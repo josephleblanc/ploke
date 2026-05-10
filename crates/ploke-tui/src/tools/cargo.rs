@@ -223,6 +223,7 @@ pub struct CargoToolParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoToolParamsOwned {
     pub command: CargoCommand,
     pub scope: CargoScope,
@@ -245,6 +246,7 @@ pub struct CargoToolParamsOwned {
 ///
 /// Diagnostics are capped for size safety; tails contain the last observed non-JSON output.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoToolResult {
     pub ok: bool,
     pub status_reason: CargoStatusReason,
@@ -263,6 +265,7 @@ pub struct CargoToolResult {
 
 /// Summary counts derived from cargo JSON messages.
 #[derive(Debug, Clone, Serialize, Default)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoSummary {
     pub errors: u32,
     pub warnings: u32,
@@ -273,6 +276,7 @@ pub struct CargoSummary {
 
 /// Condensed diagnostic for LLM/UI consumption.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoDiagnostic {
     pub level: String,
     pub message: String,
@@ -283,6 +287,7 @@ pub struct CargoDiagnostic {
 
 /// Source span attached to a diagnostic.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoSpan {
     pub file_name: String,
     pub line_start: u32,
@@ -294,6 +299,7 @@ pub struct CargoSpan {
 
 /// Final status category for a cargo invocation.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 #[serde(rename_all = "snake_case")]
 pub enum CargoStatusReason {
     Success,

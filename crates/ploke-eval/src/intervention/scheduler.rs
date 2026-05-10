@@ -7,12 +7,119 @@ use sha2::{Digest, Sha256};
 
 use super::ResolvedTreatmentBranch;
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
+use crate::operational_metrics::OperationalRunMetrics;
 use crate::projection::OperatorProjectionRead;
 use crate::record_emission::{EmitRecord, JsonRecordFile};
 use crate::spec::PrepareError;
 
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
 pub const PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION: &str = "prototype1-treatment-node.v1";
+
+pub mod baseline {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Complete;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Baseline<S> {
+    campaign_id: String,
+    parent_node_id: String,
+    parent_branch_id: String,
+    eval_set_id: String,
+    instances: Vec<BaselineInstance>,
+    state: std::marker::PhantomData<S>,
+}
+
+impl Baseline<baseline::Complete> {
+    pub fn complete(
+        campaign_id: String,
+        parent_node_id: String,
+        parent_branch_id: String,
+        eval_set_id: String,
+        instances: Vec<BaselineInstance>,
+    ) -> Result<Self, PrepareError> {
+        if instances.is_empty() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "Parent<{}> cannot enter child fanout with empty Baseline<Complete>",
+                    parent_node_id
+                ),
+            });
+        }
+        Ok(Self {
+            campaign_id,
+            parent_node_id,
+            parent_branch_id,
+            eval_set_id,
+            instances,
+            state: std::marker::PhantomData,
+        })
+    }
+
+    pub fn campaign_id(&self) -> &str {
+        &self.campaign_id
+    }
+
+    pub fn parent_node_id(&self) -> &str {
+        &self.parent_node_id
+    }
+
+    pub fn parent_branch_id(&self) -> &str {
+        &self.parent_branch_id
+    }
+
+    pub fn eval_set_id(&self) -> &str {
+        &self.eval_set_id
+    }
+
+    pub fn instances(&self) -> &[BaselineInstance] {
+        &self.instances
+    }
+
+    pub fn validate_for_parent(
+        &self,
+        campaign_id: &str,
+        parent_node_id: &str,
+        parent_branch_id: &str,
+    ) -> Result<(), PrepareError> {
+        if self.instances.is_empty() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "Parent<{}> cannot enter child fanout with empty Baseline<Complete>",
+                    parent_node_id
+                ),
+            });
+        }
+        if self.campaign_id != campaign_id
+            || self.parent_node_id != parent_node_id
+            || self.parent_branch_id != parent_branch_id
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "Baseline<Complete> does not belong to active parent: expected campaign={} parent_node={} parent_branch={}, got campaign={} parent_node={} parent_branch={}",
+                    campaign_id,
+                    parent_node_id,
+                    parent_branch_id,
+                    self.campaign_id,
+                    self.parent_node_id,
+                    self.parent_branch_id
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+pub type CompleteBaseline = Baseline<baseline::Complete>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BaselineInstance {
+    pub instance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_path: Option<PathBuf>,
+    pub record_path: PathBuf,
+    pub metrics: OperationalRunMetrics,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Prototype1SearchPolicy {
@@ -1339,7 +1446,6 @@ mod tests {
                 apply_id: None,
                 applied_content_hash: None,
                 derived_artifact_id: None,
-                latest_evaluation: None,
             },
         }
     }

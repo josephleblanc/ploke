@@ -76,32 +76,51 @@ No Rust tests were run for this pass; this was a documentation and inventory sur
 
 ## Next Implementation Slices
 
-Start with the highest-signal direct violations:
+The queue of record is [`implementation-slices.md`](implementation-slices.md).
 
-1. `protocol-artifacts.decode`
-   Replace `ploke-records::protocol` `serde_json::Value` staging with typed payload decoding.
+Use that file, not `.codex/task-stack.jsonl`, to decide what comes next for the typed-persistence-spine lane. The current first slice is `protocol-artifacts.decode`.
 
-2. `protocol-artifacts.storage-aggregate`
-   Replace `StoredProtocolArtifact` raw payload fields and aggregate output cloning with typed payload DTOs.
+## Cold Restart Note: Tool Contracts
 
-3. `tool.call.arguments`
-   Replace `ToolCallRecord.arguments` and `ToolRequestRecord.arguments` with typed argument carriers or typed parse-failure records.
+During the follow-up discussion, the intended tool-call direction was settled:
 
-4. `tool.result.trace.projection`
-   Replace `cli_facing.rs` tool-result/turn-trace/observation projection field walking with named typed projection records.
+- Keep tool execution and runtime state in `ploke-tui`.
+- Keep the owned LLM/tool transport DTOs beside the existing tool
+  implementations.
+- Expose those owned DTOs through a `ploke-tui` `tool_contracts` feature.
+- Re-export them from `ploke-records` behind a `tool-contracts` feature as
+  `ploke_records::tool_contracts`.
+- Use those re-exported DTOs when implementing the later
+  `tool.call.arguments` slice.
 
-5. `llm-attempts.provider-observation-projection`
-   Replace provider error, timeout, and attempt timeline JSON projection with typed records.
+Current code state at handoff:
 
-6. `llm-attempts.dto-tool-bridge`
-   Remove `serde_json::Value` from owned `ploke-llm` response metadata/logprobs and tool bridge argument records.
+- `crates/ploke-tui/Cargo.toml` has a default `tool_contracts` feature.
+- Owned tool transport DTOs in `crates/ploke-tui/src/tools/*.rs` derive
+  `Deserialize` under `tool_contracts`.
+- `crates/ploke-records/Cargo.toml` has an optional direct path dependency on
+  `ploke-tui` with `default-features = false` and
+  `features = ["tool_contracts"]`.
+- `crates/ploke-records/src/tool_contracts.rs` re-exports the transport DTOs
+  and explains why this exists.
 
-Then address the typed-but-scattered replay surfaces:
+Do not rehash this as a new architecture question on restart. The purpose is
+to avoid mirrored DTOs while letting persisted record readers deserialize tool
+arguments through the same Rust transport shapes that the tools use. Do not add
+an `app` feature split or gate broad `ploke-tui` runtime modules as part of
+this lane unless the user explicitly asks for a crate split.
 
-7. `edit_surface.source-records`
-8. `database-context.prompt-evidence`
-9. `evaluation-oracle-targets.identity-joins`
-10. `evaluation-oracle-targets.selection-replay`
+Verification already run before this handoff:
+
+```bash
+cargo check -p ploke-tui 2>&1 | tail -n 80
+cargo check -p ploke-records --features tool-contracts 2>&1 | tail -n 80
+cargo check -p ploke-records 2>&1 | tail -n 80
+```
+
+An extra `ploke-records` unit test for the re-export was briefly added and then
+removed because the user asked for simple Cargo/re-export wiring, not a test
+slice. Do not restore that test unless the next implementation slice needs it.
 
 ## Orchestration Notes
 

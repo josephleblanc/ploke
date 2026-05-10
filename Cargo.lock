@@ -6032,6 +6032,7 @@ name = "ploke-records"
 version = "0.1.0"
 dependencies = [
  "ploke-protocol",
+ "ploke-tui",
  "serde",
  "serde_json",
  "serde_path_to_error",

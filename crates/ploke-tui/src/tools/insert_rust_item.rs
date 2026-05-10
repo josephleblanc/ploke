@@ -48,6 +48,7 @@ pub struct InsertRustItemParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct InsertRustItemParamsOwned {
     pub file: String,
     pub container_kind: InsertRustContainerKind,

@@ -216,7 +216,6 @@ mod tests {
                 apply_id: None,
                 applied_content_hash: None,
                 derived_artifact_id: None,
-                latest_evaluation: None,
             },
         }
     }

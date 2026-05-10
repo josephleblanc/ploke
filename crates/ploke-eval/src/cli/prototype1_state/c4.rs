@@ -9,8 +9,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, instrument};
 
-use crate::branch_evaluation::BranchDisposition;
-use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
+use crate::cli::prototype1_state::cli_facing::Prototype1TreatmentEvidence;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
     Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface,
@@ -27,15 +26,10 @@ use super::observe;
 
 const RESULT_POLL: Duration = Duration::from_millis(100);
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Report {
-    pub overall_disposition: BranchDisposition,
-}
-
 #[derive(Debug)]
 pub(crate) struct SuccessfulObservation {
     pub runner_result: Prototype1RunnerResult,
-    pub evaluation: Prototype1BranchEvaluationReport,
+    pub treatment: Prototype1TreatmentEvidence,
 }
 
 #[derive(Debug)]
@@ -50,12 +44,11 @@ pub(crate) enum ObservedChild {
     Failed(FailedObservation),
 }
 
-/// `C5`: parent has observed one terminal child state and reduced it to a
-/// policy-facing report without selecting or promoting anything yet.
+/// `C5`: parent has observed one terminal child state. Successful children
+/// carry treatment evidence; parent-side comparison happens after this state.
 #[derive(Debug)]
 pub(crate) struct C5 {
     pub base: C4,
-    pub report: Report,
     pub observed: ObservedChild,
 }
 
@@ -129,10 +122,8 @@ fn completion_entry(
 pub(crate) enum ObserveChildError {
     #[error("C4 is missing a concrete child runtime id")]
     MissingRuntimeId,
-    #[error(
-        "succeeded runner result for node '{node_id}' did not include an evaluation report payload"
-    )]
-    MissingEvaluationReport { node_id: String },
+    #[error("succeeded runner result for node '{node_id}' did not include treatment evidence")]
+    MissingTreatmentEvidence { node_id: String },
     #[error("failed to read child channel: {detail}")]
     ReadChannel { detail: String },
 }
@@ -169,16 +160,9 @@ impl ObserveChild {
     }
 }
 
-impl Report {
-    fn reject() -> Self {
-        Self {
-            overall_disposition: BranchDisposition::Reject,
-        }
-    }
-}
-
 fn terminal_from_result(result: &ObservedChildResult) -> ObservedChildTerminal {
     match result {
+        ObservedChildResult::TreatmentComplete { .. } => ObservedChildTerminal::Succeeded,
         ObservedChildResult::Succeeded { .. } => ObservedChildTerminal::Succeeded,
         ObservedChildResult::Failed { .. } => ObservedChildTerminal::Failed,
     }
@@ -192,7 +176,7 @@ fn base_with_result_status(mut base: C4, runner_result: &Prototype1RunnerResult)
 #[derive(Debug)]
 struct ChildResultPayload {
     runner_result: Prototype1RunnerResult,
-    evaluation: Option<Prototype1BranchEvaluationReport>,
+    treatment: Option<Prototype1TreatmentEvidence>,
 }
 
 fn child_result_from_channel(
@@ -210,10 +194,10 @@ fn child_result_from_channel(
         .find_map(|message| match message.body() {
             ToParent::Result {
                 runner_result,
-                evaluation,
+                treatment,
             } => Some(ChildResultPayload {
                 runner_result: runner_result.clone(),
-                evaluation: evaluation.clone(),
+                treatment: treatment.clone(),
             }),
             _ => None,
         });
@@ -308,7 +292,7 @@ impl Intervention<C4, C5> for ObserveChild {
                 }
                 let ChildResultPayload {
                     runner_result,
-                    evaluation,
+                    treatment,
                 } = observed;
                 let runner_outcome = observe::Step::start(observe::span!(
                     "prototype1.child.observe.channel_result",
@@ -318,7 +302,7 @@ impl Intervention<C4, C5> for ObserveChild {
                     generation = from.node.generation,
                     runtime_id = %runtime_id,
                     runner_disposition = ?runner_result.disposition,
-                    evaluation_included = evaluation.is_some(),
+                    treatment_included = treatment.is_some(),
                 ));
                 if runner_result.disposition == Prototype1RunnerDisposition::Succeeded {
                     runner_outcome.success();
@@ -335,7 +319,6 @@ impl Intervention<C4, C5> for ObserveChild {
                     let base = base_with_result_status(from, &runner_result);
                     let next = C5 {
                         base,
-                        report: Report::reject(),
                         observed: ObservedChild::Failed(FailedObservation { runner_result }),
                     };
                     records
@@ -360,36 +343,31 @@ impl Intervention<C4, C5> for ObserveChild {
                     return Ok(Outcome::Advanced(next));
                 }
 
-                let report = evaluation.ok_or_else(|| {
-                    CommitError::Transition(ObserveChildError::MissingEvaluationReport {
+                let treatment = treatment.ok_or_else(|| {
+                    CommitError::Transition(ObserveChildError::MissingTreatmentEvidence {
                         node_id: from.node.node_id.clone(),
                     })
                 })?;
                 observe::Step::start(observe::span!(
-                    "prototype1.child.observe.evaluation_payload",
+                    "prototype1.child.observe.treatment_payload",
                     transition_id = ?self.transition_id,
                     campaign_id = %from.campaign_id,
                     node_id = %from.node.node_id,
                     generation = from.node.generation,
                     runtime_id = %runtime_id,
-                    evaluation_artifact_path = %report.evaluation_artifact_path.display(),
-                    branch_disposition = ?report.overall_disposition,
+                    treatment_campaign_id = %treatment.treatment_campaign_id,
                 ))
                 .success();
                 let base = base_with_result_status(from, &runner_result);
                 let next = C5 {
                     base,
-                    report: Report {
-                        overall_disposition: report.overall_disposition.clone(),
-                    },
                     observed: ObservedChild::Succeeded(SuccessfulObservation {
                         runner_result,
-                        evaluation: report.clone(),
+                        treatment: treatment.clone(),
                     }),
                 };
-                let result = ObservedChildResult::Succeeded {
-                    evaluation_artifact_path: report.evaluation_artifact_path.clone(),
-                    overall_disposition: report.overall_disposition.clone(),
+                let result = ObservedChildResult::TreatmentComplete {
+                    treatment_campaign_id: treatment.treatment_campaign_id.clone(),
                 };
 
                 records
@@ -408,8 +386,8 @@ impl Intervention<C4, C5> for ObserveChild {
                     target: ploke_core::EXECUTION_DEBUG_TARGET,
                     node_id = %next.base.node.node_id,
                     runtime_id = %runtime_id,
-                    disposition = ?next.report.overall_disposition,
-                    "observed successful child evaluation"
+                    treatment_campaign_id = %treatment.treatment_campaign_id,
+                    "observed successful child treatment evidence"
                 );
                 return Ok(Outcome::Advanced(next));
             }

@@ -4,6 +4,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, SystemTime},
 };
@@ -89,18 +90,19 @@ use crate::{
     },
     evaluate_branch, instances_dir,
     intervention::{
-        ArtifactEdit, Intervention, InterventionApplyInput, InterventionCandidate,
-        InterventionSpec, IssueCase, Outcome, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
-        Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
+        ArtifactEdit, BaselineInstance, CompleteBaseline, Intervention, InterventionApplyInput,
+        InterventionCandidate, InterventionSpec, IssueCase, Outcome,
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1ChildBudget,
+        Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
         Prototype1RunnerResult, Prototype1SchedulerState, Prototype1SearchPolicy, RecordStore,
-        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, execute_intervention_apply,
-        load_or_default_branch_registry, load_scheduler_state, mark_treatment_branch_applied,
-        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
-        prototype1_scheduler_path, register_root_parent_node, resolve_treatment_branch,
-        resolved_treatment_branches_from_synthesis, restore_treatment_branch, select_primary_issue,
-        select_treatment_branch, treatment_branch_id, write_node_projection,
-        write_treatment_evaluation_projection,
+        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, branch_log,
+        execute_intervention_apply, load_or_default_branch_registry, load_scheduler_state,
+        mark_treatment_branch_applied, project_node_status, prototype1_branch_registry_path,
+        prototype1_node_id, prototype1_scheduler_path, register_root_parent_node,
+        resolve_treatment_branch, resolved_treatment_branches_from_synthesis,
+        restore_treatment_branch, select_primary_issue, select_treatment_branch,
+        treatment_branch_id, write_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -358,6 +360,194 @@ fn ensure_prototype1_baseline_closure_state(
         return Ok(path);
     }
     recompute_closure_state(config.closure_recompute_request()).map(|(path, _)| path)
+}
+
+async fn establish_parent_baseline(
+    campaign_id: &str,
+    config: &ResolvedCampaignConfig,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<CompleteBaseline, PrepareError> {
+    let baseline = if parent.generation() == 0 {
+        establish_initial_parent_baseline(config, parent).await?
+    } else {
+        promote_selected_child_baseline(campaign_id, manifest_path, parent)?
+    };
+    baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
+    Ok(baseline)
+}
+
+async fn establish_initial_parent_baseline(
+    config: &ResolvedCampaignConfig,
+    parent: &ParentIdentity,
+) -> Result<CompleteBaseline, PrepareError> {
+    let mut eval_policy = config.eval.clone();
+    eval_policy.stop_on_error = false;
+    advance_eval_closure(config, &eval_policy, false).await?;
+
+    let mut protocol_policy = config.protocol.clone();
+    protocol_policy.stop_on_error = false;
+    advance_protocol_closure(config, &protocol_policy, false).await?;
+
+    let closure = load_closure_state(&config.campaign_id)?;
+    complete_baseline_from_closure(parent, &closure, &config.eval)
+}
+
+fn promote_selected_child_baseline(
+    campaign_id: &str,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<CompleteBaseline, PrepareError> {
+    let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
+    let text = fs::read_to_string(&report_path).map_err(|source| PrepareError::ReadManifest {
+        path: report_path.clone(),
+        source,
+    })?;
+    let report: Prototype1BranchEvaluationReport =
+        serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+            path: report_path.clone(),
+            source,
+        })?;
+    if report.baseline_campaign_id != campaign_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected child baseline report campaign mismatch for parent '{}': expected {}, got {}",
+                parent.node_id(),
+                campaign_id,
+                report.baseline_campaign_id
+            ),
+        });
+    }
+    if report.branch_id != parent.branch_id() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected child baseline report branch mismatch for parent '{}': expected {}, got {}",
+                parent.node_id(),
+                parent.branch_id(),
+                report.branch_id
+            ),
+        });
+    }
+    complete_baseline_from_selected_treatment(parent, &report)
+}
+
+fn complete_baseline_from_closure(
+    parent: &ParentIdentity,
+    closure: &crate::closure::ClosureState,
+    eval_policy: &EvalCampaignPolicy,
+) -> Result<CompleteBaseline, PrepareError> {
+    let rows = closure
+        .instances
+        .iter()
+        .map(|row| {
+            if row.eval_status != ClosureClass::Complete {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "Parent<{}> cannot spawn children: baseline instance '{}' is {:?}",
+                        parent.node_id(),
+                        row.instance_id,
+                        row.eval_status
+                    ),
+                });
+            }
+            let record_path =
+                row.artifacts
+                    .record_path
+                    .clone()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "Parent<{}> cannot spawn children: baseline instance '{}' has no record_path",
+                            parent.node_id(),
+                            row.instance_id
+                        ),
+                    })?;
+            let metrics = read_compressed_record(&record_path)
+                .map(|record| record.operational_metrics())
+                .map_err(|source| PrepareError::ReadManifest {
+                    path: record_path.clone(),
+                    source,
+                })?;
+            Ok(BaselineInstance {
+                instance_id: row.instance_id.clone(),
+                registration_path: row.artifacts.registration_path.clone(),
+                record_path,
+                metrics,
+            })
+        })
+        .collect::<Result<Vec<_>, PrepareError>>()?;
+    let instance_ids = rows
+        .iter()
+        .map(|row| row.instance_id.clone())
+        .collect::<Vec<_>>();
+    CompleteBaseline::complete(
+        closure.campaign_id.clone(),
+        parent.node_id().to_string(),
+        parent.branch_id().to_string(),
+        prototype1_eval_set_id(
+            &closure.campaign_id,
+            &closure.campaign_id,
+            closure.config.benchmark_family,
+            &closure.config.dataset_sources,
+            eval_policy,
+            &instance_ids,
+        ),
+        rows,
+    )
+}
+
+fn complete_baseline_from_selected_treatment(
+    parent: &ParentIdentity,
+    report: &Prototype1BranchEvaluationReport,
+) -> Result<CompleteBaseline, PrepareError> {
+    let eval_set_id = report
+        .eval_set_identity
+        .as_ref()
+        .map(|identity| identity.id.clone())
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "Parent<{}> cannot promote selected child baseline: evaluation report has no eval_set_identity",
+                parent.node_id()
+            ),
+        })?;
+    let rows = report
+        .compared_instances
+        .iter()
+        .map(|row| {
+            let record_path =
+                row.treatment_record_path
+                    .clone()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "Parent<{}> cannot promote selected child baseline: treatment instance '{}' has no record_path",
+                            parent.node_id(),
+                            row.instance_id
+                        ),
+                    })?;
+            let metrics =
+                row.treatment_metrics
+                    .clone()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "Parent<{}> cannot promote selected child baseline: treatment instance '{}' has no metrics",
+                            parent.node_id(),
+                            row.instance_id
+                        ),
+                    })?;
+            Ok(BaselineInstance {
+                instance_id: row.instance_id.clone(),
+                registration_path: row.treatment_registration_path.clone(),
+                record_path,
+                metrics,
+            })
+        })
+        .collect::<Result<Vec<_>, PrepareError>>()?;
+    CompleteBaseline::complete(
+        report.baseline_campaign_id.clone(),
+        parent.node_id().to_string(),
+        parent.branch_id().to_string(),
+        eval_set_id,
+        rows,
+    )
 }
 
 struct ChildPlanReceipt {
@@ -713,7 +903,6 @@ fn resolved_from_checked_edit(
             apply_id: Some(checked.proposal_id().to_string()),
             applied_content_hash: None,
             derived_artifact_id: Some(derived_artifact_id),
-            latest_evaluation: None,
         },
     }
 }
@@ -2487,8 +2676,8 @@ fn prototype1_monitor_locations(
         Prototype1MonitorLocation {
             label: "branch registry",
             path: prototype1_branch_registry_path(manifest_path),
-            volatility: "mutable JSON; overwritten as branches are synthesized, selected, applied, and evaluated",
-            description: "Synthesized branch records and latest evaluation summaries.",
+            volatility: "append-only typed record stream; appended as branches are synthesized, selected, applied, and compared",
+            description: "Branch registry snapshots and parent comparison summaries.",
         },
         Prototype1MonitorLocation {
             label: "legacy loop trace",
@@ -5359,7 +5548,7 @@ fn prototype1_monitor_description(prototype_root: &Path, path: &Path) -> &'stati
     match parts.as_slice() {
         [] => "campaign-local Prototype 1 state root",
         ["scheduler.json"] => "scheduler frontier, policy, node list, and continuation decision",
-        ["branches.json"] => "synthesized branch registry and evaluation summaries",
+        ["branches.json"] => "append-only branch registry and parent comparison stream",
         ["prototype1-loop-trace.json"] => "legacy loop controller trace, overwritten per run",
         ["transition-journal.jsonl"] => "append-only typed transition journal",
         ["evaluations"] => "branch evaluation artifact directory",
@@ -5654,12 +5843,71 @@ async fn resolve_child_plan(
     })
 }
 
+fn compare_observed_child_treatment(
+    campaign_id: &str,
+    manifest_path: &Path,
+    parent_baseline: &CompleteBaseline,
+    resolved: &crate::intervention::ResolvedTreatmentBranch,
+    treatment: &Prototype1TreatmentEvidence,
+    branch_log_gate: &Mutex<()>,
+) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
+    let branch_id = resolved.branch.branch_id.as_str();
+    if treatment.baseline_campaign_id != campaign_id || treatment.branch_id != branch_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child treatment evidence does not match active parent comparison: expected campaign={} branch={}, got campaign={} branch={}",
+                campaign_id, branch_id, treatment.baseline_campaign_id, treatment.branch_id
+            ),
+        });
+    }
+    let branch_registry_path = prototype1_branch_registry_path(manifest_path);
+    let evaluation_artifact_path = prototype1_branch_evaluation_path(manifest_path, branch_id);
+    let report = build_prototype1_branch_evaluation_report(
+        campaign_id,
+        branch_id,
+        &branch_registry_path,
+        &evaluation_artifact_path,
+        parent_baseline,
+        treatment,
+    )?;
+    write_json_file_pretty(&evaluation_artifact_path, &report)?;
+
+    let rejected_instances = report
+        .compared_instances
+        .iter()
+        .filter(|row| {
+            row.evaluation
+                .as_ref()
+                .is_some_and(|evaluation| evaluation.disposition == BranchDisposition::Reject)
+                || row.status != "compared"
+        })
+        .count();
+    let summary = branch_log::ComparisonSummary {
+        baseline_campaign_id: campaign_id.to_string(),
+        treatment_campaign_id: report.treatment_campaign_id.clone(),
+        compared_instances: report.compared_instances.len(),
+        rejected_instances,
+        overall_disposition: report.overall_disposition.clone(),
+        evaluated_at: Utc::now().to_rfc3339(),
+    };
+    let _guard = branch_log_gate
+        .lock()
+        .map_err(|_| PrepareError::InvalidBatchSelection {
+            detail: "parent branch comparison log lock was poisoned".to_string(),
+        })?;
+    branch_log::record_parent_comparison(campaign_id, manifest_path, resolved, summary)?;
+
+    Ok(report)
+}
+
 fn run_planned_child(
     campaign_id: String,
     manifest_path: PathBuf,
     repo_root: PathBuf,
     journal_path: PathBuf,
     parent_identity: ParentIdentity,
+    parent_baseline: CompleteBaseline,
+    branch_log_gate: Arc<Mutex<()>>,
     stop_after: Prototype1StateStopAfter,
     plan_index: usize,
     child: ChildFiles,
@@ -5874,34 +6122,55 @@ fn run_planned_child(
                                     Outcome::Advanced(c5) => {
                                         report_node = c5.base.node().clone();
                                         report_resolved = c5.base.resolved().clone();
-                                        info!(
-                                            target: EXECUTION_DEBUG_TARGET,
-                                            role = "parent",
-                                            authority = "child_runtime_channel",
-                                            transition = "C4->C5",
-                                            campaign = %campaign_id,
-                                            node_id = %node_id,
-                                            branch_id = %c5.base.node().branch_id,
-                                            generation = c5.base.node().generation,
-                                            disposition = ?c5.report.overall_disposition,
-                                            "observed child terminal result through runtime channel"
-                                        );
-                                        debug!(
-                                            target: EXECUTION_DEBUG_TARGET,
-                                            campaign = %campaign_id,
-                                            candidate_node_id = %node_id,
-                                            disposition = ?c5.report.overall_disposition,
-                                            "child completion observed"
-                                        );
                                         if let ObservedChild::Succeeded(successful) = &c5.observed {
-                                            evaluation_report = Some(successful.evaluation.clone());
+                                            let report = compare_observed_child_treatment(
+                                                &campaign_id,
+                                                &manifest_path,
+                                                &parent_baseline,
+                                                c5.base.resolved(),
+                                                &successful.treatment,
+                                                &branch_log_gate,
+                                            )?;
+                                            info!(
+                                                target: EXECUTION_DEBUG_TARGET,
+                                                role = "parent",
+                                                authority = "parent_baseline+treatment_evidence",
+                                                transition = "C5->ParentCompared",
+                                                campaign = %campaign_id,
+                                                node_id = %node_id,
+                                                branch_id = %c5.base.node().branch_id,
+                                                generation = c5.base.node().generation,
+                                                disposition = ?report.overall_disposition,
+                                                "compared child treatment evidence against parent baseline"
+                                            );
+                                            debug!(
+                                                target: EXECUTION_DEBUG_TARGET,
+                                                campaign = %campaign_id,
+                                                candidate_node_id = %node_id,
+                                                disposition = ?report.overall_disposition,
+                                                "parent comparison completed"
+                                            );
+                                            evaluation_report = Some(report.clone());
                                             selection_input =
                                                 Some(selection_input_from_child_report(
                                                     c5.base.node(),
-                                                    &successful.evaluation,
+                                                    &report,
                                                 ));
+                                            format!("completed:{:?}", report.overall_disposition)
+                                        } else {
+                                            info!(
+                                                target: EXECUTION_DEBUG_TARGET,
+                                                role = "parent",
+                                                authority = "child_runtime_channel",
+                                                transition = "C4->C5",
+                                                campaign = %campaign_id,
+                                                node_id = %node_id,
+                                                branch_id = %c5.base.node().branch_id,
+                                                generation = c5.base.node().generation,
+                                                "observed failed child terminal result through runtime channel"
+                                            );
+                                            "completed:Reject".to_string()
                                         }
-                                        format!("completed:{:?}", c5.report.overall_disposition)
                                     }
                                 }
                             }
@@ -5940,6 +6209,7 @@ async fn run_child_fanout(
     repo_root: &Path,
     journal_path: &Path,
     parent_identity: &ParentIdentity,
+    parent_baseline: &CompleteBaseline,
     stop_after: Prototype1StateStopAfter,
     child_schedule_mode: Prototype1ChildScheduleMode,
     child_budget: Prototype1ChildBudget,
@@ -5980,6 +6250,7 @@ async fn run_child_fanout(
 
     let mut completed = Vec::new();
     let mut next = 0usize;
+    let branch_log_gate = Arc::new(Mutex::new(()));
     while next < children.len() {
         let end = usize::min(next + fanout_width, children.len());
         let mut join_set = tokio::task::JoinSet::new();
@@ -5990,6 +6261,8 @@ async fn run_child_fanout(
             let repo_root = repo_root.to_path_buf();
             let journal_path = journal_path.to_path_buf();
             let parent_identity = parent_identity.clone();
+            let parent_baseline = parent_baseline.clone();
+            let branch_log_gate = branch_log_gate.clone();
             join_set.spawn_blocking(move || {
                 run_planned_child(
                     campaign_id,
@@ -5997,6 +6270,8 @@ async fn run_child_fanout(
                     repo_root,
                     journal_path,
                     parent_identity,
+                    parent_baseline,
+                    branch_log_gate,
                     stop_after,
                     plan_index,
                     child,
@@ -6057,6 +6332,7 @@ async fn run_adaptive_child_fanout(
     repo_root: &Path,
     journal_path: &Path,
     parent_identity: &ParentIdentity,
+    parent_baseline: &CompleteBaseline,
     child_budget: Prototype1ChildBudget,
     children: Vec<ChildFiles>,
     rejected_surface_attempts: &[surface_attempt::Evidence],
@@ -6089,6 +6365,7 @@ async fn run_adaptive_child_fanout(
             repo_root,
             journal_path,
             parent_identity,
+            parent_baseline,
             Prototype1StateStopAfter::Complete,
             Prototype1ChildScheduleMode::FullBatch,
             child_budget,
@@ -6199,7 +6476,7 @@ fn current_generation_candidate_evidence(
     let mut child_diagnostics = Vec::new();
     if outcome.selection_input.is_some() && outcome.evaluation_report.is_none() {
         child_diagnostics.push(
-            "current_generation_candidate: selection input exists without typed evaluation report"
+            "current_generation_candidate: selection input exists without parent comparison report"
                 .to_string(),
         );
     }
@@ -6264,7 +6541,7 @@ fn current_generation_candidate_evidence(
     level = "debug",
     skip(report),
     fields(
-        evidence_boundary = "child_channel_evaluation_report",
+        evidence_boundary = "parent_compared_treatment_evidence",
         branch_id = %report.branch_id,
         treatment_campaign_id = %report.treatment_campaign_id,
         compared_instances = report.compared_instances.len(),
@@ -7210,6 +7487,13 @@ impl Prototype1StateCommand {
             journal_path = %journal_path.display(),
             "starting typed prototype1 parent turn"
         );
+        let parent_baseline = establish_parent_baseline(
+            &campaign_id,
+            &resolved_campaign,
+            &manifest_path,
+            &parent_identity,
+        )
+        .await?;
         let planned_children = resolve_child_plan(
             &campaign_id,
             &manifest_path,
@@ -7273,6 +7557,7 @@ impl Prototype1StateCommand {
                 &repo_root,
                 &journal_path,
                 &parent_identity,
+                &parent_baseline,
                 child_budget,
                 children,
                 &rejected_surface_attempts,
@@ -7288,6 +7573,7 @@ impl Prototype1StateCommand {
                 &repo_root,
                 &journal_path,
                 &parent_identity,
+                &parent_baseline,
                 run_shape.stop_after,
                 child_schedule_mode,
                 child_budget,
@@ -7684,57 +7970,27 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
     branch_id: &str,
     branch_registry_path: &Path,
     evaluation_artifact_path: &Path,
-    treatment_campaign: &Prototype1LoopCampaign,
-    baseline_state: &crate::closure::ClosureState,
-    treatment_state: &crate::closure::ClosureState,
+    baseline: &CompleteBaseline,
+    treatment: &Prototype1TreatmentEvidence,
 ) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
     let mut treatment_by_instance = BTreeMap::new();
-    for row in &treatment_state.instances {
+    for row in &treatment.instances {
         treatment_by_instance.insert(row.instance_id.clone(), row);
     }
 
     let mut compared_instances = Vec::new();
     let mut reasons = Vec::new();
 
-    for row in &baseline_state.instances {
+    for row in baseline.instances() {
         let treatment_row = treatment_by_instance.get(&row.instance_id).copied();
-        let baseline_registration_path = row.artifacts.registration_path.clone();
+        let baseline_registration_path = row.registration_path.clone();
         let treatment_registration_path =
-            treatment_row.and_then(|row| row.artifacts.registration_path.clone());
-        let baseline_record_path = row.artifacts.record_path.clone();
-        let treatment_record_path = treatment_row.and_then(|row| row.artifacts.record_path.clone());
+            treatment_row.and_then(|row| row.registration_path.clone());
+        let baseline_record_path = Some(row.record_path.clone());
+        let treatment_record_path = treatment_row.and_then(|row| row.record_path.clone());
 
-        let baseline_metrics = if row.eval_status == ClosureClass::Complete {
-            baseline_record_path
-                .as_ref()
-                .map(|path| {
-                    read_compressed_record(path)
-                        .map(|record| record.operational_metrics())
-                        .map_err(|source| PrepareError::ReadManifest {
-                            path: path.clone(),
-                            source,
-                        })
-                })
-                .transpose()?
-        } else {
-            None
-        };
-        let treatment_metrics =
-            if treatment_row.is_some_and(|row| row.eval_status == ClosureClass::Complete) {
-                treatment_record_path
-                    .as_ref()
-                    .map(|path| {
-                        read_compressed_record(path)
-                            .map(|record| record.operational_metrics())
-                            .map_err(|source| PrepareError::ReadManifest {
-                                path: path.clone(),
-                                source,
-                            })
-                    })
-                    .transpose()?
-            } else {
-                None
-            };
+        let baseline_metrics: Option<OperationalRunMetrics> = Some(row.metrics.clone());
+        let treatment_metrics = treatment_row.and_then(|row| row.metrics.clone());
 
         let (status, evaluation) = match (&baseline_metrics, &treatment_metrics) {
             (Some(baseline_metrics), Some(treatment_metrics)) => {
@@ -7754,15 +8010,14 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
                     "{}: treatment arm did not produce a complete record",
                     row.instance_id
                 ));
-                ("missing_treatment_record".to_string(), None)
+                (
+                    treatment_row
+                        .map(|row| row.status.clone())
+                        .unwrap_or_else(|| "missing_treatment_record".to_string()),
+                    None,
+                )
             }
-            (None, _) => {
-                reasons.push(format!(
-                    "{}: baseline arm does not have a complete record",
-                    row.instance_id
-                ));
-                ("missing_baseline_record".to_string(), None)
-            }
+            (None, _) => unreachable!("Baseline<Complete> always carries baseline metrics"),
         };
 
         compared_instances.push(Prototype1ComparedInstanceReport {
@@ -7787,7 +8042,7 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
     Ok(Prototype1BranchEvaluationReport {
         baseline_campaign_id: baseline_campaign_id.to_string(),
         branch_id: branch_id.to_string(),
-        treatment_campaign_id: treatment_campaign.campaign_id.clone(),
+        treatment_campaign_id: treatment.treatment_campaign_id.clone(),
         evaluation_procedure_id: Some(
             crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
                 .to_string(),
@@ -7798,35 +8053,87 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
         }),
         eval_set_identity: Some(build_prototype1_eval_set_identity(
             baseline_campaign_id,
-            &treatment_campaign.campaign_id,
-            &treatment_campaign.resolved.eval,
-            baseline_state,
-            treatment_state,
+            treatment,
+            baseline,
             &compared_instances,
         )),
         branch_registry_path: branch_registry_path.to_path_buf(),
         evaluation_artifact_path: evaluation_artifact_path.to_path_buf(),
-        treatment_campaign_manifest: treatment_campaign.manifest_path.clone(),
-        treatment_closure_state_path: treatment_campaign.closure_state_path.clone(),
+        treatment_campaign_manifest: treatment.treatment_campaign_manifest.clone(),
+        treatment_closure_state_path: treatment.treatment_closure_state_path.clone(),
         overall_disposition,
         reasons,
         compared_instances,
     })
 }
 
+pub(crate) fn build_prototype1_treatment_evidence(
+    baseline_campaign_id: &str,
+    branch_id: &str,
+    treatment_campaign: &Prototype1LoopCampaign,
+    treatment_state: &crate::closure::ClosureState,
+) -> Result<Prototype1TreatmentEvidence, PrepareError> {
+    let instances = treatment_state
+        .instances
+        .iter()
+        .map(|row| {
+            let metrics = if row.eval_status == ClosureClass::Complete {
+                row.artifacts
+                    .record_path
+                    .as_ref()
+                    .map(|path| {
+                        read_compressed_record(path)
+                            .map(|record| record.operational_metrics())
+                            .map_err(|source| PrepareError::ReadManifest {
+                                path: path.clone(),
+                                source,
+                            })
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
+            let status = if metrics.is_some() {
+                "complete".to_string()
+            } else if row.eval_status == ClosureClass::Complete {
+                "missing_treatment_record".to_string()
+            } else {
+                serde_name(&row.eval_status).to_string()
+            };
+            Ok(Prototype1TreatmentInstanceEvidence {
+                instance_id: row.instance_id.clone(),
+                registration_path: row.artifacts.registration_path.clone(),
+                record_path: row.artifacts.record_path.clone(),
+                metrics,
+                status,
+            })
+        })
+        .collect::<Result<Vec<_>, PrepareError>>()?;
+
+    Ok(Prototype1TreatmentEvidence {
+        baseline_campaign_id: baseline_campaign_id.to_string(),
+        branch_id: branch_id.to_string(),
+        treatment_campaign_id: treatment_campaign.campaign_id.clone(),
+        treatment_campaign_manifest: treatment_campaign.manifest_path.clone(),
+        treatment_closure_state_path: treatment_campaign.closure_state_path.clone(),
+        eval_policy: treatment_campaign.resolved.eval.clone(),
+        benchmark_family: treatment_campaign.resolved.benchmark_family,
+        dataset_sources: treatment_campaign.resolved.dataset_sources.clone(),
+        instances,
+    })
+}
+
 fn build_prototype1_eval_set_identity(
     baseline_campaign_id: &str,
-    treatment_campaign_id: &str,
-    eval_policy: &EvalCampaignPolicy,
-    baseline_state: &crate::closure::ClosureState,
-    treatment_state: &crate::closure::ClosureState,
+    treatment: &Prototype1TreatmentEvidence,
+    baseline: &CompleteBaseline,
     compared_instances: &[Prototype1ComparedInstanceReport],
 ) -> Prototype1EvalSetIdentity {
     let instance_ids = compared_instances
         .iter()
         .map(|instance| instance.instance_id.clone())
         .collect::<Vec<_>>();
-    let treatment_instances = treatment_state
+    let treatment_instances = treatment
         .instances
         .iter()
         .map(|row| row.instance_id.as_str())
@@ -7836,24 +8143,27 @@ fn build_prototype1_eval_set_identity(
         .filter(|instance_id| !treatment_instances.contains(instance_id.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let dataset_sources = baseline_state.config.dataset_sources.clone();
+    let dataset_sources = treatment.dataset_sources.clone();
     let id = prototype1_eval_set_id(
         baseline_campaign_id,
-        treatment_campaign_id,
-        baseline_state.config.benchmark_family,
+        &treatment.treatment_campaign_id,
+        treatment.benchmark_family,
         &dataset_sources,
-        eval_policy,
+        &treatment.eval_policy,
         &instance_ids,
     );
 
     Prototype1EvalSetIdentity {
         id,
         kind: PROTOTYPE1_CLOSURE_EVAL_SET_KIND.to_string(),
-        authority: PROTOTYPE1_CLOSURE_EVAL_SET_AUTHORITY.to_string(),
+        authority: format!(
+            "{}:{}",
+            PROTOTYPE1_CLOSURE_EVAL_SET_AUTHORITY, baseline.eval_set_id()
+        ),
         explicit: true,
-        benchmark_family: baseline_state.config.benchmark_family,
+        benchmark_family: treatment.benchmark_family,
         dataset_sources,
-        eval_policy: eval_policy.clone(),
+        eval_policy: treatment.eval_policy.clone(),
         instance_ids,
         missing_treatment_instance_ids,
         note: Some(
@@ -8252,6 +8562,31 @@ pub(crate) struct Prototype1StateReport {
     successor_runtime: Option<String>,
     successor_pid: Option<u32>,
     successor_ready_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Prototype1TreatmentEvidence {
+    pub(crate) baseline_campaign_id: String,
+    pub(crate) branch_id: String,
+    pub(crate) treatment_campaign_id: String,
+    pub(crate) treatment_campaign_manifest: PathBuf,
+    pub(crate) treatment_closure_state_path: PathBuf,
+    pub(crate) eval_policy: EvalCampaignPolicy,
+    pub(crate) benchmark_family: BenchmarkFamily,
+    pub(crate) dataset_sources: Vec<RegistryDatasetSource>,
+    pub(crate) instances: Vec<Prototype1TreatmentInstanceEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Prototype1TreatmentInstanceEvidence {
+    pub(crate) instance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) registration_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) record_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) metrics: Option<OperationalRunMetrics>,
+    pub(crate) status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9368,7 +9703,6 @@ stop_after = "complete"
                 apply_id: None,
                 applied_content_hash: None,
                 derived_artifact_id: None,
-                latest_evaluation: None,
             },
         }
     }
@@ -9473,6 +9807,211 @@ stop_after = "complete"
                 status: "compared".to_string(),
             }],
         }
+    }
+
+    fn test_treatment_evidence(node: &Prototype1NodeRecord) -> Prototype1TreatmentEvidence {
+        Prototype1TreatmentEvidence {
+            baseline_campaign_id: "baseline".to_string(),
+            branch_id: node.branch_id.clone(),
+            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_manifest: PathBuf::from("/tmp/treatment/campaign.json"),
+            treatment_closure_state_path: PathBuf::from("/tmp/treatment/closure-state.json"),
+            eval_policy: test_eval_policy(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            instances: vec![Prototype1TreatmentInstanceEvidence {
+                instance_id: node.instance_id.clone(),
+                registration_path: Some(PathBuf::from("/tmp/treatment/registration.json")),
+                record_path: Some(PathBuf::from("/tmp/treatment/record.json.gz")),
+                metrics: Some(test_metrics(true, true, 0)),
+                status: "complete".to_string(),
+            }],
+        }
+    }
+
+    fn test_eval_policy() -> EvalCampaignPolicy {
+        EvalCampaignPolicy {
+            include_partial: false,
+            stop_on_error: false,
+            limit: None,
+            include_dataset_labels: Vec::new(),
+            exclude_dataset_labels: Vec::new(),
+            budget: EvalBudget::default(),
+            batch_prefix: Some("test-batch".to_string()),
+        }
+    }
+
+    fn test_closure_state_without_record(instance_id: &str) -> crate::closure::ClosureState {
+        crate::closure::ClosureState {
+            schema_version: "closure-state.v1".to_string(),
+            campaign_id: "baseline".to_string(),
+            updated_at: "2026-05-10T00:00:00Z".to_string(),
+            config: crate::closure::ClosureConfig {
+                benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+                model_id: None,
+                provider_slug: None,
+                registry_path: None,
+                dataset_sources: Vec::new(),
+                required_procedures: Vec::new(),
+                instances_root: PathBuf::from("/tmp/instances"),
+                batches_root: PathBuf::from("/tmp/batches"),
+                framework: crate::spec::FrameworkConfig::default(),
+            },
+            registry: crate::closure::RegistryClosureSummary {
+                expected_total: 1,
+                mapped_total: 1,
+                missing_total: 0,
+                ambiguous_total: 0,
+                status: ClosureClass::Complete,
+            },
+            eval: crate::closure::EvalClosureSummary {
+                expected_total: 1,
+                complete_total: 1,
+                failed_total: 0,
+                missing_total: 0,
+                partial_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Complete,
+                last_transition_at: None,
+            },
+            protocol: crate::closure::ProtocolClosureSummary {
+                expected_total: 1,
+                full_total: 0,
+                partial_total: 0,
+                failed_total: 0,
+                missing_total: 1,
+                incompatible_total: 0,
+                ineligible_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Missing,
+                required_procedures: Vec::new(),
+                status_by_procedure: BTreeMap::new(),
+                last_transition_at: None,
+            },
+            instances: vec![crate::closure::ClosureInstanceRow {
+                instance_id: instance_id.to_string(),
+                dataset_label: "test".to_string(),
+                repo_family: "test".to_string(),
+                registry_status: crate::closure::RegistryInstanceStatus::Mapped,
+                eval_status: ClosureClass::Complete,
+                protocol_status: ClosureClass::Missing,
+                eval_failure: None,
+                protocol_failure: None,
+                artifacts: crate::closure::ClosureArtifactRefs {
+                    registration_path: Some(PathBuf::from("/tmp/baseline/registration.json")),
+                    ..Default::default()
+                },
+                protocol_procedures: BTreeMap::new(),
+                protocol_counts: None,
+                last_event_at: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn initial_parent_baseline_rejects_complete_projection_without_record() {
+        let parent = test_parent_identity();
+        let closure = test_closure_state_without_record("clap-rs__clap-3670");
+
+        let err = complete_baseline_from_closure(&parent, &closure, &test_eval_policy())
+            .expect_err("complete baseline requires record_path");
+
+        assert!(
+            err.to_string().contains("has no record_path"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn selected_child_treatment_promotes_to_parent_baseline() {
+        let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
+                .to_string(),
+            campaign_id: "baseline".to_string(),
+            parent_id: "node-child".to_string(),
+            node_id: "node-child".to_string(),
+            generation: 1,
+            instance_id: Some("clap-rs__clap-3670".to_string()),
+            previous_parent_id: Some("node-parent".to_string()),
+            parent_node_id: Some("node-parent".to_string()),
+            branch_id: "branch-child".to_string(),
+            artifact_branch: Some("prototype1-node-child".to_string()),
+            created_at: "2026-05-06T00:00:00Z".to_string(),
+        });
+        let node = test_node(
+            Path::new("/tmp/campaign"),
+            "node-child",
+            "branch-child",
+            "candidate-1",
+        );
+        let mut report = test_evaluation_report(&node);
+        report.compared_instances[0].treatment_record_path =
+            Some(PathBuf::from("/tmp/treatment/record.json.gz"));
+
+        let baseline =
+            complete_baseline_from_selected_treatment(&parent, &report).expect("promote baseline");
+
+        assert_eq!(baseline.parent_node_id(), parent.node_id());
+        assert_eq!(baseline.parent_branch_id(), "branch-child");
+        assert_eq!(baseline.instances().len(), 1);
+        assert_eq!(
+            baseline.instances()[0].record_path,
+            PathBuf::from("/tmp/treatment/record.json.gz")
+        );
+        assert_eq!(
+            baseline.instances()[0].metrics,
+            report.compared_instances[0]
+                .treatment_metrics
+                .clone()
+                .expect("metrics")
+        );
+    }
+
+    #[test]
+    fn parent_compares_treatment_evidence_against_owned_baseline() {
+        let parent = test_parent_identity();
+        let node = test_node(
+            Path::new("/tmp/campaign"),
+            "node-child",
+            "branch-child",
+            "candidate-1",
+        );
+        let baseline = CompleteBaseline::complete(
+            "baseline".to_string(),
+            parent.node_id().to_string(),
+            parent.branch_id().to_string(),
+            "baseline-eval-set".to_string(),
+            vec![BaselineInstance {
+                instance_id: node.instance_id.clone(),
+                registration_path: Some(PathBuf::from("/tmp/baseline/registration.json")),
+                record_path: PathBuf::from("/tmp/baseline/record.json.gz"),
+                metrics: test_metrics(false, false, 0),
+            }],
+        )
+        .expect("complete baseline");
+        let treatment = test_treatment_evidence(&node);
+
+        let report = build_prototype1_branch_evaluation_report(
+            "baseline",
+            &node.branch_id,
+            Path::new("/tmp/prototype1/branches.json"),
+            Path::new("/tmp/prototype1/evaluations/branch-child.json"),
+            &baseline,
+            &treatment,
+        )
+        .expect("parent comparison");
+
+        assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+        assert_eq!(report.compared_instances.len(), 1);
+        assert_eq!(report.compared_instances[0].status, "compared");
+        assert_eq!(
+            report.compared_instances[0].baseline_record_path,
+            Some(PathBuf::from("/tmp/baseline/record.json.gz"))
+        );
+        assert_eq!(
+            report.compared_instances[0].treatment_record_path,
+            Some(PathBuf::from("/tmp/treatment/record.json.gz"))
+        );
     }
 
     fn test_surface_evidence(target_relpath: PathBuf) -> SurfaceEvidence {
@@ -10416,11 +10955,8 @@ stop_after = "complete"
             }],
             active_targets: Vec::new(),
         };
-        fs::write(
-            prototype1_branch_registry_path(&manifest_path),
-            serde_json::to_vec_pretty(&registry).expect("registry json"),
-        )
-        .expect("write registry");
+        branch_log::append(&manifest_path, &branch_log::snapshot(&registry))
+            .expect("write registry snapshot");
 
         let err = resolve_prototype1_candidate_node_id(
             &state_command_without_ids(),

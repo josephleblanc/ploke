@@ -616,7 +616,7 @@
 //!   clean up temporary child workspaces/build products after policy permits it.
 //! - [`crate::intervention`]
 //!   Durable scheduler-owned records for node registration, runner requests and
-//!   results, branch registry, continuation policy, and evaluation summaries.
+//!   results, branch registry, continuation policy, and parent comparison records.
 //! - [`crate::cli::prototype1_state::c1`] through [`crate::cli::prototype1_state::c4`]
 //!   Typed transition sketch for materialize -> build -> spawn -> observe.
 //! - [`crate::cli::prototype1_state::backend`]
@@ -660,8 +660,9 @@
 //!   node-level records, and must not be used as decision-making evidence for
 //!   selection, continuation, History admission, or playback causality.
 //! - `branches.json`
-//!   Synthesized branch registry for one source state, including proposed
-//!   content, apply ids, and latest evaluation summaries.
+//!   Append-only branch record stream. Registry snapshot records preserve
+//!   synthesized candidate state, proposed content, and apply ids. Parent
+//!   comparison records index persisted evaluation artifacts.
 //! - `evaluations/<branch-id>.json`
 //!   Persisted branch-vs-baseline comparison results for treatment campaigns.
 //! - `transition-journal.jsonl`
@@ -754,7 +755,7 @@
 //!
 //! The record sprawl is a design problem, not just a naming problem. Today the
 //! scheduler, branch registry, node records, runner requests/results,
-//! invocation files, transition journal, evaluation summaries, parent identity,
+//! invocation files, transition journal, parent comparison records, parent identity,
 //! stream logs, and compressed run records all carry pieces of one protocol.
 //! Cleanup should not add another parallel "status" document. It should move
 //! each field into either:

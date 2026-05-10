@@ -27,6 +27,7 @@ pub struct CreateFileParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CreateFileParamsOwned {
     pub file_path: String,
     pub content: String,

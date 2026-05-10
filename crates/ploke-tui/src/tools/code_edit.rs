@@ -37,12 +37,14 @@ pub struct CanonicalEditBorrowed<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CodeEditParamsOwned {
     pub edits: Vec<CanonicalEditOwned>,
     pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CanonicalEditOwned {
     pub file: String,
     pub canon: String,

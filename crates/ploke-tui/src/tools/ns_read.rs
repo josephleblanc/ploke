@@ -57,6 +57,7 @@ pub struct NsReadParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct NsReadParamsOwned {
     pub file: String,
     pub start_line: Option<u32>,

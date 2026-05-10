@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use super::{
     child::{self, Child},
-    cli_facing::Prototype1BranchEvaluationReport,
+    cli_facing::Prototype1TreatmentEvidence,
     event::{RecordedAt, RuntimeId},
     invocation::{SuccessorCompletionRecord, SuccessorReadyRecord},
     parent::{self, Parent},
@@ -391,9 +391,9 @@ pub(crate) enum ToParent {
     Result {
         /// Attempt-scoped runner result produced by the child runtime.
         runner_result: Prototype1RunnerResult,
-        /// Branch evaluation report when the child completed evaluation.
+        /// Treatment evidence when the child completed execution.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        evaluation: Option<Prototype1BranchEvaluationReport>,
+        treatment: Option<Prototype1TreatmentEvidence>,
     },
     /// Child persisted its attempt-scoped runner result.
     ///
@@ -547,13 +547,13 @@ where
     pub(crate) fn send_terminal_result(
         self,
         runner_result: Prototype1RunnerResult,
-        evaluation: Option<Prototype1BranchEvaluationReport>,
+        treatment: Option<Prototype1TreatmentEvidence>,
     ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
         let receipt = self.write(
             &self.endpoints.child_to_parent(),
             ToParent::Result {
                 runner_result,
-                evaluation,
+                treatment,
             },
         )?;
         Ok((self.cast(), receipt))

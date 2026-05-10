@@ -81,12 +81,14 @@ pub struct NsPatchBorrowed<'a> {
 // Basically the same as `CodeEditParamsOwned`, might want to use the same type or something
 // - restructure into enum?
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct NsPatchParamsOwned {
     pub patches: Vec<NsPatchOwned>,
     pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct NsPatchOwned {
     pub file: String,
     pub diff: String,

@@ -167,6 +167,9 @@ pub(crate) struct ReadyEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ObservedChildResult {
+    TreatmentComplete {
+        treatment_campaign_id: String,
+    },
     Succeeded {
         evaluation_artifact_path: PathBuf,
         overall_disposition: BranchDisposition,

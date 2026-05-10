@@ -8,10 +8,12 @@ rust-version.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 ploke-protocol = { workspace = true, optional = true }
+ploke-tui = { path = "../ploke-tui", default-features = false, features = ["tool_contracts"], optional = true }
 
 [features]
 default = []
 protocol = ["dep:ploke-protocol"]
+tool-contracts = ["dep:ploke-tui"]
 
 [dev-dependencies]
 serde_json.workspace = true

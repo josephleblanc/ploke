@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -26,14 +27,108 @@ pub enum TreatmentBranchStatus {
     Dropped,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TreatmentBranchEvaluationSummary {
-    pub baseline_campaign_id: String,
-    pub treatment_campaign_id: String,
-    pub compared_instances: usize,
-    pub rejected_instances: usize,
-    pub overall_disposition: BranchDisposition,
-    pub evaluated_at: String,
+pub mod branch_log {
+    use super::*;
+
+    pub const SCHEMA_VERSION: &str = "prototype1-branch-record.v1";
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ComparisonSummary {
+        pub baseline_campaign_id: String,
+        pub treatment_campaign_id: String,
+        pub compared_instances: usize,
+        pub rejected_instances: usize,
+        pub overall_disposition: BranchDisposition,
+        pub evaluated_at: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct Record {
+        pub schema_version: String,
+        pub recorded_at: String,
+        pub body: Body,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum Body {
+        RegistrySnapshot(Prototype1BranchRegistry),
+        ParentComparison(ParentComparison),
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ParentComparison {
+        pub campaign_id: String,
+        pub instance_id: String,
+        pub source_state_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub parent_branch_id: Option<String>,
+        pub target_relpath: PathBuf,
+        pub branch_id: String,
+        pub candidate_id: String,
+        pub summary: ComparisonSummary,
+    }
+
+    pub fn append(campaign_manifest_path: &Path, record: &Record) -> Result<(), PrepareError> {
+        let dir = branch_registry_dir(campaign_manifest_path);
+        fs::create_dir_all(&dir).map_err(|source| PrepareError::WriteManifest {
+            path: dir.clone(),
+            source,
+        })?;
+        let path = prototype1_branch_registry_path(campaign_manifest_path);
+        let mut line = serde_json::to_vec(record).map_err(PrepareError::Serialize)?;
+        line.push(b'\n');
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|source| PrepareError::WriteManifest {
+                path: path.clone(),
+                source,
+            })?;
+        file.write_all(&line)
+            .map_err(|source| PrepareError::WriteManifest { path, source })
+    }
+
+    pub fn snapshot(registry: &Prototype1BranchRegistry) -> Record {
+        Record {
+            schema_version: SCHEMA_VERSION.to_string(),
+            recorded_at: Utc::now().to_rfc3339(),
+            body: Body::RegistrySnapshot(registry.clone()),
+        }
+    }
+
+    pub fn parent_comparison(
+        campaign_id: &str,
+        resolved: &ResolvedTreatmentBranch,
+        summary: ComparisonSummary,
+    ) -> Record {
+        Record {
+            schema_version: SCHEMA_VERSION.to_string(),
+            recorded_at: Utc::now().to_rfc3339(),
+            body: Body::ParentComparison(ParentComparison {
+                campaign_id: campaign_id.to_string(),
+                instance_id: resolved.instance_id.clone(),
+                source_state_id: resolved.source_state_id.clone(),
+                parent_branch_id: resolved.parent_branch_id.clone(),
+                target_relpath: resolved.target_relpath.clone(),
+                branch_id: resolved.branch.branch_id.clone(),
+                candidate_id: resolved.branch.candidate_id.clone(),
+                summary,
+            }),
+        }
+    }
+
+    pub fn record_parent_comparison(
+        campaign_id: &str,
+        campaign_manifest_path: &Path,
+        resolved: &ResolvedTreatmentBranch,
+        summary: ComparisonSummary,
+    ) -> Result<Record, PrepareError> {
+        let record = parent_comparison(campaign_id, resolved, summary);
+        append(campaign_manifest_path, &record)?;
+        Ok(record)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,8 +152,6 @@ pub struct TreatmentBranchNode {
     pub applied_content_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) derived_artifact_id: Option<ArtifactId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_evaluation: Option<TreatmentBranchEvaluationSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -249,7 +342,6 @@ pub fn resolved_treatment_branches_from_synthesis(
                     apply_id: None,
                     applied_content_hash: None,
                     derived_artifact_id: None,
-                    latest_evaluation: None,
                 },
             }
         })
@@ -273,10 +365,20 @@ pub fn load_or_default_branch_registry(
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
     let path = prototype1_branch_registry_path(campaign_manifest_path);
     match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
-            path: path.clone(),
-            source,
-        }),
+        Ok(text) => {
+            let mut latest = None;
+            for line in text.lines().filter(|line| !line.trim().is_empty()) {
+                let record: branch_log::Record =
+                    serde_json::from_str(line).map_err(|source| PrepareError::ParseManifest {
+                        path: path.clone(),
+                        source,
+                    })?;
+                if let branch_log::Body::RegistrySnapshot(registry) = record.body {
+                    latest = Some(registry);
+                }
+            }
+            Ok(latest.unwrap_or_else(|| default_registry(campaign_id)))
+        }
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             Ok(default_registry(campaign_id))
         }
@@ -293,9 +395,8 @@ pub fn save_branch_registry(
         path: dir.clone(),
         source,
     })?;
-    let path = prototype1_branch_registry_path(campaign_manifest_path);
-    let json = serde_json::to_string_pretty(registry).map_err(PrepareError::Serialize)?;
-    fs::write(&path, json).map_err(|source| PrepareError::WriteManifest { path, source })
+    let record = branch_log::snapshot(registry);
+    branch_log::append(campaign_manifest_path, &record)
 }
 
 pub fn record_synthesized_branches(
@@ -427,7 +528,6 @@ pub fn record_synthesized_branches(
                     apply_id: None,
                     applied_content_hash: None,
                     derived_artifact_id: None,
-                    latest_evaluation: None,
                 });
             }
         }
@@ -786,119 +886,6 @@ pub fn restore_treatment_branch(
     Ok(restored)
 }
 
-pub fn record_treatment_branch_evaluation(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
-    branch_id: &str,
-    summary: TreatmentBranchEvaluationSummary,
-) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(
-        campaign_id,
-        campaign_manifest_path,
-        OperatorProjectionRead::projection_module(),
-    )?;
-    let mut found = false;
-
-    for source_node in &mut registry.source_nodes {
-        if let Some(branch) = source_node
-            .branches
-            .iter_mut()
-            .find(|branch| branch.branch_id == branch_id)
-        {
-            branch.latest_evaluation = Some(summary.clone());
-            found = true;
-            break;
-        }
-    }
-
-    if !found {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!("unknown treatment branch '{}'", branch_id),
-        });
-    }
-
-    registry.updated_at = Utc::now().to_rfc3339();
-    save_branch_registry(campaign_manifest_path, &registry)?;
-    Ok(registry)
-}
-
-pub fn project_resolved_treatment_branch_evaluation(
-    campaign_id: &str,
-    campaign_manifest_path: &Path,
-    resolved: &ResolvedTreatmentBranch,
-    summary: TreatmentBranchEvaluationSummary,
-) -> Result<Prototype1BranchRegistry, PrepareError> {
-    let mut registry = load_or_default_branch_registry(
-        campaign_id,
-        campaign_manifest_path,
-        OperatorProjectionRead::projection_module(),
-    )?;
-
-    registry.project_evaluation_for_resolved_branch(resolved, summary);
-    registry.updated_at = Utc::now().to_rfc3339();
-    save_branch_registry(campaign_manifest_path, &registry)?;
-    Ok(registry)
-}
-
-impl Prototype1BranchRegistry {
-    fn project_evaluation_for_resolved_branch(
-        &mut self,
-        resolved: &ResolvedTreatmentBranch,
-        summary: TreatmentBranchEvaluationSummary,
-    ) {
-        let source_node = match self.source_nodes.iter_mut().find(|source| {
-            source.source_state_id == resolved.source_state_id
-                && source.target_relpath == resolved.target_relpath
-        }) {
-            Some(source) => source,
-            None => {
-                self.source_nodes.push(InterventionSourceNode {
-                    source_state_id: resolved.source_state_id.clone(),
-                    parent_branch_id: resolved.parent_branch_id.clone(),
-                    source_artifact_id: None,
-                    operation_target: resolved.branch.generation_target.clone(),
-                    instance_id: resolved.instance_id.clone(),
-                    target_relpath: resolved.target_relpath.clone(),
-                    source_content: resolved.source_content.clone(),
-                    source_content_hash: resolved.source_content_hash.clone(),
-                    selected_branch_id: resolved.selected_branch_id.clone(),
-                    branches: Vec::new(),
-                });
-                self.source_nodes
-                    .last_mut()
-                    .expect("newly pushed source node")
-            }
-        };
-
-        source_node.instance_id = resolved.instance_id.clone();
-        if resolved.parent_branch_id.is_some() {
-            source_node.parent_branch_id = resolved.parent_branch_id.clone();
-        }
-        source_node.source_content = resolved.source_content.clone();
-        source_node.source_content_hash = resolved.source_content_hash.clone();
-        if let Some(target) = resolved.branch.generation_target.clone() {
-            source_node.source_artifact_id = operation_target_artifact_id(&target)
-                .cloned()
-                .or_else(|| source_node.source_artifact_id.clone());
-            source_node.operation_target = Some(target);
-        }
-        if resolved.selected_branch_id.is_some() {
-            source_node.selected_branch_id = resolved.selected_branch_id.clone();
-        }
-
-        let mut branch = resolved.branch.clone();
-        branch.latest_evaluation = Some(summary);
-        match source_node
-            .branches
-            .iter_mut()
-            .find(|existing| existing.branch_id == branch.branch_id)
-        {
-            Some(existing) => *existing = branch,
-            None => source_node.branches.push(branch),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
@@ -1106,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn project_resolved_evaluation_upserts_runtime_branch_projection() {
+    fn append_resolved_comparison_records_parent_comparison() {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
         let synthesis = synthesis_output();
@@ -1119,7 +1106,7 @@ mod tests {
         .into_iter()
         .find(|branch| branch.branch.candidate_id == "candidate-1")
         .expect("resolved branch");
-        let summary = TreatmentBranchEvaluationSummary {
+        let summary = branch_log::ComparisonSummary {
             baseline_campaign_id: "test-campaign".to_string(),
             treatment_campaign_id: "test-campaign-treatment".to_string(),
             compared_instances: 1,
@@ -1128,22 +1115,34 @@ mod tests {
             evaluated_at: "2026-05-07T00:00:00Z".to_string(),
         };
 
-        let registry = project_resolved_treatment_branch_evaluation(
+        let record = branch_log::record_parent_comparison(
             "test-campaign",
             &manifest,
             &resolved,
             summary.clone(),
         )
-        .expect("project evaluation");
+        .expect("append comparison");
 
-        assert_eq!(registry.source_nodes.len(), 1);
-        let source = &registry.source_nodes[0];
-        assert_eq!(source.source_state_id, resolved.source_state_id);
-        assert_eq!(source.target_relpath, resolved.target_relpath);
-        assert_eq!(source.branches.len(), 1);
-        let branch = &source.branches[0];
-        assert_eq!(branch.branch_id, resolved.branch.branch_id);
-        assert_eq!(branch.latest_evaluation.as_ref(), Some(&summary));
+        let branch_log::Body::ParentComparison(comparison) = &record.body else {
+            panic!("expected parent comparison record");
+        };
+        assert_eq!(comparison.campaign_id, "test-campaign");
+        assert_eq!(comparison.instance_id, resolved.instance_id);
+        assert_eq!(comparison.source_state_id, resolved.source_state_id);
+        assert_eq!(
+            comparison.parent_branch_id.as_deref(),
+            Some("parent-branch")
+        );
+        assert_eq!(comparison.target_relpath, resolved.target_relpath);
+        assert_eq!(comparison.branch_id, resolved.branch.branch_id);
+        assert_eq!(comparison.candidate_id, resolved.branch.candidate_id);
+        assert_eq!(comparison.summary, summary);
+
+        let text = fs::read_to_string(prototype1_branch_registry_path(&manifest)).expect("log");
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        let stored: branch_log::Record = serde_json::from_str(lines[0]).expect("stored record");
+        assert_eq!(stored, record);
     }
 
     #[test]

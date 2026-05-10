@@ -62,6 +62,7 @@ impl<'a> ValidatesAbolutePath for EdgesParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct EdgesParamsOwned {
     pub item_name: String,
     pub file_path: String,

@@ -24,3 +24,5 @@ pub mod protocol;
 pub mod record;
 pub mod scheduler;
 pub mod selection;
+#[cfg(feature = "tool-contracts")]
+pub mod tool_contracts;

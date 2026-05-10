@@ -126,14 +126,12 @@ use std::process::Command as ProcessCommand;
 use tracing::debug;
 
 use super::*;
-use crate::BranchDisposition;
 use crate::cli::prototype1_state::backend::{GitWorktreeBackend, WorkspaceBackend};
 use crate::cli::prototype1_state::channel::{Channel, Cursor, FileTransport, ToParent};
 use crate::cli::prototype1_state::child::Child;
 use crate::cli::prototype1_state::cli_facing::{
-    Prototype1BranchEvaluationReport, build_prototype1_branch_evaluation_report,
+    Prototype1TreatmentEvidence, build_prototype1_treatment_evidence,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
-    prototype1_branch_evaluation_path,
 };
 use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::event::{Paths, Refs};
@@ -156,9 +154,8 @@ use crate::cli::prototype1_state::selection;
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
-    RecordStore, ResolvedTreatmentBranch, TreatmentBranchEvaluationSummary, project_node_status,
-    project_resolved_treatment_branch_evaluation, prototype1_branch_registry_path,
-    write_node_projection, write_runner_result_at,
+    RecordStore, ResolvedTreatmentBranch, project_node_status, write_node_projection,
+    write_runner_result_at,
 };
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -1471,7 +1468,7 @@ fn build_treatment_failed_runner_result(
 fn build_succeeded_runner_result(
     campaign_id: &str,
     node: &crate::intervention::Prototype1NodeRecord,
-    report: &Prototype1BranchEvaluationReport,
+    treatment: &Prototype1TreatmentEvidence,
 ) -> Prototype1RunnerResult {
     Prototype1RunnerResult {
         schema_version: crate::intervention::PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
@@ -1481,8 +1478,8 @@ fn build_succeeded_runner_result(
         branch_id: node.branch_id.clone(),
         status: Prototype1NodeStatus::Succeeded,
         disposition: Prototype1RunnerDisposition::Succeeded,
-        treatment_campaign_id: Some(report.treatment_campaign_id.clone()),
-        evaluation_artifact_path: Some(report.evaluation_artifact_path.clone()),
+        treatment_campaign_id: Some(treatment.treatment_campaign_id.clone()),
+        evaluation_artifact_path: None,
         detail: None,
         exit_code: Some(0),
         stdout_excerpt: None,
@@ -1600,7 +1597,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
         None => None,
     };
 
-    let outcome = run_prototype1_resolved_branch_evaluation(
+    let outcome = run_prototype1_resolved_branch_treatment(
         invocation.campaign_id(),
         &manifest_path,
         &resolved,
@@ -1609,10 +1606,10 @@ pub(super) async fn execute_prototype1_runner_invocation(
     )
     .await;
 
-    let (result, evaluation) = match outcome {
-        Ok(report) => (
-            build_succeeded_runner_result(invocation.campaign_id(), &node, &report),
-            Some(report),
+    let (result, treatment) = match outcome {
+        Ok(evidence) => (
+            build_succeeded_runner_result(invocation.campaign_id(), &node, &evidence),
+            Some(evidence),
         ),
         Err(err) => (
             build_treatment_failed_runner_result(
@@ -1644,7 +1641,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
             detail: err.to_string(),
         })?;
     if let Some(channel) = channel {
-        let _ = channel.send_terminal_result(result.clone(), evaluation);
+        let _ = channel.send_terminal_result(result.clone(), treatment);
     }
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -1657,13 +1654,13 @@ pub(super) async fn execute_prototype1_runner_invocation(
     Ok(result)
 }
 
-pub(super) async fn run_prototype1_resolved_branch_evaluation(
+pub(super) async fn run_prototype1_resolved_branch_treatment(
     baseline_campaign_id: &str,
-    baseline_manifest_path: &Path,
+    _baseline_manifest_path: &Path,
     resolved_branch: &ResolvedTreatmentBranch,
     repo_root: &Path,
     stop_on_error: bool,
-) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
+) -> Result<Prototype1TreatmentEvidence, PrepareError> {
     let branch_id = resolved_branch.branch.branch_id.as_str();
     macro_rules! eval_span {
         ($name:literal, $phase:literal) => {
@@ -1714,7 +1711,6 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
     ));
     let outcome = async {
         let _run_scope = TimingTrace::scope(format!("loop.prototype1_branch.evaluate.{branch_id}"));
-        let branch_registry_path = prototype1_branch_registry_path(&baseline_manifest_path);
         step!(
             "prototype1.child.evaluate.materialize",
             "Materialize",
@@ -1731,11 +1727,6 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
             "prototype1.child.evaluate.resolve_baseline_campaign",
             "ResolveBaselineCampaign",
             || resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default()),
-        )?;
-        let baseline_state = step!(
-            "prototype1.child.evaluate.load_baseline_state",
-            "LoadBaselineState",
-            || load_closure_state(baseline_campaign_id),
         )?;
         let treatment_campaign = step!(
             "prototype1.child.evaluate.prepare_treatment_campaign",
@@ -1774,73 +1765,28 @@ pub(super) async fn run_prototype1_resolved_branch_evaluation(
             || load_closure_state(&treatment_campaign.campaign_id),
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
-        let evaluation_artifact_path =
-            prototype1_branch_evaluation_path(baseline_manifest_path, branch_id);
-        let report = step!(
-            "prototype1.child.evaluate.compare",
-            "Compare",
+        let treatment = step!(
+            "prototype1.child.evaluate.treatment_evidence",
+            "BuildTreatmentEvidence",
             || {
-                build_prototype1_branch_evaluation_report(
+                build_prototype1_treatment_evidence(
                     baseline_campaign_id,
                     branch_id,
-                    &branch_registry_path,
-                    &evaluation_artifact_path,
                     &treatment_campaign,
-                    &baseline_state,
                     &treatment_state,
                 )
             },
             treatment_campaign_id = %treatment_campaign.campaign_id,
-            evaluation_artifact_path = %evaluation_artifact_path.display(),
-        )?;
-        step!(
-            "prototype1.child.evaluate.persist_report",
-            "PersistEvaluationReport",
-            || write_json_file_pretty(&evaluation_artifact_path, &report),
-            treatment_campaign_id = %treatment_campaign.campaign_id,
-            evaluation_artifact_path = %evaluation_artifact_path.display(),
         )?;
 
-        let rejected_instances = report
-            .compared_instances
-            .iter()
-            .filter(|row| {
-                row.evaluation
-                    .as_ref()
-                    .is_some_and(|evaluation| evaluation.disposition == BranchDisposition::Reject)
-                    || row.status != "compared"
-            })
-            .count();
-        let summary = TreatmentBranchEvaluationSummary {
-            baseline_campaign_id: baseline_campaign_id.to_string(),
-            treatment_campaign_id: report.treatment_campaign_id.clone(),
-            compared_instances: report.compared_instances.len(),
-            rejected_instances,
-            overall_disposition: report.overall_disposition.clone(),
-            evaluated_at: Utc::now().to_rfc3339(),
-        };
-        step!(
-            "prototype1.child.evaluate.persist_summary",
-            "PersistEvaluationSummary",
-            || {
-                project_resolved_treatment_branch_evaluation(
-                    baseline_campaign_id,
-                    baseline_manifest_path,
-                    resolved_branch,
-                    summary,
-                )
-            },
-            treatment_campaign_id = %treatment_campaign.campaign_id,
-        )?;
-
-        Ok(report)
+        Ok(treatment)
     }
     .await;
 
     match outcome {
-        Ok(report) => {
+        Ok(treatment) => {
             step.success();
-            Ok(report)
+            Ok(treatment)
         }
         Err(error) => {
             step.fail("self_evaluation", &error);
