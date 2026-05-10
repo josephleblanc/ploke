@@ -30,11 +30,14 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::intervention::{
-    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1RunnerRequest,
-    ResolvedTreatmentBranch,
-};
 use crate::spec::PrepareError;
+use crate::{
+    cli::prototype1_state::profile::{self, RunProfileCommitment},
+    intervention::{
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1RunnerRequest,
+        ResolvedTreatmentBranch,
+    },
+};
 
 pub(crate) use ploke_records::invocation::{
     SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionRecord,
@@ -124,6 +127,8 @@ pub(crate) struct Invocation {
     pub resolved: Option<ResolvedTreatmentBranch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_parent_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_profile: Option<RunProfileCommitment>,
     pub created_at: String,
 }
 
@@ -172,6 +177,7 @@ impl Invocation {
             request,
             resolved,
             active_parent_root: None,
+            run_profile: None,
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -185,6 +191,11 @@ impl Invocation {
         channel_root: PathBuf,
         active_parent_root: PathBuf,
     ) -> Self {
+        let run_profile = journal_path.parent().and_then(|prototype1_root| {
+            profile::load_admitted_commitment_from_prototype_root(prototype1_root)
+                .ok()
+                .flatten()
+        });
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
             role: Role::Successor,
@@ -197,6 +208,7 @@ impl Invocation {
             request: None,
             resolved: None,
             active_parent_root: Some(active_parent_root),
+            run_profile,
             created_at: Utc::now().to_rfc3339(),
         }
     }

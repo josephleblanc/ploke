@@ -793,6 +793,7 @@ pub(crate) mod journal;
 pub(crate) mod metrics;
 pub(crate) mod observe;
 pub(crate) mod parent;
+pub(crate) mod profile;
 pub(crate) mod record;
 pub(crate) mod score;
 pub(crate) mod selection;

@@ -13,6 +13,7 @@ dirs = "6.0"
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+toml = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 ploke-db = { workspace = true }

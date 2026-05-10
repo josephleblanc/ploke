@@ -812,6 +812,10 @@ pub struct Prototype1LoopCommand {
     #[arg(long)]
     pub campaign: Option<String>,
 
+    /// Prototype 1 run profile name or TOML path. Profile admission is owned by setup.
+    #[arg(long, value_name = "NAME_OR_PATH")]
+    pub profile: Option<String>,
+
     /// Root directory containing repo checkouts at <repo-cache>/<org>/<repo>.
     #[arg(long, value_name = "PATH")]
     pub repo_cache: Option<PathBuf>,
@@ -12118,6 +12122,8 @@ mod tests {
             "xai",
             "--campaign",
             "p1-clap",
+            "--profile",
+            "overnight-edit-surface",
         ])
         .expect("loop prototype1-setup should parse");
 
@@ -12130,6 +12136,7 @@ mod tests {
                 assert_eq!(cmd.model_id.as_deref(), Some("x-ai/grok-4-fast"));
                 assert_eq!(cmd.provider.as_deref(), Some("xai"));
                 assert_eq!(cmd.campaign.as_deref(), Some("p1-clap"));
+                assert_eq!(cmd.profile.as_deref(), Some("overnight-edit-surface"));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

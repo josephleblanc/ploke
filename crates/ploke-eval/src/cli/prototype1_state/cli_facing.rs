@@ -79,7 +79,7 @@ use crate::{
                 Check, Checked, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles, Genesis,
                 Parent, Planned, Predecessor, Ready, Selectable, Startup, Unchecked,
             },
-            selection as state_selection,
+            profile, selection as state_selection,
             successor::Record as SuccessorRecord,
             telemetry::RuntimeTelemetry,
         },
@@ -176,12 +176,19 @@ struct Prototype1SetupReport {
     generation: u32,
     branch_id: String,
     search_policy: Prototype1SearchPolicy,
+    run_profile: Option<profile::RunProfileCommitment>,
 }
 
 fn prepare_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
 ) -> Result<Prototype1SetupReport, PrepareError> {
-    let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command)?;
+    let operator_profile = command
+        .profile
+        .as_deref()
+        .map(profile::load_operator_profile)
+        .transpose()?;
+    let profile_ref = operator_profile.as_ref().map(|profile| &profile.profile);
+    let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command, profile_ref)?;
     if prepared_batch.instances.len() != 1 {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -192,20 +199,19 @@ fn prepare_prototype1_parent_setup(
     }
 
     let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+    let admitted_profile = operator_profile
+        .as_ref()
+        .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
+        .transpose()?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
     let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
     })?;
-    let child_budget = child_budget_from_command(command)?;
-    let search_policy = Prototype1SearchPolicy {
-        max_generations: command.max_generations,
-        max_total_nodes: command.max_total_nodes,
-        child_budget,
-        child_schedule_mode: child_schedule_mode_from_command(command),
-        stop_on_first_keep: command.stop_on_first_keep,
-        require_keep_for_continuation: command.require_keep_for_continuation,
-        explore_from_rejected: command.explore_from_rejected,
+    let search_policy = if let Some(profile) = admitted_profile.as_ref() {
+        profile.profile.search_policy()
+    } else {
+        search_policy_from_command(command)?
     };
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
@@ -265,6 +271,7 @@ fn prepare_prototype1_parent_setup(
         generation: identity.generation(),
         branch_id: identity.branch_id().to_string(),
         search_policy,
+        run_profile: admitted_profile.map(|profile| profile.commitment),
     })
 }
 
@@ -297,6 +304,10 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
         yes_no(report.search_policy.require_keep_for_continuation),
         yes_no(report.search_policy.explore_from_rejected)
     );
+    if let Some(commitment) = report.run_profile.as_ref() {
+        println!("run_profile: {}", commitment.profile_path.display());
+        println!("run_profile_sha256: {}", commitment.sha256);
+    }
     println!();
     println!("next:");
     println!(
@@ -521,12 +532,63 @@ impl CandidateGenerationConfig {
         }
     }
 
+    fn from_profile_generation(generation: profile::Generation) -> Self {
+        Self {
+            generator: generation.candidate_generator(),
+            edit_surface: generation.edit_surface(),
+        }
+    }
+
     fn path(self) -> CandidateGenerationPath {
         match self.generator {
             Prototype1CandidateGenerator::Legacy => CandidateGenerationPath::Legacy,
             Prototype1CandidateGenerator::TuiEditSurface => {
                 CandidateGenerationPath::TuiEditSurface(self.edit_surface)
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Prototype1StateRunShape {
+    stop_after: Prototype1StateStopAfter,
+    candidate_generation: CandidateGenerationConfig,
+    successor_selection: Prototype1SuccessorSelection,
+    successor_selection_seed: u64,
+    successor_selection_metrics: Prototype1TraversalMetrics,
+}
+
+impl Prototype1StateRunShape {
+    fn from_command(command: &Prototype1StateCommand) -> Self {
+        Self {
+            stop_after: command.stop_after,
+            candidate_generation: CandidateGenerationConfig::from_command(command),
+            successor_selection: command.successor_selection,
+            successor_selection_seed: command.successor_selection_seed,
+            successor_selection_metrics: command.successor_selection_metrics,
+        }
+    }
+
+    fn from_profile(profile: &profile::Prototype1RunProfile) -> Self {
+        Self {
+            stop_after: profile.execution.state_stop_after(),
+            candidate_generation: CandidateGenerationConfig::from_profile_generation(
+                profile.generation,
+            ),
+            successor_selection: profile.selection.successor_selection(),
+            successor_selection_seed: profile.selection.seed,
+            successor_selection_metrics: profile.selection.traversal_metrics(),
+        }
+    }
+
+    fn resolve(
+        command: &Prototype1StateCommand,
+        manifest_path: &Path,
+    ) -> Result<Self, PrepareError> {
+        if let Some(admitted) = profile::load_admitted_run_profile(manifest_path)? {
+            Ok(Self::from_profile(&admitted.profile))
+        } else {
+            Ok(Self::from_command(command))
         }
     }
 }
@@ -1592,14 +1654,29 @@ struct Prototype1LoopControllerInput {
 
 impl Prototype1LoopControllerInput {
     fn from_command(command: &Prototype1LoopCommand) -> Result<Self, PrepareError> {
-        let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command)?;
+        let operator_profile = command
+            .profile
+            .as_deref()
+            .map(profile::load_operator_profile)
+            .transpose()?;
+        let profile_ref = operator_profile.as_ref().map(|profile| &profile.profile);
+        let (batch_manifest, prepared_batch) =
+            prepare_or_load_prototype1_batch(command, profile_ref)?;
         let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+        let admitted_profile = operator_profile
+            .as_ref()
+            .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
+            .transpose()?;
         let trace_path = prototype1_trace_path(&campaign.manifest_path);
         let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
             path: PathBuf::from("."),
             source,
         })?;
-        let child_budget = child_budget_from_command(command)?;
+        let search_policy = if let Some(profile) = admitted_profile.as_ref() {
+            profile.profile.search_policy()
+        } else {
+            search_policy_from_command(command)?
+        };
 
         Ok(Self {
             stop_after: command.stop_after,
@@ -1607,15 +1684,7 @@ impl Prototype1LoopControllerInput {
             stop_on_error: command.stop_on_error,
             protocol_model_id: command.protocol_model_id.clone(),
             protocol_provider: command.protocol_provider.clone(),
-            search_policy: Prototype1SearchPolicy {
-                max_generations: command.max_generations,
-                max_total_nodes: command.max_total_nodes,
-                child_budget,
-                child_schedule_mode: child_schedule_mode_from_command(command),
-                stop_on_first_keep: command.stop_on_first_keep,
-                require_keep_for_continuation: command.require_keep_for_continuation,
-                explore_from_rejected: command.explore_from_rejected,
-            },
+            search_policy,
             source_campaign: command.source_campaign.clone(),
             source_branch_id: command.source_branch_id.clone(),
             source_parent: None,
@@ -1627,6 +1696,20 @@ impl Prototype1LoopControllerInput {
             campaign,
         })
     }
+}
+
+fn search_policy_from_command(
+    command: &Prototype1LoopCommand,
+) -> Result<Prototype1SearchPolicy, PrepareError> {
+    Ok(Prototype1SearchPolicy {
+        max_generations: command.max_generations,
+        max_total_nodes: command.max_total_nodes,
+        child_budget: child_budget_from_command(command)?,
+        child_schedule_mode: child_schedule_mode_from_command(command),
+        stop_on_first_keep: command.stop_on_first_keep,
+        require_keep_for_continuation: command.require_keep_for_continuation,
+        explore_from_rejected: command.explore_from_rejected,
+    })
 }
 
 fn child_budget_from_command(
@@ -1927,6 +2010,7 @@ async fn run_prototype1_loop_controller(
 
 fn prepare_or_load_prototype1_batch(
     command: &Prototype1LoopCommand,
+    run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
     if command.batch.is_some() || command.batch_id.is_some() {
         return load_prepared_batch_for_loop(resolve_batch_manifest(
@@ -1935,21 +2019,33 @@ fn prepare_or_load_prototype1_batch(
         )?);
     }
 
+    let dataset_key = command
+        .dataset_key
+        .clone()
+        .or_else(|| run_profile.and_then(|profile| profile.target.dataset_key.clone()));
+    let instance_ids = if command.instance.is_empty() {
+        run_profile
+            .and_then(|profile| profile.target.instance.clone())
+            .into_iter()
+            .collect()
+    } else {
+        command.instance.clone()
+    };
     let batch_id = command.prepare_batch_id.clone().unwrap_or_else(|| {
         default_batch_id(
-            command.dataset_key.as_deref(),
+            dataset_key.as_deref(),
             command.dataset.as_ref(),
             command.all,
-            &command.instance,
+            &instance_ids,
             &command.specific,
         )
     });
     let prepared = PrepareMsbBatchRequest {
         dataset_file: command.dataset.clone(),
-        dataset_key: command.dataset_key.clone(),
+        dataset_key,
         batch_id,
         select_all: command.all,
-        instance_ids: command.instance.clone(),
+        instance_ids,
         specifics: command.specific.clone(),
         limit: command.limit,
         repo_cache: command.repo_cache.clone().unwrap_or(repos_dir()?),
@@ -5445,11 +5541,12 @@ fn resolve_initial_parent_node_id(
 }
 
 async fn resolve_child_plan(
-    command: &Prototype1StateCommand,
     campaign_id: &str,
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
+    candidate_generation: CandidateGenerationConfig,
+    selected_node_id: Option<&str>,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     info!(
@@ -5469,7 +5566,6 @@ async fn resolve_child_plan(
         manifest_path.to_path_buf(),
         parent_identity.node_id().to_string(),
     ));
-    let candidate_generation = CandidateGenerationConfig::from_command(command);
     let receipt = if plan_at.path().exists() {
         receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent)?
     } else {
@@ -5495,7 +5591,7 @@ async fn resolve_child_plan(
         }
     }
 
-    let children = if let Some(node_id) = command.node_id.as_ref() {
+    let children = if let Some(node_id) = selected_node_id {
         let candidate = children
             .iter()
             .find(|child| child.node_id() == node_id)
@@ -6926,6 +7022,7 @@ impl Prototype1StateCommand {
         let campaign_id = resolve_prototype1_state_campaign(&self, &repo_root)?;
         record_active_prototype1_monitor_target(&campaign_id, &repo_root);
         let manifest_path = campaign_manifest_path(&campaign_id)?;
+        let run_shape = Prototype1StateRunShape::resolve(&self, &manifest_path)?;
         let resolved_campaign =
             resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
         ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
@@ -7048,8 +7145,15 @@ impl Prototype1StateCommand {
             journal_path = %journal_path.display(),
             "starting typed prototype1 parent turn"
         );
-        let planned_children =
-            resolve_child_plan(&self, &campaign_id, &manifest_path, &repo_root, parent).await?;
+        let planned_children = resolve_child_plan(
+            &campaign_id,
+            &manifest_path,
+            &repo_root,
+            parent,
+            run_shape.candidate_generation,
+            self.node_id.as_deref(),
+        )
+        .await?;
         let PlannedChildren {
             parent,
             plan,
@@ -7058,7 +7162,7 @@ impl Prototype1StateCommand {
         } = planned_children;
         let planned_child_count = plan.body().children().len();
         let (mut child_budget, mut child_schedule_mode) =
-            if self.stop_after == Prototype1StateStopAfter::Complete {
+            if run_shape.stop_after == Prototype1StateStopAfter::Complete {
                 let scheduler =
                     load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?;
                 (
@@ -7072,7 +7176,7 @@ impl Prototype1StateCommand {
                     Prototype1ChildScheduleMode::AdaptiveBatch,
                 )
             };
-        if self.stop_after != Prototype1StateStopAfter::Complete && self.node_id.is_some() {
+        if run_shape.stop_after != Prototype1StateStopAfter::Complete && self.node_id.is_some() {
             // Non-Complete + explicit node id is a single-node debug path.
             child_budget = Prototype1ChildBudget { min: 1, max: 1 };
             child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
@@ -7081,9 +7185,9 @@ impl Prototype1StateCommand {
             children.truncate(child_budget.max as usize);
         }
 
-        let metric_inputs = traversal_metric_inputs(self.successor_selection_metrics);
-        let selection_strategy = self.successor_selection.active_strategy(metric_inputs);
-        let rejected_only_plan = self.stop_after == Prototype1StateStopAfter::Complete
+        let metric_inputs = traversal_metric_inputs(run_shape.successor_selection_metrics);
+        let selection_strategy = run_shape.successor_selection.active_strategy(metric_inputs);
+        let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
             && children.is_empty()
             && !rejected_surface_attempts.is_empty();
         let (child_outcomes, selection, rejected_attempt_payloads) = if rejected_only_plan {
@@ -7095,7 +7199,7 @@ impl Prototype1StateCommand {
             )
             .current_generation_candidates()?;
             (Vec::new(), None, Some(projection.considered.len()))
-        } else if self.stop_after == Prototype1StateStopAfter::Complete
+        } else if run_shape.stop_after == Prototype1StateStopAfter::Complete
             && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
         {
             let (outcomes, selection) = run_adaptive_child_fanout(
@@ -7107,7 +7211,7 @@ impl Prototype1StateCommand {
                 child_budget,
                 children,
                 &rejected_surface_attempts,
-                self.successor_selection_seed,
+                run_shape.successor_selection_seed,
                 selection_strategy,
             )
             .await?;
@@ -7118,7 +7222,7 @@ impl Prototype1StateCommand {
                 &manifest_path,
                 &repo_root,
                 &journal_path,
-                self.stop_after,
+                run_shape.stop_after,
                 child_schedule_mode,
                 child_budget,
                 0,
@@ -7131,9 +7235,9 @@ impl Prototype1StateCommand {
                 &child_outcomes,
                 &rejected_surface_attempts,
             );
-            let selection = if self.stop_after == Prototype1StateStopAfter::Complete {
+            let selection = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
                 parent_selection
-                    .select_successor(self.successor_selection_seed, selection_strategy)?
+                    .select_successor(run_shape.successor_selection_seed, selection_strategy)?
             } else {
                 None
             };
@@ -7255,7 +7359,7 @@ impl Prototype1StateCommand {
                     decision.disposition
                 ));
             }
-        } else if self.stop_after == Prototype1StateStopAfter::Complete {
+        } else if run_shape.stop_after == Prototype1StateStopAfter::Complete {
             outcome.push_str(";selection=none");
         }
 
@@ -7277,7 +7381,7 @@ impl Prototype1StateCommand {
                 .unwrap_or_else(|| fallback_node.node_id.clone()),
             repo_root,
             journal_path,
-            stop_after: self.stop_after,
+            stop_after: run_shape.stop_after,
             outcome,
             node_status: report_child
                 .as_ref()
@@ -8602,6 +8706,60 @@ mod tests {
             config.path(),
             CandidateGenerationPath::TuiEditSurface(Prototype1EditSurface::PlokeTuiTools)
         );
+    }
+
+    #[test]
+    fn state_run_shape_prefers_admitted_campaign_profile() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let profile_text = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "overnight-edit-surface"
+
+[search]
+max_generations = 15
+max_total_nodes = 96
+children = { min = 6, max = 6 }
+schedule = "full-batch"
+stop_on_first_keep = false
+require_keep_for_continuation = false
+explore_from_rejected = true
+
+[generation]
+source = "edit-surface"
+surface = "ploke-tui-tools"
+
+[selection]
+strategy = "history-score-child-prop"
+evidence = "operational-and-protocol"
+seed = 7
+
+[execution]
+stop_after = "complete"
+"#;
+        let parsed =
+            toml::from_str::<profile::Prototype1RunProfile>(profile_text).expect("profile parses");
+        parsed.validate().expect("profile validates");
+        let operator = profile::OperatorRunProfile {
+            source_path: tmp.path().join("source.toml"),
+            text: profile_text.to_string(),
+            profile: parsed,
+        };
+        profile::admit_run_profile(&manifest_path, &operator).expect("profile admitted");
+        let command = state_command_without_ids();
+
+        let shape =
+            Prototype1StateRunShape::resolve(&command, &manifest_path).expect("run shape resolves");
+
+        assert_eq!(
+            shape.candidate_generation.path(),
+            CandidateGenerationPath::TuiEditSurface(Prototype1EditSurface::PlokeTuiTools)
+        );
+        assert_eq!(
+            shape.successor_selection_metrics,
+            Prototype1TraversalMetrics::OperationalAndProtocol
+        );
+        assert_eq!(shape.successor_selection_seed, 7);
     }
 
     #[test]
