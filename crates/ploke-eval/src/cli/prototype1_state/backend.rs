@@ -21,7 +21,8 @@ use crate::loop_graph::{ArtifactId, PatchId};
 use super::edit_surface::{self, graph, request_policy, surface, tui};
 use super::event::ContentHash;
 use super::history::{
-    HistoryError, HistoryHash, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
+    ArtifactSurface, HistoryError, HistoryHash, SurfaceArtifactRef, SurfaceCommitment,
+    SurfaceEvidence, SurfaceTouch, TreeKeyCommitment,
 };
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
@@ -531,6 +532,8 @@ pub(crate) enum BackendError {
     MissingSurfaceFile { path: PathBuf },
     #[error("immutable surface changed across candidate artifact: before={before}, after={after}")]
     ImmutableSurfaceChanged { before: String, after: String },
+    #[error("artifact surface measurement failed: {detail}")]
+    ArtifactSurfaceMeasurement { detail: String },
     #[error("edit-surface proposal for {surface:?} had no touches")]
     EmptyEditTouches { surface: Prototype1EditSurface },
     #[error("edit-surface proposal touched multiple files: {paths:?}")]
@@ -1839,6 +1842,30 @@ impl WorkspaceBackend for GitWorktreeBackend {
             ambient_before,
             ambient_after,
         )))
+    }
+}
+
+impl GitWorktreeBackend {
+    pub(crate) fn artifact_surface(&self, root: &Path) -> Result<ArtifactSurface, BackendError> {
+        let tree_key = self
+            .clean_tree_key(root)?
+            .tree_key_hash()
+            .map_err(|source| BackendError::ArtifactSurfaceMeasurement {
+                detail: source.to_string(),
+            })?;
+        let immutable_paths = tracked_paths(root, "crates/ploke-eval")?;
+        if immutable_paths.is_empty() {
+            return Err(BackendError::EmptySurfacePathspec {
+                root: root.to_path_buf(),
+                pathspec: "crates/ploke-eval".to_string(),
+            });
+        }
+        let immutable = surface_hash(root, &immutable_paths)?;
+        let mutated = surface_hash(root, &mutated_surface_paths(root)?)?;
+        let ambient = surface_hash(root, &[])?;
+        Ok(ArtifactSurface::from_backend_measurement(
+            tree_key, immutable, mutated, ambient,
+        ))
     }
 }
 

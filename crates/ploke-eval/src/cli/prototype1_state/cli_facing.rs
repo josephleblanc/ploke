@@ -53,10 +53,11 @@ use crate::{
             c4::{ObserveChild, ObservedChild},
             event::RecordedAt,
             history::{
-                CandidateArtifact, CandidateCoordinate, CandidateLifecycle, CandidateMembershipId,
-                CandidateOccurrenceId, CandidateSetCommitment, EvaluationPayload, Generation,
-                History, HistoryHash, ProcedureRef, Scope, ScopeFor, SealedBranchEvidence,
-                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
+                ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
+                CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
+                EvaluationPayload, Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
+                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
+                SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
                 SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
                 SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
                 SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
@@ -386,6 +387,7 @@ struct PlannedChildOutcome {
     evaluation_report: Option<Prototype1BranchEvaluationReport>,
     selection_input: Option<SelectionInput>,
     surface: Option<SurfaceEvidence>,
+    artifact_surface: Option<ArtifactSurface>,
 }
 
 struct TuiEditSurfaceCandidates {
@@ -5747,6 +5749,7 @@ fn run_planned_child(
     let mut child_runtime = None;
     let mut evaluation_report = None;
     let mut selection_input = None;
+    let mut artifact_surface = None;
     let outcome = if stop_after == Prototype1StateStopAfter::Materialize {
         "materialized".to_string()
     } else {
@@ -5773,13 +5776,13 @@ fn run_planned_child(
             Outcome::Advanced(c3) => {
                 report_node = c3.node().clone();
                 report_resolved = c3.resolved().clone();
-                let _surface = persist_prototype1_buildable_child_artifact(
+                artifact_surface = Some(persist_prototype1_buildable_child_artifact(
                     &campaign_id,
                     &manifest_path,
                     &repo_root,
                     c3.node(),
                     c3.resolved(),
-                )?;
+                )?);
                 info!(
                     target: EXECUTION_DEBUG_TARGET,
                     role = "parent",
@@ -5923,6 +5926,7 @@ fn run_planned_child(
         evaluation_report,
         selection_input,
         surface,
+        artifact_surface,
         // Rejected attempts from proposal validation are tracked separately
         // and projected as payload-only candidates.
     })
@@ -6273,19 +6277,11 @@ fn current_generation_evaluation_evidence(
     let evaluator_identity = report
         .evaluator_identity
         .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|err| PrepareError::InvalidBatchSelection {
-            detail: format!("failed to serialize evaluator identity for History: {err}"),
-        })?;
+        .map(seal_evaluator_identity_for_history);
     let eval_set_identity = report
         .eval_set_identity
         .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|err| PrepareError::InvalidBatchSelection {
-            detail: format!("failed to serialize eval-set identity for History: {err}"),
-        })?;
+        .map(seal_eval_set_identity_for_history);
 
     Ok(SealedEvaluationEvidence {
         branch_id: report.branch_id.clone(),
@@ -6315,6 +6311,31 @@ fn current_generation_evaluation_evidence(
             .map(current_generation_compared_run_evidence)
             .collect(),
     })
+}
+
+fn seal_evaluator_identity_for_history(
+    identity: &Prototype1EvaluatorIdentity,
+) -> SealedEvaluatorIdentity {
+    SealedEvaluatorIdentity {
+        id: identity.id.clone(),
+        version: identity.version.clone(),
+    }
+}
+
+fn seal_eval_set_identity_for_history(
+    identity: &Prototype1EvalSetIdentity,
+) -> SealedEvalSetIdentity {
+    SealedEvalSetIdentity {
+        id: identity.id.clone(),
+        kind: identity.kind.clone(),
+        authority: identity.authority.clone(),
+        explicit: identity.explicit,
+        benchmark_family: Some(serde_name(&identity.benchmark_family)),
+        dataset_source_count: identity.dataset_sources.len(),
+        instance_ids: identity.instance_ids.clone(),
+        missing_treatment_instance_ids: identity.missing_treatment_instance_ids.clone(),
+        note: identity.note.clone(),
+    }
 }
 
 fn current_generation_compared_run_evidence(
@@ -6577,7 +6598,10 @@ impl ScopeFor<Generation> for ParentSelection<'_> {
 fn candidate_artifact_from_outcome(
     outcome: &PlannedChildOutcome,
 ) -> Result<CandidateArtifact, PrepareError> {
-    let artifact = CandidateArtifact::new(outcome.node.clone(), outcome.resolved.clone());
+    let mut artifact = CandidateArtifact::new(outcome.node.clone(), outcome.resolved.clone());
+    if let Some(surface) = outcome.artifact_surface.clone() {
+        artifact = artifact.with_artifact_surface(surface);
+    }
     match outcome.surface.clone() {
         Some(surface) => {
             validate_surface_evidence_binding(&outcome.node, &outcome.resolved, &surface)?;
@@ -6622,6 +6646,14 @@ fn select_artifact_for_handoff(
     if let Some(surface) = artifact.surface.as_ref() {
         validate_surface_evidence_binding(&node, &resolved, surface)?;
     }
+    let Some(artifact_surface) = artifact.artifact_surface.clone() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected candidate {} has no admitted artifact surface measurement for handoff",
+                material.selected_candidate.as_str()
+            ),
+        });
+    };
     if node.node_id != decision.candidate_node_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -6708,6 +6740,7 @@ fn select_artifact_for_handoff(
         node,
         material.selected_candidate.clone(),
         resolved,
+        artifact_surface,
         source,
         primary_runtime_id,
     )
@@ -9507,6 +9540,7 @@ stop_after = "complete"
             evaluation_report: Some(report),
             selection_input: Some(selection_input),
             surface: None,
+            artifact_surface: Some(ArtifactSurface::test(&node.node_id)),
             node,
         }
     }
@@ -10038,6 +10072,84 @@ stop_after = "complete"
     }
 
     #[test]
+    fn history_handoff_rejects_missing_artifact_surface_before_seal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node = test_node(
+            tmp.path(),
+            "node-historical",
+            "branch-historical",
+            "candidate-1",
+        );
+        let resolved = test_resolved(&node);
+        let selected = SubjectRef::new("candidate:node-historical:plan_index=0");
+        let payload = EvaluationPayload::builder(
+            selected.clone(),
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+        )
+        .sealed_candidate_evidence(
+            crate::cli::prototype1_state::history::SealedCandidateEvidence {
+                schema_version: 2,
+                coordinate: crate::cli::prototype1_state::history::CandidateCoordinate {
+                    node_id: "node-historical".to_string(),
+                    parent_node_id: Some("node-parent".to_string()),
+                    branch_id: Some("branch-historical".to_string()),
+                    generation: Some(1),
+                    plan_index: Some(0),
+                    primary_runtime_id: Some("runtime:node-historical".to_string()),
+                },
+                lifecycle: crate::cli::prototype1_state::history::CandidateLifecycle {
+                    planner_outcome: "completed".to_string(),
+                    node_status: "completed".to_string(),
+                },
+                evaluations: Vec::new(),
+                runtimes: Vec::new(),
+                branches: Vec::new(),
+                extra_document_citations: Vec::new(),
+                extra_journal_citations: Vec::new(),
+                child_diagnostics: Vec::new(),
+            },
+        )
+        .candidate_artifact(CandidateArtifact::new(node.clone(), resolved))
+        .build();
+        let material = SelectionSealMaterial {
+            procedure: ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            scope: SelectionScope::all_admitted_candidates(),
+            selected_candidate: selected,
+            selected_occurrence_id: None,
+            selected_membership_id: None,
+            considered: vec![payload],
+            considered_sources: Vec::new(),
+            projection_failures: Vec::new(),
+            traversal: Some(TraversalEvidence {
+                seed: 1,
+                strategy: StrategyKind::default(),
+                selected_source: None,
+            }),
+            selected_from_generation_outcomes: false,
+        };
+        let decision = SuccessorDecision {
+            procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+            candidate_node_id: "node-historical".to_string(),
+            selected_branch_id: Some("branch-historical".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        };
+
+        let err = select_artifact_for_handoff(&decision, &material)
+            .expect_err("historical candidate without artifact surface must not hand off");
+
+        assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(
+            err.to_string()
+                .contains("no admitted artifact surface measurement")
+        );
+    }
+
+    #[test]
     fn history_handoff_rejects_unresolvable_runtime_before_seal() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node = test_node(
@@ -10075,7 +10187,10 @@ stop_after = "complete"
                 child_diagnostics: Vec::new(),
             },
         )
-        .candidate_artifact(CandidateArtifact::new(node.clone(), resolved))
+        .candidate_artifact(
+            CandidateArtifact::new(node.clone(), resolved)
+                .with_artifact_surface(ArtifactSurface::test("node-historical")),
+        )
         .build();
         let material = SelectionSealMaterial {
             procedure: ProcedureRef::new(
@@ -10149,7 +10264,10 @@ stop_after = "complete"
                 child_diagnostics: Vec::new(),
             },
         )
-        .candidate_artifact(CandidateArtifact::new(node.clone(), resolved))
+        .candidate_artifact(
+            CandidateArtifact::new(node.clone(), resolved)
+                .with_artifact_surface(ArtifactSurface::test("node-historical")),
+        )
         .build();
         let material = SelectionSealMaterial {
             procedure: ProcedureRef::new(

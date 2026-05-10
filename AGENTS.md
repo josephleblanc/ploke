@@ -37,6 +37,7 @@
 
 ## Coding Style & Naming Discipline
 
+- Requirement: owned persisted JSON/JSONL data must be read and written through named Rust types. Production code must not parse, inspect, transform, slice, or project owned persisted data through `serde_json::Value`, anonymous field walking, or ad hoc JSON accessors. This applies across `ploke-records`, `ploke-tree`, `ploke-eval`, `ploke-tui`, monitor/debug/projection paths, and future crates. If the project writes the shape, the project owns a `Serialize`/`Deserialize` type for that shape. If a reader needs only part of a record, define a named typed projection struct or enum. Test fixtures may use JSON literals for construction and comparison, but not as production reader/parser precedent.
 - Requirement: do not flatten role/state structure into long compound names when a type parameter, enum state, module boundary, or transition carrier can express it. Prefer `Child<Ready>` over `ChildReady`, `RuntimeTraceEntry::ChildReady`, `ChildHeartbeat`, or `observe_child_ready_state`.
 - Requirement: typed transition names must preserve structure. If the domain object is a role in a state, model it as `Role<State>` or an equivalent typed carrier; do not invent a new generic layer like "trace", "admission", "claim", "heartbeat", or "progress" unless that layer is actually part of the domain model.
 - Requirement: typed transitions should not be trivial public status writes. Prefer private fields, sealed or module-private state markers, move-only transition methods, and journal records produced by those transitions. The durable record should be the projection of an allowed state transition, not an arbitrary string/status update.
@@ -61,6 +62,14 @@ Maintain this list when a bug is discovered that would have been prevented by pr
   - Collapsed shape: `candidate_set_membership` / `selected_membership_id` treated source-set membership and final decision-set membership as the same relation.
   - Missing structure: source candidate-set membership vs sealed decision candidate-set membership should be distinct role/state carriers, e.g. `Membership<SourceSet>` and `Membership<DecisionSet>`, or equivalent module/type boundaries.
   - Preventing type constraint: traversal may carry `Membership<SourceSet>` only as evidence; sealed selection constructors must require `Membership<DecisionSet>` minted or resolved from the final candidate set. No API may accept a bare membership id where the set role is not encoded.
+- `docs/active/bugs/2026-05-10-prototype1-historical-successor-surface-root-mismatch.md`
+  - Affected files:
+    - `crates/ploke-eval/src/cli/prototype1_process.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+  - Collapsed shape: bare `SurfaceCommitment` and `active_parent_root` let the handoff path treat previous-parent surface roots and selected-successor surface roots as the same relation.
+  - Missing structure: the selected Artifact tree key and selected Artifact surface commitment should be one carrier minted by the install/materialize transition, e.g. `SelectedArtifactCommitment` or `SurfaceTransition<CurrentParentBefore, SelectedArtifactAfter>`.
+  - Preventing type constraint: History sealing must require a selected-Artifact commitment that bundles Artifact identity, tree key, and surface roots from the same backend transition. No API may seal `ArtifactRef`, `TreeKeyHash`, and `SurfaceCommitment` as independent arguments.
 
 ## Anti-Blob Guardrails
 
@@ -103,7 +112,8 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 
 ## Prototype 1 Run Playback / Observability Plan
 
-- Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, read `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md`.
+- Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, start from the shared track index at `docs/active/plans/self-improvement-loop/handoffs.md`.
+- Treat `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md` as the typed playback contract, not necessarily the latest operational handoff.
 - Playback is a read/projection layer over persisted typed records. It must not become active loop authority, and it must not parse rendered CLI output.
 - Preserve granularity structurally with typestates such as `RunPlayback<Coarse>` and `RunPlayback<Fine>` rather than string modes or report flags.
 - Provide both owned and borrowed playback forms. UI-facing paths should be able to use borrowed `RunPlaybackRef<'a, G>` projections over an already-loaded record store without cloning large payloads.

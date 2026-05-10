@@ -1112,14 +1112,14 @@ impl StoredBlock {
 #[derive(Debug, Deserialize)]
 struct StoredSealedBlock {
     state: StoredSealedState,
-    entries: Vec<serde_json::Value>,
+    entries: Vec<stored::StoredEntryAdmitted>,
 }
 
 #[derive(Debug, Deserialize)]
 struct StoredSealedState {
     header: SealedBlockHeader,
     #[serde(rename = "_private")]
-    _private: serde_json::Value,
+    _private: serde::de::IgnoredAny,
 }
 
 impl StoredSealedBlock {
@@ -1137,9 +1137,7 @@ impl StoredSealedBlock {
         }
 
         let mut entries = Vec::with_capacity(self.entries.len());
-        for value in self.entries {
-            let stored: stored::StoredEntryAdmitted =
-                serde_json::from_value(value).map_err(BlockStoreError::Deserialize)?;
+        for stored in self.entries {
             entries.push(stored.into_entry());
         }
 
@@ -1815,6 +1813,24 @@ impl SurfaceCommitment {
         )
     }
 
+    pub(crate) fn from_artifact_surfaces(
+        before: &ArtifactSurface,
+        after: &ArtifactSurface,
+    ) -> Result<Self, HistoryError> {
+        if before.immutable != after.immutable {
+            return Err(HistoryError::SurfaceMismatch {
+                partition: "immutable",
+                expected: before.immutable.root().hash().clone(),
+                actual: after.immutable.root().hash().clone(),
+            });
+        }
+        Ok(Self::new(
+            before.immutable.clone(),
+            SurfaceDelta::new(before.mutated.clone(), after.mutated.clone()),
+            SurfaceDelta::new(before.ambient.clone(), after.ambient.clone()),
+        ))
+    }
+
     pub(crate) fn verify_current(&self, current: &Self) -> Result<(), HistoryError> {
         verify_surface_root(
             "immutable",
@@ -1831,6 +1847,59 @@ impl SurfaceCommitment {
             self.ambient.after().root().hash(),
             current.ambient.after().root().hash(),
         )
+    }
+}
+
+/// Backend-measured identity and surface profile for one recoverable Artifact.
+///
+/// This is not patch provenance. It is the artifact-local profile used to build
+/// an authority transition from the current ruler artifact to a selected
+/// successor artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ArtifactSurface {
+    pub(crate) schema_version: u32,
+    pub(crate) measurement: ProcedureRef,
+    tree_key: TreeKeyHash,
+    immutable: Surface<surface::Immutable>,
+    mutated: Surface<surface::Mutated>,
+    ambient: Surface<surface::Ambient>,
+}
+
+impl ArtifactSurface {
+    pub(crate) fn from_backend_measurement(
+        tree_key: TreeKeyHash,
+        immutable: HistoryHash,
+        mutated: HistoryHash,
+        ambient: HistoryHash,
+    ) -> Self {
+        Self {
+            schema_version: 1,
+            measurement: ProcedureRef::new("prototype1:artifact-surface:v1"),
+            tree_key,
+            immutable: Surface::new(SurfaceRoot::new(immutable)),
+            mutated: Surface::new(SurfaceRoot::new(mutated)),
+            ambient: Surface::new(SurfaceRoot::new(ambient)),
+        }
+    }
+
+    pub(crate) fn tree_key(&self) -> &TreeKeyHash {
+        &self.tree_key
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(label: &str) -> Self {
+        let tree_key =
+            TreeKeyHash::from_serialized_key(&format!("tree:{label}")).expect("test tree key hash");
+        let immutable =
+            HistoryHash::of_domain_json("prototype1.test.artifact_surface.immutable", &"shared")
+                .expect("test immutable surface");
+        let mutated =
+            HistoryHash::of_domain_json("prototype1.test.artifact_surface.mutated", &label)
+                .expect("test mutated surface");
+        let ambient =
+            HistoryHash::of_domain_json("prototype1.test.artifact_surface.ambient", &label)
+                .expect("test ambient surface");
+        Self::from_backend_measurement(tree_key, immutable, mutated, ambient)
     }
 }
 
@@ -2660,11 +2729,50 @@ pub(crate) struct SealedComparedRunEvidence {
     pub(crate) treatment_protocol: Option<metric::Protocol>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) diagnostics: Vec<String>,
-    /// JSON snapshot of typed child run evidence when available (identity, spec, artifacts, protocol); same shape as `RunEvidence` in `evidence.rs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) baseline_run: Option<serde_json::Value>,
+    pub(crate) baseline_run: Option<SealedRunEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) treatment_run: Option<serde_json::Value>,
+    pub(crate) treatment_run: Option<SealedRunEvidence>,
+}
+
+/// Passive run snapshot sealed into candidate evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedRunEvidence {
+    pub(crate) run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) run_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) spec_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_slug: Option<String>,
+    #[serde(default)]
+    pub(crate) protocol: SealedRunProtocolEvidence,
+}
+
+/// Protocol evidence summary for a sealed run snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedRunProtocolEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) anchor_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) artifacts: Vec<SealedProtocolArtifactEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedProtocolArtifactEvidence {
+    pub(crate) procedure_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) schema_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) subject_id: Option<String>,
 }
 
 /// One branch evaluation report worth of sealed material.
@@ -2674,9 +2782,9 @@ pub(crate) struct SealedEvaluationEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) evaluation_procedure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) evaluator_identity: Option<serde_json::Value>,
+    pub(crate) evaluator_identity: Option<SealedEvaluatorIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) eval_set_identity: Option<serde_json::Value>,
+    pub(crate) eval_set_identity: Option<SealedEvalSetIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) evaluation_artifact_citation: Option<SealedEvidenceCitation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2684,6 +2792,30 @@ pub(crate) struct SealedEvaluationEvidence {
     pub(crate) primary_report_citation: SealedEvidenceCitation,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) compared_runs: Vec<SealedComparedRunEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedEvaluatorIdentity {
+    pub(crate) id: String,
+    pub(crate) version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SealedEvalSetIdentity {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) authority: String,
+    pub(crate) explicit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) benchmark_family: Option<String>,
+    #[serde(default)]
+    pub(crate) dataset_source_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) instance_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) missing_treatment_instance_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2975,6 +3107,8 @@ pub(crate) struct CandidateArtifact {
     pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) surface: Option<SurfaceEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact_surface: Option<ArtifactSurface>,
 }
 
 impl CandidateArtifact {
@@ -2987,12 +3121,19 @@ impl CandidateArtifact {
             node,
             resolved,
             surface: None,
+            artifact_surface: None,
         }
     }
 
     pub(crate) fn with_surface(mut self, evidence: SurfaceEvidence) -> Self {
         self.schema_version = self.schema_version.max(2);
         self.surface = Some(evidence);
+        self
+    }
+
+    pub(crate) fn with_artifact_surface(mut self, surface: ArtifactSurface) -> Self {
+        self.schema_version = self.schema_version.max(3);
+        self.artifact_surface = Some(surface);
         self
     }
 
@@ -6262,8 +6403,8 @@ mod tests {
             evaluation_procedure_id: Some(
                 super::super::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string(),
             ),
-            evaluator_identity: Some(serde_json::json!({"id":"test","version":"1"})),
-            eval_set_identity: Some(serde_json::json!({"id":"eval-set"})),
+            evaluator_identity: Some(test_evaluator_identity()),
+            eval_set_identity: Some(test_eval_set_identity()),
             evaluation_artifact_citation: None,
             overall_disposition: Some("keep".to_string()),
             primary_report_citation: SealedEvidenceCitation {
@@ -6272,6 +6413,27 @@ mod tests {
                 record_name: None,
             },
             compared_runs: Vec::new(),
+        }
+    }
+
+    fn test_evaluator_identity() -> SealedEvaluatorIdentity {
+        SealedEvaluatorIdentity {
+            id: "test".to_string(),
+            version: "1".to_string(),
+        }
+    }
+
+    fn test_eval_set_identity() -> SealedEvalSetIdentity {
+        SealedEvalSetIdentity {
+            id: "eval-set".to_string(),
+            kind: "test".to_string(),
+            authority: "test-suite".to_string(),
+            explicit: true,
+            benchmark_family: Some("multi_swe_bench_rust".to_string()),
+            dataset_source_count: 1,
+            instance_ids: vec!["instance-a".to_string()],
+            missing_treatment_instance_ids: Vec::new(),
+            note: None,
         }
     }
 
@@ -6573,6 +6735,73 @@ mod tests {
         )
         .expect("by lineage index");
         assert!(by_lineage.contains("\"block_height\":0"));
+    }
+
+    #[test]
+    fn fs_block_store_projection_indexes_deserialize_and_match_sealed_blocks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+
+        let state0 = store.lineage_state(&lineage).expect("read empty state");
+        let mut block0 = open_block_from_state(&state0, 0, Vec::new());
+        block0
+            .admit(proposed_entry(), actor("admitter"))
+            .expect("admit block 0");
+        let sealed0 = seal(block0);
+        let hash0 = *sealed0.block_hash();
+        store.append(&state0, &sealed0).expect("append block 0");
+
+        let state1 = store.lineage_state(&lineage).expect("read block 0 state");
+        let mut block1 = open_block_from_state(&state1, 1, vec![hash0]);
+        block1
+            .admit(proposed_entry(), actor("admitter"))
+            .expect("admit block 1");
+        let sealed1 = seal(block1);
+        let hash1 = *sealed1.block_hash();
+        store.append(&state1, &sealed1).expect("append block 1");
+
+        let by_hash = std::fs::read_to_string(store.by_hash_path()).expect("by hash index");
+        let by_hash_records = by_hash
+            .lines()
+            .map(|line| serde_json::from_str::<StoredBlock>(line).expect("stored block record"))
+            .collect::<Vec<_>>();
+        assert_eq!(by_hash_records.len(), 2);
+        assert_eq!(by_hash_records[0].lineage_id, lineage);
+        assert_eq!(by_hash_records[0].block_height, 0);
+        assert_eq!(by_hash_records[0].block_hash, hash0);
+        assert_eq!(
+            by_hash_records[0].location.segment,
+            FsBlockStore::SEGMENT_NAME
+        );
+        assert_eq!(by_hash_records[0].location.line_index, 0);
+        assert_eq!(by_hash_records[1].lineage_id, lineage);
+        assert_eq!(by_hash_records[1].block_height, 1);
+        assert_eq!(by_hash_records[1].block_hash, hash1);
+        assert_eq!(
+            by_hash_records[1].location.segment,
+            FsBlockStore::SEGMENT_NAME
+        );
+        assert_eq!(by_hash_records[1].location.line_index, 1);
+
+        let by_lineage =
+            std::fs::read_to_string(store.by_lineage_height_path()).expect("lineage index");
+        let by_lineage_records = by_lineage
+            .lines()
+            .map(|line| serde_json::from_str::<LineageHeight>(line).expect("lineage record"))
+            .collect::<Vec<_>>();
+        assert_eq!(by_lineage_records.len(), 2);
+        assert_eq!(by_lineage_records[0].lineage_id, lineage);
+        assert_eq!(by_lineage_records[0].block_height, 0);
+        assert_eq!(by_lineage_records[0].block_hash, hash0);
+        assert_eq!(by_lineage_records[1].lineage_id, lineage);
+        assert_eq!(by_lineage_records[1].block_height, 1);
+        assert_eq!(by_lineage_records[1].block_hash, hash1);
+
+        let heads: BTreeMap<LineageId, BlockHash> =
+            serde_json::from_slice(&std::fs::read(store.heads_path()).expect("heads projection"))
+                .expect("typed heads projection");
+        assert_eq!(heads.get(&lineage), Some(&hash1));
     }
 
     #[test]
@@ -7250,6 +7479,36 @@ mod tests {
     }
 
     #[test]
+    fn surface_commitment_from_artifacts_uses_selected_successor_after_roots() {
+        let current_parent = ArtifactSurface::test("artifact:f");
+        let selected_successor = ArtifactSurface::test("artifact:b");
+        let handoff =
+            SurfaceCommitment::from_artifact_surfaces(&current_parent, &selected_successor)
+                .expect("same immutable surface admits authority transition");
+
+        let selected_current =
+            SurfaceCommitment::from_artifact_surfaces(&selected_successor, &selected_successor)
+                .expect("selected current surface");
+        handoff
+            .verify_current(&selected_current)
+            .expect("handoff after-roots describe selected successor");
+
+        let stale_parent_current =
+            SurfaceCommitment::from_artifact_surfaces(&current_parent, &current_parent)
+                .expect("parent current surface");
+        let err = handoff
+            .verify_current(&stale_parent_current)
+            .expect_err("handoff must not verify against stale parent after-roots");
+        assert!(matches!(
+            err,
+            HistoryError::SurfaceMismatch {
+                partition: "mutated",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn crown_lock_transition_reference_is_committed_to_block_hash() {
         let block_id = BlockId::new();
         let entry_id = EntryId::new();
@@ -7699,8 +7958,8 @@ mod tests {
                     crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
                         .to_string(),
                 ),
-                evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
-                eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
+                evaluator_identity: Some(test_evaluator_identity()),
+                eval_set_identity: Some(test_eval_set_identity()),
                 evaluation_artifact_citation: None,
                 overall_disposition: Some("keep".to_string()),
                 primary_report_citation: SealedEvidenceCitation {
@@ -7764,8 +8023,8 @@ mod tests {
             evaluations: vec![SealedEvaluationEvidence {
                 branch_id: "b1".to_string(),
                 evaluation_procedure_id: Some("other-procedure".to_string()),
-                evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
-                eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
+                evaluator_identity: Some(test_evaluator_identity()),
+                eval_set_identity: Some(test_eval_set_identity()),
                 evaluation_artifact_citation: None,
                 overall_disposition: Some("keep".to_string()),
                 primary_report_citation: SealedEvidenceCitation {
@@ -7839,8 +8098,8 @@ mod tests {
                     crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
                         .to_string(),
                 ),
-                evaluator_identity: Some(serde_json::json!({ "id": "ev-1" })),
-                eval_set_identity: Some(serde_json::json!({ "set": "s1" })),
+                evaluator_identity: Some(test_evaluator_identity()),
+                eval_set_identity: Some(test_eval_set_identity()),
                 evaluation_artifact_citation: None,
                 overall_disposition: Some("keep".to_string()),
                 primary_report_citation: SealedEvidenceCitation {

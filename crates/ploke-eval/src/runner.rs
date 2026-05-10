@@ -733,6 +733,9 @@ pub struct ToolRequestRecord {
     pub parent_id: String,
     pub call_id: String,
     pub tool: String,
+    /// Captured argument text. Persisted readers must deserialize through a
+    /// typed tool-argument record, typed enum, or typed parse-failure record;
+    /// do not inspect this as anonymous JSON.
     pub arguments: String,
 }
 

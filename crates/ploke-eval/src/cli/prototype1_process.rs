@@ -138,11 +138,11 @@ use crate::cli::prototype1_state::cli_facing::{
 use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::event::{Paths, Refs};
 use crate::cli::prototype1_state::history::{
-    ActorRef, ArtifactLocator, ArtifactRef, BlockStore, DraftEntry, Entry, EntryKind, EvidenceRef,
-    FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation, OpenBlock,
-    OpeningAuthority, OperationalEnvironment, ParentIdentityRef, PredecessorAuthority,
+    ActorRef, ArtifactLocator, ArtifactRef, ArtifactSurface, BlockStore, DraftEntry, Entry,
+    EntryKind, EvidenceRef, FsBlockStore, GenesisAuthority, LineageId, LineageState, Observation,
+    OpenBlock, OpeningAuthority, OperationalEnvironment, ParentIdentityRef, PredecessorAuthority,
     ProcedureRef, Proposal, Regime, SealBlock, StoreHead, SubjectRef, SuccessorRef,
-    SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
+    SurfaceCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -435,18 +435,25 @@ fn prepare_prototype1_active_successor_runtime(
     _manifest_path: &Path,
     selected: &selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
-) -> Result<(PathBuf, SurfaceCommitment), PrepareError> {
-    let surface = install_prototype1_successor_artifact(campaign_id, active_parent_root, selected)?;
+) -> Result<(PathBuf, InstalledSuccessorArtifact), PrepareError> {
+    let installed =
+        install_prototype1_successor_artifact(campaign_id, active_parent_root, selected)?;
     let binary = build_prototype1_active_successor_binary(active_parent_root)?;
-    Ok((binary, surface))
+    Ok((binary, installed))
 }
 
 fn install_prototype1_successor_artifact(
     campaign_id: &str,
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
-) -> Result<SurfaceCommitment, PrepareError> {
+) -> Result<InstalledSuccessorArtifact, PrepareError> {
     let backend = GitWorktreeBackend;
+    let current_surface = backend
+        .artifact_surface(active_parent_root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_current_artifact_surface",
+            detail: source.to_string(),
+        })?;
     let artifact = selected.selected();
     let node = artifact.node();
     let resolved = artifact.resolved();
@@ -483,12 +490,6 @@ fn install_prototype1_successor_artifact(
                 phase: "prototype1_successor_parent_identity_commit",
                 detail: source.to_string(),
             })?;
-        let surface = backend
-            .surface_commitment(active_parent_root, &workspace.root)
-            .map_err(|source| PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_surface_commitment",
-                detail: source.to_string(),
-            })?;
         backend
             .remove(active_parent_root, &workspace)
             .map_err(|source| PrepareError::DatabaseSetup {
@@ -502,25 +503,26 @@ fn install_prototype1_successor_artifact(
             active_parent_root,
             selected,
             workspace,
-            surface,
+            current_surface,
             previous_parent,
         )
     } else {
-        let surface = backend
-            .surface_commitment(active_parent_root, &active_parent_root)
-            .map_err(|source| PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_surface_commitment_reuse",
-                detail: source.to_string(),
-            })?;
         install_committed_successor_artifact(
             campaign_id,
             active_parent_root,
             selected,
             workspace,
-            surface,
+            current_surface,
             previous_parent,
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstalledSuccessorArtifact {
+    artifact_ref: ArtifactRef,
+    artifact_key: TreeKeyHash,
+    surface: SurfaceCommitment,
 }
 
 fn install_committed_successor_artifact(
@@ -528,9 +530,9 @@ fn install_committed_successor_artifact(
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
     workspace: crate::cli::prototype1_state::backend::Workspace,
-    surface: SurfaceCommitment,
+    current_surface: ArtifactSurface,
     previous_parent: Option<ParentIdentity>,
-) -> Result<SurfaceCommitment, PrepareError> {
+) -> Result<InstalledSuccessorArtifact, PrepareError> {
     let backend = GitWorktreeBackend;
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let artifact = selected.selected();
@@ -628,7 +630,27 @@ fn install_committed_successor_artifact(
         active_parent_root = %active_parent_root.display(),
     ))
     .success();
-    Ok(surface)
+    let selected_surface = backend
+        .artifact_surface(active_parent_root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_artifact_surface_after_install",
+            detail: source.to_string(),
+        })?;
+    if &selected_surface != artifact.artifact_surface() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected successor Artifact surface mismatch after install: node={} branch={}",
+                node.node_id, workspace.branch.0
+            ),
+        });
+    }
+    let surface = SurfaceCommitment::from_artifact_surfaces(&current_surface, &selected_surface)
+        .map_err(history_prepare_error)?;
+    Ok(InstalledSuccessorArtifact {
+        artifact_ref: artifact.artifact_ref().clone(),
+        artifact_key: selected_surface.tree_key().clone(),
+        surface,
+    })
 }
 
 fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareError> {
@@ -745,7 +767,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
     active_parent_root: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     resolved: &ResolvedTreatmentBranch,
-) -> Result<SurfaceCommitment, PrepareError> {
+) -> Result<ArtifactSurface, PrepareError> {
     let backend = GitWorktreeBackend;
     let workspace = backend
         .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
@@ -783,6 +805,12 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         &workspace.root,
         "prototype1_child_surface_commitment_after_persist",
     )?;
+    let artifact_surface = backend
+        .artifact_surface(&workspace.root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_artifact_surface_after_persist",
+            detail: source.to_string(),
+        })?;
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -810,7 +838,25 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         }),
         "prototype1_child_artifact_journal",
     )?;
-    Ok(surface)
+    let expected_surface = SurfaceCommitment::from_artifact_surfaces(
+        &GitWorktreeBackend
+            .artifact_surface(active_parent_root)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_parent_artifact_surface_for_child",
+                detail: source.to_string(),
+            })?,
+        &artifact_surface,
+    )
+    .map_err(history_prepare_error)?;
+    if surface != expected_surface {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "persisted child Artifact surface transition mismatch for node {}",
+                node.node_id
+            ),
+        });
+    }
+    Ok(artifact_surface)
 }
 
 fn spawn_prototype1_successor(
@@ -980,23 +1026,17 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let artifact = selected.selected();
     let node = artifact.node();
-    let (active_successor_binary_path, surface) = prepare_prototype1_active_successor_runtime(
+    let (active_successor_binary_path, installed) = prepare_prototype1_active_successor_runtime(
         campaign_id,
         &manifest_path,
         &selected,
         active_parent_root,
     )?;
     let runtime_id = RuntimeId::new();
-    let successor_artifact = artifact.artifact_ref().clone();
+    let successor_artifact = installed.artifact_ref.clone();
     let parent_actor = parent_actor_ref(parent.identity());
-    let handoff_block = handoff_block_fields(
-        campaign_id,
-        active_parent_root,
-        parent.identity(),
-        &manifest_path,
-        successor_artifact.clone(),
-        surface,
-    )?;
+    let handoff_block =
+        handoff_block_fields(campaign_id, parent.identity(), &manifest_path, &installed)?;
     let seal = SealBlock::from_handoff(
         EvidenceRef::new(format!("prototype1:successor-handoff:{runtime_id}")),
         SuccessorRef::new(ActorRef::Runtime(runtime_id), successor_artifact.clone()),
@@ -1326,11 +1366,9 @@ struct HandoffBlock {
 
 fn handoff_block_fields(
     campaign_id: &str,
-    active_parent_root: &Path,
     parent_identity: &ParentIdentity,
     manifest_path: &Path,
-    active_artifact: ArtifactRef,
-    surface: SurfaceCommitment,
+    installed: &InstalledSuccessorArtifact,
 ) -> Result<HandoffBlock, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
     let lineage_id = LineageId::new(campaign_id.to_string());
@@ -1338,12 +1376,7 @@ fn handoff_block_fields(
         .lineage_state(&lineage_id)
         .map_err(block_store_prepare_error)?;
     let parent_actor = parent_actor_ref(parent_identity);
-    let backend = GitWorktreeBackend;
-    let artifact_key = backend
-        .clean_tree_key(active_parent_root)
-        .map_err(backend_prepare_error)?
-        .tree_key_hash()
-        .map_err(history_prepare_error)?;
+    let artifact_key = installed.artifact_key.clone();
     let (block_height, parent_block_hashes, opening_authority) = match state.head() {
         StoreHead::Present(head) => {
             let predecessor = *head.block_hash();
@@ -1376,10 +1409,10 @@ fn handoff_block_fields(
             regime: Regime::prototype1_baseline(block_height),
             opening_authority,
             opened_by: parent_actor.clone(),
-            opened_from_artifact: active_artifact,
+            opened_from_artifact: installed.artifact_ref.clone(),
             ruling_authority: parent_actor,
             policy_ref: ProcedureRef::new("prototype1:single-ruler-local:v1"),
-            surface,
+            surface: installed.surface.clone(),
             opened_at: RecordedAt::now(),
         },
         expected_state: state,

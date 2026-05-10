@@ -33,3 +33,5 @@ for near-term implementation planning.
   Provider-emitted malformed or schema-invalid tool-call arguments are accepted without a repair/retry path.
 - [`2026-05-09-prototype1-history-traversal-membership-mismatch.md`](./2026-05-09-prototype1-history-traversal-membership-mismatch.md)
   Prototype 1 History traversal can select a membership that is absent from the final sealed considered set.
+- [`2026-05-10-prototype1-historical-successor-surface-root-mismatch.md`](./2026-05-10-prototype1-historical-successor-surface-root-mismatch.md)
+  Prototype 1 can seal a historical successor Artifact with the previous parent's mutated surface root.

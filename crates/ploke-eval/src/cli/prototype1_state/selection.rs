@@ -2,7 +2,7 @@ use std::{error::Error, fmt, marker::PhantomData};
 
 use crate::intervention::{Prototype1NodeRecord, ResolvedTreatmentBranch};
 
-use super::history::{ArtifactRef, SubjectRef};
+use super::history::{ArtifactRef, ArtifactSurface, SubjectRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Selection<T> {
@@ -15,6 +15,7 @@ pub(crate) struct Artifact {
     node: Prototype1NodeRecord,
     candidate: SubjectRef,
     artifact_ref: ArtifactRef,
+    artifact_surface: ArtifactSurface,
     resolved: ResolvedTreatmentBranch,
     source: Source,
     primary_runtime_id: Option<String>,
@@ -38,6 +39,7 @@ impl Selection<Artifact> {
         node: Prototype1NodeRecord,
         candidate: SubjectRef,
         resolved: ResolvedTreatmentBranch,
+        artifact_surface: ArtifactSurface,
         source: Source,
         primary_runtime_id: Option<String>,
     ) -> Result<Self, ArtifactMismatch> {
@@ -48,6 +50,7 @@ impl Selection<Artifact> {
                 node,
                 candidate,
                 artifact_ref,
+                artifact_surface,
                 resolved,
                 source,
                 primary_runtime_id,
@@ -72,6 +75,10 @@ impl Artifact {
 
     pub(crate) fn artifact_ref(&self) -> &ArtifactRef {
         &self.artifact_ref
+    }
+
+    pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
+        &self.artifact_surface
     }
 
     pub(crate) fn branch_id(&self) -> &str {
@@ -224,6 +231,7 @@ mod tests {
             node,
             SubjectRef::new("candidate:node-1:plan_index=0"),
             resolved,
+            ArtifactSurface::test("node-1"),
             Source::History,
             Some("runtime:node-1".to_string()),
         )

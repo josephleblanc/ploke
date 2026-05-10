@@ -20,8 +20,10 @@ use crate::{
         CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
         CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
         HistoryCandidateSource, HistoryCandidates, HistoryError, SealedCandidateEvidence,
-        SealedComparedRunEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
-        SelectionProjectionFailureKind, SelectionScope, SubjectRef, TraversalCandidateSource,
+        SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluatorIdentity,
+        SealedProtocolArtifactEvidence, SealedRunEvidence, SealedRunProtocolEvidence,
+        SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+        SelectionScope, SubjectRef, TraversalCandidateSource,
     },
     metric::{self, Summary},
 };
@@ -1216,17 +1218,8 @@ fn sample_weighted_index(
     weights.last().map(|weight| weight.index)
 }
 
-fn run_snapshot_has_protocol(snapshot: &serde_json::Value) -> bool {
-    let Some(protocol) = snapshot.get("protocol") else {
-        return false;
-    };
-    protocol
-        .get("anchor_path")
-        .is_some_and(|anchor| !anchor.is_null())
-        || protocol
-            .get("artifacts")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|artifacts| !artifacts.is_empty())
+fn run_snapshot_has_protocol(snapshot: &SealedRunEvidence) -> bool {
+    snapshot.protocol.anchor_path.is_some() || !snapshot.protocol.artifacts.is_empty()
 }
 
 #[derive(Debug, Default)]
@@ -1605,22 +1598,33 @@ mod tests {
                 baseline_protocol: None,
                 treatment_protocol: None,
                 diagnostics: Vec::new(),
-                baseline_run: Some(serde_json::json!({
-                    "run_id": "baseline",
-                    "protocol": {
-                        "anchor_path": null,
-                        "artifacts": []
-                    }
-                })),
-                treatment_run: Some(serde_json::json!({
-                    "run_id": "treatment",
-                    "protocol": {
-                        "anchor_path": "/tmp/protocol-anchor.json",
-                        "artifacts": [
-                            {"procedure_name": "tool-call-review"}
-                        ]
-                    }
-                })),
+                baseline_run: Some(SealedRunEvidence {
+                    run_id: "baseline".to_string(),
+                    task_id: None,
+                    run_role: None,
+                    spec_fingerprint: None,
+                    model_id: None,
+                    provider_slug: None,
+                    protocol: SealedRunProtocolEvidence::default(),
+                }),
+                treatment_run: Some(SealedRunEvidence {
+                    run_id: "treatment".to_string(),
+                    task_id: None,
+                    run_role: None,
+                    spec_fingerprint: None,
+                    model_id: None,
+                    provider_slug: None,
+                    protocol: SealedRunProtocolEvidence {
+                        anchor_path: Some("/tmp/protocol-anchor.json".into()),
+                        artifacts: vec![SealedProtocolArtifactEvidence {
+                            procedure_name: "tool-call-review".to_string(),
+                            path: None,
+                            schema_version: None,
+                            subject_id: None,
+                        }],
+                        diagnostics: Vec::new(),
+                    },
+                }),
             });
 
         let case = CandidateCase::from_payload(&payload);
@@ -2098,8 +2102,21 @@ mod tests {
                     evaluation_procedure_id: Some(
                         PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string(),
                     ),
-                    evaluator_identity: Some(serde_json::json!({"id":"test","version":"1"})),
-                    eval_set_identity: Some(serde_json::json!({"id":"eval-set"})),
+                    evaluator_identity: Some(SealedEvaluatorIdentity {
+                        id: "test".to_string(),
+                        version: "1".to_string(),
+                    }),
+                    eval_set_identity: Some(SealedEvalSetIdentity {
+                        id: "eval-set".to_string(),
+                        kind: "test".to_string(),
+                        authority: "test-suite".to_string(),
+                        explicit: true,
+                        benchmark_family: Some("multi_swe_bench_rust".to_string()),
+                        dataset_source_count: 1,
+                        instance_ids: vec!["instance-a".to_string()],
+                        missing_treatment_instance_ids: Vec::new(),
+                        note: None,
+                    }),
                     evaluation_artifact_citation: None,
                     overall_disposition: Some("keep".to_string()),
                     primary_report_citation: SealedEvidenceCitation {

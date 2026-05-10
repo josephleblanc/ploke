@@ -1241,6 +1241,36 @@ mod tests {
     }
 
     #[test]
+    fn child_plan_files_deserializes_nested_child_manifest() {
+        let manifest_path = Path::new("/tmp/campaign.json");
+        let sender = parent("parent-a", 0);
+        let child = node_record("child-1", 1, Some("parent-a"));
+        let files = ChildPlanFiles::for_parent(
+            manifest_path,
+            sender.identity(),
+            vec![child_files(sender.identity(), child)],
+        );
+
+        let json = serde_json::to_string(&files).expect("serialize child-plan files");
+        let decoded: ChildPlanFiles =
+            serde_json::from_str(&json).expect("deserialize child-plan files");
+
+        assert_eq!(decoded, files);
+        assert_eq!(decoded.parent_node_id(), "parent-a");
+        assert_eq!(decoded.child_generation(), 1);
+        assert_eq!(decoded.children().len(), 1);
+        assert_eq!(decoded.children()[0].node_id(), "child-1");
+        assert_eq!(
+            decoded.children()[0].runner_request().node_id.as_str(),
+            "child-1"
+        );
+        assert_eq!(
+            decoded.children()[0].resolved().branch.branch_id,
+            "branch-child-1"
+        );
+    }
+
+    #[test]
     fn selectable_parent_locks_crown_and_retires() {
         let manifest_path = Path::new("/tmp/campaign.json");
         let sender = parent("parent-a", 0);

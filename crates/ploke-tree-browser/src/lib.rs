@@ -451,6 +451,113 @@ mod tests {
     }
 
     #[test]
+    fn browser_model_deserializes_serialized_nested_snapshots() {
+        let model = PlaybackBrowserModel {
+            schema_version: "ploke-tree-browser.playback.v1".to_owned(),
+            granularity: BrowserGranularity::FineHistory,
+            step_count: 1,
+            warning_count: 0,
+            steps: vec![PlaybackBrowserStep {
+                index: 0,
+                id: "block-hash:entry:0:candidate:0".to_owned(),
+                fine_kind: Some(FineStepKind::CandidateConsidered),
+                order: Some(FineOrder {
+                    block_height: 7,
+                    phase_rank: 20,
+                    entry_index: Some(0),
+                    candidate_index: Some(0),
+                }),
+                block_height: 7,
+                block_hash: "block-hash".to_owned(),
+                label: Some("candidate:node-abc123:plan_index=0".to_owned()),
+                selected_candidate: Some("candidate:abc123".to_owned()),
+                considered_candidate_count: 3,
+                warning_count: 0,
+                evidence: EvidenceStrength::SealedHistory,
+                node_id: Some("abc123".to_owned()),
+                branch_id: Some("branch-abc123".to_owned()),
+                candidate_id: Some("candidate-abc123".to_owned()),
+                occurrence_id: Some("occurrence-abc123".to_owned()),
+                membership_id: Some("membership-abc123".to_owned()),
+                evaluation: Some(EvaluationSnapshot {
+                    disposition: Disposition::Keep,
+                    tool_calls_total: 4,
+                    tool_calls_failed: 1,
+                    patch_attempted: true,
+                    patch_apply_state: Some("applied".to_owned()),
+                    nonempty_valid_patch: true,
+                    convergence: false,
+                    oracle_eligible: true,
+                    aborted: false,
+                    reasons: Some(vec!["improved oracle score".to_owned()]),
+                }),
+                surface: Some(SurfaceSnapshot {
+                    target_relpath: "src/lib.rs".to_owned(),
+                    patch_id: Some("patch-1".to_owned()),
+                    source_content_hash: Some("source-hash".to_owned()),
+                    proposed_content_hash: Some("proposed-hash".to_owned()),
+                    source_state_id: Some("source-state".to_owned()),
+                }),
+                protocol: Some(ProtocolSnapshot {
+                    intent_segmentation_count: 1,
+                    tool_call_review_count: 2,
+                    segment_review_count: 3,
+                    issue_detection_count: 4,
+                    synthesis_count: 5,
+                    model_id: Some("model-a".to_owned()),
+                    provider_slug: Some("provider-a".to_owned()),
+                }),
+            }],
+            run_summary: Some(RunSummary {
+                campaign_id: "campaign-a".to_owned(),
+                node_count: 12,
+                generation_count: 4,
+                sealed_block_count: 7,
+                evaluation_count: 9,
+                evaluations_kept: 6,
+                evaluations_rejected: 3,
+                journal_entry_count: 32,
+                terminal_status: Some("complete".to_owned()),
+            }),
+        };
+
+        let json = serde_json::to_string(&model).expect("serialize browser model");
+        let decoded: PlaybackBrowserModel =
+            serde_json::from_str(&json).expect("deserialize browser model");
+
+        assert_eq!(decoded, model);
+    }
+
+    #[test]
+    fn browser_model_deserializes_omitted_optional_projection_fields() {
+        let json = r#"{
+            "schema_version":"ploke-tree-browser.playback.v1",
+            "granularity":"coarse_history",
+            "step_count":1,
+            "warning_count":0,
+            "steps":[{
+                "index":0,
+                "id":"block-hash",
+                "block_height":3,
+                "block_hash":"block-hash",
+                "considered_candidate_count":0,
+                "warning_count":0,
+                "evidence":"sealed_history"
+            }]
+        }"#;
+
+        let decoded: PlaybackBrowserModel =
+            serde_json::from_str(json).expect("deserialize browser model");
+
+        assert_eq!(decoded.run_summary, None);
+        assert_eq!(decoded.steps[0].fine_kind, None);
+        assert_eq!(decoded.steps[0].order, None);
+        assert_eq!(decoded.steps[0].evaluation, None);
+        assert_eq!(decoded.steps[0].surface, None);
+        assert_eq!(decoded.steps[0].protocol, None);
+    }
+
+    #[test]
     #[ignore]
     fn serialize_real_campaign_fine_browser_model_to_json() {
         let run_root = std::env::var("PLOKE_TREE_RUN_ROOT")

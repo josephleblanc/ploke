@@ -1431,6 +1431,9 @@ pub use ploke_tui::chat_history::Message as ConversationMessage;
 pub struct ToolCallRecord {
     pub id: String,
     pub tool: String,
+    /// Typed-persistence violation: replace this anonymous JSON field with a
+    /// typed argument enum/record or typed parse-failure record before this
+    /// shape is used as an owned persisted reader contract.
     pub arguments: serde_json::Value,
 }
 

@@ -67,8 +67,9 @@ use super::cli_facing::{
 use super::evidence_class::EvidenceClass;
 use super::history::{
     CandidateCoordinate, CandidateLifecycle, SealedBranchEvidence, SealedCandidateEvidence,
-    SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
-    SealedRuntimeEvidence,
+    SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluationEvidence,
+    SealedEvaluatorIdentity, SealedEvidenceCitation, SealedProtocolArtifactEvidence,
+    SealedRunEvidence, SealedRunProtocolEvidence, SealedRuntimeEvidence,
 };
 use super::history_preview::{EvidencePointer, EvidenceRecord, Stored};
 use super::invocation::{Invocation, SuccessorCompletionRecord, SuccessorReadyRecord};
@@ -391,11 +392,11 @@ pub(crate) fn seal_candidate_evidence_for_history(
                     evaluator_identity: evaluation
                         .evaluator_identity
                         .as_ref()
-                        .and_then(|identity| serde_json::to_value(identity).ok()),
+                        .map(seal_evaluator_identity),
                     eval_set_identity: evaluation
                         .eval_set_identity
                         .as_ref()
-                        .and_then(|identity| serde_json::to_value(identity).ok()),
+                        .map(seal_eval_set_identity),
                     evaluation_artifact_citation: evaluation.evaluation_artifact_path.as_ref().map(
                         |path| SealedEvidenceCitation {
                             ref_id: format!("opaque_evaluation_artifact:{}", path.display()),
@@ -522,26 +523,8 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
             )
         })
         .collect();
-    let baseline_run = match row.baseline_run.as_ref() {
-        Some(run) => match serde_json::to_value(run) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                diagnostics.push(format!("baseline_run:history_seal_json_failed:{err}"));
-                None
-            }
-        },
-        None => None,
-    };
-    let treatment_run = match row.treatment_run.as_ref() {
-        Some(run) => match serde_json::to_value(run) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                diagnostics.push(format!("treatment_run:history_seal_json_failed:{err}"));
-                None
-            }
-        },
-        None => None,
-    };
+    let baseline_run = row.baseline_run.as_ref().map(seal_run_evidence);
+    let treatment_run = row.treatment_run.as_ref().map(seal_run_evidence);
     let baseline_protocol =
         seal_protocol_aggregate("baseline", row.baseline_run.as_ref(), &mut diagnostics);
     let treatment_protocol =
@@ -558,6 +541,65 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         diagnostics,
         baseline_run,
         treatment_run,
+    }
+}
+
+fn seal_evaluator_identity(identity: &Prototype1EvaluatorIdentity) -> SealedEvaluatorIdentity {
+    SealedEvaluatorIdentity {
+        id: identity.id.clone(),
+        version: identity.version.clone(),
+    }
+}
+
+fn seal_eval_set_identity(identity: &Prototype1EvalSetIdentity) -> SealedEvalSetIdentity {
+    SealedEvalSetIdentity {
+        id: identity.id.clone(),
+        kind: identity.kind.clone(),
+        authority: identity.authority.clone(),
+        explicit: identity.explicit,
+        benchmark_family: serde_json::to_value(identity.benchmark_family)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string)),
+        dataset_source_count: identity.dataset_sources.len(),
+        instance_ids: identity.instance_ids.clone(),
+        missing_treatment_instance_ids: identity.missing_treatment_instance_ids.clone(),
+        note: identity.note.clone(),
+    }
+}
+
+fn seal_run_evidence(run: &RunEvidence) -> SealedRunEvidence {
+    SealedRunEvidence {
+        run_id: run.run_id.clone(),
+        task_id: Some(run.task_id.clone()),
+        run_role: Some(format!("{:?}", run.run_role)),
+        spec_fingerprint: Some(run.spec_fingerprint.clone()),
+        model_id: run.model_id.clone(),
+        provider_slug: run.provider_slug.clone(),
+        protocol: SealedRunProtocolEvidence {
+            anchor_path: run.protocol.anchor_path.clone(),
+            artifacts: run
+                .protocol
+                .artifacts
+                .iter()
+                .map(|artifact| SealedProtocolArtifactEvidence {
+                    procedure_name: artifact.procedure_name.clone(),
+                    path: Some(artifact.path.clone()),
+                    schema_version: Some(artifact.schema_version.clone()),
+                    subject_id: Some(artifact.subject_id.clone()),
+                })
+                .collect(),
+            diagnostics: run
+                .protocol
+                .diagnostics
+                .iter()
+                .map(|diagnostic| {
+                    format!(
+                        "{}:{}:{}",
+                        diagnostic.severity, diagnostic.field, diagnostic.message
+                    )
+                })
+                .collect(),
+        },
     }
 }
 
