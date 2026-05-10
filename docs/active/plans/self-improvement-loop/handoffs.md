@@ -4,6 +4,8 @@ Use this as the shared restart list for the records/playback/frontend track. The
 
 ## Current Spine
 
+- [`typed-persistence-spine/2026-05-10-survey-inventory-handoff.md`](typed-persistence-spine/2026-05-10-survey-inventory-handoff.md)
+  Current handoff for the completed typed-persistence-spine survey inventory and next implementation slices.
 - [`../../agents/2026-05-09_run-playback-coarse-history-handoff.md`](../../agents/2026-05-09_run-playback-coarse-history-handoff.md)
   Current operational handoff for the coarse/fine sealed-History playback slice and real-run record compatibility.
 - [`../../agents/2026-05-09_egui-wasm-observability-handoff.md`](../../agents/2026-05-09_egui-wasm-observability-handoff.md)
