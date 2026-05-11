@@ -27,6 +27,17 @@ use super::history::{
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
 pub(crate) const EVAL_CORE_SURFACE_ROOT: &str = "crates/ploke-eval";
+const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
+    EVAL_CORE_SURFACE_ROOT,
+    ".ploke",
+    ".agents",
+    ".codex",
+    ".codex-skill-staging",
+    ".tmp",
+    ".symlinks",
+    "target",
+    "dist",
+];
 
 /// Git branch name for one backend-managed child lineage.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -965,7 +976,9 @@ impl GitWorktreeBackend {
         }
         let target_relpath = paths.remove(0);
         validate_normal_repo_relpath(&target_relpath)?;
-        if !is_allowed_edit_surface_path(proposal_surface, &target_relpath) {
+        if !path_matches_surface_policy(proposal_surface, &target_relpath)
+            || !edit_surface_contains_path(repo_root, proposal_surface, &target_relpath)?
+        {
             return Err(BackendError::OutOfEditSurface {
                 surface: proposal_surface,
                 path: target_relpath,
@@ -1996,12 +2009,12 @@ pub(crate) fn edit_surface_paths(
         Prototype1EditSurface::WorkspaceExceptPlokeEval => {
             let paths = tracked_paths(worktree_root, ".")?
                 .into_iter()
-                .filter(|path| !path.starts_with(EVAL_CORE_SURFACE_ROOT))
+                .filter(|path| !is_workspace_authority_path(path))
                 .collect::<Vec<_>>();
             if paths.is_empty() {
                 return Err(BackendError::EmptySurfacePathspec {
                     root: worktree_root.to_path_buf(),
-                    pathspec: format!(". excluding {EVAL_CORE_SURFACE_ROOT}"),
+                    pathspec: ". excluding Prototype 1 authority surfaces".to_string(),
                 });
             }
             Ok(paths)
@@ -2009,16 +2022,30 @@ pub(crate) fn edit_surface_paths(
     }
 }
 
-fn is_allowed_edit_surface_path(surface: Prototype1EditSurface, path: &Path) -> bool {
+fn edit_surface_contains_path(
+    worktree_root: &Path,
+    surface: Prototype1EditSurface,
+    path: &Path,
+) -> Result<bool, BackendError> {
+    Ok(edit_surface_paths(worktree_root, surface)?
+        .iter()
+        .any(|surface_path| surface_path == path))
+}
+
+fn path_matches_surface_policy(surface: Prototype1EditSurface, path: &Path) -> bool {
     match surface {
         Prototype1EditSurface::PlokeTuiTools => {
             path.starts_with("crates/ploke-tui/src/tools")
                 || ploke_tui_tool_files().iter().any(|allowed| allowed == path)
         }
-        Prototype1EditSurface::WorkspaceExceptPlokeEval => {
-            !path.starts_with(EVAL_CORE_SURFACE_ROOT)
-        }
+        Prototype1EditSurface::WorkspaceExceptPlokeEval => !is_workspace_authority_path(path),
     }
+}
+
+fn is_workspace_authority_path(path: &Path) -> bool {
+    WORKSPACE_EXCEPT_AUTHORITY_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
 }
 
 fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
@@ -2294,6 +2321,10 @@ mod tests {
         let path = repo_root.join(&relpath);
         fs::create_dir_all(path.parent().expect("target has parent")).expect("create target dir");
         fs::write(path, content).expect("write tui target");
+        run_git_test(
+            repo_root,
+            &["add", relpath.to_str().expect("test relpath is utf-8")],
+        );
         relpath
     }
 
@@ -2682,6 +2713,92 @@ R  old.rs -> new.rs
                 proposal_for(tmp.path(), relpath, "let old = 1;\n"),
             )
             .expect_err("out-of-surface path must reject");
+
+        assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
+    }
+
+    #[test]
+    fn workspace_except_surface_excludes_runtime_authority_paths() {
+        let tmp = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let repo_root = tmp.path();
+        for relpath in [
+            ".ploke/prototype1/parent_identity.json",
+            ".agents/operator.md",
+            ".codex/config.md",
+            ".codex-skill-staging/staged.md",
+            ".tmp/scratch.md",
+            ".symlinks/CatColab-symlink",
+            "target/debug/build-note.md",
+            "dist/bundle.md",
+        ] {
+            let path = repo_root.join(relpath);
+            fs::create_dir_all(path.parent().expect("authority path has parent"))
+                .expect("create authority parent");
+            fs::write(path, "authority\n").expect("write authority fixture");
+            run_git_test(repo_root, &["add", relpath]);
+        }
+        let paths = super::edit_surface_paths(
+            repo_root,
+            crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
+        )
+        .expect("workspace surface paths");
+
+        assert!(paths.iter().any(|path| *path == PathBuf::from("README.md")));
+        assert!(
+            paths
+                .iter()
+                .any(|path| *path == PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"))
+        );
+        for relpath in [
+            ".ploke/prototype1/parent_identity.json",
+            ".agents/operator.md",
+            ".codex/config.md",
+            ".codex-skill-staging/staged.md",
+            ".tmp/scratch.md",
+            ".symlinks/CatColab-symlink",
+            "target/debug/build-note.md",
+            "dist/bundle.md",
+        ] {
+            assert!(
+                !paths.iter().any(|path| *path == PathBuf::from(relpath)),
+                "{relpath} must not be editable surface"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_except_validation_rejects_untracked_path() {
+        let tmp = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let relpath = PathBuf::from("scratch.toml");
+        fs::write(tmp.path().join(&relpath), "let old = 1;\n").expect("write untracked scratch");
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
+        proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("untracked workspace file must not validate");
+
+        assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
+    }
+
+    #[test]
+    fn workspace_except_validation_rejects_parent_identity() {
+        let tmp = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let relpath = PathBuf::from(".ploke/prototype1/parent_identity.json");
+        let path = tmp.path().join(&relpath);
+        fs::create_dir_all(path.parent().expect("identity path has parent"))
+            .expect("create identity parent");
+        fs::write(&path, "let old = 1;\n").expect("write identity fixture");
+        run_git_test(
+            tmp.path(),
+            &["add", relpath.to_str().expect("test relpath is utf-8")],
+        );
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
+        proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("parent identity is runtime authority, not editable surface");
 
         assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
     }
