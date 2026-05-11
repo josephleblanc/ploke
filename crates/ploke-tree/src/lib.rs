@@ -12,6 +12,7 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 mod playback;
+pub mod browser;
 
 pub use playback::{
     CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,

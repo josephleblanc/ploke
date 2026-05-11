@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 
 use eframe::egui::{self, Color32, RichText, ScrollArea};
 use eframe::{App, Frame};
-use ploke_tree_browser::{
+use ploke_tree::browser::{
     BrowserGranularity, PlaybackBrowserModel, PlaybackBrowserStep, RunSummary,
 };
 #[cfg(target_arch = "wasm32")]
@@ -704,7 +704,7 @@ fn push_unique(values: &mut Vec<String>, value: Option<&str>) {
     }
 }
 
-fn protocol_item_count(protocol: &ploke_tree_browser::ProtocolSnapshot) -> usize {
+fn protocol_item_count(protocol: &ploke_tree::browser::ProtocolSnapshot) -> usize {
     protocol.intent_segmentation_count
         + protocol.tool_call_review_count
         + protocol.segment_review_count

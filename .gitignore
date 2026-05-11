@@ -110,3 +110,6 @@ docs/archive/*
 /rust-analyzer-upstream
 github-project
 research-papers
+crates/ploke-tree-egui/dist/index.html
+crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b.js
+crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b_bg.wasm

@@ -2,10 +2,6 @@ use std::path::{Path, PathBuf};
 
 use ploke_records::history::ActorRefRecord;
 use ploke_records::playback::FineStep;
-use ploke_tree::{
-    CoarseHistorySpine, FsRunStore, build_coarse_history_spine,
-    fine_run_playback_from_sealed_history,
-};
 use serde::Serialize;
 
 use crate::cli::InspectOutputFormat;

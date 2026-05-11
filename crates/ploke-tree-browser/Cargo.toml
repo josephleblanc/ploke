@@ -3,16 +3,11 @@ name = "ploke-tree-browser"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
-description = "Renderer-neutral playback models for browsing Ploke run trees"
-
-[features]
-default = ["projection"]
-projection = ["dep:ploke-tree"]
+description = "Compatibility facade for browser playback models now owned by ploke-tree"
 
 [dependencies]
-ploke-records = { workspace = true }
-ploke-tree = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive"] }
+ploke-tree = { workspace = true, features = ["projection"] }
 
-[dev-dependencies]
-serde_json = { workspace = true }
+[features]
+default = []
+projection = ["ploke-tree/projection"]

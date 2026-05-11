@@ -38,6 +38,7 @@ members = [
     "crates/ingest/ploke-embed",
     "crates/ploke-protocol",
     "crates/ploke-records",
+    "crates/ploke-egui",
     "crates/ploke-tree",
     "crates/ploke-tree-browser",
     "crates/ploke-tree-egui",
@@ -78,6 +79,7 @@ ploke-test-utils = { path = "crates/test-utils" }
 ploke-core = { path = "crates/ploke-core" }
 ploke-protocol = { path = "crates/ploke-protocol" }
 ploke-records = { path = "crates/ploke-records" }
+ploke-egui = { path = "crates/ploke-egui" }
 ploke-tree = { path = "crates/ploke-tree" }
 ploke-tree-browser = { path = "crates/ploke-tree-browser", default-features = false }
 ploke-tree-egui = { path = "crates/ploke-tree-egui" }

@@ -9,3 +9,7 @@ description = "Read-only run tree projections over passive Ploke records"
 ploke-records = { workspace = true, features = ["protocol"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+
+[features]
+default = ["projection"]
+projection = []

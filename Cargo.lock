@@ -5840,6 +5840,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-egui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "getrandom 0.2.15",
+ "getrandom 0.3.1",
+ "log",
+ "ploke-records",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "ploke-embed"
 version = "0.1.0"
 dependencies = [
@@ -5904,8 +5921,6 @@ dependencies = [
  "ploke-protocol",
  "ploke-records",
  "ploke-test-utils",
- "ploke-tree",
- "ploke-tree-browser",
  "ploke-tui",
  "regex",
  "reqwest",
@@ -6114,10 +6129,7 @@ dependencies = [
 name = "ploke-tree-browser"
 version = "0.1.0"
 dependencies = [
- "ploke-records",
  "ploke-tree",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -6129,7 +6141,7 @@ dependencies = [
  "getrandom 0.2.15",
  "getrandom 0.3.1",
  "log",
- "ploke-tree-browser",
+ "ploke-tree",
  "serde",
  "serde_json",
  "wasm-bindgen",

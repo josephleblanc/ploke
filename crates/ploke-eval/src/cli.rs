@@ -559,12 +559,6 @@ pub enum HistorySubcommand {
     ScoreSelectionReview(Prototype1ScoreCommand),
     /// Print one sealed successor-selection decision and optional traversal replay.
     SelectionShow(Prototype1SelectionShowCommand),
-    /// Print a read-only History-shaped preview from current campaign records.
-    Preview(Prototype1HistoryPreviewCommand),
-    /// Print read-only playback projected from sealed History blocks.
-    Playback(Prototype1HistoryPlaybackCommand),
-    /// Export an enriched browser model as JSON for the egui/WASM frontend.
-    ExportBrowserModel(Prototype1ExportBrowserModelCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -636,40 +630,6 @@ pub struct Prototype1SelectionShowCommand {
     /// Include deterministic HistoryScoreChildProp replay weights when available.
     #[arg(long)]
     pub replay: bool,
-}
-
-#[derive(Debug, Parser)]
-pub struct Prototype1HistoryPreviewCommand {
-    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
-    pub format: InspectOutputFormat,
-
-    /// Print one zero-based entry from the preview.
-    #[arg(long, value_name = "INDEX")]
-    pub entry: Option<usize>,
-
-    /// Maximum entries to include in the lightweight view.
-    #[arg(long, value_name = "N")]
-    pub entries: Option<usize>,
-
-    /// Maximum diagnostics to include in the lightweight view.
-    #[arg(long, value_name = "N")]
-    pub diagnostics: Option<usize>,
-}
-
-#[derive(Debug, Parser)]
-pub struct Prototype1HistoryPlaybackCommand {
-    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
-    pub format: InspectOutputFormat,
-
-    #[arg(long, value_enum, default_value_t = Prototype1HistoryPlaybackGranularity::Fine)]
-    pub granularity: Prototype1HistoryPlaybackGranularity,
-}
-
-#[derive(Debug, Parser)]
-pub struct Prototype1ExportBrowserModelCommand {
-    /// Write output to this path instead of stdout.
-    #[arg(long)]
-    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -12527,71 +12487,6 @@ mod tests {
             }) => {
                 assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
                 assert_eq!(command.format, InspectOutputFormat::Json);
-            }
-            other => panic!("unexpected command shape: {:?}", other),
-        }
-    }
-
-    #[test]
-    fn history_preview_command_parses() {
-        let parsed = Cli::try_parse_from([
-            "ploke-eval",
-            "history",
-            "preview",
-            "--campaign",
-            "prototype1-campaign",
-            "--format",
-            "json",
-            "--entries",
-            "3",
-            "--diagnostics",
-            "2",
-            "--entry",
-            "1",
-        ])
-        .expect("history preview should parse");
-
-        match parsed.command {
-            Command::History(HistoryCommand {
-                campaign,
-                command: HistorySubcommand::Preview(preview),
-                ..
-            }) => {
-                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
-                assert_eq!(preview.format, InspectOutputFormat::Json);
-                assert_eq!(preview.entries, Some(3));
-                assert_eq!(preview.diagnostics, Some(2));
-                assert_eq!(preview.entry, Some(1));
-            }
-            other => panic!("unexpected command shape: {:?}", other),
-        }
-    }
-
-    #[test]
-    fn history_playback_command_parses() {
-        let parsed = Cli::try_parse_from([
-            "ploke-eval",
-            "history",
-            "playback",
-            "--campaign",
-            "prototype1-campaign",
-            "--format",
-            "json",
-        ])
-        .expect("history playback should parse");
-
-        match parsed.command {
-            Command::History(HistoryCommand {
-                campaign,
-                command: HistorySubcommand::Playback(playback),
-                ..
-            }) => {
-                assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
-                assert_eq!(playback.format, InspectOutputFormat::Json);
-                assert_eq!(
-                    playback.granularity,
-                    Prototype1HistoryPlaybackGranularity::Fine
-                );
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

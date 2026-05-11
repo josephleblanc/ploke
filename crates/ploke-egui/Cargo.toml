@@ -1,15 +1,15 @@
 [package]
-name = "ploke-tree-egui"
+name = "ploke-egui"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
-description = "egui/eframe UI for browsing Ploke run playback"
+description = "egui run playback browser for Ploke"
 
 [dependencies]
-ploke-tree = { workspace = true, features = ["projection"] }
+ploke-records = { workspace = true, features = ["protocol"] }
 eframe = "0.33"
 egui = "0.33"
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 log = "0.4"
 
