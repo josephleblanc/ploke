@@ -93,7 +93,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 use uuid::Uuid;
 
 // Re-export types from ploke-llm that we need for structured capture
@@ -1235,6 +1235,87 @@ pub struct RawFullResponseRecord {
     pub response: OpenAiResponse,
 }
 
+/// Typed projection over `agent-turn-trace.json` for replay/UI summaries.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentTurnTraceProjection {
+    #[serde(default)]
+    pub events: Vec<TurnTraceProjectionEvent>,
+}
+
+/// One externally tagged event in `agent-turn-trace.json`.
+#[derive(Debug, Clone)]
+pub enum TurnTraceProjectionEvent {
+    ToolCompleted(ToolCompletedRecord),
+    ToolFailed(ToolFailedRecord),
+    Other { kind: String },
+}
+
+impl TurnTraceProjectionEvent {
+    pub fn kind(&self) -> &str {
+        match self {
+            Self::ToolCompleted(_) => "ToolCompleted",
+            Self::ToolFailed(_) => "ToolFailed",
+            Self::Other { kind } => kind,
+        }
+    }
+
+    pub fn tool_latency_ms(&self) -> Option<u64> {
+        match self {
+            Self::ToolCompleted(record) => Some(record.latency_ms),
+            Self::ToolFailed(record) => Some(record.latency_ms),
+            Self::Other { .. } => None,
+        }
+    }
+
+    pub fn is_tool_completed(&self) -> bool {
+        matches!(self, Self::ToolCompleted(_))
+    }
+
+    pub fn is_tool_failed(&self) -> bool {
+        matches!(self, Self::ToolFailed(_))
+    }
+}
+
+impl<'de> Deserialize<'de> for TurnTraceProjectionEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct EventVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for EventVisitor {
+            type Value = TurnTraceProjectionEvent;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an externally tagged turn-trace event")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let Some(kind) = map.next_key::<String>()? else {
+                    return Err(serde::de::Error::custom("turn-trace event had no tag"));
+                };
+                let event = match kind.as_str() {
+                    "ToolCompleted" => TurnTraceProjectionEvent::ToolCompleted(map.next_value()?),
+                    "ToolFailed" => TurnTraceProjectionEvent::ToolFailed(map.next_value()?),
+                    _ => {
+                        let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                        TurnTraceProjectionEvent::Other { kind }
+                    }
+                };
+                while map.next_key::<serde::de::IgnoredAny>()?.is_some() {
+                    let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                }
+                Ok(event)
+            }
+        }
+
+        deserializer.deserialize_map(EventVisitor)
+    }
+}
+
 /// A single tool execution (request + result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecutionRecord {
@@ -1431,10 +1512,7 @@ pub use ploke_tui::chat_history::Message as ConversationMessage;
 pub struct ToolCallRecord {
     pub id: String,
     pub tool: String,
-    /// Typed-persistence violation: replace this anonymous JSON field with a
-    /// typed argument enum/record or typed parse-failure record before this
-    /// shape is used as an owned persisted reader contract.
-    pub arguments: serde_json::Value,
+    pub arguments: ploke_records::tool_contracts::ToolArgumentsJson,
 }
 
 /// Run outcome summary (for quick reference without decompressing).
@@ -1673,7 +1751,7 @@ mod tests {
                     parent_id: "parent-001".to_string(),
                     call_id: "call-001".to_string(),
                     tool: "search_code".to_string(),
-                    arguments: r#"{"query":"handle_request"}"#.to_string(),
+                    arguments: r#"{"query":"handle_request"}"#.into(),
                 }),
                 ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
                     request_id: "req-001".to_string(),
@@ -1873,6 +1951,121 @@ mod tests {
     }
 
     #[test]
+    fn tool_request_record_deserializes_legacy_string_arguments() {
+        let json = r#"{
+            "request_id":"req-001",
+            "parent_id":"parent-001",
+            "call_id":"call-001",
+            "tool":"read_file",
+            "arguments":"{\"file\":\"src/lib.rs\",\"start_line\":1}"
+        }"#;
+
+        let record: ToolRequestRecord =
+            serde_json::from_str(json).expect("legacy string arguments deserialize");
+
+        assert_eq!(
+            record.arguments.as_str(),
+            r#"{"file":"src/lib.rs","start_line":1}"#
+        );
+        assert!(
+            record
+                .arguments
+                .decode_for_tool(&record.tool)
+                .decoded()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn turn_record_deserializes_legacy_object_tool_arguments() {
+        let json = r#"{
+            "turn_number":1,
+            "started_at":"2026-04-09T18:30:00Z",
+            "ended_at":"2026-04-09T18:30:05Z",
+            "db_timestamp_micros":1744223415500000,
+            "issue_prompt":"Inspect src/lib.rs",
+            "tool_calls":[{
+                "request":{
+                    "request_id":"req-001",
+                    "parent_id":"parent-001",
+                    "call_id":"call-001",
+                    "tool":"read_file",
+                    "arguments":{"file":"src/lib.rs","start_line":1,"end_line":3}
+                },
+                "result":{
+                    "status":"Completed",
+                    "request_id":"req-001",
+                    "parent_id":"parent-001",
+                    "call_id":"call-001",
+                    "tool":"read_file",
+                    "content":"ok"
+                },
+                "latency_ms":12
+            }],
+            "outcome":{"type":"ToolCalls","count":1}
+        }"#;
+
+        let turn: TurnRecord =
+            serde_json::from_str(json).expect("legacy object arguments deserialize");
+
+        let request = &turn.tool_calls[0].request;
+        assert_eq!(
+            request.arguments.as_str(),
+            r#"{"end_line":3,"file":"src/lib.rs","start_line":1}"#
+        );
+        assert!(
+            request
+                .arguments
+                .decode_for_tool(&request.tool)
+                .decoded()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn tool_result_trace_projection_deserializes_turn_events() {
+        let json = r#"{
+            "events": [
+                {"DebugCommand": "ignored"},
+                {"ToolCompleted": {
+                    "request_id": "req-001",
+                    "parent_id": "parent-001",
+                    "call_id": "call-001",
+                    "tool": "read_file",
+                    "content": "ok",
+                    "ui_payload": null,
+                    "latency_ms": 42
+                }},
+                {"ToolFailed": {
+                    "request_id": "req-002",
+                    "parent_id": "parent-001",
+                    "call_id": "call-002",
+                    "tool": "apply_code_edit",
+                    "error": "no match",
+                    "ui_payload": null,
+                    "latency_ms": 13
+                }}
+            ]
+        }"#;
+
+        let projection: AgentTurnTraceProjection =
+            serde_json::from_str(json).expect("turn trace projection should deserialize");
+
+        assert_eq!(projection.events.len(), 3);
+        assert_eq!(projection.events[0].kind(), "DebugCommand");
+        assert!(projection.events[1].is_tool_completed());
+        assert!(projection.events[2].is_tool_failed());
+        assert_eq!(
+            projection
+                .events
+                .iter()
+                .filter_map(TurnTraceProjectionEvent::tool_latency_ms)
+                .sum::<u64>(),
+            55
+        );
+    }
+
+    #[test]
     fn agent_metadata_roundtrips_selected_endpoint_provenance() {
         let metadata = AgentMetadata {
             model_id: Some(ModelId::from_str("moonshotai/kimi-k2.5").expect("model id")),
@@ -2048,7 +2241,7 @@ mod tests {
                     parent_id: "parent-001".to_string(),
                     call_id: "call-001".to_string(),
                     tool: "search_code".to_string(),
-                    arguments: r#"{"query": "fn handle_request"}"#.to_string(),
+                    arguments: r#"{"query": "fn handle_request"}"#.into(),
                 },
                 result: ToolResult::Completed(ToolCompletedRecord {
                     request_id: "req-001".to_string(),
@@ -2105,7 +2298,7 @@ mod tests {
                     parent_id: "parent-002".to_string(),
                     call_id: "call-002".to_string(),
                     tool: "apply_code_edit".to_string(),
-                    arguments: r#"{"path": "src/lib.rs", "line": 42}"#.to_string(),
+                    arguments: r#"{"path": "src/lib.rs", "line": 42}"#.into(),
                 },
                 result: ToolResult::Completed(ToolCompletedRecord {
                     request_id: "req-002".to_string(),
@@ -2307,7 +2500,7 @@ mod tests {
                     parent_id: "parent-010".to_string(),
                     call_id: "call-010".to_string(),
                     tool: "search_code".to_string(),
-                    arguments: r#"{"query":"handle_request"}"#.to_string(),
+                    arguments: r#"{"query":"handle_request"}"#.into(),
                 }),
                 ObservedTurnEvent::ToolFailed(ToolFailedRecord {
                     request_id: "req-010".to_string(),

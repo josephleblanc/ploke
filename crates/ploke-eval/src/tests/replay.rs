@@ -194,7 +194,7 @@ async fn replay_ns_patch_request(
         call_id: ploke_core::ArcStr::from(request.call_id.clone()),
     };
 
-    let params = NsPatch::deserialize_params(&request.arguments)
+    let params = NsPatch::deserialize_params(request.arguments.as_str())
         .expect("historical non_semantic_patch payload should deserialize");
     let ploke_tui::tools::ToolResult {
         content,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::record::{
     RunRecord, SubmissionArtifactState, ToolExecutionRecord, ToolResult, TurnOutcome,
 };
+use ploke_records::tool_contracts::{PersistedToolCallArguments, ToolCallArguments};
 
 const EDIT_TOOL_NAMES: [&str; 4] = [
     "apply_code_edit",
@@ -270,22 +271,21 @@ fn flatten_raw_patch_targets(tool_calls: &[ToolExecutionRecord]) -> Vec<String> 
     tool_calls
         .iter()
         .filter(|call| call.request.tool == RAW_PATCH_TOOL_NAME)
-        .flat_map(|call| raw_patch_target_files(&call.request.arguments))
+        .flat_map(raw_patch_target_files)
         .collect()
 }
 
-fn raw_patch_target_files(arguments: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
-        return Vec::new();
-    };
-    value
-        .get("patches")
-        .and_then(|patches| patches.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|patch| patch.get("file").and_then(|file| file.as_str()))
-        .map(ToString::to_string)
-        .collect()
+fn raw_patch_target_files(call: &ToolExecutionRecord) -> Vec<String> {
+    match call.request.arguments.decode_for_tool(&call.request.tool) {
+        PersistedToolCallArguments::Decoded(ToolCallArguments::NsPatch(arguments)) => arguments
+            .patches
+            .into_iter()
+            .map(|patch| patch.file)
+            .collect(),
+        PersistedToolCallArguments::Decoded(_) | PersistedToolCallArguments::ParseFailure(_) => {
+            Vec::new()
+        }
+    }
 }
 
 fn raw_patch_retry_count(targets: &[String]) -> usize {
@@ -422,7 +422,9 @@ mod tests {
                 parent_id: Uuid::new_v4().to_string(),
                 call_id: call_id.to_string(),
                 tool: tool.as_str().to_string(),
-                arguments: serde_json::to_string(&arguments).expect("serialize args"),
+                arguments: serde_json::to_string(&arguments)
+                    .expect("serialize args")
+                    .into(),
             },
             result: ToolResult::Completed(ToolCompletedRecord {
                 request_id: request_id.to_string(),
@@ -450,7 +452,9 @@ mod tests {
                 parent_id: Uuid::new_v4().to_string(),
                 call_id: call_id.to_string(),
                 tool: tool.as_str().to_string(),
-                arguments: serde_json::to_string(&arguments).expect("serialize args"),
+                arguments: serde_json::to_string(&arguments)
+                    .expect("serialize args")
+                    .into(),
             },
             result: ToolResult::Failed(ToolFailedRecord {
                 request_id: request_id.to_string(),

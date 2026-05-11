@@ -6,7 +6,25 @@ This matrix bridges the typed persistence inventory to the interactive archive-g
 
 The inventory says which persisted/transmitted surfaces exist. The UI contract says what questions the archive graph must answer. This matrix says which typed facts, joins, and derived evidence are needed to answer each question.
 
-The UI target is an interactive node graph canvas over the growing archive: artifact/runtime nodes, patch/evaluation/successor edges, inspector refs, badges, and a synced timeline strip. Matrix rows should preserve those visual primitives when naming facts and joins.
+The UI target is an interactive node graph canvas over the growing archive:
+artifact/runtime nodes, operation edges, patch-attempt/derived-artifact edges,
+runtime-derivation edges, evaluation/successor edges, inspector refs, badges,
+and a synced timeline strip. Matrix rows should preserve those visual
+primitives when naming facts and joins.
+
+The run execution graph is the central operator-facing object. Its core comes
+from `prototype1_state::mod`:
+
+```text
+Runtime -> Surface(Artifact) -> PatchAttempt
+PatchAttempt + base Artifact -> derived Artifact
+derived Artifact -> hydrated Runtime
+```
+
+This is three related graphs: artifact graph, runtime derivation graph, and
+operation graph. Typed-persistence cleanup rows may be foundation-complete
+before they are operator-complete; the operator-complete path is typed source
+facts -> graph assembly -> browser model -> egui/browser inspector.
 
 ## Evidence Modes
 
@@ -30,6 +48,7 @@ new mirror types:
 |---|---|---|---|
 | Runtime instance | `ploke_records::ids::RuntimeId` | runtime node, timeline span owner, tool/LLM/eval context | `ploke-eval::loop_graph` has an older mirror; do not extend the mirror for new shared persisted shapes. |
 | Recoverable artifact state | `ploke_records::ids::ArtifactId`; History `ArtifactRefRecord` | graph node, patch base, selected successor target | Current join is string identity between transparent carriers. Add typed helper/projection joins later; do not invent a second artifact identity. |
+| Operation coordinate | generator Runtime id + target Artifact/surface id, eventually a shared operation id when durable records prove the need | operation edge, patch generation provenance, cross-lineage operation explanation | Do not collapse this into git ancestry or branch name. The generator Runtime and target Artifact are both semantically significant. |
 | Patch record | `ploke_records::ids::PatchId` | patch edge, diff inspector, composability input | The final parent -> patch -> child edge may combine patch, surface commitment, and History entry facts. |
 | Candidate occurrence | `CandidateOccurrenceId` | candidate event in History/fine playback | Distinct from candidate-set membership. |
 | Candidate membership and set | `CandidateMembershipId`, `CandidateSetRecord`, `CandidateSetMembershipRecord`, candidate-set root/commitment | selection edge and "selected from which set" proof | There is no standalone `CandidateSetId` today; do not invent one during cleanup slices unless a later replay slice proves it is needed. |
@@ -39,7 +58,8 @@ new mirror types:
 
 ## Protocol Artifact Pre-Slice Decisions
 
-These decisions constrain `protocol-artifacts.decode`:
+These decisions constrain `protocol-artifacts.decode` and
+`protocol-artifacts.current-writer-dtos`:
 
 - The protocol artifact coordinate for slice 1 is `run_id`, `subject_id`,
   artifact file path or `ProtocolArtifactSummaryRecord.path`,
@@ -56,8 +76,8 @@ These decisions constrain `protocol-artifacts.decode`:
   `serde_json::Value` for later field walking.
 - Archive-graph joins from protocol artifacts to History entries, evaluations,
   tool calls, parent/child artifacts, or patches are not complete in slice 1.
-  They are explicit follow-up facts for `protocol-artifacts.storage-aggregate`
-  and later replay/identity slices.
+  They are explicit follow-up facts for `protocol-artifacts.listing-load-result`,
+  `protocol-artifacts.aggregate-tool-call`, and later replay/identity slices.
 - Later protocol joins should stay compound unless a replay slice proves a
   standalone protocol artifact id is necessary. Use History `EntryId` from
   admitted entries; evaluation identity from evaluation procedure, eval-set,
@@ -142,9 +162,9 @@ slices without adding new source-authority records early:
 
 | UI contract rows | Evidence mode | Typed facts needed | Required joins | Inventory rows | Closing slices | UI answer produced | Verification target |
 |---|---|---|---|---|---|---|---|
-| `ui.protocol.outputs`, `ui.parent.child.patch.reason` | `fact`, `join`, `replay` | Protocol artifact input/output payloads, typed protocol parse/error records, stored artifact records, aggregate outputs, parent/child artifact refs | protocol coordinate (`run_id`, `subject_id`, path, procedure), parent artifact id, child artifact id, history entry id | `protocol.artifact.decode`, `protocol.artifact.store`, `protocol.artifact.aggregate.output`, `protocol.artifact.playback` | `protocol-artifacts.decode`, `protocol-artifacts.storage-aggregate` | Show typed protocol inputs/outputs and how cited protocol facts feed parent-child patch reasoning without inferring graph lineage from artifact filenames or reports. | Typed protocol payload fixture deserializes into payload variants or typed parse/error records; replay test uses adjacent typed joins for any parent/child edge. |
-| `ui.tool.calls`, `ui.child.self.eval.actions`, `ui.live.progress` | `fact`, `join`, `replay` | Tool call records, typed arguments, tool request/result records, tool execution records, typed trace projections | tool call id, request id, execution id, attempt id, evaluation id, child artifact id | `tool.call.record.arguments`, `tool.request.arguments.capture`, `tool.execution.record`, `tool.response.full_response_trace`, `tool.result.trace.projection` | `tool.call.arguments`, `tool.result.trace.projection` | Show each tool call with typed arguments, typed return, execution status, and parent evaluation context. | Real-run or fixture parse reconstructs child evaluation -> attempt -> tool call -> result. |
-| `ui.provider.attempts`, `ui.child.self.eval.actions`, `ui.live.progress` | `fact`, `join`, `replay` | LLM request/response records, provider error records, timeout records, attempt timeline records, tool bridge records | attempt id, provider request id, response id, model id, tool call id, child/evaluation id | `llm.attempt.request`, `llm.attempt.response`, `llm.attempt.provider_error`, `llm.attempt.timeout`, `llm.attempt.timeline`, `llm.dto.openai_response`, `llm.tool_bridge.records` | `llm-attempts.provider-observation-projection`, `llm-attempts.dto-tool-bridge` | Show provider/model attempts, errors, timeouts, responses, and linked tool calls. | Typed attempt projection reconstructs request -> response/error/timeout -> tool bridge without JSON field walking. |
+| `ui.protocol.outputs`, `ui.parent.child.patch.reason` | `fact`, `join`, `replay` | Protocol artifact input/output payloads, typed protocol parse/error records, stored artifact records, aggregate outputs, parent/child artifact refs | protocol coordinate (`run_id`, `subject_id`, path, procedure), parent artifact id, child artifact id, history entry id | `protocol.artifact.decode`, `protocol.artifact.store`, `protocol.artifact.aggregate.output`, `protocol.artifact.playback` | `protocol-artifacts.aggregate-tool-call` | Show typed protocol inputs/outputs and how cited protocol facts feed parent-child patch reasoning without inferring graph lineage from artifact filenames or reports. | Typed listing fixture returns one row per visible `.json`, classifies malformed/unsupported/future payloads and identity mismatches as typed unload rows, proves filenames are not semantic authority, and aggregate tests consume decoded tool-call variants while separately reporting decoded non-tool-call skips, decoded tool-call payload-shape skips, and unloaded rows. |
+| `ui.tool.calls`, `ui.child.self.eval.actions`, `ui.live.progress` | `fact`, `join`, `replay` | Tool call records, typed arguments, tool request/result records, tool execution records, typed trace projections | tool call id, request id, execution id, attempt id, evaluation id, child artifact id | `tool.call.record.arguments`, `tool.request.arguments.capture`, `tool.execution.record`, `tool.response.full_response_trace`, `tool.result.trace.projection` | `tool.result.trace.projection`, `run-execution-graph.browser-spine` | Show each tool call with typed arguments, typed return, execution status, and parent evaluation context from selected run graph steps/groups. | Tool argument fixture decodes through `ToolArgumentsJson -> ToolCallArguments` or typed parse-failure records; tool-result failure/truncation summaries, `agent-turn-trace.json`, and observation JSONL replay now deserialize through named typed projections. Graph-spine verification must prove browser-model/egui access to selected-step tool-call summaries. Provider DTO/tool-bridge joins remain assigned to later LLM-attempt slices. |
+| `ui.provider.attempts`, `ui.child.self.eval.actions`, `ui.live.progress` | `fact`, `join`, `replay` | LLM request/response records, provider error records, timeout records, attempt timeline records, tool bridge records | attempt id, provider request id, response id, model id, tool call id, child/evaluation id | `llm.attempt.request`, `llm.attempt.response`, `llm.attempt.provider_error`, `llm.attempt.timeout`, `llm.attempt.timeline`, `llm.dto.openai_response`, `llm.tool_bridge.records` | `run-execution-graph.browser-spine`, `llm-attempts.dto-tool-bridge` | Show provider/model attempts, retries, suppressions, errors, timeouts, responses, and linked tool calls from selected run graph steps/groups. | Provider error, timeout, and attempt timeline replay now use typed projections; graph-spine verification must prove browser-model/egui access to selected-step/group provider attempt summaries. Remaining work after that is the OpenAI response DTO/tool bridge. |
 | `ui.write.surface.evidence`, `ui.approval.path`, `ui.patch.diff.metadata`, `ui.patch.diff.view` | `fact`, `join`, `replay` | Surface grant/check records, checked surface evidence, attempt/commitment records, patch artifact records, proposal refs | surface id, grant/check id, proposal id, commitment id, patch id, parent artifact id, invocation id | `edit_surface.grant_check`, `edit_surface.checked_surface_evidence`, `edit_surface.surface_evidence_record`, `edit_surface.surface_attempt_record`, `edit_surface.candidate_artifact_record`, `edit_surface.surface_commitment_record`, `edit_surface.parent_identity_record`, `edit_surface.invocation_record`, `edit_surface.proposal_registry`, `edit_surface.patch_artifact` | `edit-surface.source-records`, `patch.diff-code-graph-impact` | Show why a write surface was selected, what proposal/commitment approved it, and what diff was applied. | Typed replay links surface evidence -> proposal/check -> commitment -> patch diff. |
 | `ui.database.context`, `ui.write.surface.evidence` | `fact`, `join`, `replay` | Intent/tool result records, context assembly records, embedding/node refs, UI context projection | context bundle id, query id, node id, prompt id, evaluation id, tool call id | `db.context.intent_and_tool_result`, `db.context.assembly`, `db.context.embedding_and_node_refs`, `db.context.ui_projection` | `database-context.prompt-evidence` | Show which database context was added and why it was included. | Typed replay links prompt/evaluation/tool call to context bundle and each cited node. |
 | `ui.oracle.target`, `ui.successor.selection`, `ui.selection.candidate.set` | `fact`, `join`, `replay` | Eval target identity records, artifact branch records, instance registry, scheduler state, selection DTO, History selection payload, metrics/evidence records | evaluation id, target artifact id, instance id, branch id, candidate set root/commitment, candidate membership id, selected artifact id, metrics run id | `eval.artifact.branch`, `eval.metrics.run`, `eval.selection.dto`, `eval.history.payload.selection`, `eval.history.evidence`, `eval.instance.registry`, `eval.scheduler.state`, `eval.run_record.metadata_setup`, `eval.run_record.patch_packaging`, `eval.tree.playback` | `evaluation-oracle-targets.identity-joins`, `evaluation-oracle-targets.selection-replay`, `candidate-frontier.replay` | Show oracle target, complete candidate set, selected successor, and evidence used for selection. | Typed replay proves selected membership belongs to the final decision candidate set. |

@@ -20,8 +20,13 @@ use ploke_protocol::procedure::{
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
+use ploke_records::protocol::{InterventionApplyArtifact, InterventionIssueDetectionArtifact};
+use ploke_records::tool_contracts::{
+    PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
+    ToolArgumentsJson, ToolCallArguments,
+};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -71,11 +76,11 @@ use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::projection::OperatorProjectionRead;
 use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
-    load_protocol_aggregate_from_artifacts,
 };
 use crate::protocol_artifacts::{
-    StoredProtocolArtifactFile, list_protocol_artifacts, load_protocol_artifact,
-    protocol_artifact_preview, protocol_artifact_summary, write_protocol_artifact,
+    StoredProtocolArtifactFile, list_protocol_artifact_load_results, list_protocol_artifacts,
+    load_protocol_artifact, protocol_artifact_preview, protocol_artifact_summary,
+    write_protocol_artifact,
 };
 use crate::protocol_report::{
     ProtocolAggregateCallIssueRow, ProtocolAggregateCoverage, ProtocolAggregateReport,
@@ -1503,6 +1508,7 @@ fn persist_intervention_apply_for_record(
             phase: "intervention_apply",
             detail: source.to_string(),
         })?;
+    let artifact = InterventionApplyArtifact(&output);
     write_protocol_artifact(
         record_path,
         INTERVENTION_APPLY_PROCEDURE,
@@ -1511,7 +1517,7 @@ fn persist_intervention_apply_for_record(
         None,
         &input,
         &output,
-        &output,
+        &artifact,
     )?;
     Ok(output)
 }
@@ -5925,11 +5931,13 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     Ok(())
 }
 
-fn build_issue_detection_artifact(output: &IssueDetectionOutput) -> serde_json::Value {
-    serde_json::json!({
-        "case_count": output.cases.len(),
-        "primary_issue": select_primary_issue(output),
-    })
+fn build_issue_detection_artifact(
+    output: &IssueDetectionOutput,
+) -> InterventionIssueDetectionArtifact<IssueCase> {
+    InterventionIssueDetectionArtifact {
+        case_count: output.cases.len(),
+        primary_issue: select_primary_issue(output),
+    }
 }
 
 fn issue_aggregate_error_to_prepare(err: IssueDetectionAggregateError) -> PrepareError {
@@ -6633,7 +6641,10 @@ impl InspectToolCallsCommand {
                         index,
                         turn,
                         truncate_for_table(&call.request.tool, 18),
-                        truncate_for_table(&summarize_tool_inputs(&call.request.arguments), 46),
+                        truncate_for_table(
+                            &summarize_tool_inputs(&call.request.tool, &call.request.arguments),
+                            46,
+                        ),
                         truncate_for_table(&summarize_tool_result(&call.result), 28),
                     );
                 }
@@ -7018,7 +7029,10 @@ impl InspectTurnCommand {
                                     index,
                                     truncate_for_table(&call.request.tool, 18),
                                     truncate_for_table(
-                                        &summarize_tool_inputs(&call.request.arguments),
+                                        &summarize_tool_inputs(
+                                            &call.request.tool,
+                                            &call.request.arguments,
+                                        ),
                                         46
                                     ),
                                     truncate_for_table(&summarize_tool_result(&call.result), 28),
@@ -8500,13 +8514,17 @@ fn collect_protocol_run_summary_record(
         .unwrap_or_else(|| record.manifest_id.clone());
     let subject_id = record.metadata.benchmark.instance_id.clone();
     let tool_calls_total = record.tool_calls().len();
-    let artifacts =
-        list_protocol_artifacts(record_path).map_err(|err| PrepareError::DatabaseSetup {
+    let artifacts = list_protocol_artifact_load_results(record_path).map_err(|err| {
+        PrepareError::DatabaseSetup {
             phase: "inspect_protocol_overview",
             detail: err.to_string(),
-        })?;
+        }
+    })?;
 
-    match load_protocol_aggregate_from_artifacts(record_path, artifacts) {
+    match crate::protocol::protocol_aggregate::load_protocol_aggregate_from_artifacts(
+        record_path,
+        artifacts,
+    ) {
         Ok(aggregate) => {
             let report = build_protocol_report(&aggregate)?;
             let summary = protocol_summary_row_from_aggregate_with_report(&aggregate, &report);
@@ -9304,7 +9322,7 @@ fn tool_loop_entries(tool_calls: &[crate::record::ToolExecutionRecord]) -> Vec<T
 }
 
 fn tool_loop_entry(index: usize, call: &crate::record::ToolExecutionRecord) -> ToolLoopEntry {
-    let input = summarize_tool_inputs(&call.request.arguments);
+    let input = summarize_tool_inputs(&call.request.tool, &call.request.arguments);
     match &call.result {
         crate::record::ToolResult::Completed(completed) => ToolLoopEntry {
             index,
@@ -9642,10 +9660,15 @@ fn summarize_neighborhood_call(
         failed: matches!(call.result, crate::record::ToolResult::Failed(_)),
         latency_ms: call.latency_ms,
         summary: tool_call_summary_line(call),
-        args_preview: truncate_middle(&call.request.arguments, 96),
+        args_preview: truncate_middle(call.request.arguments.as_str(), 96),
         result_preview: tool_result_preview(call),
-        search_term: extract_argument_string(&call.request.arguments, &["search_term", "query"]),
+        search_term: extract_argument_string(
+            &call.request.tool,
+            &call.request.arguments,
+            &["search_term", "query"],
+        ),
         path_hint: extract_argument_string(
+            &call.request.tool,
             &call.request.arguments,
             &["file", "dir", "path", "target_dir"],
         ),
@@ -9672,14 +9695,18 @@ fn tool_result_preview(call: &crate::record::ToolExecutionRecord) -> String {
     }
 }
 
-fn extract_argument_string(arguments: &str, keys: &[&str]) -> Option<String> {
-    let json = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
-    for key in keys {
-        if let Some(value) = json.get(*key).and_then(|value| value.as_str()) {
-            return Some(value.to_string());
-        }
-    }
-    None
+fn extract_argument_string(
+    tool: &str,
+    arguments: &ToolArgumentsJson,
+    keys: &[&str],
+) -> Option<String> {
+    let PersistedToolCallArguments::Decoded(arguments) = arguments.decode_for_tool(tool) else {
+        return None;
+    };
+    tool_argument_projection(&arguments)
+        .into_iter()
+        .find(|field| keys.contains(&field.key))
+        .map(|field| field.value)
 }
 
 fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
@@ -9688,14 +9715,14 @@ fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
             "tool={} status=completed latency_ms={} args={} result={}",
             call.request.tool,
             call.latency_ms,
-            truncate_middle(&call.request.arguments, 96),
+            truncate_middle(call.request.arguments.as_str(), 96),
             truncate_middle(&completed.content, 96),
         ),
         crate::record::ToolResult::Failed(failed) => format!(
             "tool={} status=failed latency_ms={} args={} error={}",
             call.request.tool,
             call.latency_ms,
-            truncate_middle(&call.request.arguments, 96),
+            truncate_middle(call.request.arguments.as_str(), 96),
             truncate_middle(&failed.error, 96),
         ),
     }
@@ -10147,7 +10174,7 @@ fn print_tool_call_detail(
     println!();
     println!("Parsed Inputs (convenience view from stored raw arguments)");
     println!("{}", "-".repeat(40));
-    let rendered_inputs = render_tool_inputs(&call.request.arguments);
+    let rendered_inputs = render_tool_inputs(&call.request.tool, &call.request.arguments);
     if rendered_inputs.is_empty() {
         println!("(none)");
     } else {
@@ -10161,7 +10188,7 @@ fn print_tool_call_detail(
         println!();
         println!("Stored Raw Arguments");
         println!("{}", "-".repeat(40));
-        println!("{}", call.request.arguments);
+        println!("{}", call.request.arguments.as_str());
     }
 }
 
@@ -10228,138 +10255,251 @@ fn print_tool_result_detail(index: usize, result: &crate::record::ToolResult, fu
     }
 }
 
-fn render_tool_inputs(arguments: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
-        return vec![format!(
-            "arguments: {}",
-            render_payload_block(arguments, 220).text
-        )];
-    };
+#[derive(Debug, Clone)]
+struct ToolArgumentField {
+    key: &'static str,
+    value: String,
+}
 
-    match value {
-        serde_json::Value::Object(map) => render_tool_input_map(&map),
-        other => vec![format!(
-            "arguments: {}",
-            summarize_json_value("arguments", &other, true)
-        )],
+fn render_tool_inputs(tool: &str, arguments: &ToolArgumentsJson) -> Vec<String> {
+    match arguments.decode_for_tool(tool) {
+        PersistedToolCallArguments::Decoded(arguments) => {
+            render_tool_argument_fields(&tool_argument_projection(&arguments))
+        }
+        PersistedToolCallArguments::ParseFailure(failure) => {
+            render_tool_argument_parse_failure(&failure)
+        }
     }
 }
 
-fn summarize_tool_inputs(arguments: &str) -> String {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
-        return truncate_middle(arguments, 46);
-    };
-
-    let Some(object) = value.as_object() else {
-        return truncate_middle(&value.to_string(), 46);
-    };
-
-    let preferred = [
-        "file",
-        "file_path",
-        "dir",
-        "path",
-        "search_term",
-        "canon",
-        "symbol",
-        "name",
-        "query",
-        "command",
-        "patches",
-        "confidence",
-    ];
-
-    let mut parts = Vec::new();
-    let mut used = BTreeSet::new();
-    if let Some(line_window) = summarize_line_window(object) {
-        parts.push(format!("lines={line_window}"));
-        used.insert("start_line");
-        used.insert("end_line");
-    }
-    for key in preferred {
-        if used.contains(key) {
-            continue;
+fn summarize_tool_inputs(tool: &str, arguments: &ToolArgumentsJson) -> String {
+    match arguments.decode_for_tool(tool) {
+        PersistedToolCallArguments::Decoded(arguments) => {
+            summarize_tool_argument_fields(&tool_argument_projection(&arguments))
         }
-        if let Some(value) = object.get(key) {
-            parts.push(format!(
-                "{}={}",
-                key,
-                summarize_json_value(key, value, false)
-            ));
-            used.insert(key);
-        }
-        if parts.len() >= 3 {
-            break;
+        PersistedToolCallArguments::ParseFailure(failure) => {
+            truncate_middle(&failure.raw_arguments, 46)
         }
     }
-
-    if parts.is_empty() {
-        for (key, value) in object.iter().take(3) {
-            parts.push(format!(
-                "{}={}",
-                key,
-                summarize_json_value(key, value, false)
-            ));
-        }
-    }
-
-    parts.join("; ")
 }
 
-fn render_tool_input_map(map: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+fn render_tool_argument_fields(fields: &[ToolArgumentField]) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut rendered = BTreeSet::new();
-
-    if let Some(line_window) = summarize_line_window(map) {
+    if let Some(line_window) = line_window_from_fields(fields) {
         lines.push(format!(
             "lines (derived from start_line/end_line): {}",
             line_window
         ));
-        rendered.insert("start_line");
-        rendered.insert("end_line");
     }
-
-    for key in [
-        "file",
-        "file_path",
-        "dir",
-        "path",
-        "start_line",
-        "end_line",
-        "search_term",
-        "canon",
-        "symbol",
-        "name",
-        "query",
-        "command",
-        "patches",
-        "confidence",
-    ] {
-        if rendered.contains(key) {
-            continue;
-        }
-        if let Some(value) = map.get(key) {
-            lines.push(format!(
-                "{}: {}",
-                key,
-                summarize_json_value(key, value, true)
-            ));
-            rendered.insert(key);
-        }
-    }
-
-    for (key, value) in map {
-        if rendered.contains(key.as_str()) {
+    for field in fields {
+        if matches!(field.key, "start_line" | "end_line") {
             continue;
         }
         lines.push(format!(
             "{}: {}",
-            key,
-            summarize_json_value(key, value, true)
+            field.key,
+            summarize_argument_value(field.key, &field.value, true)
         ));
     }
-
     lines
+}
+
+fn summarize_tool_argument_fields(fields: &[ToolArgumentField]) -> String {
+    let mut parts = Vec::new();
+    if let Some(line_window) = line_window_from_fields(fields) {
+        parts.push(format!("lines={line_window}"));
+    }
+    for field in fields {
+        if matches!(field.key, "start_line" | "end_line") {
+            continue;
+        }
+        parts.push(format!(
+            "{}={}",
+            field.key,
+            summarize_argument_value(field.key, &field.value, false)
+        ));
+        if parts.len() >= 3 {
+            break;
+        }
+    }
+    parts.join("; ")
+}
+
+fn render_tool_argument_parse_failure(failure: &ToolArgumentParseFailure) -> Vec<String> {
+    vec![
+        format!(
+            "decode_error: {}",
+            tool_argument_decode_error(&failure.error)
+        ),
+        format!(
+            "arguments: {}",
+            render_payload_block(&failure.raw_arguments, 220).text
+        ),
+    ]
+}
+
+fn tool_argument_decode_error(error: &ToolArgumentDecodeError) -> String {
+    match error {
+        ToolArgumentDecodeError::UnknownTool { tool } => format!("unknown tool `{tool}`"),
+        ToolArgumentDecodeError::InvalidJson { message } => message.clone(),
+    }
+}
+
+fn line_window_from_fields(fields: &[ToolArgumentField]) -> Option<String> {
+    let start = fields
+        .iter()
+        .find(|field| field.key == "start_line")
+        .map(|field| field.value.as_str());
+    let end = fields
+        .iter()
+        .find(|field| field.key == "end_line")
+        .map(|field| field.value.as_str());
+    match (start, end) {
+        (Some(start), Some(end)) if start != end => Some(format!("{start}-{end}")),
+        (Some(line), _) | (_, Some(line)) => Some(line.to_string()),
+        _ => None,
+    }
+}
+
+fn tool_argument_projection(arguments: &ToolCallArguments) -> Vec<ToolArgumentField> {
+    let mut fields = Vec::new();
+    match arguments {
+        ToolCallArguments::RequestCodeContext(args) => {
+            push_option(&mut fields, "token_budget", args.token_budget);
+            push_option_ref(&mut fields, "search_term", args.search_term.as_deref());
+        }
+        ToolCallArguments::ApplyCodeEdit(args) => {
+            push_count(&mut fields, "edits", args.edits.len());
+            push_option(&mut fields, "confidence", args.confidence);
+            if let Some(edit) = args.edits.first() {
+                push_ref(&mut fields, "file", &edit.file);
+                push_ref(&mut fields, "canon", &edit.canon);
+                push_value(&mut fields, "node_type", format!("{:?}", edit.node_type));
+                push_value(&mut fields, "code", byte_count(&edit.code));
+            }
+        }
+        ToolCallArguments::InsertRustItem(args) => {
+            push_ref(&mut fields, "file", &args.file);
+            push_value(
+                &mut fields,
+                "container_kind",
+                format!("{:?}", args.container_kind),
+            );
+            push_option_ref(
+                &mut fields,
+                "container_canon",
+                args.container_canon.as_deref(),
+            );
+            push_value(&mut fields, "item_kind", format!("{:?}", args.item_kind));
+            push_value(&mut fields, "code", byte_count(&args.code));
+            push_option(&mut fields, "confidence", args.confidence);
+        }
+        ToolCallArguments::CreateFile(args) => {
+            push_ref(&mut fields, "file_path", &args.file_path);
+            push_value(&mut fields, "content", byte_count(&args.content));
+            push_option_ref(&mut fields, "on_exists", args.on_exists.as_deref());
+            push_value(&mut fields, "create_parents", args.create_parents);
+        }
+        ToolCallArguments::NsPatch(args) => {
+            push_count(&mut fields, "patches", args.patches.len());
+            push_option(&mut fields, "confidence", args.confidence);
+            if let Some(patch) = args.patches.first() {
+                push_ref(&mut fields, "file", &patch.file);
+                push_value(&mut fields, "diff", byte_count(&patch.diff));
+                push_value(&mut fields, "reasoning", byte_count(&patch.reasoning));
+            }
+        }
+        ToolCallArguments::NsRead(args) => {
+            push_ref(&mut fields, "file", &args.file);
+            push_option(&mut fields, "start_line", args.start_line);
+            push_option(&mut fields, "end_line", args.end_line);
+            push_option(&mut fields, "max_bytes", args.max_bytes);
+        }
+        ToolCallArguments::CodeItemLookup(args) => {
+            push_ref(&mut fields, "item_name", &args.item_name);
+            push_ref(&mut fields, "file_path", &args.file_path);
+            push_ref(&mut fields, "node_kind", &args.node_kind);
+            push_ref(&mut fields, "module_path", &args.module_path);
+        }
+        ToolCallArguments::CodeItemEdges(args) => {
+            push_ref(&mut fields, "item_name", &args.item_name);
+            push_ref(&mut fields, "file_path", &args.file_path);
+            push_ref(&mut fields, "node_kind", &args.node_kind);
+            push_ref(&mut fields, "module_path", &args.module_path);
+        }
+        ToolCallArguments::Cargo(args) => {
+            push_value(&mut fields, "command", format!("{:?}", args.command));
+            push_value(&mut fields, "scope", format!("{:?}", args.scope));
+            push_option_ref(&mut fields, "package", args.package.as_deref());
+            push_option_ref(&mut fields, "target", args.target.as_deref());
+            push_option_ref(&mut fields, "profile", args.profile.as_deref());
+            push_option(
+                &mut fields,
+                "features",
+                args.features.as_ref().map(|v| v.join(",")),
+            );
+        }
+        ToolCallArguments::ListDir(args) => {
+            push_ref(&mut fields, "dir", &args.dir);
+            push_value(&mut fields, "include_hidden", args.include_hidden);
+            push_option_ref(&mut fields, "sort", args.sort.as_deref());
+            push_option(&mut fields, "max_entries", args.max_entries);
+        }
+        ToolCallArguments::SearchCode(args)
+        | ToolCallArguments::SearchSymbols(args)
+        | ToolCallArguments::QueryCodebase(args) => {
+            push_option_ref(&mut fields, "search_term", args.search_term.as_deref());
+            push_option_ref(&mut fields, "query", args.query.as_deref());
+        }
+    }
+    fields
+}
+
+fn push_ref(fields: &mut Vec<ToolArgumentField>, key: &'static str, value: &str) {
+    fields.push(ToolArgumentField {
+        key,
+        value: value.to_string(),
+    });
+}
+
+fn push_value(fields: &mut Vec<ToolArgumentField>, key: &'static str, value: impl ToString) {
+    fields.push(ToolArgumentField {
+        key,
+        value: value.to_string(),
+    });
+}
+
+fn push_option<T>(fields: &mut Vec<ToolArgumentField>, key: &'static str, value: Option<T>)
+where
+    T: ToString,
+{
+    if let Some(value) = value {
+        push_value(fields, key, value);
+    }
+}
+
+fn push_option_ref(fields: &mut Vec<ToolArgumentField>, key: &'static str, value: Option<&str>) {
+    if let Some(value) = value {
+        push_ref(fields, key, value);
+    }
+}
+
+fn push_count(fields: &mut Vec<ToolArgumentField>, key: &'static str, value: usize) {
+    push_value(fields, key, value);
+}
+
+fn byte_count(value: &str) -> String {
+    format!("{} bytes", value.len())
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolNativeTruncationProjection {
+    #[serde(default, deserialize_with = "optional_bool_projection")]
+    truncated: Option<bool>,
+    #[serde(default, deserialize_with = "optional_u64_projection")]
+    byte_len: Option<u64>,
+    #[serde(default, deserialize_with = "optional_string_projection")]
+    content: Option<String>,
 }
 
 fn summarize_tool_result(result: &crate::record::ToolResult) -> String {
@@ -10377,15 +10517,96 @@ fn summarize_tool_result(result: &crate::record::ToolResult) -> String {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ToolFailureSummaryProjection {
+    #[serde(default, deserialize_with = "optional_string_projection")]
+    user: Option<String>,
+    #[serde(default, deserialize_with = "optional_string_projection")]
+    summary: Option<String>,
+    #[serde(default, deserialize_with = "optional_string_projection")]
+    message: Option<String>,
+    #[serde(default, deserialize_with = "optional_string_projection")]
+    error: Option<String>,
+}
+
+impl ToolFailureSummaryProjection {
+    fn first_message(&self) -> Option<&str> {
+        [
+            self.user.as_deref(),
+            self.summary.as_deref(),
+            self.message.as_deref(),
+            self.error.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|text| !text.split_whitespace().collect::<String>().is_empty())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OptionalStringProjection {
+    String(String),
+    Other(serde::de::IgnoredAny),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OptionalBoolProjection {
+    Bool(bool),
+    Other(serde::de::IgnoredAny),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OptionalU64Projection {
+    Number(u64),
+    String(String),
+    Other(serde::de::IgnoredAny),
+}
+
+fn optional_string_projection<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match Option::<OptionalStringProjection>::deserialize(deserializer)? {
+            Some(OptionalStringProjection::String(value)) => Some(value),
+            Some(OptionalStringProjection::Other(_)) | None => None,
+        },
+    )
+}
+
+fn optional_bool_projection<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match Option::<OptionalBoolProjection>::deserialize(deserializer)? {
+            Some(OptionalBoolProjection::Bool(value)) => Some(value),
+            Some(OptionalBoolProjection::Other(_)) | None => None,
+        },
+    )
+}
+
+fn optional_u64_projection<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match Option::<OptionalU64Projection>::deserialize(deserializer)? {
+            Some(OptionalU64Projection::Number(value)) => Some(value),
+            Some(OptionalU64Projection::String(value)) => value.parse().ok(),
+            Some(OptionalU64Projection::Other(_)) | None => None,
+        },
+    )
+}
+
 fn summarize_failure_reason(error: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(error) {
-        for key in ["user", "summary", "message", "error"] {
-            if let Some(text) = value.get(key).and_then(|value| value.as_str()) {
-                let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !normalized.is_empty() {
-                    return truncate_middle(&normalized, 96);
-                }
-            }
+    if let Ok(projection) = serde_json::from_str::<ToolFailureSummaryProjection>(error) {
+        if let Some(text) = projection.first_message() {
+            let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            return truncate_middle(&normalized, 96);
         }
     }
     let normalized = error
@@ -10417,58 +10638,12 @@ fn top_failure_label(counts: &BTreeMap<String, usize>) -> Option<String> {
         .map(|(label, _)| label.clone())
 }
 
-fn summarize_json_value(key: &str, value: &serde_json::Value, multiline: bool) -> String {
-    match value {
-        serde_json::Value::String(text) => {
-            if looks_like_path(key, text) {
-                abbreviate_path_tail(text, if multiline { 72 } else { 24 })
-            } else {
-                let limit = if multiline { 120 } else { 24 };
-                prettify_field_value(&truncate_middle(text, limit))
-            }
-        }
-        serde_json::Value::Array(items) => {
-            if items.is_empty() {
-                "[]".to_string()
-            } else {
-                format!(
-                    "[{} item{}]",
-                    items.len(),
-                    if items.len() == 1 { "" } else { "s" }
-                )
-            }
-        }
-        serde_json::Value::Object(map) => format!(
-            "{{{} key{}}}",
-            map.len(),
-            if map.len() == 1 { "" } else { "s" }
-        ),
-        other => other.to_string(),
-    }
-}
-
-fn summarize_line_window(object: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
-    let start = object
-        .get("start_line")
-        .map(compact_json_scalar)
-        .filter(|value| !value.is_empty());
-    let end = object
-        .get("end_line")
-        .map(compact_json_scalar)
-        .filter(|value| !value.is_empty());
-
-    match (start, end) {
-        (Some(start), Some(end)) => Some(format!("{start}-{end}")),
-        (Some(start), None) => Some(format!("{start}-EOF")),
-        (None, Some(end)) => Some(format!("1-{end}")),
-        (None, None) => None,
-    }
-}
-
-fn compact_json_scalar(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(text) => text.clone(),
-        other => other.to_string(),
+fn summarize_argument_value(key: &str, value: &str, multiline: bool) -> String {
+    if looks_like_path(key, value) {
+        abbreviate_path_tail(value, if multiline { 72 } else { 24 })
+    } else {
+        let limit = if multiline { 120 } else { 24 };
+        prettify_field_value(&truncate_middle(value, limit))
     }
 }
 
@@ -10563,17 +10738,16 @@ impl RenderedPayloadBlock {
 }
 
 fn summarize_tool_native_truncation(content: &str) -> Option<String> {
-    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
-    let object = parsed.as_object()?;
-    let truncated = object.get("truncated")?.as_bool()?;
+    let projection: ToolNativeTruncationProjection = serde_json::from_str(content).ok()?;
+    let truncated = projection.truncated?;
     if !truncated {
         return None;
     }
 
-    let source_bytes = object.get("byte_len")?.as_u64()?;
-    let retained_bytes = object
-        .get("content")
-        .and_then(|value| value.as_str())
+    let source_bytes = projection.byte_len?;
+    let retained_bytes = projection
+        .content
+        .as_deref()
         .map(|text| text.len() as u64)
         .unwrap_or(0);
     let omitted_bytes = source_bytes.saturating_sub(retained_bytes);
@@ -11633,7 +11807,7 @@ mod tests {
             parent_id: "parent-1".to_string(),
             call_id: "call-1".to_string(),
             tool: tool.to_string(),
-            arguments: arguments.to_string(),
+            arguments: arguments.into(),
         }
     }
 
@@ -12601,20 +12775,44 @@ mod tests {
 
     #[test]
     fn summarize_tool_inputs_prefers_parsed_fields() {
-        let args = r#"{"file":"/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs","start_line":80,"end_line":120}"#;
-        let summary = summarize_tool_inputs(args);
+        let args: ToolArgumentsJson = r#"{"file":"/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/globset/src/lib.rs","start_line":80,"end_line":120}"#.into();
+        let summary = summarize_tool_inputs("read_file", &args);
         assert!(summary.contains("lines=80-120"));
         assert!(summary.contains("file=.../globset/src/lib.rs"));
     }
 
     #[test]
     fn render_tool_inputs_surfaces_derived_line_window() {
-        let lines = render_tool_inputs(
-            r#"{"file":"/tmp/demo.rs","start_line":10,"end_line":24,"symbol":"demo"}"#,
-        );
+        let args: ToolArgumentsJson =
+            r#"{"file":"/tmp/demo.rs","start_line":10,"end_line":24,"max_bytes":4096}"#.into();
+        let lines = render_tool_inputs("read_file", &args);
         assert_eq!(lines[0], "lines (derived from start_line/end_line): 10-24");
         assert!(lines.iter().any(|line| line == "file: /tmp/demo.rs"));
-        assert!(lines.iter().any(|line| line == "symbol: demo"));
+        assert!(lines.iter().any(|line| line == "max_bytes: 4096"));
+    }
+
+    #[test]
+    fn tool_argument_string_extracts_legacy_search_code_query() {
+        let args: ToolArgumentsJson = r#"{"query":"handle_request"}"#.into();
+
+        assert_eq!(
+            extract_argument_string("search_code", &args, &["search_term", "query"]).as_deref(),
+            Some("handle_request")
+        );
+        assert_eq!(
+            summarize_tool_inputs("search_code", &args),
+            "query=handle_request"
+        );
+    }
+
+    #[test]
+    fn tool_argument_string_extracts_legacy_query_codebase_search_term() {
+        let args: ToolArgumentsJson = r#"{"search_term":"ToolRequestRecord"}"#.into();
+
+        assert_eq!(
+            extract_argument_string("query_codebase", &args, &["search_term", "query"]).as_deref(),
+            Some("ToolRequestRecord")
+        );
     }
 
     #[test]
@@ -12692,6 +12890,21 @@ mod tests {
             summary,
             "apply_code_edit: No matching node found (strict+fallback)"
         );
+    }
+
+    #[test]
+    fn tool_result_failure_projection_uses_structured_summary() {
+        let summary = summarize_failure_reason(
+            r#"{"message":"  apply_code_edit failed\nmissing protected surface  ","error":"fallback"}"#,
+        );
+        assert_eq!(summary, "apply_code_edit failed missing protected surface");
+    }
+
+    #[test]
+    fn tool_result_failure_projection_skips_non_string_fields() {
+        let summary =
+            summarize_failure_reason(r#"{"message":{"nested":true},"error":"fallback reason"}"#);
+        assert_eq!(summary, "fallback reason");
     }
 
     #[test]

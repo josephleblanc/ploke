@@ -2,17 +2,20 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ploke_protocol::{
-    Confidence,
+    Concern, Confidence, LocalAnalysisAssessment, LocalAnalysisSignals, OverallVerdict,
+    RecoverabilityAssessment, RecoverabilityVerdict, RedundancyAssessment, RedundancyVerdict,
+    UsefulnessAssessment, UsefulnessVerdict,
     tool_calls::segment::{IntentLabel, SegmentStatus, SegmentedToolCallSequence},
 };
+use ploke_records::protocol::{ArtifactBody, ArtifactDecodeFailureRecord, ArtifactPayloadKind};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::protocol_artifacts::{
-    ProtocolArtifactIdentityMismatch, StoredProtocolArtifactFile, list_protocol_artifacts,
-    validate_protocol_artifact_identity,
+    DecodedProtocolArtifactFile, ProtocolArtifactLoadFailure, ProtocolArtifactLoadResult,
+    list_protocol_artifact_load_results,
 };
-use crate::run_registry::resolve_protocol_run_identity;
+use crate::run_registry::{ResolvedProtocolRunIdentity, resolve_protocol_run_identity};
 use crate::spec::PrepareError;
 
 const TOOL_CALL_REVIEW: &str = "tool_call_review";
@@ -38,6 +41,9 @@ pub struct ProtocolRunIdentity {
 pub struct ProtocolCoverage {
     pub scanned_artifact_count: usize,
     pub artifact_counts: BTreeMap<String, usize>,
+    pub unloaded_artifact_count: usize,
+    pub skipped_non_tool_call_artifact_count: usize,
+    pub skipped_tool_call_payload_shape_count: usize,
     pub total_calls_in_run: usize,
     pub total_segments_in_anchor: usize,
     pub reviewed_call_count: usize,
@@ -191,6 +197,39 @@ pub struct ProtocolSkippedSegmentReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolSkippedArtifact {
+    pub path: PathBuf,
+    pub created_at_ms: u64,
+    pub procedure_name: String,
+    pub kind: ProtocolSkippedArtifactKind,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtocolSkippedArtifactKind {
+    DecodedNonToolCall,
+    ToolCallPayloadShape,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolUnloadedArtifact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub procedure_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_payload_kind: Option<ArtifactPayloadKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolDerivedMetrics {
     pub call_review_overall_counts: BTreeMap<String, usize>,
     pub segment_review_overall_counts: BTreeMap<String, usize>,
@@ -212,6 +251,10 @@ pub struct ProtocolAggregate {
     pub derived_metrics: ProtocolDerivedMetrics,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_segment_reviews: Vec<ProtocolSkippedSegmentReview>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_artifacts: Vec<ProtocolSkippedArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unloaded_artifacts: Vec<ProtocolUnloadedArtifact>,
 }
 
 #[derive(Debug, Error)]
@@ -232,46 +275,81 @@ pub enum ProtocolAggregateError {
         "protocol segment review '{path}' does not match anchor basis for segment {segment_index}"
     )]
     SegmentBasisMismatch { path: PathBuf, segment_index: usize },
-    #[error(
-        "protocol artifact '{path}' for procedure '{procedure}' has {field}='{actual}' but expected '{expected}'"
-    )]
-    ArtifactIdentityMismatch {
-        path: PathBuf,
-        procedure: String,
-        field: &'static str,
-        expected: String,
-        actual: String,
-    },
-    #[error("failed to deserialize protocol artifact '{path}': {source}")]
-    DeserializeArtifact {
-        path: PathBuf,
-        source: serde_json::Error,
-    },
 }
 
 pub fn load_protocol_aggregate(
     record_path: &Path,
 ) -> Result<ProtocolAggregate, ProtocolAggregateError> {
-    let artifacts = list_protocol_artifacts(record_path)?;
+    let artifacts = list_protocol_artifact_load_results(record_path)?;
     load_protocol_aggregate_from_artifacts(record_path, artifacts)
 }
 
 pub(crate) fn load_protocol_aggregate_from_artifacts(
     record_path: &Path,
-    artifacts: Vec<StoredProtocolArtifactFile>,
+    artifacts: Vec<ProtocolArtifactLoadResult>,
 ) -> Result<ProtocolAggregate, ProtocolAggregateError> {
     let resolved_identity = resolve_protocol_run_identity(record_path)?;
-    for artifact in &artifacts {
-        validate_protocol_artifact_identity(artifact, &resolved_identity)
-            .map_err(protocol_artifact_identity_error)?;
+    let classified = classify_protocol_artifact_load_results(artifacts);
+
+    build_protocol_aggregate(
+        record_path,
+        resolved_identity,
+        classified.scanned_artifact_count,
+        classified.tool_call_artifacts,
+        classified.skipped_artifacts,
+        classified.unloaded_artifacts,
+    )
+}
+
+struct ClassifiedProtocolArtifacts {
+    scanned_artifact_count: usize,
+    tool_call_artifacts: Vec<ToolCallProtocolArtifactFile>,
+    skipped_artifacts: Vec<ProtocolSkippedArtifact>,
+    unloaded_artifacts: Vec<ProtocolUnloadedArtifact>,
+}
+
+fn classify_protocol_artifact_load_results(
+    artifacts: Vec<ProtocolArtifactLoadResult>,
+) -> ClassifiedProtocolArtifacts {
+    let scanned_artifact_count = artifacts.len();
+    let mut unloaded_artifacts = Vec::new();
+    let mut skipped_artifacts = Vec::new();
+    let mut tool_call_artifacts = Vec::new();
+
+    for artifact in artifacts {
+        match artifact {
+            ProtocolArtifactLoadResult::Loaded(entry) => {
+                match tool_call_artifact_from_decoded(entry) {
+                    Ok(entry) => tool_call_artifacts.push(entry),
+                    Err(skipped) => skipped_artifacts.push(skipped),
+                }
+            }
+            ProtocolArtifactLoadResult::Unloaded(failure) => {
+                unloaded_artifacts.push(unloaded_artifact_row(failure));
+            }
+        }
     }
 
-    let artifact_counts = count_artifacts(&artifacts);
-    let anchor_entry =
-        latest_artifact(&artifacts, TOOL_CALL_INTENT_SEGMENTATION).ok_or_else(|| {
-            ProtocolAggregateError::MissingAnchor {
-                record_path: record_path.to_path_buf(),
-            }
+    ClassifiedProtocolArtifacts {
+        scanned_artifact_count,
+        tool_call_artifacts,
+        skipped_artifacts,
+        unloaded_artifacts,
+    }
+}
+
+fn build_protocol_aggregate(
+    record_path: &Path,
+    resolved_identity: ResolvedProtocolRunIdentity,
+    scanned_artifact_count: usize,
+    tool_call_artifacts: Vec<ToolCallProtocolArtifactFile>,
+    skipped_artifacts: Vec<ProtocolSkippedArtifact>,
+    unloaded_artifacts: Vec<ProtocolUnloadedArtifact>,
+) -> Result<ProtocolAggregate, ProtocolAggregateError> {
+    let artifact_counts = count_artifacts(&tool_call_artifacts);
+    let anchor_entry = latest_artifact(&tool_call_artifacts, TOOL_CALL_INTENT_SEGMENTATION)
+        .ok_or_else(|| ProtocolAggregateError::MissingAnchor {
+            record_path: record_path.to_path_buf(),
         })?;
     let anchor = normalize_anchor(anchor_entry)?;
     let call_index_to_segment_index = build_call_segment_lookup(&anchor.segments);
@@ -280,21 +358,20 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
     let mut accepted_segment_reviews: BTreeMap<usize, ProtocolSegmentReviewRow> = BTreeMap::new();
     let mut skipped_segment_reviews = Vec::new();
 
-    for entry in artifacts
+    for entry in tool_call_artifacts
         .iter()
-        .filter(|entry| entry.stored.procedure_name == TOOL_CALL_REVIEW)
+        .filter(|entry| entry.procedure_name == TOOL_CALL_REVIEW)
     {
         match normalize_call_review(entry, &anchor, &call_index_to_segment_index) {
             Ok(row) => insert_latest_call_review(&mut accepted_call_reviews, row),
-            Err(ProtocolAggregateError::DeserializeArtifact { .. })
-            | Err(ProtocolAggregateError::InvalidArtifactField { .. }) => continue,
+            Err(ProtocolAggregateError::InvalidArtifactField { .. }) => continue,
             Err(err) => return Err(err),
         }
     }
 
-    for entry in artifacts
+    for entry in tool_call_artifacts
         .iter()
-        .filter(|entry| entry.stored.procedure_name == TOOL_CALL_SEGMENT_REVIEW)
+        .filter(|entry| entry.procedure_name == TOOL_CALL_SEGMENT_REVIEW)
     {
         match normalize_segment_review(entry, &anchor) {
             Ok(row) => {
@@ -303,8 +380,7 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
             Err(ProtocolAggregateError::SegmentBasisMismatch { .. }) => {
                 skipped_segment_reviews.push(describe_segment_mismatch(entry, &anchor)?);
             }
-            Err(ProtocolAggregateError::DeserializeArtifact { .. })
-            | Err(ProtocolAggregateError::InvalidArtifactField { .. }) => continue,
+            Err(ProtocolAggregateError::InvalidArtifactField { .. }) => continue,
             Err(err) => return Err(err),
         }
     }
@@ -336,10 +412,21 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
     let total_calls_in_run = anchor.coverage.total_calls;
     let missing_call_indices = missing_indices(total_calls_in_run, present_call_indices);
     let missing_segment_indices = missing_indices(anchor.segments.len(), present_segment_indices);
+    let decoded_non_tool_call_skip_count = skipped_artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == ProtocolSkippedArtifactKind::DecodedNonToolCall)
+        .count();
+    let tool_call_payload_shape_skip_count = skipped_artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == ProtocolSkippedArtifactKind::ToolCallPayloadShape)
+        .count();
 
     let coverage = ProtocolCoverage {
-        scanned_artifact_count: artifacts.len(),
+        scanned_artifact_count,
         artifact_counts,
+        unloaded_artifact_count: unloaded_artifacts.len(),
+        skipped_non_tool_call_artifact_count: decoded_non_tool_call_skip_count,
+        skipped_tool_call_payload_shape_count: tool_call_payload_shape_skip_count,
         total_calls_in_run,
         total_segments_in_anchor: anchor.segments.len(),
         reviewed_call_count: call_reviews.len(),
@@ -396,13 +483,136 @@ pub(crate) fn load_protocol_aggregate_from_artifacts(
         crosswalk,
         derived_metrics,
         skipped_segment_reviews,
+        skipped_artifacts,
+        unloaded_artifacts,
     })
 }
 
+#[derive(Debug, Clone)]
+struct ToolCallProtocolArtifactFile {
+    path: PathBuf,
+    created_at_ms: u64,
+    procedure_name: String,
+    output: ToolCallProtocolOutput,
+}
+
+#[derive(Debug, Clone)]
+enum ToolCallProtocolOutput {
+    IntentSegmentation(SegmentedToolCallSequence),
+    CallReview(ProtocolCallReviewOutput),
+    SegmentReview(ProtocolSegmentReviewOutput),
+}
+
+fn tool_call_artifact_from_decoded(
+    entry: DecodedProtocolArtifactFile,
+) -> Result<ToolCallProtocolArtifactFile, ProtocolSkippedArtifact> {
+    let path = entry.path;
+    let created_at_ms = entry.artifact.created_at_ms;
+    let procedure_name = entry.artifact.procedure_name;
+    let output = match entry.artifact.body {
+        ArtifactBody::ToolCallIntentSegmentation(payload) => {
+            ToolCallProtocolOutput::IntentSegmentation(payload.output)
+        }
+        ArtifactBody::ToolCallReview(payload) => ToolCallProtocolOutput::CallReview(
+            ProtocolCallReviewOutput::try_from(payload.output).map_err(|field| {
+                tool_call_payload_shape_skip(
+                    path.clone(),
+                    created_at_ms,
+                    procedure_name.clone(),
+                    field,
+                )
+            })?,
+        ),
+        ArtifactBody::ToolCallSegmentReview(payload) => ToolCallProtocolOutput::SegmentReview(
+            ProtocolSegmentReviewOutput::try_from(payload.output).map_err(|field| {
+                tool_call_payload_shape_skip(
+                    path.clone(),
+                    created_at_ms,
+                    procedure_name.clone(),
+                    field,
+                )
+            })?,
+        ),
+        ArtifactBody::InterventionIssueDetection(_)
+        | ArtifactBody::InterventionSynthesis(_)
+        | ArtifactBody::InterventionApply(_) => {
+            return Err(ProtocolSkippedArtifact {
+                path,
+                created_at_ms,
+                procedure_name,
+                kind: ProtocolSkippedArtifactKind::DecodedNonToolCall,
+                reason: "decoded non-tool-call artifact is outside the tool-call aggregate"
+                    .to_string(),
+            });
+        }
+    };
+
+    Ok(ToolCallProtocolArtifactFile {
+        path,
+        created_at_ms,
+        procedure_name,
+        output,
+    })
+}
+
+fn unloaded_artifact_row(failure: ProtocolArtifactLoadFailure) -> ProtocolUnloadedArtifact {
+    match failure {
+        ProtocolArtifactLoadFailure::Decode(failure) => unloaded_decode_row(failure),
+        ProtocolArtifactLoadFailure::Identity(mismatch) => ProtocolUnloadedArtifact {
+            path: Some(mismatch.path),
+            reason: "identity_mismatch".to_string(),
+            procedure_name: Some(mismatch.procedure_name),
+            expected_payload_kind: None,
+            field: Some(mismatch.field.to_string()),
+            expected: Some(mismatch.expected),
+            actual: Some(mismatch.actual),
+        },
+    }
+}
+
+fn tool_call_payload_shape_skip(
+    path: PathBuf,
+    created_at_ms: u64,
+    procedure_name: String,
+    field: &'static str,
+) -> ProtocolSkippedArtifact {
+    ProtocolSkippedArtifact {
+        path,
+        created_at_ms,
+        procedure_name,
+        kind: ProtocolSkippedArtifactKind::ToolCallPayloadShape,
+        reason: format!("tool-call artifact is missing typed field {field}"),
+    }
+}
+
+fn unloaded_decode_row(failure: ArtifactDecodeFailureRecord) -> ProtocolUnloadedArtifact {
+    ProtocolUnloadedArtifact {
+        path: failure.path,
+        reason: failure.error,
+        procedure_name: failure
+            .coordinate
+            .as_ref()
+            .map(|coordinate| coordinate.procedure_name.clone()),
+        expected_payload_kind: failure.expected_payload_kind,
+        field: None,
+        expected: None,
+        actual: None,
+    }
+}
+
 fn normalize_anchor(
-    entry: &StoredProtocolArtifactFile,
+    entry: &ToolCallProtocolArtifactFile,
 ) -> Result<ProtocolSegmentationAnchor, ProtocolAggregateError> {
-    let output: SegmentedToolCallSequence = from_artifact_output(entry)?;
+    let output = match &entry.output {
+        ToolCallProtocolOutput::IntentSegmentation(output) => output.clone(),
+        _ => {
+            return Err(ProtocolAggregateError::InvalidArtifactField {
+                path: entry.path.clone(),
+                procedure: entry.procedure_name.clone(),
+                field: "output",
+            });
+        }
+    };
     let artifact = artifact_ref(entry);
     let coverage = ProtocolSegmentationCoverage {
         total_calls: output.coverage.total_calls,
@@ -446,11 +656,20 @@ fn normalize_anchor(
 }
 
 fn normalize_call_review(
-    entry: &StoredProtocolArtifactFile,
+    entry: &ToolCallProtocolArtifactFile,
     anchor: &ProtocolSegmentationAnchor,
     call_index_to_segment_index: &BTreeMap<usize, usize>,
 ) -> Result<ProtocolCallReviewRow, ProtocolAggregateError> {
-    let output: RawCallReviewOutput = from_artifact_output(entry)?;
+    let output = match &entry.output {
+        ToolCallProtocolOutput::CallReview(output) => output.clone(),
+        _ => {
+            return Err(ProtocolAggregateError::InvalidArtifactField {
+                path: entry.path.clone(),
+                procedure: entry.procedure_name.clone(),
+                field: "output",
+            });
+        }
+    };
     let artifact = artifact_ref(entry);
     let segment_index = call_index_to_segment_index
         .get(&output.packet.focal_call_index)
@@ -490,10 +709,19 @@ fn normalize_call_review(
 }
 
 fn normalize_segment_review(
-    entry: &StoredProtocolArtifactFile,
+    entry: &ToolCallProtocolArtifactFile,
     anchor: &ProtocolSegmentationAnchor,
 ) -> Result<ProtocolSegmentReviewRow, ProtocolAggregateError> {
-    let output: RawSegmentReviewOutput = from_artifact_output(entry)?;
+    let output = match &entry.output {
+        ToolCallProtocolOutput::SegmentReview(output) => output.clone(),
+        _ => {
+            return Err(ProtocolAggregateError::InvalidArtifactField {
+                path: entry.path.clone(),
+                procedure: entry.procedure_name.clone(),
+                field: "output",
+            });
+        }
+    };
     let basis = anchor
         .segments
         .iter()
@@ -544,10 +772,19 @@ fn normalize_segment_review(
 }
 
 fn describe_segment_mismatch(
-    entry: &StoredProtocolArtifactFile,
+    entry: &ToolCallProtocolArtifactFile,
     anchor: &ProtocolSegmentationAnchor,
 ) -> Result<ProtocolSkippedSegmentReview, ProtocolAggregateError> {
-    let output: RawSegmentReviewOutput = from_artifact_output(entry)?;
+    let output = match &entry.output {
+        ToolCallProtocolOutput::SegmentReview(output) => output.clone(),
+        _ => {
+            return Err(ProtocolAggregateError::InvalidArtifactField {
+                path: entry.path.clone(),
+                procedure: entry.procedure_name.clone(),
+                field: "output",
+            });
+        }
+    };
     let basis = anchor
         .segments
         .iter()
@@ -575,46 +812,23 @@ fn describe_segment_mismatch(
     })
 }
 
-fn protocol_artifact_identity_error(
-    mismatch: ProtocolArtifactIdentityMismatch,
-) -> ProtocolAggregateError {
-    ProtocolAggregateError::ArtifactIdentityMismatch {
-        path: mismatch.path,
-        procedure: mismatch.procedure_name,
-        field: mismatch.field,
-        expected: mismatch.expected,
-        actual: mismatch.actual,
-    }
-}
-
-fn artifact_ref(entry: &StoredProtocolArtifactFile) -> ProtocolArtifactRef {
+fn artifact_ref(entry: &ToolCallProtocolArtifactFile) -> ProtocolArtifactRef {
     ProtocolArtifactRef {
         path: entry.path.clone(),
-        created_at_ms: entry.stored.created_at_ms,
-        procedure_name: entry.stored.procedure_name.clone(),
+        created_at_ms: entry.created_at_ms,
+        procedure_name: entry.procedure_name.clone(),
     }
-}
-
-fn from_artifact_output<T: for<'de> Deserialize<'de>>(
-    entry: &StoredProtocolArtifactFile,
-) -> Result<T, ProtocolAggregateError> {
-    serde_json::from_value(entry.stored.output.clone()).map_err(|source| {
-        ProtocolAggregateError::DeserializeArtifact {
-            path: entry.path.clone(),
-            source,
-        }
-    })
 }
 
 fn latest_artifact<'a>(
-    entries: &'a [StoredProtocolArtifactFile],
+    entries: &'a [ToolCallProtocolArtifactFile],
     procedure_name: &str,
-) -> Option<&'a StoredProtocolArtifactFile> {
+) -> Option<&'a ToolCallProtocolArtifactFile> {
     entries
         .iter()
-        .filter(|entry| entry.stored.procedure_name == procedure_name)
+        .filter(|entry| entry.procedure_name == procedure_name)
         .max_by(|left, right| {
-            (left.stored.created_at_ms, &left.path).cmp(&(right.stored.created_at_ms, &right.path))
+            (left.created_at_ms, &left.path).cmp(&(right.created_at_ms, &right.path))
         })
 }
 
@@ -681,12 +895,10 @@ where
         .collect()
 }
 
-fn count_artifacts(entries: &[StoredProtocolArtifactFile]) -> BTreeMap<String, usize> {
+fn count_artifacts(entries: &[ToolCallProtocolArtifactFile]) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for entry in entries {
-        *counts
-            .entry(entry.stored.procedure_name.clone())
-            .or_insert(0) += 1;
+        *counts.entry(entry.procedure_name.clone()).or_insert(0) += 1;
     }
     counts
 }
@@ -699,37 +911,37 @@ fn count_string_field(values: impl Iterator<Item = String>) -> BTreeMap<String, 
     counts
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct RawIndexedCall {
+#[derive(Debug, Clone, Deserialize)]
+struct ProtocolIndexedCall {
     index: usize,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawCallReviewOutput {
+#[derive(Debug, Clone, Deserialize)]
+struct ProtocolCallReviewOutput {
     overall: String,
     overall_confidence: String,
-    packet: RawCallReviewPacket,
-    recoverability: RawBranchAssessment,
-    redundancy: RawBranchAssessment,
-    signals: RawSignals,
-    usefulness: RawBranchAssessment,
+    packet: ProtocolCallReviewPacket,
+    recoverability: ProtocolBranchAssessment,
+    redundancy: ProtocolBranchAssessment,
+    signals: ProtocolReviewSignals,
+    usefulness: ProtocolBranchAssessment,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawSegmentReviewOutput {
+#[derive(Debug, Clone, Deserialize)]
+struct ProtocolSegmentReviewOutput {
     overall: String,
     overall_confidence: String,
-    packet: RawSegmentReviewPacket,
-    recoverability: RawBranchAssessment,
-    redundancy: RawBranchAssessment,
-    signals: RawSignals,
-    usefulness: RawBranchAssessment,
+    packet: ProtocolSegmentReviewPacket,
+    recoverability: ProtocolBranchAssessment,
+    redundancy: ProtocolBranchAssessment,
+    signals: ProtocolReviewSignals,
+    usefulness: ProtocolBranchAssessment,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawCallReviewPacket {
-    calls: Vec<RawIndexedCall>,
+#[derive(Debug, Clone, Deserialize)]
+struct ProtocolCallReviewPacket {
+    calls: Vec<ProtocolIndexedCall>,
     focal_call_index: usize,
     scope_summary: String,
     subject_id: String,
@@ -741,9 +953,9 @@ struct RawCallReviewPacket {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawSegmentReviewPacket {
-    calls: Vec<RawIndexedCall>,
+#[derive(Debug, Clone, Deserialize)]
+struct ProtocolSegmentReviewPacket {
+    calls: Vec<ProtocolIndexedCall>,
     scope_summary: String,
     segment_index: usize,
     #[serde(default)]
@@ -756,47 +968,6 @@ struct RawSegmentReviewPacket {
     total_calls_in_run: usize,
     total_calls_in_scope: usize,
     turn_span: Vec<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawBranchAssessment {
-    confidence: String,
-    rationale: String,
-    verdict: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawSignals {
-    #[serde(default)]
-    browse_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    candidate_concerns: Vec<String>,
-    #[serde(default)]
-    directory_pivots: Option<usize>,
-    #[serde(default)]
-    distinct_tool_count: Option<usize>,
-    #[serde(default)]
-    edit_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    execute_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    failed_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    labeled_segments_in_source: Option<usize>,
-    #[serde(default)]
-    ambiguous_segments_in_source: Option<usize>,
-    #[serde(default)]
-    read_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    repeated_tool_name_count: Option<usize>,
-    #[serde(default)]
-    scope_turn_count: Option<usize>,
-    #[serde(default)]
-    search_calls_in_scope: Option<usize>,
-    #[serde(default)]
-    similar_search_neighbors: Option<usize>,
-    #[serde(default)]
-    uncovered_calls_in_source: Option<usize>,
 }
 
 fn segment_status_name(status: SegmentStatus) -> &'static str {
@@ -830,146 +1001,223 @@ fn intent_label_name_opt(label: Option<IntentLabel>) -> Option<&'static str> {
     })
 }
 
-impl From<RawBranchAssessment> for ProtocolBranchAssessment {
-    fn from(value: RawBranchAssessment) -> Self {
+impl TryFrom<LocalAnalysisAssessment> for ProtocolCallReviewOutput {
+    type Error = &'static str;
+
+    fn try_from(value: LocalAnalysisAssessment) -> Result<Self, Self::Error> {
+        let focal_call_index = value
+            .packet
+            .focal_call_index
+            .ok_or("output.packet.focal_call_index")?;
+        Ok(Self {
+            overall: overall_verdict_name(value.overall).to_string(),
+            overall_confidence: confidence_name(value.overall_confidence).to_string(),
+            packet: ProtocolCallReviewPacket {
+                calls: indexed_calls(&value.packet.calls),
+                focal_call_index,
+                scope_summary: value.packet.scope_summary,
+                subject_id: value.packet.subject_id,
+                target_id: value.packet.target_id,
+                target_kind: target_kind_name(value.packet.target_kind).to_string(),
+                total_calls_in_run: value.packet.total_calls_in_run,
+                total_calls_in_scope: value.packet.total_calls_in_scope,
+                turn_span: value
+                    .packet
+                    .turn_span
+                    .into_iter()
+                    .map(|turn| turn as usize)
+                    .collect(),
+            },
+            recoverability: value.recoverability.into(),
+            redundancy: value.redundancy.into(),
+            signals: value.signals.into(),
+            usefulness: value.usefulness.into(),
+        })
+    }
+}
+
+impl TryFrom<LocalAnalysisAssessment> for ProtocolSegmentReviewOutput {
+    type Error = &'static str;
+
+    fn try_from(value: LocalAnalysisAssessment) -> Result<Self, Self::Error> {
+        let segment_index = value
+            .packet
+            .segment_index
+            .ok_or("output.packet.segment_index")?;
+        Ok(Self {
+            overall: overall_verdict_name(value.overall).to_string(),
+            overall_confidence: confidence_name(value.overall_confidence).to_string(),
+            packet: ProtocolSegmentReviewPacket {
+                calls: indexed_calls(&value.packet.calls),
+                scope_summary: value.packet.scope_summary,
+                segment_index,
+                segment_label: value.packet.segment_label.map(intent_label_name),
+                segment_status: value
+                    .packet
+                    .segment_status
+                    .map(segment_status_name)
+                    .map(str::to_string),
+                subject_id: value.packet.subject_id,
+                target_id: value.packet.target_id,
+                target_kind: target_kind_name(value.packet.target_kind).to_string(),
+                total_calls_in_run: value.packet.total_calls_in_run,
+                total_calls_in_scope: value.packet.total_calls_in_scope,
+                turn_span: value
+                    .packet
+                    .turn_span
+                    .into_iter()
+                    .map(|turn| turn as usize)
+                    .collect(),
+            },
+            recoverability: value.recoverability.into(),
+            redundancy: value.redundancy.into(),
+            signals: value.signals.into(),
+            usefulness: value.usefulness.into(),
+        })
+    }
+}
+
+impl From<UsefulnessAssessment> for ProtocolBranchAssessment {
+    fn from(value: UsefulnessAssessment) -> Self {
         Self {
-            verdict: value.verdict,
-            confidence: value.confidence,
+            verdict: usefulness_verdict_name(value.verdict).to_string(),
+            confidence: confidence_name(value.confidence).to_string(),
             rationale: value.rationale,
         }
     }
 }
 
-impl From<RawSignals> for ProtocolReviewSignals {
-    fn from(value: RawSignals) -> Self {
+impl From<RedundancyAssessment> for ProtocolBranchAssessment {
+    fn from(value: RedundancyAssessment) -> Self {
         Self {
-            browse_calls_in_scope: value.browse_calls_in_scope,
-            candidate_concerns: value.candidate_concerns,
-            directory_pivots: value.directory_pivots,
-            distinct_tool_count: value.distinct_tool_count,
-            edit_calls_in_scope: value.edit_calls_in_scope,
-            execute_calls_in_scope: value.execute_calls_in_scope,
-            failed_calls_in_scope: value.failed_calls_in_scope,
+            verdict: redundancy_verdict_name(value.verdict).to_string(),
+            confidence: confidence_name(value.confidence).to_string(),
+            rationale: value.rationale,
+        }
+    }
+}
+
+impl From<RecoverabilityAssessment> for ProtocolBranchAssessment {
+    fn from(value: RecoverabilityAssessment) -> Self {
+        Self {
+            verdict: recoverability_verdict_name(value.verdict).to_string(),
+            confidence: confidence_name(value.confidence).to_string(),
+            rationale: value.rationale,
+        }
+    }
+}
+
+impl From<LocalAnalysisSignals> for ProtocolReviewSignals {
+    fn from(value: LocalAnalysisSignals) -> Self {
+        Self {
+            browse_calls_in_scope: Some(value.browse_calls_in_scope),
+            candidate_concerns: value
+                .candidate_concerns
+                .into_iter()
+                .map(concern_name)
+                .map(str::to_string)
+                .collect(),
+            directory_pivots: Some(value.directory_pivots),
+            distinct_tool_count: Some(value.distinct_tool_count),
+            edit_calls_in_scope: Some(value.edit_calls_in_scope),
+            execute_calls_in_scope: Some(value.execute_calls_in_scope),
+            failed_calls_in_scope: Some(value.failed_calls_in_scope),
             labeled_segments_in_source: value.labeled_segments_in_source,
             ambiguous_segments_in_source: value.ambiguous_segments_in_source,
-            read_calls_in_scope: value.read_calls_in_scope,
-            repeated_tool_name_count: value.repeated_tool_name_count,
-            scope_turn_count: value.scope_turn_count,
-            search_calls_in_scope: value.search_calls_in_scope,
-            similar_search_neighbors: value.similar_search_neighbors,
+            read_calls_in_scope: Some(value.read_calls_in_scope),
+            repeated_tool_name_count: Some(value.repeated_tool_name_count),
+            scope_turn_count: Some(value.scope_turn_count),
+            search_calls_in_scope: Some(value.search_calls_in_scope),
+            similar_search_neighbors: Some(value.similar_search_neighbors),
             uncovered_calls_in_source: value.uncovered_calls_in_source,
         }
+    }
+}
+
+fn indexed_calls(calls: &[ploke_protocol::NeighborhoodCall]) -> Vec<ProtocolIndexedCall> {
+    calls
+        .iter()
+        .map(|call| ProtocolIndexedCall { index: call.index })
+        .collect()
+}
+
+fn confidence_name(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::Low => "low",
+        Confidence::Medium => "medium",
+        Confidence::High => "high",
+    }
+}
+
+fn target_kind_name(kind: ploke_protocol::LocalAnalysisTargetKind) -> &'static str {
+    match kind {
+        ploke_protocol::LocalAnalysisTargetKind::FocalCall => "focal_call",
+        ploke_protocol::LocalAnalysisTargetKind::IntentSegment => "intent_segment",
+    }
+}
+
+fn overall_verdict_name(verdict: OverallVerdict) -> &'static str {
+    match verdict {
+        OverallVerdict::FocusedProgress => "focused_progress",
+        OverallVerdict::UsefulExploration => "useful_exploration",
+        OverallVerdict::RecoverableDetour => "recoverable_detour",
+        OverallVerdict::RedundantThrash => "redundant_thrash",
+        OverallVerdict::Mixed => "mixed",
+        OverallVerdict::Unclear => "unclear",
+    }
+}
+
+fn usefulness_verdict_name(verdict: UsefulnessVerdict) -> &'static str {
+    match verdict {
+        UsefulnessVerdict::KeyProgress => "key_progress",
+        UsefulnessVerdict::HelpfulButNonEssential => "helpful_but_non_essential",
+        UsefulnessVerdict::LowValue => "low_value",
+        UsefulnessVerdict::NoValue => "no_value",
+        UsefulnessVerdict::Unclear => "unclear",
+    }
+}
+
+fn redundancy_verdict_name(verdict: RedundancyVerdict) -> &'static str {
+    match verdict {
+        RedundancyVerdict::Distinct => "distinct",
+        RedundancyVerdict::Overlapping => "overlapping",
+        RedundancyVerdict::RedundantRepeat => "redundant_repeat",
+        RedundancyVerdict::SearchThrash => "search_thrash",
+        RedundancyVerdict::Unclear => "unclear",
+    }
+}
+
+fn recoverability_verdict_name(verdict: RecoverabilityVerdict) -> &'static str {
+    match verdict {
+        RecoverabilityVerdict::NoRecoveryNeeded => "no_recovery_needed",
+        RecoverabilityVerdict::ClearNextStep => "clear_next_step",
+        RecoverabilityVerdict::PartialNextStep => "partial_next_step",
+        RecoverabilityVerdict::NoClearRecovery => "no_clear_recovery",
+        RecoverabilityVerdict::Unclear => "unclear",
+    }
+}
+
+fn concern_name(concern: Concern) -> &'static str {
+    match concern {
+        Concern::RepeatedToolCluster => "RepeatedToolCluster",
+        Concern::SearchThrashRisk => "SearchThrashRisk",
+        Concern::RecoveryOpportunity => "RecoveryOpportunity",
+        Concern::FilePivot => "FilePivot",
+        Concern::AmbiguousScope => "AmbiguousScope",
+        Concern::ResidualCoverageGap => "ResidualCoverageGap",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
-    use crate::inner::registry::RunRegistration;
-    use crate::spec::EvalBudget;
+    use ploke_records::protocol::{
+        Artifact, ArtifactBody, InterventionIssueDetectionArtifact,
+        InterventionIssueDetectionPayload, IssueDetectionArtifactInputMirror,
+        IssueDetectionOutputMirror,
+    };
     use serde_json::Value;
-    use std::ffi::OsString;
     use std::path::Path;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-    use tempfile::TempDir;
-
-    struct TestRunFixture {
-        _env_lock: MutexGuard<'static, ()>,
-        _env: EnvVarGuard,
-        _tmp: TempDir,
-        record_path: PathBuf,
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvVarGuard {
-        key: &'static str,
-        prev: Option<OsString>,
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match self.prev.as_ref() {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
-            }
-        }
-    }
-
-    fn set_env_var_scoped(key: &'static str, value: impl Into<OsString>) -> EnvVarGuard {
-        let prev = std::env::var_os(key);
-        unsafe {
-            std::env::set_var(key, value.into());
-        }
-        EnvVarGuard { key, prev }
-    }
-
-    fn write_test_run_record(path: &Path, subject_id: &str) {
-        let prepared = crate::spec::PreparedSingleRun {
-            task_id: subject_id.to_string(),
-            repo_root: PathBuf::from("/tmp/repo"),
-            output_dir: PathBuf::from("/tmp/output"),
-            issue: crate::spec::IssueInput {
-                title: None,
-                body: None,
-                body_path: None,
-            },
-            base_sha: None,
-            head_sha: None,
-            budget: crate::spec::EvalBudget::default(),
-            source: None,
-            campaign: None,
-        };
-        let record =
-            crate::record::RunRecord::new(&prepared, crate::runner::RunArm::shell_only_control());
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("record dir");
-        }
-        crate::record::write_compressed_record(path, &record).expect("write record");
-    }
-
-    fn registered_run(run_id: &str, subject_id: &str) -> TestRunFixture {
-        let env_lock = env_lock().lock().expect("env lock");
-        let tmp = tempfile::tempdir().expect("tmp");
-        let env = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
-
-        let intent = RunIntent {
-            task_id: subject_id.to_string(),
-            repo_root: tmp.path().join("repo"),
-            storage_roots: RunStorageRoots::new(
-                tmp.path().join("registries"),
-                tmp.path().join("instances").join(subject_id).join("runs"),
-            ),
-            base_sha: Some("deadbeef".to_string()),
-            budget: EvalBudget::default(),
-            model_id: Some("model".to_string()),
-            provider_slug: Some("provider".to_string()),
-            campaign_id: None,
-            batch_id: None,
-            run_arm_id: "structured-current-policy".to_string(),
-            run_role: RegisteredRunRole::Treatment,
-        };
-        let registration =
-            RunRegistration::register_with_run_id(intent, run_id).expect("registration");
-        let record_path = registration.artifacts.record_path.clone();
-        write_test_run_record(&record_path, subject_id);
-        registration.persist().expect("persist registration");
-
-        TestRunFixture {
-            _env_lock: env_lock,
-            _env: env,
-            _tmp: tmp,
-            record_path,
-        }
-    }
 
     fn turn_context_json() -> Value {
         serde_json::json!({
@@ -1005,34 +1253,293 @@ mod tests {
         path: &str,
         procedure_name: &str,
         created_at_ms: u64,
-        subject_id: &str,
-        run_id: &str,
+        _subject_id: &str,
+        _run_id: &str,
         output: serde_json::Value,
-    ) -> StoredProtocolArtifactFile {
-        StoredProtocolArtifactFile {
+    ) -> ToolCallProtocolArtifactFile {
+        let output = match procedure_name {
+            TOOL_CALL_INTENT_SEGMENTATION => ToolCallProtocolOutput::IntentSegmentation(
+                serde_json::from_value(output).expect("segmentation output"),
+            ),
+            TOOL_CALL_REVIEW => ToolCallProtocolOutput::CallReview(
+                serde_json::from_value(output).expect("call review output"),
+            ),
+            TOOL_CALL_SEGMENT_REVIEW => ToolCallProtocolOutput::SegmentReview(
+                serde_json::from_value(output).expect("segment review output"),
+            ),
+            other => panic!("unsupported test procedure: {other}"),
+        };
+        ToolCallProtocolArtifactFile {
             path: PathBuf::from(path),
-            stored: crate::protocol_artifacts::StoredProtocolArtifact {
-                schema_version: crate::protocol_artifacts::PROTOCOL_ARTIFACT_SCHEMA_VERSION
-                    .to_string(),
-                procedure_name: procedure_name.to_string(),
+            created_at_ms,
+            procedure_name: procedure_name.to_string(),
+            output,
+        }
+    }
+
+    fn load_test_protocol_aggregate(
+        record_path: &Path,
+        run_id: &str,
+        subject_id: &str,
+        artifacts: Vec<ToolCallProtocolArtifactFile>,
+        unloaded_artifacts: Vec<ProtocolUnloadedArtifact>,
+    ) -> Result<ProtocolAggregate, ProtocolAggregateError> {
+        let resolved_identity = ResolvedProtocolRunIdentity {
+            record_path: record_path.to_path_buf(),
+            run_dir: record_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("/tmp")),
+            run_id: run_id.to_string(),
+            subject_id: subject_id.to_string(),
+        };
+        build_protocol_aggregate(
+            record_path,
+            resolved_identity,
+            artifacts.len() + unloaded_artifacts.len(),
+            artifacts,
+            Vec::new(),
+            unloaded_artifacts,
+        )
+    }
+
+    fn test_record_path(run_id: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("ploke-protocol-aggregate-{run_id}"))
+            .join("record.json.zst")
+    }
+
+    fn decoded_issue_detection_artifact(
+        path: &str,
+        run_id: &str,
+        subject_id: &str,
+    ) -> ProtocolArtifactLoadResult {
+        ProtocolArtifactLoadResult::Loaded(DecodedProtocolArtifactFile {
+            path: PathBuf::from(path),
+            artifact: Artifact {
+                schema_version: "protocol-artifact.v1".to_string(),
+                procedure_name: "intervention_issue_detection".to_string(),
                 subject_id: subject_id.to_string(),
                 run_id: run_id.to_string(),
-                created_at_ms,
+                created_at_ms: 5000,
                 model_id: None,
                 provider_slug: None,
-                input: serde_json::json!({}),
-                output,
-                artifact: serde_json::json!({}),
+                body: ArtifactBody::InterventionIssueDetection(InterventionIssueDetectionPayload {
+                    input: IssueDetectionArtifactInputMirror {
+                        run_id: run_id.to_string(),
+                        subject_id: subject_id.to_string(),
+                        total_calls_in_run: 0,
+                        anchor_segment_count: 0,
+                        protocol_reviewed_call_count: 0,
+                        protocol_reviewed_segment_count: 0,
+                        protocol_artifact_count: 0,
+                    },
+                    output: IssueDetectionOutputMirror { cases: Vec::new() },
+                    artifact: InterventionIssueDetectionArtifact {
+                        case_count: 0,
+                        primary_issue: None,
+                    },
+                }),
             },
-        }
+        })
+    }
+
+    fn assessment_json_without_focal(subject_id: &str) -> Value {
+        serde_json::json!({
+            "overall": "focused_progress",
+            "overall_confidence": "high",
+            "synthesis_rationale": "focused review",
+            "packet": {
+                "calls": [call_json(1, 1, "sed", "read", "inspect file")],
+                "scope_summary": "focal call 1",
+                "subject_id": subject_id,
+                "target_id": "call:1",
+                "target_kind": "focal_call",
+                "total_calls_in_run": 2,
+                "total_calls_in_scope": 1,
+                "turn_span": [1]
+            },
+            "recoverability": {
+                "confidence": "high",
+                "rationale": "recover",
+                "verdict": "clear_next_step"
+            },
+            "redundancy": {
+                "confidence": "high",
+                "rationale": "redundant",
+                "verdict": "distinct"
+            },
+            "signals": {
+                "browse_calls_in_scope": 0,
+                "candidate_concerns": [],
+                "directory_pivots": 0,
+                "distinct_tool_count": 1,
+                "edit_calls_in_scope": 0,
+                "execute_calls_in_scope": 0,
+                "failed_calls_in_scope": 0,
+                "read_calls_in_scope": 1,
+                "repeated_tool_name_count": 0,
+                "scope_turn_count": 1,
+                "search_calls_in_scope": 0,
+                "similar_search_neighbors": 0
+            },
+            "usefulness": {
+                "confidence": "high",
+                "rationale": "useful",
+                "verdict": "key_progress"
+            }
+        })
+    }
+
+    fn empty_anchor_artifact(run_id: &str, subject_id: &str) -> ToolCallProtocolArtifactFile {
+        artifact(
+            &format!("/tmp/run/1000_tool_call_intent_segmentation_{run_id}.json"),
+            TOOL_CALL_INTENT_SEGMENTATION,
+            1000,
+            subject_id,
+            run_id,
+            serde_json::json!({
+                "coverage": {
+                    "ambiguous_calls": 0,
+                    "ambiguous_segments": 0,
+                    "labeled_calls": 0,
+                    "labeled_segments": 0,
+                    "total_calls": 0,
+                    "uncovered_calls": 0
+                },
+                "segments": [],
+                "sequence": {
+                    "subject_id": subject_id,
+                    "total_turns": 0,
+                    "total_calls_in_run": 0,
+                    "turns": [],
+                    "calls": []
+                },
+                "signals": {
+                    "browse_calls": 0,
+                    "directory_pivots": 0,
+                    "edit_calls": 0,
+                    "execute_calls": 0,
+                    "failed_calls": 0,
+                    "read_calls": 0,
+                    "repeated_search_runs": 0,
+                    "search_calls": 0,
+                    "search_terms_seen": [],
+                    "total_calls": 0,
+                    "total_turns": 0
+                },
+                "overall_rationale": "empty"
+            }),
+        )
+    }
+
+    #[test]
+    fn classifies_decoded_non_tool_call_artifact_separately_from_unloaded() {
+        let run_id = "run-non-tool-skip";
+        let subject_id = "subject-non-tool-skip";
+        let classified = classify_protocol_artifact_load_results(vec![
+            decoded_issue_detection_artifact(
+                "/tmp/run/5000_intervention_issue_detection_subject-non-tool-skip.json",
+                run_id,
+                subject_id,
+            ),
+            ProtocolArtifactLoadResult::Unloaded(ProtocolArtifactLoadFailure::Decode(
+                ArtifactDecodeFailureRecord {
+                    path: Some(PathBuf::from("/tmp/run/bad.json")),
+                    coordinate: None,
+                    expected_payload_kind: None,
+                    error: "malformed json".to_string(),
+                },
+            )),
+        ]);
+
+        assert_eq!(classified.scanned_artifact_count, 2);
+        assert_eq!(classified.tool_call_artifacts.len(), 0);
+        assert_eq!(classified.unloaded_artifacts.len(), 1);
+        assert_eq!(classified.skipped_artifacts.len(), 1);
+        assert_eq!(
+            classified.skipped_artifacts[0].kind,
+            ProtocolSkippedArtifactKind::DecodedNonToolCall
+        );
+        assert_eq!(
+            classified.skipped_artifacts[0].procedure_name,
+            "intervention_issue_detection"
+        );
+    }
+
+    #[test]
+    fn aggregate_reports_decoded_non_tool_call_skip_next_to_valid_anchor() {
+        let run_id = "run-non-tool-aggregate";
+        let subject_id = "subject-non-tool-aggregate";
+        let record_path = test_record_path(run_id);
+        let classified =
+            classify_protocol_artifact_load_results(vec![decoded_issue_detection_artifact(
+                "/tmp/run/5000_intervention_issue_detection_subject-non-tool-aggregate.json",
+                run_id,
+                subject_id,
+            )]);
+        let resolved_identity = ResolvedProtocolRunIdentity {
+            record_path: record_path.clone(),
+            run_dir: record_path.parent().unwrap().to_path_buf(),
+            run_id: run_id.to_string(),
+            subject_id: subject_id.to_string(),
+        };
+
+        let aggregate = build_protocol_aggregate(
+            &record_path,
+            resolved_identity,
+            classified.scanned_artifact_count + 1,
+            vec![empty_anchor_artifact(run_id, subject_id)],
+            classified.skipped_artifacts,
+            classified.unloaded_artifacts,
+        )
+        .expect("aggregate should skip decoded non-tool-call artifact");
+
+        assert_eq!(aggregate.coverage.scanned_artifact_count, 2);
+        assert_eq!(aggregate.coverage.unloaded_artifact_count, 0);
+        assert_eq!(aggregate.coverage.skipped_non_tool_call_artifact_count, 1);
+        assert_eq!(aggregate.coverage.skipped_tool_call_payload_shape_count, 0);
+        assert_eq!(aggregate.skipped_artifacts.len(), 1);
+        assert_eq!(
+            aggregate.skipped_artifacts[0].kind,
+            ProtocolSkippedArtifactKind::DecodedNonToolCall
+        );
+    }
+
+    #[test]
+    fn classifies_missing_focal_index_as_tool_call_payload_shape_skip() {
+        let output: LocalAnalysisAssessment =
+            serde_json::from_value(assessment_json_without_focal("subject-shape-skip"))
+                .expect("local assessment keeps focal index optional");
+
+        let skipped = ProtocolCallReviewOutput::try_from(output)
+            .map_err(|field| {
+                tool_call_payload_shape_skip(
+                    PathBuf::from("/tmp/run/2000_tool_call_review_subject-shape-skip.json"),
+                    2000,
+                    TOOL_CALL_REVIEW.to_string(),
+                    field,
+                )
+            })
+            .expect_err("call review aggregate projection requires focal index");
+
+        assert_eq!(
+            skipped.kind,
+            ProtocolSkippedArtifactKind::ToolCallPayloadShape
+        );
+        assert_eq!(skipped.procedure_name, TOOL_CALL_REVIEW);
+        assert!(
+            skipped.reason.contains("output.packet.focal_call_index"),
+            "unexpected reason: {}",
+            skipped.reason
+        );
     }
 
     #[test]
     fn normalizes_latest_unique_rows_and_rejects_basis_mismatch() {
         let run_id = "run-tokio-5583";
         let subject_id = "tokio-rs__tokio-5583";
-        let fixture = registered_run(run_id, subject_id);
-        let record_path = fixture.record_path.clone();
+        let record_path = test_record_path(run_id);
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-5583.json",
@@ -1378,8 +1885,10 @@ mod tests {
             }),
         );
 
-        let aggregate = load_protocol_aggregate_from_artifacts(
+        let aggregate = load_test_protocol_aggregate(
             &record_path,
+            run_id,
+            subject_id,
             vec![
                 anchor,
                 call_review_old,
@@ -1388,6 +1897,7 @@ mod tests {
                 segment_review_ok,
                 segment_review_mismatch,
             ],
+            Vec::new(),
         )
         .expect("aggregate should load");
 
@@ -1441,8 +1951,7 @@ mod tests {
     fn loads_ambiguous_anchor_segment_without_label() {
         let run_id = "run-tokio-ambiguous";
         let subject_id = "tokio-rs__tokio-ambiguous";
-        let fixture = registered_run(run_id, subject_id);
-        let record_path = fixture.record_path.clone();
+        let record_path = test_record_path(run_id);
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-ambiguous.json",
@@ -1501,8 +2010,14 @@ mod tests {
             }),
         );
 
-        let aggregate = load_protocol_aggregate_from_artifacts(&record_path, vec![anchor])
-            .expect("aggregate should load ambiguous anchor");
+        let aggregate = load_test_protocol_aggregate(
+            &record_path,
+            run_id,
+            subject_id,
+            vec![anchor],
+            Vec::new(),
+        )
+        .expect("aggregate should load ambiguous anchor");
 
         assert_eq!(aggregate.segmentation.segments.len(), 1);
         assert_eq!(
@@ -1513,11 +2028,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mixed_artifacts_with_mismatched_identity() {
+    fn preserves_identity_mismatch_rows_without_failing_aggregate() {
         let run_id = "run-tokio-mixed";
         let subject_id = "tokio-rs__tokio-mixed";
-        let fixture = registered_run(run_id, subject_id);
-        let record_path = fixture.record_path.clone();
+        let record_path = test_record_path(run_id);
 
         let anchor = artifact(
             "/tmp/run/1000_tool_call_intent_segmentation_tokio-rs__tokio-mixed.json",
@@ -1571,78 +2085,36 @@ mod tests {
             }),
         );
 
-        let mismatched_call_review = artifact(
-            "/tmp/run/2000_tool_call_review_other.json",
-            TOOL_CALL_REVIEW,
-            2000,
-            "other-subject",
-            "run-other",
-            serde_json::json!({
-                "overall": "mixed",
-                "overall_confidence": "medium",
-                "packet": {
-                    "calls": [{"index": 0}],
-                    "focal_call_index": 0,
-                    "scope_summary": "focal call 0",
-                    "subject_id": "other-subject",
-                    "target_id": "call:0",
-                    "target_kind": "focal_call",
-                    "total_calls_in_run": 1,
-                    "total_calls_in_scope": 1,
-                    "turn_span": [1]
-                },
-                "recoverability": {
-                    "confidence": "high",
-                    "rationale": "recover",
-                    "verdict": "clear_next_step"
-                },
-                "redundancy": {
-                    "confidence": "high",
-                    "rationale": "redundant",
-                    "verdict": "distinct"
-                },
-                "signals": {
-                    "browse_calls_in_scope": 0,
-                    "candidate_concerns": [],
-                    "directory_pivots": 0,
-                    "distinct_tool_count": 1,
-                    "edit_calls_in_scope": 0,
-                    "execute_calls_in_scope": 0,
-                    "failed_calls_in_scope": 0,
-                    "read_calls_in_scope": 0,
-                    "repeated_tool_name_count": 0,
-                    "scope_turn_count": 1,
-                    "search_calls_in_scope": 1,
-                    "similar_search_neighbors": 0
-                },
-                "usefulness": {
-                    "confidence": "medium",
-                    "rationale": "useful",
-                    "verdict": "helpful_but_non_essential"
-                }
-            }),
-        );
+        let identity_mismatch = ProtocolUnloadedArtifact {
+            path: Some(PathBuf::from("/tmp/run/2000_tool_call_review_other.json")),
+            reason: "identity_mismatch".to_string(),
+            procedure_name: Some(TOOL_CALL_REVIEW.to_string()),
+            expected_payload_kind: None,
+            field: Some("stored.run_id".to_string()),
+            expected: Some(run_id.to_string()),
+            actual: Some("run-other".to_string()),
+        };
 
-        let err = load_protocol_aggregate_from_artifacts(
+        let aggregate = load_test_protocol_aggregate(
             &record_path,
-            vec![anchor, mismatched_call_review],
+            run_id,
+            subject_id,
+            vec![anchor],
+            vec![identity_mismatch],
         )
-        .expect_err("mixed identity should fail loudly");
+        .expect("identity mismatch row should not fail aggregate");
 
-        match err {
-            ProtocolAggregateError::ArtifactIdentityMismatch {
-                procedure,
-                field,
-                expected,
-                actual,
-                ..
-            } => {
-                assert_eq!(procedure, TOOL_CALL_REVIEW);
-                assert_eq!(field, "stored.run_id");
-                assert_eq!(expected, run_id);
-                assert_eq!(actual, "run-other");
-            }
-            other => panic!("unexpected error: {other}"),
-        }
+        assert_eq!(aggregate.coverage.scanned_artifact_count, 2);
+        assert_eq!(aggregate.coverage.unloaded_artifact_count, 1);
+        assert_eq!(aggregate.unloaded_artifacts.len(), 1);
+        assert_eq!(aggregate.unloaded_artifacts[0].reason, "identity_mismatch");
+        assert_eq!(
+            aggregate.unloaded_artifacts[0].procedure_name.as_deref(),
+            Some(TOOL_CALL_REVIEW)
+        );
+        assert_eq!(
+            aggregate.unloaded_artifacts[0].field.as_deref(),
+            Some("stored.run_id")
+        );
     }
 }

@@ -16,7 +16,24 @@ The primary UI is an interactive archive graph canvas, similar in interaction st
 
 The canvas shows the growing archive of artifacts/runtimes/agents. Nodes and edges are selectable, hoverable, pannable, and zoomable. Selecting a node or edge opens inspector panels backed by typed records.
 
-The primary graph shape is:
+The primary graph shape is the generative execution graph from
+`prototype1_state::mod`, not merely git ancestry and not merely a log timeline.
+At its core:
+
+```text
+Runtime -> Surface(Artifact) -> PatchAttempt
+PatchAttempt + base Artifact -> derived Artifact
+derived Artifact -> hydrated Runtime
+```
+
+The UI should preserve three related graphs:
+
+- artifact graph: durable Artifact states connected by applied patches
+- runtime derivation graph: which Artifact hydrated each Runtime
+- operation graph: which Runtime operated over which Artifact surface to create
+  a patch attempt
+
+The constrained single-successor prototype path projects that richer graph as:
 
 ```text
 genesis
@@ -36,7 +53,9 @@ Sibling candidates remain visible as branches. Selected successor edges are visu
 Visual primitives:
 
 - `GraphNode`: artifact/runtime/agent instance.
-- `GraphEdge`: lineage, patch/self-modification attempt, candidate relation, successor selection, evaluation relation, or merge/composability relation.
+- `GraphEdge`: operation coordinate, patch/self-modification attempt,
+  artifact derivation, runtime derivation, candidate relation, successor
+  selection, evaluation relation, or merge/composability relation.
 - `NodeBadge`: score delta, evaluation status, selected/not-selected marker, running/failed state, evidence strength, confidence marker.
 - `EdgeBadge`: patch id, changed file/item count, selection reason, compatibility/conflict status, evaluation outcome.
 - `InspectorRef`: stable typed ids for loading protocol artifacts, tool calls, diffs, database context, metrics, evidence, and lineage.
@@ -45,6 +64,13 @@ Visual primitives:
 A minimal timeline strip is visible by default near the bottom of the screen, like a compact audio/mixing timeline. It can be expanded into a full timeline view or toggled off. Timeline segments are color-coded by kind/status, hoverable for details, and synced with selected graph nodes/edges.
 
 The UI does not need one physical record per graph primitive. It needs enough typed source records and join keys to construct the graph and inspectors without guessing.
+
+Typed-persistence foundation work is not the same as UI coverage. A row becomes
+operator-useful only when its facts are reachable from the run execution graph:
+as a graph node, graph edge, evidence attachment, inspector ref, or timeline
+span. Tool calls, provider attempts, database context, protocol artifacts,
+surface checks, metrics, and logs are evidence attached to graph objects; they
+are not the graph's organizing structure.
 
 Projection constraints:
 
@@ -200,6 +226,7 @@ The current answer contracts are:
     context to attempts and tool calls.
   - Closing slices: `tool.call.arguments`, `tool.result.trace.projection`,
     `llm-attempts.provider-observation-projection`,
+    `run-execution-graph.browser-spine`,
     `llm-attempts.dto-tool-bridge`.
 
 - What oracle target was used for child self-evaluation?
@@ -222,11 +249,16 @@ The current answer contracts are:
 - What protocol outputs were used to derive a choice?
   - Answer object: `ProtocolOutputPanel`, keyed by protocol coordinate and
     typed payload variant or typed parse-failure record.
-  - Still to pin down in implementation: exact Rust parse/error record shape
-    for malformed payloads and typed decode without `serde_json::Value`
-    staging.
-  - Closing slices: `protocol-artifacts.decode`,
-    `protocol-artifacts.storage-aggregate`.
+  - Current writer DTO coverage is closed: all six current writer procedures
+    have named writer-side DTO/artifact shapes.
+  - Listing load-result behavior is covered by tolerant rows for decoded
+    artifacts, typed parse/unsupported/future/malformed failures, and identity
+    mismatches.
+  - Tool-call-only aggregation now consumes decoded protocol variants and
+    separately reports decoded non-tool-call skips, decoded tool-call
+    payload-shape skips, and typed unloaded rows for malformed,
+    unsupported/future, and identity-mismatched artifacts.
+  - Closing slice: `protocol-artifacts.aggregate-tool-call`.
 
 - Do protocol outputs themselves prove parent/child/patch lineage?
   - Answer: no. Protocol payloads are typed inspectable facts. Lineage,
@@ -280,18 +312,18 @@ The current answer contracts are:
 
 | ID | UI question | Tree node or panel | Source records | Required join keys | Required payloads | Current coverage | Gap slice | Verification target |
 |---|---|---|---|---|---|---|---|---|
-| `ui.parent.child.patch.reason` | This parent produced a patch for this child. Why? | Parent -> child -> patch edge | Parent History entry, protocol artifacts, edit-surface evidence, patch artifact, candidate/evaluation records | run id, parent artifact id, child artifact id, history entry id, patch id, protocol coordinate | parent decision evidence, target surface, produced patch, candidate identity, evaluation summary | Partial: edit-surface and evaluation records are typed; protocol payloads still stage through raw JSON and protocol graph joins are incomplete. | `protocol-artifacts.decode`, `protocol-artifacts.storage-aggregate`, `edit-surface.source-records`, `evaluation-oracle-targets.selection-replay` | Typed reconstruction test can load a parent-child-patch path and display evidence, patch, and outcome using adjacent typed joins rather than inferring lineage from protocol artifact filenames. |
+| `ui.parent.child.patch.reason` | This parent produced a patch for this child. Why? | Parent -> child -> patch edge | Parent History entry, protocol artifacts, edit-surface evidence, patch artifact, candidate/evaluation records | run id, parent artifact id, child artifact id, history entry id, patch id, protocol coordinate | parent decision evidence, target surface, produced patch, candidate identity, evaluation summary | Partial: edit-surface, evaluation records, protocol writer DTOs, tolerant protocol listing, and aggregate output consumption are typed; protocol graph joins remain incomplete. | `edit-surface.source-records`, `evaluation-oracle-targets.selection-replay` | Typed reconstruction test can load a parent-child-patch path and display evidence, patch, and outcome using adjacent typed joins rather than inferring lineage from protocol artifact filenames. |
 | `ui.write.surface.evidence` | What evidence selected this write surface? | Patch detail -> surface evidence | Surface grant/check records, checked surface evidence, DB context refs, diagnosis records, candidate membership/evidence | surface id, grant/check id, evidence ids, parent history entry id, context bundle id | evidence list, rejected/accepted surface reasons, protected-core path, diagnostic classification | Partial: edit-surface records are typed; ownership and replay joins remain scattered. | `edit-surface.source-records`, `database-context.prompt-evidence` | Typed projection can show surface choice and all cited evidence ids without reading TUI-local state or logs. |
-| `ui.protocol.outputs` | What protocol outputs were used to derive the choice? | Protocol artifact panel | Protocol artifact records, stored artifact records, aggregate output records | protocol coordinate (`run_id`, `subject_id`, path, procedure), parent/child artifact id, history entry id | typed protocol input, typed protocol output, derived evidence, parse/error record if malformed | Non-compliant: decode/store/aggregate still retain or stage `serde_json::Value`; no standalone protocol-artifact id exists today. | `protocol-artifacts.decode`, `protocol-artifacts.storage-aggregate` | `ploke-records` test deserializes real protocol artifacts into typed payload variants or typed parse/error records and rejects mismatched nested shapes. |
+| `ui.protocol.outputs` | What protocol outputs were used to derive the choice? | Protocol artifact panel | Protocol artifact records, stored artifact records, aggregate output records | protocol coordinate (`run_id`, `subject_id`, path, procedure), parent/child artifact id, history entry id | typed protocol input, typed protocol output, derived evidence, parse/error record if malformed | Partial: implemented tool-call payload decode, all six current writer DTO/artifact shapes, tolerant listing/load-result rows, and aggregate filtering exist; no standalone protocol-artifact id exists today. | None for this row until graph playback joins are scheduled. | `ploke-records` test deserializes real protocol artifacts into typed payload variants or typed parse/error records and rejects mismatched nested shapes; `ploke-eval` listing and aggregate tests classify decoded non-tool-call skips, decoded tool-call payload-shape skips, malformed/unsupported/future unloads, and identity-mismatched unloads without filename inference while aggregating valid tool-call outputs. |
 | `ui.patch.diff.metadata` | What files did the patch touch, and what metadata was produced with it? | Patch detail -> diff/files panel | Patch artifact record, edit-surface attempt/commitment records, candidate artifact record, parent identity/invocation records | patch id, candidate artifact id, surface id, invocation id, parent artifact id | changed paths, diff summary or patch body ref, generated metadata, invocation provenance | Mostly typed; replay source ownership still needs cleanup. | `edit-surface.source-records`, `evaluation-oracle-targets.selection-replay` | Typed replay can map selected patch to files touched, candidate artifact, and parent invocation. |
 | `ui.approval.path` | How did the parent decide to apply or approve this patch through the edit surface? | Patch -> approval path | Surface grant/check records, attempt/commitment records, History selection/admission records, ploke-tui proposal registry projection | grant/check id, proposal id, commitment id, history entry id, parent artifact id | grant result, checked surface evidence, proposal state, commitment outcome, parent admission link | Partial: typed edit-surface records exist; proposal registry remains local to TUI/eval boundary. | `edit-surface.source-records`, `evaluation-oracle-targets.identity-joins` | Typed path links proposal -> check -> commitment -> History/evaluation without treating TUI projection as source truth. |
-| `ui.child.self.eval.actions` | After the patch was applied, what did the child do during self-evaluation? | Child -> self-evaluation timeline | Evaluation run records, LLM attempt records, tool request/result records, protocol artifacts, metrics records | child artifact id, evaluation id, attempt id, tool call id, protocol coordinate, metrics run id | ordered attempts, tool calls, responses, errors/timeouts, evaluation observations, final metrics | Mixed: evaluation records typed; LLM/tool projections still contain raw or stringly JSON. | `tool.call.arguments`, `tool.result.trace.projection`, `llm-attempts.provider-observation-projection`, `llm-attempts.dto-tool-bridge` | Typed replay can show child evaluation timeline with typed attempts, tool calls, results, and metrics. |
+| `ui.child.self.eval.actions` | After the patch was applied, what did the child do during self-evaluation? | Child -> self-evaluation timeline | Evaluation run records, LLM attempt records, tool request/result records, protocol artifacts, metrics records | child artifact id, evaluation id, attempt id, tool call id, protocol coordinate, metrics run id | ordered attempts, tool calls, responses, errors/timeouts, evaluation observations, final metrics | Mixed: evaluation records, tool-call arguments, tool-result summaries, trace/observation replay, and provider error/timeout/timeline projections are typed; the browser-facing graph landing is now the next slice, and DTO/tool-bridge projections remain queued after that. | `run-execution-graph.browser-spine`, `llm-attempts.dto-tool-bridge` | Typed replay can show child evaluation timeline with typed provider attempts, tool calls/results, and trace observations; the graph-spine slice must make the already-typed facts visible from selected browser steps/groups. |
 | `ui.oracle.target` | During child self-evaluation, what target instance was used as the oracle patch target? | Evaluation target panel | Eval target identity records, artifact branch records, instance registry, scheduler state, run metadata | evaluation id, target artifact id, instance id, branch id, surface root id | oracle target identity, selected artifact root, branch/worktree identity, target surface roots | Typed but scattered. | `evaluation-oracle-targets.identity-joins` | Typed lookup from evaluation id returns oracle target artifact/runtime and surface roots. |
-| `ui.tool.calls` | What did each tool call look like, including typed arguments and typed return? | Tool-call panel | Tool call record, tool request record, tool execution record, tool result record, provider attempt record | tool call id, request id, execution id, attempt id, child/evaluation id | typed arguments, typed result, execution status, provider response link, typed error if malformed | Partially prepared: `ploke-tui` owned transport DTOs are exposed through `ploke_records::tool_contracts`; persisted records still need a closed carrier and parse-failure record instead of raw `String` / `serde_json::Value`. | `tool.call.arguments`, `tool.result.trace.projection`, `llm-attempts.dto-tool-bridge` | Roundtrip and real-run parse tests cover each owned tool argument/result shape through the `ploke-records` re-export. |
+| `ui.tool.calls` | What did each tool call look like, including typed arguments and typed return? | Tool-call panel | Tool call record, tool request record, tool execution record, tool result record, provider attempt record | tool call id, request id, execution id, attempt id, child/evaluation id | typed arguments, typed result, execution status, provider response link, typed error if malformed | Partial: persisted eval tool-call arguments use `ToolArgumentsJson`, decode through a closed `ToolCallArguments` enum over `ploke_records::tool_contracts`, preserve legacy search records, and surface typed parse-failure records. Tool-result failure/truncation summaries and turn-trace replay now use named typed projections; browser graph attachment and provider bridge projections remain incomplete. | `run-execution-graph.browser-spine`, `llm-attempts.dto-tool-bridge` | Roundtrip and focused replay tests cover typed tool arguments and result/trace projections; graph-spine verification must show selected browser steps/groups can expose tool-call summaries from typed records. |
 | `ui.database.context` | What additional context was added from the database? | Context panel | Intent/tool result records, context assembly records, embedding/node ref records, UI context projection | context bundle id, query id, node ids, prompt id, evaluation id, tool call id | query text or intent, retrieved node refs, embedding/search refs, assembled prompt context, inclusion reason | Typed surfaces exist; prompt-evidence and replay joins need unification. | `database-context.prompt-evidence` | Typed replay links prompt/evaluation/tool call to DB context bundle and each cited node. |
-| `ui.provider.attempts` | What provider/model attempts happened, and how did errors or timeouts affect the run? | LLM attempt panel | LLM request/response records, provider error records, timeout records, attempt timeline records, full response logs | attempt id, provider request id, response id, model id, child/evaluation id | provider/model, request metadata, response summary, timeout/error type, typed observation timeline | Non-compliant: provider observation/timeline projections still use raw or stringly JSON. | `llm-attempts.provider-observation-projection`, `llm-attempts.dto-tool-bridge` | Typed attempt projection can show request, response, error/timeout, and timeline without JSON field walking. |
+| `ui.provider.attempts` | What provider/model attempts happened, and how did errors or timeouts affect the run? | LLM attempt panel | LLM request/response records, provider error records, timeout records, attempt timeline records, full response logs | attempt id, provider request id, response id, model id, child/evaluation id | provider/model, request metadata, response summary, timeout/error type, typed observation timeline | Partial: provider error, timeout, and attempt timeline projections are typed; browser graph attachment is next, and response DTO metadata/logprobs plus tool bridge records remain queued afterward. | `run-execution-graph.browser-spine`, `llm-attempts.dto-tool-bridge` | Typed attempt projection can show provider error/timeout and timeline without JSON field walking; graph-spine verification must show selected browser steps/groups can expose provider attempts, retries, suppressions, timeouts, status/body failures, elapsed time, and backoff. |
 | `ui.successor.selection` | Why was this successor selected over other candidates? | Successor selection panel | Selection DTO, History selection payload, evidence records, metrics run, tree playback projection | run id, candidate set root/commitment, candidate membership id, selected artifact id, metrics run id, history entry id | candidate list, scores/metrics, evidence refs, selected membership, final selected artifact/runtime | Typed but scattered; recent work improved successor identity but replay joins still need consolidation. | `evaluation-oracle-targets.identity-joins`, `evaluation-oracle-targets.selection-replay` | Typed replay can show all candidates, their evidence/metrics, and the selected successor identity. |
-| `ui.live.progress` | What is happening right now during a live run? | Live run tree/progress view | Typed monitor/projection records, scheduler/node/result/metrics projections, History-backed records where admitted | run id, parent artifact id, child artifact id, node request id, result id, metrics id | live status, current node/attempt, latest typed observation, provisional projection markers | Partial: scheduler/node/result/metrics projections typed; preview/trace/observation/slice readers still need typed projection records. | `tool.result.trace.projection`, `llm-attempts.provider-observation-projection` | Live monitor can consume typed projection records and mark them as projection, not source authority. |
+| `ui.live.progress` | What is happening right now during a live run? | Live run tree/progress view | Typed monitor/projection records, scheduler/node/result/metrics projections, History-backed records where admitted | run id, parent artifact id, child artifact id, node request id, result id, metrics id | live status, current node/attempt, latest typed observation, provisional projection markers | Partial: scheduler/node/result/metrics plus trace/observation replay and provider-attempt projections are typed; preview/slice readers still need typed records. | None for provider attempts; preview/slice rows remain separately queued. | Live monitor can consume typed trace/observation and provider-attempt projection records and mark them as projection, not source authority. |
 | `ui.child.lineage.genesis` | For a given child, what combination of runtimes, artifacts, and patches led to that child, tracing back to genesis? | Child -> ancestry path | Artifact branch records, runtime hydration records, parent/child History entries, patch artifact records, successor selection records | child artifact id, parent artifact id, runtime id, patch id, predecessor artifact id, genesis artifact id, history entry id | ordered ancestry chain, patch per edge, runtime per artifact, selected successor per generation, genesis root | Partial: artifact/evaluation records exist; full cross-generation lineage projection is not yet a named typed view. | `runtime-artifact-lineage`, `evaluation-oracle-targets.identity-joins`, `evaluation-oracle-targets.selection-replay` | Typed lineage lookup can start from a child artifact id and reconstruct artifact/runtime/patch edges back to genesis. |
 | `ui.successor.candidate.frontier` | What are all the candidates for a possible next successor? | Parent -> candidate frontier | Candidate set records, candidate membership records, scheduler state, evaluation records, metrics records, child artifact records | parent artifact id, candidate set root/commitment, candidate membership id, child artifact id, evaluation id, metrics run id | complete candidate list, candidate origin, artifact/runtime identity, evaluation status, metrics availability | Partial: selection DTOs are typed; candidate frontier and membership roles need explicit replay projection. | `candidate-frontier.replay`, `evaluation-oracle-targets.selection-replay` | Typed replay can list every candidate considered for a parent before showing the selected successor. |
 | `ui.selection.candidate.set` | How did this parent select this successor, and from among which exact candidates? | Successor selection -> candidate comparison | Candidate set records, selection DTO, History selection payload, evidence records, metrics run, selected artifact commitment | parent artifact id, candidate set root/commitment, selected membership id, candidate membership ids, selected artifact id, history entry id | candidate set snapshot, rejected candidates, selected candidate, evidence and scores used for selection | Partial: selected identity is improving; source-set vs decision-set membership must stay typed and explicit. | `candidate-frontier.replay`, `evaluation-oracle-targets.selection-replay` | Typed selection replay proves the selected membership belongs to the final decision candidate set. |
@@ -349,5 +381,7 @@ A drilldown row is `covered` only when all of these are true:
 3. Joins are explicit typed ids or refs, not inferred from filenames, logs, CLI output, or JSON field walking.
 4. The UI-facing projection carries evidence strength or projection status without upgrading authority.
 5. A test or fixture proves reconstruction of the row's tree path.
+6. The reconstructed facts are reachable from the run execution graph projection
+   as nodes, edges, evidence attachments, inspector refs, or timeline spans.
 
 Until then, the row is only partially covered even if each individual record roundtrips.

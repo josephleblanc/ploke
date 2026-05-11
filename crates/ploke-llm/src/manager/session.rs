@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use ploke_core::ArcStr;
 use reqwest::header::HeaderMap;
+use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use tracing::info;
 use tracing::warn;
@@ -44,6 +45,123 @@ pub enum ChatStepOutcome {
         reasoning: Option<ArcStr>,
         finish_reason: FinishReason,
     },
+}
+
+#[derive(Debug, Deserialize)]
+struct ProviderResponseObservation {
+    #[serde(default)]
+    provider: Option<ProviderName>,
+    #[serde(default)]
+    error: Option<ProviderEmbeddedError>,
+}
+
+impl ProviderResponseObservation {
+    fn from_body(body_text: &str) -> Option<Self> {
+        serde_json::from_str(body_text).ok()
+    }
+
+    fn provider_slug(&self) -> Option<ArcStr> {
+        self.provider
+            .as_ref()
+            .and_then(ProviderName::to_slug)
+            .map(|slug| ArcStr::from(slug.as_str()))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ProviderEmbeddedError {
+    Record(ProviderEmbeddedErrorRecord),
+    Ignored(serde::de::IgnoredAny),
+}
+
+impl ProviderEmbeddedError {
+    fn message(&self) -> &str {
+        match self {
+            Self::Record(record) => record.message(),
+            Self::Ignored(_) => "Unknown provider error",
+        }
+    }
+
+    fn api_code(&self) -> Option<ArcStr> {
+        match self {
+            Self::Record(record) => record.api_code(),
+            Self::Ignored(_) => None,
+        }
+    }
+
+    fn status(&self) -> u16 {
+        match self {
+            Self::Record(record) => record.status(),
+            Self::Ignored(_) => 200,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ProviderEmbeddedErrorRecord {
+    message: Option<String>,
+    #[serde(default)]
+    code: Option<ProviderApiCodeProjection>,
+    #[serde(default)]
+    status: Option<ProviderStatusProjection>,
+}
+
+impl ProviderEmbeddedErrorRecord {
+    fn message(&self) -> &str {
+        self.message.as_deref().unwrap_or("Unknown provider error")
+    }
+
+    fn api_code(&self) -> Option<ArcStr> {
+        self.code
+            .as_ref()
+            .and_then(ProviderApiCodeProjection::arcstr)
+    }
+
+    fn status(&self) -> u16 {
+        self.status
+            .as_ref()
+            .and_then(ProviderStatusProjection::u16)
+            .unwrap_or(200)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ProviderApiCodeProjection {
+    String(String),
+    Signed(i64),
+    Unsigned(u64),
+    Ignored(serde::de::IgnoredAny),
+}
+
+impl ProviderApiCodeProjection {
+    fn arcstr(&self) -> Option<ArcStr> {
+        match self {
+            Self::String(value) => Some(ArcStr::from(value.as_str())),
+            Self::Signed(value) => Some(ArcStr::from(value.to_string())),
+            Self::Unsigned(value) => Some(ArcStr::from(value.to_string())),
+            Self::Ignored(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ProviderStatusProjection {
+    Number(u64),
+    String(String),
+    Ignored(serde::de::IgnoredAny),
+}
+
+impl ProviderStatusProjection {
+    fn u16(&self) -> Option<u16> {
+        match self {
+            Self::Number(value) => u16::try_from(*value).ok(),
+            Self::String(value) => value.parse().ok(),
+            Self::Ignored(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,12 +214,68 @@ fn chat_http_stderr_enabled() -> bool {
     })
 }
 
-fn emit_chat_http_stderr_line(payload: serde_json::Value) {
+fn emit_chat_http_stderr_line(payload: impl Serialize) {
     if chat_http_stderr_enabled()
         && let Ok(line) = serde_json::to_string(&payload)
     {
         eprintln!("{line}");
     }
+}
+
+#[derive(Debug, Serialize)]
+struct ChatHttpStatusErrorObservation<'a> {
+    event: &'static str,
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    url: &'a str,
+    status: u16,
+    retry_after_ms: Option<u64>,
+    elapsed_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatHttpRequestErrorObservation<'a> {
+    event: &'static str,
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    phase: &'a str,
+    url: &'a str,
+    status: Option<u16>,
+    failure: &'a str,
+    receive_phase: Option<&'a str>,
+    body_failure: Option<&'a str>,
+    elapsed_ms: u64,
+    is_timeout: bool,
+    raw_error: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatHttpRetryScheduledObservation<'a> {
+    event: &'static str,
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    phase: &'a str,
+    url: &'a str,
+    status: Option<u16>,
+    backoff_ms: u64,
+    elapsed_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatHttpRetrySuppressedObservation<'a> {
+    event: &'static str,
+    request_id: u64,
+    attempt: u32,
+    max_attempts: u32,
+    phase: &'a str,
+    url: &'a str,
+    status: Option<u16>,
+    body_failure: Option<&'a str>,
+    reason: &'static str,
+    elapsed_ms: u64,
 }
 
 pub async fn chat_step<R: Router>(
@@ -592,16 +766,16 @@ fn trace_chat_http_status_error(
     retry_after: Option<Duration>,
     elapsed: Duration,
 ) {
-    emit_chat_http_stderr_line(serde_json::json!({
-        "event": "chat_http_response_error_status",
-        "request_id": request_id,
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "url": url,
-        "status": status,
-        "retry_after_ms": retry_after.map(|value| value.as_millis() as u64),
-        "elapsed_ms": elapsed.as_millis()
-    }));
+    emit_chat_http_stderr_line(ChatHttpStatusErrorObservation {
+        event: "chat_http_response_error_status",
+        request_id,
+        attempt,
+        max_attempts,
+        url,
+        status,
+        retry_after_ms: retry_after.map(duration_ms),
+        elapsed_ms: duration_ms(elapsed),
+    });
     tracing::warn!(
         target: "chat_http",
         event = "chat_http_response_error_status",
@@ -625,17 +799,17 @@ fn trace_chat_http_retry_scheduled(
     backoff: Duration,
     elapsed: Duration,
 ) {
-    emit_chat_http_stderr_line(serde_json::json!({
-        "event": "chat_http_retry_scheduled",
-        "request_id": request_id,
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "phase": phase,
-        "url": url,
-        "status": status,
-        "backoff_ms": backoff.as_millis(),
-        "elapsed_ms": elapsed.as_millis()
-    }));
+    emit_chat_http_stderr_line(ChatHttpRetryScheduledObservation {
+        event: "chat_http_retry_scheduled",
+        request_id,
+        attempt,
+        max_attempts,
+        phase,
+        url,
+        status,
+        backoff_ms: duration_ms(backoff),
+        elapsed_ms: duration_ms(elapsed),
+    });
     tracing::warn!(
         target: "chat_http",
         event = "chat_http_retry_scheduled",
@@ -695,21 +869,21 @@ struct ChatHttpErrorTrace<'a> {
 }
 
 fn trace_chat_http_error(event: ChatHttpErrorTrace<'_>) {
-    emit_chat_http_stderr_line(serde_json::json!({
-        "event": "chat_http_request_error",
-        "request_id": event.request_id,
-        "attempt": event.attempt,
-        "max_attempts": event.max_attempts,
-        "phase": event.phase,
-        "url": event.url,
-        "status": event.status,
-        "failure": event.failure,
-        "receive_phase": event.receive_phase,
-        "body_failure": event.body_failure,
-        "elapsed_ms": event.elapsed.as_millis(),
-        "is_timeout": event.is_timeout,
-        "raw_error": event.raw_error
-    }));
+    emit_chat_http_stderr_line(ChatHttpRequestErrorObservation {
+        event: "chat_http_request_error",
+        request_id: event.request_id,
+        attempt: event.attempt,
+        max_attempts: event.max_attempts,
+        phase: event.phase,
+        url: event.url,
+        status: event.status,
+        failure: event.failure,
+        receive_phase: event.receive_phase,
+        body_failure: event.body_failure,
+        elapsed_ms: duration_ms(event.elapsed),
+        is_timeout: event.is_timeout,
+        raw_error: event.raw_error,
+    });
     tracing::warn!(
         target: "chat_http",
         event = "chat_http_request_error",
@@ -738,18 +912,18 @@ fn trace_chat_http_retry_suppressed(
     body_failure: Option<&str>,
     elapsed: Duration,
 ) {
-    emit_chat_http_stderr_line(serde_json::json!({
-        "event": "chat_http_retry_suppressed",
-        "request_id": request_id,
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "phase": phase,
-        "url": url,
-        "status": status,
-        "body_failure": body_failure,
-        "reason": "classified_non_retryable",
-        "elapsed_ms": elapsed.as_millis()
-    }));
+    emit_chat_http_stderr_line(ChatHttpRetrySuppressedObservation {
+        event: "chat_http_retry_suppressed",
+        request_id,
+        attempt,
+        max_attempts,
+        phase,
+        url,
+        status,
+        body_failure,
+        reason: "classified_non_retryable",
+        elapsed_ms: duration_ms(elapsed),
+    });
     tracing::warn!(
         target: "chat_http",
         event = "chat_http_retry_suppressed",
@@ -799,6 +973,10 @@ fn classify_body_failure(error: &reqwest::Error) -> HttpBodyFailure {
     } else {
         HttpBodyFailure::ReadFailed
     }
+}
+
+fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis() as u64
 }
 
 impl HttpSendFailure {
@@ -971,24 +1149,20 @@ impl ChatStepError {
 /// Some providers return `{ "error": ... }` in a 200 OK body. We detect that early and surface it
 /// as `LlmError::Api`.
 pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
-    use serde_json::Value;
     let mut builder = ChatStepDataBuilder::new();
     let mut raw_provider_slug: Option<ArcStr> = None;
     let mut first_choice_error: Option<LlmError> = None;
 
-    // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
+    // Parse a small typed projection first so embedded provider errors do not
+    // require anonymous JSON field walking.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
-    if let Ok(v) = serde_json::from_str::<Value>(body_text) {
-        let raw_provider_name = extract_provider_name(&v);
-        raw_provider_slug = raw_provider_name
-            .as_ref()
-            .and_then(ProviderName::to_slug)
-            .map(|slug| ArcStr::from(slug.as_str()));
+    if let Some(observation) = ProviderResponseObservation::from_body(body_text) {
+        raw_provider_slug = observation.provider_slug();
 
-        if let Some(err) = v.get("error") {
+        if let Some(err) = observation.error.as_ref() {
             return Err(api_error_from_embedded_error(
                 err,
-                raw_provider_name.as_ref(),
+                observation.provider.as_ref(),
                 raw_provider_slug.clone(),
                 body_text,
                 ApiErrorSource::TopLevelError,
@@ -1118,55 +1292,33 @@ fn truncate_for_error(s: &str, max: usize) -> String {
     }
 }
 
-fn extract_provider_name(value: &serde_json::Value) -> Option<ProviderName> {
-    value
-        .get("provider")
-        .and_then(serde_json::Value::as_str)
-        .map(ProviderName::new)
-}
-
 fn extract_provider_name_from_body(body_text: &str) -> Option<ProviderName> {
-    serde_json::from_str::<serde_json::Value>(body_text)
-        .ok()
-        .and_then(|value| extract_provider_name(&value))
+    ProviderResponseObservation::from_body(body_text).and_then(|observation| observation.provider)
 }
 
 fn extract_provider_slug_from_body(body_text: &str) -> Option<ArcStr> {
-    extract_provider_name_from_body(body_text)
-        .and_then(|name| name.to_slug())
-        .map(|slug| ArcStr::from(slug.as_str()))
-}
-
-fn extract_api_code(value: &serde_json::Value) -> Option<ArcStr> {
-    match value.get("code") {
-        Some(serde_json::Value::String(s)) => Some(ArcStr::from(s.as_str())),
-        Some(serde_json::Value::Number(n)) => Some(ArcStr::from(n.to_string())),
-        _ => None,
-    }
+    ProviderResponseObservation::from_body(body_text)
+        .and_then(|observation| observation.provider_slug())
 }
 
 fn extract_api_code_from_body(body_text: &str) -> Option<ArcStr> {
-    serde_json::from_str::<serde_json::Value>(body_text)
-        .ok()
-        .and_then(|value| value.get("error").and_then(extract_api_code))
+    ProviderResponseObservation::from_body(body_text)
+        .and_then(|observation| observation.error)
+        .and_then(|error| error.api_code())
 }
 
 fn api_error_from_embedded_error(
-    err: &serde_json::Value,
+    err: &ProviderEmbeddedError,
     provider_name: Option<&ProviderName>,
     provider_slug: Option<ArcStr>,
     body_text: &str,
     error_source: ApiErrorSource,
 ) -> LlmError {
-    let msg = err
-        .get("message")
-        .and_then(|m| m.as_str())
-        .unwrap_or("Unknown provider error");
-
-    let api_code = extract_api_code(err);
+    let msg = err.message();
+    let api_code = err.api_code();
     // Provider "code" is often not an HTTP status; it may be a string like "invalid_api_key".
     // Prefer an explicit `status` field if present, otherwise mark as 200 (embedded error).
-    let status = err.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+    let status = err.status();
 
     let full_msg = if let Some(code) = api_code.as_ref() {
         format!("{msg} (code: {code})")
@@ -1210,28 +1362,20 @@ fn api_error_from_choice_error(
 
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
-    match serde_json::from_str::<serde_json::Value>(body_text) {
-        Ok(v) => {
-            if let Some(err) = v.get("error") {
-                let provider_name = extract_provider_name(&v);
-                let provider_slug = provider_name
-                    .as_ref()
-                    .and_then(ProviderName::to_slug)
-                    .map(|slug| ArcStr::from(slug.as_str()));
-                Err(api_error_from_embedded_error(
-                    err,
-                    provider_name.as_ref(),
-                    provider_slug,
-                    body_text,
-                    ApiErrorSource::TopLevelError,
-                ))
-            } else {
-                Err(LlmError::Deserialization {
-                    message: "No choices".into(),
-                    body_snippet: Some(truncate_for_error(body_text, 512)),
-                })
-            }
-        }
+    match serde_json::from_str::<ProviderResponseObservation>(body_text) {
+        Ok(observation) => match observation.error.as_ref() {
+            Some(err) => Err(api_error_from_embedded_error(
+                err,
+                observation.provider.as_ref(),
+                observation.provider_slug(),
+                body_text,
+                ApiErrorSource::TopLevelError,
+            )),
+            None => Err(LlmError::Deserialization {
+                message: "No choices".into(),
+                body_snippet: Some(truncate_for_error(body_text, 512)),
+            }),
+        },
         Err(e) => {
             let err_msg = format!("Failed to Deserialize to json: {e}");
             Err(LlmError::Deserialization {
@@ -1414,6 +1558,31 @@ mod tests {
                 assert_eq!(status, 200);
                 assert_eq!(api_code.as_deref(), Some("429"));
                 assert_eq!(provider_name.as_deref(), Some("Io Net"));
+                assert_eq!(error_source, ApiErrorSource::TopLevelError);
+            }
+            other => panic!("expected api error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_top_level_error_accepts_non_object_error_shape() {
+        let body = r#"{
+            "provider": "Groq",
+            "error": "upstream failed"
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("top-level error should abort parsing");
+        match err {
+            LlmError::Api {
+                status,
+                message,
+                provider_name,
+                error_source,
+                ..
+            } => {
+                assert_eq!(status, 200);
+                assert_eq!(message, "Unknown provider error");
+                assert_eq!(provider_name.as_deref(), Some("Groq"));
                 assert_eq!(error_source, ApiErrorSource::TopLevelError);
             }
             other => panic!("expected api error, got {other:?}"),

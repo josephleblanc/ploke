@@ -20,8 +20,18 @@ mod artifacts;
 pub mod provenance;
 
 pub use artifacts::{
-    IntentSegmentationArtifactMirror, IntentSegmentationPayload, ToolCallReviewArtifactMirror,
+    ArtifactEditMirror, ArtifactWriteRecord, IntentSegmentationArtifactMirror,
+    IntentSegmentationPayload, InterventionApplyArtifact, InterventionApplyInputMirror,
+    InterventionApplyOutputMirror, InterventionApplyPayload, InterventionCandidateMirror,
+    InterventionCandidateSetMirror, InterventionIssueCaseMirror,
+    InterventionIssueDetectionArtifact, InterventionIssueDetectionPayload, InterventionSpecMirror,
+    InterventionSynthesisArtifactMirror, InterventionSynthesisContextMirror,
+    InterventionSynthesisInputMirror, InterventionSynthesisOutputMirror,
+    InterventionSynthesisPayload, IssueDetectionArtifactInputMirror, IssueDetectionOutputMirror,
+    IssueEvidenceMirror, IssueProtocolEvidenceMirror, IssueSelectionBasisMirror,
+    OperationTargetMirror, SynthesizedInterventionDraftMirror, ToolCallReviewArtifactMirror,
     ToolCallReviewPayload, ToolCallSegmentReviewArtifactMirror, ToolCallSegmentReviewPayload,
+    TreatmentStateRefMirror, ValidationPolicyMirror, ValidationResultMirror,
 };
 pub use provenance::{
     ChoiceMirror, JsonLlmProvenanceMirror, MechanizedProvenanceMirror, OpenAiResponseMirror,
@@ -32,6 +42,9 @@ pub const SCHEMA_V1: &str = "protocol-artifact.v1";
 pub const TOOL_CALL_INTENT_SEGMENTATION: &str = "tool_call_intent_segmentation";
 pub const TOOL_CALL_REVIEW: &str = "tool_call_review";
 pub const TOOL_CALL_SEGMENT_REVIEW: &str = "tool_call_segment_review";
+pub const INTERVENTION_ISSUE_DETECTION: &str = "intervention_issue_detection";
+pub const INTERVENTION_SYNTHESIS: &str = "intervention_synthesis";
+pub const INTERVENTION_APPLY: &str = "intervention_apply";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Artifact {
@@ -76,6 +89,9 @@ pub enum ArtifactPayloadKind {
     ToolCallIntentSegmentation,
     ToolCallReview,
     ToolCallSegmentReview,
+    InterventionIssueDetection,
+    InterventionSynthesis,
+    InterventionApply,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +99,9 @@ pub enum ArtifactBody {
     ToolCallIntentSegmentation(IntentSegmentationPayload),
     ToolCallReview(ToolCallReviewPayload),
     ToolCallSegmentReview(ToolCallSegmentReviewPayload),
+    InterventionIssueDetection(InterventionIssueDetectionPayload),
+    InterventionSynthesis(InterventionSynthesisPayload),
+    InterventionApply(InterventionApplyPayload),
 }
 
 impl Record for Artifact {
@@ -146,6 +165,21 @@ impl Serialize for Artifact {
                 state.serialize_field("output", &payload.output)?;
                 state.serialize_field("artifact", &payload.artifact)?;
             }
+            ArtifactBody::InterventionIssueDetection(payload) => {
+                state.serialize_field("input", &payload.input)?;
+                state.serialize_field("output", &payload.output)?;
+                state.serialize_field("artifact", &payload.artifact)?;
+            }
+            ArtifactBody::InterventionSynthesis(payload) => {
+                state.serialize_field("input", &payload.input)?;
+                state.serialize_field("output", &payload.output)?;
+                state.serialize_field("artifact", &payload.artifact)?;
+            }
+            ArtifactBody::InterventionApply(payload) => {
+                state.serialize_field("input", &payload.input)?;
+                state.serialize_field("output", &payload.output)?;
+                state.serialize_field("artifact", &payload.artifact)?;
+            }
         }
         state.end()
     }
@@ -205,6 +239,54 @@ impl<'de> Deserialize<'de> for Artifact {
         }
 
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawInterventionIssueDetectionArtifact {
+            schema_version: String,
+            subject_id: String,
+            run_id: String,
+            created_at_ms: u64,
+            #[serde(default)]
+            model_id: Option<String>,
+            #[serde(default)]
+            provider_slug: Option<String>,
+            input: IssueDetectionArtifactInputMirror,
+            output: IssueDetectionOutputMirror,
+            artifact: InterventionIssueDetectionArtifact<InterventionIssueCaseMirror>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawInterventionSynthesisArtifact {
+            schema_version: String,
+            subject_id: String,
+            run_id: String,
+            created_at_ms: u64,
+            #[serde(default)]
+            model_id: Option<String>,
+            #[serde(default)]
+            provider_slug: Option<String>,
+            input: InterventionSynthesisInputMirror,
+            output: InterventionSynthesisOutputMirror,
+            artifact: InterventionSynthesisArtifactMirror,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawInterventionApplyArtifact {
+            schema_version: String,
+            subject_id: String,
+            run_id: String,
+            created_at_ms: u64,
+            #[serde(default)]
+            model_id: Option<String>,
+            #[serde(default)]
+            provider_slug: Option<String>,
+            input: InterventionApplyInputMirror,
+            output: InterventionApplyOutputMirror,
+            artifact: InterventionApplyOutputMirror,
+        }
+
+        #[derive(Deserialize)]
         #[serde(tag = "procedure_name")]
         enum RawArtifact {
             #[serde(rename = "tool_call_intent_segmentation")]
@@ -213,6 +295,12 @@ impl<'de> Deserialize<'de> for Artifact {
             ToolCallReview(RawToolCallReviewArtifact),
             #[serde(rename = "tool_call_segment_review")]
             ToolCallSegmentReview(RawToolCallSegmentReviewArtifact),
+            #[serde(rename = "intervention_issue_detection")]
+            InterventionIssueDetection(RawInterventionIssueDetectionArtifact),
+            #[serde(rename = "intervention_synthesis")]
+            InterventionSynthesis(RawInterventionSynthesisArtifact),
+            #[serde(rename = "intervention_apply")]
+            InterventionApply(RawInterventionApplyArtifact),
         }
 
         match RawArtifact::deserialize(deserializer)? {
@@ -258,6 +346,48 @@ impl<'de> Deserialize<'de> for Artifact {
                     artifact: raw.artifact,
                 }),
             }),
+            RawArtifact::InterventionIssueDetection(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: INTERVENTION_ISSUE_DETECTION.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::InterventionIssueDetection(InterventionIssueDetectionPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
+            RawArtifact::InterventionSynthesis(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: INTERVENTION_SYNTHESIS.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::InterventionSynthesis(InterventionSynthesisPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
+            RawArtifact::InterventionApply(raw) => Ok(Self {
+                schema_version: raw.schema_version,
+                procedure_name: INTERVENTION_APPLY.to_string(),
+                subject_id: raw.subject_id,
+                run_id: raw.run_id,
+                created_at_ms: raw.created_at_ms,
+                model_id: raw.model_id,
+                provider_slug: raw.provider_slug,
+                body: ArtifactBody::InterventionApply(InterventionApplyPayload {
+                    input: raw.input,
+                    output: raw.output,
+                    artifact: raw.artifact,
+                }),
+            }),
         }
     }
 }
@@ -268,6 +398,9 @@ fn expected_payload_kind(source: &str) -> Option<ArtifactPayloadKind> {
             TOOL_CALL_INTENT_SEGMENTATION => Some(ArtifactPayloadKind::ToolCallIntentSegmentation),
             TOOL_CALL_REVIEW => Some(ArtifactPayloadKind::ToolCallReview),
             TOOL_CALL_SEGMENT_REVIEW => Some(ArtifactPayloadKind::ToolCallSegmentReview),
+            INTERVENTION_ISSUE_DETECTION => Some(ArtifactPayloadKind::InterventionIssueDetection),
+            INTERVENTION_SYNTHESIS => Some(ArtifactPayloadKind::InterventionSynthesis),
+            INTERVENTION_APPLY => Some(ArtifactPayloadKind::InterventionApply),
             _ => None,
         }
     })

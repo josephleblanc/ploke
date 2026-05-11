@@ -103,7 +103,9 @@ fn completed_edit_call(
             parent_id: Uuid::new_v4().to_string(),
             call_id: call_id.to_string(),
             tool: tool.as_str().to_string(),
-            arguments: serde_json::to_string(&arguments).expect("serialize args"),
+            arguments: serde_json::to_string(&arguments)
+                .expect("serialize args")
+                .into(),
         },
         result: ToolResult::Completed(ToolCompletedRecord {
             request_id: request_id.to_string(),
@@ -131,7 +133,9 @@ fn failed_edit_call(
             parent_id: Uuid::new_v4().to_string(),
             call_id: call_id.to_string(),
             tool: tool.as_str().to_string(),
-            arguments: serde_json::to_string(&arguments).expect("serialize args"),
+            arguments: serde_json::to_string(&arguments)
+                .expect("serialize args")
+                .into(),
         },
         result: ToolResult::Failed(ToolFailedRecord {
             request_id: request_id.to_string(),
@@ -173,6 +177,9 @@ fn protocol_aggregate_with_recovery_review(
         coverage: ProtocolCoverage {
             scanned_artifact_count: 3,
             artifact_counts: Default::default(),
+            unloaded_artifact_count: 0,
+            skipped_non_tool_call_artifact_count: 0,
+            skipped_tool_call_payload_shape_count: 0,
             total_calls_in_run: total_calls,
             total_segments_in_anchor: 1,
             reviewed_call_count: 1,
@@ -260,6 +267,8 @@ fn protocol_aggregate_with_recovery_review(
             average_calls_per_anchor_segment: total_calls as f64,
         },
         skipped_segment_reviews: Vec::new(),
+        skipped_artifacts: Vec::new(),
+        unloaded_artifacts: Vec::new(),
     }
 }
 

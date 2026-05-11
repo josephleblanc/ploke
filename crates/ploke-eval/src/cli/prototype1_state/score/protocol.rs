@@ -117,9 +117,7 @@ fn protocol_aggregate_diagnostic(
         ),
         ProtocolAggregateError::Source(_)
         | ProtocolAggregateError::InvalidArtifactField { .. }
-        | ProtocolAggregateError::SegmentBasisMismatch { .. }
-        | ProtocolAggregateError::ArtifactIdentityMismatch { .. }
-        | ProtocolAggregateError::DeserializeArtifact { .. } => {
+        | ProtocolAggregateError::SegmentBasisMismatch { .. } => {
             ScoreDiagnostic::invalid(format!("{arm}_protocol_aggregate"), None, message)
         }
     }

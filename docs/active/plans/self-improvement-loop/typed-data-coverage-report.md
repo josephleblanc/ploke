@@ -14,6 +14,18 @@ This report evaluates whether Prototype 1 loop persisted data is covered by type
 
 Current result: coverage is strong for core loop records, but not compliant with the invariant.
 
+This report tracks typed-data foundation coverage. Operator coverage is stricter:
+typed facts must attach to the run execution graph and be inspectable through
+the browser/egui projection. Rows can be foundation-covered here while still
+needing graph/browser landing work in the typed-persistence implementation
+queue.
+
+The run execution graph is the generative Prototype 1 graph, not a log list:
+Runtime -> Surface(Artifact) -> PatchAttempt -> derived Artifact -> hydrated
+Runtime, plus selection and successor handoff. Tool calls, provider attempts,
+database context, protocol artifacts, metrics, and logs are evidence attached
+to that graph.
+
 ## Coverage Summary
 
 | Artifact family | Current typed coverage | Status |
@@ -24,11 +36,11 @@ Current result: coverage is strong for core loop records, but not compliant with
 | Scheduler/node/request/result mirrors | Typed in `crates/ploke-eval/src/intervention/scheduler.rs` and mirrored in `ploke-records`. | Typed, but `scheduler.json` is projection for this track and must not be authority. |
 | Branch registry | `Prototype1BranchRegistry` and mirrored `ploke-records` branch DTOs. | Covered. |
 | Evaluation artifacts | `ploke-records::evaluation` covers nested evaluation artifacts and metrics. | Covered by family tests. |
-| Protocol artifacts | `ploke-records::protocol` converts `input`, `output`, and `artifact` values into typed payload variants. | Not compliant: decode currently stages through `serde_json::Value`. |
+| Protocol artifacts | `ploke-records::protocol` converts implemented tool-call payloads and the six current writer procedures into named writer-side DTO/artifact shapes, and returns `ArtifactDecodeFailureRecord` for malformed payloads. `ploke-eval` tolerant listing now surfaces loaded artifacts plus typed decode/unsupported/future/malformed and identity-failure rows per visible `.json`; protocol aggregation consumes decoded tool-call variants, skips decoded non-tool-call variants, reports decoded tool-call payload-shape skips, and preserves typed unloaded rows. | Covered for current tool-call aggregate output; graph playback joins remain future work. |
 | Sealed History blocks | `ploke-records` has typed `SealedBlockRecord`; `ploke-tree` loads those for playback; legacy `ploke-eval` stored-block loader now uses typed stored entry DTOs. | Covered on shared-record path and eval reload path. |
 | History index projections | `history/index/by-hash.jsonl`, `by-lineage-height.jsonl`, and `heads.json` use typed store structures in `ploke-eval`, but are projections. | Covered by append-store projection deserialize/rebuildability test. |
-| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. | Not compliant while `ToolCallRecord.arguments` remains `serde_json::Value`. |
-| Browser playback model | `PlaybackBrowserModel` and nested snapshots are typed. | Serialization/projection plus deserialize roundtrip coverage. |
+| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. Tool-call request arguments now use `ToolArgumentsJson` and decode through `ToolCallArguments` or typed parse-failure records for eval replay/projection paths. Tool-result failure/truncation summaries, turn-trace/observation replay, provider error/timeout rows, and provider-attempt timelines now use named typed projection records. | Foundation-covered for tool-call arguments, result/trace projection, and provider observation projection; graph/browser landing is queued under `run-execution-graph.browser-spine`, and provider DTO/tool bridge remains future work. |
+| Browser playback model | `PlaybackBrowserModel` and nested snapshots are typed. | Serialization/projection plus deserialize roundtrip coverage; next work is to orient it around the generative execution graph rather than only timeline/tree summaries. |
 | Child-plan manifests | `ChildPlanFiles` and nested `ChildFiles` in `crates/ploke-eval/src/cli/prototype1_state/parent.rs` define the parent-owned message-box body. | Covered as a typed parent transition message; not a scheduler projection. |
 | Streams/logs | `nodes/*/streams/*/*.log`. | Plain text logs; outside the owned JSON/JSONL typed-persistence target. |
 
@@ -41,17 +53,36 @@ Current result: coverage is strong for core loop records, but not compliant with
 
 ## Blocking Gaps For 100%
 
-1. Protocol artifact decode stages through raw `serde_json::Value`.
-   - Evidence: `crates/ploke-records/src/protocol/mod.rs` deserializes `input`, `output`, and `artifact` as values before converting by `procedure_name`.
-   - This violates the invariant and must be replaced with typed procedure payload decoding.
-
-2. Some monitor/projection readers parse raw JSON for operator output.
-   - Examples include `agent-turn-trace.json`, `prototype1_observation_*.jsonl`, `slice.jsonl`, and selected successor-completion inspection paths in `cli_facing.rs`.
+1. Some monitor/projection readers parse raw JSON for operator output.
+   - Examples include `slice.jsonl` and selected successor-completion inspection paths in `cli_facing.rs`.
    - These must deserialize into named typed records or named typed projection structs because the project owns their JSON/JSONL shapes.
 
-3. Tool-call argument records still include an anonymous JSON field.
-   - Evidence: `crates/ploke-eval/src/record.rs` has `ToolCallRecord.arguments: serde_json::Value`.
-   - Replace with typed tool argument records, a typed enum, or a typed parse/error record; do not inspect persisted arguments through `serde_json::Value`.
+Display-only raw payload pretty printing is not a source-fact reader and is not
+itself a blocking typed-persistence gap.
+
+2. A legacy protocol execution helper still reloads the latest segmentation through raw persisted `output`.
+   - Evidence: `crates/ploke-eval/src/cli.rs` `load_latest_segmented_sequence` uses `serde_json::from_value(entry.stored.output)`.
+   - This is outside the aggregate-side slice but remains a production typed-persistence violation.
+
+3. Provider DTO/tool bridge projections still include raw/stringly JSON outside the provider-observation projection slice.
+   - Evidence: response DTO metadata/logprobs and tool-bridge rows remain assigned to `llm-attempts.dto-tool-bridge`.
+   - Replace those provider-side DTO/tool-bridge projections in the queued slice.
+
+4. The browser model is typed but not yet centered on the generative execution
+   graph from `prototype1_state::mod`.
+   - Evidence: existing browser/egui work exposes timeline/tree summaries, but
+     not the core Runtime -> Surface(Artifact) -> PatchAttempt -> derived
+     Artifact -> hydrated Runtime chain.
+   - Establish that graph spine in `run-execution-graph.browser-spine`, then
+     attach typed tool-call and provider-attempt facts as evidence.
+
+5. Tool-call and provider-attempt facts are foundation-typed but not yet
+   operator-visible as evidence on the run execution graph.
+   - Evidence: rows 5-7 have typed carriers/projections, but the egui/browser
+     model does not yet expose selected-step/group tool-call and provider
+     attempt summaries.
+   - Attach those facts after the graph spine is present, before resuming
+     deeper DTO cleanup.
 
 ## Closed In Current Coverage Pass
 
@@ -65,6 +96,10 @@ Current result: coverage is strong for core loop records, but not compliant with
   `StoredSealedBlock.entries` now deserializes directly as `Vec<stored::StoredEntryAdmitted>`, and the typestate-private marker is consumed with `serde::de::IgnoredAny`. `Block<Sealed>` is still reconstructed only through the verified loader and `Block::verify_hash()`.
 - Sealed evaluation evidence mirrors:
   `SealedEvaluationEvidence` now carries typed `SealedEvaluatorIdentity` and `SealedEvalSetIdentity`; `SealedComparedRunEvidence` now carries typed `SealedRunEvidence` with typed protocol summaries instead of raw run JSON snapshots. Traversal protocol-run checks read those typed summaries directly.
+- Protocol artifact current writer DTOs:
+  all six current `write_protocol_artifact` procedures now have named writer-side DTO/artifact shapes. Tolerant listing/load-result behavior is covered; remaining protocol work is tool-call-only aggregation, not current writer DTO coverage.
+- Tool result and trace projection:
+  `tool.result.trace.projection` now reads `agent-turn-trace.json` through `AgentTurnTraceProjection`, reads Prototype 1 observation JSONL through `ObservationTraceRecord`, and derives tool-result failure/truncation display summaries through named projections instead of anonymous JSON field walking.
 
 ## Documentation Coverage
 
@@ -116,7 +151,7 @@ Real-run file families include:
 
 1. Replace every production `serde_json::Value` reader/parser over owned persisted JSON/JSONL with a concrete record type, typed enum, or named typed projection struct.
 2. Add coverage tests that fail on wrong nested shapes for each owned persisted family, including monitor/debug/projection JSONL.
-3. Replace `ToolCallRecord.arguments: serde_json::Value` with typed persisted argument/error records.
+3. Replace tool-result and turn-trace projection field walking with typed persisted projection records.
 
 ## Suggested Verification Commands
 
@@ -124,7 +159,7 @@ Use bounded output:
 
 ```bash
 cargo test -p ploke-records playback 2>&1 | tail -n 80
-cargo test -p ploke-records protocol::tests 2>&1 | tail -n 80
+cargo test -p ploke-records --features protocol protocol 2>&1 | tail -n 80
 cargo test -p ploke-records history::tests 2>&1 | tail -n 80
 cargo test -p ploke-records evaluation::tests 2>&1 | tail -n 80
 cargo test -p ploke-tree fs_run_store_loads_typed_transition_journal_in_append_order 2>&1 | tail -n 80

@@ -377,11 +377,11 @@ impl InterventionSynthesisProcedure {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RecordedInterventionSynthesisRun {
     pub procedure_name: String,
     pub output: InterventionSynthesisOutput,
-    pub artifact: serde_json::Value,
+    pub artifact: InterventionSynthesisArtifact,
 }
 
 pub(crate) async fn synthesize_intervention_with_llm(
@@ -391,12 +391,10 @@ pub(crate) async fn synthesize_intervention_with_llm(
     let client = reqwest::Client::new();
     let procedure = InterventionSynthesisProcedure::new(JsonAdjudicator::new(client, cfg));
     let run = procedure.run(input).await.map_err(|err| err.to_string())?;
-    let artifact =
-        serde_json::to_value(&run.artifact).map_err(|err| format!("serialize artifact: {err}"))?;
     Ok(RecordedInterventionSynthesisRun {
         procedure_name: run.procedure_name,
         output: run.output,
-        artifact,
+        artifact: run.artifact,
     })
 }
 

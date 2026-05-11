@@ -339,13 +339,7 @@ mod tests {
     use crate::spec::EvalBudget;
     use std::ffi::OsString;
     use std::path::Path;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     struct EnvVarGuard {
         key: &'static str,
@@ -418,7 +412,7 @@ mod tests {
 
     #[test]
     fn preferred_registration_uses_registration_store_before_dir_guessing() {
-        let _env_lock = env_lock().lock().expect("env lock");
+        let _env_lock = crate::test_support::env_lock().lock().expect("env lock");
         let tmp = tempdir().expect("tmp");
         let env_guard = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
         let instances_root = tmp.path().join("instances");
@@ -442,7 +436,7 @@ mod tests {
 
     #[test]
     fn resolve_protocol_run_identity_prefers_registration_authority() {
-        let _env_lock = env_lock().lock().expect("env lock");
+        let _env_lock = crate::test_support::env_lock().lock().expect("env lock");
         let tmp = tempdir().expect("tmp");
         let env_guard = set_env_var_scoped("PLOKE_EVAL_HOME", tmp.path());
         let instances_root = tmp.path().join("instances");

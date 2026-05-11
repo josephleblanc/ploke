@@ -44,6 +44,132 @@ fn malformed_known_payload_returns_typed_failure_record() {
 }
 
 #[test]
+fn intervention_issue_detection_artifact_serializes_named_shape() {
+    let artifact = InterventionIssueDetectionArtifact {
+        case_count: 1,
+        primary_issue: Some("request_code_context"),
+    };
+
+    let value = serde_json::to_value(&artifact).expect("serialize issue detection artifact");
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "case_count": 1,
+            "primary_issue": "request_code_context",
+        })
+    );
+}
+
+#[test]
+fn intervention_issue_detection_artifact_decodes_as_loaded_non_tool_variant() {
+    let source = serde_json::json!({
+        "schema_version": SCHEMA_V1,
+        "procedure_name": INTERVENTION_ISSUE_DETECTION,
+        "subject_id": "subject-1",
+        "run_id": "run-1",
+        "created_at_ms": 42,
+        "input": {
+            "run_id": "run-1",
+            "subject_id": "subject-1",
+            "total_calls_in_run": 3,
+            "anchor_segment_count": 1,
+            "protocol_reviewed_call_count": 1,
+            "protocol_reviewed_segment_count": 0,
+            "protocol_artifact_count": 2
+        },
+        "output": {
+            "cases": []
+        },
+        "artifact": {
+            "case_count": 0
+        }
+    });
+    let text = serde_json::to_string(&source).expect("serialize source");
+
+    let artifact = decode_artifact_str(&text, None).expect("decode issue artifact");
+
+    assert_eq!(artifact.procedure_name, INTERVENTION_ISSUE_DETECTION);
+    match artifact.body {
+        ArtifactBody::InterventionIssueDetection(payload) => {
+            assert_eq!(payload.input.protocol_artifact_count, 2);
+            assert!(payload.output.cases.is_empty());
+            assert_eq!(payload.artifact.case_count, 0);
+        }
+        other => panic!("expected intervention issue detection payload, got {other:?}"),
+    }
+}
+
+#[test]
+fn intervention_apply_artifact_preserves_output_shape() {
+    let output = serde_json::json!({
+        "candidate_id": "candidate-1",
+        "changed": true,
+    });
+    let artifact = InterventionApplyArtifact(&output);
+
+    let value = serde_json::to_value(&artifact).expect("serialize apply artifact");
+
+    assert_eq!(value, output);
+}
+
+#[test]
+fn intervention_synthesis_artifact_mirror_accepts_private_value_shape() {
+    let artifact_json = serde_json::json!({
+        "procedure_name": "intervention_synthesis",
+        "artifact": {
+            "first": step(
+                "contextualize_intervention_synthesis",
+                synthesis_input(),
+                synthesis_context(),
+                mechanized_provenance("mechanized"),
+            ),
+            "second": {
+                "branches": {
+                    "input": {
+                        "state": synthesis_context(),
+                        "disposition": "record_and_forward",
+                    },
+                    "left_branch": "candidate_pair",
+                    "right_branch": "stronger_rewrite",
+                    "left": {
+                        "input": {
+                            "state": synthesis_context(),
+                            "disposition": "record_and_forward",
+                        },
+                        "left_branch": "minimal_rewrite",
+                        "right_branch": "decision_rule_rewrite",
+                        "left": llm_draft_step("propose_minimal_tool_guidance_rewrite"),
+                        "right": llm_draft_step("propose_decision_rule_tool_guidance_rewrite"),
+                    },
+                    "right": llm_draft_step("propose_stronger_tool_guidance_rewrite"),
+                },
+                "merge": step(
+                    "assemble_intervention_candidates",
+                    draft_triplet(),
+                    synthesis_output(),
+                    mechanized_provenance("mechanized"),
+                ),
+            },
+        },
+    });
+
+    let artifact: InterventionSynthesisArtifactMirror =
+        serde_json::from_value(artifact_json.clone()).expect("deserialize synthesis artifact");
+    let serialized = serde_json::to_value(&artifact).expect("serialize synthesis artifact");
+
+    assert_eq!(artifact.procedure_name, "intervention_synthesis");
+    assert_eq!(
+        serialized["artifact"]["first"]["output"]["target_relpath"],
+        serde_json::json!("crates/ploke-core/tool_text/request_code_context.md")
+    );
+    assert_eq!(
+        serialized["artifact"]["second"]["merge"]["output"]["candidate_set"]["candidates"][0]["candidate_id"],
+        serde_json::json!("candidate-1")
+    );
+}
+
+#[test]
 #[ignore]
 fn all_artifacts_roundtrip() {
     let dir = protocol_artifacts_dir();
@@ -270,6 +396,184 @@ fn segmentation_probe_from_artifact(artifact: &Artifact) -> serde_json::Value {
             "coverage_total_calls": payload.output.coverage.total_calls,
             "segments_len": payload.output.segments.len(),
         }
+    })
+}
+
+fn step(
+    step_id: &str,
+    input: serde_json::Value,
+    output: serde_json::Value,
+    provenance: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "step_id": step_id,
+        "step_name": step_id,
+        "executor_kind": "mechanized",
+        "executor_label": "mechanized",
+        "evidence_policy": {
+            "allowed": [],
+            "forbidden": [],
+            "hindsight_allowed": false,
+            "external_context_allowed": false,
+        },
+        "input": input,
+        "input_disposition": "record_and_forward",
+        "output": output,
+        "output_disposition": "record_and_forward",
+        "provenance": provenance,
+    })
+}
+
+fn llm_draft_step(step_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "step_id": step_id,
+        "step_name": step_id,
+        "executor_kind": "llm_adjudicator",
+        "executor_label": "json_adjudicator",
+        "evidence_policy": {
+            "allowed": [],
+            "forbidden": [],
+            "hindsight_allowed": false,
+            "external_context_allowed": false,
+        },
+        "input": synthesis_context(),
+        "input_disposition": "record_and_forward",
+        "output": draft(),
+        "output_disposition": "record_and_forward",
+        "provenance": llm_provenance(),
+    })
+}
+
+fn mechanized_provenance(strategy: &str) -> serde_json::Value {
+    serde_json::json!({
+        "strategy": strategy,
+    })
+}
+
+fn llm_provenance() -> serde_json::Value {
+    serde_json::json!({
+        "model_id": "model-1",
+        "provider_slug": "provider-1",
+        "raw_content": "{}",
+        "reasoning": null,
+        "response": {
+            "id": "response-1",
+            "choices": [],
+            "created": 0,
+            "model": "model-1",
+            "object": "chat.completion",
+            "provider": null,
+            "system_fingerprint": null,
+            "usage": null,
+        },
+    })
+}
+
+fn synthesis_input() -> serde_json::Value {
+    serde_json::json!({
+        "issue": issue_case(),
+        "source_state_id": "source-1",
+        "source_content": "old",
+        "operation_target": {
+            "kind": "artifact",
+            "artifact_id": "artifact:A1",
+        },
+    })
+}
+
+fn synthesis_context() -> serde_json::Value {
+    serde_json::json!({
+        "issue": issue_case(),
+        "source_state_id": "source-1",
+        "source_content": "old",
+        "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+        "operation_target": {
+            "kind": "artifact",
+            "artifact_id": "artifact:A1",
+        },
+    })
+}
+
+fn synthesis_output() -> serde_json::Value {
+    serde_json::json!({
+        "candidate_set": {
+            "source_state_id": "source-1",
+            "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+            "source_content": "old",
+            "candidates": [
+                {
+                    "candidate_id": "candidate-1",
+                    "branch_label": "minimal_rewrite",
+                    "proposed_content": "new",
+                    "spec": {
+                        "kind": "tool_guidance_mutation",
+                        "spec_id": "reviewed-tool:request_code_context:minimal_rewrite",
+                        "evidence_basis": "basis",
+                        "intended_effect": "effect",
+                        "tool": "request_code_context",
+                        "edit": {
+                            "kind": "replace_whole_text",
+                            "new_text": "new",
+                        },
+                        "validation_policy": validation_policy(),
+                    },
+                    "patch_id": "patch:P1",
+                }
+            ],
+            "operation_target": {
+                "kind": "artifact",
+                "artifact_id": "artifact:A1",
+            },
+        },
+    })
+}
+
+fn draft_triplet() -> serde_json::Value {
+    serde_json::json!({
+        "source": synthesis_context(),
+        "left": {
+            "source": synthesis_context(),
+            "left": draft(),
+            "right": draft(),
+        },
+        "right": draft(),
+    })
+}
+
+fn draft() -> serde_json::Value {
+    serde_json::json!({
+        "proposed_content": "new",
+        "intended_effect": "effect",
+        "rationale": "rationale",
+    })
+}
+
+fn issue_case() -> serde_json::Value {
+    serde_json::json!({
+        "selection_basis": "protocol_reviewed_issue_calls",
+        "target_tool": "request_code_context",
+        "evidence": {
+            "reviewed_call_count": 2,
+            "reviewed_issue_call_count": 1,
+            "protocol": {
+                "reviewed_call_indices": [0, 1],
+                "reviewed_segment_indices": [0],
+                "candidate_concerns": ["redundant"],
+                "nearby_segment_labels": ["inspect_candidate"],
+            },
+        },
+    })
+}
+
+fn validation_policy() -> serde_json::Value {
+    serde_json::json!({
+        "allowed_relpaths": ["crates/ploke-core/tool_text/request_code_context.md"],
+        "require_target_exists": true,
+        "require_nonempty_result": true,
+        "require_utf8": true,
+        "require_content_change": true,
+        "require_markers_after_apply": [],
+        "require_cargo_check": false,
     })
 }
 

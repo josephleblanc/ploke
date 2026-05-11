@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::MutexGuard;
 
 use super::{
     ChildScore, ScoreDirection, ScoreProfile, ScoreSelectionReview, ScoreSelectionStatus, ScoreSet,
@@ -976,13 +976,8 @@ fn score_build_aborts_on_malformed_declared_typed_record() {
     }
 }
 
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
 fn eval_home_guard(root: &Path) -> MutexGuard<'static, ()> {
-    let guard = env_lock().lock().expect("env lock");
+    let guard = crate::test_support::env_lock().lock().expect("env lock");
     unsafe {
         std::env::set_var("PLOKE_EVAL_HOME", root);
     }
@@ -1020,68 +1015,64 @@ fn write_protocol_scoring_registrations(root: &Path) -> (RunRegistration, RunReg
 }
 
 fn write_protocol_anchor(registration: &RunRegistration, created_at_ms: u64) -> std::path::PathBuf {
+    let output = serde_json::json!({
+        "coverage": {
+            "ambiguous_calls": 0,
+            "ambiguous_segments": 0,
+            "labeled_calls": 2,
+            "labeled_segments": 1,
+            "total_calls": 2,
+            "uncovered_calls": 0
+        },
+        "segments": [{
+            "calls": [
+                protocol_call_json(0, 1, "rg", "search", "find target"),
+                protocol_call_json(1, 1, "sed", "read", "inspect file")
+            ],
+            "confidence": "high",
+            "end_index": 1,
+            "label": "locate_target",
+            "rationale": "locate",
+            "segment_index": 0,
+            "start_index": 0,
+            "status": "labeled",
+            "turns": [1]
+        }],
+        "sequence": {
+            "subject_id": registration.frozen_spec.task_id.as_str(),
+            "total_turns": 1,
+            "total_calls_in_run": 2,
+            "turns": [protocol_turn_json()],
+            "calls": [
+                protocol_call_json(0, 1, "rg", "search", "find target"),
+                protocol_call_json(1, 1, "sed", "read", "inspect file")
+            ]
+        },
+        "signals": {
+            "browse_calls": 0,
+            "directory_pivots": 0,
+            "edit_calls": 0,
+            "execute_calls": 0,
+            "failed_calls": 0,
+            "read_calls": 1,
+            "repeated_search_runs": 0,
+            "search_calls": 1,
+            "search_terms_seen": [],
+            "total_calls": 2,
+            "total_turns": 1
+        },
+        "overall_rationale": "one labeled segment"
+    });
+    let input = output["sequence"].clone();
+    let artifact = protocol_anchor_artifact_json(input.clone(), output.clone());
     write_protocol_artifact_envelope_with_payload(
         registration,
         "tool_call_intent_segmentation",
         created_at_ms,
         ProtocolEnvelopeOverrides::default(),
-        serde_json::json!({}),
-        serde_json::json!({
-            "coverage": {
-                "ambiguous_calls": 0,
-                "ambiguous_segments": 0,
-                "labeled_calls": 2,
-                "labeled_segments": 1,
-                "total_calls": 2,
-                "uncovered_calls": 0
-            },
-            "segments": [{
-                "calls": [
-                    protocol_call_json(0, 1, "rg", "search", "find target"),
-                    protocol_call_json(1, 1, "sed", "read", "inspect file")
-                ],
-                "confidence": "high",
-                "end_index": 1,
-                "label": "locate_target",
-                "rationale": "locate",
-                "segment_index": 0,
-                "start_index": 0,
-                "status": "labeled",
-                "turns": [1]
-            }],
-            "sequence": {
-                "subject_id": registration.frozen_spec.task_id.as_str(),
-                "total_turns": 1,
-                "total_calls_in_run": 2,
-                "turns": [{
-                    "turn": 1,
-                    "tool_count": 2,
-                    "failed_tool_count": 0,
-                    "patch_proposed": false,
-                    "patch_applied": false,
-                    "summary": "test turn"
-                }],
-                "calls": [
-                    protocol_call_json(0, 1, "rg", "search", "find target"),
-                    protocol_call_json(1, 1, "sed", "read", "inspect file")
-                ]
-            },
-            "signals": {
-                "browse_calls": 0,
-                "directory_pivots": 0,
-                "edit_calls": 0,
-                "execute_calls": 0,
-                "failed_calls": 0,
-                "read_calls": 1,
-                "repeated_search_runs": 0,
-                "search_calls": 1,
-                "search_terms_seen": [],
-                "total_calls": 2,
-                "total_turns": 1
-            },
-            "overall_rationale": "one labeled segment"
-        }),
-        serde_json::json!({}),
+        input,
+        output,
+        artifact,
     )
 }
 
@@ -1089,58 +1080,229 @@ fn write_protocol_call_review(
     registration: &RunRegistration,
     created_at_ms: u64,
 ) -> std::path::PathBuf {
+    let input = serde_json::json!({
+        "subject_id": registration.frozen_spec.task_id.as_str(),
+        "total_calls_in_run": 2,
+        "total_calls_in_turn": 2,
+        "turn": protocol_turn_json(),
+        "before": [protocol_call_json(0, 1, "rg", "search", "find target")],
+        "focal": protocol_call_json(1, 1, "sed", "read", "inspect file"),
+        "after": []
+    });
+    let output = serde_json::json!({
+        "overall": "focused_progress",
+        "overall_confidence": "high",
+        "synthesis_rationale": "focused review",
+        "packet": {
+            "calls": [protocol_call_json(1, 1, "sed", "read", "inspect file")],
+            "focal_call_index": 1,
+            "scope_summary": "focal call 1",
+            "subject_id": registration.frozen_spec.task_id.as_str(),
+            "target_id": "call:1",
+            "target_kind": "focal_call",
+            "total_calls_in_run": 2,
+            "total_calls_in_scope": 1,
+            "turn_span": [1]
+        },
+        "recoverability": {
+            "confidence": "high",
+            "rationale": "recover",
+            "verdict": "clear_next_step"
+        },
+        "redundancy": {
+            "confidence": "high",
+            "rationale": "redundant",
+            "verdict": "distinct"
+        },
+        "signals": {
+            "browse_calls_in_scope": 0,
+            "candidate_concerns": [],
+            "directory_pivots": 0,
+            "distinct_tool_count": 1,
+            "edit_calls_in_scope": 0,
+            "execute_calls_in_scope": 0,
+            "failed_calls_in_scope": 0,
+            "read_calls_in_scope": 1,
+            "repeated_tool_name_count": 0,
+            "scope_turn_count": 1,
+            "search_calls_in_scope": 0,
+            "similar_search_neighbors": 0
+        },
+        "usefulness": {
+            "confidence": "high",
+            "rationale": "useful",
+            "verdict": "key_progress"
+        }
+    });
+    let artifact = protocol_call_review_artifact_json(input.clone(), output.clone());
     write_protocol_artifact_envelope_with_payload(
         registration,
         "tool_call_review",
         created_at_ms,
         ProtocolEnvelopeOverrides::default(),
-        serde_json::json!({}),
-        serde_json::json!({
-            "overall": "focused_progress",
-            "overall_confidence": "high",
-            "packet": {
-                "calls": [{"index": 1}],
-                "focal_call_index": 1,
-                "scope_summary": "focal call 1",
-                "subject_id": registration.frozen_spec.task_id.as_str(),
-                "target_id": "call:1",
-                "target_kind": "focal_call",
-                "total_calls_in_run": 2,
-                "total_calls_in_scope": 1,
-                "turn_span": [1]
-            },
-            "recoverability": {
-                "confidence": "high",
-                "rationale": "recover",
-                "verdict": "clear_next_step"
-            },
-            "redundancy": {
-                "confidence": "high",
-                "rationale": "redundant",
-                "verdict": "distinct"
-            },
-            "signals": {
-                "browse_calls_in_scope": 0,
-                "candidate_concerns": [],
-                "directory_pivots": 0,
-                "distinct_tool_count": 1,
-                "edit_calls_in_scope": 0,
-                "execute_calls_in_scope": 0,
-                "failed_calls_in_scope": 0,
-                "read_calls_in_scope": 1,
-                "repeated_tool_name_count": 0,
-                "scope_turn_count": 1,
-                "search_calls_in_scope": 0,
-                "similar_search_neighbors": 0
-            },
-            "usefulness": {
-                "confidence": "high",
-                "rationale": "useful",
-                "verdict": "key_progress"
-            }
-        }),
-        serde_json::json!({}),
+        input,
+        output,
+        artifact,
     )
+}
+
+fn protocol_anchor_artifact_json(
+    input: serde_json::Value,
+    output: serde_json::Value,
+) -> serde_json::Value {
+    let context = serde_json::json!({
+        "sequence": input.clone(),
+        "signals": output["signals"].clone(),
+    });
+    let judgment = serde_json::json!({
+        "segments": output["segments"].clone(),
+        "overall_rationale": output["overall_rationale"].clone(),
+    });
+    serde_json::json!({
+        "procedure_name": "tool_call_intent_segmentation",
+        "artifact": {
+            "first": protocol_mechanized_step_json(input, context.clone()),
+            "second": {
+                "branches": {
+                    "input": {
+                        "state": context.clone(),
+                        "disposition": "record_and_forward"
+                    },
+                    "left_branch": "mechanized",
+                    "right_branch": "llm",
+                    "left": protocol_mechanized_step_json(context.clone(), context.clone()),
+                    "right": protocol_llm_step_json(context.clone(), judgment.clone())
+                },
+                "merge": protocol_mechanized_step_json(
+                    serde_json::json!({
+                        "source": context,
+                        "left": output_context_from_anchor(&output),
+                        "right": judgment
+                    }),
+                    output
+                )
+            }
+        }
+    })
+}
+
+fn output_context_from_anchor(output: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "sequence": output["sequence"].clone(),
+        "signals": output["signals"].clone(),
+    })
+}
+
+fn protocol_call_review_artifact_json(
+    input: serde_json::Value,
+    output: serde_json::Value,
+) -> serde_json::Value {
+    let context = serde_json::json!({
+        "packet": output["packet"].clone(),
+        "signals": output["signals"].clone(),
+    });
+    let usefulness = output["usefulness"].clone();
+    let redundancy = output["redundancy"].clone();
+    let recoverability = output["recoverability"].clone();
+    serde_json::json!({
+        "procedure_name": "tool_call_review",
+        "artifact": {
+            "first": protocol_mechanized_step_json(input, context.clone()),
+            "second": {
+                "branches": {
+                    "input": {
+                        "state": context.clone(),
+                        "disposition": "record_and_forward"
+                    },
+                    "left_branch": "usefulness_redundancy",
+                    "right_branch": "recoverability",
+                    "left": {
+                        "input": {
+                            "state": context.clone(),
+                            "disposition": "record_and_forward"
+                        },
+                        "left_branch": "usefulness",
+                        "right_branch": "redundancy",
+                        "left": protocol_llm_step_json(context.clone(), usefulness.clone()),
+                        "right": protocol_llm_step_json(context.clone(), redundancy.clone())
+                    },
+                    "right": protocol_llm_step_json(context.clone(), recoverability.clone())
+                },
+                "merge": protocol_mechanized_step_json(
+                    serde_json::json!({
+                        "source": context,
+                        "left": {
+                            "source": output_context_from_review(&output),
+                            "left": usefulness,
+                            "right": redundancy
+                        },
+                        "right": recoverability
+                    }),
+                    output
+                )
+            }
+        }
+    })
+}
+
+fn output_context_from_review(output: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "packet": output["packet"].clone(),
+        "signals": output["signals"].clone(),
+    })
+}
+
+fn protocol_mechanized_step_json(
+    input: serde_json::Value,
+    output: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "step_id": "test_mechanized",
+        "step_name": "test_mechanized",
+        "executor_kind": "mechanized",
+        "executor_label": "test",
+        "evidence_policy": {},
+        "input": input,
+        "input_disposition": "record_and_forward",
+        "output": output,
+        "output_disposition": "record_and_forward",
+        "provenance": {
+            "strategy": "test"
+        }
+    })
+}
+
+fn protocol_llm_step_json(
+    input: serde_json::Value,
+    output: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "step_id": "test_llm",
+        "step_name": "test_llm",
+        "executor_kind": "llm_adjudicator",
+        "executor_label": "test",
+        "evidence_policy": {},
+        "input": input,
+        "input_disposition": "record_and_forward",
+        "output": output,
+        "output_disposition": "record_and_forward",
+        "provenance": {
+            "model_id": "model",
+            "provider_slug": "provider",
+            "raw_content": "{}",
+            "response": {}
+        }
+    })
+}
+
+fn protocol_turn_json() -> serde_json::Value {
+    serde_json::json!({
+        "turn": 1,
+        "tool_count": 2,
+        "failed_tool_count": 0,
+        "patch_proposed": false,
+        "patch_applied": false
+    })
 }
 
 fn protocol_call_json(

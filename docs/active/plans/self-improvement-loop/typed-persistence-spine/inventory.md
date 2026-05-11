@@ -11,21 +11,21 @@ Accepted survey rows live in [`inventory.jsonl`](inventory.jsonl). Rows are acce
 | `protocol.artifact.decode` | `protocol-artifacts` | `value-staging`, `anonymous field-walking` | `ploke-records` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
 | `protocol.artifact.test.roundtrip` | `protocol-artifacts` | typed/test fixture | `test-only` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
 | `protocol.artifact.store` | `protocol-artifacts` | `value-fields`, `field-walking` | `ploke-records` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
-| `protocol.artifact.aggregate.output` | `protocol-artifacts` | `value-field` | `ploke-eval` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
+| `protocol.artifact.aggregate.output` | `protocol-artifacts` | typed | `ploke-eval` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
 | `protocol.artifact.playback` | `protocol-artifacts` | typed | `ploke-tree` | [`survey-a`](reports/2026-05-10-protocol-artifacts.survey-a.jsonl) |
-| `tool.call.record.arguments` | `tool-calls-results` | `value-field`, `typed-reader-missing` | `ploke-records` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
-| `tool.request.arguments.capture` | `tool-calls-results` | `typed-reader-missing`, `owner-unclear` | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
+| `tool.call.record.arguments` | `tool-calls-results` | typed | `ploke-records` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
+| `tool.request.arguments.capture` | `tool-calls-results` | typed | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
 | `tool.execution.record` | `tool-calls-results` | typed | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
 | `tool.response.full_response_trace` | `tool-calls-results` | `typed-reader-missing` | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
-| `tool.result.trace.projection` | `tool-calls-results` | `value-field`, `projection-needs-type` | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
+| `tool.result.trace.projection` | `tool-calls-results` | typed | `ploke-eval` | [`survey-b`](reports/2026-05-10-tool-calls-results.survey-b.jsonl) |
 | `prototype1.scheduler_json` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.node_request_projection` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.runner_result_projection` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.metrics_projection` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.history_preview_document` | `monitor-projections` | `value-field`, `projection-needs-type` | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.history_preview_slice` | `monitor-projections` | `value-field`, `value-staging`, `ad-hoc-reader`, `projection-needs-type` | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
-| `prototype1.agent_turn_trace` | `monitor-projections` | `value-field`, `ad-hoc-reader`, `projection-needs-type` | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
-| `prototype1.observation_jsonl` | `monitor-projections` | `value-field`, `ad-hoc-reader`, `projection-needs-type` | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
+| `prototype1.agent_turn_trace` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
+| `prototype1.observation_jsonl` | `monitor-projections` | typed | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `prototype1.slice_jsonl` | `monitor-projections` | `value-field`, `ad-hoc-reader`, `projection-needs-type` | `ploke-eval` | [`survey-c-v2`](reports/2026-05-10-monitor-projections.survey-c-v2.jsonl) |
 | `edit_surface.grant_check` | `edit-surface-patch-evidence` | typed | `ploke-eval` | [`survey-d-v2`](reports/2026-05-10-edit-surface-patch-evidence.survey-d-v2.jsonl) |
 | `edit_surface.checked_surface_evidence` | `edit-surface-patch-evidence` | typed | `ploke-eval` | [`survey-d-v2`](reports/2026-05-10-edit-surface-patch-evidence.survey-d-v2.jsonl) |

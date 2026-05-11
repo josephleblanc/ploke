@@ -11,7 +11,10 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ploke_core::EXECUTION_DEBUG_TARGET;
-use ploke_llm::{HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderKey};
+use ploke_llm::{
+    HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptTimeline,
+    ProviderKey,
+};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -110,7 +113,7 @@ use crate::{
     protocol::load_protocol_aggregate,
     provider_prefs::load_provider_for_model,
     recompute_closure_state,
-    record::{RawFullResponseRecord, RunRecord, read_compressed_record},
+    record::{AgentTurnTraceProjection, RawFullResponseRecord, RunRecord, read_compressed_record},
     repos_dir, resolve_campaign_config, save_campaign_manifest,
     selection::{
         ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
@@ -2933,6 +2936,396 @@ struct ProviderHttpEvent {
     is_timeout: Option<bool>,
     failure: Option<String>,
     provider_attempt: Option<ProviderAttempt>,
+    #[serde(skip_serializing)]
+    observation: ProviderHttpObservation,
+}
+
+#[derive(Debug, Clone)]
+enum ProviderHttpObservation {
+    AttemptTimeline(ProviderAttempt),
+    MalformedProviderAttempt(ProviderAttemptParseFailureProjection),
+    RequestError(ProviderRequestErrorProjection),
+    StatusError(ProviderStatusErrorProjection),
+    RetryScheduled(ProviderRetryScheduledProjection),
+    RetrySuppressed(ProviderRetrySuppressedProjection),
+    Other(ProviderOtherObservation),
+}
+
+#[derive(Debug, Clone)]
+struct ProviderRequestErrorProjection {
+    elapsed_ms: Option<u64>,
+    status: Option<u16>,
+    failure: Option<String>,
+    body_failure: Option<HttpBodyFailure>,
+    is_timeout: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderStatusErrorProjection {
+    elapsed_ms: Option<u64>,
+    status: u16,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderRetryScheduledProjection {
+    elapsed_ms: Option<u64>,
+    backoff_ms: Option<u64>,
+    status: Option<u16>,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderRetrySuppressedProjection {
+    elapsed_ms: Option<u64>,
+    status: Option<u16>,
+    body_failure: Option<HttpBodyFailure>,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderOtherObservation {
+    event: String,
+    elapsed_ms: Option<u64>,
+    backoff_ms: Option<u64>,
+    status: Option<u16>,
+    is_timeout: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderAttemptParseFailureProjection {
+    raw: String,
+    error: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ObservationTraceRecord {
+    timestamp: Option<String>,
+    target: Option<String>,
+    event: Option<String>,
+    phase: Option<String>,
+    message: Option<String>,
+    outcome: Option<String>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    duration_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    request_id: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u32")]
+    attempt: Option<u32>,
+    #[serde(default, deserialize_with = "optional_u32")]
+    max_attempts: Option<u32>,
+    #[serde(default, deserialize_with = "optional_u16")]
+    status: Option<u16>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    elapsed_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    backoff_ms: Option<u64>,
+    model: Option<String>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    request_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    response_bytes: Option<u64>,
+    is_timeout: Option<bool>,
+    failure: Option<String>,
+    url: Option<String>,
+    receive_phase: Option<String>,
+    raw_error: Option<String>,
+    reason: Option<String>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    retry_after_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    started_at_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    request_sent_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    headers_received_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    output_started_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    output_progress_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    output_completed_ms: Option<u64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    failed_ms: Option<u64>,
+    #[serde(default)]
+    failure_phase: Option<ploke_llm::ProviderFailurePhase>,
+    #[serde(default, deserialize_with = "optional_http_body_failure")]
+    body_failure: Option<HttpBodyFailure>,
+    #[serde(default)]
+    retry_decision: Option<ploke_llm::ProviderRetryDecision>,
+    span: Option<ObservationTraceSpan>,
+    #[serde(default)]
+    spans: Vec<ObservationTraceSpan>,
+    #[serde(default, deserialize_with = "optional_provider_attempt_compatibility")]
+    provider_attempt: Option<ProviderAttemptCompatibility>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ObservationTraceSpan {
+    name: Option<String>,
+    campaign_id: Option<String>,
+    campaign: Option<String>,
+    node_id: Option<String>,
+    branch_id: Option<String>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    generation: Option<u64>,
+    runtime_id: Option<String>,
+    role: Option<String>,
+    runtime_phase: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ProviderAttemptProjection {
+    JsonString(String),
+    Record(ProviderAttempt),
+}
+
+#[derive(Debug, Clone)]
+enum ProviderAttemptCompatibility {
+    Parsed(ProviderAttempt),
+    MalformedLegacy(ProviderAttemptParseFailureProjection),
+}
+
+impl ProviderAttemptCompatibility {
+    fn from_legacy_string(raw: String) -> Self {
+        match serde_json::from_str::<ProviderAttempt>(&raw) {
+            Ok(attempt) => Self::Parsed(attempt),
+            Err(error) => Self::MalformedLegacy(ProviderAttemptParseFailureProjection {
+                raw,
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    fn parsed(&self) -> Option<&ProviderAttempt> {
+        match self {
+            Self::Parsed(attempt) => Some(attempt),
+            Self::MalformedLegacy(_) => None,
+        }
+    }
+
+    fn parse_failure(&self) -> Option<&ProviderAttemptParseFailureProjection> {
+        match self {
+            Self::Parsed(_) => None,
+            Self::MalformedLegacy(failure) => Some(failure),
+        }
+    }
+}
+
+impl ProviderHttpObservation {
+    fn from_record(record: &ObservationTraceRecord) -> Self {
+        match record.event.as_deref() {
+            Some("provider_attempt") => provider_attempt_from_record(record)
+                .map(Self::AttemptTimeline)
+                .or_else(|| {
+                    record
+                        .provider_attempt
+                        .as_ref()
+                        .and_then(ProviderAttemptCompatibility::parse_failure)
+                        .cloned()
+                        .map(Self::MalformedProviderAttempt)
+                })
+                .unwrap_or_else(|| {
+                    Self::Other(ProviderOtherObservation::from_record(
+                        record,
+                        "provider_attempt",
+                    ))
+                }),
+            Some("chat_http_request_error") => Self::RequestError(ProviderRequestErrorProjection {
+                elapsed_ms: record.elapsed_ms,
+                status: record.status,
+                failure: record.failure.clone(),
+                body_failure: record.body_failure.clone(),
+                is_timeout: record.is_timeout.unwrap_or(false),
+            }),
+            Some("chat_http_response_error_status") => record
+                .status
+                .map(|status| {
+                    Self::StatusError(ProviderStatusErrorProjection {
+                        elapsed_ms: record.elapsed_ms,
+                        status,
+                    })
+                })
+                .unwrap_or_else(|| {
+                    Self::Other(ProviderOtherObservation::from_record(
+                        record,
+                        "chat_http_response_error_status",
+                    ))
+                }),
+            Some("chat_http_retry_scheduled") => {
+                Self::RetryScheduled(ProviderRetryScheduledProjection {
+                    elapsed_ms: record.elapsed_ms,
+                    backoff_ms: record.backoff_ms,
+                    status: record.status,
+                })
+            }
+            Some("chat_http_retry_suppressed") => {
+                Self::RetrySuppressed(ProviderRetrySuppressedProjection {
+                    elapsed_ms: record.elapsed_ms,
+                    status: record.status,
+                    body_failure: record.body_failure.clone(),
+                })
+            }
+            Some(event) => Self::Other(ProviderOtherObservation::from_record(record, event)),
+            None => Self::Other(ProviderOtherObservation::from_record(record, "")),
+        }
+    }
+
+    fn event_name(&self) -> &str {
+        match self {
+            Self::AttemptTimeline(_) => "provider_attempt",
+            Self::MalformedProviderAttempt(_) => "provider_attempt_parse_failure",
+            Self::RequestError(_) => "chat_http_request_error",
+            Self::StatusError(_) => "chat_http_response_error_status",
+            Self::RetryScheduled(_) => "chat_http_retry_scheduled",
+            Self::RetrySuppressed(_) => "chat_http_retry_suppressed",
+            Self::Other(record) => record.event.as_str(),
+        }
+    }
+
+    fn provider_attempt(&self) -> Option<&ProviderAttempt> {
+        match self {
+            Self::AttemptTimeline(attempt) => Some(attempt),
+            _ => None,
+        }
+    }
+
+    fn failure(&self) -> Option<String> {
+        match self {
+            Self::MalformedProviderAttempt(failure) => Some(format!(
+                "malformed_legacy_provider_attempt: {}; raw_bytes={}",
+                failure.error,
+                failure.raw.len()
+            )),
+            _ => None,
+        }
+    }
+
+    fn apply_to_attempt(&self, attempt: &mut ProviderHttpAttempt) {
+        match self {
+            Self::AttemptTimeline(provider_attempt) => {
+                if let Some(elapsed_ms) = provider_attempt_elapsed_ms(provider_attempt) {
+                    attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+                }
+                if let Some(backoff_ms) = provider_attempt
+                    .backoff
+                    .map(|duration| duration.as_millis() as u64)
+                {
+                    attempt.backoff_ms = attempt.backoff_ms.max(backoff_ms);
+                }
+                attempt.status = provider_attempt.status.or(attempt.status);
+                attempt.has_error |= provider_attempt.outcome == ProviderAttemptOutcome::Failed;
+                attempt.is_timeout |=
+                    provider_attempt.body_failure == Some(HttpBodyFailure::Timeout);
+            }
+            Self::MalformedProviderAttempt(_) => {
+                attempt.has_error = true;
+            }
+            Self::RequestError(record) => {
+                apply_elapsed(attempt, record.elapsed_ms);
+                attempt.status = record.status.or(attempt.status);
+                attempt.has_error = true;
+                attempt.is_timeout |=
+                    record.is_timeout || record.body_failure == Some(HttpBodyFailure::Timeout);
+                if record.failure.as_deref() == Some("timeout") {
+                    attempt.is_timeout = true;
+                }
+            }
+            Self::StatusError(record) => {
+                apply_elapsed(attempt, record.elapsed_ms);
+                attempt.status = Some(record.status).or(attempt.status);
+                attempt.has_error = true;
+            }
+            Self::RetryScheduled(record) => {
+                apply_elapsed(attempt, record.elapsed_ms);
+                if let Some(backoff_ms) = record.backoff_ms {
+                    attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
+                }
+                attempt.status = record.status.or(attempt.status);
+            }
+            Self::RetrySuppressed(record) => {
+                apply_elapsed(attempt, record.elapsed_ms);
+                attempt.status = record.status.or(attempt.status);
+                attempt.has_error = true;
+                attempt.is_timeout |= record.body_failure == Some(HttpBodyFailure::Timeout);
+            }
+            Self::Other(record) => {
+                apply_elapsed(attempt, record.elapsed_ms);
+                if let Some(backoff_ms) = record.backoff_ms {
+                    attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
+                }
+                attempt.status = record.status.or(attempt.status);
+                attempt.is_timeout |= record.is_timeout;
+            }
+        }
+    }
+}
+
+impl ProviderOtherObservation {
+    fn from_record(record: &ObservationTraceRecord, event: &str) -> Self {
+        Self {
+            event: event.to_string(),
+            elapsed_ms: record.elapsed_ms,
+            backoff_ms: record.backoff_ms,
+            status: record.status,
+            is_timeout: record.is_timeout.unwrap_or(false),
+        }
+    }
+}
+
+fn apply_elapsed(attempt: &mut ProviderHttpAttempt, elapsed_ms: Option<u64>) {
+    if let Some(elapsed_ms) = elapsed_ms {
+        attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
+    }
+}
+
+fn provider_attempt_from_record(record: &ObservationTraceRecord) -> Option<ProviderAttempt> {
+    if let Some(attempt) = record
+        .provider_attempt
+        .as_ref()
+        .and_then(ProviderAttemptCompatibility::parsed)
+        .cloned()
+    {
+        return Some(attempt);
+    }
+    let timeline = ProviderAttemptTimeline {
+        request_id: record.request_id?,
+        attempt: record.attempt.unwrap_or(1),
+        max_attempts: record.max_attempts?,
+        started_at_ms: record.started_at_ms.unwrap_or(0),
+        request_sent_ms: record.request_sent_ms,
+        headers_received_ms: record.headers_received_ms,
+        output_started_ms: record.output_started_ms,
+        output_progress_ms: record.output_progress_ms,
+        output_completed_ms: record.output_completed_ms,
+        failed_ms: record.failed_ms,
+        status: record.status,
+        response_bytes: record.response_bytes.map(|value| value as usize),
+        outcome: record
+            .outcome
+            .as_deref()
+            .and_then(parse_provider_attempt_outcome)?,
+        failure_phase: record.failure_phase,
+        body_failure: record.body_failure.clone(),
+        retry_decision: record
+            .retry_decision
+            .unwrap_or(ploke_llm::ProviderRetryDecision::None),
+        backoff_ms: record.backoff_ms,
+    };
+    Some(timeline.into_attempt())
+}
+
+fn parse_provider_attempt_outcome(value: &str) -> Option<ProviderAttemptOutcome> {
+    match value {
+        "completed" => Some(ProviderAttemptOutcome::Completed),
+        "failed" => Some(ProviderAttemptOutcome::Failed),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum U64Projection {
+    Number(u64),
+    String(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -4257,39 +4650,10 @@ fn provider_http_requests(events: &[ProviderHttpEvent]) -> Vec<ProviderHttpReque
         request.status = event.status.or(request.status);
 
         let attempt = request.attempts.entry(event.attempt).or_default();
-        attempt.events.insert(event.event.clone());
-        if let Some(provider_attempt) = &event.provider_attempt {
-            if let Some(elapsed_ms) = provider_attempt_elapsed_ms(provider_attempt) {
-                attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
-            }
-            if let Some(backoff_ms) = provider_attempt
-                .backoff
-                .map(|duration| duration.as_millis() as u64)
-            {
-                attempt.backoff_ms = attempt.backoff_ms.max(backoff_ms);
-            }
-            attempt.status = provider_attempt.status.or(attempt.status);
-            attempt.has_error |= provider_attempt.outcome == ProviderAttemptOutcome::Failed;
-            attempt.is_timeout |= provider_attempt
-                .body_failure
-                .as_ref()
-                .is_some_and(|failure| matches!(failure, HttpBodyFailure::Timeout));
-        } else {
-            if let Some(elapsed_ms) = event.elapsed_ms {
-                attempt.elapsed_ms = Some(attempt.elapsed_ms.unwrap_or(0).max(elapsed_ms));
-            }
-            if let Some(backoff_ms) = event.backoff_ms {
-                attempt.backoff_ms = attempt.backoff_ms.saturating_add(backoff_ms);
-            }
-            attempt.status = event.status.or(attempt.status);
-            attempt.has_error |= matches!(
-                event.event.as_str(),
-                "chat_http_request_error"
-                    | "chat_http_response_error_status"
-                    | "chat_http_retry_suppressed"
-            );
-            attempt.is_timeout |= event.is_timeout.unwrap_or(false);
-        }
+        attempt
+            .events
+            .insert(event.observation.event_name().to_string());
+        event.observation.apply_to_attempt(attempt);
     }
 
     requests.into_values().collect()
@@ -4589,7 +4953,7 @@ fn parse_turn_trace(path: PathBuf) -> Result<TurnTrace, PrepareError> {
         path: path.clone(),
         source,
     })?;
-    let value: serde_json::Value =
+    let trace: AgentTurnTraceProjection =
         serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
             path: path.clone(),
             source,
@@ -4600,24 +4964,16 @@ fn parse_turn_trace(path: PathBuf) -> Result<TurnTrace, PrepareError> {
     let mut tool_latency_ms_total = 0;
     let mut tool_latency_ms_max = 0;
 
-    if let Some(events) = value.get("events").and_then(|events| events.as_array()) {
-        for event in events {
-            let Some((kind, payload)) = event.as_object().and_then(|object| object.iter().next())
-            else {
-                continue;
-            };
-            *event_counts.entry(kind.clone()).or_insert(0) += 1;
-            if kind == "ToolCompleted" || kind == "ToolFailed" {
-                if kind == "ToolCompleted" {
-                    tool_completed += 1;
-                } else {
-                    tool_failed += 1;
-                }
-                if let Some(latency) = payload.get("latency_ms").and_then(|value| value.as_u64()) {
-                    tool_latency_ms_total += latency;
-                    tool_latency_ms_max = tool_latency_ms_max.max(latency);
-                }
-            }
+    for event in &trace.events {
+        *event_counts.entry(event.kind().to_string()).or_insert(0) += 1;
+        if event.is_tool_completed() {
+            tool_completed += 1;
+        } else if event.is_tool_failed() {
+            tool_failed += 1;
+        }
+        if let Some(latency) = event.tool_latency_ms() {
+            tool_latency_ms_total += latency;
+            tool_latency_ms_max = tool_latency_ms_max.max(latency);
         }
     }
 
@@ -4663,63 +5019,60 @@ fn parse_observation_log(campaign_id: &str, path: &Path, evidence: &mut Observat
     };
     let file_mentions_campaign = observation_log_mentions_campaign(&text, campaign_id);
     for line in text.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        let Ok(record) = serde_json::from_str::<ObservationTraceRecord>(line) else {
             continue;
         };
-        let span = value.get("span");
-        let mut event_campaign = trace_string_field(&value, "campaign_id")
-            .or_else(|| trace_string_field(&value, "campaign"));
+        let mut event_campaign = trace_string_field(&record, "campaign_id")
+            .or_else(|| trace_string_field(&record, "campaign"));
         if event_campaign.is_none() && file_mentions_campaign {
             event_campaign = Some(campaign_id.to_string());
         }
         if event_campaign.as_deref() != Some(campaign_id) {
             continue;
         }
-        if value
-            .get("target")
-            .and_then(|value| value.as_str())
-            .is_some_and(|target| target == "chat_http")
-            || value
-                .get("event")
-                .and_then(|value| value.as_str())
+        if record.target.as_deref() == Some("chat_http")
+            || record
+                .event
+                .as_deref()
                 .is_some_and(|event| event.starts_with("chat_http_"))
         {
-            if let Some(event) = provider_http_event(path, &value, event_campaign) {
+            if let Some(event) = provider_http_event(path, &record, event_campaign) {
                 evidence.provider_http.push(event);
             }
             continue;
         }
-        let Some(duration_ms) = value.get("duration_ms").and_then(|value| value.as_u64()) else {
+        let Some(duration_ms) = record.duration_ms else {
             continue;
         };
-        let step = string_field(span, "name")
-            .or_else(|| string_field(Some(&value), "phase"))
-            .or_else(|| string_field(Some(&value), "message"))
+        let step = record
+            .span
+            .as_ref()
+            .and_then(|span| span_string_field(span, "name"))
+            .or_else(|| record.phase.clone())
+            .or_else(|| record.message.clone())
             .unwrap_or_else(|| "(unnamed)".to_string());
         evidence.steps.push(ObservationStep {
-            timestamp: string_field(Some(&value), "timestamp"),
-            node_id: trace_string_field(&value, "node_id"),
-            generation: trace_u64_field(&value, "generation"),
+            timestamp: record.timestamp.clone(),
+            node_id: trace_string_field(&record, "node_id"),
+            generation: trace_u64_field(&record, "generation"),
             step,
-            outcome: string_field(Some(&value), "outcome"),
+            outcome: record.outcome.clone(),
             duration_ms,
         });
     }
 }
 
 fn observation_log_mentions_campaign(text: &str, campaign_id: &str) -> bool {
-    // TEMPORARY 2026-05-05: this keeps older Prototype 1 observation JSONL
-    // useful when provider_attempt events were emitted without span-scoped
-    // campaign fields. It can misattribute unscoped provider attempts if one
-    // log file contains multiple campaigns. Task stack:
-    // `prototype1-remove-unscoped-provider-attribution-bridge`; remove after
-    // 2026-05-06 if span-scoped provider attempts remain durable in live runs.
+    // TEMPORARY 2026-05-05: this only preserves older Prototype 1 provider
+    // attempt logs that lack span-scoped campaign fields. It can misattribute
+    // unscoped provider attempts if one log file contains multiple campaigns.
+    // Task stack: `prototype1-remove-unscoped-provider-attribution-bridge`.
     text.lines().any(|line| {
-        serde_json::from_str::<serde_json::Value>(line)
+        serde_json::from_str::<ObservationTraceRecord>(line)
             .ok()
-            .and_then(|value| {
-                trace_string_field(&value, "campaign_id")
-                    .or_else(|| trace_string_field(&value, "campaign"))
+            .and_then(|record| {
+                trace_string_field(&record, "campaign_id")
+                    .or_else(|| trace_string_field(&record, "campaign"))
             })
             .as_deref()
             == Some(campaign_id)
@@ -4728,13 +5081,14 @@ fn observation_log_mentions_campaign(text: &str, campaign_id: &str) -> bool {
 
 fn provider_http_event(
     path: &Path,
-    value: &serde_json::Value,
+    value: &ObservationTraceRecord,
     campaign_id: Option<String>,
 ) -> Option<ProviderHttpEvent> {
-    let provider_attempt = provider_attempt_field(value);
+    let observation = ProviderHttpObservation::from_record(value);
+    let provider_attempt = observation.provider_attempt().cloned();
     Some(ProviderHttpEvent {
         source: path.to_path_buf(),
-        timestamp: string_field(Some(value), "timestamp"),
+        timestamp: value.timestamp.clone(),
         campaign_id,
         node_id: trace_string_field(value, "node_id"),
         branch_id: trace_string_field(value, "branch_id"),
@@ -4742,39 +5096,187 @@ fn provider_http_event(
         runtime_id: trace_string_field(value, "runtime_id"),
         role: trace_string_field(value, "role"),
         runtime_phase: trace_string_field(value, "runtime_phase"),
-        request_id: u64_field(value, "request_id")
+        request_id: value
+            .request_id
             .or_else(|| provider_attempt.as_ref().map(|attempt| attempt.request_id))?,
-        attempt: u64_field(value, "attempt")
-            .and_then(|value| u32::try_from(value).ok())
+        attempt: value
+            .attempt
             .or_else(|| provider_attempt.as_ref().map(|attempt| attempt.attempt))
             .unwrap_or(1),
-        max_attempts: u64_field(value, "max_attempts")
-            .and_then(|value| u32::try_from(value).ok())
-            .or_else(|| {
-                provider_attempt
-                    .as_ref()
-                    .map(|attempt| attempt.max_attempts)
-            }),
-        event: string_field(Some(value), "event")?,
-        phase: string_field(Some(value), "phase"),
-        status: u64_field(value, "status").and_then(|value| u16::try_from(value).ok()),
-        elapsed_ms: u64_field(value, "elapsed_ms"),
-        backoff_ms: u64_field(value, "backoff_ms"),
-        model: string_field(Some(value), "model"),
-        request_bytes: u64_field(value, "request_bytes"),
-        response_bytes: u64_field(value, "response_bytes"),
-        is_timeout: value.get("is_timeout").and_then(|value| value.as_bool()),
-        failure: string_field(Some(value), "failure"),
+        max_attempts: value.max_attempts.or_else(|| {
+            provider_attempt
+                .as_ref()
+                .map(|attempt| attempt.max_attempts)
+        }),
+        event: observation.event_name().to_string(),
+        phase: value.phase.clone(),
+        status: value.status,
+        elapsed_ms: value.elapsed_ms,
+        backoff_ms: value.backoff_ms,
+        model: value.model.clone(),
+        request_bytes: value.request_bytes,
+        response_bytes: value.response_bytes,
+        is_timeout: value.is_timeout,
+        failure: value.failure.clone().or_else(|| observation.failure()),
         provider_attempt,
+        observation,
     })
 }
 
-fn provider_attempt_field(value: &serde_json::Value) -> Option<ProviderAttempt> {
-    let field = value.get("provider_attempt")?;
-    if let Some(text) = field.as_str() {
-        return serde_json::from_str(text).ok();
+fn optional_provider_attempt_compatibility<'de, D>(
+    deserializer: D,
+) -> Result<Option<ProviderAttemptCompatibility>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(projection) = Option::<ProviderAttemptProjection>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    match projection {
+        ProviderAttemptProjection::Record(record) => {
+            Ok(Some(ProviderAttemptCompatibility::Parsed(record)))
+        }
+        ProviderAttemptProjection::JsonString(text) => {
+            Ok(Some(ProviderAttemptCompatibility::from_legacy_string(text)))
+        }
     }
-    serde_json::from_value(field.clone()).ok()
+}
+
+fn optional_http_body_failure<'de, D>(deserializer: D) -> Result<Option<HttpBodyFailure>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match Option::<HttpBodyFailureProjection>::deserialize(deserializer)? {
+            Some(HttpBodyFailureProjection::Name(value)) => match value.as_str() {
+                "timeout" | "Timeout" => Some(HttpBodyFailure::Timeout),
+                "read_failed" | "ReadFailed" => Some(HttpBodyFailure::ReadFailed),
+                "decode_failed" | "DecodeFailed" => Some(HttpBodyFailure::DecodeFailed),
+                _ => None,
+            },
+            Some(HttpBodyFailureProjection::Ignored(_)) | None => None,
+        },
+    )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum HttpBodyFailureProjection {
+    Name(String),
+    Ignored(serde::de::IgnoredAny),
+}
+
+fn optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<U64Projection>::deserialize(deserializer)? {
+        Some(U64Projection::Number(value)) => Some(value),
+        Some(U64Projection::String(value)) => value.parse().ok(),
+        None => None,
+    })
+}
+
+fn optional_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(optional_u64(deserializer)?.and_then(|value| u32::try_from(value).ok()))
+}
+
+fn optional_u16<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(optional_u64(deserializer)?.and_then(|value| u16::try_from(value).ok()))
+}
+
+fn trace_string_field(value: &ObservationTraceRecord, field: &str) -> Option<String> {
+    non_empty_top_string(value, field)
+        .or_else(|| {
+            value
+                .span
+                .as_ref()
+                .and_then(|span| span_string_field(span, field))
+        })
+        .or_else(|| {
+            value
+                .spans
+                .iter()
+                .rev()
+                .find_map(|span| span_string_field(span, field))
+        })
+}
+
+fn trace_u64_field(value: &ObservationTraceRecord, field: &str) -> Option<u64> {
+    top_u64_field(value, field)
+        .or_else(|| {
+            value
+                .span
+                .as_ref()
+                .and_then(|span| span_u64_field(span, field))
+        })
+        .or_else(|| {
+            value
+                .spans
+                .iter()
+                .rev()
+                .find_map(|span| span_u64_field(span, field))
+        })
+}
+
+fn non_empty_top_string(value: &ObservationTraceRecord, field: &str) -> Option<String> {
+    match field {
+        "timestamp" => value.timestamp.as_deref(),
+        "target" => value.target.as_deref(),
+        "event" => value.event.as_deref(),
+        "phase" => value.phase.as_deref(),
+        "message" => value.message.as_deref(),
+        "outcome" => value.outcome.as_deref(),
+        "model" => value.model.as_deref(),
+        "failure" => value.failure.as_deref(),
+        _ => None,
+    }
+    .filter(|value| !value.is_empty())
+    .map(ToString::to_string)
+}
+
+fn top_u64_field(value: &ObservationTraceRecord, field: &str) -> Option<u64> {
+    match field {
+        "duration_ms" => value.duration_ms,
+        "request_id" => value.request_id,
+        "attempt" => value.attempt.map(u64::from),
+        "max_attempts" => value.max_attempts.map(u64::from),
+        "status" => value.status.map(u64::from),
+        "elapsed_ms" => value.elapsed_ms,
+        "backoff_ms" => value.backoff_ms,
+        "request_bytes" => value.request_bytes,
+        "response_bytes" => value.response_bytes,
+        _ => None,
+    }
+}
+
+fn span_string_field(value: &ObservationTraceSpan, field: &str) -> Option<String> {
+    match field {
+        "name" => value.name.as_deref(),
+        "campaign_id" => value.campaign_id.as_deref(),
+        "campaign" => value.campaign.as_deref(),
+        "node_id" => value.node_id.as_deref(),
+        "branch_id" => value.branch_id.as_deref(),
+        "runtime_id" => value.runtime_id.as_deref(),
+        "role" => value.role.as_deref(),
+        "runtime_phase" => value.runtime_phase.as_deref(),
+        _ => None,
+    }
+    .filter(|value| !value.is_empty())
+    .map(ToString::to_string)
+}
+
+fn span_u64_field(value: &ObservationTraceSpan, field: &str) -> Option<u64> {
+    match field {
+        "generation" => value.generation,
+        _ => None,
+    }
 }
 
 fn collect_named_files(root: &Path, name: &str, paths: &mut Vec<PathBuf>) {
@@ -4805,57 +5307,6 @@ fn collect_observation_logs(root: &Path, paths: &mut Vec<PathBuf>) {
             paths.push(path);
         }
     }
-}
-
-fn string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String> {
-    value?
-        .get(field)
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-}
-
-fn non_empty_string_field(value: Option<&serde_json::Value>, field: &str) -> Option<String> {
-    string_field(value, field).filter(|value| !value.is_empty())
-}
-
-fn u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
-    value.get(field).and_then(|value| {
-        value
-            .as_u64()
-            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
-    })
-}
-
-fn trace_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
-    non_empty_string_field(Some(value), field)
-        .or_else(|| non_empty_string_field(value.get("span"), field))
-        .or_else(|| string_field_from_spans(value, field))
-}
-
-fn trace_u64_field(value: &serde_json::Value, field: &str) -> Option<u64> {
-    u64_field(value, field)
-        .or_else(|| value.get("span").and_then(|span| u64_field(span, field)))
-        .or_else(|| u64_field_from_spans(value, field))
-}
-
-fn string_field_from_spans(value: &serde_json::Value, field: &str) -> Option<String> {
-    value
-        .get("spans")
-        .and_then(|value| value.as_array())
-        .into_iter()
-        .flatten()
-        .rev()
-        .find_map(|span| non_empty_string_field(Some(span), field))
-}
-
-fn u64_field_from_spans(value: &serde_json::Value, field: &str) -> Option<u64> {
-    value
-        .get("spans")
-        .and_then(|value| value.as_array())
-        .into_iter()
-        .flatten()
-        .rev()
-        .find_map(|span| u64_field(span, field))
 }
 
 fn path_mentions(path: &Path, needle: &str) -> bool {
@@ -11110,6 +11561,53 @@ stop_after = "complete"
     }
 
     #[test]
+    fn tool_result_trace_projection_parses_turn_trace_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let trace_path = tmp.path().join("agent-turn-trace.json");
+        fs::write(
+            &trace_path,
+            r#"{
+                "events": [
+                    {"ToolRequested": {
+                        "request_id": "req-001",
+                        "parent_id": "parent-001",
+                        "call_id": "call-001",
+                        "tool": "read_file",
+                        "arguments": "{\"file\":\"src/lib.rs\"}"
+                    }},
+                    {"ToolCompleted": {
+                        "request_id": "req-001",
+                        "parent_id": "parent-001",
+                        "call_id": "call-001",
+                        "tool": "read_file",
+                        "content": "ok",
+                        "ui_payload": null,
+                        "latency_ms": 17
+                    }},
+                    {"ToolFailed": {
+                        "request_id": "req-002",
+                        "parent_id": "parent-001",
+                        "call_id": "call-002",
+                        "tool": "apply_code_edit",
+                        "error": "failed",
+                        "ui_payload": null,
+                        "latency_ms": 31
+                    }}
+                ]
+            }"#,
+        )
+        .expect("write trace");
+
+        let trace = parse_turn_trace(trace_path).expect("parse trace");
+
+        assert_eq!(trace.tool_completed, 1);
+        assert_eq!(trace.tool_failed, 1);
+        assert_eq!(trace.tool_latency_ms_total, 48);
+        assert_eq!(trace.tool_latency_ms_max, 31);
+        assert_eq!(trace.event_counts.get("ToolRequested"), Some(&1));
+    }
+
+    #[test]
     fn observation_log_loads_provider_attempt_event() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let log_path = tmp
@@ -11216,6 +11714,94 @@ stop_after = "complete"
     }
 
     #[test]
+    fn observation_log_reports_malformed_legacy_provider_attempt() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp
+            .path()
+            .join("prototype1_observation_provider_attempt_malformed.jsonl");
+        let line = serde_json::json!({
+            "timestamp": "2026-05-02T00:00:04Z",
+            "target": "chat_http",
+            "event": "provider_attempt",
+            "request_id": 9,
+            "attempt": 2,
+            "max_attempts": 2,
+            "spans": [{
+                "name": "prototype1.runtime",
+                "campaign_id": "campaign-a",
+                "node_id": "node-a",
+                "branch_id": "branch-a",
+                "generation": 2,
+                "runtime_id": "runtime-a",
+                "role": "child",
+                "runtime_phase": "child_evaluation"
+            }],
+            "provider_attempt": "{\"request_id\":9",
+        });
+        fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+        let mut evidence = ObservationEvidence::default();
+        parse_observation_log("campaign-a", &log_path, &mut evidence);
+
+        assert_eq!(evidence.provider_http.len(), 1);
+        let event = &evidence.provider_http[0];
+        assert_eq!(event.event, "provider_attempt_parse_failure");
+        assert!(event.provider_attempt.is_none());
+        assert_eq!(
+            event
+                .failure
+                .as_deref()
+                .map(|value| value.starts_with("malformed_legacy_provider_attempt:")),
+            Some(true)
+        );
+        match &event.observation {
+            ProviderHttpObservation::MalformedProviderAttempt(failure) => {
+                assert_eq!(failure.raw, "{\"request_id\":9");
+                assert!(failure.error.contains("EOF"));
+            }
+            other => panic!("expected malformed legacy provider attempt, got {other:?}"),
+        }
+
+        let requests = provider_http_requests(&evidence.provider_http);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].error_count(), 1);
+    }
+
+    #[test]
+    fn observation_log_loads_provider_attempt_timeline_fields() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp
+            .path()
+            .join("prototype1_observation_provider_attempt_timeline.jsonl");
+        fs::write(
+            &log_path,
+            concat!(
+                r#"{"timestamp":"2026-05-02T00:00:04Z","target":"chat_http","event":"provider_attempt","request_id":11,"attempt":1,"max_attempts":2,"started_at_ms":0,"request_sent_ms":5,"headers_received_ms":20,"failed_ms":300000,"status":200,"outcome":"failed","failure_phase":"body","body_failure":"timeout","retry_decision":"scheduled","backoff_ms":250,"spans":[{"name":"prototype1.runtime","campaign_id":"campaign-a","node_id":"node-a","branch_id":"branch-a","generation":2,"runtime_id":"runtime-a","role":"child","runtime_phase":"child_evaluation"}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write log");
+
+        let mut evidence = ObservationEvidence::default();
+        parse_observation_log("campaign-a", &log_path, &mut evidence);
+
+        assert_eq!(evidence.provider_http.len(), 1);
+        let event = &evidence.provider_http[0];
+        let attempt = event.provider_attempt.as_ref().expect("provider attempt");
+        assert_eq!(attempt.request_id, 11);
+        assert_eq!(attempt.body_failure, Some(HttpBodyFailure::Timeout));
+        assert_eq!(
+            attempt.retry_decision,
+            ploke_llm::ProviderRetryDecision::Scheduled
+        );
+
+        let requests = provider_http_requests(&evidence.provider_http);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].timeout_count(), 1);
+        assert_eq!(requests[0].elapsed_ms(), 300_250);
+    }
+
+    #[test]
     fn provider_attempt_watch_row_renders_table_cells() {
         let provider_attempt = ProviderAttempt {
             request_id: 9,
@@ -11259,7 +11845,8 @@ stop_after = "complete"
             response_bytes: None,
             is_timeout: Some(true),
             failure: None,
-            provider_attempt: Some(provider_attempt),
+            provider_attempt: Some(provider_attempt.clone()),
+            observation: ProviderHttpObservation::AttemptTimeline(provider_attempt),
         };
 
         let header = provider_attempt_watch_header(false);
@@ -11320,6 +11907,7 @@ stop_after = "complete"
             is_timeout: Some(true),
             failure: None,
             provider_attempt: Some(provider_attempt.clone()),
+            observation: ProviderHttpObservation::AttemptTimeline(provider_attempt.clone()),
         };
 
         let timeout_row = provider_attempt_phone_row(&event).expect("timeout row");
@@ -11332,7 +11920,8 @@ stop_after = "complete"
         provider_attempt.body_failure = None;
         provider_attempt.retry_decision = ploke_llm::ProviderRetryDecision::None;
         event.request_id = 2;
-        event.provider_attempt = Some(provider_attempt);
+        event.provider_attempt = Some(provider_attempt.clone());
+        event.observation = ProviderHttpObservation::AttemptTimeline(provider_attempt);
         let completed_row = provider_attempt_phone_row(&event).expect("completed row");
 
         assert_eq!(timeout_row, "00:00 g  2 nabcd r 15/1 300s TO");

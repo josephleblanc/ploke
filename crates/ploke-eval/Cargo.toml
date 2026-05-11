@@ -21,7 +21,7 @@ ploke-embed = { workspace = true }
 ploke-core = { workspace = true }
 ploke-llm = { path = "../ploke-llm" }
 ploke-protocol = { workspace = true }
-ploke-records = { workspace = true, features = ["protocol"] }
+ploke-records = { workspace = true, features = ["protocol", "tool-contracts"] }
 ploke-tree = { workspace = true }
 ploke-tree-browser = { workspace = true, features = ["projection"] }
 ploke-tui = { path = "../ploke-tui", features = ["test_harness"] }

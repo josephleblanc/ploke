@@ -736,7 +736,7 @@ pub struct ToolRequestRecord {
     /// Captured argument text. Persisted readers must deserialize through a
     /// typed tool-argument record, typed enum, or typed parse-failure record;
     /// do not inspect this as anonymous JSON.
-    pub arguments: String,
+    pub arguments: ploke_records::tool_contracts::ToolArgumentsJson,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3524,7 +3524,7 @@ async fn handle_benchmark_event(
                 parent_id: parent_id.to_string(),
                 call_id: tool_call.call_id.to_string(),
                 tool: tool_call.function.name.as_str().to_string(),
-                arguments: tool_call.function.arguments.clone(),
+                arguments: tool_call.function.arguments.clone().into(),
             };
             artifact
                 .events
@@ -5176,7 +5176,7 @@ mod tests {
                     call_type: FunctionMarker,
                     function: FunctionCall {
                         name: ToolName::ApplyCodeEdit,
-                        arguments: "{}".to_string(),
+                        arguments: "{}".into(),
                     },
                 },
             }),
@@ -5653,7 +5653,7 @@ mod tests {
                 call_type: FunctionMarker,
                 function: FunctionCall {
                     name: ToolName::ApplyCodeEdit,
-                    arguments: "{}".to_string(),
+                    arguments: "{}".into(),
                 },
             },
         }));
