@@ -6659,7 +6659,7 @@ fn live_successor_continuation_decision(
     selected_node: &Prototype1NodeRecord,
 ) -> Result<Prototype1ContinuationDecision, PrepareError> {
     let total_nodes_after_continue = persisted_prototype1_node_count(campaign_manifest_path)?;
-    let traversal = historical_traversal_guard(campaign_manifest_path, parent_identity)?;
+    let traversal = historical_traversal_guard(campaign_manifest_path)?;
     let selected_rejected = decision
         .selected_branch_disposition()
         .is_some_and(|value| value != "keep");
@@ -6672,12 +6672,7 @@ fn live_successor_continuation_decision(
     let disposition = if decision.selected_branch_id.is_none() {
         Prototype1ContinuationDisposition::StopNoSelectedBranch
     } else if !material.selected_from_generation_outcomes {
-        if traversal
-            .spent_or_started_node_ids
-            .contains(&selected_node.node_id)
-        {
-            Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
-        } else if traversal.parent_turns_started >= policy.max_generations.saturating_add(1) {
+        if traversal.parent_turns_started >= policy.max_generations.saturating_add(1) {
             Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
         } else if policy.require_keep_for_continuation
             && selected_rejected
@@ -6731,31 +6726,21 @@ fn live_successor_continuation_decision(
 }
 
 struct HistoricalTraversalGuard {
-    spent_or_started_node_ids: BTreeSet<String>,
     parent_turns_started: u32,
 }
 
 fn historical_traversal_guard(
     campaign_manifest_path: &Path,
-    parent_identity: &ParentIdentity,
 ) -> Result<HistoricalTraversalGuard, PrepareError> {
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(campaign_manifest_path));
     let entries = journal.load_entries().map_err(|err| {
         prototype1_state_transition_error("prototype1_history_traversal_guard", err.to_string())
     })?;
-    let mut spent_or_started_node_ids = BTreeSet::new();
     let mut parent_turns_started = 0u32;
     for entry in entries {
         match entry {
             JournalEntry::ParentStarted(entry) => {
                 parent_turns_started = parent_turns_started.saturating_add(1);
-                spent_or_started_node_ids.insert(entry.parent_identity.node_id().to_string());
-            }
-            JournalEntry::SuccessorHandoff(entry) => {
-                spent_or_started_node_ids.insert(entry.node_id);
-            }
-            JournalEntry::Successor(record) if record.state.allows_successor_handoff() => {
-                spent_or_started_node_ids.insert(record.node_id);
             }
             _ => {}
         }
@@ -6763,9 +6748,7 @@ fn historical_traversal_guard(
     if parent_turns_started == 0 {
         parent_turns_started = 1;
     }
-    spent_or_started_node_ids.insert(parent_identity.node_id().to_string());
     Ok(HistoricalTraversalGuard {
-        spent_or_started_node_ids,
         parent_turns_started,
     })
 }
@@ -9735,7 +9718,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_selection_rejects_already_started_parent() {
+    fn historical_selection_allows_archive_parent_revisit() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = test_manifest_path(tmp.path());
         let parent = parent_identity_for("node-current", 1);
@@ -9746,10 +9729,16 @@ mod tests {
         node.parent_node_id = Some("node-root".to_string());
         write_test_node(&manifest_path, &node);
 
+        let policy = Prototype1SearchPolicy {
+            max_generations: 15,
+            max_total_nodes: 96,
+            ..Prototype1SearchPolicy::default()
+        };
+
         let decision = live_successor_continuation_decision(
             &manifest_path,
             &parent,
-            &Prototype1SearchPolicy::default(),
+            &policy,
             &successor_decision_for(&node),
             &selection_material_from_history(),
             &node,
@@ -9758,9 +9747,9 @@ mod tests {
 
         assert_eq!(
             decision.disposition,
-            Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
+            Prototype1ContinuationDisposition::ContinueHistoricalTraversal
         );
-        assert!(!decision.disposition.allows_successor());
+        assert!(decision.disposition.allows_successor());
     }
 
     #[test]
