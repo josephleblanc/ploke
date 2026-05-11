@@ -1,0 +1,239 @@
+use std::cell::Cell;
+use std::sync::Arc;
+
+use eframe::egui::{
+    Color32, FontId, Galley, Pos2, Shape, Stroke,
+    epaint::{CubicBezierShape, TextShape},
+};
+use petgraph::{EdgeType, stable_graph::IndexType};
+use ploke_records::branch::TreatmentBranchStatus;
+
+use super::geometry::{cubic_point, curve_points, distance_to_curve, endpoint_direction};
+use super::projection::GraphEdgePayload;
+use super::style::{CurveStyle, EdgeStyle};
+
+#[derive(Debug, Clone)]
+pub(super) struct GraphEdgeShape {
+    id: Arc<str>,
+    label: Arc<str>,
+    status: TreatmentBranchStatus,
+    selected: bool,
+    style: EdgeStyle,
+    curve: Cell<Option<EdgeCurve>>,
+    label_galley: Option<EdgeLabelGalley>,
+}
+
+impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
+    fn from(edge: egui_graphs::EdgeProps<GraphEdgePayload>) -> Self {
+        Self {
+            id: edge.payload.id,
+            label: edge.payload.label,
+            status: edge.payload.status,
+            selected: edge.selected,
+            style: edge.payload.style,
+            curve: Cell::new(None),
+            label_galley: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EdgeCurve {
+    key: EdgeCurveKey,
+    points: [Pos2; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EdgeCurveKey {
+    start: Pos2,
+    end: Pos2,
+    style: CurveStyle,
+}
+
+impl EdgeCurveKey {
+    fn new(start: Pos2, end: Pos2, style: CurveStyle) -> Self {
+        Self { start, end, style }
+    }
+}
+
+impl GraphEdgeShape {
+    fn curve(&self, start: Pos2, end: Pos2) -> [Pos2; 4] {
+        let key = EdgeCurveKey::new(start, end, self.style.curve);
+        match self.curve.get() {
+            Some(curve) if curve.key == key => curve.points,
+            _ => {
+                let points = curve_points(start, end, self.style.curve);
+                self.curve.set(Some(EdgeCurve { key, points }));
+                points
+            }
+        }
+    }
+
+    fn label_galley(&mut self, ctx: &egui_graphs::DrawContext, color: Color32) -> Arc<Galley> {
+        let key = EdgeLabelGalleyKey {
+            font_size: self.style.label.font_size,
+            color,
+        };
+        match &self.label_galley {
+            Some(cached) if cached.key == key => cached.galley.clone(),
+            _ => {
+                let galley = ctx.ctx.fonts_mut(|fonts| {
+                    fonts.layout_no_wrap(
+                        self.label.to_string(),
+                        FontId::monospace(self.style.label.font_size),
+                        color,
+                    )
+                });
+                self.label_galley = Some(EdgeLabelGalley {
+                    key,
+                    galley: galley.clone(),
+                });
+                galley
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EdgeLabelGalley {
+    key: EdgeLabelGalleyKey,
+    galley: Arc<Galley>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EdgeLabelGalleyKey {
+    font_size: f32,
+    color: Color32,
+}
+
+impl<N, Ty, Ix, D> egui_graphs::DisplayEdge<N, GraphEdgePayload, Ty, Ix, D> for GraphEdgeShape
+where
+    N: Clone,
+    Ty: EdgeType,
+    Ix: IndexType,
+    D: egui_graphs::DisplayNode<N, GraphEdgePayload, Ty, Ix>,
+{
+    fn shapes(
+        &mut self,
+        start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        ctx: &egui_graphs::DrawContext,
+    ) -> Vec<Shape> {
+        if end.location() == start.location() {
+            return Vec::new();
+        }
+
+        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
+        let curve = self.curve(start_point, end_point);
+        let screen_curve = curve.map(|point| ctx.meta.canvas_to_screen_pos(point));
+
+        let color = self.style.colors.color(self.status);
+        let stroke_width = if self.selected {
+            self.style.selected_width
+        } else {
+            self.style.normal_width
+        };
+        let mut shapes = Vec::with_capacity(2);
+        shapes.push(
+            CubicBezierShape::from_points_stroke(
+                screen_curve,
+                false,
+                Color32::TRANSPARENT,
+                Stroke::new(stroke_width, color),
+            )
+            .into(),
+        );
+
+        let center = cubic_point(screen_curve, 0.5);
+        let galley = self.label_galley(ctx, color);
+        let label_pos = Pos2::new(
+            center.x - galley.rect.width() / 2.0,
+            center.y - galley.rect.height() - self.style.label.gap,
+        );
+        shapes.push(TextShape::new(label_pos, galley, color).into());
+
+        shapes
+    }
+
+    fn update(&mut self, state: &egui_graphs::EdgeProps<GraphEdgePayload>) {
+        if self.id != state.payload.id {
+            self.id.clone_from(&state.payload.id);
+            self.curve.set(None);
+            self.label_galley = None;
+        }
+        if self.label.as_ref() != state.payload.label.as_ref() {
+            self.label = state.payload.label.clone();
+            self.label_galley = None;
+        }
+        if self.style.label != state.payload.style.label
+            || self.style.colors != state.payload.style.colors
+            || self.status != state.payload.status
+        {
+            self.label_galley = None;
+        }
+        self.status = state.payload.status;
+        self.selected = state.selected;
+        self.style = state.payload.style;
+    }
+
+    fn is_inside(
+        &self,
+        start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        pos: Pos2,
+    ) -> bool {
+        if end.location() == start.location() {
+            return false;
+        }
+
+        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
+        distance_to_curve(self.curve(start_point, end_point), pos, self.style)
+            <= self.style.hit_tolerance
+    }
+
+    fn extra_bounds(
+        &self,
+        start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+    ) -> Option<(Pos2, Pos2)> {
+        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
+        let curve = self.curve(start_point, end_point);
+        let min = Pos2::new(
+            curve.iter().map(|point| point.x).fold(f32::MAX, f32::min),
+            curve.iter().map(|point| point.y).fold(f32::MAX, f32::min),
+        );
+        let max = Pos2::new(
+            curve.iter().map(|point| point.x).fold(f32::MIN, f32::max),
+            curve.iter().map(|point| point.y).fold(f32::MIN, f32::max),
+        );
+        Some((min, max))
+    }
+}
+
+fn attachment_points<N, Ty, Ix, D>(
+    start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+    end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+    style: CurveStyle,
+) -> (Pos2, Pos2)
+where
+    N: Clone,
+    Ty: EdgeType,
+    Ix: IndexType,
+    D: egui_graphs::DisplayNode<N, GraphEdgePayload, Ty, Ix>,
+{
+    let delta = end.location() - start.location();
+    let rank_direction = if delta.y >= 0.0 { 1.0 } else { -1.0 };
+    let lateral_direction = delta.x.signum();
+    let rank_distance = delta.y.abs().max(1.0);
+    let lateral_fraction = (delta.x.abs() / rank_distance).min(1.0);
+
+    let start_direction =
+        endpoint_direction(rank_direction, lateral_direction, lateral_fraction, style);
+    let end_direction =
+        endpoint_direction(-rank_direction, -lateral_direction, lateral_fraction, style);
+
+    (
+        start.display().closest_boundary_point(start_direction),
+        end.display().closest_boundary_point(end_direction),
+    )
+}
