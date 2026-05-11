@@ -1734,6 +1734,11 @@ fn metrics(
         } else {
             SubmissionArtifactState::Missing
         },
+        patch_projection_check_state: if oracle_eligible {
+            ploke_records::evaluation::PatchProjectionCheckState::Passed
+        } else {
+            ploke_records::evaluation::PatchProjectionCheckState::NotApplicable
+        },
         partial_patch_failures: 0,
         same_file_patch_retry_count: 0,
         same_file_patch_max_streak: 0,

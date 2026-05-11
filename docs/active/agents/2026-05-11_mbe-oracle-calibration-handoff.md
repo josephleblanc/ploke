@@ -5,6 +5,9 @@ Prototype 1 loop outputs.
 
 ## Related Tracks
 
+- [`2026-05-11_mbe-oracle-calibration-plan.md`](2026-05-11_mbe-oracle-calibration-plan.md)
+  Active implementation plan for child-owned MBE instance targets, typed patch
+  projection provenance, and oracle eligibility gating.
 - [`../plans/self-improvement-loop/handoffs.md`](../plans/self-improvement-loop/handoffs.md)
   Shared track index for records, playback, frontend observability, and loop
   evaluation.

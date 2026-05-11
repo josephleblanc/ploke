@@ -11,6 +11,7 @@ use crate::branch::Disposition;
 use crate::record::{Record, RecordFamily, RecordFormat};
 
 pub const ARTIFACT_SCHEMA_V1: &str = "prototype1-branch-evaluation.v1";
+pub const BENCHMARK_PATCH_PROJECTION_SCHEMA_V1: &str = "benchmark-patch-projection.v1";
 
 /// One persisted Prototype 1 branch evaluation artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,6 +150,8 @@ pub struct RunMetrics {
     pub patch_attempted: bool,
     pub patch_apply_state: String,
     pub submission_artifact_state: String,
+    #[serde(default)]
+    pub patch_projection_check_state: PatchProjectionCheckState,
     pub partial_patch_failures: u64,
     pub same_file_patch_retry_count: u64,
     pub same_file_patch_max_streak: u64,
@@ -166,12 +169,176 @@ pub struct Outcome {
     pub reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkPatchProjectionRecord {
+    pub schema_version: String,
+    pub benchmark: MultiSweBenchTarget,
+    pub run: RunArtifactRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<CandidateArtifactRef>,
+    pub checkout: BenchmarkCheckoutRef,
+    pub submission: SubmissionPatchRef,
+    pub check: PatchProjectionCheck,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MultiSweBenchTarget {
+    pub org: String,
+    pub repo: String,
+    pub number: u64,
+    pub instance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunArtifactRef {
+    pub run_manifest: PathBuf,
+    pub run_root: PathBuf,
+    pub record_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateArtifactRef {
+    pub node_id: String,
+    pub branch_id: String,
+    pub generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_artifact_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_artifact_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkCheckoutRef {
+    pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SubmissionPatchRef {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub byte_len: u64,
+    pub line_count: u64,
+    pub diff_base: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchProjectionCheckState {
+    NotRecorded,
+    NotApplicable,
+    Passed,
+    Failed,
+    NotRun,
+}
+
+impl Default for PatchProjectionCheckState {
+    fn default() -> Self {
+        Self::NotRecorded
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PatchProjectionCheck {
+    Passed {
+        checked_at: String,
+        detail: String,
+    },
+    Failed {
+        checked_at: String,
+        reason: String,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log_path: Option<PathBuf>,
+    },
+    NotRun {
+        reason: String,
+    },
+}
+
+impl PatchProjectionCheck {
+    pub fn state(&self) -> PatchProjectionCheckState {
+        match self {
+            PatchProjectionCheck::Passed { .. } => PatchProjectionCheckState::Passed,
+            PatchProjectionCheck::Failed { .. } => PatchProjectionCheckState::Failed,
+            PatchProjectionCheck::NotRun { .. } => PatchProjectionCheckState::NotRun,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    #[test]
+    fn benchmark_patch_projection_record_roundtrips_and_rejects_unknown_fields() {
+        let record = BenchmarkPatchProjectionRecord {
+            schema_version: BENCHMARK_PATCH_PROJECTION_SCHEMA_V1.to_string(),
+            benchmark: MultiSweBenchTarget {
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number: 2209,
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                base_sha: Some("abc123".to_string()),
+            },
+            run: RunArtifactRef {
+                run_manifest: PathBuf::from("/runs/run.json"),
+                run_root: PathBuf::from("/runs/run-1"),
+                record_path: PathBuf::from("/runs/run-1/record.json.gz"),
+            },
+            candidate: Some(CandidateArtifactRef {
+                node_id: "node-1".to_string(),
+                branch_id: "branch-1".to_string(),
+                generation: 2,
+                base_artifact_id: None,
+                patch_id: Some("patch-1".to_string()),
+                derived_artifact_id: Some("artifact-2".to_string()),
+            }),
+            checkout: BenchmarkCheckoutRef {
+                cwd: PathBuf::from("/nodes/node-1/instance-targets/treatment/BurntSushi/ripgrep"),
+                head_sha: Some("def456".to_string()),
+            },
+            submission: SubmissionPatchRef {
+                path: PathBuf::from("/runs/run-1/multi-swe-bench-submission.jsonl"),
+                sha256: "00".repeat(32),
+                byte_len: 123,
+                line_count: 4,
+                diff_base: "abc123".to_string(),
+            },
+            check: PatchProjectionCheck::Passed {
+                checked_at: "2026-05-11T00:00:00Z".to_string(),
+                detail: "test".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&record).expect("serialize");
+        let decoded: BenchmarkPatchProjectionRecord =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, record);
+        assert_eq!(decoded.check.state(), PatchProjectionCheckState::Passed);
+
+        let mut value = serde_json::to_value(&record).expect("to value");
+        value
+            .as_object_mut()
+            .expect("object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        assert!(serde_json::from_value::<BenchmarkPatchProjectionRecord>(value).is_err());
+    }
 
     #[test]
     #[ignore]

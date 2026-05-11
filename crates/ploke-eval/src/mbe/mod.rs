@@ -13,6 +13,7 @@ use crate::intervention::{
     load_runner_result_at,
 };
 use crate::projection::OperatorProjectionRead;
+use crate::record::read_compressed_record;
 use crate::run_registry::{RunExecutionStatus, RunSubmissionStatus};
 use crate::runner::MultiSweBenchSubmissionRecord;
 use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
@@ -1097,6 +1098,9 @@ fn candidates_for_result(
         if nonempty_only && submission.fix_patch.trim().is_empty() {
             continue;
         }
+        if nonempty_only && !row_has_oracle_eligible_projection(row)? {
+            continue;
+        }
         candidates.push(CampaignCandidate {
             node: node.clone(),
             runner_result: result.clone(),
@@ -1105,6 +1109,18 @@ fn candidates_for_result(
         });
     }
     Ok(candidates)
+}
+
+fn row_has_oracle_eligible_projection(row: &ClosureInstanceRow) -> Result<bool, PrepareError> {
+    let Some(record_path) = row.artifacts.record_path.as_ref() else {
+        return Ok(false);
+    };
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.clone(),
+            source,
+        })?;
+    Ok(record.operational_metrics().oracle_eligible)
 }
 
 fn require_msb_source(

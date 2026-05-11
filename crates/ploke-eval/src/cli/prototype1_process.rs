@@ -152,11 +152,14 @@ use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::selection;
 use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
+use crate::inner::registry::RunRegistration;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
     RecordStore, ResolvedTreatmentBranch, project_node_status, write_node_projection,
     write_runner_result_at,
 };
+use crate::record::SubmissionArtifactState;
+use ploke_records::evaluation::{BenchmarkPatchProjectionRecord, PatchProjectionCheckState};
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
@@ -237,6 +240,222 @@ fn channel_error_phase(
     PrepareError::DatabaseSetup {
         phase,
         detail: format!("{error:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
+    use crate::intervention::{
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1NodeStatus,
+    };
+    use ploke_records::evaluation::{
+        BENCHMARK_PATCH_PROJECTION_SCHEMA_V1, BenchmarkCheckoutRef, BenchmarkPatchProjectionRecord,
+        MultiSweBenchTarget, PatchProjectionCheck, RunArtifactRef, SubmissionPatchRef,
+    };
+
+    fn test_node(root: &Path) -> Prototype1NodeRecord {
+        let node_dir = root.join("nodes").join("node-1");
+        Prototype1NodeRecord {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            node_id: "node-1".to_string(),
+            parent_node_id: Some("parent-1".to_string()),
+            generation: 1,
+            instance_id: "BurntSushi__ripgrep-2209".to_string(),
+            source_state_id: "source-1".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: Some("parent-branch".to_string()),
+            branch_id: "branch-1".to_string(),
+            candidate_id: "candidate-1".to_string(),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            node_dir: node_dir.clone(),
+            workspace_root: node_dir.join("worktree"),
+            binary_path: node_dir.join("bin").join("ploke-eval"),
+            runner_request_path: node_dir.join("runner-request.json"),
+            runner_result_path: node_dir.join("runner-result.json"),
+            status: Prototype1NodeStatus::BinaryBuilt,
+            created_at: "2026-05-11T00:00:00Z".to_string(),
+            updated_at: "2026-05-11T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn child_instance_target_cache_is_outside_artifact_worktree() {
+        let tmp = tempdir().expect("tempdir");
+        let node = test_node(tmp.path());
+        fs::create_dir_all(&node.workspace_root).expect("worktree");
+
+        let cache = prepare_child_instance_target_cache(&node, "treatment-1").expect("cache");
+
+        assert!(cache.starts_with(&node.node_dir));
+        assert!(!cache.starts_with(&node.workspace_root));
+        assert_eq!(
+            cache,
+            node.node_dir.join("instance-targets").join("treatment-1")
+        );
+        assert!(cache.is_dir());
+    }
+
+    #[test]
+    fn child_cleanup_removes_instance_targets_without_removing_worktree() {
+        let tmp = tempdir().expect("tempdir");
+        let node = test_node(tmp.path());
+        fs::create_dir_all(&node.workspace_root).expect("worktree");
+        fs::create_dir_all(node.binary_path.parent().expect("binary parent")).expect("bin dir");
+        fs::write(&node.binary_path, b"binary").expect("binary");
+        fs::create_dir_all(node.node_dir.join("target").join("debug")).expect("target");
+        fs::create_dir_all(
+            node.node_dir
+                .join("instance-targets")
+                .join("treatment-1")
+                .join("BurntSushi")
+                .join("ripgrep"),
+        )
+        .expect("instance target");
+
+        cleanup_prototype1_child_build_products(
+            &tmp.path().join("campaign.json"),
+            "campaign",
+            &node,
+        )
+        .expect("cleanup");
+
+        assert!(!node.binary_path.exists());
+        assert!(!node.node_dir.join("target").exists());
+        assert!(!node.node_dir.join("instance-targets").exists());
+        assert!(node.workspace_root.exists());
+    }
+
+    #[test]
+    fn child_projection_gate_rejects_shared_checkout_cwd() {
+        let tmp = tempdir().expect("tempdir");
+        let node = test_node(tmp.path());
+        fs::create_dir_all(&node.node_dir).expect("node dir");
+        let run_root = tmp.path().join("runs").join("run-1");
+        fs::create_dir_all(&run_root).expect("run root");
+        let projection_path = run_root.join("benchmark-patch-projection.json");
+        let registration_path = write_test_registration(&node, tmp.path(), &projection_path);
+        write_test_projection(
+            &node,
+            &projection_path,
+            PathBuf::from("/tmp/shared/BurntSushi/ripgrep"),
+        );
+
+        let treatment = Prototype1TreatmentEvidence {
+            baseline_campaign_id: "baseline".to_string(),
+            branch_id: node.branch_id.clone(),
+            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_manifest: tmp.path().join("campaign.json"),
+            treatment_closure_state_path: tmp.path().join("closure.json"),
+            eval_policy: EvalCampaignPolicy::default(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            instances: vec![
+                crate::cli::prototype1_state::cli_facing::Prototype1TreatmentInstanceEvidence {
+                    instance_id: node.instance_id.clone(),
+                    registration_path: Some(registration_path),
+                    record_path: Some(run_root.join("record.json.gz")),
+                    metrics: Some(crate::OperationalRunMetrics {
+                        tool_calls_total: 1,
+                        tool_calls_failed: 0,
+                        patch_attempted: true,
+                        patch_apply_state: crate::PatchApplyState::Applied,
+                        submission_artifact_state: SubmissionArtifactState::Nonempty,
+                        patch_projection_check_state: PatchProjectionCheckState::Passed,
+                        partial_patch_failures: 0,
+                        same_file_patch_retry_count: 0,
+                        same_file_patch_max_streak: 0,
+                        aborted: false,
+                        aborted_repair_loop: false,
+                        nonempty_valid_patch: true,
+                        convergence: true,
+                        oracle_eligible: true,
+                    }),
+                    status: "complete".to_string(),
+                },
+            ],
+        };
+
+        let error = validate_treatment_patch_projection(&node, &treatment)
+            .expect_err("shared checkout must fail child gate");
+        assert!(
+            error
+                .to_string()
+                .contains("outside child instance target root")
+        );
+    }
+
+    fn write_test_registration(
+        node: &Prototype1NodeRecord,
+        root: &Path,
+        projection_path: &Path,
+    ) -> PathBuf {
+        let storage_roots = RunStorageRoots::new(root.join("registries"), root.join("runs"));
+        let intent = RunIntent {
+            task_id: node.instance_id.clone(),
+            repo_root: node
+                .node_dir
+                .join("instance-targets/treatment/BurntSushi/ripgrep"),
+            storage_roots,
+            base_sha: Some("abc123".to_string()),
+            budget: EvalBudget::default(),
+            model_id: Some("model".to_string()),
+            provider_slug: Some("provider".to_string()),
+            campaign_id: Some("treatment".to_string()),
+            batch_id: Some("batch".to_string()),
+            run_arm_id: "treatment".to_string(),
+            run_role: RegisteredRunRole::Treatment,
+        };
+        let mut registration =
+            RunRegistration::register_with_run_id(intent, "run-1").expect("registration");
+        registration.artifacts.patch_projection = Some(projection_path.to_path_buf());
+        registration.persist().expect("persist registration");
+        registration.registry_path()
+    }
+
+    fn write_test_projection(node: &Prototype1NodeRecord, path: &Path, cwd: PathBuf) {
+        let record = BenchmarkPatchProjectionRecord {
+            schema_version: BENCHMARK_PATCH_PROJECTION_SCHEMA_V1.to_string(),
+            benchmark: MultiSweBenchTarget {
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number: 2209,
+                instance_id: node.instance_id.clone(),
+                base_sha: Some("abc123".to_string()),
+            },
+            run: RunArtifactRef {
+                run_manifest: path.with_file_name("run.json"),
+                run_root: path.parent().expect("run root").to_path_buf(),
+                record_path: path.with_file_name("record.json.gz"),
+            },
+            candidate: None,
+            checkout: BenchmarkCheckoutRef {
+                cwd,
+                head_sha: Some("def456".to_string()),
+            },
+            submission: SubmissionPatchRef {
+                path: path.with_file_name("multi-swe-bench-submission.jsonl"),
+                sha256: "00".repeat(32),
+                byte_len: 1,
+                line_count: 1,
+                diff_base: "abc123".to_string(),
+            },
+            check: PatchProjectionCheck::Passed {
+                checked_at: "2026-05-11T00:00:00Z".to_string(),
+                detail: "test".to_string(),
+            },
+        };
+        fs::write(path, serde_json::to_string_pretty(&record).expect("json"))
+            .expect("write projection");
     }
 }
 
@@ -656,6 +875,121 @@ fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareErr
     })
 }
 
+fn child_instance_targets_root(node_dir: &Path) -> PathBuf {
+    node_dir.join("instance-targets")
+}
+
+fn prepare_child_instance_target_cache(
+    node: &crate::intervention::Prototype1NodeRecord,
+    treatment_campaign_id: &str,
+) -> Result<PathBuf, PrepareError> {
+    let root = child_instance_targets_root(&node.node_dir);
+    let repo_cache = root.join(treatment_campaign_id);
+    ensure_node_child_path(&node.node_dir, &repo_cache)?;
+    if repo_cache.exists() {
+        fs::remove_dir_all(&repo_cache).map_err(|source| PrepareError::WriteManifest {
+            path: repo_cache.clone(),
+            source,
+        })?;
+    }
+    fs::create_dir_all(&repo_cache).map_err(|source| PrepareError::CreateOutputDir {
+        path: repo_cache.clone(),
+        source,
+    })?;
+    Ok(repo_cache)
+}
+
+fn validate_treatment_patch_projection(
+    node: &crate::intervention::Prototype1NodeRecord,
+    treatment: &Prototype1TreatmentEvidence,
+) -> Result<(), PrepareError> {
+    for instance in &treatment.instances {
+        let Some(metrics) = instance.metrics.as_ref() else {
+            continue;
+        };
+        if metrics.submission_artifact_state == SubmissionArtifactState::Nonempty
+            && metrics.patch_projection_check_state != PatchProjectionCheckState::Passed
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "treatment '{}' instance '{}' produced nonempty MBE submission without passed patch projection check ({:?})",
+                    treatment.treatment_campaign_id,
+                    instance.instance_id,
+                    metrics.patch_projection_check_state
+                ),
+            });
+        }
+        if metrics.submission_artifact_state == SubmissionArtifactState::Nonempty {
+            validate_child_patch_projection_checkout(node, instance)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_child_patch_projection_checkout(
+    node: &crate::intervention::Prototype1NodeRecord,
+    instance: &crate::cli::prototype1_state::cli_facing::Prototype1TreatmentInstanceEvidence,
+) -> Result<(), PrepareError> {
+    let registration_path =
+        instance
+            .registration_path
+            .as_ref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "instance '{}' has nonempty MBE submission but no run registration path",
+                    instance.instance_id
+                ),
+            })?;
+    let registration =
+        RunRegistration::load(registration_path).map_err(|source| PrepareError::ReadManifest {
+            path: registration_path.clone(),
+            source: std::io::Error::other(source.to_string()),
+        })?;
+    let projection_path = registration
+        .artifacts
+        .patch_projection
+        .as_ref()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "instance '{}' has nonempty MBE submission but no patch projection artifact",
+                instance.instance_id
+            ),
+        })?;
+    let text =
+        fs::read_to_string(projection_path).map_err(|source| PrepareError::ReadManifest {
+            path: projection_path.clone(),
+            source,
+        })?;
+    let projection: BenchmarkPatchProjectionRecord =
+        serde_json::from_str(&text).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_child_patch_projection_decode",
+            detail: format!(
+                "failed to parse patch projection '{}': {source}",
+                projection_path.display()
+            ),
+        })?;
+    let targets_root = child_instance_targets_root(&node.node_dir);
+    if !projection.checkout.cwd.starts_with(&targets_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "patch projection cwd '{}' is outside child instance target root '{}'",
+                projection.checkout.cwd.display(),
+                targets_root.display()
+            ),
+        });
+    }
+    if projection.checkout.cwd.starts_with(&node.workspace_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "patch projection cwd '{}' must not be inside child Artifact worktree '{}'",
+                projection.checkout.cwd.display(),
+                node.workspace_root.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn cleanup_prototype1_child_build_products(
     manifest_path: &Path,
     campaign_id: &str,
@@ -701,7 +1035,13 @@ pub(crate) fn cleanup_prototype1_child_build_products(
     }
 
     let target_dir = node.node_dir.join("target");
-    remove_node_target(manifest_path, campaign_id, node, &target_dir)
+    remove_node_target(manifest_path, campaign_id, node, &target_dir)?;
+    remove_child_instance_targets(
+        manifest_path,
+        campaign_id,
+        node,
+        &child_instance_targets_root(&node.node_dir),
+    )
 }
 
 fn remove_node_target(
@@ -744,6 +1084,53 @@ fn remove_node_target(
             .fail("node_target_remove", &source);
             return Err(PrepareError::WriteManifest {
                 path: target_dir.to_path_buf(),
+                source,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn remove_child_instance_targets(
+    manifest_path: &Path,
+    campaign_id: &str,
+    node: &crate::intervention::Prototype1NodeRecord,
+    targets_root: &Path,
+) -> Result<(), PrepareError> {
+    ensure_node_child_path(&node.node_dir, targets_root)?;
+    match fs::remove_dir_all(targets_root) {
+        Ok(()) => observe::Step::start(observe::span!(
+            "prototype1.cleanup.instance_targets",
+            campaign_id = %campaign_id,
+            node_id = %node.node_id,
+            generation = node.generation,
+            manifest_path = %manifest_path.display(),
+            path = %targets_root.display(),
+        ))
+        .removed(),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.instance_targets",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %targets_root.display(),
+            ))
+            .missing()
+        }
+        Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.instance_targets",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %targets_root.display(),
+            ))
+            .fail("child_instance_targets_remove", &source);
+            return Err(PrepareError::WriteManifest {
+                path: targets_root.to_path_buf(),
                 source,
             });
         }
@@ -1601,6 +1988,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.campaign_id(),
         &manifest_path,
         &resolved,
+        &node,
         &request.workspace_root,
         request.stop_on_error,
     )
@@ -1658,6 +2046,7 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
     baseline_campaign_id: &str,
     _baseline_manifest_path: &Path,
     resolved_branch: &ResolvedTreatmentBranch,
+    node: &crate::intervention::Prototype1NodeRecord,
     repo_root: &Path,
     stop_on_error: bool,
 ) -> Result<Prototype1TreatmentEvidence, PrepareError> {
@@ -1733,6 +2122,12 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
             "PrepareTreatmentCampaign",
             || prepare_prototype1_treatment_campaign(&baseline_resolved, branch_id),
         )?;
+        let instance_repo_cache = step!(
+            "prototype1.child.evaluate.prepare_instance_target",
+            "PrepareInstanceTarget",
+            || prepare_child_instance_target_cache(node, &treatment_campaign.campaign_id),
+            path = %node.node_dir.display(),
+        )?;
         let mut eval_policy = treatment_campaign.resolved.eval.clone();
         if stop_on_error {
             eval_policy.stop_on_error = true;
@@ -1740,8 +2135,14 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
         async_step!(
             "prototype1.child.evaluate.eval_closure",
             "EvalClosure",
-            advance_eval_closure(&treatment_campaign.resolved, &eval_policy, false),
+            advance_eval_closure(
+                &treatment_campaign.resolved,
+                &eval_policy,
+                false,
+                Some(instance_repo_cache.as_path()),
+            ),
             treatment_campaign_id = %treatment_campaign.campaign_id,
+            instance_repo_cache = %instance_repo_cache.display(),
             stop_on_error = eval_policy.stop_on_error,
         )
         .await?;
@@ -1776,6 +2177,12 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
                     &treatment_state,
                 )
             },
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+        step!(
+            "prototype1.child.evaluate.patch_projection_gate",
+            "PatchProjectionGate",
+            || validate_treatment_patch_projection(node, &treatment),
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
 

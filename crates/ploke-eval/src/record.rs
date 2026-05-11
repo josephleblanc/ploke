@@ -92,6 +92,7 @@
 //! }
 //! ```
 
+use ploke_records::evaluation::PatchProjectionCheckState;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 use uuid::Uuid;
@@ -1434,6 +1435,18 @@ pub struct PackagingPhase {
     /// Path to the written benchmark submission artifact, if one exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msb_submission_path: Option<PathBuf>,
+
+    /// Path to the typed patch-projection provenance record, if one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_projection_path: Option<PathBuf>,
+
+    /// Coarse state of the patch-projection provenance check.
+    #[serde(default = "default_patch_projection_check_state")]
+    pub patch_projection_check_state: PatchProjectionCheckState,
+}
+
+fn default_patch_projection_check_state() -> PatchProjectionCheckState {
+    PatchProjectionCheckState::NotRecorded
 }
 
 /// Build validation result.

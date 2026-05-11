@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, ExitCode};
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -5078,7 +5078,7 @@ impl ClosureAdvanceEvalCommand {
         if self.stop_on_error {
             policy.stop_on_error = true;
         }
-        let report = advance_eval_closure(&resolved, &policy, self.dry_run).await?;
+        let report = advance_eval_closure(&resolved, &policy, self.dry_run, None).await?;
         render_advance_eval_report(report, self.format)
     }
 }
@@ -5122,7 +5122,7 @@ impl ClosureAdvanceAllCommand {
             protocol_policy.stop_on_error = true;
         }
 
-        let eval_report = advance_eval_closure(&resolved, &eval_policy, self.dry_run).await?;
+        let eval_report = advance_eval_closure(&resolved, &eval_policy, self.dry_run, None).await?;
         let protocol_report =
             advance_protocol_closure(&resolved, &protocol_policy, self.dry_run).await?;
         render_advance_all_report(
@@ -5432,10 +5432,78 @@ fn build_eval_batch_plans(
     Ok(plans)
 }
 
+fn ensure_eval_plan_repo_cache(
+    registry: &TargetRegistry,
+    plan: &EvalBatchPlan,
+    repo_cache: &Path,
+) -> Result<(), PrepareError> {
+    let mut by_instance = BTreeMap::<String, RegistryEntry>::new();
+    for entry in &registry.entries {
+        by_instance.insert(entry.instance_id.clone(), entry.clone());
+    }
+
+    let mut cloned = BTreeSet::<(String, String)>::new();
+    for instance_id in &plan.instances {
+        let entry = by_instance
+            .get(instance_id)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "closure_eval_repo_cache",
+                detail: format!("registry entry missing for '{instance_id}'"),
+            })?;
+        let key = (entry.source.org.clone(), entry.source.repo.clone());
+        if !cloned.insert(key.clone()) {
+            continue;
+        }
+        clone_repo_into_cache(&key.0, &key.1, repo_cache)?;
+    }
+    Ok(())
+}
+
+fn clone_repo_into_cache(org: &str, repo: &str, repo_cache: &Path) -> Result<(), PrepareError> {
+    let source = repos_dir()?.join(org).join(repo);
+    if !source.is_dir() {
+        return Err(PrepareError::MissingRepoRoot(source));
+    }
+    let org_dir = repo_cache.join(org);
+    let target = org_dir.join(repo);
+    fs::create_dir_all(&org_dir).map_err(|source| PrepareError::CreateOutputDir {
+        path: org_dir.clone(),
+        source,
+    })?;
+    if target.exists() {
+        fs::remove_dir_all(&target).map_err(|source| PrepareError::WriteManifest {
+            path: target.clone(),
+            source,
+        })?;
+    }
+    let command_label = format!(
+        "git clone --no-hardlinks {} {}",
+        source.display(),
+        target.display()
+    );
+    let output = ProcessCommand::new("git")
+        .args(["clone", "--no-hardlinks"])
+        .arg(&source)
+        .arg(&target)
+        .output()
+        .map_err(|source| PrepareError::GitCommand {
+            command: command_label.clone(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(PrepareError::GitCommandStatus {
+            command: command_label,
+            status: output.status.code().unwrap_or(-1),
+        });
+    }
+    Ok(())
+}
+
 async fn advance_eval_closure(
     config: &ResolvedCampaignConfig,
     policy: &EvalCampaignPolicy,
     dry_run: bool,
+    repo_cache_override: Option<&Path>,
 ) -> Result<ClosureAdvanceEvalReport, PrepareError> {
     let before_state = recompute_closure_state(closure_request_from_campaign(config))?.1;
     let selected_rows = select_eval_rows(&before_state, policy);
@@ -5461,6 +5529,12 @@ async fn advance_eval_closure(
         let campaign_context = campaign_context_from_config(config);
         let provider = parse_provider_key(config.provider_slug.clone())?;
         for plan in &plans {
+            let repo_cache = repo_cache_override
+                .map(Path::to_path_buf)
+                .unwrap_or(repos_dir()?);
+            if repo_cache_override.is_some() {
+                ensure_eval_plan_repo_cache(&registry, plan, &repo_cache)?;
+            }
             let mut prepared = PrepareMsbBatchRequest {
                 dataset_file: Some(plan.dataset_path.clone()),
                 dataset_key: None,
@@ -5469,7 +5543,7 @@ async fn advance_eval_closure(
                 instance_ids: plan.instances.clone(),
                 specifics: Vec::new(),
                 limit: None,
-                repo_cache: repos_dir()?,
+                repo_cache,
                 instances_root: config.instances_root.clone(),
                 batches_root: config.batches_root.clone(),
                 budget: policy.budget.clone(),

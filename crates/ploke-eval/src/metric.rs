@@ -264,6 +264,7 @@ mod tests {
     use super::*;
     use crate::operational_metrics::PatchApplyState;
     use crate::record::SubmissionArtifactState;
+    use ploke_records::evaluation::PatchProjectionCheckState;
 
     #[test]
     fn operational_summary_uses_existing_quality_points() {
@@ -273,6 +274,7 @@ mod tests {
             patch_attempted: true,
             patch_apply_state: PatchApplyState::Applied,
             submission_artifact_state: SubmissionArtifactState::Nonempty,
+            patch_projection_check_state: PatchProjectionCheckState::Passed,
             partial_patch_failures: 0,
             same_file_patch_retry_count: 0,
             same_file_patch_max_streak: 0,

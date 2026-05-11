@@ -384,7 +384,7 @@ async fn establish_initial_parent_baseline(
 ) -> Result<CompleteBaseline, PrepareError> {
     let mut eval_policy = config.eval.clone();
     eval_policy.stop_on_error = false;
-    advance_eval_closure(config, &eval_policy, false).await?;
+    advance_eval_closure(config, &eval_policy, false, None).await?;
 
     let mut protocol_policy = config.protocol.clone();
     protocol_policy.stop_on_error = false;
@@ -2021,7 +2021,7 @@ async fn run_prototype1_loop_controller(
     }
     let eval_report = {
         let _scope = TimingTrace::scope("loop.prototype1.advance_eval_closure");
-        advance_eval_closure(&campaign.resolved, &eval_policy, false).await?
+        advance_eval_closure(&campaign.resolved, &eval_policy, false, None).await?
     };
 
     if input.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
@@ -10484,6 +10484,11 @@ stop_after = "complete"
                 crate::record::SubmissionArtifactState::Nonempty
             } else {
                 crate::record::SubmissionArtifactState::Missing
+            },
+            patch_projection_check_state: if oracle_eligible {
+                ploke_records::evaluation::PatchProjectionCheckState::Passed
+            } else {
+                ploke_records::evaluation::PatchProjectionCheckState::NotApplicable
             },
             partial_patch_failures: 0,
             same_file_patch_retry_count: 0,

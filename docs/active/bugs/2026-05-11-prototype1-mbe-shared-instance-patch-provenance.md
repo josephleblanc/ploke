@@ -4,6 +4,7 @@
 - campaign: `p1-history-traversal-20260511-2`
 - status: alive, unfixed
 - evidence directory: `docs/active/agents/2026-05-11_mbe-instance-patch-provenance/`
+- plan: `docs/active/agents/2026-05-11_mbe-oracle-calibration-plan.md`
 
 ## Summary
 
@@ -174,4 +175,3 @@ A fixed run should show:
   oracle evidence
 - repeated `fix_patch` hashes across sibling candidates are explainable by
   identical applied proposal evidence, not shared mutable checkout state
-

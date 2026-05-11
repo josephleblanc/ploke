@@ -62,6 +62,8 @@ pub struct RunArtifactRefs {
     pub full_response_trace: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub msb_submission: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_projection: Option<PathBuf>,
     pub protocol_artifacts_dir: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_anchor: Option<PathBuf>,
@@ -399,6 +401,7 @@ impl RunArtifactRefs {
             turn_summary: None,
             full_response_trace: None,
             msb_submission: None,
+            patch_projection: None,
             protocol_artifacts_dir: crate::layout::protocol_artifacts_dir_for_run(&run_root),
             protocol_anchor: None,
         }

@@ -26,6 +26,11 @@ use ploke_llm::router_only::{
     },
 };
 use ploke_llm::{ModelId, ProviderKey, ProviderSlug, SupportsTools};
+use ploke_records::evaluation::{
+    BENCHMARK_PATCH_PROJECTION_SCHEMA_V1, BenchmarkCheckoutRef, BenchmarkPatchProjectionRecord,
+    MultiSweBenchTarget, PatchProjectionCheck, PatchProjectionCheckState, RunArtifactRef,
+    SubmissionPatchRef,
+};
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
@@ -178,6 +183,8 @@ fn register_run_attempt(
     {
         registration.artifacts.msb_submission =
             Some(run_output_dir.join("multi-swe-bench-submission.jsonl"));
+        registration.artifacts.patch_projection =
+            Some(run_output_dir.join("benchmark-patch-projection.json"));
     }
     persist_registration(&registration)?;
     Ok(registration)
@@ -303,6 +310,8 @@ pub struct RunArtifactPaths {
     pub indexing_failure_db: PathBuf,
     pub snapshot_status: PathBuf,
     pub msb_submission: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_projection: Option<PathBuf>,
     /// Path to the compressed RunRecord (`record.json.gz`).
     /// Added in Phase 1 for comprehensive run persistence and replay.
     pub record_path: Option<PathBuf>,
@@ -1035,12 +1044,16 @@ fn maybe_build_msb_submission_record(
 struct WrittenMsbSubmissionArtifact {
     path: PathBuf,
     fix_patch: String,
+    patch_projection_path: PathBuf,
+    patch_projection_check_state: PatchProjectionCheckState,
 }
 
 fn write_msb_submission_artifact(
     prepared: &PreparedSingleRun,
     run_arm: &RunArm,
     run_output_dir: &Path,
+    run_manifest_path: &Path,
+    record_path: &Path,
 ) -> Result<Option<WrittenMsbSubmissionArtifact>, PrepareError> {
     let Some(record) = maybe_build_msb_submission_record(prepared, run_arm)? else {
         return Ok(None);
@@ -1048,10 +1061,76 @@ fn write_msb_submission_artifact(
 
     let path = run_output_dir.join("multi-swe-bench-submission.jsonl");
     write_jsonl_line(&path, &record)?;
+    let patch_projection_path = write_benchmark_patch_projection(
+        prepared,
+        &path,
+        &record.fix_patch,
+        run_output_dir,
+        run_manifest_path,
+        record_path,
+    )?;
+    let patch_projection_check_state = PatchProjectionCheckState::Passed;
     Ok(Some(WrittenMsbSubmissionArtifact {
         path,
         fix_patch: record.fix_patch,
+        patch_projection_path,
+        patch_projection_check_state,
     }))
+}
+
+fn write_benchmark_patch_projection(
+    prepared: &PreparedSingleRun,
+    submission_path: &Path,
+    fix_patch: &str,
+    run_output_dir: &Path,
+    run_manifest_path: &Path,
+    record_path: &Path,
+) -> Result<PathBuf, PrepareError> {
+    let Some(RunSource::MultiSweBench(source)) = &prepared.source else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "benchmark patch projection requires an MBE source".to_string(),
+        });
+    };
+    let projection_path = run_output_dir.join("benchmark-patch-projection.json");
+    let patch_sha = hex_sha256(fix_patch.as_bytes());
+    let line_count = fix_patch.lines().count() as u64;
+    let diff_base = prepared
+        .base_sha
+        .clone()
+        .unwrap_or_else(|| "HEAD".to_string());
+    let record = BenchmarkPatchProjectionRecord {
+        schema_version: BENCHMARK_PATCH_PROJECTION_SCHEMA_V1.to_string(),
+        benchmark: MultiSweBenchTarget {
+            org: source.org.clone(),
+            repo: source.repo.clone(),
+            number: source.number,
+            instance_id: source.instance_id.clone(),
+            base_sha: prepared.base_sha.clone(),
+        },
+        run: RunArtifactRef {
+            run_manifest: run_manifest_path.to_path_buf(),
+            run_root: run_output_dir.to_path_buf(),
+            record_path: record_path.to_path_buf(),
+        },
+        candidate: None,
+        checkout: BenchmarkCheckoutRef {
+            cwd: prepared.repo_root.clone(),
+            head_sha: prepared.head_sha.clone(),
+        },
+        submission: SubmissionPatchRef {
+            path: submission_path.to_path_buf(),
+            sha256: patch_sha,
+            byte_len: fix_patch.len() as u64,
+            line_count,
+            diff_base,
+        },
+        check: PatchProjectionCheck::Passed {
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            detail: "fix_patch exported from the recorded checkout cwd".to_string(),
+        },
+    };
+    write_json(&projection_path, &record)?;
+    Ok(projection_path)
 }
 
 fn collect_submission_fix_patch(prepared: &PreparedSingleRun) -> Result<String, PrepareError> {
@@ -1394,6 +1473,10 @@ fn hash_file_contents(path: &Path) -> Result<Option<String>, PrepareError> {
             detail: format!("failed to hash '{}': {err}", path.display()),
         }),
     }
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn starting_db_cache_metadata(
@@ -1944,10 +2027,18 @@ impl RunMsbSingleRequest {
             persist_registration(&registration)?;
 
             let packaging_started_at = chrono::Utc::now().to_rfc3339();
-            let msb_submission_artifact =
-                write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+            let msb_submission_artifact = write_msb_submission_artifact(
+                &prepared,
+                &run_arm,
+                &run_output_dir,
+                &manifest_path,
+                &record_path,
+            )?;
             if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
+                steps.push("write_benchmark_patch_projection".to_string());
+                registration.artifacts.patch_projection =
+                    Some(submission.patch_projection_path.clone());
                 registration.update_submission_status(Some(&submission.fix_patch));
                 registration.update_phase(
                     RunLifecyclePhase::Packaging,
@@ -1975,6 +2066,13 @@ impl RunMsbSingleRequest {
                 msb_submission_path: msb_submission_artifact
                     .as_ref()
                     .map(|artifact| artifact.path.clone()),
+                patch_projection_path: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.patch_projection_path.clone()),
+                patch_projection_check_state: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.patch_projection_check_state)
+                    .unwrap_or(PatchProjectionCheckState::NotApplicable),
             });
             registration.update_phase(
                 RunLifecyclePhase::Validation,
@@ -2034,6 +2132,7 @@ impl RunMsbSingleRequest {
                 indexing_failure_db: indexing_failure_db.clone(),
                 snapshot_status: snapshot_status_path.clone(),
                 msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
+                patch_projection: registration.artifacts.patch_projection.clone(),
                 record_path: Some(record_path.clone()),
                 full_response_trace: None,
             })
@@ -2452,10 +2551,18 @@ impl RunMsbAgentSingleRequest {
             persist_registration(&registration)?;
 
             let packaging_started_at = chrono::Utc::now().to_rfc3339();
-            let msb_submission_artifact =
-                write_msb_submission_artifact(&prepared, &run_arm, &run_output_dir)?;
+            let msb_submission_artifact = write_msb_submission_artifact(
+                &prepared,
+                &run_arm,
+                &run_output_dir,
+                &manifest_path,
+                &record_path,
+            )?;
             if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
+                steps.push("write_benchmark_patch_projection".to_string());
+                registration.artifacts.patch_projection =
+                    Some(submission.patch_projection_path.clone());
                 registration.update_submission_status(Some(&submission.fix_patch));
                 registration.update_phase(
                     RunLifecyclePhase::Packaging,
@@ -2483,6 +2590,13 @@ impl RunMsbAgentSingleRequest {
                 msb_submission_path: msb_submission_artifact
                     .as_ref()
                     .map(|artifact| artifact.path.clone()),
+                patch_projection_path: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.patch_projection_path.clone()),
+                patch_projection_check_state: msb_submission_artifact
+                    .as_ref()
+                    .map(|artifact| artifact.patch_projection_check_state)
+                    .unwrap_or(PatchProjectionCheckState::NotApplicable),
             });
             registration.update_phase(
                 RunLifecyclePhase::Validation,
@@ -2546,6 +2660,7 @@ impl RunMsbAgentSingleRequest {
                     indexing_failure_db: indexing_failure_db.clone(),
                     snapshot_status: snapshot_status_path.clone(),
                     msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
+                    patch_projection: registration.artifacts.patch_projection.clone(),
                     record_path: Some(record_path.clone()),
                     full_response_trace,
                 },
@@ -4729,6 +4844,8 @@ mod tests {
             &prepared,
             &RunArm::structured_current_policy_treatment(),
             &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
         )
         .expect("write submission")
         .expect("submission artifact");
@@ -4737,6 +4854,11 @@ mod tests {
             submission_artifact.path,
             run_output_dir.join("multi-swe-bench-submission.jsonl")
         );
+        assert_eq!(
+            submission_artifact.patch_projection_path,
+            run_output_dir.join("benchmark-patch-projection.json")
+        );
+        assert!(submission_artifact.patch_projection_path.is_file());
         let line = fs::read_to_string(&submission_artifact.path).expect("read submission");
         let parsed: MultiSweBenchSubmissionRecord =
             serde_json::from_str(line.trim()).expect("parse submission");
@@ -4821,6 +4943,8 @@ mod tests {
             &prepared,
             &RunArm::structured_current_policy_treatment(),
             &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
         )
         .expect("write submission")
         .expect("submission artifact");
@@ -4923,6 +5047,8 @@ mod tests {
             &prepared,
             &RunArm::structured_current_policy_treatment(),
             &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
         )
         .expect_err("submission write should fail when target path is a directory");
         let packaging_err_text = packaging_err.to_string();

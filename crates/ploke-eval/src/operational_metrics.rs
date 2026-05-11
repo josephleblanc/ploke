@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::record::{
     RunRecord, SubmissionArtifactState, ToolExecutionRecord, ToolResult, TurnOutcome,
 };
+use ploke_records::evaluation::PatchProjectionCheckState;
 use ploke_records::tool_contracts::{PersistedToolCallArguments, ToolCallArguments};
 
 const EDIT_TOOL_NAMES: [&str; 4] = [
@@ -46,6 +47,7 @@ pub struct OperationalRunMetrics {
     /// Keep both: the submission artifact may be absent or empty even when the run looked
     /// operationally coherent, and legacy records may not have packaging persisted at all.
     pub submission_artifact_state: SubmissionArtifactState,
+    pub patch_projection_check_state: PatchProjectionCheckState,
     pub partial_patch_failures: usize,
     pub same_file_patch_retry_count: usize,
     pub same_file_patch_max_streak: usize,
@@ -112,8 +114,10 @@ impl OperationalRunMetrics {
             && same_file_patch_max_streak >= REPAIR_LOOP_STREAK_THRESHOLD
             && !nonempty_valid_patch;
         let convergence = !aborted && nonempty_valid_patch && !aborted_repair_loop;
-        let oracle_eligible =
-            convergence && submission_artifact_state == SubmissionArtifactState::Nonempty;
+        let patch_projection_check_state = derive_patch_projection_check_state(record);
+        let oracle_eligible = convergence
+            && submission_artifact_state == SubmissionArtifactState::Nonempty
+            && patch_projection_check_state == PatchProjectionCheckState::Passed;
 
         Self {
             tool_calls_total,
@@ -121,6 +125,7 @@ impl OperationalRunMetrics {
             patch_attempted,
             patch_apply_state,
             submission_artifact_state,
+            patch_projection_check_state,
             partial_patch_failures,
             same_file_patch_retry_count,
             same_file_patch_max_streak,
@@ -191,6 +196,15 @@ fn derive_submission_artifact_state(record: &RunRecord) -> SubmissionArtifactSta
         .as_ref()
         .map(|phase| phase.submission_artifact_state)
         .unwrap_or(SubmissionArtifactState::NotRecorded)
+}
+
+fn derive_patch_projection_check_state(record: &RunRecord) -> PatchProjectionCheckState {
+    record
+        .phases
+        .packaging
+        .as_ref()
+        .map(|packaging| packaging.patch_projection_check_state)
+        .unwrap_or(PatchProjectionCheckState::NotRecorded)
 }
 
 impl RunRecord {
@@ -322,6 +336,7 @@ mod tests {
 
     use ploke_core::ArcStr;
     use ploke_core::tool_types::ToolName;
+    use ploke_records::evaluation::PatchProjectionCheckState;
     use ploke_tui::tools::ToolUiPayload;
     use uuid::Uuid;
 
@@ -384,6 +399,7 @@ mod tests {
             patch_attempted: true,
             patch_apply_state: PatchApplyState::Applied,
             submission_artifact_state: SubmissionArtifactState::Nonempty,
+            patch_projection_check_state: PatchProjectionCheckState::Passed,
             partial_patch_failures: 2,
             same_file_patch_retry_count: 3,
             same_file_patch_max_streak: 2,
@@ -499,6 +515,8 @@ mod tests {
             ended_at: "2026-04-23T00:00:03Z".to_string(),
             submission_artifact_state: SubmissionArtifactState::Nonempty,
             msb_submission_path: Some(PathBuf::from("/tmp/repo/multi-swe-bench-submission.jsonl")),
+            patch_projection_path: Some(PathBuf::from("/tmp/repo/benchmark-patch-projection.json")),
+            patch_projection_check_state: PatchProjectionCheckState::Passed,
         });
         record.phases.agent_turns.push(turn_record(
             TurnOutcome::ToolCalls { count: 1 },
@@ -529,6 +547,48 @@ mod tests {
         assert!(metrics.nonempty_valid_patch);
         assert!(metrics.convergence);
         assert!(metrics.oracle_eligible);
+    }
+
+    #[test]
+    fn nonempty_submission_without_passed_projection_is_not_oracle_eligible() {
+        let mut record = base_record();
+        record.phases.packaging = Some(PackagingPhase {
+            started_at: "2026-04-23T00:00:02Z".to_string(),
+            ended_at: "2026-04-23T00:00:03Z".to_string(),
+            submission_artifact_state: SubmissionArtifactState::Nonempty,
+            msb_submission_path: Some(PathBuf::from("/tmp/repo/multi-swe-bench-submission.jsonl")),
+            patch_projection_path: Some(PathBuf::from("/tmp/repo/benchmark-patch-projection.json")),
+            patch_projection_check_state: PatchProjectionCheckState::Failed,
+        });
+        record.phases.agent_turns.push(turn_record(
+            TurnOutcome::ToolCalls { count: 1 },
+            vec![completed_edit_call(
+                ToolName::ApplyCodeEdit,
+                serde_json::json!({
+                    "edits": [{
+                        "file": "src/lib.rs",
+                        "canon": "crate::lib::helper",
+                        "node_type": "function",
+                        "code": "pub fn helper() {}"
+                    }]
+                }),
+                1,
+                false,
+            )],
+        ));
+
+        let metrics = OperationalRunMetrics::from_record(&record);
+
+        assert!(metrics.convergence);
+        assert_eq!(
+            metrics.submission_artifact_state,
+            SubmissionArtifactState::Nonempty
+        );
+        assert_eq!(
+            metrics.patch_projection_check_state,
+            PatchProjectionCheckState::Failed
+        );
+        assert!(!metrics.oracle_eligible);
     }
 
     #[test]
@@ -610,6 +670,8 @@ mod tests {
             ended_at: "2026-04-23T00:00:03Z".to_string(),
             submission_artifact_state: SubmissionArtifactState::Empty,
             msb_submission_path: Some(PathBuf::from("/tmp/repo/multi-swe-bench-submission.jsonl")),
+            patch_projection_path: Some(PathBuf::from("/tmp/repo/benchmark-patch-projection.json")),
+            patch_projection_check_state: PatchProjectionCheckState::Passed,
         });
         record.phases.agent_turns.push(turn_record(
             TurnOutcome::ToolCalls { count: 1 },
