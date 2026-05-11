@@ -13,13 +13,16 @@
 ## Context Budget / Large File Guardrails
 
 - Context explosion counter:
-  - Total incidents: 1
-  - Last context explosion: 2026-05-09
+  - Total incidents: 2
+  - Last context explosion: 2026-05-11
   - Days since last context explosion: 0
 
 - Requirement: do not read large logs, journals, generated artifacts, or long documents directly. Before opening any unknown-size file, use metadata guardrails such as `wc -l` and `ls -lh` to estimate both line count and byte size.
 - Requirement: for JSONL, journals, traces, or other record-oriented files, a small line count is not enough. Lines may be huge, so content reads must cap both record count and record width, for example `rg -n '<pattern>' <file> | head -n 5 | cut -c 1-400`, `sed -n 'start,endp' <file> | cut -c 1-400`, or `tail -n 3 <file> | cut -c 1-400`.
 - Requirement: do not read `transition-journal.jsonl` or similar run/history journals wholesale. Query them only with narrow `rg` patterns, bounded line ranges, or very small tails, always with a width cap such as `cut -c 1-400`, unless the user explicitly asks for a full read.
+- Requirement added 2026-05-11: repeated health checks for Prototype 1 campaigns must be metadata-first. Use admitted node counts/statuses, file mtimes, byte sizes, line counts, transition-file mtimes, and disk usage as the default signal. Do not read JSONL content during routine health checks.
+- Requirement added 2026-05-11: JSONL content reads during Prototype 1 health checks are anomaly diagnostics only. If an anomaly requires content inspection, read at most one explicitly named file, at most three records, and at most 400 characters per record, for example `tail -n 3 <file> | cut -c 1-400`. Do not run broad `rg` over multiple observation streams or journal files for routine health.
+- Requirement added 2026-05-11: if the user asks for repeated loop health checks, preserve context by reporting compact deltas from the last check: node count, generation range, status counts, newest mtime, and disk free. Do not restate or dump raw trace records unless the user explicitly asks for raw evidence.
 - Requirement: docs are not exempt from context discipline. When consulting a doc, first identify the needed section with `rg` or inspect a bounded range; avoid dumping whole planning documents into context.
 - If a bounded read is insufficient, state what extra range or pattern is needed before expanding it, and keep the expansion targeted.
 

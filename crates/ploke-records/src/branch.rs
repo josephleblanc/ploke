@@ -12,6 +12,9 @@ use crate::ids::{ArtifactId, Coordinate, OperationTarget, PatchId};
 /// Durable schema version used by current Prototype 1 branch registries.
 pub const PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION: &str = "prototype1-branch-registry.v1";
 
+/// Durable schema version used by append-only Prototype 1 branch logs.
+pub const PROTOTYPE1_BRANCH_LOG_SCHEMA_VERSION: &str = "prototype1-branch-record.v1";
+
 /// Branch-level disposition assigned by passive evaluation records.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +24,7 @@ pub enum Disposition {
 }
 
 /// Lifecycle label for one treatment branch node in the registry.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum TreatmentBranchStatus {
     Synthesized,
@@ -40,6 +43,36 @@ pub struct TreatmentBranchEvaluationSummary {
     pub rejected_instances: usize,
     pub overall_disposition: Disposition,
     pub evaluated_at: String,
+}
+
+/// One append-only branch log record persisted in `prototype1/branches.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchLogRecord {
+    pub schema_version: String,
+    pub recorded_at: String,
+    pub body: BranchLogBody,
+}
+
+/// Body of one append-only branch log record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BranchLogBody {
+    RegistrySnapshot(Prototype1BranchRegistry),
+    ParentComparison(BranchParentComparisonRecord),
+}
+
+/// Passive record of a parent comparison written after evaluating one branch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchParentComparisonRecord {
+    pub campaign_id: String,
+    pub instance_id: String,
+    pub source_state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_branch_id: Option<String>,
+    pub target_relpath: PathBuf,
+    pub branch_id: String,
+    pub candidate_id: String,
+    pub summary: TreatmentBranchEvaluationSummary,
 }
 
 /// One candidate branch under an intervention source node.
@@ -224,6 +257,35 @@ mod tests {
         let record: Prototype1BranchRegistry = serde_json::from_value(json).unwrap();
         assert!(record.source_nodes.is_empty());
         assert!(record.active_targets.is_empty());
+    }
+
+    #[test]
+    fn branch_log_parent_comparison_roundtrips() {
+        let json = serde_json::json!({
+            "schema_version": PROTOTYPE1_BRANCH_LOG_SCHEMA_VERSION,
+            "recorded_at": "2026-05-11T10:34:56Z",
+            "body": {
+                "kind": "parent_comparison",
+                "campaign_id": "campaign-1",
+                "instance_id": "instance-1",
+                "source_state_id": "source-1",
+                "parent_branch_id": "branch-parent",
+                "target_relpath": "crates/ploke-llm/src/lib.rs",
+                "branch_id": "branch-1",
+                "candidate_id": "candidate-1",
+                "summary": {
+                    "baseline_campaign_id": "campaign-1",
+                    "treatment_campaign_id": "campaign-1-treatment-branch-1",
+                    "compared_instances": 1,
+                    "rejected_instances": 0,
+                    "overall_disposition": "keep",
+                    "evaluated_at": "2026-05-11T10:34:55Z"
+                }
+            }
+        });
+
+        let record: BranchLogRecord = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(record).unwrap(), json);
     }
 
     #[test]

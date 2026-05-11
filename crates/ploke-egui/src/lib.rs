@@ -15,4 +15,13 @@
 //! needed by that surface. Runtime authority and active loop behavior stay out
 //! of this crate.
 
+pub mod demo;
 pub mod graph;
+pub mod import;
+pub mod ui;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
+
+#[cfg(target_arch = "wasm32")]
+pub mod web;
