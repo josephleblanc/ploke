@@ -6659,6 +6659,7 @@ fn live_successor_continuation_decision(
     selected_node: &Prototype1NodeRecord,
 ) -> Result<Prototype1ContinuationDecision, PrepareError> {
     let total_nodes_after_continue = persisted_prototype1_node_count(campaign_manifest_path)?;
+    let traversal = historical_traversal_guard(campaign_manifest_path, parent_identity)?;
     let selected_rejected = decision
         .selected_branch_disposition()
         .is_some_and(|value| value != "keep");
@@ -6671,7 +6672,33 @@ fn live_successor_continuation_decision(
     let disposition = if decision.selected_branch_id.is_none() {
         Prototype1ContinuationDisposition::StopNoSelectedBranch
     } else if !material.selected_from_generation_outcomes {
-        Prototype1ContinuationDisposition::StopHistoricalSelection
+        if traversal
+            .spent_or_started_node_ids
+            .contains(&selected_node.node_id)
+        {
+            Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
+        } else if traversal.parent_turns_started >= policy.max_generations.saturating_add(1) {
+            Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
+        } else if policy.require_keep_for_continuation
+            && selected_rejected
+            && !explore_from_rejected
+        {
+            Prototype1ContinuationDisposition::StopSelectedBranchRejected
+        } else if policy.stop_on_first_keep
+            && decision
+                .selected_branch_disposition()
+                .is_some_and(|value| value == "keep")
+        {
+            Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
+        } else if selected_node.generation > policy.max_generations {
+            Prototype1ContinuationDisposition::StopMaxGenerations
+        } else if total_nodes_after_continue >= policy.max_total_nodes {
+            Prototype1ContinuationDisposition::StopMaxTotalNodes
+        } else if explore_from_rejected {
+            Prototype1ContinuationDisposition::ContinueExploreFromRejected
+        } else {
+            Prototype1ContinuationDisposition::ContinueHistoricalTraversal
+        }
     } else if !direct_child {
         Prototype1ContinuationDisposition::StopNonDirectChildSelection
     } else if policy.require_keep_for_continuation && selected_rejected && !explore_from_rejected {
@@ -6700,6 +6727,46 @@ fn live_successor_continuation_decision(
             .map(ToOwned::to_owned),
         next_generation: selected_node.generation,
         total_nodes_after_continue,
+    })
+}
+
+struct HistoricalTraversalGuard {
+    spent_or_started_node_ids: BTreeSet<String>,
+    parent_turns_started: u32,
+}
+
+fn historical_traversal_guard(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+) -> Result<HistoricalTraversalGuard, PrepareError> {
+    let journal = PrototypeJournal::new(prototype1_transition_journal_path(campaign_manifest_path));
+    let entries = journal.load_entries().map_err(|err| {
+        prototype1_state_transition_error("prototype1_history_traversal_guard", err.to_string())
+    })?;
+    let mut spent_or_started_node_ids = BTreeSet::new();
+    let mut parent_turns_started = 0u32;
+    for entry in entries {
+        match entry {
+            JournalEntry::ParentStarted(entry) => {
+                parent_turns_started = parent_turns_started.saturating_add(1);
+                spent_or_started_node_ids.insert(entry.parent_identity.node_id().to_string());
+            }
+            JournalEntry::SuccessorHandoff(entry) => {
+                spent_or_started_node_ids.insert(entry.node_id);
+            }
+            JournalEntry::Successor(record) if record.state.allows_successor_handoff() => {
+                spent_or_started_node_ids.insert(record.node_id);
+            }
+            _ => {}
+        }
+    }
+    if parent_turns_started == 0 {
+        parent_turns_started = 1;
+    }
+    spent_or_started_node_ids.insert(parent_identity.node_id().to_string());
+    Ok(HistoricalTraversalGuard {
+        spent_or_started_node_ids,
+        parent_turns_started,
     })
 }
 
@@ -9551,6 +9618,182 @@ mod tests {
                 .contains("persisted node count 20 has reached max_total_nodes 20"),
             "{error}"
         );
+    }
+
+    fn test_manifest_path(root: &Path) -> PathBuf {
+        root.join("campaign.toml")
+    }
+
+    fn write_test_node(manifest_path: &Path, node: &Prototype1NodeRecord) {
+        let node_dir = prototype1_nodes_dir(manifest_path).join(&node.node_id);
+        fs::create_dir_all(&node_dir).expect("node dir");
+        fs::write(
+            node_dir.join("node.json"),
+            serde_json::to_vec_pretty(node).expect("node json"),
+        )
+        .expect("write node");
+    }
+
+    fn parent_identity_for(node_id: &str, generation: u32) -> ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
+                .to_string(),
+            campaign_id: "campaign".to_string(),
+            parent_id: node_id.to_string(),
+            node_id: node_id.to_string(),
+            generation,
+            instance_id: Some("clap-rs__clap-3670".to_string()),
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: format!("branch-{node_id}"),
+            artifact_branch: Some(format!("prototype1-{node_id}")),
+            created_at: "2026-05-06T00:00:00Z".to_string(),
+        })
+    }
+
+    fn append_parent_started(manifest_path: &Path, identity: ParentIdentity) {
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
+        journal
+            .append(JournalEntry::ParentStarted(ParentStartedEntry {
+                recorded_at: RecordedAt::now(),
+                campaign_id: identity.campaign_id().to_string(),
+                parent_identity: identity,
+                repo_root: manifest_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf(),
+                handoff_runtime_id: None,
+                pid: 1,
+            }))
+            .expect("append parent started");
+    }
+
+    fn selection_material_from_history() -> SelectionSealMaterial {
+        SelectionSealMaterial {
+            procedure: ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            scope: SelectionScope::all_admitted_candidates(),
+            selected_candidate: SubjectRef::new("candidate:node-history:plan_index=0"),
+            selected_occurrence_id: None,
+            selected_membership_id: None,
+            considered: Vec::new(),
+            considered_sources: Vec::new(),
+            projection_failures: Vec::new(),
+            traversal: Some(TraversalEvidence {
+                seed: 0,
+                strategy: StrategyKind::default(),
+                selected_source: Some(TraversalCandidateSource::History),
+            }),
+            selected_from_generation_outcomes: false,
+        }
+    }
+
+    fn successor_decision_for(node: &Prototype1NodeRecord) -> SuccessorDecision {
+        SuccessorDecision {
+            procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+            candidate_node_id: node.node_id.clone(),
+            selected_branch_id: Some(node.branch_id.clone()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn historical_selection_can_continue_when_unspent_and_bounded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = test_manifest_path(tmp.path());
+        let parent = parent_identity_for("node-current", 1);
+        append_parent_started(&manifest_path, parent.clone());
+        let mut node = test_node(tmp.path(), "node-history", "branch-history", "candidate-1");
+        node.generation = 1;
+        node.parent_node_id = Some("node-root".to_string());
+        write_test_node(&manifest_path, &node);
+
+        let policy = Prototype1SearchPolicy {
+            max_generations: 15,
+            max_total_nodes: 96,
+            ..Prototype1SearchPolicy::default()
+        };
+        let decision = live_successor_continuation_decision(
+            &manifest_path,
+            &parent,
+            &policy,
+            &successor_decision_for(&node),
+            &selection_material_from_history(),
+            &node,
+        )
+        .expect("continuation decision");
+
+        assert_eq!(
+            decision.disposition,
+            Prototype1ContinuationDisposition::ContinueHistoricalTraversal
+        );
+        assert!(decision.disposition.allows_successor());
+    }
+
+    #[test]
+    fn historical_selection_rejects_already_started_parent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = test_manifest_path(tmp.path());
+        let parent = parent_identity_for("node-current", 1);
+        append_parent_started(&manifest_path, parent.clone());
+        append_parent_started(&manifest_path, parent_identity_for("node-history", 1));
+        let mut node = test_node(tmp.path(), "node-history", "branch-history", "candidate-1");
+        node.generation = 1;
+        node.parent_node_id = Some("node-root".to_string());
+        write_test_node(&manifest_path, &node);
+
+        let decision = live_successor_continuation_decision(
+            &manifest_path,
+            &parent,
+            &Prototype1SearchPolicy::default(),
+            &successor_decision_for(&node),
+            &selection_material_from_history(),
+            &node,
+        )
+        .expect("continuation decision");
+
+        assert_eq!(
+            decision.disposition,
+            Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
+        );
+        assert!(!decision.disposition.allows_successor());
+    }
+
+    #[test]
+    fn historical_selection_rejects_exhausted_parent_turn_budget() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = test_manifest_path(tmp.path());
+        let parent = parent_identity_for("node-current", 1);
+        append_parent_started(&manifest_path, parent_identity_for("node-root", 0));
+        append_parent_started(&manifest_path, parent.clone());
+        let mut node = test_node(tmp.path(), "node-history", "branch-history", "candidate-1");
+        node.generation = 1;
+        node.parent_node_id = Some("node-root".to_string());
+        write_test_node(&manifest_path, &node);
+        let policy = Prototype1SearchPolicy {
+            max_generations: 1,
+            ..Prototype1SearchPolicy::default()
+        };
+
+        let decision = live_successor_continuation_decision(
+            &manifest_path,
+            &parent,
+            &policy,
+            &successor_decision_for(&node),
+            &selection_material_from_history(),
+            &node,
+        )
+        .expect("continuation decision");
+
+        assert_eq!(
+            decision.disposition,
+            Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
+        );
+        assert!(!decision.disposition.allows_successor());
     }
 
     #[test]

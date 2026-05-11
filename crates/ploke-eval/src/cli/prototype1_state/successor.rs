@@ -58,6 +58,15 @@ pub(crate) enum State {
     },
 }
 
+impl State {
+    pub(crate) fn allows_successor_handoff(&self) -> bool {
+        matches!(
+            self,
+            Self::Selected { decision, .. } if decision.disposition.allows_successor()
+        )
+    }
+}
+
 /// Durable record written by a typed successor transition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Record {

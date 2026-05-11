@@ -194,6 +194,7 @@ impl Prototype1ChildScheduleMode {
 pub enum Prototype1ContinuationDisposition {
     ContinueReady,
     ContinueExploreFromRejected,
+    ContinueHistoricalTraversal,
     StopMaxGenerations,
     StopMaxTotalNodes,
     StopNoSelectedBranch,
@@ -201,13 +202,17 @@ pub enum Prototype1ContinuationDisposition {
     StopSelectedBranchRejected,
     StopHistoricalSelection,
     StopNonDirectChildSelection,
+    StopHistoricalTraversalCycle,
+    StopHistoricalTraversalBudget,
 }
 
 impl Prototype1ContinuationDisposition {
     pub fn allows_successor(self) -> bool {
         matches!(
             self,
-            Self::ContinueReady | Self::ContinueExploreFromRejected
+            Self::ContinueReady
+                | Self::ContinueExploreFromRejected
+                | Self::ContinueHistoricalTraversal
         )
     }
 }
