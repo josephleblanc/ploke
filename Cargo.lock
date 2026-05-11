@@ -6429,6 +6429,7 @@ dependencies = [
 name = "ploke-egui"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "eframe 0.34.2",
  "egui 0.34.2",
  "egui_graphs",

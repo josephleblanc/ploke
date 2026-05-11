@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use crate::graph::Graph;
-use crate::ui::view::GraphView;
+use crate::ui::view::{GraphView, GraphViewDiagnostics};
 
 #[derive(Debug, Default)]
 pub struct OperatorApp {
@@ -29,6 +29,7 @@ impl OperatorApp {
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.summary.refresh(&self.graph);
+        self.summary.refresh_diagnostics(self.view.diagnostics());
 
         egui::Panel::left("run_navigation").show_inside(ui, |ui| {
             ui.heading("Run");
@@ -38,6 +39,13 @@ impl eframe::App for OperatorApp {
             ui.label(self.summary.artifact_edges.as_str());
             ui.label(self.summary.runtimes.as_str());
             ui.label(self.summary.operations.as_str());
+            if self.summary.diagnostics.is_some() {
+                ui.separator();
+                ui.label(self.summary.view_nodes.as_str());
+                ui.label(self.summary.graph_size.as_str());
+                ui.label(self.summary.aspect.as_str());
+                ui.label(self.summary.fit_fill.as_str());
+            }
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -55,6 +63,11 @@ struct GraphSummary {
     artifact_edges: String,
     runtimes: String,
     operations: String,
+    diagnostics: Option<GraphViewDiagnostics>,
+    view_nodes: String,
+    graph_size: String,
+    aspect: String,
+    fit_fill: String,
 }
 
 impl GraphSummary {
@@ -71,6 +84,33 @@ impl GraphSummary {
         self.artifact_edges = format!("Artifact edges: {}", counts.artifact_edges);
         self.runtimes = format!("Runtimes: {}", counts.runtimes);
         self.operations = format!("Operations: {}", counts.operations);
+    }
+
+    fn refresh_diagnostics(&mut self, diagnostics: Option<GraphViewDiagnostics>) {
+        if self.diagnostics == diagnostics {
+            return;
+        }
+
+        self.diagnostics = diagnostics;
+        let Some(diagnostics) = diagnostics else {
+            self.view_nodes.clear();
+            self.graph_size.clear();
+            self.aspect.clear();
+            self.fit_fill.clear();
+            return;
+        };
+
+        self.view_nodes = format!("View nodes: {}", diagnostics.node_count);
+        self.graph_size = format!(
+            "Graph: {:.0} x {:.0}",
+            diagnostics.graph_size.x, diagnostics.graph_size.y
+        );
+        self.aspect = format!("Aspect: {:.2}", diagnostics.aspect_ratio);
+        self.fit_fill = format!(
+            "Fit fill: {:.0}% x {:.0}%",
+            diagnostics.fitted_fill.x * 100.0,
+            diagnostics.fitted_fill.y * 100.0
+        );
     }
 }
 

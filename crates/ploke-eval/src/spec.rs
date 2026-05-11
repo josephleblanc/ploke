@@ -350,6 +350,10 @@ pub enum PrepareError {
     MissingDatasetInstance { path: PathBuf, instance_id: String },
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
+    #[error("MBE submission artifact '{0}' does not exist")]
+    MissingMbeSubmission(PathBuf),
+    #[error("MBE request is invalid: {detail}")]
+    InvalidMbeRequest { detail: String },
     #[error("prototype1 parent check failed: {0}")]
     Prototype1Parent(Box<Prototype1ParentError>),
     #[error("issue input must include at least a title or a body")]

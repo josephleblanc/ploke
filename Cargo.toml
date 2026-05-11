@@ -103,6 +103,7 @@ serde_json = "1"
 ron = "0.11"
 toml = "0.9"
 cargo_toml = "0.22"
+clap = { version = "4.5", features = ["derive"] }
 
 # Concurrency and parallelism
 rayon = "1.10.0"

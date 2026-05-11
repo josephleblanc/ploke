@@ -23,6 +23,7 @@ pub struct LayoutStyle {
     pub row_distance: f32,
     pub column_distance: f32,
     pub fit_padding: f32,
+    pub node_radius: f32,
 }
 
 impl Default for LayoutStyle {
@@ -31,6 +32,7 @@ impl Default for LayoutStyle {
             row_distance: 140.0,
             column_distance: 170.0,
             fit_padding: 0.18,
+            node_radius: 11.0,
         }
     }
 }
@@ -77,7 +79,7 @@ impl Default for EdgeStyle {
             label: EdgeLabelStyle::default(),
             colors: StatusColors::default(),
             normal_width: 2.0,
-            selected_width: 3.0,
+            selected_width: 4.0,
             hit_tolerance: 8.0,
         }
     }

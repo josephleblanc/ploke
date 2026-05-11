@@ -9,6 +9,7 @@ pub mod intervention;
 pub mod intervention_issue_aggregate;
 pub mod layout;
 pub(crate) mod loop_graph;
+pub mod mbe;
 pub(crate) mod metric;
 pub mod model_registry;
 pub mod msb;
@@ -59,6 +60,10 @@ pub use closure::{
 pub use layout::{
     batches_dir, campaigns_dir, datasets_dir, instances_dir, ploke_eval_home,
     protocol_artifacts_dir_for_run, registries_dir, repos_dir, workspace_root_for_key,
+};
+pub use mbe::{
+    HarnessConfig as MbeHarnessConfig, Layout as MbeLayout, Mode as MbeMode, Options as MbeOptions,
+    Request as MbeRequest, Workers as MbeWorkers, WrittenConfig as WrittenMbeConfig,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use operational_metrics::{OperationalRunMetrics, PatchApplyState};

@@ -1,16 +1,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use eframe::egui::Vec2;
 use petgraph::{Directed, stable_graph::StableGraph};
 use ploke_records::branch::TreatmentBranchStatus;
 use ploke_records::ids::{ArtifactId, SchedulerNodeId};
 
 use crate::graph::{Candidate, Edge, EdgeEndpoint, EdgeKind, Graph as DomainGraph};
 
+use super::GraphViewDiagnostics;
+use super::diagnostics::graph_diagnostics;
 use super::edge::GraphEdgeShape;
-use super::style::{EdgeStyle, LabelStyle, ViewStyle};
+use super::order::visual_candidate_order;
+use super::style::{EdgeStyle, ViewStyle};
 
-type WidgetGraph = egui_graphs::Graph<
+pub(super) type WidgetGraph = egui_graphs::Graph<
     GraphNode,
     GraphEdgePayload,
     Directed,
@@ -19,25 +23,32 @@ type WidgetGraph = egui_graphs::Graph<
     GraphEdgeShape,
 >;
 type RawGraph = StableGraph<GraphNode, GraphEdgePayload, Directed>;
+type WidgetNode = egui_graphs::Node<
+    GraphNode,
+    GraphEdgePayload,
+    Directed,
+    petgraph::stable_graph::DefaultIx,
+    egui_graphs::DefaultNodeShape,
+>;
 
 #[derive(Debug)]
-pub(super) struct ArtifactViewCache {
+pub(super) struct GraphViewCache {
     revision: Option<u64>,
     style: ViewStyle,
     graph: WidgetGraph,
 }
 
-impl Default for ArtifactViewCache {
+impl Default for GraphViewCache {
     fn default() -> Self {
         Self {
             revision: None,
             style: ViewStyle::default(),
-            graph: to_widget_graph(&RawGraph::default(), LabelStyle::default()),
+            graph: to_widget_graph(&RawGraph::default(), ViewStyle::default()),
         }
     }
 }
 
-impl ArtifactViewCache {
+impl GraphViewCache {
     pub(super) fn refresh(&mut self, graph: &DomainGraph, style: ViewStyle) -> bool {
         if self.revision == Some(graph.revision()) && self.style == style {
             return false;
@@ -52,12 +63,25 @@ impl ArtifactViewCache {
     pub(super) fn graph_mut(&mut self) -> &mut WidgetGraph {
         &mut self.graph
     }
+
+    pub(super) fn diagnostics(
+        &self,
+        viewport_size: Vec2,
+        style: ViewStyle,
+    ) -> Option<GraphViewDiagnostics> {
+        graph_diagnostics(&self.graph, viewport_size, style)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum GraphNode {
-    Candidate { label: Arc<str> },
-    Artifact { id: ArtifactId },
+    Candidate {
+        label: Arc<str>,
+        status: TreatmentBranchStatus,
+    },
+    Artifact {
+        id: ArtifactId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -78,17 +102,13 @@ fn build_widget_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
 fn build_candidate_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
     let mut raw = RawGraph::default();
 
-    let mut candidates: Vec<_> = graph.candidates().collect();
-    candidates.sort_by(|left, right| {
-        left.generation()
-            .cmp(&right.generation())
-            .then_with(|| left.id().as_str().cmp(right.id().as_str()))
-    });
+    let candidates = visual_candidate_order(graph.candidates().collect());
 
     let mut index_by_candidate = HashMap::<SchedulerNodeId, _>::new();
     for (index, candidate) in candidates.into_iter().enumerate() {
         let raw_index = raw.add_node(GraphNode::Candidate {
             label: Arc::from(candidate_label(candidate, index)),
+            status: candidate.status(),
         });
         index_by_candidate.insert(candidate.id().clone(), raw_index);
     }
@@ -125,7 +145,7 @@ fn build_candidate_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
         );
     }
 
-    to_widget_graph(&raw, style.labels)
+    to_widget_graph(&raw, style)
 }
 
 fn build_artifact_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
@@ -174,18 +194,42 @@ fn build_artifact_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
         );
     }
 
-    to_widget_graph(&raw, style.labels)
+    to_widget_graph(&raw, style)
 }
 
-fn to_widget_graph(raw: &RawGraph, labels: LabelStyle) -> WidgetGraph {
+fn to_widget_graph(raw: &RawGraph, style: ViewStyle) -> WidgetGraph {
     egui_graphs::to_graph_custom(
         raw,
-        |node| match node.payload() {
-            GraphNode::Candidate { label, .. } => node.set_label(label.to_string()),
-            GraphNode::Artifact { id } => node.set_label(labels.artifact(id.0.as_str())),
+        |node: &mut WidgetNode| {
+            let visual = NodeVisual::from_node(node.payload(), style);
+            node.set_label(visual.label);
+            if let Some(color) = visual.color {
+                node.set_color(color);
+            }
+            node.display_mut().radius = style.layout.node_radius;
         },
         |_edge| {},
     )
+}
+
+struct NodeVisual {
+    label: String,
+    color: Option<eframe::egui::Color32>,
+}
+
+impl NodeVisual {
+    fn from_node(node: &GraphNode, style: ViewStyle) -> Self {
+        match node {
+            GraphNode::Candidate { label, status } => Self {
+                label: label.to_string(),
+                color: Some(style.edge.colors.color(*status)),
+            },
+            GraphNode::Artifact { id } => Self {
+                label: style.labels.artifact(id.0.as_str()),
+                color: None,
+            },
+        }
+    }
 }
 
 fn candidate_label(candidate: &Candidate, index: usize) -> String {
@@ -198,7 +242,7 @@ fn candidate_label(candidate: &Candidate, index: usize) -> String {
 
 fn candidate_edge_label(edge: &Edge, index: usize) -> Arc<str> {
     if edge.status() == TreatmentBranchStatus::Selected {
-        Arc::from("selected")
+        Arc::from("S")
     } else {
         Arc::from(format!("C{}", index + 1))
     }
