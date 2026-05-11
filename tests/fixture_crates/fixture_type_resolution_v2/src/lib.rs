@@ -21,3 +21,28 @@ pub struct UsesTrait;
 impl LocalTrait for UsesTrait {}
 
 pub trait ChildTrait: LocalTrait {}
+
+pub struct Const<const N: usize>;
+
+pub trait IntoArrayLength {
+    type ArrayLength;
+}
+
+pub type ProjectedArrayLength<const N: usize> = <Const<N> as IntoArrayLength>::ArrayLength;
+
+pub trait LocalAssocBound {
+    type Output: LocalTrait;
+}
+
+pub struct WhereLocal<T>(T)
+where
+    T: LocalTrait;
+
+pub struct WhereComposite<T>(T)
+where
+    Vec<T>: LocalTrait;
+
+pub type WhereProjection<T>
+where
+    <T as LocalAssocBound>::Output: LocalTrait,
+ = T;

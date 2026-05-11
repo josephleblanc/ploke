@@ -7,7 +7,9 @@ use crate::parser::nodes::{
 }; // Import AnyNodeIdConversionError, GenericParamNodeId
 use crate::parser::nodes::{AssociatedItemNodeId, PrimaryNodeId};
 use crate::parser::type_slots::TraitTypeUseId;
-use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use crate::parser::types::{
+    GenericParamKind, GenericParamNode, TypeWherePredicate, VisibilityKind,
+};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
 use log::error;
 use ploke_core::ItemKind;
@@ -307,6 +309,40 @@ impl VisitorState {
         }
 
         params
+    }
+
+    pub(crate) fn process_where_predicates(
+        &mut self,
+        generics: &Generics,
+    ) -> Vec<TypeWherePredicate> {
+        let Some(where_clause) = &generics.where_clause else {
+            return Vec::new();
+        };
+
+        where_clause
+            .predicates
+            .iter()
+            .filter_map(|predicate| match predicate {
+                syn::WherePredicate::Type(predicate) => {
+                    let bounds: Vec<TraitTypeUseId> = predicate
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| self.process_type_bound(bound))
+                        .collect();
+                    if bounds.is_empty() {
+                        return None;
+                    }
+                    Some(TypeWherePredicate {
+                        subject: get_or_create_type(self, &predicate.bounded_ty),
+                        bounds,
+                    })
+                }
+                // Lifetime predicates do not currently participate in typed
+                // type graph traversal.
+                syn::WherePredicate::Lifetime(_) => None,
+                _ => None,
+            })
+            .collect()
     }
 
     /// Process type bounds for generics

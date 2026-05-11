@@ -1,7 +1,12 @@
 use cozo::{DataValue, Db, MemStorage};
-use ploke_db::{Database, DbError, TypeRelationKind, to_uuid};
+use ploke_db::{Database, DbError, TypeRelationKind, TypeUseRole, to_uuid};
 use ploke_transform::{schema::create_schema_all, transform::transform_parsed_graph};
 use uuid::Uuid;
+
+pub(super) enum TypePathDepth {
+    Exact(u32),
+    Min(u32),
+}
 
 pub(super) fn setup_typed_fixture_db(fixture: &'static str) -> Result<Database, DbError> {
     setup_typed_db_from_parser_output(
@@ -480,6 +485,47 @@ pub(super) fn assert_owner_reaches_target(
         }),
         "{message}; owner_id: {owner_id}; target_id: {target_id}; reachable: {reachable:#?}"
     );
+    Ok(())
+}
+
+pub(super) fn assert_type_use_reaches_target(
+    db: &Database,
+    owner_id: Uuid,
+    role: TypeUseRole,
+    slot_index: Option<u32>,
+    target_id: Uuid,
+    relation_kind: TypeRelationKind,
+    depth: TypePathDepth,
+    message: &str,
+) -> Result<(), DbError> {
+    let roots = db.type_uses_for_owner(owner_id)?;
+    let matching_roots = roots
+        .iter()
+        .filter(|root| root.role == role && root.slot_index == slot_index)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_roots.len(),
+        1,
+        "{message}; expected exactly one root for owner {owner_id}, role {role:?}, slot {slot_index:?}; roots: {roots:#?}",
+    );
+
+    let root = matching_roots[0];
+    let reachable = db.type_targets_reachable_from_owner(owner_id)?;
+    assert!(
+        reachable.iter().any(|path| {
+            path.owner_id == owner_id
+                && path.root_type_id == root.root_type_id
+                && path.target_id == target_id
+                && path.relation_kind == relation_kind
+                && match depth {
+                    TypePathDepth::Exact(expected) => path.depth == expected,
+                    TypePathDepth::Min(minimum) => path.depth >= minimum,
+                }
+        }),
+        "{message}; owner_id: {owner_id}; root: {root:#?}; target_id: {target_id}; reachable: {reachable:#?}"
+    );
+
     Ok(())
 }
 

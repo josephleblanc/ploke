@@ -66,7 +66,9 @@ impl TypeNode {
 
     pub fn child_type_ids(&self) -> ChildTypeIds<'_> {
         match self {
-            Self::Named(node) => ChildTypeIds::ordinary_slice(&node.arguments),
+            Self::Named(node) => {
+                ChildTypeIds::named(node.qualified_self, node.qualified_trait, &node.arguments)
+            }
             Self::Reference(node) => ChildTypeIds::single_ordinary(node.referenced),
             Self::Slice(node) => ChildTypeIds::single_ordinary(node.element),
             Self::Array(node) => ChildTypeIds::single_ordinary(node.element),
@@ -92,6 +94,12 @@ impl TypeNode {
 pub enum ChildTypeIds<'a> {
     Empty,
     SingleOrdinary(Option<OrdinaryTypeUseId>),
+    Named {
+        qualified_self: Option<OrdinaryTypeUseId>,
+        qualified_trait: Option<TraitTypeUseId>,
+        arguments: &'a [OrdinaryTypeUseId],
+        index: usize,
+    },
     OrdinarySlice {
         ids: &'a [OrdinaryTypeUseId],
         index: usize,
@@ -116,6 +124,20 @@ impl<'a> ChildTypeIds<'a> {
     #[inline]
     fn single_ordinary(id: OrdinaryTypeUseId) -> Self {
         Self::SingleOrdinary(Some(id))
+    }
+
+    #[inline]
+    fn named(
+        qualified_self: Option<OrdinaryTypeUseId>,
+        qualified_trait: Option<TraitTypeUseId>,
+        arguments: &'a [OrdinaryTypeUseId],
+    ) -> Self {
+        Self::Named {
+            qualified_self,
+            qualified_trait,
+            arguments,
+            index: 0,
+        }
     }
 
     #[inline]
@@ -148,6 +170,22 @@ impl Iterator for ChildTypeIds<'_> {
         match self {
             Self::Empty => None,
             Self::SingleOrdinary(id) => id.take().map(AnyTypeId::from),
+            Self::Named {
+                qualified_self,
+                qualified_trait,
+                arguments,
+                index,
+            } => {
+                if let Some(id) = qualified_self.take() {
+                    return Some(id.into());
+                }
+                if let Some(id) = qualified_trait.take() {
+                    return Some(id.into());
+                }
+                let id = arguments.get(*index).copied()?;
+                *index += 1;
+                Some(id.into())
+            }
             Self::OrdinarySlice { ids, index } => {
                 let id = ids.get(*index).copied()?;
                 *index += 1;
@@ -191,6 +229,8 @@ pub struct NamedTypeNode {
     pub id: NamedTypeId,
     pub path: Vec<String>,
     pub is_fully_qualified: bool,
+    pub qualified_self: Option<OrdinaryTypeUseId>,
+    pub qualified_trait: Option<TraitTypeUseId>,
     pub arguments: Vec<OrdinaryTypeUseId>,
 }
 
@@ -356,6 +396,8 @@ mod tests {
             id,
             path: vec!["Example".into()],
             is_fully_qualified: false,
+            qualified_self: None,
+            qualified_trait: None,
             arguments: Vec::new(),
         });
 

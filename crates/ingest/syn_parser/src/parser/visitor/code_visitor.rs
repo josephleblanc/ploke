@@ -699,6 +699,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Process generic parameters
             let generic_params = self.state.process_generics(&func.sig.generics);
+            let where_predicates = self.state.process_where_predicates(&func.sig.generics);
 
             // Pop the function's ID from the scope stack AFTER processing types/generics
             // Use helper function for logging
@@ -720,6 +721,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 parameters,
                 return_type,
                 generic_params,
+                where_predicates,
                 attributes,
                 docstring,
                 body,
@@ -832,6 +834,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters (still within struct's scope)
         let generic_params = self.state.process_generics(&item_struct.generics);
+        let where_predicates = self.state.process_where_predicates(&item_struct.generics);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
@@ -846,6 +849,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_struct.vis),
             fields,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -979,6 +983,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters (still within struct's scope)
         let generic_params = self.state.process_generics(&item_struct.generics);
+        let where_predicates = self.state.process_where_predicates(&item_struct.generics);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
@@ -993,6 +998,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_struct.vis),
             fields,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1081,6 +1087,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_type.generics);
+        let where_predicates = self.state.process_where_predicates(&item_type.generics);
 
         // Pop the type alias's ID from the scope stack AFTER processing type/generics
         // Use helper function for logging
@@ -1098,6 +1105,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_type.vis),
             type_id,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1219,6 +1227,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_union.generics);
+        let where_predicates = self.state.process_where_predicates(&item_union.generics);
 
         // Pop the union's ID from the scope stack AFTER processing fields/generics
         // Note: This pop happens *before* visiting children, which might be incorrect
@@ -1238,6 +1247,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_union.vis),
             fields, // Pass the collected FieldNode Vec
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1484,6 +1494,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
+        let where_predicates = self.state.process_where_predicates(&item_enum.generics);
 
         // Pop the enum's ID from the scope stack AFTER processing its generics
         // Note: This pop happens *before* visiting children, which might be incorrect
@@ -1502,6 +1513,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_enum.vis),
             variants,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1681,6 +1693,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
+                let where_predicates = self.state.process_where_predicates(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
@@ -1703,6 +1716,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters,
                     return_type,
                     generic_params,
+                    where_predicates,
                     attributes,
                     docstring,
                     body,
@@ -1727,6 +1741,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters for impl block
         let generic_params = self.state.process_generics(&item_impl.generics);
+        let where_predicates = self.state.process_where_predicates(&item_impl.generics);
 
         // Create info struct and then the node
         let impl_node = ImplNode {
@@ -1736,6 +1751,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             trait_type: trait_type_id,
             methods, // Pass the collected MethodNode Vec
             generic_params,
+            where_predicates,
             cfgs: item_cfgs,
         };
         let typed_impl_id = impl_node.impl_id();
@@ -1888,6 +1904,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
+                let where_predicates = self.state.process_where_predicates(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
@@ -1913,6 +1930,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters,
                     return_type,
                     generic_params,
+                    where_predicates,
                     attributes,
                     docstring,
                     body,
@@ -1935,9 +1953,30 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Placeholder for other associated items (consts, types)
         let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
         let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
+        let associated_type_bounds: Vec<TraitTypeUseId> = item_trait
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::TraitItem::Type(assoc_type) => Some(
+                    assoc_type
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| match bound {
+                            syn::TypeParamBound::Trait(trait_bound) => {
+                                Some(get_or_create_trait_bound_type(self.state, trait_bound))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect();
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_trait.generics);
+        let where_predicates = self.state.process_where_predicates(&item_trait.generics);
 
         // Process super traits
         let super_traits: Vec<TraitTypeUseId> = item_trait
@@ -1979,7 +2018,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&item_trait.vis),
             methods, // Use collected methods
             generic_params,
+            where_predicates,
             super_traits: super_traits.clone(),
+            associated_type_bounds,
             attributes,
             docstring,
             tracking_hash: Some(

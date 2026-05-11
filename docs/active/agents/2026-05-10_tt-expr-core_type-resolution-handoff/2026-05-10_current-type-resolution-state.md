@@ -106,9 +106,10 @@ DB-level typed graph tests live in `crates/ploke-db/tests/unit/type_graph_querie
 - `alias_expansion`: passing type-alias target/root traversal over backup fixtures.
 - `const_static_roots`: passing top-level const/static type contracts over real backup fixtures.
 - `generic_bounds`: passing generic declaration-bound and generic-param-owned bound-root contracts over regenerated real backup fixtures.
-- `constraint_surfaces_red`: intentionally red contracts for qualified associated type projections and associated type bounds.
+- `qualified_projections`: passing qualified associated type projection contracts over regenerated real backup fixtures.
+- `associated_type_bounds`: passing associated type bound contracts over regenerated real backup fixtures.
 
-The file-level doc comment contains the current real-corpus coverage table. It distinguishes passing, red, source-only ignored, and not-covered capability buckets so future tests can fill the grid instead of accumulating unstructured cases.
+The file-level doc comment contains the current real-corpus coverage table. It distinguishes passing, source-only ignored, and not-covered capability buckets so future tests can fill the grid instead of accumulating unstructured cases.
 
 Current real-source typed graph backup fixtures:
 
@@ -141,28 +142,24 @@ Current corpus-contract status after adding edge-pushing real-corpus tests and r
   - `GenericArray<T, N: ArrayLength>` reaches `ArrayLength`.
   - `Date<Tz: TimeZone>` reaches `TimeZone`.
   - `DateTime::Tz` generic-param node reaches `TimeZone`.
-- Two strict contracts remain intentionally red:
-  - `ConstArrayLength = <Const<N> as IntoArrayLength>::ArrayLength` should reach `IntoArrayLength`.
-  - `TimeZone { type Offset: Offset; }` should reach `Offset`.
-- The remaining red failures report `reachable: []`, meaning selected owners and targets exist but no typed graph path is emitted for those constraint surfaces.
+- Qualified associated type projection contracts now pass over the regenerated `corpus_generic_array_type_graph` backup:
+  - `ConstArrayLength = <Const<N> as IntoArrayLength>::ArrayLength` reaches `IntoArrayLength`.
+- Associated type bound contracts now pass over the regenerated `corpus_chrono_type_graph` backup:
+  - `TimeZone { type Offset: Offset; }` reaches `Offset`.
 - `cargo check -p ploke-db --tests --features typed_type_graph` passed after the module split, with existing unrelated warnings.
-- Post-regeneration focused run:
-  `cargo test -p ploke-db --features typed_type_graph type_graph_queries::corpus_contracts -- --nocapture`
-  exited 101 as expected after the 2026-05-10 backup regeneration: 15 passed,
-  2 failed, 6 ignored. The passing count includes the three generic-bound
-  corpus contracts that previously failed. The remaining failures are exactly
-  the two `constraint_surfaces_red::*` cases for qualified associated type
-  projections and associated type bounds.
+- Focused associated-type-bound run:
+  `cargo test -p ploke-db --features typed_type_graph chrono_backup_timezone_associated_offset_bound_reaches_offset_trait -- --nocapture`
+  passed after regenerating `corpus_chrono_type_graph`.
 
 ## Known Gaps
 
 - Method-param, method-return, enum-variant-field, union-field, impl-root, const-root, static-root, and array-containment coverage now exists, but it is not exhaustive across all target families or import/re-export shapes.
-- Generic declaration bounds such as `struct S<T: Debug>` are supported. Where-clause predicates and some generic-adjacent surfaces are still gaps.
-- Where-clause predicates are not modeled as semantic bound nodes yet.
-- Associated type/const bounds are blocked by parser-side TODOs for trait and impl associated type/const parsing.
+- Generic declaration bounds such as `struct S<T: Debug>`, type where-clause predicates such as `where T: Trait` and `where Vec<T>: Trait`, qualified associated type projection traits such as `<T as Trait>::Assoc`, and trait associated type bounds such as `type Offset: Offset` are supported for fresh ingestion.
+- Type where-clause predicates are modeled as predicate subjects plus trait-position bounds for fresh fixture ingestion; real-corpus backup contracts still need to be added/regenerated for that surface.
+- Associated type/const items are still not parsed as precise associated-item owners; trait associated type bounds are currently exposed through the containing trait.
 - File-module qualified path resolution has a known blocker in the legacy comments: module declaration to definition traversal needs equivalent treatment to import backlink traversal for module segments.
 - Corpus perf notes show typed v2 can hit the import-chain depth limit on large import/re-export chains.
-- DB coverage has real-corpus backup contracts for several successful graphRAG traversals, but we still need edge-pushing corpus tests that intentionally expose limits: where predicates, associated type projections, trait super roots, deeper re-export chains, external dependency types, union targets, raw pointer/function pointer structural nodes, and impl-surface expansion from resolved self/trait targets.
+- DB coverage has real-corpus backup contracts for several successful graphRAG traversals, but we still need edge-pushing corpus tests that intentionally expose limits: where predicates over real corpus, trait super roots, deeper re-export chains, external dependency types, union targets, raw pointer/function pointer structural nodes, and impl-surface expansion from resolved self/trait targets.
 - RAG integration should get exact assertions that type-context expansion retrieves expected related owners through `type_relation`, not just parser-level relation rows or DB-only reachability.
 
 ## Suggested Restart Point
@@ -173,6 +170,6 @@ Start from the v2 relation model rather than reviving slot mutation as the main 
 - Write real-target corpus tests that push beyond current passing contracts. Prefer strict tests over placeholders: if a capability is not implemented, let the test fail with the concrete missing traversal.
 - Use those failing or edge tests to document current limitations directly next to the contract they expose.
 - Add import-chain stress cases that mirror backlink coverage: renamed imports, glob imports, and multi-hop re-exports used in actual type slots, especially in real corpus crates.
-- Add where-clause traversal only after deciding how predicate owners and bounds should be represented structurally.
+- Add real-corpus where-clause contracts now that predicate owners and bounds are represented structurally for fresh ingestion.
 - Add transform/DB/RAG integration tests for exact `type_use` + `type_contains` + `type_relation` query behavior.
 - Investigate the v2 import-chain depth failures before relying on corpus-scale typed context expansion.

@@ -35,6 +35,14 @@ pub struct GenericParamNode {
     pub kind: GenericParamKind,
 }
 
+/// A type predicate from a `where` clause, such as `where T: Clone` or
+/// `where Vec<T>: LocalTrait`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct TypeWherePredicate {
+    pub subject: OrdinaryTypeUseId,
+    pub bounds: Vec<TraitTypeUseId>,
+}
+
 impl GenericParamNode {
     pub fn name_if_type_id(&self, ty_id: TypeId) -> Option<&str> {
         match &self.kind {

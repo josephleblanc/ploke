@@ -2,7 +2,7 @@
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
 use crate::parser::type_slots::OrdinaryTypeUseId;
-use crate::parser::types::GenericParamNode;
+use crate::parser::types::{GenericParamNode, TypeWherePredicate};
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
 use ploke_core::TrackingHash;
@@ -24,6 +24,8 @@ pub struct TypeAliasNode {
     pub visibility: VisibilityKind,
     pub type_id: OrdinaryTypeUseId, // The ID of the aliased type
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,

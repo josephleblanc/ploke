@@ -33,11 +33,11 @@
 //! | Tuple containment | Source-only ignored | `watch::channel(...) -> (Sender, Receiver)` has an ignored Hyper source contract, but no backup fixture contract yet. |
 //! | Generic declaration bounds | Passing | `GenericArray<T, N: ArrayLength>` and `Date<Tz: TimeZone>` reach their trait bounds. |
 //! | Generic-param-owned bound roots | Passing | `DateTime::Tz` reaches `TimeZone` from the generic parameter owner. |
-//! | Qualified associated type projections | Red | `<Const<N> as IntoArrayLength>::ArrayLength` does not yet expose `IntoArrayLength`. |
-//! | Associated type bounds | Red | `trait TimeZone { type Offset: Offset; }` does not yet expose `Offset`. |
+//! | Qualified associated type projections | Passing | `<Const<N> as IntoArrayLength>::ArrayLength` reaches `IntoArrayLength`. |
+//! | Associated type bounds | Passing | `trait TimeZone { type Offset: Offset; }` reaches the `Offset` trait. |
 //! | Trait super roots | Not covered | Need real corpus `trait Child: Parent` backup contract. |
 //! | Slice/raw pointer/function pointer/paren/never/inferred/macro/unknown type vertices | Not covered | These structural node families are parser/DB-fixture covered only, if at all. |
-//! | Union/type-alias/generic-param targets | Not covered | Real corpus contracts currently hit struct, enum, and red trait targets. |
+//! | Union/type-alias/generic-param targets | Not covered | Real corpus contracts currently hit struct, enum, and trait targets. |
 //! | Import path stress | Not covered | Need renamed import, glob import, re-export chain, `crate::`/`self::`/`super::`, and file-module boundary contracts. |
 //! | RAG-facing expansion/ranking | Mostly wishlist | Low-level reachability is asserted here; `expand_type_context` corpus behavior is covered separately as wishlist/API contracts. |
 //!
@@ -610,13 +610,8 @@ mod generic_bounds {
     }
 }
 
-mod constraint_surfaces_red {
+mod qualified_projections {
     use super::*;
-
-    // Known limitation: KL-008 documents the constraint surfaces covered by
-    // these strict red contracts. Keep these tests failing until the typed graph
-    // emits real paths for projections and associated bounds.
-    // See docs/design/known_limitations/KL-008-typed-type-graph-constraint-surfaces.md.
 
     #[test]
     fn generic_array_backup_const_array_length_projection_reaches_into_array_length_trait()
@@ -636,7 +631,6 @@ mod constraint_surfaces_red {
         //   -> `as IntoArrayLength` trait qualifier
         //   -> IntoArrayLength trait definition.
         //
-        // This is expected to expose the current associated-type/projection gap.
         assert_owner_reaches_target(
             &db,
             alias_owner_id,
@@ -646,6 +640,10 @@ mod constraint_surfaces_red {
             "ConstArrayLength should reach IntoArrayLength through its qualified associated type projection",
         )
     }
+}
+
+mod associated_type_bounds {
+    use super::*;
 
     #[test]
     fn chrono_backup_timezone_associated_offset_bound_reaches_offset_trait() -> Result<(), DbError>
@@ -664,14 +662,12 @@ mod constraint_surfaces_red {
         //   -> associated type bound type Offset: Offset
         //   -> Offset trait definition.
         //
-        // This should fail until associated trait items and their bounds are
-        // represented as type-use owners.
         assert_owner_reaches_target(
             &db,
             timezone_id,
             offset_id,
             TypeRelationKind::Trait,
-            1,
+            0,
             "TimeZone should reach Offset through its associated type bound",
         )
     }

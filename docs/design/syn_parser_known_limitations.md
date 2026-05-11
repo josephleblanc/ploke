@@ -109,24 +109,26 @@ handling, or an explicit feature-aware corpus parse mode.
 
 ---
 
-## L7 — Typed type graph constraint surfaces are not emitted as reachable relations
+## L7 — Some typed type graph constraint surfaces are not emitted as reachable relations
 
 **KL index:** [KL-008](known_limitations/KL-008-typed-type-graph-constraint-surfaces.md).
 
 **Symptom:** Real-corpus `typed_type_graph` DB contracts can select both the
-owner and target rows, but `type_targets_reachable_from_owner` returns no path
-for generic declaration bounds, generic-param-owned bounds, qualified associated
-type projections, and associated type bounds.
+owner and target rows, but `type_targets_reachable_from_owner` still lacks
+complete real-corpus coverage for where-clause predicates and some associated
+item details.
 
 **Cause:** The v2 type graph currently emits `type_use` roots for ordinary item
-type slots, but generic bounds/defaults, where predicates, projection
-qualifiers, and associated type/const items are not yet represented as
-traversable `type_use -> type_contains -> type_relation` surfaces.
+type slots, generic declaration bounds, generic-param-owned bounds, type
+where-clause predicates, qualified projection traits, and trait associated type
+bounds. Generic defaults and associated type/const items as precise owners are
+not yet represented as complete traversable `type_use -> type_contains ->
+type_relation` surfaces.
 
-**Workarounds (future):** Add first-class typed graph roots for generic bounds
-and where predicates, preserve `<T as Trait>::Assoc` qualifiers as trait-position
-sources, and parse associated type/const items as precise owners.
+**Workarounds (future):** Add first-class typed graph roots for where
+predicates, and parse associated type/const items as precise owners for
+associated defaults and impl associated type definitions.
 
 **Repro tests / fixtures** (`ploke-db`, with `typed_type_graph`):
 
-- `type_graph_queries::corpus_contracts::constraint_surfaces_red::*`
+- `type_graph_queries::corpus_contracts::associated_type_bounds::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`

@@ -111,8 +111,19 @@ fn collect_path_segments_and_type_arguments(
     path: &Path,
     arguments: &mut Vec<OrdinaryTypeUseId>,
 ) -> Vec<String> {
+    collect_path_segments_and_type_arguments_until(state, path, path.segments.len(), arguments)
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn collect_path_segments_and_type_arguments_until(
+    state: &mut VisitorState,
+    path: &Path,
+    end: usize,
+    arguments: &mut Vec<OrdinaryTypeUseId>,
+) -> Vec<String> {
     path.segments
         .iter()
+        .take(end)
         .map(|seg| {
             match &seg.arguments {
                 PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
@@ -142,6 +153,44 @@ fn collect_path_segments_and_type_arguments(
             seg.ident.to_string()
         })
         .collect()
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn get_or_create_named_type_node(
+    state: &mut VisitorState,
+    path: Vec<String>,
+    is_fully_qualified: bool,
+    arguments: Vec<OrdinaryTypeUseId>,
+    qualified_self: Option<OrdinaryTypeUseId>,
+    qualified_trait: Option<TraitTypeUseId>,
+) -> NamedTypeId {
+    let kind = TypeKind::Named {
+        path: path.clone(),
+        is_fully_qualified,
+    };
+    let related: Vec<_> = arguments
+        .iter()
+        .copied()
+        .map(|id| id.base_id())
+        .chain(qualified_self.map(|id| id.base_id()))
+        .chain(qualified_trait.map(|id| id.base_id()))
+        .collect();
+    let id = NamedTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
+        .expect("named TypeKind must refine to NamedTypeId");
+
+    let _ = insert_typed_type_node(
+        state,
+        NamedTypeNode {
+            id,
+            path,
+            is_fully_qualified,
+            qualified_self,
+            qualified_trait,
+            arguments,
+        }
+        .into(),
+    );
+    id
 }
 
 #[cfg(feature = "typed_type_graph")]
@@ -412,23 +461,42 @@ fn process_typed_type(state: &mut VisitorState, ty: &Type) -> OrdinaryTypeUseId 
         Type::Path(TypePath { path, qself }) => {
             let mut arguments = Vec::new();
             let segments = collect_path_segments_and_type_arguments(state, path, &mut arguments);
-            let kind = TypeKind::Named {
-                path: segments.clone(),
-                is_fully_qualified: qself.is_some(),
-            };
-            let related = related_base_ids(&arguments);
-            let id = NamedTypeId::try_refine(state.generate_type_id(&kind, &related), &kind)
-                .expect("named TypeKind must refine to NamedTypeId");
-
-            let _ = insert_typed_type_node(
-                state,
-                NamedTypeNode {
-                    id,
-                    path: segments,
-                    is_fully_qualified: qself.is_some(),
-                    arguments,
+            let qualified_self = qself
+                .as_ref()
+                .map(|qualified_self| get_or_create_type(state, &qualified_self.ty));
+            let qualified_trait = qself.as_ref().and_then(|qualified_self| {
+                if qualified_self.position == 0 {
+                    return None;
                 }
-                .into(),
+
+                let mut trait_arguments = Vec::new();
+                let trait_path = collect_path_segments_and_type_arguments_until(
+                    state,
+                    path,
+                    qualified_self.position,
+                    &mut trait_arguments,
+                );
+                if trait_path.is_empty() {
+                    return None;
+                }
+
+                let trait_id = get_or_create_named_type_node(
+                    state,
+                    trait_path,
+                    path.leading_colon.is_some(),
+                    trait_arguments,
+                    None,
+                    None,
+                );
+                Some(TraitTypeSourceId::from(trait_id))
+            });
+            let id = get_or_create_named_type_node(
+                state,
+                segments,
+                qself.is_some(),
+                arguments,
+                qualified_self,
+                qualified_trait,
             );
             id.into()
         }

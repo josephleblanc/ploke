@@ -883,6 +883,29 @@ macro_rules! type_relations_present_case {
 }
 
 #[macro_export]
+macro_rules! type_relations_exact_sources_case {
+    (
+        $test_name:ident,
+        graph: $graph:expr,
+        report: $report:expr,
+        expected: [$($expected:expr),* $(,)?]
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .try_init();
+
+            $crate::common::type_relation_resolution::TypeRelationView::new($graph, $report)
+                .assert_exact_sources(&[$($expected),*])?;
+
+            Ok(())
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! run_paranoid_test {
     ($setup:ident, $test_name:ident $(, $test_body:expr)?) => {
         #[test]

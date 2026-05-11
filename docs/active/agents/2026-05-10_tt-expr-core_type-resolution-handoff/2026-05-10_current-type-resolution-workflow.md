@@ -28,15 +28,24 @@ This keeps composite type structure intact while still giving query code durable
 
 The current intentionally red bucket is documented as `KL-008`: typed graph constraint surfaces.
 
-The known failing surfaces are:
+The remaining surfaces are:
 
-- Qualified associated type projections, for example `<Const<N> as IntoArrayLength>::ArrayLength`.
-- Associated type bounds, for example `trait TimeZone { type Offset: Offset; }`.
-- Where-clause predicates, which are not fully covered by the current red corpus contracts yet.
+- Type where-clause predicates over real-corpus backup fixtures; fresh fixture
+  ingestion now supports them, but no regenerated corpus contract pins them yet.
+- Generic defaults and const generic parameter types as queryable type roots.
+- Associated type/const items as precise associated-item owners, including
+  associated type defaults and impl associated type definitions.
 
 Generic declaration bounds and generic-param-owned bound roots are supported for
 fresh fixture ingestion and by the regenerated 2026-05-10 typed corpus backup
-fixtures.
+fixtures. Qualified associated type projections are also supported for fresh
+ingestion and the regenerated `corpus_generic_array_type_graph` backup fixture.
+Trait associated type bounds are supported through containing-trait
+`AssociatedTypeBound` roots and the regenerated `corpus_chrono_type_graph`
+backup fixture.
+Type where-clause predicates are supported for fresh ingestion as
+`WherePredicateSubject`, `WherePredicateBound`, and direct-param
+`WhereGenericParamBound` roots.
 
 ## Current Implementation Status
 
@@ -47,12 +56,13 @@ The generic declaration-bound slice has been implemented for fresh parses:
 - DB-facing `TypeUseRole` recognizes both new roles.
 - Fresh fixture tests cover parser relation emission, direct root rows, and reachability from both owner surfaces.
 
-The generic declaration-bound corpus contracts have moved out of
-`constraint_surfaces_red` after regenerating the typed backup DB fixtures. The
-remaining red corpus contracts are projection and associated-type-bound
-surfaces.
+The generic declaration-bound, qualified-projection, and associated-type-bound
+corpus contracts have moved out of the red bucket after regenerating the
+relevant typed backup DB fixtures.
 
-The next implementation bucket should be chosen from the remaining `KL-008` surfaces: where-clause predicates, qualified associated type projections, or associated type bounds.
+The next implementation bucket should be chosen from the remaining `KL-008`
+surfaces: real-corpus where-clause contracts, generic defaults/const generic
+parameter types, or precise associated item owners/defaults.
 
 ## Generic-Bound Owner Policy
 

@@ -3,7 +3,7 @@ use ploke_db::{DbError, TypeUseRole, TypeUseRoot};
 use super::common::{
     function_id_by_name, function_id_by_name_in_module, function_param_type_by_name,
     function_return_type_by_name_in_module, generic_type_param_id_by_owner_name,
-    setup_typed_fixture_db, struct_id_by_name, type_alias_row_by_name,
+    setup_typed_fixture_db, struct_id_by_name, trait_id_by_name_in_module, type_alias_row_by_name,
 };
 
 /// Elementary contract: the DB API should expose direct owner-to-root type-use
@@ -109,6 +109,113 @@ fn generic_bound_roots_are_queryable_from_item_and_param_owners() -> Result<(), 
             slot_index: Some(0),
         }),
         "expected LocallyBound::T to expose the same bound root as GenericParamBound; roots: {generic_param_roots:#?}"
+    );
+
+    Ok(())
+}
+
+/// Associated type bounds should expose a direct trait-position root from the
+/// containing trait. Precise associated type item ownership is a separate
+/// future surface; this pins the current GraphRAG-friendly owner path.
+#[test]
+fn associated_type_bound_root_is_queryable_from_containing_trait() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = trait_id_by_name_in_module(&db, &["crate"], "LocalAssocBound")?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert!(
+        roots.iter().any(|root| {
+            root.owner_id == owner_id
+                && root.role == TypeUseRole::AssociatedTypeBound
+                && root.slot_index == Some(0)
+        }),
+        "expected LocalAssocBound to expose an AssociatedTypeBound root; roots: {roots:#?}"
+    );
+
+    Ok(())
+}
+
+/// Where predicates should keep the bounded subject separate from the trait
+/// bounds. Direct generic-param subjects additionally expose a derived
+/// generic-param-owned bound root.
+#[test]
+fn where_predicate_roots_are_queryable_from_item_and_param_owners() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereLocal")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+
+    let owner_roots = db.type_uses_for_owner(owner_id)?;
+    let generic_param_roots = db.type_uses_for_owner(generic_param_id)?;
+
+    assert!(
+        owner_roots.iter().any(|root| {
+            root.owner_id == owner_id
+                && root.role == TypeUseRole::WherePredicateSubject
+                && root.slot_index == Some(0)
+        }),
+        "expected WhereLocal to expose a WherePredicateSubject root; roots: {owner_roots:#?}"
+    );
+
+    let owner_bound = owner_roots
+        .iter()
+        .find(|root| {
+            root.owner_id == owner_id
+                && root.role == TypeUseRole::WherePredicateBound
+                && root.slot_index == Some(0)
+        })
+        .copied()
+        .unwrap_or_else(|| {
+            panic!(
+                "expected WhereLocal to expose a WherePredicateBound root; roots: {owner_roots:#?}"
+            )
+        });
+
+    assert!(
+        generic_param_roots.contains(&TypeUseRoot {
+            owner_id: generic_param_id,
+            root_type_id: owner_bound.root_type_id,
+            role: TypeUseRole::WhereGenericParamBound,
+            slot_index: Some(0),
+        }),
+        "expected WhereLocal::T to expose the same bound root as WhereGenericParamBound; roots: {generic_param_roots:#?}"
+    );
+
+    Ok(())
+}
+
+/// Composite where-predicate subjects are queryable as subjects, but should not
+/// be collapsed into a direct generic-param-owned bound root.
+#[test]
+fn composite_where_predicate_subject_is_not_a_generic_param_bound() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereComposite")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+
+    let owner_roots = db.type_uses_for_owner(owner_id)?;
+    let generic_param_roots = db.type_uses_for_owner(generic_param_id)?;
+
+    assert!(
+        owner_roots.iter().any(|root| {
+            root.owner_id == owner_id
+                && root.role == TypeUseRole::WherePredicateSubject
+                && root.slot_index == Some(0)
+        }),
+        "expected WhereComposite to expose a WherePredicateSubject root; roots: {owner_roots:#?}"
+    );
+    assert!(
+        owner_roots.iter().any(|root| {
+            root.owner_id == owner_id
+                && root.role == TypeUseRole::WherePredicateBound
+                && root.slot_index == Some(0)
+        }),
+        "expected WhereComposite to expose a WherePredicateBound root; roots: {owner_roots:#?}"
+    );
+    assert!(
+        generic_param_roots
+            .iter()
+            .all(|root| root.role != TypeUseRole::WhereGenericParamBound),
+        "composite subject Vec<T> should not be collapsed into a WhereGenericParamBound root; roots: {generic_param_roots:#?}"
     );
 
     Ok(())

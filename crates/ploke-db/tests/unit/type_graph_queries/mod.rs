@@ -21,7 +21,8 @@
 //!   references, tuples, function pointers, and trait objects
 //! - exact root vs nested terminal ranking for related owners
 //! - selected type generic parameter resolution and shadowing behavior
-//! - selected alias, trait-impl, and real-corpus graphRAG contracts
+//! - selected alias, trait-impl, associated type bound, and real-corpus
+//!   graphRAG contracts
 //!
 //! Known typed-id expansion points not yet exercised at the DB layer:
 //!
@@ -50,6 +51,7 @@ mod containment;
 mod context_expansion_wishlist;
 mod corpus_contracts;
 mod direct_roots;
+mod endpoint_families;
 mod reachability;
 mod related_owners;
 mod wishlist_contracts;

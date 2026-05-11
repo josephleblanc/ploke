@@ -137,3 +137,34 @@ fn trait_object_contains_trait_bound_child() -> Result<(), DbError> {
     assert_eq!(bound_edges[0].position, Some(0));
     Ok(())
 }
+
+/// Structural contract for qualified associated type projections.
+///
+/// `<Const<N> as IntoArrayLength>::ArrayLength` should expose its qualified
+/// self type and explicit trait qualifier through typed containment kinds. This
+/// prevents transform and DB decoding from drifting into string-only agreement.
+#[test]
+fn qualified_projection_contains_self_and_trait_qualifier() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let (_alias_id, root_type_id) = type_alias_row_by_name(&db, "ProjectedArrayLength")?;
+
+    let edges = db.direct_type_contains(root_type_id)?;
+    let qualified_self_count = edges
+        .iter()
+        .filter(|edge| edge.kind == TypeContainmentKind::QualifiedSelf)
+        .count();
+    let qualified_trait_count = edges
+        .iter()
+        .filter(|edge| edge.kind == TypeContainmentKind::QualifiedTrait)
+        .count();
+
+    assert_eq!(
+        qualified_self_count, 1,
+        "expected one qualified self child for projection alias; edges: {edges:#?}"
+    );
+    assert_eq!(
+        qualified_trait_count, 1,
+        "expected one qualified trait child for projection alias; edges: {edges:#?}"
+    );
+    Ok(())
+}

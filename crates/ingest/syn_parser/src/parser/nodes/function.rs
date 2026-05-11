@@ -3,7 +3,7 @@
 
 use crate::parser::graph::GraphAccess;
 use crate::parser::type_slots::OrdinaryTypeUseId;
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use crate::parser::types::{GenericParamNode, TypeWherePredicate}; // Removed define_node_info_struct import
 use derive_test_helpers::ExpectedData;
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,8 @@ pub struct FunctionNode {
     pub parameters: Vec<ParamData>,
     pub return_type: Option<OrdinaryTypeUseId>,
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub body: Option<String>,

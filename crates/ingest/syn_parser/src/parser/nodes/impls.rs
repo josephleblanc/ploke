@@ -1,5 +1,5 @@
 use crate::parser::type_slots::{OrdinaryTypeUseId, TraitTypeUseId};
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use crate::parser::types::{GenericParamNode, TypeWherePredicate}; // Removed define_node_info_struct import
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -18,6 +18,8 @@ pub struct ImplNode {
     pub trait_type: Option<TraitTypeUseId>,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub cfgs: Vec<String>,
     // TODO: Add fields for associated consts and types once we are processing them.
     // pub associated_consts: Vec<ConstNodeId>,

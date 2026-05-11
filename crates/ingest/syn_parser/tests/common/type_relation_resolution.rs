@@ -24,10 +24,16 @@ use syn_parser::parser::nodes::{
     OrdinaryTypeUseId, TraitTypeSourceId, TraitTypeTargetId, TypeDefNode, TypeGenericParamNodeId,
 };
 use syn_parser::parser::relations::TypeRelation;
-use syn_parser::parser::types::{GenericParamNode, TypeNode};
+use syn_parser::parser::types::{GenericParamNode, TypeNode, TypeWherePredicate};
 use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
 
 use super::resolution::find_item_id_by_path_name_kind_checked;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TypeRelationSource {
+    Ordinary(OrdinaryTypeSourceId),
+    Trait(TraitTypeSourceId),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldSelector<'a> {
@@ -83,6 +89,12 @@ pub enum TypeUseSourceSlot {
     ImplSelf,
     ImplTrait,
     TraitSuper(usize),
+    AssociatedTypeBound(usize),
+    WherePredicateSubject(usize),
+    WherePredicateBound {
+        predicate_index: usize,
+        bound_index: usize,
+    },
     ConstType,
     StaticType,
     GenericParamBound {
@@ -330,6 +342,55 @@ impl<'a> TypeRelationView<'a> {
         Ok(())
     }
 
+    pub fn assert_exact_sources(
+        self,
+        expected: &[ExpectedTypeRelation<'_>],
+    ) -> Result<(), SynParserError> {
+        let mut expected_relations = expected
+            .iter()
+            .map(|relation| self.expected_relation(*relation))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        expected_relations.sort();
+        expected_relations.dedup();
+
+        let expected_sources = expected_relations
+            .iter()
+            .map(|relation| relation_source(*relation))
+            .unique()
+            .collect::<Vec<_>>();
+
+        for source in expected_sources {
+            let mut expected_for_source = expected_relations
+                .iter()
+                .copied()
+                .filter(|relation| relation_source(*relation) == source)
+                .collect::<Vec<_>>();
+            let mut actual_for_source = self
+                .report
+                .relations
+                .iter()
+                .copied()
+                .filter(|relation| relation_source(*relation) == source)
+                .collect::<Vec<_>>();
+
+            expected_for_source.sort();
+            actual_for_source.sort();
+
+            assert_eq!(
+                actual_for_source,
+                expected_for_source,
+                "Expected exact v2 type relations for source {source:?}.\n\
+                 Expected:\n{}\n\
+                 Actual:\n{}",
+                format_relation_rows(&expected_for_source),
+                format_relation_rows(&actual_for_source),
+            );
+        }
+
+        Ok(())
+    }
+
     fn expected_relation(
         self,
         expected: ExpectedTypeRelation<'_>,
@@ -360,6 +421,13 @@ impl<'a> TypeRelationView<'a> {
         } else {
             rows.join("\n")
         }
+    }
+}
+
+fn relation_source(relation: TypeRelation) -> TypeRelationSource {
+    match relation {
+        TypeRelation::Ordinary { source, .. } => TypeRelationSource::Ordinary(source),
+        TypeRelation::Trait { source, .. } => TypeRelationSource::Trait(source),
     }
 }
 
@@ -669,6 +737,49 @@ impl<'a> FixtureGraphView<'a> {
                     .expect("trait owner should exist");
                 Ok(SourceSlotRoot::Trait(trait_node.super_traits[index]))
             }
+            TypeUseSourceSlot::AssociatedTypeBound(index) => {
+                let AnyNodeId::Trait(id) = owner else {
+                    panic!("AssociatedTypeBound source used with non-trait owner {owner:?}");
+                };
+                let trait_node = self
+                    .graph
+                    .traits()
+                    .iter()
+                    .find(|trait_node| trait_node.id == id)
+                    .expect("trait owner should exist");
+                Ok(SourceSlotRoot::Trait(
+                    trait_node.associated_type_bounds[index],
+                ))
+            }
+            TypeUseSourceSlot::WherePredicateSubject(index) => {
+                let predicates = self.where_predicates_for_owner(owner);
+                Ok(SourceSlotRoot::Ordinary(
+                    predicates.get(index).unwrap_or_else(|| {
+                        panic!(
+                            "where predicate index {index} out of bounds for owner {owner:?}; predicate count {}",
+                            predicates.len()
+                        )
+                    }).subject,
+                ))
+            }
+            TypeUseSourceSlot::WherePredicateBound {
+                predicate_index,
+                bound_index,
+            } => {
+                let predicates = self.where_predicates_for_owner(owner);
+                let predicate = predicates.get(predicate_index).unwrap_or_else(|| {
+                    panic!(
+                        "where predicate index {predicate_index} out of bounds for owner {owner:?}; predicate count {}",
+                        predicates.len()
+                    )
+                });
+                Ok(SourceSlotRoot::Trait(*predicate.bounds.get(bound_index).unwrap_or_else(|| {
+                    panic!(
+                        "bound index {bound_index} out of bounds for where predicate {predicate:?}; bound count {}",
+                        predicate.bounds.len()
+                    )
+                })))
+            }
             TypeUseSourceSlot::ConstType => {
                 let AnyNodeId::Const(id) = owner else {
                     panic!("ConstType source used with non-const owner {owner:?}");
@@ -859,6 +970,91 @@ impl<'a> FixtureGraphView<'a> {
         }
     }
 
+    fn where_predicates_for_owner(self, owner: AnyNodeId) -> Vec<&'a TypeWherePredicate> {
+        match owner {
+            AnyNodeId::Function(id) => self
+                .graph
+                .functions()
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| node.where_predicates.iter().collect())
+                .unwrap_or_default(),
+            AnyNodeId::Struct(id) => self
+                .graph
+                .defined_types()
+                .iter()
+                .find_map(|node| match node {
+                    TypeDefNode::Struct(node) if node.id == id => {
+                        Some(node.where_predicates.iter().collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            AnyNodeId::Enum(id) => self
+                .graph
+                .defined_types()
+                .iter()
+                .find_map(|node| match node {
+                    TypeDefNode::Enum(node) if node.id == id => {
+                        Some(node.where_predicates.iter().collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            AnyNodeId::Union(id) => self
+                .graph
+                .defined_types()
+                .iter()
+                .find_map(|node| match node {
+                    TypeDefNode::Union(node) if node.id == id => {
+                        Some(node.where_predicates.iter().collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            AnyNodeId::TypeAlias(id) => self
+                .graph
+                .defined_types()
+                .iter()
+                .find_map(|node| match node {
+                    TypeDefNode::TypeAlias(node) if node.id == id => {
+                        Some(node.where_predicates.iter().collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            AnyNodeId::Trait(id) => self
+                .graph
+                .traits()
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| node.where_predicates.iter().collect())
+                .unwrap_or_default(),
+            AnyNodeId::Impl(id) => self
+                .graph
+                .impls()
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| node.where_predicates.iter().collect())
+                .unwrap_or_default(),
+            AnyNodeId::Method(id) => self
+                .graph
+                .impls()
+                .iter()
+                .flat_map(|node| node.methods.iter())
+                .chain(
+                    self.graph
+                        .traits()
+                        .iter()
+                        .flat_map(|node| node.methods.iter()),
+                )
+                .find(|node| node.id == id)
+                .map(|node| node.where_predicates.iter().collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
     fn ordinary_source_terminal(
         self,
         root: AnyTypeId,
@@ -1021,6 +1217,17 @@ fn path_matches(actual: &[String], expected: &[&str]) -> bool {
             .iter()
             .map(String::as_str)
             .eq(expected.iter().copied())
+}
+
+fn format_relation_rows(rows: &[TypeRelation]) -> String {
+    if rows.is_empty() {
+        "  <none>".to_string()
+    } else {
+        rows.iter()
+            .map(|relation| format!("  {relation:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 impl TypeUseOwnerSelector<'_> {

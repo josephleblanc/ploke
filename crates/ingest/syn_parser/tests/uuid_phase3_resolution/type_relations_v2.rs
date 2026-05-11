@@ -23,7 +23,7 @@ use crate::common::type_relation_resolution::{
     named, ordinary_item, ordinary_relation, ordinary_source, ordinary_type_param, root,
     struct_field, trait_item, trait_relation, trait_source, union_field,
 };
-use crate::{type_relation_cases, type_relations_present_case};
+use crate::{type_relation_cases, type_relations_exact_sources_case};
 
 lazy_static! {
     static ref FIXTURE_TYPE_RESOLUTION_V2: (ParsedCodeGraph, ModuleTree) =
@@ -87,6 +87,57 @@ type_relation_cases!(
                 root()
             ),
             trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_qualified_projection_trait_qualifier => trait_relation(
+            trait_source(
+                item(&["crate"], "ProjectedArrayLength", ItemKind::TypeAlias),
+                TypeUseSourceSlot::TypeAliasTarget,
+                named(&["IntoArrayLength"])
+            ),
+            trait_item(item(&["crate"], "IntoArrayLength", ItemKind::Trait))
+        ),
+        v2_resolves_associated_type_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "LocalAssocBound", ItemKind::Trait),
+                TypeUseSourceSlot::AssociatedTypeBound(0),
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_direct_type_param_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "WhereLocal", ItemKind::Struct),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_direct_type_param_subject => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereLocal", ItemKind::Struct),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "WhereLocal", ItemKind::Struct), "T")
+        ),
+        v2_resolves_where_composite_subject_nested_type_param => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereComposite", ItemKind::Struct),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                named(&["T"])
+            ),
+            ordinary_type_param(item(&["crate"], "WhereComposite", ItemKind::Struct), "T")
+        ),
+        v2_resolves_where_projection_subject_trait_qualifier => trait_relation(
+            trait_source(
+                item(&["crate"], "WhereProjection", ItemKind::TypeAlias),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                named(&["LocalAssocBound"])
+            ),
+            trait_item(item(&["crate"], "LocalAssocBound", ItemKind::Trait))
         ),
     ]
 );
@@ -312,7 +363,47 @@ type_relation_cases!(
     ]
 );
 
-type_relations_present_case!(
+type_relations_exact_sources_case!(
+    fixture_type_resolution_v2_projection_and_where_sources_are_exact,
+    graph: &FIXTURE_TYPE_RESOLUTION_V2.0,
+    report: &FIXTURE_TYPE_RESOLUTION_V2_REPORT,
+    expected: [
+        trait_relation(
+            trait_source(
+                item(&["crate"], "ProjectedArrayLength", ItemKind::TypeAlias),
+                TypeUseSourceSlot::TypeAliasTarget,
+                named(&["IntoArrayLength"])
+            ),
+            trait_item(item(&["crate"], "IntoArrayLength", ItemKind::Trait))
+        ),
+        trait_relation(
+            trait_source(
+                item(&["crate"], "LocalAssocBound", ItemKind::Trait),
+                TypeUseSourceSlot::AssociatedTypeBound(0),
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereComposite", ItemKind::Struct),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                named(&["T"])
+            ),
+            ordinary_type_param(item(&["crate"], "WhereComposite", ItemKind::Struct), "T")
+        ),
+        trait_relation(
+            trait_source(
+                item(&["crate"], "WhereProjection", ItemKind::TypeAlias),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                named(&["LocalAssocBound"])
+            ),
+            trait_item(item(&["crate"], "LocalAssocBound", ItemKind::Trait))
+        ),
+    ]
+);
+
+type_relations_exact_sources_case!(
     fixture_nodes_v2_generic_trait_supertrait_complete_slot,
     graph: &FIXTURE_NODES.0,
     report: &FIXTURE_NODES_REPORT,
@@ -366,7 +457,7 @@ type_relation_cases!(
     ]
 );
 
-type_relations_present_case!(
+type_relations_exact_sources_case!(
     fixture_conflation_v2_nested_generic_field_complete_slot,
     graph: &FIXTURE_CONFLATION.0,
     report: &FIXTURE_CONFLATION_REPORT,

@@ -35,12 +35,13 @@ use crate::{
         ParsedCodeGraph,
         graph::GraphAccess,
         nodes::{
-            AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId, ImportNodeId, MethodNodeId,
-            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+            AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId,
+            ConstNodeId, GenericParamOwnerId, ImportNodeId, MethodNodeId, ModuleNodeId,
+            OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, StaticNodeId,
             TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId,
         },
         relations::{SyntacticRelation, TypeRelation},
-        types::{GenericParamKind, GenericParamNode, TypeNode},
+        types::{GenericParamKind, GenericParamNode, TypeNode, TypeWherePredicate},
     },
 };
 
@@ -71,8 +72,50 @@ struct TypeUseSite {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ResolutionContext {
-    resolution_context_owner: AnyNodeId,
+    resolution_context_owner: TypeResolutionScopeOwnerId,
     containing_module: Option<ModuleNodeId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeResolutionScopeOwnerId {
+    Generic(GenericParamOwnerId),
+    Const(ConstNodeId),
+    Static(StaticNodeId),
+}
+
+impl TypeResolutionScopeOwnerId {
+    fn as_any(self) -> AnyNodeId {
+        match self {
+            Self::Generic(owner) => owner.as_any(),
+            Self::Const(owner) => owner.as_any(),
+            Self::Static(owner) => owner.as_any(),
+        }
+    }
+
+    fn generic_owner(self) -> Option<GenericParamOwnerId> {
+        match self {
+            Self::Generic(owner) => Some(owner),
+            Self::Const(_) | Self::Static(_) => None,
+        }
+    }
+}
+
+impl From<GenericParamOwnerId> for TypeResolutionScopeOwnerId {
+    fn from(owner: GenericParamOwnerId) -> Self {
+        Self::Generic(owner)
+    }
+}
+
+impl From<ConstNodeId> for TypeResolutionScopeOwnerId {
+    fn from(owner: ConstNodeId) -> Self {
+        Self::Const(owner)
+    }
+}
+
+impl From<StaticNodeId> for TypeResolutionScopeOwnerId {
+    fn from(owner: StaticNodeId) -> Self {
+        Self::Static(owner)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,9 +190,7 @@ impl<'a> TypeRelationResolver<'a> {
                 .map(|target| target.map(|target| TypeRelation::Ordinary { source, target }));
         }
 
-        if let Some(type_param_id) =
-            self.resolve_type_generic_param(context.resolution_context_owner, path)
-        {
+        if let Some(type_param_id) = self.resolve_type_generic_param(context, path) {
             return Ok(Some(TypeRelation::Ordinary {
                 source,
                 target: OrdinaryTypeTargetId::from(type_param_id),
@@ -171,7 +212,7 @@ impl<'a> TypeRelationResolver<'a> {
         };
 
         let self_context = ResolutionContext {
-            resolution_context_owner: impl_node.id.as_any(),
+            resolution_context_owner: GenericParamOwnerId::from(impl_node.id).into(),
             containing_module: context
                 .containing_module
                 .or_else(|| self.containing_module(impl_node.id.as_any())),
@@ -223,7 +264,7 @@ impl<'a> TypeRelationResolver<'a> {
 
         let containing_module = context
             .containing_module
-            .or_else(|| self.containing_module(context.resolution_context_owner));
+            .or_else(|| self.containing_module(context.resolution_context_owner.as_any()));
         let Some(mut current_module) = containing_module else {
             return Ok(None);
         };
@@ -486,29 +527,31 @@ impl<'a> TypeRelationResolver<'a> {
 
     fn resolve_type_generic_param(
         &self,
-        owner: AnyNodeId,
+        context: ResolutionContext,
         path: &[String],
     ) -> Option<TypeGenericParamNodeId> {
         if path.len() != 1 {
             return None;
         }
         let name = path[0].as_str();
+        let owner = context.resolution_context_owner.generic_owner()?;
 
         self.resolve_type_generic_param_in_owner(owner, name)
             .or_else(|| {
-                let AnyNodeId::Method(method_id) = owner else {
+                let GenericParamOwnerId::Method(method_id) = owner else {
                     return None;
                 };
                 self.associated_owner_for_method(method_id)
-                    .and_then(|associated_owner| {
-                        self.resolve_type_generic_param_in_owner(associated_owner, name)
+                    .map(|associated_owner| {
+                        self.generic_owner_for_associated_owner(associated_owner)
                     })
+                    .and_then(|owner| self.resolve_type_generic_param_in_owner(owner, name))
             })
     }
 
     fn resolve_type_generic_param_in_owner(
         &self,
-        owner: AnyNodeId,
+        owner: GenericParamOwnerId,
         name: &str,
     ) -> Option<TypeGenericParamNodeId> {
         self.generic_params_for_owner(owner)?
@@ -523,16 +566,19 @@ impl<'a> TypeRelationResolver<'a> {
             })
     }
 
-    fn associated_owner_for_method(&self, method_id: MethodNodeId) -> Option<AnyNodeId> {
+    fn associated_owner_for_method(
+        &self,
+        method_id: MethodNodeId,
+    ) -> Option<AssociatedItemOwnerId> {
         let target = AssociatedItemNodeId::from(method_id);
         self.tree
             .get_iter_relations_to(&target.as_any())
             .find_map(|relation| match relation.rel() {
                 SyntacticRelation::ImplAssociatedItem { source, target: t } if *t == target => {
-                    Some(source.as_any())
+                    Some(AssociatedItemOwnerId::from(*source))
                 }
                 SyntacticRelation::TraitAssociatedItem { source, target: t } if *t == target => {
-                    Some(source.as_any())
+                    Some(AssociatedItemOwnerId::from(*source))
                 }
                 _ => None,
             })
@@ -540,30 +586,51 @@ impl<'a> TypeRelationResolver<'a> {
 
     fn impl_for_self_context(
         &self,
-        owner: AnyNodeId,
+        owner: TypeResolutionScopeOwnerId,
     ) -> Option<&'a crate::parser::nodes::ImplNode> {
         match owner {
-            AnyNodeId::Impl(id) => self.graph.impls().iter().find(|node| node.id == id),
-            AnyNodeId::Method(method_id) => match self.associated_owner_for_method(method_id)? {
-                AnyNodeId::Impl(id) => self.graph.impls().iter().find(|node| node.id == id),
-                _ => None,
-            },
-            _ => None,
+            TypeResolutionScopeOwnerId::Generic(GenericParamOwnerId::Impl(id)) => {
+                self.graph.impls().iter().find(|node| node.id == id)
+            }
+            TypeResolutionScopeOwnerId::Generic(GenericParamOwnerId::Method(method_id)) => {
+                match self.associated_owner_for_method(method_id)? {
+                    AssociatedItemOwnerId::Impl(id) => {
+                        self.graph.impls().iter().find(|node| node.id == id)
+                    }
+                    AssociatedItemOwnerId::Trait(_) => None,
+                }
+            }
+            TypeResolutionScopeOwnerId::Generic(_)
+            | TypeResolutionScopeOwnerId::Const(_)
+            | TypeResolutionScopeOwnerId::Static(_) => None,
         }
     }
 
-    fn generic_params_for_owner(&self, owner: AnyNodeId) -> Option<&'a [GenericParamNode]> {
+    fn generic_owner_for_associated_owner(
+        &self,
+        owner: AssociatedItemOwnerId,
+    ) -> GenericParamOwnerId {
         match owner {
-            AnyNodeId::Function(id) => self
+            AssociatedItemOwnerId::Trait(id) => GenericParamOwnerId::from(id),
+            AssociatedItemOwnerId::Impl(id) => GenericParamOwnerId::from(id),
+        }
+    }
+
+    fn generic_params_for_owner(
+        &self,
+        owner: GenericParamOwnerId,
+    ) -> Option<&'a [GenericParamNode]> {
+        match owner {
+            GenericParamOwnerId::Function(id) => self
                 .graph
                 .functions()
                 .iter()
                 .find(|node| node.id == id)
                 .map(|node| node.generic_params.as_slice()),
-            AnyNodeId::Method(id) => self
+            GenericParamOwnerId::Method(id) => self
                 .find_method(id)
                 .map(|node| node.generic_params.as_slice()),
-            AnyNodeId::Struct(id) => {
+            GenericParamOwnerId::Struct(id) => {
                 self.graph
                     .defined_types()
                     .iter()
@@ -574,27 +641,29 @@ impl<'a> TypeRelationResolver<'a> {
                         _ => None,
                     })
             }
-            AnyNodeId::Enum(id) => self
-                .graph
-                .defined_types()
-                .iter()
-                .find_map(|node| match node {
-                    crate::parser::nodes::TypeDefNode::Enum(node) if node.id == id => {
-                        Some(node.generic_params.as_slice())
-                    }
-                    _ => None,
-                }),
-            AnyNodeId::Union(id) => self
-                .graph
-                .defined_types()
-                .iter()
-                .find_map(|node| match node {
-                    crate::parser::nodes::TypeDefNode::Union(node) if node.id == id => {
-                        Some(node.generic_params.as_slice())
-                    }
-                    _ => None,
-                }),
-            AnyNodeId::TypeAlias(id) => {
+            GenericParamOwnerId::Enum(id) => {
+                self.graph
+                    .defined_types()
+                    .iter()
+                    .find_map(|node| match node {
+                        crate::parser::nodes::TypeDefNode::Enum(node) if node.id == id => {
+                            Some(node.generic_params.as_slice())
+                        }
+                        _ => None,
+                    })
+            }
+            GenericParamOwnerId::Union(id) => {
+                self.graph
+                    .defined_types()
+                    .iter()
+                    .find_map(|node| match node {
+                        crate::parser::nodes::TypeDefNode::Union(node) if node.id == id => {
+                            Some(node.generic_params.as_slice())
+                        }
+                        _ => None,
+                    })
+            }
+            GenericParamOwnerId::TypeAlias(id) => {
                 self.graph
                     .defined_types()
                     .iter()
@@ -605,19 +674,18 @@ impl<'a> TypeRelationResolver<'a> {
                         _ => None,
                     })
             }
-            AnyNodeId::Trait(id) => self
+            GenericParamOwnerId::Trait(id) => self
                 .graph
                 .traits()
                 .iter()
                 .find(|node| node.id == id)
                 .map(|node| node.generic_params.as_slice()),
-            AnyNodeId::Impl(id) => self
+            GenericParamOwnerId::Impl(id) => self
                 .graph
                 .impls()
                 .iter()
                 .find(|node| node.id == id)
                 .map(|node| node.generic_params()),
-            _ => None,
         }
     }
 
@@ -773,6 +841,7 @@ enum TypeResolutionRoot<'a> {
 #[derive(Debug, Clone, Copy)]
 struct MethodIterState {
     generic_state: GenericBoundIterState,
+    where_state: WherePredicateIterState,
     param_idx: usize,
     yielded_return: bool,
 }
@@ -781,6 +850,7 @@ impl MethodIterState {
     fn new() -> Self {
         Self {
             generic_state: GenericBoundIterState::new(),
+            where_state: WherePredicateIterState::new(),
             param_idx: 0,
             yielded_return: false,
         }
@@ -803,6 +873,23 @@ impl GenericBoundIterState {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct WherePredicateIterState {
+    predicate_idx: usize,
+    yielded_subject: bool,
+    bound_idx: usize,
+}
+
+impl WherePredicateIterState {
+    fn new() -> Self {
+        Self {
+            predicate_idx: 0,
+            yielded_subject: false,
+            bound_idx: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 enum DirectTypeUseIter<'a> {
     Function {
         node: &'a crate::parser::nodes::FunctionNode,
@@ -813,12 +900,14 @@ enum DirectTypeUseIter<'a> {
         node: &'a crate::parser::nodes::StructNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         field_idx: usize,
     },
     Enum {
         node: &'a crate::parser::nodes::EnumNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         variant_idx: usize,
         field_idx: usize,
     },
@@ -826,19 +915,23 @@ enum DirectTypeUseIter<'a> {
         node: &'a crate::parser::nodes::TypeAliasNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         yielded: bool,
     },
     Union {
         node: &'a crate::parser::nodes::UnionNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         field_idx: usize,
     },
     Trait {
         node: &'a crate::parser::nodes::TraitNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         super_idx: usize,
+        associated_type_bound_idx: usize,
         method_idx: usize,
         method_state: MethodIterState,
     },
@@ -846,6 +939,7 @@ enum DirectTypeUseIter<'a> {
         node: &'a crate::parser::nodes::ImplNode,
         module: Option<ModuleNodeId>,
         generic_state: GenericBoundIterState,
+        where_state: WherePredicateIterState,
         yielded_self: bool,
         yielded_trait: bool,
         method_idx: usize,
@@ -881,6 +975,7 @@ impl<'a> DirectTypeUseIter<'a> {
                         node,
                         module: resolver.containing_module(owner),
                         generic_state: GenericBoundIterState::new(),
+                        where_state: WherePredicateIterState::new(),
                         field_idx: 0,
                     }
                 }
@@ -890,6 +985,7 @@ impl<'a> DirectTypeUseIter<'a> {
                         node,
                         module: resolver.containing_module(owner),
                         generic_state: GenericBoundIterState::new(),
+                        where_state: WherePredicateIterState::new(),
                         variant_idx: 0,
                         field_idx: 0,
                     }
@@ -900,6 +996,7 @@ impl<'a> DirectTypeUseIter<'a> {
                         node,
                         module: resolver.containing_module(owner),
                         generic_state: GenericBoundIterState::new(),
+                        where_state: WherePredicateIterState::new(),
                         yielded: false,
                     }
                 }
@@ -909,6 +1006,7 @@ impl<'a> DirectTypeUseIter<'a> {
                         node,
                         module: resolver.containing_module(owner),
                         generic_state: GenericBoundIterState::new(),
+                        where_state: WherePredicateIterState::new(),
                         field_idx: 0,
                     }
                 }
@@ -919,7 +1017,9 @@ impl<'a> DirectTypeUseIter<'a> {
                     node,
                     module: resolver.containing_module(owner),
                     generic_state: GenericBoundIterState::new(),
+                    where_state: WherePredicateIterState::new(),
                     super_idx: 0,
+                    associated_type_bound_idx: 0,
                     method_idx: 0,
                     method_state: MethodIterState::new(),
                 }
@@ -930,6 +1030,7 @@ impl<'a> DirectTypeUseIter<'a> {
                     node,
                     module: resolver.containing_module(owner),
                     generic_state: GenericBoundIterState::new(),
+                    where_state: WherePredicateIterState::new(),
                     yielded_self: false,
                     yielded_trait: false,
                     method_idx: 0,
@@ -966,9 +1067,10 @@ impl Iterator for DirectTypeUseIter<'_> {
                 module,
                 method_state,
             } => next_callable_type_use(
-                node.id.as_any(),
+                GenericParamOwnerId::from(node.id),
                 *module,
                 &node.generic_params,
+                &node.where_predicates,
                 &node.parameters,
                 node.return_type,
                 method_state,
@@ -977,47 +1079,53 @@ impl Iterator for DirectTypeUseIter<'_> {
                 node,
                 module,
                 generic_state,
+                where_state,
                 field_idx,
             } => {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
-                Some(ordinary_type_use_site(
-                    node.id.as_any(),
-                    *module,
-                    field.type_id,
-                ))
+                Some(ordinary_type_use_site(owner.into(), *module, field.type_id))
             }
             Self::Enum {
                 node,
                 module,
                 generic_state,
+                where_state,
                 variant_idx,
                 field_idx,
             } => loop {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
                 let variant = node.variants.get(*variant_idx)?;
                 if let Some(field) = variant.fields.get(*field_idx) {
                     *field_idx += 1;
-                    return Some(ordinary_type_use_site(
-                        node.id.as_any(),
-                        *module,
-                        field.type_id,
-                    ));
+                    return Some(ordinary_type_use_site(owner.into(), *module, field.type_id));
                 }
                 *variant_idx += 1;
                 *field_idx = 0;
@@ -1026,13 +1134,20 @@ impl Iterator for DirectTypeUseIter<'_> {
                 node,
                 module,
                 generic_state,
+                where_state,
                 yielded,
             } => {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
@@ -1040,60 +1155,76 @@ impl Iterator for DirectTypeUseIter<'_> {
                     return None;
                 }
                 *yielded = true;
-                Some(ordinary_type_use_site(
-                    node.id.as_any(),
-                    *module,
-                    node.type_id,
-                ))
+                Some(ordinary_type_use_site(owner.into(), *module, node.type_id))
             }
             Self::Union {
                 node,
                 module,
                 generic_state,
+                where_state,
                 field_idx,
             } => {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
                 let field = node.fields.get(*field_idx)?;
                 *field_idx += 1;
-                Some(ordinary_type_use_site(
-                    node.id.as_any(),
-                    *module,
-                    field.type_id,
-                ))
+                Some(ordinary_type_use_site(owner.into(), *module, field.type_id))
             }
             Self::Trait {
                 node,
                 module,
                 generic_state,
+                where_state,
                 super_idx,
+                associated_type_bound_idx,
                 method_idx,
                 method_state,
             } => {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
                 if let Some(type_id) = node.super_traits.get(*super_idx).copied() {
                     *super_idx += 1;
-                    return Some(trait_type_use_site(node.id.as_any(), *module, type_id));
+                    return Some(trait_type_use_site(owner.into(), *module, type_id));
+                }
+                if let Some(type_id) = node
+                    .associated_type_bounds
+                    .get(*associated_type_bound_idx)
+                    .copied()
+                {
+                    *associated_type_bound_idx += 1;
+                    return Some(trait_type_use_site(owner.into(), *module, type_id));
                 }
                 loop {
                     let method = node.methods.get(*method_idx)?;
                     if let Some(site) = next_callable_type_use(
-                        method.id.as_any(),
+                        GenericParamOwnerId::from(method.id),
                         *module,
                         &method.generic_params,
+                        &method.where_predicates,
                         &method.parameters,
                         method.return_type,
                         method_state,
@@ -1108,23 +1239,30 @@ impl Iterator for DirectTypeUseIter<'_> {
                 node,
                 module,
                 generic_state,
+                where_state,
                 yielded_self,
                 yielded_trait,
                 method_idx,
                 method_state,
             } => {
-                if let Some(site) = next_generic_bound_type_use(
-                    node.id.as_any(),
+                let owner = GenericParamOwnerId::from(node.id);
+                if let Some(site) =
+                    next_generic_bound_type_use(owner, *module, &node.generic_params, generic_state)
+                {
+                    return Some(site);
+                }
+                if let Some(site) = next_where_predicate_type_use(
+                    owner,
                     *module,
-                    &node.generic_params,
-                    generic_state,
+                    &node.where_predicates,
+                    where_state,
                 ) {
                     return Some(site);
                 }
                 if !*yielded_self {
                     *yielded_self = true;
                     return Some(ordinary_type_use_site(
-                        node.id.as_any(),
+                        owner.into(),
                         *module,
                         node.self_type,
                     ));
@@ -1132,15 +1270,16 @@ impl Iterator for DirectTypeUseIter<'_> {
                 if !*yielded_trait {
                     *yielded_trait = true;
                     if let Some(type_id) = node.trait_type {
-                        return Some(trait_type_use_site(node.id.as_any(), *module, type_id));
+                        return Some(trait_type_use_site(owner.into(), *module, type_id));
                     }
                 }
                 loop {
                     let method = node.methods.get(*method_idx)?;
                     if let Some(site) = next_callable_type_use(
-                        method.id.as_any(),
+                        GenericParamOwnerId::from(method.id),
                         *module,
                         &method.generic_params,
+                        &method.where_predicates,
                         &method.parameters,
                         method.return_type,
                         method_state,
@@ -1161,7 +1300,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                 }
                 *yielded = true;
                 Some(ordinary_type_use_site(
-                    node.id.as_any(),
+                    TypeResolutionScopeOwnerId::from(node.id),
                     *module,
                     node.type_id,
                 ))
@@ -1176,7 +1315,7 @@ impl Iterator for DirectTypeUseIter<'_> {
                 }
                 *yielded = true;
                 Some(ordinary_type_use_site(
-                    node.id.as_any(),
+                    TypeResolutionScopeOwnerId::from(node.id),
                     *module,
                     node.type_id,
                 ))
@@ -1186,9 +1325,10 @@ impl Iterator for DirectTypeUseIter<'_> {
 }
 
 fn next_callable_type_use(
-    resolution_context_owner: AnyNodeId,
+    resolution_context_owner: GenericParamOwnerId,
     module: Option<ModuleNodeId>,
     generic_params: &[GenericParamNode],
+    where_predicates: &[TypeWherePredicate],
     parameters: &[crate::parser::nodes::ParamData],
     return_type: Option<OrdinaryTypeUseId>,
     state: &mut MethodIterState,
@@ -1202,10 +1342,19 @@ fn next_callable_type_use(
         return Some(site);
     }
 
+    if let Some(site) = next_where_predicate_type_use(
+        resolution_context_owner,
+        module,
+        where_predicates,
+        &mut state.where_state,
+    ) {
+        return Some(site);
+    }
+
     if let Some(param) = parameters.get(state.param_idx) {
         state.param_idx += 1;
         return Some(ordinary_type_use_site(
-            resolution_context_owner,
+            resolution_context_owner.into(),
             module,
             param.type_id,
         ));
@@ -1214,7 +1363,7 @@ fn next_callable_type_use(
         state.yielded_return = true;
         if let Some(type_id) = return_type {
             return Some(ordinary_type_use_site(
-                resolution_context_owner,
+                resolution_context_owner.into(),
                 module,
                 type_id,
             ));
@@ -1223,8 +1372,38 @@ fn next_callable_type_use(
     None
 }
 
+fn next_where_predicate_type_use(
+    resolution_context_owner: GenericParamOwnerId,
+    module: Option<ModuleNodeId>,
+    where_predicates: &[TypeWherePredicate],
+    state: &mut WherePredicateIterState,
+) -> Option<TypeUseSite> {
+    loop {
+        let predicate = where_predicates.get(state.predicate_idx)?;
+        if !state.yielded_subject {
+            state.yielded_subject = true;
+            return Some(ordinary_type_use_site(
+                resolution_context_owner.into(),
+                module,
+                predicate.subject,
+            ));
+        }
+        if let Some(bound) = predicate.bounds.get(state.bound_idx).copied() {
+            state.bound_idx += 1;
+            return Some(trait_type_use_site(
+                resolution_context_owner.into(),
+                module,
+                bound,
+            ));
+        }
+        state.predicate_idx += 1;
+        state.yielded_subject = false;
+        state.bound_idx = 0;
+    }
+}
+
 fn next_generic_bound_type_use(
-    resolution_context_owner: AnyNodeId,
+    resolution_context_owner: GenericParamOwnerId,
     module: Option<ModuleNodeId>,
     generic_params: &[GenericParamNode],
     state: &mut GenericBoundIterState,
@@ -1235,7 +1414,7 @@ fn next_generic_bound_type_use(
             if let Some(type_id) = bounds.get(state.bound_idx).copied() {
                 state.bound_idx += 1;
                 return Some(trait_type_use_site(
-                    resolution_context_owner,
+                    resolution_context_owner.into(),
                     module,
                     type_id,
                 ));
@@ -1247,7 +1426,7 @@ fn next_generic_bound_type_use(
 }
 
 fn ordinary_type_use_site(
-    resolution_context_owner: AnyNodeId,
+    resolution_context_owner: TypeResolutionScopeOwnerId,
     containing_module: Option<ModuleNodeId>,
     source: OrdinaryTypeUseId,
 ) -> TypeUseSite {
@@ -1261,7 +1440,7 @@ fn ordinary_type_use_site(
 }
 
 fn trait_type_use_site(
-    resolution_context_owner: AnyNodeId,
+    resolution_context_owner: TypeResolutionScopeOwnerId,
     containing_module: Option<ModuleNodeId>,
     source: TraitTypeSourceId,
 ) -> TypeUseSite {
@@ -1336,6 +1515,12 @@ impl<'a, 'resolver> TypeTreeRelationIter<'a, 'resolver> {
         match resolver.type_node(source)? {
             TypeNode::Named(node) => {
                 self.push_ordinary_children_rev(&node.arguments);
+                if let Some(qualified_trait) = node.qualified_trait {
+                    self.push(TypeWorkItem::Trait(qualified_trait));
+                }
+                if let Some(qualified_self) = node.qualified_self {
+                    self.push(TypeWorkItem::Ordinary(qualified_self));
+                }
                 resolver.resolve_ordinary_source(
                     self.context,
                     OrdinaryTypeSourceId::from(node.id),
@@ -1400,6 +1585,12 @@ impl<'a, 'resolver> TypeTreeRelationIter<'a, 'resolver> {
         match resolver.type_node(source)? {
             TypeNode::Named(node) => {
                 self.push_ordinary_children_rev(&node.arguments);
+                if let Some(qualified_trait) = node.qualified_trait {
+                    self.push(TypeWorkItem::Trait(qualified_trait));
+                }
+                if let Some(qualified_self) = node.qualified_self {
+                    self.push(TypeWorkItem::Ordinary(qualified_self));
+                }
                 resolver.resolve_trait_source(
                     self.context,
                     TraitTypeSourceId::from(node.id),

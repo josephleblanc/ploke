@@ -26,10 +26,14 @@ pub enum TypeUseRole {
     ImplSelf,
     ImplTrait,
     TraitSuper,
+    AssociatedTypeBound,
     ConstType,
     StaticType,
     GenericBound,
     GenericParamBound,
+    WherePredicateSubject,
+    WherePredicateBound,
+    WhereGenericParamBound,
 }
 
 impl TypeUseRole {
@@ -44,10 +48,14 @@ impl TypeUseRole {
             Self::ImplSelf => "ImplSelf",
             Self::ImplTrait => "ImplTrait",
             Self::TraitSuper => "TraitSuper",
+            Self::AssociatedTypeBound => "AssociatedTypeBound",
             Self::ConstType => "ConstType",
             Self::StaticType => "StaticType",
             Self::GenericBound => "GenericBound",
             Self::GenericParamBound => "GenericParamBound",
+            Self::WherePredicateSubject => "WherePredicateSubject",
+            Self::WherePredicateBound => "WherePredicateBound",
+            Self::WhereGenericParamBound => "WhereGenericParamBound",
         }
     }
 
@@ -62,10 +70,14 @@ impl TypeUseRole {
             "ImplSelf" => Ok(Self::ImplSelf),
             "ImplTrait" => Ok(Self::ImplTrait),
             "TraitSuper" => Ok(Self::TraitSuper),
+            "AssociatedTypeBound" => Ok(Self::AssociatedTypeBound),
             "ConstType" => Ok(Self::ConstType),
             "StaticType" => Ok(Self::StaticType),
             "GenericBound" => Ok(Self::GenericBound),
             "GenericParamBound" => Ok(Self::GenericParamBound),
+            "WherePredicateSubject" => Ok(Self::WherePredicateSubject),
+            "WherePredicateBound" => Ok(Self::WherePredicateBound),
+            "WhereGenericParamBound" => Ok(Self::WhereGenericParamBound),
             other => Err(DbError::Cozo(format!("unknown type-use role {other:?}"))),
         }
     }
@@ -89,6 +101,8 @@ pub enum TypeContainmentKind {
     Referenced,
     Pointee,
     TraitBound,
+    QualifiedSelf,
+    QualifiedTrait,
     Inner,
     FunctionParam,
     FunctionReturn,
@@ -102,6 +116,8 @@ impl TypeContainmentKind {
             "Referenced" => Ok(Self::Referenced),
             "Pointee" => Ok(Self::Pointee),
             "TraitBound" => Ok(Self::TraitBound),
+            "QualifiedSelf" => Ok(Self::QualifiedSelf),
+            "QualifiedTrait" => Ok(Self::QualifiedTrait),
             "Inner" => Ok(Self::Inner),
             "FunctionParam" => Ok(Self::FunctionParam),
             "FunctionReturn" => Ok(Self::FunctionReturn),
@@ -308,6 +324,27 @@ impl Database {
 
         let rows = self.run_script(
             r#"
+            ordinary_target[target_id] := *struct { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *enum { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *union { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *type_alias { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *generic_type { id: target_id @ 'NOW' }
+
+            trait_source[source_id] := *named_type { type_id: source_id @ 'NOW' }
+            trait_source[source_id] := *trait_bound_type { type_id: source_id @ 'NOW' }
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Ordinary",
+                *named_type { type_id: source_id @ 'NOW' },
+                ordinary_target[target_id]
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Trait",
+                trait_source[source_id],
+                *trait { id: target_id @ 'NOW' }
+
             roots[owner_id, root_type_id] :=
                 owner_id = $owner_id,
                 *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
@@ -330,11 +367,7 @@ impl Database {
 
             ?[owner_id, root_type_id, terminal_type_id, target_id, relation_kind, depth] :=
                 reachable[owner_id, root_type_id, terminal_type_id, depth],
-                *type_relation {
-                    source_id: terminal_type_id,
-                    target_id,
-                    relation_kind @ 'NOW'
-                }
+                valid_type_relation[terminal_type_id, target_id, relation_kind]
             "#,
             params,
             ScriptMutability::Immutable,
@@ -377,6 +410,27 @@ impl Database {
 
         let rows = self.run_script(
             r#"
+            ordinary_target[target_id] := *struct { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *enum { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *union { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *type_alias { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *generic_type { id: target_id @ 'NOW' }
+
+            trait_source[source_id] := *named_type { type_id: source_id @ 'NOW' }
+            trait_source[source_id] := *trait_bound_type { type_id: source_id @ 'NOW' }
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Ordinary",
+                *named_type { type_id: source_id @ 'NOW' },
+                ordinary_target[target_id]
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Trait",
+                trait_source[source_id],
+                *trait { id: target_id @ 'NOW' }
+
             roots[owner_id, root_type_id] :=
                 *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
 
@@ -399,11 +453,7 @@ impl Database {
             ?[owner_id, root_type_id, terminal_type_id, target_id, relation_kind, depth] :=
                 target_id = $target_id,
                 reachable[owner_id, root_type_id, terminal_type_id, depth],
-                *type_relation {
-                    source_id: terminal_type_id,
-                    target_id,
-                    relation_kind @ 'NOW'
-                }
+                valid_type_relation[terminal_type_id, target_id, relation_kind]
 
             :sort depth, owner_id, root_type_id, terminal_type_id
             "#,
@@ -449,6 +499,27 @@ impl Database {
 
         let rows = self.run_script(
             r#"
+            ordinary_target[target_id] := *struct { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *enum { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *union { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *type_alias { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *generic_type { id: target_id @ 'NOW' }
+
+            trait_source[source_id] := *named_type { type_id: source_id @ 'NOW' }
+            trait_source[source_id] := *trait_bound_type { type_id: source_id @ 'NOW' }
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Ordinary",
+                *named_type { type_id: source_id @ 'NOW' },
+                ordinary_target[target_id]
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Trait",
+                trait_source[source_id],
+                *trait { id: target_id @ 'NOW' }
+
             origin_roots[root_type_id] :=
                 owner_id = $owner_id,
                 *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
@@ -471,11 +542,7 @@ impl Database {
 
             origin_targets[target_id, relation_kind, origin_depth] :=
                 origin_reachable[source_id, origin_depth],
-                *type_relation {
-                    source_id,
-                    target_id,
-                    relation_kind @ 'NOW'
-                }
+                valid_type_relation[source_id, target_id, relation_kind]
 
             related_roots[related_owner_id, root_type_id] :=
                 *type_use {
@@ -504,11 +571,7 @@ impl Database {
 
             related_targets[related_owner_id, target_id, relation_kind, related_depth] :=
                 related_reachable[related_owner_id, source_id, related_depth],
-                *type_relation {
-                    source_id,
-                    target_id,
-                    relation_kind @ 'NOW'
-                }
+                valid_type_relation[source_id, target_id, relation_kind]
 
             ?[
                 origin_owner_id,
@@ -683,6 +746,21 @@ impl Database {
 
         let rows = self.run_script(
             r#"
+            ordinary_target[target_id] := *struct { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *enum { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *union { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *type_alias { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *generic_type { id: target_id @ 'NOW' }
+
+            valid_ordinary_relation[source_id, target_id] :=
+                *type_relation {
+                    source_id,
+                    target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                },
+                *named_type { type_id: source_id @ 'NOW' },
+                ordinary_target[target_id]
+
             transparent_child[owner_id, child_type_id] :=
                 *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
                 *type_contains {
@@ -713,11 +791,7 @@ impl Database {
             ?[owner_id] :=
                 target_id = $target_id,
                 transparent_child[owner_id, source_id],
-                *type_relation {
-                    source_id,
-                    target_id,
-                    relation_kind: "Ordinary" @ 'NOW'
-                }
+                valid_ordinary_relation[source_id, target_id]
 
             :sort owner_id
             "#,
@@ -952,6 +1026,27 @@ impl Database {
 
         let rows = self.run_script(
             r#"
+            ordinary_target[target_id] := *struct { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *enum { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *union { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *type_alias { id: target_id @ 'NOW' }
+            ordinary_target[target_id] := *generic_type { id: target_id @ 'NOW' }
+
+            trait_source[source_id] := *named_type { type_id: source_id @ 'NOW' }
+            trait_source[source_id] := *trait_bound_type { type_id: source_id @ 'NOW' }
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Ordinary",
+                *named_type { type_id: source_id @ 'NOW' },
+                ordinary_target[target_id]
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                *type_relation { source_id, target_id, relation_kind @ 'NOW' },
+                relation_kind = "Trait",
+                trait_source[source_id],
+                *trait { id: target_id @ 'NOW' }
+
             roots[impl_id, root_type_id] :=
                 *impl { id: impl_id @ 'NOW' },
                 *type_use {
@@ -981,11 +1076,7 @@ impl Database {
                 target_id = $target_id,
                 relation_kind = $relation_kind,
                 reachable[impl_id, source_id, depth],
-                *type_relation {
-                    source_id,
-                    target_id,
-                    relation_kind @ 'NOW'
-                }
+                valid_type_relation[source_id, target_id, relation_kind]
 
             :sort depth, impl_id
             "#,

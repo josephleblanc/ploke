@@ -1,9 +1,10 @@
-use ploke_db::{DbError, TypeRelationKind, TypeTargetPath};
+use ploke_db::{DbError, TypeRelationKind, TypeTargetPath, TypeUseRole};
 
 use super::common::{
-    exactly_one_uuid, function_id_by_name, function_id_by_name_in_module,
-    function_param_type_by_name, generic_type_param_id_by_owner_name, setup_typed_fixture_db,
-    struct_id_by_name, trait_id_by_name_in_module,
+    TypePathDepth, assert_type_use_reaches_target, exactly_one_uuid, function_id_by_name,
+    function_id_by_name_in_module, function_param_type_by_name,
+    generic_type_param_id_by_owner_name, setup_typed_fixture_db, struct_id_by_name,
+    trait_id_by_name_in_module,
 };
 
 /// Medium resolution contract: direct root resolution should compose owner
@@ -48,17 +49,16 @@ fn reachable_targets_walk_reference_trait_object_to_trait_definition() -> Result
     let owner_id = function_id_by_name_in_module(&db, &["crate"], "draw_object")?;
     let target_id = trait_id_by_name_in_module(&db, &["crate"], "Drawable")?;
 
-    let reachable = db.type_targets_reachable_from_owner(owner_id)?;
-
-    assert!(
-        reachable.iter().any(|path| {
-            path.owner_id == owner_id
-                && path.target_id == target_id
-                && path.relation_kind == TypeRelationKind::Trait
-                && path.depth >= 1
-        }),
-        "expected draw_object parameter to reach Drawable through &dyn Drawable; reachable: {reachable:#?}"
-    );
+    assert_type_use_reaches_target(
+        &db,
+        owner_id,
+        TypeUseRole::FunctionParam,
+        Some(0),
+        target_id,
+        TypeRelationKind::Trait,
+        TypePathDepth::Min(1),
+        "expected draw_object parameter to reach Drawable through &dyn Drawable",
+    )?;
     Ok(())
 }
 
@@ -74,17 +74,16 @@ fn reachable_targets_preserve_positive_depth_for_nested_ordinary_type() -> Resul
     let owner_id = function_id_by_name(&db, "takes_vec_of_t")?;
     let target_id = struct_id_by_name(&db, "T")?;
 
-    let reachable = db.type_targets_reachable_from_owner(owner_id)?;
-
-    assert!(
-        reachable.iter().any(|path| {
-            path.owner_id == owner_id
-                && path.target_id == target_id
-                && path.relation_kind == TypeRelationKind::Ordinary
-                && path.depth > 0
-        }),
-        "expected nested Vec<T> traversal to reach T at positive depth; reachable: {reachable:#?}"
-    );
+    assert_type_use_reaches_target(
+        &db,
+        owner_id,
+        TypeUseRole::FunctionParam,
+        Some(0),
+        target_id,
+        TypeRelationKind::Ordinary,
+        TypePathDepth::Min(1),
+        "expected takes_vec_of_t parameter to reach T through nested Vec<T>",
+    )?;
     Ok(())
 }
 
@@ -106,18 +105,17 @@ fn reachable_targets_include_multiple_terminals_from_one_root() -> Result<(), Db
         0,
     )?;
 
-    let reachable = db.type_targets_reachable_from_owner(owner_id)?;
-
     for target_id in [t_id, u_id] {
-        assert!(
-            reachable.iter().any(|path| {
-                path.owner_id == owner_id
-                    && path.target_id == target_id
-                    && path.relation_kind == TypeRelationKind::Ordinary
-                    && path.depth > 0
-            }),
-            "expected tuple return traversal to reach target {target_id}; reachable: {reachable:#?}"
-        );
+        assert_type_use_reaches_target(
+            &db,
+            owner_id,
+            TypeUseRole::FunctionReturn,
+            None,
+            target_id,
+            TypeRelationKind::Ordinary,
+            TypePathDepth::Min(1),
+            &format!("expected tuple return traversal to reach target {target_id}"),
+        )?;
     }
     Ok(())
 }
@@ -131,18 +129,82 @@ fn reachable_targets_include_generic_declaration_bound_trait() -> Result<(), DbE
     let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
     let trait_id = trait_id_by_name_in_module(&db, &["crate"], "LocalTrait")?;
 
-    for source_owner_id in [owner_id, generic_param_id] {
-        let reachable = db.type_targets_reachable_from_owner(source_owner_id)?;
-        assert!(
-            reachable.iter().any(|path| {
-                path.owner_id == source_owner_id
-                    && path.target_id == trait_id
-                    && path.relation_kind == TypeRelationKind::Trait
-                    && path.depth == 0
-            }),
-            "expected owner {source_owner_id} to reach LocalTrait through generic declaration bound; reachable: {reachable:#?}"
-        );
-    }
+    assert_type_use_reaches_target(
+        &db,
+        owner_id,
+        TypeUseRole::GenericBound,
+        Some(0),
+        trait_id,
+        TypeRelationKind::Trait,
+        TypePathDepth::Exact(0),
+        "expected LocallyBound to reach LocalTrait through generic declaration bound",
+    )?;
+    assert_type_use_reaches_target(
+        &db,
+        generic_param_id,
+        TypeUseRole::GenericParamBound,
+        Some(0),
+        trait_id,
+        TypeRelationKind::Trait,
+        TypePathDepth::Exact(0),
+        "expected LocallyBound::T to reach LocalTrait through generic declaration bound",
+    )?;
+
+    Ok(())
+}
+
+/// Where-clause bounds should compose with `type_relation` from both the
+/// containing item and direct generic-param owner when the predicate subject is
+/// exactly that local type parameter.
+#[test]
+fn reachable_targets_include_where_direct_type_param_bound_trait() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereLocal")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+    let trait_id = trait_id_by_name_in_module(&db, &["crate"], "LocalTrait")?;
+
+    assert_type_use_reaches_target(
+        &db,
+        owner_id,
+        TypeUseRole::WherePredicateBound,
+        Some(0),
+        trait_id,
+        TypeRelationKind::Trait,
+        TypePathDepth::Exact(0),
+        "expected WhereLocal to reach LocalTrait through where-clause bound",
+    )?;
+    assert_type_use_reaches_target(
+        &db,
+        generic_param_id,
+        TypeUseRole::WhereGenericParamBound,
+        Some(0),
+        trait_id,
+        TypeRelationKind::Trait,
+        TypePathDepth::Exact(0),
+        "expected WhereLocal::T to reach LocalTrait through where-clause bound",
+    )?;
+
+    Ok(())
+}
+
+/// Composite where-clause subjects should expose their nested type terminals
+/// without pretending the whole predicate is a direct bound on `T`.
+#[test]
+fn reachable_targets_include_where_composite_subject_nested_type_param() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereComposite")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+
+    assert_type_use_reaches_target(
+        &db,
+        owner_id,
+        TypeUseRole::WherePredicateSubject,
+        Some(0),
+        generic_param_id,
+        TypeRelationKind::Ordinary,
+        TypePathDepth::Min(1),
+        "expected WhereComposite subject Vec<T> to reach nested generic param T",
+    )?;
 
     Ok(())
 }

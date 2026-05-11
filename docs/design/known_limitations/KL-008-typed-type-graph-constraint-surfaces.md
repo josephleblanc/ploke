@@ -1,4 +1,4 @@
-# KL-008 Typed type graph constraint surfaces are not emitted as reachable relations
+# KL-008 Some typed type graph constraint surfaces are not emitted as reachable relations
 
 ## Lifecycle
 
@@ -13,32 +13,47 @@ The `typed_type_graph` pipeline currently resolves ordinary type-use surfaces
 well when they are represented as roots in `type_use` and terminal nodes in
 `type_relation`. Real-corpus backup contracts now pass for function params and
 returns, method params and returns, fields, type aliases, impl self/trait roots,
-const/static types, references, slices, arrays, and named generic arguments.
+const/static types, references, slices, arrays, named generic arguments,
+generic declaration bounds, type where-clause predicates, qualified associated
+type projections, and trait associated type bounds.
 
-Several Rust constraint surfaces are still parsed or stored only as metadata, or
+Some Rust constraint surfaces are still parsed or stored only as metadata, or
 are not represented precisely enough to become reachable typed graph relations:
 
-- Qualified associated type projections such as
-  `<Const<N> as IntoArrayLength>::ArrayLength`.
-- Associated type bounds such as `trait TimeZone { type Offset: Offset; }`.
-- Where-clause predicates and associated const/type items more generally.
+- Non-type where-clause predicates, such as lifetime-only predicates.
+- Generic defaults and const generic parameter types as queryable type roots.
+- Associated const/type items as precise associated-item owners, including
+  associated type defaults and impl associated type definitions.
 
 Generic declaration bounds and generic-param-owned bound roots are supported for
 fresh parser/transform fixture ingestion and by the regenerated typed corpus
-backup fixtures from 2026-05-10.
+backup fixtures from 2026-05-10. Qualified associated type projections such as
+`<Const<N> as IntoArrayLength>::ArrayLength` now preserve and resolve the
+`as Trait` qualifier as a trait-position source edge.
+
+Trait associated type bounds such as
+`trait TimeZone { type Offset: Offset; }` are now collected on the containing
+trait and emitted as `AssociatedTypeBound` type-use roots.
+
+Type where-clause predicates such as `where T: Trait`,
+`where Vec<T>: Trait`, and `where <T as Trait>::Assoc: OtherTrait` are now
+collected as predicate subjects plus trait-position bounds for fresh ingestion.
+The transform emits `WherePredicateSubject` and `WherePredicateBound` roots,
+and direct local type-param subjects additionally get `WhereGenericParamBound`
+roots on the generic parameter node. Real-corpus backup contracts for these
+where-clause surfaces still need to be added/regenerated.
 
 ## Symptom
 
-The strict real-corpus DB contracts in
+Earlier strict real-corpus DB contracts in
 [`corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
-fail with `reachable: []` for the `constraint_surfaces_red` module:
+failed with `reachable: []` for `TimeZone { type Offset: Offset; } -> Offset`.
+That case now passes after regenerating the 2026-05-10 chrono typed backup.
 
-- `ConstArrayLength = <Const<N> as IntoArrayLength>::ArrayLength` does not reach
-  `IntoArrayLength`.
-- `TimeZone { type Offset: Offset; }` does not reach `Offset`.
-
-The owner rows and target rows exist in the backup DBs. The missing piece is the
-typed graph path between them.
+The remaining limitation is not represented by a passing corpus contract yet:
+fresh ingestion covers type where-clause predicates, but real-corpus backup
+contracts for them have not been added, and precise associated item owners
+still do not have complete typed graph surfaces.
 
 ## Cause
 
@@ -46,8 +61,9 @@ The current v2 type graph emits roots for ordinary owner/type slots in
 [`transform/type_graph.rs`](../../../crates/ingest/ploke-transform/src/transform/type_graph.rs),
 including functions, methods, fields, aliases, traits, impls, consts, and
 statics. Fresh ingestion now also emits `type_use` roots for generic type
-parameter bounds. It does not yet emit roots for generic defaults, const generic
-parameter types, or where-clause predicates.
+parameter bounds, type where-clause predicates, and trait associated type
+bounds. It does not yet emit roots for generic defaults or const generic
+parameter types.
 
 Generic parameter bounds are collected as generic-param metadata in
 [`visitor/state.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/state.rs)
@@ -56,14 +72,16 @@ and persisted as `generic_type.bounds` in
 and fresh typed graph ingestion now exposes them through `type_use ->
 type_relation` for both containing owners and generic-param owners.
 
-Qualified associated type projection support is also incomplete. The type
-processing path records nested associated type values, but does not preserve and
-resolve the `as Trait` qualifier as a trait-position source edge for the typed
-graph.
+Qualified associated type projections are now represented by preserving the
+projection's qualified self type and optional `as Trait` qualifier as structural
+children of the named projection node. The resolver walks the qualifier in trait
+position and the transform emits `QualifiedSelf` / `QualifiedTrait`
+`type_contains` edges.
 
 Trait and impl associated type/const parsing still has explicit TODOs in
 [`visitor/code_visitor.rs`](../../../crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs),
-so associated type bounds do not have precise associated-item owners yet.
+so associated type bounds are currently owned by the containing trait rather
+than by a precise associated type item node.
 
 ## Relationship to other work
 
@@ -86,8 +104,7 @@ The current restart context is tracked in
 ## Repro tests / fixtures
 
 - [`crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
-  - `constraint_surfaces_red::generic_array_backup_const_array_length_projection_reaches_into_array_length_trait`
-  - `constraint_surfaces_red::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`
+  - `associated_type_bounds::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`
 
 Current focused command:
 
@@ -95,9 +112,9 @@ Current focused command:
 cargo test -p ploke-db --features typed_type_graph type_graph_queries::corpus_contracts -- --nocapture
 ```
 
-Expected current result: the non-constraint contracts and generic-bound
-contracts pass, and the two remaining `constraint_surfaces_red::*` contracts
-fail with `reachable: []`.
+Expected current result: the ordinary, generic-bound, qualified-projection, and
+associated-type-bound contracts pass. Fresh where-clause fixtures pass, but
+real-corpus where-clause contracts still need to be added/regenerated.
 
 Fresh-ingestion fixture coverage for generic bounds:
 
@@ -108,12 +125,40 @@ Fresh-ingestion fixture coverage for generic bounds:
 - [`crates/ploke-db/tests/unit/type_graph_queries/reachability.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/reachability.rs)
   - `reachable_targets_include_generic_declaration_bound_trait`
 
+Fresh-ingestion fixture coverage for type where-clause predicates:
+
+- [`crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs`](../../../crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs)
+  - `v2_resolves_where_direct_type_param_bound`
+  - `v2_resolves_where_direct_type_param_subject`
+  - `v2_resolves_where_composite_subject_nested_type_param`
+  - `v2_resolves_where_projection_subject_trait_qualifier`
+- [`crates/ploke-db/tests/unit/type_graph_queries/direct_roots.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/direct_roots.rs)
+  - `where_predicate_roots_are_queryable_from_item_and_param_owners`
+  - `composite_where_predicate_subject_is_not_a_generic_param_bound`
+- [`crates/ploke-db/tests/unit/type_graph_queries/reachability.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/reachability.rs)
+  - `reachable_targets_include_where_direct_type_param_bound_trait`
+  - `reachable_targets_include_where_composite_subject_nested_type_param`
+
 Regenerated real-corpus coverage for generic bounds:
 
 - [`crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
   - `generic_bounds::generic_array_backup_generic_array_bound_reaches_array_length_trait`
   - `generic_bounds::chrono_backup_date_timezone_bound_reaches_timezone_trait`
   - `generic_bounds::chrono_backup_datetime_timezone_param_bound_source_reaches_timezone_trait`
+
+Fresh-ingestion and regenerated real-corpus coverage for qualified projections:
+
+- [`crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs`](../../../crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs)
+  - `v2_resolves_qualified_projection_trait_qualifier`
+- [`crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - `qualified_projections::generic_array_backup_const_array_length_projection_reaches_into_array_length_trait`
+
+Fresh-ingestion and regenerated real-corpus coverage for associated type bounds:
+
+- [`crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs`](../../../crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs)
+  - `v2_resolves_associated_type_bound`
+- [`crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - `associated_type_bounds::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`
 
 ## Possible future resolution paths
 
@@ -123,14 +168,13 @@ Regenerated real-corpus coverage for generic bounds:
 2. Emit typed graph roots for generic defaults and const generic parameter
    types, with a clear owner policy for containing items vs generic parameter
    nodes.
-3. Model where-clause predicates as first-class bound surfaces rather than
-   treating them as unstructured metadata.
-4. Preserve qualified associated type projection qualifiers and resolve
-   `<T as Trait>::Assoc` to the `Trait` target in trait position.
-5. Parse and persist associated type/const items as precise owners, then emit
-   type-use roots for associated type bounds and defaults.
-6. Promote passing red contracts out of `constraint_surfaces_red` as each
-   surface becomes supported, and update this KL entry until it can be resolved.
+3. Add and, if needed, regenerate real-corpus backup contracts for type
+   where-clause predicates.
+4. Parse and persist associated type/const items as precise owners, then emit
+   type-use roots for associated type defaults and impl associated type
+   definitions.
+5. Add strict contracts for remaining surfaces, then update this KL entry until
+   it can be resolved.
 
 ## Further reading / evidence
 
