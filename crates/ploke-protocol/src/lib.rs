@@ -8,6 +8,7 @@
 //! - persisted artifacts for each execution boundary
 
 pub mod core;
+#[cfg(feature = "llm")]
 pub mod llm;
 pub mod procedure;
 pub mod step;
@@ -18,6 +19,7 @@ pub use core::{
     MergeArtifact, ProcedureArtifact, ProcedureRun, ProcedureState, SequenceArtifact,
     StateDisposition, StateEnvelope, StepArtifact,
 };
+#[cfg(feature = "llm")]
 pub use llm::{
     JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, JsonLlmConfig, JsonLlmProvenance,
     JsonLlmResult, ProtocolLlmError, adjudicate_json,
@@ -34,14 +36,21 @@ pub use tool_calls::review::{
     Concern, LocalAnalysisAssessment, LocalAnalysisContext, LocalAnalysisPacket,
     LocalAnalysisSignals, LocalAnalysisTargetKind, Metric as ToolCallReviewMetric, OverallVerdict,
     RecoverabilityAssessment, RecoverabilityVerdict, RedundancyAssessment, RedundancyVerdict,
-    SegmentMetric as ToolCallSegmentReviewMetric, SegmentReviewSubject, ToolCallReview,
-    ToolCallReviewArtifact, ToolCallReviewError, ToolCallSegmentReview,
-    ToolCallSegmentReviewArtifact, ToolCallSegmentReviewError, UsefulnessAssessment,
+    SegmentMetric as ToolCallSegmentReviewMetric, SegmentReviewSubject, UsefulnessAssessment,
     UsefulnessVerdict,
+};
+#[cfg(feature = "llm")]
+pub use tool_calls::review::{
+    ToolCallReview, ToolCallReviewArtifact, ToolCallReviewError, ToolCallSegmentReview,
+    ToolCallSegmentReviewArtifact, ToolCallSegmentReviewError,
 };
 pub use tool_calls::segment::{
     IntentLabel, IntentSegment, IntentSegmentProposal, Metric as IntentSegmentationMetric,
     SegmentStatus, SegmentationCoverage, SegmentationJudgment, SegmentedToolCallSequence,
-    SequenceReviewContext, SequenceSignals, ToolCallIntentSegmentation, UncoveredCallSpan,
+    SequenceReviewContext, SequenceSignals, UncoveredCallSpan,
+};
+#[cfg(feature = "llm")]
+pub use tool_calls::segment::{
+    IntentSegmentationArtifact, IntentSegmentationError, ToolCallIntentSegmentation,
 };
 pub use tool_calls::trace::{NeighborhoodCall, ToolCallNeighborhood, ToolCallSequence, ToolKind};

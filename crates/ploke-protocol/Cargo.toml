@@ -10,9 +10,14 @@ async-trait = "0.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-ploke-llm = { path = "../ploke-llm" }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+ploke-llm = { path = "../ploke-llm", optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true }
 fxhash = { workspace = true }
+
+[features]
+default = ["llm"]
+llm = ["dep:ploke-llm", "dep:reqwest"]
+record-types = []
 
 [dev-dependencies]
 tokio = { workspace = true }

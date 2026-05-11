@@ -1,16 +1,21 @@
 use std::collections::BTreeSet;
 
+#[cfg(feature = "llm")]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::{Confidence, EvidencePolicy, Measurement};
+#[cfg(feature = "llm")]
 use crate::llm::{JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, ProtocolLlmError};
+#[cfg(feature = "llm")]
 use crate::procedure::{
     FanOut, FanOutError, Merge, MergeError, NamedProcedure, ObservedSubrequest, Procedure,
     ProcedureExt, Sequence, SequenceError, SubrequestDescriptor,
 };
-use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
+#[cfg(feature = "llm")]
+use crate::step::{MechanizedExecutor, Step};
+use crate::step::{MechanizedSpec, StepSpec};
 
 use super::trace::{ToolCallSequence, ToolKind, TurnContext};
 
@@ -208,6 +213,7 @@ impl StepSpec for SegmentByIntent {
     }
 }
 
+#[cfg(feature = "llm")]
 impl JsonAdjudicationSpec for SegmentByIntent {
     fn build_prompt(&self, input: &Self::InputState) -> JsonChatPrompt {
         JsonChatPrompt {
@@ -410,16 +416,19 @@ impl MechanizedSpec for NormalizeSegments {
     }
 }
 
+#[cfg(feature = "llm")]
 pub type ContextBranches = FanOut<
     Step<PreserveSequenceContext, MechanizedExecutor>,
     ObservedSubrequest<Step<SegmentByIntent, JsonAdjudicator>>,
 >;
 
+#[cfg(feature = "llm")]
 pub type IntentSegmentationInner = Sequence<
     Step<ContextualizeSequence, MechanizedExecutor>,
     Merge<ContextBranches, Step<NormalizeSegments, MechanizedExecutor>>,
 >;
 
+#[cfg(feature = "llm")]
 pub type IntentSegmentationArtifact = crate::core::ProcedureArtifact<
     crate::core::SequenceArtifact<
         crate::core::StepArtifact<
@@ -454,16 +463,19 @@ pub type IntentSegmentationArtifact = crate::core::ProcedureArtifact<
     >,
 >;
 
+#[cfg(feature = "llm")]
 pub type IntentSegmentationError = SequenceError<
     std::convert::Infallible,
     MergeError<FanOutError<std::convert::Infallible, ProtocolLlmError>, NormalizeSegmentsError>,
 >;
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "llm")]
 pub struct ToolCallIntentSegmentation {
     inner: NamedProcedure<IntentSegmentationInner>,
 }
 
+#[cfg(feature = "llm")]
 impl ToolCallIntentSegmentation {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeSequence, MechanizedExecutor);
@@ -490,6 +502,7 @@ impl ToolCallIntentSegmentation {
     }
 }
 
+#[cfg(feature = "llm")]
 #[async_trait]
 impl Procedure for ToolCallIntentSegmentation {
     type Subject = ToolCallSequence;

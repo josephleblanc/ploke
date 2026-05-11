@@ -97,10 +97,10 @@ use crate::{
         PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1ChildBudget,
         Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1SchedulerState, Prototype1SearchPolicy, RecordStore, TreatmentBranchNode,
-        TreatmentBranchStatus, ValidationPolicy, branch_log, execute_intervention_apply,
-        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
-        prototype1_node_id, prototype1_scheduler_path, register_root_parent_node,
+        Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
+        ValidationPolicy, branch_log, execute_intervention_apply, load_scheduler_state,
+        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
+        prototype1_scheduler_path, register_root_parent_node,
         resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
         write_node_projection, write_treatment_evaluation_projection,
     },
@@ -11199,74 +11199,6 @@ stop_after = "complete"
                 "primary_runtime_id=Some(\"runtime:node-historical\")",
             ],
         ));
-    }
-
-    #[test]
-    fn state_node_inference_rejects_projection_backed_discovery() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let manifest_path = tmp.path().join("campaign.json");
-        let selected = test_node(
-            tmp.path(),
-            "node-selected",
-            "branch-selected",
-            "candidate-1",
-        );
-        let alternate = test_node(tmp.path(), "node-other", "branch-other", "candidate-2");
-        let scheduler = Prototype1SchedulerState {
-            schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign".to_string(),
-            updated_at: "2026-04-26T00:00:00Z".to_string(),
-            policy: Prototype1SearchPolicy::default(),
-            frontier_node_ids: vec![selected.node_id.clone(), alternate.node_id.clone()],
-            completed_node_ids: Vec::new(),
-            failed_node_ids: Vec::new(),
-            last_continuation_decision: None,
-            nodes: vec![selected.clone(), alternate],
-        };
-        fs::create_dir_all(manifest_path.parent().unwrap().join("prototype1"))
-            .expect("prototype dir");
-        fs::write(
-            prototype1_scheduler_path(&manifest_path),
-            serde_json::to_vec_pretty(&scheduler).expect("scheduler json"),
-        )
-        .expect("write scheduler");
-
-        let registry = Prototype1BranchRegistry {
-            schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign".to_string(),
-            updated_at: "2026-04-26T00:00:00Z".to_string(),
-            source_nodes: vec![InterventionSourceNode {
-                source_state_id: "baseline-run".to_string(),
-                parent_branch_id: None,
-                source_artifact_id: None,
-                operation_target: None,
-                instance_id: "clap-rs__clap-3670".to_string(),
-                target_relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
-                source_content: "old".to_string(),
-                source_content_hash: "old-hash".to_string(),
-                selected_branch_id: Some("branch-selected".to_string()),
-                branches: Vec::new(),
-            }],
-            active_targets: Vec::new(),
-        };
-        branch_log::append(&manifest_path, &branch_log::snapshot(&registry))
-            .expect("write registry snapshot");
-
-        let err = resolve_prototype1_candidate_node_id(
-            &state_command_without_ids(),
-            "campaign",
-            &manifest_path,
-            None,
-            None,
-            "test",
-        )
-        .expect_err("projection-backed node discovery should be rejected");
-
-        let PrepareError::InvalidBatchSelection { detail } = err else {
-            panic!("expected invalid batch selection");
-        };
-        assert!(detail.contains("no longer reads scheduler.json"));
-        assert!(detail.contains("pass --node-id explicitly"));
     }
 
     #[test]

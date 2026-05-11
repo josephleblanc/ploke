@@ -1,16 +1,21 @@
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 
+#[cfg(feature = "llm")]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::core::{Confidence, EvidencePolicy, ForkState, Measurement};
+#[cfg(feature = "llm")]
 use crate::llm::{JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, ProtocolLlmError};
+#[cfg(feature = "llm")]
 use crate::procedure::{
     FanOut, FanOutError, Merge, MergeError, NamedProcedure, ObservedSubrequest, Procedure,
     ProcedureExt, Sequence, SequenceError, SubrequestDescriptor,
 };
-use crate::step::{MechanizedExecutor, MechanizedSpec, Step, StepSpec};
+#[cfg(feature = "llm")]
+use crate::step::{MechanizedExecutor, Step};
+use crate::step::{MechanizedSpec, StepSpec};
 
 use super::segment::{IntentLabel, IntentSegment, SegmentStatus, SegmentationCoverage};
 use super::trace::{NeighborhoodCall, ToolCallNeighborhood, ToolCallSequence, ToolKind};
@@ -338,6 +343,7 @@ impl StepSpec for AssessLocalUsefulness {
     }
 }
 
+#[cfg(feature = "llm")]
 impl JsonAdjudicationSpec for AssessLocalUsefulness {
     fn build_prompt(&self, input: &Self::InputState) -> JsonChatPrompt {
         JsonChatPrompt {
@@ -370,6 +376,7 @@ impl StepSpec for AssessRedundancy {
     }
 }
 
+#[cfg(feature = "llm")]
 impl JsonAdjudicationSpec for AssessRedundancy {
     fn build_prompt(&self, input: &Self::InputState) -> JsonChatPrompt {
         JsonChatPrompt {
@@ -402,6 +409,7 @@ impl StepSpec for AssessRecoverability {
     }
 }
 
+#[cfg(feature = "llm")]
 impl JsonAdjudicationSpec for AssessRecoverability {
     fn build_prompt(&self, input: &Self::InputState) -> JsonChatPrompt {
         JsonChatPrompt {
@@ -414,10 +422,12 @@ impl JsonAdjudicationSpec for AssessRecoverability {
     }
 }
 
+#[cfg(feature = "llm")]
 pub type BranchPair = FanOut<
     ObservedSubrequest<Step<AssessLocalUsefulness, JsonAdjudicator>>,
     ObservedSubrequest<Step<AssessRedundancy, JsonAdjudicator>>,
 >;
+#[cfg(feature = "llm")]
 pub type BranchSet =
     FanOut<BranchPair, ObservedSubrequest<Step<AssessRecoverability, JsonAdjudicator>>>;
 pub type BranchJudgments = ForkState<
@@ -505,11 +515,13 @@ branch rationales: usefulness='{}' redundancy='{}' recoverability='{}'.",
     }
 }
 
+#[cfg(feature = "llm")]
 pub type ToolCallReviewInner = Sequence<
     Step<ContextualizeNeighborhood, MechanizedExecutor>,
     Merge<BranchSet, Step<AssembleAssessment, MechanizedExecutor>>,
 >;
 
+#[cfg(feature = "llm")]
 pub type ToolCallReviewArtifact = crate::core::ProcedureArtifact<
     crate::core::SequenceArtifact<
         crate::core::StepArtifact<
@@ -548,6 +560,7 @@ pub type ToolCallReviewArtifact = crate::core::ProcedureArtifact<
     >,
 >;
 
+#[cfg(feature = "llm")]
 pub type ToolCallReviewError = SequenceError<
     Infallible,
     MergeError<
@@ -557,10 +570,12 @@ pub type ToolCallReviewError = SequenceError<
 >;
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "llm")]
 pub struct ToolCallReview {
     inner: NamedProcedure<ToolCallReviewInner>,
 }
 
+#[cfg(feature = "llm")]
 impl ToolCallReview {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeNeighborhood, MechanizedExecutor);
@@ -599,6 +614,7 @@ impl ToolCallReview {
     }
 }
 
+#[cfg(feature = "llm")]
 #[async_trait]
 impl Procedure for ToolCallReview {
     type Subject = ToolCallNeighborhood;
@@ -618,11 +634,13 @@ impl Procedure for ToolCallReview {
     }
 }
 
+#[cfg(feature = "llm")]
 pub type SegmentReviewInner = Sequence<
     Step<ContextualizeSegment, MechanizedExecutor>,
     Merge<BranchSet, Step<AssembleAssessment, MechanizedExecutor>>,
 >;
 
+#[cfg(feature = "llm")]
 pub type ToolCallSegmentReviewArtifact = crate::core::ProcedureArtifact<
     crate::core::SequenceArtifact<
         crate::core::StepArtifact<
@@ -661,6 +679,7 @@ pub type ToolCallSegmentReviewArtifact = crate::core::ProcedureArtifact<
     >,
 >;
 
+#[cfg(feature = "llm")]
 pub type ToolCallSegmentReviewError = SequenceError<
     Infallible,
     MergeError<
@@ -670,10 +689,12 @@ pub type ToolCallSegmentReviewError = SequenceError<
 >;
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "llm")]
 pub struct ToolCallSegmentReview {
     inner: NamedProcedure<SegmentReviewInner>,
 }
 
+#[cfg(feature = "llm")]
 impl ToolCallSegmentReview {
     pub fn new(adjudicator: JsonAdjudicator) -> Self {
         let context = Step::new(ContextualizeSegment, MechanizedExecutor);
@@ -712,6 +733,7 @@ impl ToolCallSegmentReview {
     }
 }
 
+#[cfg(feature = "llm")]
 #[async_trait]
 impl Procedure for ToolCallSegmentReview {
     type Subject = SegmentReviewSubject;
@@ -942,6 +964,7 @@ fn min_confidence(left: Confidence, right: Confidence) -> Confidence {
     }
 }
 
+#[cfg(feature = "llm")]
 fn render_review_context(input: &LocalAnalysisContext) -> String {
     format!(
         "subject_id: {}\ntarget_kind: {:?}\ntarget_id: {}\nscope_summary: {}\nturn_span: {}\ntotal_calls_in_scope: {}\ntotal_calls_in_run: {}\nsegment_status: {}\nsegment_label: {}\n\ncalls:\n{}\n\nsignals:\n{}",
@@ -977,6 +1000,7 @@ fn render_review_context(input: &LocalAnalysisContext) -> String {
     )
 }
 
+#[cfg(feature = "llm")]
 fn render_call_block(packet: &LocalAnalysisPacket) -> String {
     if packet.calls.is_empty() {
         return "  (none)".to_string();
@@ -1009,6 +1033,7 @@ fn render_call_block(packet: &LocalAnalysisPacket) -> String {
         .join("\n")
 }
 
+#[cfg(feature = "llm")]
 fn render_signals(signals: &LocalAnalysisSignals) -> String {
     format!(
         "  scope_turn_count={}\n  repeated_tool_name_count={}\n  distinct_tool_count={}\n  search_calls_in_scope={}\n  read_calls_in_scope={}\n  browse_calls_in_scope={}\n  edit_calls_in_scope={}\n  execute_calls_in_scope={}\n  failed_calls_in_scope={}\n  similar_search_neighbors={}\n  directory_pivots={}\n  labeled_segments_in_source={:?}\n  ambiguous_segments_in_source={:?}\n  uncovered_calls_in_source={:?}\n  candidate_concerns={:?}",
