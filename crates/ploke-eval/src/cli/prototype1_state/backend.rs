@@ -2107,7 +2107,7 @@ fn surface_hash(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<HistoryHas
         if !absolute.exists() {
             return Err(BackendError::MissingSurfaceFile { path: absolute });
         }
-        let bytes = fs::read(&absolute).map_err(|source| BackendError::ReadTarget {
+        let bytes = surface_entry_bytes(&absolute).map_err(|source| BackendError::ReadTarget {
             path: absolute,
             source,
         })?;
@@ -2119,6 +2119,18 @@ fn surface_hash(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<HistoryHas
     }
 
     Ok(HistoryHash::of_bytes(&preimage))
+}
+
+fn surface_entry_bytes(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(fs::read_link(path)?
+            .as_os_str()
+            .to_string_lossy()
+            .into_owned()
+            .into_bytes());
+    }
+    fs::read(path)
 }
 
 /// Execute one short-lived git command and return a typed backend error on
@@ -2862,6 +2874,31 @@ R  old.rs -> new.rs
             .expect("tui tool mutation is represented");
 
         assert_ne!(unchanged, changed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn surface_commitment_hashes_tracked_symlink_to_directory() {
+        let before = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let after = init_surface_repo("pub fn policy() {}\n", "same\n");
+        for root in [before.path(), after.path()] {
+            let symlink_dir = root.join(".symlinks");
+            let linked_dir = root.join("linked-dir");
+            fs::create_dir_all(&symlink_dir).expect("create symlink dir");
+            fs::create_dir_all(&linked_dir).expect("create linked dir");
+            std::os::unix::fs::symlink(&linked_dir, symlink_dir.join("directory-link"))
+                .expect("create directory symlink");
+            run_git_test(root, &["add", ".symlinks/directory-link"]);
+            run_git_test(
+                root,
+                &["commit", "--no-gpg-sign", "-m", "tracked directory symlink"],
+            );
+        }
+        let backend = GitWorktreeBackend;
+
+        backend
+            .surface_commitment(before.path(), after.path())
+            .expect("surface commitment handles tracked directory symlink");
     }
 
     #[test]
