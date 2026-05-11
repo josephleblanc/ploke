@@ -45,7 +45,7 @@ It does not validate that `SealBlock` fields are consequences of the Crown-lock 
 - `Crown<Locked>` carries only `lineage: String` in `crates/ploke-eval/src/cli/prototype1_state/inner.rs:60`; it carries no selected successor, active artifact, policy, block id, or lock evidence.
 - Tests seal blocks with `block::Claims::empty_unchecked()` in `crates/ploke-eval/src/cli/prototype1_state/history.rs:2308` and `crates/ploke-eval/src/cli/prototype1_state/history.rs:2372`.
 
-Affected invariant: the code implements "a matching `Crown<Locked>` is required to seal a block", but it does not implement "the sealed header is the projection of the lock transition that selected this successor/artifact." This distinction matters because the docs say a sealed block should prove admitted evidence under authority, not merely that a hash is stable: `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:52`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:151`.
+Affected invariant: the code implements "a matching `Crown<Locked>` is required to seal a block", but it does not implement "the sealed header is the projection of the lock transition that selected this successor/artifact." This distinction matters because the docs say a sealed block should prove admitted evidence under authority, not merely that a hash is stable: `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:52`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:151`.
 
 The docs partly acknowledge this gap in `crates/ploke-eval/src/cli/prototype1_state/history.rs:1433`, which says the `crown_lock_transition` reference is still header material and not an authority token. That caveat is accurate and should remain prominent until the Crown lock itself carries the selected successor/artifact commitments.
 
@@ -86,7 +86,7 @@ That is useful, but it is not the same as a verified History-store transition:
 - `FsBlockStore::append` verifies only the sealed block hash, appends it, then overwrites `heads.json` for the lineage at `crates/ploke-eval/src/cli/prototype1_state/history.rs:541` and `crates/ploke-eval/src/cli/prototype1_state/history.rs:568`.
 - There is no compare-and-swap or "current head must equal predecessor" check before `heads.insert(...)`.
 
-Affected invariant: implemented code provides a rebuildable local projection over appended sealed blocks. It does not implement authenticated head-map proofs, configured-store genesis absence, or atomic accepted-head update. The docs correctly identify this limitation in `crates/ploke-eval/src/cli/prototype1_state/history.rs:414`, `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:144`, and `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:39`.
+Affected invariant: implemented code provides a rebuildable local projection over appended sealed blocks. It does not implement authenticated head-map proofs, configured-store genesis absence, or atomic accepted-head update. The docs correctly identify this limitation in `crates/ploke-eval/src/cli/prototype1_state/history.rs:414`, `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:144`, and `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:39`.
 
 Concrete misuse: append two different sealed genesis blocks for the same lineage. Both can be internally hash-valid; `heads.json` will point at the later append, and the store will not record that the second append violated the intended genesis absence/predecessor policy.
 
@@ -109,7 +109,7 @@ The remaining gap is that `Locator<T>` is an unsealed crate-local trait. It does
 
 So a crate-local caller can implement a locator that returns in-memory data and a matching digest without crossing the intended filesystem/tree/backend boundary. `Verifiable::verify_with` at `crates/ploke-eval/src/cli/prototype1_state/history.rs:785` verifies consistency against the supplied locator, not against an authenticated artifact context.
 
-Affected invariant: implemented code quarantines failures through a fallible trait call. It does not prove that the locator is the configured backend/tree for the active artifact. The docs should continue to describe backend/tree recovery as intended rather than fully implemented. `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:223` and `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:123` already frame artifact manifests and tree-key admission as future work.
+Affected invariant: implemented code quarantines failures through a fallible trait call. It does not prove that the locator is the configured backend/tree for the active artifact. The docs should continue to describe backend/tree recovery as intended rather than fully implemented. `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:223` and `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:123` already frame artifact manifests and tree-key admission as future work.
 
 ### Low: `Digest<T>` and loaded claim recovery remain future-sensitive
 
@@ -159,20 +159,20 @@ Implemented invariant:
 
 Documented-but-not-implemented invariant:
 
-- live startup admission through `Startup<Validated> -> Parent<Ruling>` is explicitly not implemented in `crates/ploke-eval/src/cli/prototype1_state/history.rs:52`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:81`, and `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:177`.
-- live append of the sealed History block at handoff is not implemented, as stated in `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:177` and `crates/ploke-eval/src/cli/prototype1_state/mod.rs:658`.
-- genesis absence under a configured store is a target invariant, not a current proof, as stated in `crates/ploke-eval/src/cli/prototype1_state/history.rs:80` and `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:60`.
+- live startup admission through `Startup<Validated> -> Parent<Ruling>` is explicitly not implemented in `crates/ploke-eval/src/cli/prototype1_state/history.rs:52`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:81`, and `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:177`.
+- live append of the sealed History block at handoff is not implemented, as stated in `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:177` and `crates/ploke-eval/src/cli/prototype1_state/mod.rs:658`.
+- genesis absence under a configured store is a target invariant, not a current proof, as stated in `crates/ploke-eval/src/cli/prototype1_state/history.rs:80` and `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:60`.
 - successor startup verification against the sealed head and current clean tree key is not implemented, as stated in `crates/ploke-eval/src/cli/prototype1_state/history.rs:254` and `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:91`.
 - `Parent<Ruling>` as the only writer of open block entries is explicitly not enforced yet in `crates/ploke-eval/src/cli/prototype1_state/history.rs:163`.
 
 Potential future invariant:
 
-- distributed consensus, cryptographic signatures, remote witnesses, process uniqueness, authenticated Merkle-style head maps, finality, rollback/fork policy, artifact-local manifests, stochastic evidence roots, and validator/reputation semantics are all future work. The docs generally label them that way in `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:39`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:118`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:285`, and `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:82`.
+- distributed consensus, cryptographic signatures, remote witnesses, process uniqueness, authenticated Merkle-style head maps, finality, rollback/fork policy, artifact-local manifests, stochastic evidence roots, and validator/reputation semantics are all future work. The docs generally label them that way in `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:39`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:118`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:285`, and `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:82`.
 
 Docs issue:
 
-- `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:7` still names `2851650e` as the latest committed checkpoint. That was true for the handoff note, but after `0fd55d8d` it is stale. It does not create an invariant overclaim, but it should be updated or marked historical before being reused as an agent brief.
-- `docs/workflow/evalnomicon/drafts/runtime-artifact-lineage.md:1` reads like raw planning notes and has no status block. Its artifact/runtime lineage ideas are consistent with the newer docs, but it should not be treated as an implementation claim.
+- `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:7` still names `2851650e` as the latest committed checkpoint. That was true for the handoff note, but after `0fd55d8d` it is stale. It does not create an invariant overclaim, but it should be updated or marked historical before being reused as an agent brief.
+- `docs/workflow/evalnomicon/drafts/runtime/artifact-runtime-lineage.md:1` reads like raw planning notes and has no status block. Its artifact/runtime lineage ideas are consistent with the newer docs, but it should not be treated as an implementation claim.
 
 ## Recommended Next Patch
 

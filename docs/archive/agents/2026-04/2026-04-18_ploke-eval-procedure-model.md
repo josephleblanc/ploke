@@ -16,7 +16,7 @@ explicit procedure model rather than from whichever branch of `runner.rs`
 happens to be in view.
 
 This note is eval-specific. It uses the shared formal language from
-`formal-procedure-notation.md`, but it is not a protocol architecture note and
+`formal/procedure-notation.md`, but it is not a protocol architecture note and
 should not import `ploke-protocol`'s packet-review abstractions as the native
 carrier for eval execution.
 

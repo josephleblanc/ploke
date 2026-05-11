@@ -60,21 +60,21 @@ Read these first, in this order:
 - [`docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](2026-05-08_bounded-edit-surface-implementation-orientation.md)
   Short operational packet for sub-agents: core docs, invariants, task-flow
   diagram, task-stack ids, and prompt pattern.
-- [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md)
+- [`docs/workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md`](../../workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md)
   Current implementation plan. Includes formal surface algebra, current blocker
   status, stable vocabulary, validation loops, first worked route, and
   milestone/slice plan.
-- [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md)
+- [`docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`](../../workflow/evalnomicon/drafts/edit-surface/proof-index.md)
   Test-to-formal-proof index. Maps the current tests to `A' -> B* -> C'`
   splices and records formal gaps such as rejected-attempt evidence and
   apply-outcome classification.
-- [`docs/workflow/evalnomicon/drafts/formal-edit-surface.md`](../../workflow/evalnomicon/drafts/formal-edit-surface.md)
+- [`docs/workflow/evalnomicon/drafts/formal/edit-surface.md`](../../workflow/evalnomicon/drafts/formal/edit-surface.md)
   Formal core copied from the discussion: `Γ_a = (V_a, E_a, μ_a)`, grants
   `(R,W,F)`, proposal resolution `(Q_r,Q_w)`, containment, validity, and apply.
-- [`docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`](../../workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md)
+- [`docs/workflow/evalnomicon/drafts/edit-surface/model.md`](../../workflow/evalnomicon/drafts/edit-surface/model.md)
   Conceptual model for `SurfaceGrant`, proposal/check/apply, and trait adapter
   shape. Recently moved from the May 2026 archive into drafts.
-- [`docs/workflow/evalnomicon/drafts/prototype-1-intervention-loop-v2.md`](../../workflow/evalnomicon/drafts/prototype-1-intervention-loop-v2.md)
+- [`docs/workflow/evalnomicon/drafts/runtime/loop.md`](../../workflow/evalnomicon/drafts/runtime/loop.md)
   Runtime loop model: parent creates descendants, child self-evaluates after
   rebuild/spawn, successor receives authority.
 - [`docs/workflow/evalnomicon/drafts/runtime/authority.md`](../../workflow/evalnomicon/drafts/runtime/authority.md)
@@ -112,9 +112,9 @@ Useful supporting docs:
 
 ## Probably Skip For Now
 
-- `docs/workflow/evalnomicon/drafts/prototype-1-intervention-loop.md`
+- `docs/workflow/evalnomicon/drafts/runtime/loop-v1-historical.md`
   Historical v1 loop. Use v2 for runtime-succession semantics.
-- `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+- `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
   Older History/Crown background. Prefer `chat-history/history-blocks-v2.md`.
 - `docs/workflow/evalnomicon/chat-history/framework-ext-01.md` through
   `framework-ext-04.md`
@@ -407,7 +407,7 @@ Files changed by the 7.3 local primitive:
 
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs`
-- `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`
 
 Verification for the 7.3 local primitive:
 
@@ -538,11 +538,11 @@ Files changed by the 7.2 implementation:
 
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/diagnosis.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/mod.rs`
-- `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`
 
 Key proof tests are indexed in:
 
-- [`docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md)
+- [`docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`](../../workflow/evalnomicon/drafts/edit-surface/proof-index.md)
 
 Especially important tests:
 
@@ -659,7 +659,7 @@ crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs
   - broad_surface_objective_records_context_without_diagnosis_specificity
   - route::semantic_resolution and proposal-touch splice coverage
 
-docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md
+docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md
   - indexes those tests as local primitive proofs only
   - explicitly separates the completed local/proof 7.4 route and narrow 7.5
     downstream candidate splice from later live Router/TUI/selection work
@@ -870,7 +870,7 @@ Good next scout prompt:
 
 ```text
 Read docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
-and docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md.
+and docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md.
 
 Task: bounded-edit-surface-mini-run (7.7).
 

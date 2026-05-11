@@ -29,9 +29,9 @@ plus successor invocation/ready records, not Crown-backed admission.
 | --- | --- | --- |
 | Weekly audit must compare claims to implementation and inspect type barriers. | Intended/prescriptive. | [AGENTS.md:25](../../../AGENTS.md#L25), [AGENTS.md:27](../../../AGENTS.md#L27), [AGENTS.md:29](../../../AGENTS.md#L29) |
 | Role/state structure must not be flattened into names or public status writes. | Intended/prescriptive. | [AGENTS.md:5](../../../AGENTS.md#L5), [AGENTS.md:6](../../../AGENTS.md#L6), [AGENTS.md:7](../../../AGENTS.md#L7) |
-| The brief says live startup validation does not yet gate `Parent<Ruling>` on sealed History. | Implemented/descriptive, and accurate. | [prototype1-history-metrics-agent-brief.md:115](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L115), [prototype1-history-metrics-agent-brief.md:116](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L116), [prototype1-history-metrics-agent-brief.md:118](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L118) |
-| The brief's target sequence derives Tree key, verifies sealed History head, then enters `Parent<Ruling>`. | Intended/prescriptive. | [prototype1-history-metrics-agent-brief.md:183](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L183), [prototype1-history-metrics-agent-brief.md:187](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L187), [prototype1-history-metrics-agent-brief.md:188](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L188), [prototype1-history-metrics-agent-brief.md:190](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L190) |
-| The brief says cross-runtime handoff is not one in-process state machine and does not claim OS-process uniqueness. | Intended/prescriptive, clearly qualified. | [prototype1-history-metrics-agent-brief.md:198](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L198), [prototype1-history-metrics-agent-brief.md:201](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L201), [prototype1-history-metrics-agent-brief.md:207](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L207) |
+| The brief says live startup validation does not yet gate `Parent<Ruling>` on sealed History. | Implemented/descriptive, and accurate. | [history/metrics-agent-brief.md:115](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L115), [history/metrics-agent-brief.md:116](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L116), [history/metrics-agent-brief.md:118](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L118) |
+| The brief's target sequence derives Tree key, verifies sealed History head, then enters `Parent<Ruling>`. | Intended/prescriptive. | [history/metrics-agent-brief.md:183](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L183), [history/metrics-agent-brief.md:187](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L187), [history/metrics-agent-brief.md:188](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L188), [history/metrics-agent-brief.md:190](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L190) |
+| The brief says cross-runtime handoff is not one in-process state machine and does not claim OS-process uniqueness. | Intended/prescriptive, clearly qualified. | [history/metrics-agent-brief.md:198](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L198), [history/metrics-agent-brief.md:201](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L201), [history/metrics-agent-brief.md:207](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L207) |
 | `mod.rs` says the full startup admission check is not implemented. | Implemented/descriptive, and accurate. | [mod.rs:85](../../../crates/ploke-eval/src/cli/prototype1_state/mod.rs#L85), [mod.rs:93](../../../crates/ploke-eval/src/cli/prototype1_state/mod.rs#L93), [mod.rs:96](../../../crates/ploke-eval/src/cli/prototype1_state/mod.rs#L96) |
 | `prototype1_process.rs` describes intended successor handoff with `Parent<Selectable> -> Parent<Retired>`. | Mostly implemented/descriptive for the local move-only handoff; not History admission. | [prototype1_process.rs:39](../../../crates/ploke-eval/src/cli/prototype1_process.rs#L39), [prototype1_process.rs:43](../../../crates/ploke-eval/src/cli/prototype1_process.rs#L43), [prototype1_process.rs:52](../../../crates/ploke-eval/src/cli/prototype1_process.rs#L52), [parent.rs:423](../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L423), [prototype1_process.rs:875](../../../crates/ploke-eval/src/cli/prototype1_process.rs#L875) |
 | History module says current live handoff locks a Crown carrier but does not seal/persist a block. | Implemented/descriptive, and accurate for the code inspected. | [history.rs:6](../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L6), [history.rs:7](../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L7), [history.rs:159](../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L159), [history.rs:163](../../../crates/ploke-eval/src/cli/prototype1_state/history.rs#L163) |
@@ -44,9 +44,9 @@ plus successor invocation/ready records, not Crown-backed admission.
    The brief explicitly says live startup validation does not gate
    `Parent<Ruling>` on a sealed History head, and that live Crown sealing does
    not persist the block the next runtime must verify
-   ([prototype1-history-metrics-agent-brief.md:115](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L115),
-   [prototype1-history-metrics-agent-brief.md:116](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L116),
-   [prototype1-history-metrics-agent-brief.md:118](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L118)). The inspected code matches: startup loads artifact-carried identity, checks the active checkout and scheduler/node facts, acknowledges any handoff invocation, appends `ParentStarted`, then proceeds to a turn
+   ([history/metrics-agent-brief.md:115](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L115),
+   [history/metrics-agent-brief.md:116](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L116),
+   [history/metrics-agent-brief.md:118](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L118)). The inspected code matches: startup loads artifact-carried identity, checks the active checkout and scheduler/node facts, acknowledges any handoff invocation, appends `ParentStarted`, then proceeds to a turn
    ([cli_facing.rs:3208](../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L3208),
    [cli_facing.rs:3212](../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L3212),
    [cli_facing.rs:3221](../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L3221),
@@ -101,8 +101,8 @@ plus successor invocation/ready records, not Crown-backed admission.
    [backend.rs:1073](../../../crates/ploke-eval/src/cli/prototype1_state/backend.rs#L1073)). `clean_tree_key` exists but is not used in the inspected startup path
    ([backend.rs:1108](../../../crates/ploke-eval/src/cli/prototype1_state/backend.rs#L1108),
    [backend.rs:1117](../../../crates/ploke-eval/src/cli/prototype1_state/backend.rs#L1117)). The brief correctly reserves Tree-key sealed-head admission for the target sequence
-   ([prototype1-history-metrics-agent-brief.md:187](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L187),
-   [prototype1-history-metrics-agent-brief.md:188](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L188)).
+   ([history/metrics-agent-brief.md:187](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L187),
+   [history/metrics-agent-brief.md:188](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L188)).
 
 5. **Stale Successor-as-literal-typestate risk is mostly controlled, but a few headings/phrases can still mislead.**
 
@@ -137,9 +137,9 @@ plus successor invocation/ready records, not Crown-backed admission.
 
 1. In the operator brief, keep the current "Not implemented" bullets near any
    startup/handoff target sequence. The existing boundary is good; do not split
-   [prototype1-history-metrics-agent-brief.md:113](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L113) through
-   [prototype1-history-metrics-agent-brief.md:130](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L130) away from the target sequence at
-   [prototype1-history-metrics-agent-brief.md:183](../../../docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md#L183).
+   [history/metrics-agent-brief.md:113](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L113) through
+   [history/metrics-agent-brief.md:130](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L130) away from the target sequence at
+   [history/metrics-agent-brief.md:183](../../../docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md#L183).
 
 2. Narrow live-path wording from "continuation authority" or "successor admission"
    to "scheduler/invocation/checkout continuation validation" wherever referring

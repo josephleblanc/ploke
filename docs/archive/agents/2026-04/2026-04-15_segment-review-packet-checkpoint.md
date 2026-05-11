@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: segment review packet checkpoint
 - task description: introduce a shared local-analysis packet boundary for protocol review procedures and add the first downstream segment-level review over `SegmentedToolCallSequence`
-- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_intent-segmentation-semantics-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_intent-segmentation-semantics-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
 
 ## What Changed
 

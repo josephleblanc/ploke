@@ -113,7 +113,7 @@ No current doc proves 100% typed deserialized coverage. The best references are 
   Best nested History deserialization proof.
 - `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md`
   Explicitly says not every replay-relevant passive DTO has `Record` metadata.
-- `docs/workflow/evalnomicon/drafts/prototype1-persistence-map-2026-05-03/`
+- `docs/workflow/evalnomicon/drafts/persistence/map-2026-05-03/`
   Best historical artifact-family inventory, but it also documents missing join objects and aggregate records.
 
 ## Real-Run Families To Keep In Scope

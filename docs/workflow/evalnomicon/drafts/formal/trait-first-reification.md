@@ -82,9 +82,9 @@ runtime graph instance as concrete struct
 
 This note sits on top of the existing formal work:
 
-- [formal-procedure-notation.md](formal-procedure-notation.md)
-- [type-state.md](type-state.md)
-- [prototype-1-intervention-loop.md](prototype-1-intervention-loop.md)
+- [procedure-notation.md](procedure-notation.md)
+- [typestate-sketches.md](typestate-sketches.md)
+- [runtime/loop-v1-historical.md](../runtime/loop-v1-historical.md)
 - [framework-ext-01.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-01.md)
 - [framework-ext-02.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-02.md)
 - [framework-ext-03.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-03.md)

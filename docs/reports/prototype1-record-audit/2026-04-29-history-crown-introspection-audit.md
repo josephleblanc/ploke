@@ -20,7 +20,7 @@ The design documents define the stronger object as:
 - `Ingress = append-only late/backchannel observations outside the sealed epoch`.
 - `Projection = disposable view or index derived from History`.
 
-The Crown boundary is the important authority cut: `Parent<Ruling>` records entries, locks `Crown<Locked>`, sealing `Block<Sealed>`; `Successor<Admitted>` verifies the sealed block before becoming the next `Parent<Ruling>` (`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:36`). The type-safety claim is deliberately narrow and requires private or sealed state markers, move-only transitions, records emitted as transition projections, and validation at authoritative transition boundaries (`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:108`).
+The Crown boundary is the important authority cut: `Parent<Ruling>` records entries, locks `Crown<Locked>`, sealing `Block<Sealed>`; `Successor<Admitted>` verifies the sealed block before becoming the next `Parent<Ruling>` (`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:36`). The type-safety claim is deliberately narrow and requires private or sealed state markers, move-only transitions, records emitted as transition projections, and validation at authoritative transition boundaries (`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:108`).
 
 ## What The Code Currently Enforces
 

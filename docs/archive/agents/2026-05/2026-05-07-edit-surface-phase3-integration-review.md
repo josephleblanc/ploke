@@ -12,7 +12,7 @@ the slice is safe to commit before the live backend path exists.
 Related planning files:
 
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/model.md`
 - `docs/archive/agents/2026-05/2026-05-07-edit-surface-phase3-integration-slice.md`
 - `crates/ploke-eval/src/cli.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`

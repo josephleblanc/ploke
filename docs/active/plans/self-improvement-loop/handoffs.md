@@ -24,7 +24,7 @@ Use this as the shared restart list for the records/playback/frontend track. The
 
 ## Background
 
-- [`../../../workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md`](../../../workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md)
+- [`../../../workflow/evalnomicon/drafts/history/handoff-2026-04-29.md`](../../../workflow/evalnomicon/drafts/history/handoff-2026-04-29.md)
   Older History/Crown background. Use for conceptual continuity, not current task status.
-- [`../../../workflow/evalnomicon/drafts/prototype1-timing-projection-handoff-2026-05-02.md`](../../../workflow/evalnomicon/drafts/prototype1-timing-projection-handoff-2026-05-02.md)
+- [`../../../workflow/evalnomicon/drafts/observability/timing-projection-handoff-2026-05-02.md`](../../../workflow/evalnomicon/drafts/observability/timing-projection-handoff-2026-05-02.md)
   Older timing/projection context.

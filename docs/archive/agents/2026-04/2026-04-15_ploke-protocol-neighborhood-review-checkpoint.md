@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: ploke-protocol neighborhood review checkpoint
 - task description: third architectural checkpoint for `crates/ploke-protocol`, replacing the weak single-call review with a richer adapter-backed neighborhood procedure composed from mechanized context, forked adjudication branches, and explicit merge
-- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-state-composition-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-state-composition-checkpoint.md`, `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
 
 ## What Changed
 

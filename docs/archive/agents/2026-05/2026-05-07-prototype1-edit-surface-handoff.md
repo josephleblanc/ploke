@@ -10,7 +10,7 @@ and eventual `ploke-tui` integration.
 
 Related planning files:
 
-- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/model.md`
 - `docs/active/todo/2026-05-05_long-horizon.md`
 - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - `crates/ploke-tui/src/tools/code_edit.rs`
@@ -23,7 +23,7 @@ Related planning files:
 The concise framework doc is now:
 
 ```text
-docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md
+docs/workflow/evalnomicon/drafts/edit-surface/model.md
 ```
 
 It captures the current agreed model:

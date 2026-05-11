@@ -3,7 +3,7 @@
 Read set used:
 
 - `AGENTS.md`
-- `docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md`
+- `docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md`
 
 ## Recommendation
 

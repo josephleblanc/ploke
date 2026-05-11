@@ -16,8 +16,8 @@ or the test is not proving a load-bearing property.
 
 Related plan:
 
-- [`2026-05-08-bounded-edit-harness-adapter-plan.md`](2026-05-08-bounded-edit-harness-adapter-plan.md)
-- [`formal-edit-surface.md`](formal-edit-surface.md)
+- [`harness-adapter-plan.md`](harness-adapter-plan.md)
+- [`formal/edit-surface.md`](../formal/edit-surface.md)
 
 ## Formal Reference
 

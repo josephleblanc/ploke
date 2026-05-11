@@ -13,10 +13,10 @@ Reviewed probes:
 Context checked:
 
 - `AGENTS.md`
-- `docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md`
-- `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
-- `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
-- `docs/workflow/evalnomicon/drafts/runtime-artifact-lineage.md`
+- `docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md`
+- `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
+- `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
+- `docs/workflow/evalnomicon/drafts/runtime/artifact-runtime-lineage.md`
 - `docs/reports/prototype1-record-audit/history-admission-map.md`
 - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/history.rs`

@@ -23,18 +23,6 @@
 - Requirement: docs are not exempt from context discipline. When consulting a doc, first identify the needed section with `rg` or inspect a bounded range; avoid dumping whole planning documents into context.
 - If a bounded read is insufficient, state what extra range or pattern is needed before expanding it, and keep the expansion targeted.
 
-## Token Budget / Sub-Agent Model Routing
-
-- Prefer fewer sub-agents first. A cheaper sub-agent still spends tokens if it reads too broadly or duplicates work already done in the main thread.
-- Model routing should account for both model capability and plan-credit cost. Treat output as especially expensive, so ask sub-agents for compact reports rather than long explanations.
-- Use `gpt-5.4-mini` as the cheap fallback for bounded discovery, summarization, search narrowing, compile-error triage, mechanical edits, and tests from an obvious pattern.
-- Use `gpt-5.3-codex` for bounded implementation work where Spark or mini is likely too weak but the task is still local and code-shaped.
-- Use `gpt-5.4` for harder review, diagnosis, or multi-file reasoning when 5.5 is not clearly justified.
-- Reserve `gpt-5.5` for architectural changes, Prototype 1 History/Crown/Runtime/Artifact invariants, subtle Rust type/lifetime/async/concurrency reasoning, multi-file edits where semantic authority matters, diagnosing agent/tool workflow failures, and final review before applying or accepting a high-risk patch.
-- Use Spark or mini for finding where a symbol, file, command, or behavior is defined; summarizing a module or narrow file cluster; small refactors with obvious local patterns; mechanical edits; writing tests from an existing nearby pattern; checking a compile error and proposing a narrow fix; and quick diff review before escalating.
-- Ask Spark and mini agents for exact file paths and line ranges, compact findings, commands used, and the smallest verification command. Do not ask them to dump large logs, artifacts, JSON records, prompts, responses, benchmark payloads, or broad search output.
-- Escalate only after a cheaper model has narrowed the search surface, unless the task is already known to require invariant-sensitive reasoning.
-
 ## Coding Style & Naming Discipline
 
 - Requirement: owned persisted JSON/JSONL data must be read and written through named Rust types. Production code must not parse, inspect, transform, slice, or project owned persisted data through `serde_json::Value`, anonymous field walking, or ad hoc JSON accessors. This applies across `ploke-records`, `ploke-tree`, `ploke-eval`, `ploke-tui`, monitor/debug/projection paths, and future crates. If the project writes the shape, the project owns a `Serialize`/`Deserialize` type for that shape. If a reader needs only part of a record, define a named typed projection struct or enum. Test fixtures may use JSON literals for construction and comparison, but not as production reader/parser precedent.

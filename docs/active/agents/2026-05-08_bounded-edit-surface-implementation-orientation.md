@@ -48,14 +48,14 @@ mechanically applies when authorized.
 
 ## Core Docs
 
-- [`2026-05-08-bounded-edit-harness-adapter-plan.md`](../../workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md)
+- [`edit-surface/harness-adapter-plan.md`](../../workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md)
   Main plan. Read first. Contains the target end state, stable core
   vocabulary, slice discipline, validation strategy, first worked route, and
   implementation phases.
-- [`formal-edit-surface.md`](../../workflow/evalnomicon/drafts/formal-edit-surface.md)
+- [`formal/edit-surface.md`](../../workflow/evalnomicon/drafts/formal/edit-surface.md)
   Minimal formal surface algebra. Read when touching grants, touches,
   containment, projection identity, or checked apply.
-- [`2026-05-07-prototype1-edit-surface-model.md`](../../workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md)
+- [`edit-surface/model.md`](../../workflow/evalnomicon/drafts/edit-surface/model.md)
   Conceptual model for `Surface(operator, substrate, mode, policy)`,
   `SurfaceGrant`, proposal/check/apply, and TUI-as-harness boundaries.
 - [`2026-05-08_bounded-edit-surface-handoff.md`](2026-05-08_bounded-edit-surface-handoff.md)
@@ -72,7 +72,7 @@ Read these only as needed for the slice:
 - [`history-blocks-v2.md`](../../workflow/evalnomicon/chat-history/history-blocks-v2.md)
   Current History/Crown authority model. Read before changing History,
   selection evidence, candidate admission, or cross-generation provenance.
-- [`prototype-1-intervention-loop-v2.md`](../../workflow/evalnomicon/drafts/prototype-1-intervention-loop-v2.md)
+- [`runtime/loop.md`](../../workflow/evalnomicon/drafts/runtime/loop.md)
   Runtime/trampoline model. Read before touching child materialization,
   child self-evaluation, successor handoff, or generation transitions.
 - [`runtime/authority.md`](../../workflow/evalnomicon/drafts/runtime/authority.md)
@@ -386,7 +386,7 @@ Use this shape for bounded implementation agents:
 ```text
 Read:
   docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md
-  docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md
+  docs/workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md
 
 Task stack item:
   <id>

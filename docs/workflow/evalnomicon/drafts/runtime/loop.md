@@ -42,7 +42,7 @@ or child self-promotion.
 
 This version remains downstream of the same formal sources as v1:
 
-- [formal-procedure-notation.md](formal-procedure-notation.md)
+- [formal/procedure-notation.md](../formal/procedure-notation.md)
   Procedures/protocols as typed state transitions with explicit executors,
   evidential outputs, and composition rules.
 - [framework-ext-01.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-01.md)
@@ -62,7 +62,7 @@ Two later notes are also directly relevant to the current code shape:
 
 - [isomorphic-code-01.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/isomorphic-code-01.md)
   Strongest argument for phase-indexed/state-indexed intervention families.
-- [module-tree-and-trait-algebra.md](module-tree-and-trait-algebra.md)
+- [formal/module-tree-and-trait-algebra.md](../formal/module-tree-and-trait-algebra.md)
   Current draft for how the codebase should split formal kinds, concrete
   transitions, and implementation modules.
 

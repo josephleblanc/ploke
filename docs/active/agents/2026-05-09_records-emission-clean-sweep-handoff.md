@@ -24,7 +24,7 @@ Pre-compaction update for the next pickup:
   - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
   - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs`
   - `docs/active/agents/2026-05-08_bounded-edit-surface-handoff.md`
-  - `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-surface-proof-index.md`
+  - `docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`
 - Treat those dirty files as bounded-edit-surface / other-thread work unless
   the user explicitly reassigns them to this record-emission cleanup.
 - If this handoff is dirty after compaction, it is expected: this block was
@@ -40,7 +40,7 @@ Post-compaction refresh:
   - `docs/active/agents/readme.md` includes this handoff in the active index.
   - `docs/active/agents/2026-05-09_records-emission-clean-sweep-handoff.md`
     is the uncommitted handoff.
-  - `docs/workflow/evalnomicon/drafts/2026-05-08-bounded-edit-harness-adapter-plan.md`
+  - `docs/workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md`
     has unrelated bounded-edit planning additions and should be treated as
     other-thread/user work unless explicitly reassigned.
 - Do not let the passive-reader success claim expand into a producer
@@ -123,7 +123,7 @@ The remembered docs were not found under an exact "slash and burn" phrase. The m
   - strongest "clean sweep" planning map
   - key rule: this is not incremental cleanup; it is a clean sweep of file reads/writes in loop execution
   - classifies scheduler, branch registry, node records, runner-result, transition journal fallback reads, and parent identity
-- `docs/workflow/evalnomicon/drafts/prototype1-run-tree-browser-design.md`
+- `docs/workflow/evalnomicon/drafts/observability/run-tree-browser-design.md`
   - companion UI/schema plan
   - `ploke-records` = passive schemas
   - `ploke-tree` = read-only projection

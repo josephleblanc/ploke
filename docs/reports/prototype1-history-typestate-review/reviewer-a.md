@@ -8,11 +8,11 @@ Some local typestate transitions are real and useful, especially `Child<Starting
 
 ## Claims Reviewed
 
-- History is a chain of sealed Blocks, with entries written during a Crown epoch and late observations routed through ingress: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:26`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:42`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:286`.
-- The near-term claim is local tamper-evident, lineage-scoped, transition-checked History: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:74`.
-- Successor admission must verify the sealed block before becoming `Parent<Ruling>`: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:104`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:156`.
-- Advanced states must be hard to construct, transitions should consume prior state, and durable records should be projections of allowed transitions: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:122`, `AGENTS.md:7`.
-- Mutable JSON buffers are not sealed History: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:337`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:613`.
+- History is a chain of sealed Blocks, with entries written during a Crown epoch and late observations routed through ingress: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:26`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:42`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:286`.
+- The near-term claim is local tamper-evident, lineage-scoped, transition-checked History: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:74`.
+- Successor admission must verify the sealed block before becoming `Parent<Ruling>`: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:104`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:156`.
+- Advanced states must be hard to construct, transitions should consume prior state, and durable records should be projections of allowed transitions: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:122`, `AGENTS.md:7`.
+- Mutable JSON buffers are not sealed History: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:337`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:613`.
 
 ## Findings
 
@@ -20,7 +20,7 @@ Some local typestate transitions are real and useful, especially `Child<Starting
 
 There is no concrete `Block<Open>`, `Block<Sealed>`, ingress store, block hash, entries root, previous block hash, or successor admission type in the reviewed Rust modules. `inner::Crown<L>` exists only as an unconstructed private-field token, and `LockBox` is a trait with no implementation in the reviewed path: `crates/ploke-eval/src/cli/prototype1_state/inner.rs:42`, `crates/ploke-eval/src/cli/prototype1_state/inner.rs:54`.
 
-The module docs accurately admit part of this gap: live handoff still uses invocation and ready files, and the concrete Crown box is missing: `crates/ploke-eval/src/cli/prototype1_state/mod.rs:164`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:619`. The stronger draft language around sealed blocks and successor verification is therefore aspirational, not implemented: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:117`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:390`.
+The module docs accurately admit part of this gap: live handoff still uses invocation and ready files, and the concrete Crown box is missing: `crates/ploke-eval/src/cli/prototype1_state/mod.rs:164`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:619`. The stronger draft language around sealed blocks and successor verification is therefore aspirational, not implemented: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:117`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:390`.
 
 Concrete violation: a successor can be recorded as spawned, ready, timed out, or completed through `SuccessorRecord` journal entries without any `Crown<Locked>` or `Block<Sealed>` value existing in memory or on disk. See direct successor record append in `crates/ploke-eval/src/cli/prototype1_process.rs:166`, ready/completion writes in `crates/ploke-eval/src/cli/prototype1_process.rs:306`, and spawn/handoff writes in `crates/ploke-eval/src/cli/prototype1_process.rs:906`.
 
@@ -83,7 +83,7 @@ This is acceptable as a transitional bootstrap file, but it is not equivalent to
 
 ### Medium: The JSONL journal is append-only by API convention, not tamper-evident History
 
-`PrototypeJournal::append` uses `OpenOptions::append` and `sync_data`: `crates/ploke-eval/src/cli/prototype1_state/journal.rs:563`. That gives an append path for normal writers, but entries do not carry payload hashes, previous-entry hashes, block-local ordering hashes, entries roots, or block hashes. The draft requires those for the minimum useful block seal: `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:93`.
+`PrototypeJournal::append` uses `OpenOptions::append` and `sync_data`: `crates/ploke-eval/src/cli/prototype1_state/journal.rs:563`. That gives an append path for normal writers, but entries do not carry payload hashes, previous-entry hashes, block-local ordering hashes, entries roots, or block hashes. The draft requires those for the minimum useful block seal: `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:93`.
 
 A local process can still rewrite `transition-journal.jsonl`; replay can detect some duplicate or impossible phase combinations, but not mutation against a sealed digest.
 

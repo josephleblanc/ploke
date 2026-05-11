@@ -19,7 +19,7 @@ mechanically apply edits.
 
 Related proof index:
 
-- [`2026-05-08-bounded-edit-surface-proof-index.md`](2026-05-08-bounded-edit-surface-proof-index.md)
+- [`proof-index.md`](proof-index.md)
   Maps implementation tests to the formal surface/edit judgments and records
   formal gaps exposed by the tests.
 

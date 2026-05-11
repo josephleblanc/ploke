@@ -25,11 +25,11 @@ Read deeper only when the task touches the relevant concept:
 - current History/Crown/blockchain framing:
   `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`
 - older Crown/authority background:
-  `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+  `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
 - procedure graphs and mixed LLM/mechanized metrics:
-  `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+  `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
 - runtime/artifact graph location:
-  `docs/workflow/evalnomicon/drafts/runtime-artifact-lineage.md`
+  `docs/workflow/evalnomicon/drafts/runtime/artifact-runtime-lineage.md`
 - record inventory:
   `docs/reports/prototype1-record-audit/*.md`
 

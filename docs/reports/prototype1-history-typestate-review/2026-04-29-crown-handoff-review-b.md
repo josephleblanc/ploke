@@ -7,7 +7,7 @@ Date: 2026-04-29
 Reviewed protocol correctness and cross-runtime semantics for Crown, History,
 and successor spawning in the current working tree. Inspected:
 
-- `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+- `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
 - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/inner.rs`
@@ -53,8 +53,8 @@ prior authority epoch.
 
 The draft requires the successor to verify the exact sealed predecessor block
 before unlocking Crown and becoming `Parent<Ruling>`
-(`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:104`,
-`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:118`).
+(`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:104`,
+`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:118`).
 `history.rs` correctly narrows the current claim: live handoff locks a
 lineage-bound `Crown<Locked>` but does not seal or persist a History block, and
 successor validation still consults mutable scheduler/invocation state
@@ -81,7 +81,7 @@ invocation file promote directly to `Parent<Ready>` or future `Parent<Ruling>`.
 ### High: Scheduler state is still authority-adjacent in the handoff gate
 
 The History draft says mutable scheduler JSON is a projection, not authority
-(`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:337`).
+(`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:337`).
 The live validation path still uses `scheduler.last_continuation_decision` as
 the successor gate: `validate_prototype1_successor_node_continuation` loads the
 scheduler, reads the last decision, and accepts when it is `ContinueReady` for
@@ -198,8 +198,8 @@ invocation.
 
 The draft presents `Successor<Admitted>` as the verifier/importer that becomes
 the next `Parent<Ruling>`
-(`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:47`,
-`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:118`).
+(`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:47`,
+`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:118`).
 `history.rs` now accurately says `Successor<Admitted>` is not a live handoff
 gate (`crates/ploke-eval/src/cli/prototype1_state/history.rs:172`,
 `crates/ploke-eval/src/cli/prototype1_state/history.rs:195`). The live

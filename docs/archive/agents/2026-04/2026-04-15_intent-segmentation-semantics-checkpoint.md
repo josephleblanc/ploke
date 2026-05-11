@@ -3,7 +3,7 @@
 - date: 2026-04-15
 - task title: intent segmentation semantics checkpoint
 - task description: refine the `tool_call_intent_segmentation` contract so labeled segments, ambiguous segments, and uncovered regions are represented distinctly and inspectably
-- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_protocol-artifact-persistence-handoff.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+- related planning files: `docs/archive/agents/2026-04/2026-04-15_ploke-protocol-control-note.md`, `docs/archive/agents/2026-04/2026-04-15_protocol-artifact-persistence-handoff.md`, `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
 
 ## What Changed
 

@@ -4,7 +4,7 @@
 > branch/evaluation plan and remains useful background for mechanized metrics,
 > issue selection, and shallow branch policy. It is superseded for runtime-loop
 > semantics by
-> [prototype-1-intervention-loop-v2.md](prototype-1-intervention-loop-v2.md),
+> [loop.md](loop.md),
 > because the parent binary cannot fully evaluate descendants whose source
 > changes are only present after rebuilding and spawning a child/successor
 > binary.
@@ -19,7 +19,7 @@ This prototype is intentionally downstream of the formal procedure framework and
 its later mutable/reflexive extensions. When implementation details drift, use
 these documents as the semantic source of truth:
 
-- [formal-procedure-notation.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/drafts/formal-procedure-notation.md)
+- [formal/procedure-notation.md](../formal/procedure-notation.md)
   defines procedures/protocols as typed state transitions with explicit
   executors, evidential outputs, recording/forwarding rules, and DAG
   composition.
@@ -211,7 +211,7 @@ BranchEvaluationProcedure is where OperationalRunMetrics belongs.
    produced by an intervention-synthesis procedure, not as the procedure
    itself. The relevant procedure/protocol framing is defined in:
 
-   - [formal-procedure-notation.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/drafts/formal-procedure-notation.md)
+   - [formal/procedure-notation.md](../formal/procedure-notation.md)
    - [framework-ext-01.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-01.md)
    - [framework-ext-03.md](/home/brasides/code/ploke/docs/workflow/evalnomicon/chat-history/framework-ext-03.md)
 
@@ -669,5 +669,5 @@ The current code now has the first semantic boundary in place:
 
 Current `ploke-protocol` integration should still be treated as adapter code.
 The canonical semantic boundary for this prototype is the intervention
-synthesis/execution state types above, pending the larger `type-state.md`
+synthesis/execution state types above, pending the larger `../formal/typestate-sketches.md`
 procedure refactor.

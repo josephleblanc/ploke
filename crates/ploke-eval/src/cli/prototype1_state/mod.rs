@@ -483,7 +483,7 @@
 //! combined human and LLM review while this architecture is active. The audit
 //! should compare the actual implementation against the claims above and in
 //! `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`, using
-//! `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+//! `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
 //! as older background where it has not yet been refreshed.
 //! In particular, review private fields, constructor visibility, sealed or
 //! module-private state markers, move-only transitions, and the durable records

@@ -3,7 +3,7 @@
 - date: 2026-04-18
 - task title: ploke-eval canonical artifact set
 - task description: reduced stored artifact policy for the `ploke-eval` rewrite, defining the canonical per-run records, durable attachments, convenience views to eliminate, and the authority surface downstream systems should consult
-- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/archive/agents/2026-04/2026-04-18_ploke-eval-procedure-model.md`, `crates/ploke-eval/src/inner/recon-reports/patch-pipeline.md`, `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md` (historical `2026-04-18_ploke-eval-pipeline-recon` packet is not in this tree; use git history if needed)
+- related planning files: `docs/active/CURRENT_FOCUS.md`, `docs/archive/agents/2026-04/2026-04-18_ploke-eval-procedure-model.md`, `crates/ploke-eval/src/inner/recon-reports/patch-pipeline.md`, `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md` (historical `2026-04-18_ploke-eval-pipeline-recon` packet is not in this tree; use git history if needed)
 
 ## Purpose
 

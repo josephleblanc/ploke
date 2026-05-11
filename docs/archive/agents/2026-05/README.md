@@ -32,6 +32,6 @@ Optional related handoffs (repair links when moves land; same serialization rule
 Moved from [`docs/active/agents/`](../../../active/agents/readme.md) on **2026-05-08** (whole files/trees preserved):
 
 - **`2026-05-07-*` edit-surface thread:** phase reviews (`edit-surface-phase[1-4]-*`), integration slice, backend bridge, resolver extraction, scoring evidence CLI review, loop rerun readiness review.
-- **`2026-05-07-prototype1-edit-surface-*.md`:** handoff and implementation plan for bounded TUI/edit-surface wiring into Prototype 1; the model draft now lives in `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`.
+- **`2026-05-07-prototype1-edit-surface-*.md`:** handoff and implementation plan for bounded TUI/edit-surface wiring into Prototype 1; the model draft now lives in `docs/workflow/evalnomicon/drafts/edit-surface/model.md`.
 - **`2026-05-07-tui-edit-surface-producer-{note,review}.md`** — deterministic parent-side producer notes.
 - **History readiness reviews dated 2026-05-01:** `history-startup-state-review-2026-05-01/`, `single-ruler-readiness-2026-05-01/`, `startup-history-invariant-review-2026-05-01-0955/`.

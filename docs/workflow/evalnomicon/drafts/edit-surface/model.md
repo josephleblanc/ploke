@@ -18,7 +18,7 @@ Related planning files:
 - `crates/ploke-tui/src/parser.rs`
 - `crates/ploke-db/src/helpers.rs`
 - `crates/ploke-core/src/io_types.rs`
-- `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md`
+- `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md`
 - `docs/workflow/evalnomicon/chat-history/framework-ext-01.md`
 - `docs/workflow/evalnomicon/chat-history/framework-ext-02.md`
 - `docs/workflow/evalnomicon/chat-history/framework-ext-03.md`

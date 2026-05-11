@@ -38,7 +38,7 @@ Affected invariant: entries should be written while the runtime has ruling autho
 
 Likewise, `Block<Open>::admit` takes `&mut self`, an `Entry<Proposed>`, and an `ActorRef` at `crates/ploke-eval/src/cli/prototype1_state/history.rs:1692`. It does not require `Parent<Ruling>`, `Crown<Ruling>`, or a policy carrier. It does bind ingress imports to the target block (`crates/ploke-eval/src/cli/prototype1_state/history.rs:1697`), records `ruling_authority` from `BlockCommon` (`crates/ploke-eval/src/cli/prototype1_state/history.rs:1725`), and rejects duplicate entry ids (`crates/ploke-eval/src/cli/prototype1_state/history.rs:1709`), but admission authority is still caller-supplied data.
 
-The implementation docs correctly warn that live `Parent<Ruling>` as the only writer, live append, successor verification, and ingress capture are not yet enforced at `crates/ploke-eval/src/cli/prototype1_state/history.rs:163` and `crates/ploke-eval/src/cli/prototype1_state/history.rs:165`. The handoff doc says the same for live startup, append, successor verification, and genesis absence at `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:177`.
+The implementation docs correctly warn that live `Parent<Ruling>` as the only writer, live append, successor verification, and ingress capture are not yet enforced at `crates/ploke-eval/src/cli/prototype1_state/history.rs:163` and `crates/ploke-eval/src/cli/prototype1_state/history.rs:165`. The handoff doc says the same for live startup, append, successor verification, and genesis absence at `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:177`.
 
 Status: documented-but-not-implemented invariant, with a crate-visible API surface that can be misused.
 
@@ -48,7 +48,7 @@ Affected invariant: History head should be derived from accepted sealed blocks a
 
 `FsBlockStore::append` calls `block.verify_hash()` before writing at `crates/ploke-eval/src/cli/prototype1_state/history.rs:541`, which protects the block's internal hash commitment. It then appends the block and indexes and unconditionally overwrites the lineage head in `heads.json` at `crates/ploke-eval/src/cli/prototype1_state/history.rs:557` and `crates/ploke-eval/src/cli/prototype1_state/history.rs:568`.
 
-There is no compare-and-swap, no check that the appended block height advances the previous head, and no check that the block's parent hashes include the current stored head. A stale or parallel local writer can append a valid sealed block and move the projection head. The code comments explicitly acknowledge this limitation: `head` and `heads.json` are not authenticated inclusion/absence proofs and `append` does not validate a CAS-style lineage-head transition (`crates/ploke-eval/src/cli/prototype1_state/history.rs:414`). The handoff doc also calls `heads.json` a rebuildable projection rather than an authenticated proof at `docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:159`.
+There is no compare-and-swap, no check that the appended block height advances the previous head, and no check that the block's parent hashes include the current stored head. A stale or parallel local writer can append a valid sealed block and move the projection head. The code comments explicitly acknowledge this limitation: `head` and `heads.json` are not authenticated inclusion/absence proofs and `append` does not validate a CAS-style lineage-head transition (`crates/ploke-eval/src/cli/prototype1_state/history.rs:414`). The handoff doc also calls `heads.json` a rebuildable projection rather than an authenticated proof at `docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:159`.
 
 Status: correctly documented as not implemented. It remains a concrete invariant gap before startup admission can rely on the store.
 
@@ -80,15 +80,15 @@ The strongest docs are aligned with the implementation limits:
 - `history.rs` explicitly lists current enforcement and non-enforcement (`crates/ploke-eval/src/cli/prototype1_state/history.rs:155`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:163`).
 - `mod.rs` describes History as a tamper-evident local model, not consensus or judgment proof (`crates/ploke-eval/src/cli/prototype1_state/mod.rs:77`).
 - `history-blocks-v2.md` marks startup admission, consensus, authenticated head-map proofs, and full policy/finality semantics as not implemented (`docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:39`, `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:83`).
-- `prototype1-history-handoff-2026-04-29.md` gives a clear implemented-versus-intended list (`docs/workflow/evalnomicon/drafts/prototype1-history-handoff-2026-04-29.md:163`).
-- `history-blocks-and-crown-authority.md` is labeled older background and says conflicts should resolve in favor of `history.rs` and `history-blocks-v2.md` (`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:3`).
+- `history/handoff-2026-04-29.md` gives a clear implemented-versus-intended list (`docs/workflow/evalnomicon/drafts/history/handoff-2026-04-29.md:163`).
+- `history/crown-authority-background.md` is labeled older background and says conflicts should resolve in favor of `history.rs` and `history-blocks-v2.md` (`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:3`).
 
 Two claims should be read narrowly:
 
 - "At most one valid typestate carrier may hold `Crown<Ruling>`" is presented as a core invariant (`crates/ploke-eval/src/cli/prototype1_state/history.rs:101`), but current constructor visibility allows duplicate carriers inside `prototype1_state`.
 - The block proof language "these claims/evidence were admitted by this authority under this policy" (`docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:52`) is directionally right, but current `block::Claims` does not encode same-block or same-lineage admission.
 
-`runtime-artifact-lineage.md` and `formal-procedure-notation.md` are conceptual drafts. They support the current direction around artifact/runtime provenance and typed procedure states, but they should not be treated as implemented API claims.
+`runtime/artifact-runtime-lineage.md` and `formal/procedure-notation.md` are conceptual drafts. They support the current direction around artifact/runtime provenance and typed procedure states, but they should not be treated as implemented API claims.
 
 ## Recommended Next Patch
 

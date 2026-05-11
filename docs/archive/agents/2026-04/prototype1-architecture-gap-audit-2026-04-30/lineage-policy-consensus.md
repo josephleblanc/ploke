@@ -11,7 +11,7 @@ Primary sources reviewed:
 - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
 - `docs/workflow/evalnomicon/chat-history/history-blocks-v2.md`
-- `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md`
+- `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
 - Adjacent live wiring in `crates/ploke-eval/src/cli/prototype1_process.rs`, `crates/ploke-eval/src/cli/prototype1_state/inner.rs`, `crates/ploke-eval/src/cli/prototype1_state/parent.rs`, and `crates/ploke-eval/src/cli/prototype1_state/backend.rs`.
 
 ## Implemented Invariants
@@ -37,7 +37,7 @@ The runtime/code-surface policy is partly implemented. `SurfaceCommitment` struc
 
 The authenticated multi-lineage store is explicitly deferred. The History module says the store should eventually maintain an authenticated lineage-head map, likely Merkle-Patricia or equivalent, with present and absent proofs; the current `heads.json` projection is not such a proof (`crates/ploke-eval/src/cli/prototype1_state/history.rs:219`). The main module repeats that an authenticated lineage-head map is missing and current code only has local parent links and rebuildable head projections (`crates/ploke-eval/src/cli/prototype1_state/mod.rs:700`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:713`).
 
-Distributed consensus, signatures, and process uniqueness are deferred. The History docs list cryptographic signatures and distributed consensus as not enforced (`crates/ploke-eval/src/cli/prototype1_state/history.rs:242`). The older Crown draft says today's model does not provide distributed consensus, compromised-local-file protection, global authority across unrelated lineages, or OS-process uniqueness (`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:111`). It also says "signed" currently means content-addressed and sealed by the Crown-lock authority transition; cryptographic signing is a later extension (`docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:126`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:151`).
+Distributed consensus, signatures, and process uniqueness are deferred. The History docs list cryptographic signatures and distributed consensus as not enforced (`crates/ploke-eval/src/cli/prototype1_state/history.rs:242`). The older Crown draft says today's model does not provide distributed consensus, compromised-local-file protection, global authority across unrelated lineages, or OS-process uniqueness (`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:111`). It also says "signed" currently means content-addressed and sealed by the Crown-lock authority transition; cryptographic signing is a later extension (`docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:126`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:151`).
 
 Global fork choice/finality is also deferred. The v2 note distinguishes local History from complete History and says future consensus may admit blocks from multiple local rulers; current local Crown blocks should not be described as global finality (`docs/workflow/evalnomicon/chat-history/history-blocks-v2.md:354`). The code reserves multi-parent ancestry by storing `parent_block_hashes` as a list, but states that branch merges and consensus extensions are forward-facing, not implemented finality (`crates/ploke-eval/src/cli/prototype1_state/history.rs:368`).
 

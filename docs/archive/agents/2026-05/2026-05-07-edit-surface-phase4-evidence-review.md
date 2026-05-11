@@ -13,7 +13,7 @@ Context read:
 
 - `docs/archive/agents/2026-05/2026-05-07-edit-surface-implementation-handoff.md`
 - `docs/archive/agents/2026-05/2026-05-07-prototype1-edit-surface-implementation-plan.md`
-- `docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/model.md`
 
 ## Summary
 
@@ -112,7 +112,7 @@ spans, check result, derived artifact id, and later child evidence
 (`2026-05-07-prototype1-edit-surface-implementation-plan.md:355-381`). The
 model also calls out readable/writable grant identifiers or commitments,
 proposal/request/call ids, edit mode, touched spans, hashes, derived artifact,
-and validation result (`docs/workflow/evalnomicon/drafts/2026-05-07-prototype1-edit-surface-model.md:586-598`).
+and validation result (`docs/workflow/evalnomicon/drafts/edit-surface/model.md:586-598`).
 
 The current patch does not persist a grant id/commitment, graph rule digests,
 projection identity, graph bounds digest, edit mode, request/call id, or actual

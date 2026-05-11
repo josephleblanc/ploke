@@ -176,18 +176,18 @@ Risk: recursive selected-branch collection is intentionally broad. It can mark a
 
 The formal procedure draft separates recorded artifacts from forwarded evidence and treats procedure outputs as typed states rather than bare values:
 
-- `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md:90-118`
+- `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md:90-118`
   - Distinguishes target metrics, evidential outputs, and supporting metric states.
-- `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md:120-140`
+- `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md:120-140`
   - Separates `Rec(s)` from `Fwd(s)`.
-- `docs/workflow/evalnomicon/drafts/formal-procedure-notation.md:195-207`
+- `docs/workflow/evalnomicon/drafts/formal/procedure-notation.md:195-207`
   - Merge should preserve branch provenance unless explicitly discarded.
 
 Prototype 1 already has several structural carriers, but selection evidence still lacks one durable joined object that ties a selected child to all evidence classes used or excluded:
 
-- `docs/workflow/evalnomicon/drafts/prototype1-persistence-map-2026-05-03/08-synthesis.md:20-28`
+- `docs/workflow/evalnomicon/drafts/persistence/map-2026-05-03/synthesis.md:20-28`
   - Useful join spine: campaign -> node/branch/runtime -> runner result -> evaluation report -> compared run records -> provider/protocol evidence.
-- `docs/workflow/evalnomicon/drafts/prototype1-persistence-map-2026-05-03/08-synthesis.md:102-112`
+- `docs/workflow/evalnomicon/drafts/persistence/map-2026-05-03/synthesis.md:102-112`
   - Gaps include no single authoritative object tying the IDs and paths together, provider retry evidence only in logs/telemetry, metrics/history preview not reading sealed History blocks, and live sealed blocks appearing as zero-entry handoff authority.
 
 Missing structure for this audit:

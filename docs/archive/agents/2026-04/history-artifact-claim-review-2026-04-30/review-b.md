@@ -29,7 +29,7 @@ Findings
 
 4. Low: docs are mostly honest about the remaining startup gap, but the new comments around `ArtifactLocator` overstate recovery/verification.
 
-   References: `crates/ploke-eval/src/cli/prototype1_state/history.rs:13`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:17`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:60`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:125`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:85`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:183`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:51`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:126`.
+   References: `crates/ploke-eval/src/cli/prototype1_state/history.rs:13`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:17`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:60`, `crates/ploke-eval/src/cli/prototype1_state/history.rs:125`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:85`, `crates/ploke-eval/src/cli/prototype1_state/mod.rs:183`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:51`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:126`.
 
    The higher-level docs correctly say successor sealed-head verification is not yet live. The misleading part is local to the new artifact-claim code: comments such as "recoverable through the configured tree/backend boundary" and "rechecked as the same tree-key commitment" read stronger than the implementation. A reviewer or future caller could easily mistake `verify_with(&ArtifactLocator)` for backend artifact verification.
 
@@ -48,7 +48,7 @@ Claimed or documented:
 - Crown is local mutable History authority, not pid/branch/path/global consensus: `prototype1_state/mod.rs:151`-`181`, `history.rs:136`-`147`.
 - The Crown object does not cross runtimes; the invariant is a shared typed contract plus sealed durable evidence: `history.rs:94`-`107`.
 - Startup admission should require current Artifact plus sealed History admission before entering `Parent<Ruling>`: `history.rs:60`-`64`, `prototype1_state/mod.rs:85`-`97`.
-- A sealed block should be a projection of typed authority transitions, not a caller-assembled status blob: `history.rs:142`-`147`, `docs/workflow/evalnomicon/drafts/history-blocks-and-crown-authority.md:141`-`152`.
+- A sealed block should be a projection of typed authority transitions, not a caller-assembled status blob: `history.rs:142`-`147`, `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md:141`-`152`.
 
 Missing or still caller-discipline:
 

@@ -1,7 +1,7 @@
 # Prototype 1 Metrics Next-Patch Plan
 
 Context read: `AGENTS.md` and
-`docs/workflow/evalnomicon/drafts/prototype1-history-metrics-agent-brief.md`
+`docs/workflow/evalnomicon/drafts/history/metrics-agent-brief.md`
 only.
 
 ## Recommendation
