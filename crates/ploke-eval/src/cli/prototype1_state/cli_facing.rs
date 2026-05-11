@@ -6746,6 +6746,33 @@ fn persisted_prototype1_node_count(campaign_manifest_path: &Path) -> Result<u32,
     Ok(count)
 }
 
+fn reserve_complete_child_budget(
+    policy: &Prototype1SearchPolicy,
+    current_node_count: u32,
+) -> Result<Prototype1ChildBudget, PrepareError> {
+    if current_node_count >= policy.max_total_nodes {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 hard stop before child planning: persisted node count {} has reached max_total_nodes {}",
+                current_node_count, policy.max_total_nodes
+            ),
+        });
+    }
+    let remaining_node_slots = policy.max_total_nodes.saturating_sub(current_node_count);
+    if remaining_node_slots < policy.child_budget.min {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 hard stop before child planning: remaining node slots {} are below required min children {}",
+                remaining_node_slots, policy.child_budget.min
+            ),
+        });
+    }
+    Ok(Prototype1ChildBudget {
+        min: policy.child_budget.min,
+        max: policy.child_budget.max.min(remaining_node_slots),
+    })
+}
+
 struct GenerationCandidateProjection {
     considered: Vec<EvaluationPayload>,
     projection_failures: Vec<SelectionProjectionFailure>,
@@ -7840,7 +7867,17 @@ impl Prototype1StateCommand {
         } else {
             None
         };
-        if let Some(policy) = complete_search_policy.as_ref() {
+        if run_shape.stop_after == Prototype1StateStopAfter::Complete
+            && matches!(
+                run_shape.candidate_generation.path(),
+                CandidateGenerationPath::Legacy
+            )
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
+            });
+        }
+        let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
             let current_node_count = persisted_prototype1_node_count(&manifest_path)?;
             if parent_identity.generation() >= policy.max_generations {
                 return Err(PrepareError::InvalidBatchSelection {
@@ -7851,19 +7888,10 @@ impl Prototype1StateCommand {
                     ),
                 });
             }
-            if current_node_count >= policy.max_total_nodes {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "prototype1 hard stop before child planning: persisted node count {} has reached max_total_nodes {}",
-                        current_node_count, policy.max_total_nodes
-                    ),
-                });
-            }
-        }
-        let plan_child_budget = complete_search_policy
-            .as_ref()
-            .map(|policy| policy.child_budget)
-            .unwrap_or(Prototype1ChildBudget { min: 1, max: 1 });
+            reserve_complete_child_budget(policy, current_node_count)?
+        } else {
+            Prototype1ChildBudget { min: 1, max: 1 }
+        };
         let planned_children = resolve_child_plan(
             &campaign_id,
             &manifest_path,
@@ -7883,7 +7911,7 @@ impl Prototype1StateCommand {
         let planned_child_count = plan.body().children().len();
         let (mut child_budget, mut child_schedule_mode) =
             if let Some(policy) = complete_search_policy.as_ref() {
-                (policy.child_budget, policy.child_schedule_mode)
+                (plan_child_budget, policy.child_schedule_mode)
             } else {
                 // Non-Complete modes intentionally run one child as a debug/inspection slice.
                 (
@@ -9471,6 +9499,57 @@ mod tests {
             CandidateGenerationPath::TuiEditSurface(
                 Prototype1EditSurface::WorkspaceExceptPlokeEval
             )
+        );
+    }
+
+    #[test]
+    fn complete_child_budget_reserves_remaining_node_slots() {
+        let policy = Prototype1SearchPolicy {
+            max_total_nodes: 20,
+            child_budget: Prototype1ChildBudget { min: 2, max: 6 },
+            ..Prototype1SearchPolicy::default()
+        };
+
+        let reserved =
+            reserve_complete_child_budget(&policy, 17).expect("remaining slots should reserve");
+
+        assert_eq!(reserved, Prototype1ChildBudget { min: 2, max: 3 });
+    }
+
+    #[test]
+    fn complete_child_budget_rejects_below_min_remaining_slots() {
+        let policy = Prototype1SearchPolicy {
+            max_total_nodes: 20,
+            child_budget: Prototype1ChildBudget { min: 4, max: 4 },
+            ..Prototype1SearchPolicy::default()
+        };
+
+        let error =
+            reserve_complete_child_budget(&policy, 17).expect_err("remaining slots below min");
+
+        assert!(
+            error
+                .to_string()
+                .contains("remaining node slots 3 are below required min children 4"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn complete_child_budget_rejects_reached_total_node_limit() {
+        let policy = Prototype1SearchPolicy {
+            max_total_nodes: 20,
+            child_budget: Prototype1ChildBudget { min: 2, max: 6 },
+            ..Prototype1SearchPolicy::default()
+        };
+
+        let error = reserve_complete_child_budget(&policy, 20).expect_err("limit reached");
+
+        assert!(
+            error
+                .to_string()
+                .contains("persisted node count 20 has reached max_total_nodes 20"),
+            "{error}"
         );
     }
 
