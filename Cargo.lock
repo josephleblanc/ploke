@@ -6641,6 +6641,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "toml 0.9.5",
 ]
 
 [[package]]
@@ -6713,6 +6714,7 @@ dependencies = [
  "ploke-records",
  "serde",
  "serde_json",
+ "toml 0.9.5",
 ]
 
 [[package]]

@@ -301,6 +301,161 @@ pub enum SurfaceApplyStatusRecord {
     Applied,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestPolicyOriginRecord {
+    Explicit,
+    #[default]
+    Default,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveRequestPolicyRecord<T> {
+    pub value: T,
+    pub origin: RequestPolicyOriginRecord,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestPolicyResponseFormatRecord {
+    None,
+    JsonObject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestPolicyProviderRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_fallbacks: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_parameters: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_collection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zdr: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforce_distillable_text: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantizations: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_price: Option<RequestPolicyMaxPriceRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RequestPolicyMaxPriceRecord {
+    pub prompt_tokens: Option<f64>,
+    pub completion_tokens: Option<f64>,
+    pub request: Option<f64>,
+}
+
+impl Eq for RequestPolicyMaxPriceRecord {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RequestParameterPolicyRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<EffectiveRequestPolicyRecord<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<EffectiveRequestPolicyRecord<i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logit_bias: Option<EffectiveRequestPolicyRecord<Vec<(i32, String)>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<EffectiveRequestPolicyRecord<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_a: Option<EffectiveRequestPolicyRecord<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<EffectiveRequestPolicyRecord<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestObjectiveBindingRecord {
+    pub summary: String,
+    pub target_metric: String,
+    pub writable_intent: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RequestProposalBindingRecord {
+    pub proposal_id: String,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RequestPayloadHashRecord {
+    Known { value: String },
+    Unknown { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestPolicyReceiptRecord {
+    pub schema_version: u32,
+    pub base_artifact_id: ArtifactId,
+    pub objective: RequestObjectiveBindingRecord,
+    #[serde(default)]
+    pub proposal: RequestProposalBindingRecord,
+    pub router: String,
+    pub model: EffectiveRequestPolicyRecord<String>,
+    pub response_format: EffectiveRequestPolicyRecord<RequestPolicyResponseFormatRecord>,
+    pub stop: EffectiveRequestPolicyRecord<Vec<String>>,
+    pub stream: EffectiveRequestPolicyRecord<bool>,
+    pub parameters: RequestParameterPolicyRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<RequestPolicyProviderRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_payload_hash: Option<RequestPayloadHashRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_payload_hash: Option<RequestPayloadHashRecord>,
+    pub client_policy_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SurfaceProposalProducerRecord {
+    NonRouter,
+    Router {
+        request_policy: RequestPolicyReceiptRecord,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratorSourceKindRecord {
+    Named,
+    Inline,
+    Derived,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneratorSurfaceVersionRecord {
+    pub projection_id: String,
+    pub projection_hash: String,
+    pub bounds_digest: String,
+    pub source_kind: GeneratorSourceKindRecord,
+    pub source_id: String,
+    pub source_version: String,
+}
+
 /// Serializable evidence for one checked edit-surface candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceEvidenceRecord {
@@ -315,12 +470,27 @@ pub struct SurfaceEvidenceRecord {
     pub patch_id: PatchId,
     pub source_content_hash: String,
     pub proposed_content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_producer: Option<SurfaceProposalProducerRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator_surface: Option<GeneratorSurfaceVersionRecord>,
     pub touches: Vec<SurfaceTouchRecord>,
     pub touches_digest: HistoryHash,
     pub delta_id: String,
     pub delta_digest: HistoryHash,
     pub check_status: SurfaceCheckStatusRecord,
     pub apply_status: SurfaceApplyStatusRecord,
+}
+
+static DEFAULT_SURFACE_PROPOSAL_PRODUCER: SurfaceProposalProducerRecord =
+    SurfaceProposalProducerRecord::NonRouter;
+
+impl SurfaceEvidenceRecord {
+    pub fn effective_proposal_producer(&self) -> &SurfaceProposalProducerRecord {
+        self.proposal_producer
+            .as_ref()
+            .unwrap_or(&DEFAULT_SURFACE_PROPOSAL_PRODUCER)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,12 +686,51 @@ pub struct SelectionDecisionEntryRecord {
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
-        SelectionDecisionEntryRecord, TraversalCandidateSourceRecord, TraversalEvidenceRecord,
+        GeneratorSourceKindRecord, RequestPayloadHashRecord, RequestPolicyOriginRecord,
+        RequestPolicyResponseFormatRecord, SelectionDecisionEntryRecord, SurfaceEvidenceRecord,
+        SurfaceProposalProducerRecord, TraversalCandidateSourceRecord, TraversalEvidenceRecord,
         TraversalMetricInputsRecord, TraversalStrategyRecord,
     };
+
+    fn minimal_surface_evidence_value() -> Value {
+        json!({
+            "schema_version": 1,
+            "producer_id": "prototype1:edit-surface:v1",
+            "proposal_id": "proposal-1",
+            "run_id": "run-1",
+            "policy": "workspace_except_ploke_eval",
+            "target_relpath": "src/lib.rs",
+            "base": {
+                "artifact_id": "git-tree:source",
+                "hash": "sha256:source"
+            },
+            "after": {
+                "artifact_id": "git-commit:derived",
+                "hash": "sha256:applied"
+            },
+            "patch_id": "patch:1",
+            "source_content_hash": "sha256:source",
+            "proposed_content_hash": "sha256:proposed",
+            "touches": [{
+                "target_relpath": "src/lib.rs",
+                "target_name": "direct-splice:eof-comment",
+                "span_relpath": "src/lib.rs",
+                "start": 12,
+                "end": 12,
+                "base_hash": "sha256:source",
+                "replacement": " println!(\"hi\");",
+                "replacement_hash": "sha256:replacement"
+            }],
+            "touches_digest": "sha256:touches",
+            "delta_id": "surface-delta:sha256:delta",
+            "delta_digest": "sha256:delta",
+            "check_status": "checked",
+            "apply_status": "applied"
+        })
+    }
 
     #[test]
     fn traversal_evidence_accepts_structured_strategy_shape() {
@@ -627,6 +836,203 @@ mod tests {
             member.membership_id.as_ref().map(|id| id.0.as_str()),
             Some(membership_id.as_str())
         );
+    }
+
+    #[test]
+    fn surface_evidence_roundtrips_router_proposal_producer() {
+        let value = json!({
+            "schema_version": 2,
+            "producer_id": "prototype1:router-edit-surface:v1",
+            "proposal_id": "proposal-router-1",
+            "run_id": "run-router-1",
+            "policy": "workspace_except_ploke_eval",
+            "target_relpath": "src/lib.rs",
+            "base": {
+                "artifact_id": "git-tree:source",
+                "hash": "sha256:source"
+            },
+            "after": {
+                "artifact_id": "git-commit:derived",
+                "hash": "sha256:applied"
+            },
+            "patch_id": "patch:router-1",
+            "source_content_hash": "sha256:source",
+            "proposed_content_hash": "sha256:proposed",
+            "proposal_producer": {
+                "kind": "router",
+                "request_policy": {
+                    "schema_version": 1,
+                    "base_artifact_id": "git-tree:source",
+                    "objective": {
+                        "summary": "Resolve invalid candidate generation",
+                        "target_metric": "candidate_generation_validity",
+                        "writable_intent": "semantic_edit_resolution"
+                    },
+                    "proposal": {
+                        "proposal_id": "proposal-router-1",
+                        "run_id": "run-router-1"
+                    },
+                    "router": "openrouter",
+                    "model": {
+                        "value": "openai/gpt-5",
+                        "origin": "explicit"
+                    },
+                    "response_format": {
+                        "value": "json_object",
+                        "origin": "explicit"
+                    },
+                    "stop": {
+                        "value": ["</patch>"],
+                        "origin": "default"
+                    },
+                    "stream": {
+                        "value": false,
+                        "origin": "default"
+                    },
+                    "parameters": {
+                        "max_tokens": {
+                            "value": 2048,
+                            "origin": "explicit"
+                        },
+                        "temperature": {
+                            "value": "0.2",
+                            "origin": "explicit"
+                        },
+                        "seed": {
+                            "value": 7,
+                            "origin": "default"
+                        }
+                    },
+                    "provider": {
+                        "order": ["openai"],
+                        "allow_fallbacks": false,
+                        "require_parameters": true,
+                        "max_price": {
+                            "prompt_tokens": 0.000002,
+                            "completion_tokens": 0.000008,
+                            "request": null
+                        }
+                    },
+                    "request_payload_hash": {
+                        "kind": "known",
+                        "value": "sha256:request"
+                    },
+                    "response_payload_hash": {
+                        "kind": "unknown",
+                        "reason": "response not received"
+                    },
+                    "client_policy_hash": "sha256:client-policy"
+                }
+            },
+            "generator_surface": {
+                "projection_id": "router-generator-projection",
+                "projection_hash": "sha256:projection",
+                "bounds_digest": "sha256:bounds",
+                "source_kind": "derived",
+                "source_id": "router-edit-surface",
+                "source_version": "request-policy-v1"
+            },
+            "touches": [{
+                "target_relpath": "src/lib.rs",
+                "target_name": "direct-splice:eof-comment",
+                "span_relpath": "src/lib.rs",
+                "start": 12,
+                "end": 12,
+                "base_hash": "sha256:source",
+                "replacement": " println!(\"hi\");",
+                "replacement_hash": "sha256:replacement"
+            }],
+            "touches_digest": "sha256:touches",
+            "delta_id": "surface-delta:sha256:delta",
+            "delta_digest": "sha256:delta",
+            "check_status": "checked",
+            "apply_status": "applied"
+        });
+
+        let parsed: SurfaceEvidenceRecord =
+            serde_json::from_value(value.clone()).expect("parse router surface evidence");
+
+        assert_eq!(parsed.schema_version, 2);
+        assert_eq!(
+            parsed
+                .generator_surface
+                .as_ref()
+                .expect("generator surface is present")
+                .source_kind,
+            GeneratorSourceKindRecord::Derived
+        );
+        match parsed.effective_proposal_producer() {
+            SurfaceProposalProducerRecord::Router { request_policy } => {
+                assert_eq!(request_policy.base_artifact_id.0, parsed.base.artifact_id.0);
+                assert_eq!(request_policy.proposal.proposal_id, parsed.proposal_id);
+                assert_eq!(request_policy.proposal.run_id, parsed.run_id);
+                assert_eq!(
+                    request_policy.model.origin,
+                    RequestPolicyOriginRecord::Explicit
+                );
+                assert_eq!(
+                    request_policy.response_format.value,
+                    RequestPolicyResponseFormatRecord::JsonObject
+                );
+                assert_eq!(
+                    request_policy.request_payload_hash,
+                    Some(RequestPayloadHashRecord::Known {
+                        value: "sha256:request".to_string()
+                    })
+                );
+                assert!(request_policy.provider.is_some());
+            }
+            SurfaceProposalProducerRecord::NonRouter => panic!("expected router proposal producer"),
+        }
+
+        let roundtrip = serde_json::to_value(&parsed).expect("serialize router surface evidence");
+        assert_eq!(roundtrip, value);
+    }
+
+    #[test]
+    fn surface_evidence_accepts_missing_default_provenance_fields() {
+        let value = minimal_surface_evidence_value();
+
+        let parsed: SurfaceEvidenceRecord =
+            serde_json::from_value(value.clone()).expect("parse legacy surface evidence");
+
+        assert_eq!(
+            parsed.effective_proposal_producer(),
+            &SurfaceProposalProducerRecord::NonRouter
+        );
+        assert!(parsed.proposal_producer.is_none());
+        assert!(parsed.generator_surface.is_none());
+
+        let roundtrip = serde_json::to_value(&parsed).expect("serialize legacy surface evidence");
+        assert_eq!(roundtrip, value);
+    }
+
+    #[test]
+    fn surface_evidence_preserves_explicit_non_router_proposal_producer() {
+        let mut value = minimal_surface_evidence_value();
+        value
+            .as_object_mut()
+            .expect("surface evidence object")
+            .insert(
+                "proposal_producer".to_string(),
+                json!({ "kind": "non_router" }),
+            );
+
+        let parsed: SurfaceEvidenceRecord =
+            serde_json::from_value(value.clone()).expect("parse explicit non-router evidence");
+
+        assert_eq!(
+            parsed.proposal_producer.as_ref(),
+            Some(&SurfaceProposalProducerRecord::NonRouter)
+        );
+        assert_eq!(
+            parsed.effective_proposal_producer(),
+            &SurfaceProposalProducerRecord::NonRouter
+        );
+
+        let roundtrip =
+            serde_json::to_value(&parsed).expect("serialize explicit non-router evidence");
+        assert_eq!(roundtrip, value);
     }
 
     #[test]

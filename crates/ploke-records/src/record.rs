@@ -8,12 +8,15 @@ use serde::Serialize;
 /// Logical persisted record family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordFamily {
+    ChildPlan,
     SchedulerState,
     SchedulerNode,
     RunnerRequest,
     RunnerResult,
     EvaluationArtifact,
     ProtocolArtifact,
+    RunProfile,
+    RunProfileCommitment,
 }
 
 /// Wire format used by a persisted record family.
@@ -21,6 +24,7 @@ pub enum RecordFamily {
 pub enum RecordFormat {
     Json,
     JsonLines,
+    Toml,
 }
 
 /// Passive record shape that can be serialized by an authority-owning crate.

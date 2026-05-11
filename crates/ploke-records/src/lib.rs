@@ -12,6 +12,7 @@
 
 pub mod branch;
 pub mod channel;
+pub mod child_plan;
 pub mod evaluation;
 pub mod history;
 pub mod identity;
@@ -22,6 +23,7 @@ pub mod playback;
 #[cfg(feature = "protocol")]
 pub mod protocol;
 pub mod record;
+pub mod run_profile;
 pub mod scheduler;
 pub mod selection;
 #[cfg(feature = "tool-contracts")]

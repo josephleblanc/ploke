@@ -12,17 +12,22 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 pub mod browser;
+pub mod graph;
 mod playback;
+pub mod store;
 
+pub use graph::Graph;
 pub use playback::{
     CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,
     coarse_run_playback_from_sealed_history, coarse_run_playback_ref_steps_from_sealed_history,
     fine_run_playback_from_sealed_history, fine_run_playback_ref_steps_from_sealed_history,
     project_coarse_history_spine,
 };
+pub use store::*;
 
 use ploke_records::branch::{BranchLogBody, BranchLogRecord, Prototype1BranchRegistry};
 use ploke_records::channel::{Envelope, ToChild, ToParent};
+use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::SealedBlockRecord;
 use ploke_records::identity::ParentIdentityRecord;
@@ -34,38 +39,9 @@ use ploke_records::protocol::{
     Artifact as ProtocolArtifact, TOOL_CALL_INTENT_SEGMENTATION, TOOL_CALL_REVIEW,
     TOOL_CALL_SEGMENT_REVIEW,
 };
+use ploke_records::run_profile::{RunProfileCommitmentRecord, RunProfileRecord};
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, SchedulerStateRecord};
 use serde::{Deserialize, Serialize};
-
-/// In-memory inputs for one run-forest projection.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RunForestInput {
-    pub scheduler: SchedulerStateRecord,
-    #[serde(default)]
-    pub node_records: Vec<NodeRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_identity: Option<ParentIdentityRecord>,
-    #[serde(default)]
-    pub successor_ready: Vec<SuccessorReadyRecord>,
-    #[serde(default)]
-    pub successor_completion: Vec<SuccessorCompletionRecord>,
-    #[serde(default)]
-    pub passive_evidence: PassiveEvidence,
-}
-
-/// Typed records loaded for one Prototype 1 run root.
-///
-/// This is a read-only record carrier for projection crates. It does not make
-/// scheduler sidecars authoritative and it does not interpret sealed History;
-/// callers choose the projection they need from the same loaded record set.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RunRecordSet {
-    pub forest_input: RunForestInput,
-    #[serde(default)]
-    pub history_blocks: Vec<SealedBlockRecord>,
-    #[serde(default)]
-    pub transition_journal: TransitionJournal,
-}
 
 /// UI-facing forest assembled from passive records.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -378,8 +354,10 @@ impl FsRunStore {
             transition_journal: self.load_transition_journal_evidence()?,
             history: self.load_history_evidence()?,
             channel_envelopes: self.load_channel_evidence()?,
+            child_plans: self.load_child_plan_evidence()?,
             evaluations: self.load_evaluation_evidence()?,
             protocol_artifacts: self.load_protocol_artifacts_evidence()?,
+            run_profile: self.load_run_profile_evidence()?,
         })
     }
 
@@ -498,16 +476,10 @@ impl FsRunStore {
                         evidence.sealed_block_count += 1;
                         evidence.admitted_entry_count += record.entries.len();
                     }
-                    Err(_) => match serde_json::from_str::<serde_json::Value>(&line) {
-                        Ok(value) => {
-                            evidence.record_parse_error_count += 1;
-                            if let Some(entries) = value.get("entries").and_then(|v| v.as_array()) {
-                                evidence.sealed_block_count += 1;
-                                evidence.admitted_entry_count += entries.len();
-                            }
-                        }
-                        Err(_) => evidence.json_parse_error_count += 1,
-                    },
+                    Err(source) if source.is_data() => {
+                        evidence.record_parse_error_count += 1;
+                    }
+                    Err(_) => evidence.json_parse_error_count += 1,
                 }
             }
         }
@@ -549,6 +521,31 @@ impl FsRunStore {
         }
 
         Ok(Some(evidence))
+    }
+
+    fn load_child_plan_evidence(&self) -> Result<Option<ChildPlanEvidence>, FsRunStoreError> {
+        let dir = self.run_root.join("messages").join("child-plan");
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+
+        let mut summary = ChildPlanSummary::default();
+        let mut index = BTreeMap::new();
+        for path in sorted_json_files(&dir)? {
+            summary.file_count += 1;
+            let plan = self.read_json::<ChildPlanRecord>(&path)?;
+            summary.parsed_count += 1;
+            summary.child_count += plan.children.len();
+            summary.children_with_surface_count += plan
+                .children
+                .iter()
+                .filter(|child| child.surface.is_some())
+                .count();
+            summary.rejected_surface_attempt_count += plan.rejected_surface_attempts.len();
+            index.insert(plan.parent_node_id.as_str().to_owned(), plan);
+        }
+
+        Ok(Some(ChildPlanEvidence { summary, index }))
     }
 
     pub fn load_evaluation_evidence(&self) -> Result<Option<EvaluationEvidence>, FsRunStoreError> {
@@ -605,6 +602,30 @@ impl FsRunStore {
         Ok(Some(ProtocolArtifactsEvidence { summary, index }))
     }
 
+    fn load_run_profile_evidence(&self) -> Result<Option<RunProfileEvidence>, FsRunStoreError> {
+        let profile_path = self.run_root.join("run-profile.toml");
+        let commitment_path = self.run_root.join("run-profile.commitment.json");
+        if !profile_path.is_file() && !commitment_path.is_file() {
+            return Ok(None);
+        }
+
+        let profile = if profile_path.is_file() {
+            Some(self.read_toml::<RunProfileRecord>(&profile_path)?)
+        } else {
+            None
+        };
+        let commitment = if commitment_path.is_file() {
+            Some(self.read_json::<RunProfileCommitmentRecord>(&commitment_path)?)
+        } else {
+            None
+        };
+
+        Ok(Some(RunProfileEvidence {
+            profile,
+            commitment,
+        }))
+    }
+
     fn read_json<T>(&self, path: &Path) -> Result<T, FsRunStoreError>
     where
         T: for<'de> Deserialize<'de>,
@@ -614,6 +635,20 @@ impl FsRunStore {
             source,
         })?;
         serde_json::from_slice(&bytes).map_err(|source| FsRunStoreError::Json {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    fn read_toml<T>(&self, path: &Path) -> Result<T, FsRunStoreError>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let source_text = fs::read_to_string(path).map_err(|source| FsRunStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str(&source_text).map_err(|source| FsRunStoreError::Toml {
             path: path.to_path_buf(),
             source,
         })
@@ -708,6 +743,10 @@ pub enum FsRunStoreError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    Toml {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
     JsonLine {
         path: PathBuf,
         line_number: usize,
@@ -722,6 +761,9 @@ impl fmt::Display for FsRunStoreError {
                 write!(formatter, "failed to read {}: {source}", path.display())
             }
             Self::Json { path, source } => {
+                write!(formatter, "failed to parse {}: {source}", path.display())
+            }
+            Self::Toml { path, source } => {
                 write!(formatter, "failed to parse {}: {source}", path.display())
             }
             Self::JsonLine {
@@ -745,6 +787,7 @@ impl Error for FsRunStoreError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Json { source, .. } => Some(source),
+            Self::Toml { source, .. } => Some(source),
             Self::JsonLine { source, .. } => Some(source),
         }
     }
@@ -992,129 +1035,6 @@ fn attach_successor_completion(
             evidence,
         ));
     }
-}
-
-/// Passive evidence counts loaded beside the scheduler tree.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct PassiveEvidence {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_registry: Option<BranchRegistryEvidence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transition_journal: Option<JsonlEvidence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub history: Option<HistoryEvidence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_envelopes: Option<ChannelEvidence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evaluations: Option<EvaluationEvidence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
-}
-
-/// Typed transition journal loaded in append order from `transition-journal.jsonl`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct TransitionJournal {
-    pub entries: Vec<JsonlRecord<JournalEntry>>,
-}
-
-impl TransitionJournal {
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, JsonlRecord<JournalEntry>> {
-        self.entries.iter()
-    }
-}
-
-/// One parsed JSONL record with its source line preserved.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct JsonlRecord<T> {
-    pub line_number: usize,
-    pub record: T,
-}
-
-/// Counts from a passive Prototype 1 branch registry.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BranchRegistryEvidence {
-    pub source_node_count: usize,
-    pub branch_count: usize,
-    pub active_target_count: usize,
-    #[serde(default)]
-    pub record_count: usize,
-    #[serde(default)]
-    pub registry_snapshot_count: usize,
-    #[serde(default)]
-    pub parent_comparison_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_campaign_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_recorded_at: Option<String>,
-}
-
-/// Counts from a JSONL evidence file parsed as passive records.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct JsonlEvidence {
-    pub line_count: usize,
-    pub parsed_count: usize,
-    pub parse_error_count: usize,
-}
-
-/// Counts from passive History block storage.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HistoryEvidence {
-    pub line_count: usize,
-    pub sealed_block_count: usize,
-    pub admitted_entry_count: usize,
-    pub record_parse_error_count: usize,
-    pub json_parse_error_count: usize,
-}
-
-/// Counts from passive runtime channel envelope files.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ChannelEvidence {
-    pub file_count: usize,
-    pub line_count: usize,
-    pub parsed_count: usize,
-    pub parse_error_count: usize,
-}
-
-/// Read-only typed evidence loaded from evaluation artifacts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct EvaluationEvidence {
-    pub summary: EvaluationArtifactSummary,
-    pub index: BTreeMap<String, EvaluationArtifact>,
-}
-
-/// Counts from persisted evaluation artifacts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EvaluationArtifactSummary {
-    pub file_count: usize,
-    pub parsed_count: usize,
-    pub keep_count: usize,
-    pub reject_count: usize,
-}
-
-/// Read-only typed evidence loaded from protocol artifacts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ProtocolArtifactsEvidence {
-    pub summary: ProtocolArtifactSummary,
-    pub index: BTreeMap<String, ProtocolArtifact>,
-}
-
-/// Counts from persisted protocol artifacts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProtocolArtifactSummary {
-    pub file_count: usize,
-    pub parsed_count: usize,
-    pub intent_segmentation_count: usize,
-    pub review_count: usize,
-    pub segment_review_count: usize,
-    pub typed_payload_count: usize,
 }
 
 /// Stable node key used by tree projections.
@@ -1988,7 +1908,16 @@ mod tests {
                 .as_ref()
                 .expect("history evidence")
                 .admitted_entry_count,
-            2
+            0
+        );
+        assert_eq!(
+            forest
+                .passive_evidence
+                .history
+                .as_ref()
+                .expect("history evidence")
+                .record_parse_error_count,
+            1
         );
         assert_eq!(
             forest
@@ -2151,6 +2080,125 @@ mod tests {
         assert_eq!(records.forest_input.scheduler.nodes.len(), 1);
         assert_eq!(records.history_blocks.len(), 1);
         assert_eq!(records.transition_journal.len(), 1);
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn fs_run_store_loads_run_profile_evidence() {
+        let root = temp_run_root("run-profile");
+        fs::create_dir_all(&root).expect("create run root");
+
+        write_json(
+            &root.join("scheduler.json"),
+            &scheduler(vec![node("root", None, NodeStatusRecord::Succeeded)]),
+        );
+        fs::write(
+            root.join("run-profile.toml"),
+            r#"
+schema_version = "prototype1-run-profile.v1"
+name = "synthetic-run-profile"
+
+[storage]
+worktree_root = "~/.ploke-eval/worktrees"
+
+[target]
+dataset_key = "ripgrep"
+instance = "BurntSushi__ripgrep-2209"
+
+[search]
+max_generations = 3
+max_total_nodes = 12
+children = { min = 2, max = 4 }
+schedule = "full-batch"
+stop_on_first_keep = false
+require_keep_for_continuation = true
+explore_from_rejected = true
+
+[generation]
+source = "edit-surface"
+surface = "workspace-except-ploke-eval"
+
+[selection]
+strategy = "history-score-child-prop"
+evidence = "operational-and-protocol"
+seed = 42
+
+[execution]
+stop_after = "complete"
+trace_jsonl = "auto"
+debug_tools = true
+"#,
+        )
+        .expect("write profile");
+        write_json(
+            &root.join("run-profile.commitment.json"),
+            &serde_json::json!({
+                "schema_version": "prototype1-run-profile-commitment.v1",
+                "profile_path": root.join("run-profile.toml"),
+                "sha256": "0123456789abcdef",
+                "source_path": "/tmp/profiles/synthetic-run-profile.toml",
+                "admitted_at": "2026-05-11T12:00:00Z"
+            }),
+        );
+
+        let records = FsRunStore::new(&root)
+            .load_record_set()
+            .expect("load record set");
+        let run_profile = records
+            .forest_input
+            .passive_evidence
+            .run_profile
+            .as_ref()
+            .expect("run profile evidence");
+        let profile = run_profile.profile.as_ref().expect("profile record");
+        let commitment = run_profile.commitment.as_ref().expect("commitment record");
+
+        assert_eq!(profile.name, "synthetic-run-profile");
+        assert_eq!(profile.search.max_generations, 3);
+        assert_eq!(profile.selection.seed, 42);
+        assert_eq!(commitment.sha256, "0123456789abcdef");
+        assert_eq!(commitment.profile_path, root.join("run-profile.toml"));
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn fs_run_store_loads_child_plan_evidence() {
+        let root = temp_run_root("child-plan");
+        let child_plan_dir = root.join("messages").join("child-plan");
+        fs::create_dir_all(&child_plan_dir).expect("create child-plan dir");
+
+        write_json(
+            &root.join("scheduler.json"),
+            &scheduler(vec![node("root", None, NodeStatusRecord::Succeeded)]),
+        );
+        let child_plan_path = child_plan_dir.join("root.json");
+        fs::write(
+            &child_plan_path,
+            minimal_child_plan_json(&child_plan_path).to_string(),
+        )
+        .expect("write child-plan");
+
+        let records = FsRunStore::new(&root)
+            .load_record_set()
+            .expect("load record set");
+        let child_plans = records
+            .forest_input
+            .passive_evidence
+            .child_plans
+            .as_ref()
+            .expect("child-plan evidence");
+
+        assert_eq!(child_plans.summary.file_count, 1);
+        assert_eq!(child_plans.summary.parsed_count, 1);
+        assert_eq!(child_plans.summary.child_count, 1);
+        assert_eq!(child_plans.summary.children_with_surface_count, 0);
+        assert_eq!(child_plans.summary.rejected_surface_attempt_count, 0);
+        let plan = child_plans.index.get("root").expect("root child plan");
+        assert_eq!(plan.parent_node_id.as_str(), "root");
+        assert_eq!(plan.child_generation, 1);
+        assert_eq!(plan.children[0].node.node_id.as_str(), "child");
 
         fs::remove_dir_all(root).expect("remove temp run");
     }
@@ -2535,6 +2583,67 @@ mod tests {
             "body": "ready"
         })
         .to_string()
+    }
+
+    fn minimal_child_plan_json(message_path: &Path) -> serde_json::Value {
+        serde_json::json!({
+            "message": message_path.to_string_lossy(),
+            "parent_node_id": "root",
+            "child_generation": 1,
+            "children": [{
+                "node": {
+                    "schema_version": "prototype1-treatment-node.v1",
+                    "node_id": "child",
+                    "parent_node_id": "root",
+                    "generation": 1,
+                    "instance_id": "instance-child",
+                    "source_state_id": "source-child",
+                    "branch_id": "branch-child",
+                    "candidate_id": "candidate-child",
+                    "target_relpath": "src/lib.rs",
+                    "node_dir": "/tmp/prototype1/nodes/child",
+                    "workspace_root": "/tmp/worktrees/child",
+                    "binary_path": "/tmp/worktrees/child/target/debug/ploke",
+                    "runner_request_path": "/tmp/prototype1/nodes/child/runner-request.json",
+                    "runner_result_path": "/tmp/prototype1/nodes/child/runner-result.json",
+                    "status": "planned",
+                    "created_at": "2026-05-11T12:00:00Z",
+                    "updated_at": "2026-05-11T12:01:00Z"
+                },
+                "request": {
+                    "schema_version": "prototype1-runner-request.v1",
+                    "campaign_id": "campaign-1",
+                    "node_id": "child",
+                    "generation": 1,
+                    "instance_id": "instance-child",
+                    "source_state_id": "source-child",
+                    "branch_id": "branch-child",
+                    "target_relpath": "src/lib.rs",
+                    "workspace_root": "/tmp/worktrees/child",
+                    "binary_path": "/tmp/worktrees/child/target/debug/ploke",
+                    "stop_on_error": false,
+                    "runner_args": ["prototype1", "runner"]
+                },
+                "resolved": {
+                    "instance_id": "instance-child",
+                    "source_state_id": "source-child",
+                    "parent_branch_id": "branch-root",
+                    "target_relpath": "src/lib.rs",
+                    "source_content": "fn main() {}",
+                    "source_content_hash": "sha256:source",
+                    "selected_branch_id": "branch-child",
+                    "branch": {
+                        "branch_id": "branch-child",
+                        "candidate_id": "candidate-child",
+                        "branch_label": "candidate-child",
+                        "synthesized_spec_id": "spec-child",
+                        "proposed_content": "fn main() { println!(\"child\"); }",
+                        "proposed_content_hash": "sha256:proposed",
+                        "status": "synthesized"
+                    }
+                }
+            }]
+        })
     }
 
     fn write_json(path: &Path, value: &impl Serialize) {

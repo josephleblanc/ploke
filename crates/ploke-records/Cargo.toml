@@ -18,3 +18,4 @@ tool-contracts = ["dep:ploke-tui"]
 [dev-dependencies]
 serde_json.workspace = true
 serde_path_to_error = "0.1"
+toml.workspace = true

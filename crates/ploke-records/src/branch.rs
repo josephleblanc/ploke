@@ -111,7 +111,6 @@ pub struct ResolvedTreatmentBranch {
     pub target_relpath: PathBuf,
     pub source_content: String,
     pub source_content_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_branch_id: Option<String>,
     pub branch: TreatmentBranchNode,
 }
@@ -257,6 +256,32 @@ mod tests {
         let record: Prototype1BranchRegistry = serde_json::from_value(json).unwrap();
         assert!(record.source_nodes.is_empty());
         assert!(record.active_targets.is_empty());
+    }
+
+    #[test]
+    fn resolved_treatment_branch_preserves_null_selected_branch_id() {
+        let json = serde_json::json!({
+            "instance_id": "instance-1",
+            "source_state_id": "source-1",
+            "target_relpath": "src/lib.rs",
+            "source_content": "fn main() {}",
+            "source_content_hash": "sha256:source",
+            "selected_branch_id": null,
+            "branch": {
+                "branch_id": "branch-child",
+                "candidate_id": "candidate-1",
+                "patch_id": "patch:attempt-1",
+                "branch_label": "candidate-1",
+                "synthesized_spec_id": "spec-1",
+                "proposed_content": "fn main() { println!(\"hi\"); }",
+                "proposed_content_hash": "sha256:proposed",
+                "status": "synthesized"
+            }
+        });
+
+        let record: ResolvedTreatmentBranch = serde_json::from_value(json.clone()).unwrap();
+        assert!(record.selected_branch_id.is_none());
+        assert_eq!(serde_json::to_value(record).unwrap(), json);
     }
 
     #[test]

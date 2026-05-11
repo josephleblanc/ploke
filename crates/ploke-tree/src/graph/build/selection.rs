@@ -1,0 +1,259 @@
+#[path = "selection/membership.rs"]
+mod membership;
+
+#[cfg(test)]
+#[path = "selection/tests.rs"]
+mod tests;
+
+use ploke_records::history::{
+    AdmittedEntryRecord, SelectionDecisionEntryRecord, TraversalCandidateSourceRecord,
+};
+use ploke_records::ids::CandidateId;
+
+use crate::graph::{
+    CandidateBranchNode, CandidateMembershipKey, CandidateMembershipNode, CandidateNode,
+    CandidateSource, EvidenceKind, EvidenceSubject, GraphWarningKind, SelectionNode,
+};
+
+use super::Builder;
+
+impl Builder {
+    pub(super) fn ingest_selection(
+        &mut self,
+        entry: &AdmittedEntryRecord,
+        selection: &SelectionDecisionEntryRecord,
+    ) {
+        self.attach_evidence(
+            EvidenceSubject::Selection(entry.core.entry_id.clone()),
+            EvidenceKind::SelectionDecision,
+            Vec::new(),
+        );
+
+        let candidate_set_root = selection
+            .candidate_set
+            .as_ref()
+            .map(|candidate_set| candidate_set.root.clone());
+        let selection_node = SelectionNode {
+            entry_id: entry.core.entry_id.clone(),
+            procedure_or_policy: selection.procedure_or_policy.clone(),
+            scope: selection.scope.clone(),
+            selected_candidate: selection.selected_candidate.clone(),
+            selected_occurrence_id: selection.selected_occurrence_id.clone(),
+            selected_membership_id: selection.selected_membership_id.clone(),
+            candidate_set_root: candidate_set_root.clone(),
+            considered_count: selection.considered.len(),
+            projection_failure_count: selection.projection_failures.len(),
+            decision_outcome: selection.decision.outcome,
+        };
+        self.graph
+            .selections
+            .selections
+            .insert(entry.core.entry_id.clone(), selection_node);
+
+        let candidate_set = selection.candidate_set.as_ref();
+        let memberships = candidate_set.map(|candidate_set| candidate_set.memberships.as_slice());
+        if let Some(memberships) = memberships
+            && memberships.len() != selection.considered.len()
+        {
+            self.warn(
+                GraphWarningKind::CandidateSetMembershipCountMismatch,
+                format!(
+                    "selection entry {} considered={} memberships={}",
+                    entry.core.entry_id.0,
+                    selection.considered.len(),
+                    memberships.len()
+                ),
+            );
+        }
+
+        if let Some(candidate_set) = candidate_set {
+            for member in &candidate_set.memberships {
+                if let Some(membership_id) = member.membership_id.clone() {
+                    let key = CandidateMembershipKey {
+                        candidate_set_root: candidate_set.root.clone(),
+                        membership_id: membership_id.clone(),
+                    };
+                    let node = CandidateMembershipNode {
+                        membership_id: membership_id.clone(),
+                        candidate_set_root: candidate_set.root.clone(),
+                        occurrence_id: member.occurrence_id.clone(),
+                        candidate_subject: member.candidate.clone(),
+                        selection_entry_id: entry.core.entry_id.clone(),
+                        payload_hash: member.payload_hash.0.clone(),
+                    };
+                    if self.graph.candidates.memberships.contains_key(&key) {
+                        self.warn(
+                            GraphWarningKind::DuplicateCandidateMembershipId,
+                            format!(
+                                "selection entry {} candidate_set repeats membership_id {}",
+                                entry.core.entry_id.0, membership_id.0
+                            ),
+                        );
+                    } else {
+                        self.graph.candidates.memberships.insert(key, node);
+                    }
+                }
+            }
+        }
+
+        let selected_membership_seen =
+            selection
+                .selected_membership_id
+                .as_ref()
+                .is_none_or(|selected| {
+                    memberships
+                        .unwrap_or(&[])
+                        .iter()
+                        .any(|member| member.membership_id.as_ref() == Some(selected))
+                });
+        let selected = membership::Selected::from_selection(selection);
+        for (index, payload) in selection.considered.iter().enumerate() {
+            let source = selection
+                .considered_sources
+                .get(index)
+                .map(|source| match source {
+                    TraversalCandidateSourceRecord::History => CandidateSource::History,
+                    TraversalCandidateSourceRecord::CurrentGeneration => {
+                        CandidateSource::CurrentGeneration
+                    }
+                });
+            let membership =
+                memberships.and_then(|memberships| {
+                    match membership::for_payload(payload, Some(&selected), memberships) {
+                        membership::Resolution::Matched(member) => Some(member),
+                        membership::Resolution::Missing => {
+                            self.warn(
+                                GraphWarningKind::CandidateSetMembershipMissingForPayload,
+                                format!(
+                                    "selection entry {} payload_index={} candidate {} has no matching candidate_set membership",
+                                    entry.core.entry_id.0, index, payload.candidate.value
+                                ),
+                            );
+                            None
+                        }
+                        membership::Resolution::Ambiguous {
+                            matching_memberships,
+                        } => {
+                            self.warn(
+                                GraphWarningKind::CandidateSetMembershipAmbiguousForPayload,
+                                format!(
+                                    "selection entry {} payload_index={} candidate {} matches {} candidate_set memberships; membership not attached",
+                                    entry.core.entry_id.0, index, payload.candidate.value, matching_memberships
+                                ),
+                            );
+                            None
+                        }
+                    }
+                });
+            let coordinate = payload
+                .sealed_evidence
+                .as_ref()
+                .map(|evidence| &evidence.coordinate);
+            let artifact_after = payload.artifact.as_ref().and_then(|artifact| {
+                artifact
+                    .resolved
+                    .branch
+                    .derived_artifact_id
+                    .clone()
+                    .or_else(|| {
+                        artifact
+                            .surface
+                            .as_ref()
+                            .map(|surface| surface.after.artifact_id.clone())
+                    })
+            });
+            if let Some(artifact_id) = artifact_after.as_ref() {
+                self.observe_artifact_id(artifact_id);
+            }
+            let patch_id = payload.artifact.as_ref().and_then(|artifact| {
+                artifact.resolved.branch.patch_id.clone().or_else(|| {
+                    artifact
+                        .surface
+                        .as_ref()
+                        .map(|surface| surface.patch_id.clone())
+                })
+            });
+
+            let evidence_id = self.attach_evidence(
+                EvidenceSubject::Candidate {
+                    selection_entry_id: entry.core.entry_id.clone(),
+                    payload_index: index,
+                },
+                EvidenceKind::CandidatePayload,
+                payload.source_refs.clone(),
+            );
+            if let Some(sealed_evidence) = payload.sealed_evidence.as_ref() {
+                for branch in &sealed_evidence.branches {
+                    self.graph.candidates.branches.push(CandidateBranchNode {
+                        selection_entry_id: entry.core.entry_id.clone(),
+                        payload_index: index,
+                        branch_id: branch.branch_id.clone(),
+                        candidate_id: branch.candidate_id.clone().map(CandidateId),
+                        source_state_id: branch.source_state_id.clone(),
+                        evidence: vec![evidence_id],
+                    });
+                }
+            }
+
+            self.graph.candidates.candidates.push(CandidateNode {
+                selection_entry_id: entry.core.entry_id.clone(),
+                payload_index: index,
+                subject: payload.candidate.clone(),
+                source,
+                occurrence_id: membership.and_then(|member| member.occurrence_id.clone()),
+                membership_id: membership.and_then(|member| member.membership_id.clone()),
+                membership_key: membership.and_then(|member| {
+                    member
+                        .membership_id
+                        .clone()
+                        .zip(candidate_set_root.clone())
+                        .map(
+                            |(membership_id, candidate_set_root)| CandidateMembershipKey {
+                                candidate_set_root,
+                                membership_id,
+                            },
+                        )
+                }),
+                node_id: coordinate
+                    .map(|coordinate| coordinate.node_id.clone())
+                    .or_else(|| {
+                        payload
+                            .selection_input
+                            .as_ref()
+                            .map(|input| input.candidate.node_id.clone())
+                    }),
+                branch_id: coordinate
+                    .and_then(|coordinate| coordinate.branch_id.clone())
+                    .or_else(|| {
+                        payload
+                            .selection_input
+                            .as_ref()
+                            .map(|input| input.candidate.branch_id.clone())
+                    }),
+                generation: coordinate
+                    .and_then(|coordinate| coordinate.generation)
+                    .or_else(|| {
+                        payload
+                            .selection_input
+                            .as_ref()
+                            .map(|input| input.candidate.generation)
+                    }),
+                primary_runtime_id: coordinate
+                    .and_then(|coordinate| coordinate.primary_runtime_id.clone()),
+                artifact_after,
+                patch_id,
+                evidence: vec![evidence_id],
+            });
+        }
+
+        if !selected_membership_seen {
+            self.warn(
+                GraphWarningKind::SelectedMembershipMissing,
+                format!(
+                    "selection entry {} selected_membership_id is absent from candidate_set",
+                    entry.core.entry_id.0
+                ),
+            );
+        }
+    }
+}

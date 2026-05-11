@@ -59,6 +59,10 @@ History.
   - typed transition journal entries
 - `ploke-tree::FsRunStore::load_record_set()` is the filesystem entry point
   for that carrier.
+- `ploke-tree::graph::Graph` is now the first read-side graph/index boundary
+  over `RunRecordSet`. Its first implemented layer indexes sealed History
+  lineages, blocks, admitted entries, selection decisions, candidate
+  memberships, artifact/runtime refs, and typed evidence attachments.
 - `ploke-egui::import::graph_from_run_root()` now calls
   `FsRunStore::load_record_set()` and builds `Graph` from the loaded carrier.
 - `ploke-egui::import::graph_from_run_records()` takes `&RunRecordSet`.
@@ -95,7 +99,7 @@ ploke-egui
 `ploke-tree-browser` is only a compatibility facade over `ploke_tree::browser`.
 Do not add new semantics there.
 
-The next graph design should promote the stable read-side object into
+The graph design has started promoting the stable read-side object into
 `ploke-tree` rather than continuing to make `ploke-egui` the only owner of
 semantic graph structure. `ploke-egui` may keep a view graph or adapter, but it
 should not be the only crate that can step through the loop graph. The read-side
@@ -104,9 +108,74 @@ research analysis.
 
 The current `ploke-tree::browser::RunExecutionGraph` is evidence that a partial
 graph spine already exists. The remaining problem is not "no graph exists"; it
-is that the graph is split between browser projection and egui import/view
-logic, and full History-spined joins/evidence attachment are not yet
-consolidated into one read-side object.
+is that the graph is split between browser projection, egui import/view logic,
+and the new `ploke-tree::graph::Graph` boundary. The next consolidation step is
+to move semantic consumers toward `ploke-tree::graph::Graph` and keep browser
+or egui DTOs as projections.
+
+## Graph Content Model
+
+The graph is not a mirror of every persisted file family. It is a small
+semantic graph with a larger typed evidence index.
+
+The core graph object should model:
+
+- `Lineage`: the History authority coordinate. A lineage is not a git branch,
+  worktree path, process id, runtime id, or Artifact identity.
+- `HistoryBlock` / authority epoch: one sealed Crown epoch for one lineage,
+  keyed by block hash, block id, lineage id, lineage-local height, parent block
+  hashes, opening authority, ruling authority, surface commitment, active
+  artifact, and selected successor.
+- `HistoryEntry`: a provenance-bearing fact admitted into one block. The entry
+  preserves subject, procedure/policy, executor, observer, recorder, proposer,
+  admitting authority, ruling authority, operational environment, input/output
+  refs, payload ref/hash, and payload kind.
+- `Artifact`: recoverable artifact identity from History refs, backend/tree
+  commitments, or shared passive artifact ids. Worktree paths and branch names
+  are handles, not semantic identity.
+- `ArtifactSurface` / `SurfaceCommitment`: the partitioned immutable/mutated/
+  ambient surface commitments that constrain successor admission and explain
+  artifact transitions.
+- `Runtime`: a concrete execution hydrated from an Artifact. Runtime role is a
+  role occurrence (`Parent`, `Child`, `Successor`), not a permanent process or
+  path label.
+- `OperationCoordinate`: generator Runtime plus target Artifact or surface.
+  This is the provenance coordinate for patch generation; git ancestry alone
+  cannot recover the generator.
+- `PatchAttempt` / `Patch` / `SurfaceDelta`: the attempted or applied edit that
+  derives one Artifact from another.
+- `CandidateOccurrence`: one observed candidate in a source class such as
+  current generation or previously admitted History.
+- `CandidateSet` / `CandidateMembership`: the authenticated universe considered
+  by one selection decision. Membership and occurrence identity must not be
+  collapsed into a bare child node id.
+- `SelectionDecision`: the sealed decision over a candidate universe, including
+  selected occurrence/membership when present, ordered considered payloads,
+  candidate-set root, traversal evidence, decision outcome, and projection
+  failures.
+- `Handoff` / hydration: transition from selected Artifact to successor
+  Runtime and then to the next `Parent<Ruling>` after startup validation.
+- `Ingress`: late/backchannel observations outside a sealed epoch until they
+  are imported under an explicit policy.
+
+Record families then attach to those graph objects as typed evidence:
+
+- `agent-turn-trace.json` and `agent-turn-summary.json` attach to Runtime turns
+  or operations as behavioral evidence.
+- tool calls/results attach to operations, provider attempts, evaluations, or
+  runtime turns.
+- provider attempts, retries, timeouts, and provider failures attach to LLM
+  attempts inside a runtime turn or operation.
+- protocol artifacts attach to operations, evaluations, or inspector refs.
+- branch/evaluation/metrics records attach to candidate, evaluation, selection,
+  or comparison relations.
+- scheduler/node/request/result mirrors provide labels, paths, status, and
+  recovery context; they do not define ordering or successor authority.
+- logs and streams are weak operator evidence unless a typed record cites them.
+
+When a record cannot be joined to a semantic object without guessing, the graph
+should keep it as unresolved evidence with an explicit warning. It must not
+invent lineage, selection, or operation authority from a weaker projection.
 
 ## Prior Docs
 
@@ -123,6 +192,12 @@ Relevant current review:
 
 Useful reference docs:
 
+- `docs/active/agents/ploke-tree-graph-ingestion/README.md`
+  for the current sub-agent coordination packet, edit boundaries, retry rules,
+  and module split lanes for `ploke-tree::Graph` ingestion.
+- `docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md`
+  for the accepted typed-persistence inventory mapped to current
+  `ploke-tree::Graph` ingestion status.
 - `docs/active/plans/self-improvement-loop/typed-persistence-spine/traceability-matrix.md`
   for graph primitive, identity, join, replay, and evidence-strength vocabulary.
 - `docs/active/plans/self-improvement-loop/typed-persistence-spine/ui-drilldown-contract.md`
