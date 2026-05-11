@@ -199,6 +199,8 @@ pub enum Prototype1ContinuationDisposition {
     StopNoSelectedBranch,
     StopOnFirstKeepSatisfied,
     StopSelectedBranchRejected,
+    StopHistoricalSelection,
+    StopNonDirectChildSelection,
 }
 
 impl Prototype1ContinuationDisposition {
@@ -368,7 +370,7 @@ pub fn prototype1_scheduler_path(campaign_manifest_path: &Path) -> PathBuf {
     scheduler_dir(campaign_manifest_path).join("scheduler.json")
 }
 
-fn prototype1_nodes_dir(campaign_manifest_path: &Path) -> PathBuf {
+pub fn prototype1_nodes_dir(campaign_manifest_path: &Path) -> PathBuf {
     scheduler_dir(campaign_manifest_path).join("nodes")
 }
 

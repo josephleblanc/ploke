@@ -175,8 +175,8 @@ impl Generation {
 impl Default for Generation {
     fn default() -> Self {
         Self {
-            source: GenerationSource::Legacy,
-            surface: None,
+            source: GenerationSource::EditSurface,
+            surface: Some(GenerationSurface::WorkspaceExceptPlokeEval),
         }
     }
 }

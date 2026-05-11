@@ -5,16 +5,16 @@
 //! authority. Callers provide typed records or `ploke-tree` projections; this
 //! crate shapes them for visual browsing.
 
-use ploke_records::branch::Disposition;
-use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, PatchId, RuntimeId};
-use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
-#[cfg(feature = "projection")]
-use ploke_records::{evaluation::Artifact as EvaluationArtifact, history::SealedBlockRecord};
 #[cfg(feature = "projection")]
 use crate::{
     CoarseHistorySpine, CoarseHistoryWarning, build_coarse_history_spine,
     fine_run_playback_from_sealed_history,
 };
+use ploke_records::branch::Disposition;
+use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, PatchId, RuntimeId};
+use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
+#[cfg(feature = "projection")]
+use ploke_records::{evaluation::Artifact as EvaluationArtifact, history::SealedBlockRecord};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "projection")]
 use std::collections::BTreeMap;
@@ -1112,33 +1112,20 @@ mod tests {
         enrich_fine_browser_model(&mut model, &BTreeMap::new(), &branches, None);
 
         let graph = model.execution_graph.expect("execution graph");
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.id == "artifact:base")
-        );
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.id == "artifact:after")
-        );
+        assert!(graph.nodes.iter().any(|node| node.id == "artifact:base"));
+        assert!(graph.nodes.iter().any(|node| node.id == "artifact:after"));
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == ExecutionEdgeKind::RuntimeExecutesOperation
                 && edge.to == "operation:branch-abc123"
         }));
         assert!(graph.edges.iter().any(|edge| {
-            edge.kind == ExecutionEdgeKind::RuntimeOperatesOnArtifact
-                && edge.to == "artifact:base"
+            edge.kind == ExecutionEdgeKind::RuntimeOperatesOnArtifact && edge.to == "artifact:base"
         }));
         assert!(graph.edges.iter().any(|edge| {
-            edge.kind == ExecutionEdgeKind::PatchDerivesArtifact
-                && edge.to == "artifact:after"
+            edge.kind == ExecutionEdgeKind::PatchDerivesArtifact && edge.to == "artifact:after"
         }));
         assert!(graph.edges.iter().any(|edge| {
-            edge.kind == ExecutionEdgeKind::ArtifactHydratesRuntime
-                && edge.from == "artifact:after"
+            edge.kind == ExecutionEdgeKind::ArtifactHydratesRuntime && edge.from == "artifact:after"
         }));
     }
 

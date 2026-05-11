@@ -45,11 +45,12 @@ pub use scheduler::{
     load_node_record, load_or_register_treatment_evaluation_node, load_runner_request,
     load_runner_result, load_runner_result_at, load_scheduler_state, project_node_status,
     project_node_workspace_root, prototype1_node_dir, prototype1_node_id,
-    prototype1_node_record_path, prototype1_runner_request_path, prototype1_runner_result_path,
-    prototype1_scheduler_path, record_continuation_decision, record_runner_result,
-    register_root_parent_node, register_treatment_evaluation_node, runner_request_from_node,
-    update_node_status, update_node_workspace_root, update_scheduler_policy, write_node_projection,
-    write_runner_request_projection, write_runner_result_at, write_treatment_evaluation_projection,
+    prototype1_node_record_path, prototype1_nodes_dir, prototype1_runner_request_path,
+    prototype1_runner_result_path, prototype1_scheduler_path, record_continuation_decision,
+    record_runner_result, register_root_parent_node, register_treatment_evaluation_node,
+    runner_request_from_node, update_node_status, update_node_workspace_root,
+    update_scheduler_policy, write_node_projection, write_runner_request_projection,
+    write_runner_result_at, write_treatment_evaluation_projection,
 };
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,

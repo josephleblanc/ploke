@@ -98,11 +98,12 @@ use crate::{
         Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
         Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
-        ValidationPolicy, branch_log, execute_intervention_apply, load_scheduler_state,
-        project_node_status, prototype1_branch_registry_path, prototype1_node_id,
-        prototype1_scheduler_path, register_root_parent_node,
-        resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
-        write_node_projection, write_treatment_evaluation_projection,
+        ValidationPolicy, branch_log, execute_intervention_apply, load_node_record,
+        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
+        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
+        register_root_parent_node, resolved_treatment_branches_from_synthesis,
+        select_primary_issue, treatment_branch_id, write_node_projection,
+        write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -913,6 +914,7 @@ async fn run_parent_target_selection(
     repo_root: &Path,
     parent: Parent<Ready>,
     config: CandidateGenerationConfig,
+    child_budget: Prototype1ChildBudget,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     match config.path() {
         CandidateGenerationPath::Legacy => {
@@ -925,6 +927,7 @@ async fn run_parent_target_selection(
                 repo_root,
                 parent,
                 edit_surface,
+                child_budget,
             )
             .await
         }
@@ -1042,6 +1045,7 @@ async fn run_tui_edit_surface_parent_target_selection(
     repo_root: &Path,
     parent: Parent<Ready>,
     edit_surface: Prototype1EditSurface,
+    child_budget: Prototype1ChildBudget,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     publish_tui_edit_surface_child_plan(
         campaign_id,
@@ -1049,7 +1053,7 @@ async fn run_tui_edit_surface_parent_target_selection(
         repo_root,
         parent,
         edit_surface,
-        Prototype1SearchPolicy::default().child_budget,
+        child_budget,
     )
 }
 
@@ -5979,6 +5983,7 @@ async fn resolve_child_plan(
     parent: Parent<Ready>,
     candidate_generation: CandidateGenerationConfig,
     selected_node_id: Option<&str>,
+    child_budget: Prototype1ChildBudget,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     info!(
@@ -6007,6 +6012,7 @@ async fn resolve_child_plan(
             repo_root,
             parent,
             candidate_generation,
+            child_budget,
         )
         .await?
     };
@@ -6644,13 +6650,100 @@ fn adaptive_selection_accepts_successor(
     })
 }
 
-fn continuation_disposition_for_selection(
+fn live_successor_continuation_decision(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    policy: &Prototype1SearchPolicy,
     decision: &SuccessorDecision,
-) -> Prototype1ContinuationDisposition {
-    if decision.selected_branch_id.is_none() {
-        return Prototype1ContinuationDisposition::StopNoSelectedBranch;
+    material: &SelectionSealMaterial,
+    selected_node: &Prototype1NodeRecord,
+) -> Result<Prototype1ContinuationDecision, PrepareError> {
+    let total_nodes_after_continue = persisted_prototype1_node_count(campaign_manifest_path)?;
+    let selected_rejected = decision
+        .selected_branch_disposition()
+        .is_some_and(|value| value != "keep");
+    let explore_from_rejected = policy.explore_from_rejected && selected_rejected;
+    let expected_generation = parent_identity.generation().saturating_add(1);
+    let direct_child = material.selected_from_generation_outcomes
+        && selected_node.parent_node_id.as_deref() == Some(parent_identity.node_id())
+        && selected_node.generation == expected_generation;
+
+    let disposition = if decision.selected_branch_id.is_none() {
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    } else if !material.selected_from_generation_outcomes {
+        Prototype1ContinuationDisposition::StopHistoricalSelection
+    } else if !direct_child {
+        Prototype1ContinuationDisposition::StopNonDirectChildSelection
+    } else if policy.require_keep_for_continuation && selected_rejected && !explore_from_rejected {
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    } else if policy.stop_on_first_keep
+        && decision
+            .selected_branch_disposition()
+            .is_some_and(|value| value == "keep")
+    {
+        Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
+    } else if selected_node.generation > policy.max_generations {
+        Prototype1ContinuationDisposition::StopMaxGenerations
+    } else if total_nodes_after_continue >= policy.max_total_nodes {
+        Prototype1ContinuationDisposition::StopMaxTotalNodes
+    } else if explore_from_rejected {
+        Prototype1ContinuationDisposition::ContinueExploreFromRejected
+    } else {
+        Prototype1ContinuationDisposition::ContinueReady
+    };
+
+    Ok(Prototype1ContinuationDecision {
+        disposition,
+        selected_next_branch_id: decision.selected_branch_id.clone(),
+        selected_branch_disposition: decision
+            .selected_branch_disposition()
+            .map(ToOwned::to_owned),
+        next_generation: selected_node.generation,
+        total_nodes_after_continue,
+    })
+}
+
+fn persisted_prototype1_node_count(campaign_manifest_path: &Path) -> Result<u32, PrepareError> {
+    let nodes_dir = prototype1_nodes_dir(campaign_manifest_path);
+    let entries = match fs::read_dir(&nodes_dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: nodes_dir,
+                source,
+            });
+        }
+    };
+    let mut count = 0u32;
+    for entry in entries {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: nodes_dir.clone(),
+            source,
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: entry.path(),
+                source,
+            })?
+            .is_dir()
+        {
+            continue;
+        }
+        let node_id = entry.file_name().to_string_lossy().into_owned();
+        let record_path = entry.path().join("node.json");
+        if !record_path.exists() {
+            continue;
+        }
+        load_node_record(
+            campaign_manifest_path,
+            &node_id,
+            OperatorProjectionRead::cli_operator(),
+        )?;
+        count = count.saturating_add(1);
     }
-    Prototype1ContinuationDisposition::ContinueReady
+    Ok(count)
 }
 
 struct GenerationCandidateProjection {
@@ -7735,6 +7828,42 @@ impl Prototype1StateCommand {
             &parent_identity,
         )
         .await?;
+        let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            Some(
+                if let Some(admitted) = profile::load_admitted_run_profile(&manifest_path)? {
+                    admitted.profile.search_policy()
+                } else {
+                    load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?
+                        .policy
+                },
+            )
+        } else {
+            None
+        };
+        if let Some(policy) = complete_search_policy.as_ref() {
+            let current_node_count = persisted_prototype1_node_count(&manifest_path)?;
+            if parent_identity.generation() >= policy.max_generations {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
+                        parent_identity.generation(),
+                        policy.max_generations
+                    ),
+                });
+            }
+            if current_node_count >= policy.max_total_nodes {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "prototype1 hard stop before child planning: persisted node count {} has reached max_total_nodes {}",
+                        current_node_count, policy.max_total_nodes
+                    ),
+                });
+            }
+        }
+        let plan_child_budget = complete_search_policy
+            .as_ref()
+            .map(|policy| policy.child_budget)
+            .unwrap_or(Prototype1ChildBudget { min: 1, max: 1 });
         let planned_children = resolve_child_plan(
             &campaign_id,
             &manifest_path,
@@ -7742,6 +7871,7 @@ impl Prototype1StateCommand {
             parent,
             run_shape.candidate_generation,
             self.node_id.as_deref(),
+            plan_child_budget,
         )
         .await?;
         let PlannedChildren {
@@ -7752,13 +7882,8 @@ impl Prototype1StateCommand {
         } = planned_children;
         let planned_child_count = plan.body().children().len();
         let (mut child_budget, mut child_schedule_mode) =
-            if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-                let scheduler =
-                    load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?;
-                (
-                    scheduler.policy.child_budget,
-                    scheduler.policy.child_schedule_mode,
-                )
+            if let Some(policy) = complete_search_policy.as_ref() {
+                (policy.child_budget, policy.child_schedule_mode)
             } else {
                 // Non-Complete modes intentionally run one child as a debug/inspection slice.
                 (
@@ -7878,16 +8003,23 @@ impl Prototype1StateCommand {
             let material = selection_material;
             let artifact = material.selected_artifact()?;
             let node = artifact.node().clone();
-            let decision = Prototype1ContinuationDecision {
-                disposition: continuation_disposition_for_selection(&selection_decision),
-                selected_next_branch_id: selection_decision.selected_branch_id.clone(),
-                selected_branch_disposition: selection_decision
-                    .selected_branch_disposition()
-                    .map(ToOwned::to_owned),
-                next_generation: node.generation.saturating_add(1),
-                total_nodes_after_continue: child_outcomes.len() as u32,
-            };
-            let handoff = if selection_decision.selected_branch_id.is_some() {
+            let search_policy =
+                complete_search_policy
+                    .as_ref()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail:
+                            "successor selection reached handoff without an admitted or scheduler search policy"
+                                .to_string(),
+                    })?;
+            let decision = live_successor_continuation_decision(
+                &manifest_path,
+                &parent_identity,
+                search_policy,
+                &selection_decision,
+                &material,
+                &node,
+            )?;
+            let handoff = if decision.disposition.allows_successor() {
                 let selected_artifact =
                     select_artifact_for_handoff(&selection_decision, &material)?;
                 let selection_entry = material.into_entry(selection_decision.clone())?;
@@ -9323,18 +9455,23 @@ mod tests {
             successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
             successor_selection_seed: 0,
             successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-            candidate_generator: Prototype1CandidateGenerator::Legacy,
+            candidate_generator: Prototype1CandidateGenerator::TuiEditSurface,
             edit_surface: Prototype1EditSurface::WorkspaceExceptPlokeEval,
             format: InspectOutputFormat::Table,
         }
     }
 
     #[test]
-    fn candidate_generation_config_dispatches_legacy_by_default() {
+    fn candidate_generation_config_dispatches_tui_edit_surface_by_default() {
         let command = state_command_without_ids();
         let config = CandidateGenerationConfig::from_command(&command);
 
-        assert_eq!(config.path(), CandidateGenerationPath::Legacy);
+        assert_eq!(
+            config.path(),
+            CandidateGenerationPath::TuiEditSurface(
+                Prototype1EditSurface::WorkspaceExceptPlokeEval
+            )
+        );
     }
 
     #[test]

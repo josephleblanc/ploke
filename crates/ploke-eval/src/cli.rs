@@ -498,7 +498,7 @@ pub struct Prototype1StateCommand {
     pub successor_selection_metrics: Prototype1TraversalMetrics,
 
     /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::Legacy)]
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::TuiEditSurface)]
     pub candidate_generator: Prototype1CandidateGenerator,
 
     /// Bounded edit surface used by edit-surface candidate generation.
@@ -12352,7 +12352,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_prototype1_state_candidate_generator_defaults_to_legacy() {
+    fn loop_prototype1_state_candidate_generator_defaults_to_tui_edit_surface() {
         let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-state"])
             .expect("loop prototype1-state should parse with generator defaults");
 
@@ -12362,7 +12362,7 @@ mod tests {
             }) => {
                 assert_eq!(
                     cmd.candidate_generator,
-                    Prototype1CandidateGenerator::Legacy
+                    Prototype1CandidateGenerator::TuiEditSurface
                 );
                 assert_eq!(
                     cmd.edit_surface,
