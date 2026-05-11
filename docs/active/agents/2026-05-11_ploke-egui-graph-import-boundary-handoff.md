@@ -177,6 +177,35 @@ When a record cannot be joined to a semantic object without guessing, the graph
 should keep it as unresolved evidence with an explicit warning. It must not
 invent lineage, selection, or operation authority from a weaker projection.
 
+## 2026-05-11 Graph Ingestion Commit
+
+Committed baseline:
+
+- `b521b505 Build ploke-tree graph ingestion spine`
+
+Post-commit local wave, not yet committed at this handoff:
+
+- `RunProfileRecord` / `RunProfileCommitmentRecord` are now attached to
+  `ploke-tree::Graph` as metadata evidence only.
+- `FsRunStore` and filesystem loader methods have moved from
+  `ploke-tree/src/lib.rs` to `ploke-tree/src/store/fs.rs`; root re-exports
+  preserve public paths.
+- Store-focused tests still live in `lib.rs`.
+
+Known follow-ups:
+
+- Browser/fine playback still erases set-scoped candidate membership identity.
+  It should preserve `{ candidate_set_root, membership_id }` or project from
+  `ploke-tree::Graph` before UI detail keys rely on membership IDs.
+- `agent-turn-summary.json` / `agent-turn-trace.json` passive ownership is
+  blocked on typing `ToolUiPayload` / `ToolErrorWire.llm` / retry context at
+  the `ploke-tui` tool UI/error boundary, then re-exporting through
+  `ploke_records::tool_contracts`.
+- `ploke-records/src/history/payload.rs` is large; split payload submodules
+  before adding another surface/request-policy family.
+- `docs/active/agents/readme.md` is dirty with mixed index updates from more
+  than one lane and was intentionally not staged in the graph-ingestion commit.
+
 ## Prior Docs
 
 The 2026-05-09 egui/browser handoffs are useful historical context, but they

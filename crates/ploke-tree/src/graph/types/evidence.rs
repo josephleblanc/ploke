@@ -3,6 +3,11 @@ use std::path::PathBuf;
 
 use ploke_records::history::EvidenceRefRecord;
 use ploke_records::ids::{ArtifactId, BlockHash, EntryId, RuntimeId};
+use ploke_records::run_profile::{
+    ExecutionStopAfter, GenerationSource, GenerationSurface, RunProfileCommitmentRecord,
+    RunProfileRecord, SelectionEvidence, SelectionStrategy, TraceJsonl,
+};
+use ploke_records::scheduler::{ChildBudgetRecord, ChildScheduleModeRecord};
 
 /// Typed evidence attachments. These are not lineage authority.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,6 +24,57 @@ pub struct EvidenceAttachment {
     pub subject: EvidenceSubject,
     pub kind: EvidenceKind,
     pub locators: Vec<EvidenceLocator>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunProfileMetadata {
+    pub schema_version: String,
+    pub name: String,
+    pub worktree_root: PathBuf,
+    pub target_dataset_key: Option<String>,
+    pub target_instance: Option<String>,
+    pub max_generations: u32,
+    pub max_total_nodes: u32,
+    pub child_budget: ChildBudgetRecord,
+    pub child_schedule_mode: ChildScheduleModeRecord,
+    pub stop_on_first_keep: bool,
+    pub require_keep_for_continuation: bool,
+    pub explore_from_rejected: bool,
+    pub generation_source: GenerationSource,
+    pub generation_surface: Option<GenerationSurface>,
+    pub selection_strategy: SelectionStrategy,
+    pub selection_evidence: SelectionEvidence,
+    pub selection_seed: u64,
+    pub execution_stop_after: ExecutionStopAfter,
+    pub trace_jsonl: TraceJsonl,
+    pub debug_tools: bool,
+}
+
+impl From<&RunProfileRecord> for RunProfileMetadata {
+    fn from(profile: &RunProfileRecord) -> Self {
+        Self {
+            schema_version: profile.schema_version.clone(),
+            name: profile.name.clone(),
+            worktree_root: profile.storage.worktree_root.clone(),
+            target_dataset_key: profile.target.dataset_key.clone(),
+            target_instance: profile.target.instance.clone(),
+            max_generations: profile.search.max_generations,
+            max_total_nodes: profile.search.max_total_nodes,
+            child_budget: profile.search.children,
+            child_schedule_mode: profile.search.schedule,
+            stop_on_first_keep: profile.search.stop_on_first_keep,
+            require_keep_for_continuation: profile.search.require_keep_for_continuation,
+            explore_from_rejected: profile.search.explore_from_rejected,
+            generation_source: profile.generation.source,
+            generation_surface: profile.generation.surface,
+            selection_strategy: profile.selection.strategy,
+            selection_evidence: profile.selection.evidence,
+            selection_seed: profile.selection.seed,
+            execution_stop_after: profile.execution.stop_after,
+            trace_jsonl: profile.execution.trace_jsonl,
+            debug_tools: profile.execution.debug_tools,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +184,8 @@ pub enum EvidenceSubject {
         subject_id: String,
         run_id: String,
     },
+    RunProfileSummary(RunProfileMetadata),
+    RunProfileCommitment(RunProfileCommitmentRecord),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,4 +210,6 @@ pub enum EvidenceKind {
     CandidatePayload,
     CandidateEvaluation,
     ProtocolArtifact,
+    RunProfileSummary,
+    RunProfileCommitment,
 }

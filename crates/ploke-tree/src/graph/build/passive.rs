@@ -1,5 +1,8 @@
 use crate::graph::{EvidenceKind, EvidenceLocator, EvidenceSubject};
-use crate::{ChildPlanEvidence, EvaluationEvidence, PassiveEvidence, ProtocolArtifactsEvidence};
+use crate::{
+    ChildPlanEvidence, EvaluationEvidence, PassiveEvidence, ProtocolArtifactsEvidence,
+    RunProfileEvidence,
+};
 
 use super::Builder;
 
@@ -47,6 +50,9 @@ impl Builder {
         }
         if let Some(protocol_artifacts) = evidence.protocol_artifacts.as_ref() {
             self.ingest_protocol_artifacts(protocol_artifacts);
+        }
+        if let Some(run_profile) = evidence.run_profile.as_ref() {
+            self.ingest_run_profile(run_profile);
         }
     }
 
@@ -126,14 +132,45 @@ impl Builder {
             );
         }
     }
+
+    fn ingest_run_profile(&mut self, evidence: &RunProfileEvidence) {
+        if let Some(profile) = evidence.profile.as_ref() {
+            self.attach_located_evidence(
+                EvidenceSubject::RunProfileSummary(profile.into()),
+                EvidenceKind::RunProfileSummary,
+                vec![EvidenceLocator::LoadedSummary {
+                    name: "run_profile",
+                }],
+            );
+        }
+
+        if let Some(commitment) = evidence.commitment.as_ref() {
+            self.attach_located_evidence(
+                EvidenceSubject::RunProfileCommitment(commitment.clone()),
+                EvidenceKind::RunProfileCommitment,
+                vec![EvidenceLocator::LoadedSummary {
+                    name: "run_profile_commitment",
+                }],
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
-    use crate::graph::{EvidenceKind, EvidenceSubject};
-    use crate::{ChildPlanEvidence, ChildPlanSummary, PassiveEvidence};
+    use ploke_records::run_profile::{
+        Execution, ExecutionStopAfter, Generation, GenerationSource, GenerationSurface,
+        RUN_PROFILE_COMMITMENT_SCHEMA_VERSION, RUN_PROFILE_SCHEMA_VERSION,
+        RunProfileCommitmentRecord, RunProfileRecord, Search, Selection, SelectionEvidence,
+        SelectionStrategy, Storage, Target, TraceJsonl,
+    };
+    use ploke_records::scheduler::{ChildBudgetRecord, ChildScheduleModeRecord};
+
+    use crate::graph::{EvidenceKind, EvidenceSubject, RunProfileMetadata};
+    use crate::{ChildPlanEvidence, ChildPlanSummary, PassiveEvidence, RunProfileEvidence};
 
     use super::Builder;
 
@@ -168,5 +205,77 @@ mod tests {
                         rejected_surface_attempt_count: 4,
                     }
         }));
+    }
+
+    #[test]
+    fn passive_run_profile_attaches_metadata_without_graph_authority() {
+        let mut builder = Builder::default();
+        let profile = run_profile_record();
+        let commitment = RunProfileCommitmentRecord {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_owned(),
+            profile_path: PathBuf::from("run-profile.toml"),
+            sha256: "sha256:profile".to_owned(),
+            source_path: Some(PathBuf::from("profiles/overnight.toml")),
+            admitted_at: "2026-05-11T00:00:00Z".to_owned(),
+        };
+        let mut passive = PassiveEvidence::default();
+        passive.run_profile = Some(RunProfileEvidence {
+            profile: Some(profile.clone()),
+            commitment: Some(commitment.clone()),
+        });
+
+        builder.ingest_passive_evidence(&passive);
+        let graph = builder.finish();
+
+        assert!(graph.runtimes.runtimes.is_empty());
+        assert!(graph.artifacts.artifacts.is_empty());
+        assert!(graph.candidates.branches.is_empty());
+        assert!(graph.authority.epochs_by_lineage.is_empty());
+        assert!(graph.evidence.attachments.values().any(|evidence| {
+            evidence.kind == EvidenceKind::RunProfileSummary
+                && evidence.subject
+                    == EvidenceSubject::RunProfileSummary(RunProfileMetadata::from(&profile))
+        }));
+        assert!(graph.evidence.attachments.values().any(|evidence| {
+            evidence.kind == EvidenceKind::RunProfileCommitment
+                && evidence.subject == EvidenceSubject::RunProfileCommitment(commitment.clone())
+        }));
+    }
+
+    fn run_profile_record() -> RunProfileRecord {
+        RunProfileRecord {
+            schema_version: RUN_PROFILE_SCHEMA_VERSION.to_owned(),
+            name: "overnight-edit-surface".to_owned(),
+            storage: Storage {
+                worktree_root: PathBuf::from("worktrees"),
+            },
+            target: Target {
+                dataset_key: Some("ripgrep".to_owned()),
+                instance: Some("BurntSushi__ripgrep-2209".to_owned()),
+            },
+            search: Search {
+                max_generations: 15,
+                max_total_nodes: 96,
+                children: ChildBudgetRecord { min: 6, max: 6 },
+                schedule: ChildScheduleModeRecord::FullBatch,
+                stop_on_first_keep: false,
+                require_keep_for_continuation: false,
+                explore_from_rejected: true,
+            },
+            generation: Generation {
+                source: GenerationSource::EditSurface,
+                surface: Some(GenerationSurface::WorkspaceExceptPlokeEval),
+            },
+            selection: Selection {
+                strategy: SelectionStrategy::HistoryScoreChildProp,
+                evidence: SelectionEvidence::OperationalAndProtocol,
+                seed: 42,
+            },
+            execution: Execution {
+                stop_after: ExecutionStopAfter::Complete,
+                trace_jsonl: TraceJsonl::Auto,
+                debug_tools: true,
+            },
+        }
     }
 }

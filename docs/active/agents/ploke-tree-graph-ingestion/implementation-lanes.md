@@ -100,7 +100,7 @@ adding a loader.
 | `agent-turn-summary.json`, `agent-turn-trace.json` | 5 | blocked on nested tool UI/error payload typing before passive owner can be added |
 | `llm-full-responses.jsonl`, `prototype1_observation_*.jsonl` | 5 | provider/observation evidence after writer/type resolution |
 | `record.json.gz` | 5 | replay/provenance metadata or locator |
-| `run-profile.toml`, `run-profile.commitment.json` | 5 | passive owner and store loader exist; graph attachment pending |
+| `run-profile.toml`, `run-profile.commitment.json` | 5 | passive owner, store loader, and graph metadata evidence exist |
 | `history/index/*` | 6 | rebuildability/check metadata derived from History |
 | `slice.jsonl`, current projection/debug artifacts | 6 | weak evidence or diagnostics derived from typed inputs |
 | `stdout.log`, `stderr.log`, console logs | 6 | log locator/metadata and drilldown surface |
@@ -143,6 +143,16 @@ Goal:
 - keep `RunRecordSet` as the loaded-run carrier.
 - do this before adding more loader families, because `lib.rs` is already large
   enough that additional loader work will normalize the wrong file boundary.
+
+Current status:
+
+- `store/{mod.rs,record_set.rs,evidence.rs}` exists.
+- `FsRunStore`, loader methods, loader errors, sorted file helpers, and
+  protocol artifact key helpers have moved to `store/fs.rs`.
+- Root re-exports preserve public `ploke_tree::FsRunStore` and
+  `ploke_tree::RunRecordSet` paths.
+- Store-focused tests still live in `lib.rs`; moving those tests is the next
+  mechanical cleanup, not a semantic graph change.
 
 No-goals:
 
@@ -264,11 +274,19 @@ Current status notes:
 - `messages/child-plan/node-*.json`: passive records, store loading, and
   summary-only graph evidence now exist.
 - `run-profile.toml` and `run-profile.commitment.json`: passive records and
-  store loading now exist; graph attachment is still pending.
+  store loading now exist; graph metadata evidence also exists.
 - `agent-turn-summary.json` and `agent-turn-trace.json`: blocked before passive
   ownership because `ToolCompletedRecord` / `ToolFailedRecord` UI payloads can
   contain nested LLM retry JSON. Resolve the tool UI/error payload boundary
   before adding an `agent_turn` record module.
+
+Projection follow-up:
+
+- Browser/fine playback still carries bare `membership_id` and one path still
+  aligns memberships by vector index. It should preserve
+  `{ candidate_set_root, membership_id }` or project directly from
+  `ploke-tree::Graph` membership keys before the UI treats membership IDs as
+  stable detail keys.
 
 No-goals:
 

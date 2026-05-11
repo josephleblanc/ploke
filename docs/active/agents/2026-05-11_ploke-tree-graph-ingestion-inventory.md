@@ -59,7 +59,8 @@ Current inputs consumed by `Graph::from_records(&RunRecordSet)`:
 
 Current loaded inputs not yet consumed by `Graph::from_records`:
 
-- `RunRecordSet.forest_input.passive_evidence.run_profile`
+- none from the first loaded passive-evidence set. Further loader families
+  remain pending below.
 
 ## Family Rollup
 
@@ -126,28 +127,28 @@ Current loaded inputs not yet consumed by `Graph::from_records`:
 | `eval.instance.registry` | `not-loaded` | Attach as evaluation/campaign context if a typed loader becomes graph input. |
 | `eval.scheduler.state` | `evidence` | Scheduler state is loaded and attached as secondary label/status evidence. |
 | `eval.child_plan.message` | `evidence` | `messages/child-plan/*.json` now has a passive record owner, store loader, and summary-only graph evidence. It does not create child branch/runtime authority. |
-| `eval.run_profile` | `loaded-not-ingested` | `run-profile.toml` and `run-profile.commitment.json` now have passive records and store loading; graph attachment is still pending. |
+| `eval.run_profile` | `evidence` | `run-profile.toml` and `run-profile.commitment.json` now have passive records, store loading, and graph metadata evidence. They do not create lineage/runtime/artifact authority. |
 | `eval.run_record.metadata_setup` | `not-loaded` | Attach to run/campaign/runtime evidence once run records are loaded. |
 | `eval.run_record.patch_packaging` | `not-loaded` | Attach to patch/MBE submission evidence; patch bytes come from packaging diff artifacts. |
 | `eval.tree.playback` | `projection-target` | Playback should be derived from sealed History / graph, not treated as graph source. |
 
 ## Immediate Graph Gaps
 
-1. `RunRecordSet` now loads run profile records, but `Graph` does not yet
-   attach them as reproducibility metadata/evidence.
-2. Tool calls/results and agent-turn files are not loaded into `RunRecordSet`.
+1. Tool calls/results and agent-turn files are not loaded into `RunRecordSet`.
    Agent-turn passive ownership is blocked on the nested tool UI/error payload
    shape.
-3. Full invocation, runner request, and runner result files have passive owners
+2. Full invocation, runner request, and runner result files have passive owners
    but are not yet loaded as individual attempt evidence.
-4. Patch artifact snapshots and MBE packaging evidence are not loaded into
+3. Patch artifact snapshots and MBE packaging evidence are not loaded into
    `RunRecordSet`.
-5. Provider attempts/retries/timeouts are not loaded into `RunRecordSet`.
-6. Database context/prompt evidence is not loaded into `RunRecordSet`.
-7. `crates/ploke-tree/src/lib.rs` still owns too much store loading and should
-   be split into `store/**` before more loader families are added.
-8. `crates/ploke-records/src/history/payload.rs` is now large enough that the
+4. Provider attempts/retries/timeouts are not loaded into `RunRecordSet`.
+5. Database context/prompt evidence is not loaded into `RunRecordSet`.
+6. `crates/ploke-tree/src/lib.rs` still owns store-focused tests and forest /
+   browser projection assembly. `FsRunStore` itself has moved to `store/fs.rs`.
+7. `crates/ploke-records/src/history/payload.rs` is now large enough that the
    next surface/request-policy addition should split payload submodules first.
+8. Browser/fine playback projections still erase set-scoped membership identity
+   and should be repaired before UI use relies on membership IDs as stable keys.
 
 ## Next Update Rule
 
