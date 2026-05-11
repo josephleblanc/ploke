@@ -183,7 +183,7 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     id: "fixture_nodes_canonical",
     rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
-    status: FixtureStatus::TypedTypeGraph,
+    status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_canonical",
@@ -201,7 +201,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "fixture_nodes_local_embeddings",
     rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-06.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
-    status: FixtureStatus::TypedTypeGraph,
+    status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateLocalEmbeddings {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_local_embeddings",
@@ -248,7 +248,7 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     id: "ploke_db_primary",
     rel_path: "tests/backup_dbs/ploke_db_primary_2026-05-06.sqlite",
     parsed_targets: &["crates/ploke-db"],
-    status: FixtureStatus::TypedTypeGraph,
+    status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
         crate_name: "ploke-db",
         output_stem: "ploke_db_primary",
@@ -264,9 +264,9 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
 
 pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     id: "ws_fixture_01_canonical",
-    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-05-10.sqlite",
     parsed_targets: &["tests/fixture_workspace/ws_fixture_01"],
-    status: FixtureStatus::TypedTypeGraph,
+    status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
         fixture_name: "ws_fixture_01",
         output_stem: "ws_fixture_01_canonical",
@@ -276,7 +276,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-10",
     notes: "Canonical plain backup for the committed multi-member workspace fixture `tests/fixture_workspace/ws_fixture_01`. Regeneration parses the on-disk workspace fixture, transforms `workspace_metadata` plus crate graphs into a fresh DB, and writes a strict plain-backup snapshot without assuming any embedding model contract.",
 };
 
@@ -306,7 +306,7 @@ pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_semver_type_graph",
     rel_path: "tests/backup_dbs/corpus_semver_type_graph_2026-05-06.sqlite",
     parsed_targets: &["github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
         normalized_repo: "dtolnay/semver",
         checkout_slug: "dtolnay__semver",
@@ -327,7 +327,7 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_memchr_type_graph",
     rel_path: "tests/backup_dbs/corpus_memchr_type_graph_2026-05-06.sqlite",
     parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
         normalized_repo: "BurntSushi/memchr",
         checkout_slug: "BurntSushi__memchr",
@@ -348,7 +348,7 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_generic_array_type_graph",
     rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-10.sqlite",
     parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
         normalized_repo: "fizyk20/generic-array",
         checkout_slug: "fizyk20__generic-array",
@@ -369,7 +369,7 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_chrono_type_graph",
     rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-10.sqlite",
     parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
-    status: FixtureStatus::Active,
+    status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
         normalized_repo: "chronotope/chrono",
         checkout_slug: "chronotope__chrono",
@@ -555,7 +555,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "ws_fixture_01_canonical_2026-05-06.sqlite"
+            "ws_fixture_01_canonical_2026-05-10.sqlite"
         );
         assert_eq!(
             fixture.parsed_targets,

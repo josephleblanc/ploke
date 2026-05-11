@@ -93,7 +93,7 @@ Test isolation note:
 | `fixture_nodes_local_embeddings_2026-05-06.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-05-06 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
 | `ploke_db_primary_2026-05-06.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-05-06 |
-| `ws_fixture_01_canonical_2026-05-06.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-05-06 |
+| `ws_fixture_01_canonical_2026-05-10.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-05-10 |
 | `ws_fixture_01_member_single_2026-05-06.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-05-06 |
 | `corpus_semver_type_graph_2026-05-06.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-06 |
 | `corpus_memchr_type_graph_2026-05-06.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-06 |
@@ -180,9 +180,9 @@ Test isolation note:
   - `ploke-tui`
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
 
-## `ws_fixture_01_canonical_2026-05-06.sqlite`
+## `ws_fixture_01_canonical_2026-05-10.sqlite`
 
-- File: `tests/backup_dbs/ws_fixture_01_canonical_2026-05-06.sqlite`
+- File: `tests/backup_dbs/ws_fixture_01_canonical_2026-05-10.sqlite`
 - Parsed target(s): `tests/fixture_workspace/ws_fixture_01`
 - Expected DB config:
   - plain backup import
@@ -196,7 +196,7 @@ Test isolation note:
 - Notes:
   - this fixture is the canonical plain workspace backup required by the
     workspace rollout readiness gate
-  - the filename is dated `2026-05-06` because `cargo xtask recreate-backup-db`
+  - the filename is dated `2026-05-10` because `cargo xtask recreate-backup-db`
     stamps outputs with UTC date
 
 ## `ws_fixture_01_member_single_2026-05-06.sqlite`

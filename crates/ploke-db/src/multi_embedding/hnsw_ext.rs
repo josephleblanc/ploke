@@ -1241,8 +1241,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
             }
         }
 
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
+        let target_file = ploke_test_utils::FIXTURE_NODES_CANONICAL.path();
         let prior_rels_vec = db
             .prior_rels_for_plain_backup_import()
             .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
@@ -1287,11 +1286,10 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
     fn helper_load_db() -> Result<Database, Error> {
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-        use ploke_test_utils::workspace_root;
+        use ploke_test_utils::FIXTURE_NODES_CANONICAL;
 
         let db = Database::init_with_schema()?;
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
+        let target_file = FIXTURE_NODES_CANONICAL.path();
         let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)
