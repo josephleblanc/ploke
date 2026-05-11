@@ -30,3 +30,5 @@ Shared planning area for Prototype 1 records, playback, loop evaluation, and fro
   Safe route for evaluating a recent long loop run without relying on `scheduler.json`.
 - [`frontend-questions.md`](frontend-questions.md)
   Questions and feature checks the frontend should answer for multi-generation self-improvement runs.
+- [`../../agents/2026-05-11_mbe-oracle-calibration-handoff.md`](../../agents/2026-05-11_mbe-oracle-calibration-handoff.md)
+  Active oracle-calibration handoff for MBE controls, compile-failed loop candidates, and benchmark-base patch export questions.

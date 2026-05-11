@@ -29,8 +29,8 @@ pub struct LayoutStyle {
 impl Default for LayoutStyle {
     fn default() -> Self {
         Self {
-            row_distance: 140.0,
-            column_distance: 170.0,
+            row_distance: 240.0,
+            column_distance: 90.0,
             fit_padding: 0.18,
             node_radius: 11.0,
         }

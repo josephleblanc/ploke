@@ -352,8 +352,19 @@ pub enum PrepareError {
     InvalidBatchSelection { detail: String },
     #[error("MBE submission artifact '{0}' does not exist")]
     MissingMbeSubmission(PathBuf),
+    #[error("MBE final report '{0}' does not exist")]
+    MissingMbeReport(PathBuf),
     #[error("MBE request is invalid: {detail}")]
     InvalidMbeRequest { detail: String },
+    #[error("MBE final report is invalid: {detail}")]
+    InvalidMbeReport { detail: String },
+    #[error("failed to run MBE harness command '{command}': {source}")]
+    MbeHarnessCommand {
+        command: String,
+        source: std::io::Error,
+    },
+    #[error("MBE harness command '{command}' failed with status {status}")]
+    MbeHarnessStatus { command: String, status: i32 },
     #[error("prototype1 parent check failed: {0}")]
     Prototype1Parent(Box<Prototype1ParentError>),
     #[error("issue input must include at least a title or a body")]
@@ -512,6 +523,17 @@ impl PrepareSingleRunRequest {
 }
 
 impl PreparedSingleRun {
+    pub fn load_manifest(path: PathBuf) -> Result<Self, PrepareError> {
+        if !path.is_file() {
+            return Err(PrepareError::MissingRunManifest(path));
+        }
+        let text = std::fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+            path: path.clone(),
+            source,
+        })?;
+        serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
+    }
+
     pub fn manifest_path(&self) -> PathBuf {
         self.output_dir.join("run.json")
     }

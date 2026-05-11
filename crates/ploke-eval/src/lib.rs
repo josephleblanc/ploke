@@ -62,8 +62,11 @@ pub use layout::{
     protocol_artifacts_dir_for_run, registries_dir, repos_dir, workspace_root_for_key,
 };
 pub use mbe::{
-    HarnessConfig as MbeHarnessConfig, Layout as MbeLayout, Mode as MbeMode, Options as MbeOptions,
-    Request as MbeRequest, Workers as MbeWorkers, WrittenConfig as WrittenMbeConfig,
+    FinalReport as MbeFinalReport, HarnessConfig as MbeHarnessConfig,
+    HarnessInvocation as MbeHarnessInvocation, HarnessRun as MbeHarnessRun, Layout as MbeLayout,
+    Mode as MbeMode, Options as MbeOptions, OracleEvidence as MbeOracleEvidence,
+    Request as MbeRequest, Verdict as MbeVerdict, Workers as MbeWorkers,
+    WrittenConfig as WrittenMbeConfig,
 };
 pub use msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 pub use operational_metrics::{OperationalRunMetrics, PatchApplyState};

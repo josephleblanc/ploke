@@ -2,21 +2,23 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use eframe::egui::{
-    Color32, FontId, Galley, Pos2, Shape, Stroke,
+    Color32, FontId, Galley, Id, LayerId, Order, Pos2, Shape, Stroke, Vec2,
     epaint::{CubicBezierShape, TextShape},
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
-use ploke_records::branch::TreatmentBranchStatus;
 
-use super::geometry::{cubic_point, curve_points, distance_to_curve, endpoint_direction};
+use crate::graph::EdgeId;
+
+use super::geometry::{curve_points, distance_to_curve, endpoint_direction};
+use super::label::{EdgeLabelInput, place_edge_label, record_edge_label};
 use super::projection::GraphEdgePayload;
 use super::style::{CurveStyle, EdgeStyle};
 
 #[derive(Debug, Clone)]
 pub(super) struct GraphEdgeShape {
-    id: Arc<str>,
+    id: EdgeId,
     label: Arc<str>,
-    status: TreatmentBranchStatus,
+    color: Color32,
     selected: bool,
     style: EdgeStyle,
     curve: Cell<Option<EdgeCurve>>,
@@ -28,7 +30,7 @@ impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
         Self {
             id: edge.payload.id,
             label: edge.payload.label,
-            status: edge.payload.status,
+            color: edge.payload.color,
             selected: edge.selected,
             style: edge.payload.style,
             curve: Cell::new(None),
@@ -127,13 +129,13 @@ where
         let curve = self.curve(start_point, end_point);
         let screen_curve = curve.map(|point| ctx.meta.canvas_to_screen_pos(point));
 
-        let color = self.style.colors.color(self.status);
+        let color = self.color;
         let stroke_width = if self.selected {
             self.style.selected_width
         } else {
             self.style.normal_width
         };
-        let mut shapes = Vec::with_capacity(2);
+        let mut shapes = Vec::with_capacity(1);
         shapes.push(
             CubicBezierShape::from_points_stroke(
                 screen_curve,
@@ -144,13 +146,29 @@ where
             .into(),
         );
 
-        let center = cubic_point(screen_curve, 0.5);
         let galley = self.label_galley(ctx, color);
-        let label_pos = Pos2::new(
-            center.x - galley.rect.width() / 2.0,
-            center.y - galley.rect.height() - self.style.label.gap,
-        );
-        shapes.push(TextShape::new(label_pos, galley, color).into());
+        let placement = place_edge_label(EdgeLabelInput {
+            curve: screen_curve,
+            start_node: ctx.meta.canvas_to_screen_pos(start.location()),
+            end_node: ctx.meta.canvas_to_screen_pos(end.location()),
+            start_radius: screen_curve[0].distance(ctx.meta.canvas_to_screen_pos(start.location())),
+            end_radius: screen_curve[3].distance(ctx.meta.canvas_to_screen_pos(end.location())),
+            text_size: galley.rect.size(),
+            padding: Vec2::splat(3.0),
+            gap: self.style.label.gap,
+            stroke_width,
+        });
+        record_edge_label(ctx.ctx, placement.background, screen_curve);
+        let label_painter = ctx.ctx.layer_painter(LayerId::new(
+            Order::Foreground,
+            Id::new("ploke-egui.edge-labels"),
+        ));
+        label_painter.add(Shape::rect_filled(
+            placement.background,
+            2.0,
+            Color32::from_black_alpha(180),
+        ));
+        label_painter.add(TextShape::new(placement.text_pos, galley, color));
 
         shapes
     }
@@ -165,13 +183,10 @@ where
             self.label = state.payload.label.clone();
             self.label_galley = None;
         }
-        if self.style.label != state.payload.style.label
-            || self.style.colors != state.payload.style.colors
-            || self.status != state.payload.status
-        {
+        if self.style.label != state.payload.style.label || self.color != state.payload.color {
             self.label_galley = None;
         }
-        self.status = state.payload.status;
+        self.color = state.payload.color;
         self.selected = state.selected;
         self.style = state.payload.style;
     }

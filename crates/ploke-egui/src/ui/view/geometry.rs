@@ -40,6 +40,14 @@ pub(super) fn cubic_point(points: [Pos2; 4], t: f32) -> Pos2 {
         })
 }
 
+pub(super) fn cubic_tangent(points: [Pos2; 4], t: f32) -> Vec2 {
+    let mt = 1.0 - t;
+    let a = (points[1] - points[0]) * (3.0 * mt * mt);
+    let b = (points[2] - points[1]) * (6.0 * mt * t);
+    let c = (points[3] - points[2]) * (3.0 * t * t);
+    a + b + c
+}
+
 fn cubic_bezier_weights(mt: f32, t: f32) -> [f32; 4] {
     [mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t]
 }
@@ -56,6 +64,15 @@ pub(super) fn distance_to_curve(points: [Pos2; 4], point: Pos2, style: EdgeStyle
     distance
 }
 
+pub(super) fn segments_intersect(a: Pos2, b: Pos2, c: Pos2, d: Pos2) -> bool {
+    let ab_c = cross(b - a, c - a);
+    let ab_d = cross(b - a, d - a);
+    let cd_a = cross(d - c, a - c);
+    let cd_b = cross(d - c, b - c);
+
+    ab_c.signum() != ab_d.signum() && cd_a.signum() != cd_b.signum()
+}
+
 fn distance_to_segment(start: Pos2, end: Pos2, point: Pos2) -> f32 {
     let segment = end - start;
     let length_squared = segment.length_sq();
@@ -65,4 +82,8 @@ fn distance_to_segment(start: Pos2, end: Pos2, point: Pos2) -> f32 {
 
     let t = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
     point.distance(start + segment * t)
+}
+
+fn cross(left: Vec2, right: Vec2) -> f32 {
+    left.x * right.y - left.y * right.x
 }

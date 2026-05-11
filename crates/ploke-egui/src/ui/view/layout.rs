@@ -19,8 +19,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             triggered: false,
-            row_dist: 140.0,
-            col_dist: 170.0,
+            row_dist: 240.0,
+            col_dist: 90.0,
         }
     }
 }
@@ -28,11 +28,11 @@ impl Default for State {
 impl egui_graphs::LayoutState for State {}
 
 #[derive(Debug, Default)]
-pub(super) struct CenteredTree {
+pub(super) struct Lineage {
     state: State,
 }
 
-impl CenteredTree {
+impl Lineage {
     fn apply<N, E, Ty, Ix, Dn, De>(
         graph: &mut egui_graphs::Graph<N, E, Ty, Ix, Dn, De>,
         state: &State,
@@ -46,15 +46,16 @@ impl CenteredTree {
     {
         let roots = sorted_nodes(graph.g().externals(Incoming));
         let mut visited = HashSet::new();
-        let mut next_leaf = 0usize;
+        let mut next_root = 0usize;
 
         for root in roots {
             if visited.contains(&root) {
                 continue;
             }
 
-            place_tree(graph, &mut visited, root, 0, &mut next_leaf, state);
-            next_leaf = next_leaf.saturating_add(1);
+            let root_x = next_root as f32 * state.col_dist * 2.0;
+            place_lineage(graph, &mut visited, root, 0, root_x, state);
+            next_root = next_root.saturating_add(1);
         }
 
         let remaining = sorted_nodes(graph.g().node_indices());
@@ -63,13 +64,14 @@ impl CenteredTree {
                 continue;
             }
 
-            place_tree(graph, &mut visited, node, 0, &mut next_leaf, state);
-            next_leaf = next_leaf.saturating_add(1);
+            let root_x = next_root as f32 * state.col_dist * 2.0;
+            place_lineage(graph, &mut visited, node, 0, root_x, state);
+            next_root = next_root.saturating_add(1);
         }
     }
 }
 
-impl egui_graphs::Layout<State> for CenteredTree {
+impl egui_graphs::Layout<State> for Lineage {
     fn from_state(state: State) -> impl egui_graphs::Layout<State> {
         Self { state }
     }
@@ -99,15 +101,14 @@ impl egui_graphs::Layout<State> for CenteredTree {
     }
 }
 
-fn place_tree<N, E, Ty, Ix, Dn, De>(
+fn place_lineage<N, E, Ty, Ix, Dn, De>(
     graph: &mut egui_graphs::Graph<N, E, Ty, Ix, Dn, De>,
     visited: &mut HashSet<NodeIndex<Ix>>,
     node: NodeIndex<Ix>,
     depth: usize,
-    next_leaf: &mut usize,
+    x: f32,
     state: &State,
-) -> f32
-where
+) where
     N: Clone,
     E: Clone,
     Ty: EdgeType,
@@ -116,29 +117,17 @@ where
     De: egui_graphs::DisplayEdge<N, E, Ty, Ix, Dn>,
 {
     visited.insert(node);
+    graph.g_mut()[node].set_location(Pos2::new(x, depth as f32 * state.row_dist));
 
     let children = sorted_nodes(graph.g().neighbors_directed(node, Outgoing))
         .into_iter()
         .filter(|child| !visited.contains(child))
         .collect::<Vec<_>>();
 
-    let x = if children.is_empty() {
-        let x = *next_leaf as f32 * state.col_dist;
-        *next_leaf = next_leaf.saturating_add(1);
-        x
-    } else {
-        let mut first = None;
-        let mut last = None;
-        for child in children {
-            let child_x = place_tree(graph, visited, child, depth + 1, next_leaf, state);
-            first.get_or_insert(child_x);
-            last = Some(child_x);
-        }
-        (first.unwrap_or(0.0) + last.unwrap_or(0.0)) / 2.0
-    };
-
-    graph.g_mut()[node].set_location(Pos2::new(x, depth as f32 * state.row_dist));
-    x
+    for (index, child) in children.iter().enumerate() {
+        let child_x = x + centered_offset(index, children.len(), state.col_dist);
+        place_lineage(graph, visited, *child, depth + 1, child_x, state);
+    }
 }
 
 fn sorted_nodes<Ix>(nodes: impl Iterator<Item = NodeIndex<Ix>>) -> Vec<NodeIndex<Ix>>
@@ -150,6 +139,11 @@ where
     nodes
 }
 
+fn centered_offset(index: usize, count: usize, spacing: f32) -> f32 {
+    let center = (count.saturating_sub(1)) as f32 / 2.0;
+    (index as f32 - center) * spacing
+}
+
 #[cfg(test)]
 mod tests {
     use eframe::egui::{Pos2, Rect, Vec2};
@@ -158,7 +152,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn centered_tree_layout_fits_representative_viewport() {
+    fn lineage_layout_uses_depth_before_leaf_width() {
         let mut raw = StableGraph::<&'static str, (), Directed>::default();
         let parent = raw.add_node("parent");
         let left = raw.add_node("left");
@@ -183,17 +177,18 @@ mod tests {
         > = egui_graphs::to_graph(&raw);
         let state = State {
             triggered: false,
-            row_dist: 140.0,
-            col_dist: 170.0,
+            row_dist: 240.0,
+            col_dist: 90.0,
         };
 
-        CenteredTree::apply(&mut graph, &state);
+        Lineage::apply(&mut graph, &state);
 
         let bounds = node_bounds(&graph).expect("test graph has nodes");
         let parent_x = graph.g().node_weight(parent).unwrap().location().x;
         let left_x = graph.g().node_weight(left).unwrap().location().x;
         let right_x = graph.g().node_weight(right).unwrap().location().x;
         assert_eq!(parent_x, (left_x + right_x) / 2.0);
+        assert!(bounds.height() > bounds.width());
 
         let viewport = Vec2::new(900.0, 600.0);
         let fitted = fit_bounds(bounds, viewport, 0.18);

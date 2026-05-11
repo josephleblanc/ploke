@@ -2,6 +2,8 @@
 
 use eframe::egui;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::diagnostics::SnapshotSink;
 use crate::graph::Graph;
 use crate::ui::view::{GraphView, GraphViewDiagnostics};
 
@@ -10,6 +12,12 @@ pub struct OperatorApp {
     graph: Graph,
     view: GraphView,
     summary: GraphSummary,
+    #[cfg(not(target_arch = "wasm32"))]
+    diagnostics_sink: Option<SnapshotSink>,
+    #[cfg(not(target_arch = "wasm32"))]
+    close_after_snapshot: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    diagnostics_error: Option<String>,
 }
 
 impl OperatorApp {
@@ -18,11 +26,24 @@ impl OperatorApp {
             graph,
             view: GraphView::default(),
             summary: GraphSummary::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            diagnostics_sink: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            close_after_snapshot: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            diagnostics_error: None,
         }
     }
 
     pub fn graph(&self) -> &Graph {
         &self.graph
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_snapshot_sink(mut self, sink: SnapshotSink) -> Self {
+        self.diagnostics_sink = Some(sink);
+        self.close_after_snapshot = true;
+        self
     }
 }
 
@@ -45,12 +66,46 @@ impl eframe::App for OperatorApp {
                 ui.label(self.summary.graph_size.as_str());
                 ui.label(self.summary.aspect.as_str());
                 ui.label(self.summary.fit_fill.as_str());
+                ui.label(self.summary.edge_labels.as_str());
+                ui.label(self.summary.readability.as_str());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(error) = &self.diagnostics_error {
+                ui.separator();
+                ui.label(error.as_str());
             }
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.view.show(ui, &self.graph);
         });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.emit_diagnostics(ui.ctx());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl OperatorApp {
+    fn emit_diagnostics(&mut self, ctx: &egui::Context) {
+        let Some(sink) = &mut self.diagnostics_sink else {
+            return;
+        };
+        let Some(diagnostics) = self.view.diagnostics() else {
+            return;
+        };
+
+        match sink.observe(diagnostics) {
+            Ok(true) if self.close_after_snapshot => {
+                self.diagnostics_sink = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                self.diagnostics_error = Some(format!("Diagnostics write failed: {error}"));
+                self.diagnostics_sink = None;
+            }
+        }
     }
 }
 
@@ -68,6 +123,8 @@ struct GraphSummary {
     graph_size: String,
     aspect: String,
     fit_fill: String,
+    edge_labels: String,
+    readability: String,
 }
 
 impl GraphSummary {
@@ -97,6 +154,8 @@ impl GraphSummary {
             self.graph_size.clear();
             self.aspect.clear();
             self.fit_fill.clear();
+            self.edge_labels.clear();
+            self.readability.clear();
             return;
         };
 
@@ -110,6 +169,24 @@ impl GraphSummary {
             "Fit fill: {:.0}% x {:.0}%",
             diagnostics.fitted_fill.x * 100.0,
             diagnostics.fitted_fill.y * 100.0
+        );
+        self.edge_labels = format!(
+            "Edge labels: {}, label collisions: {}, edge intersections: {}, edge collisions: {}",
+            diagnostics.edge_labels.label_count,
+            diagnostics.edge_labels.collision_count,
+            diagnostics.edge_labels.edge_intersection_count,
+            diagnostics.edge_labels.edge_collision_count
+        );
+        self.readability = format!(
+            "Crossings: {}, candidate/history: {}, long edges: {}, backtracking: {}, selected crossings: {}",
+            diagnostics.readability.edge_edge_crossings,
+            diagnostics
+                .readability
+                .edge_crossings_by_kind
+                .candidate_history,
+            diagnostics.readability.long_edge_count,
+            diagnostics.readability.backtracking_edge_count,
+            diagnostics.readability.selected_path_crossings
         );
     }
 }

@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use chrono::Utc;
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
@@ -194,6 +194,9 @@ pub enum Command {
     #[command(display_order = 43)]
     /// Persist and inspect the active operator selection context.
     Select(SelectCommand),
+    #[command(display_order = 44)]
+    /// Prepare MBE oracle configs and inspect MBE oracle reports.
+    Mbe(MbeCommand),
     #[command(display_order = 50)]
     /// Check eval setup and point out likely configuration problems.
     Doctor,
@@ -329,6 +332,136 @@ pub struct RunReplayCommand {
 pub enum RunReplaySubcommand {
     /// [debug/manual] Replay one embedding batch from a prepared run.
     Batch(ReplayMsbBatchCommand),
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Prepare and run MBE oracle evaluations over typed eval artifacts")]
+pub struct MbeCommand {
+    #[command(subcommand)]
+    pub command: MbeSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MbeSubcommand {
+    /// Run the MBE oracle harness for one prepared Multi-SWE-bench run.
+    Run(MbeRunCommand),
+    /// List Prototype 1 child nodes with MBE submission artifacts.
+    CampaignCandidates(MbeCampaignCandidatesCommand),
+    /// Run the MBE oracle harness for one Prototype 1 child node.
+    RunCampaignCandidate(MbeRunCampaignCandidateCommand),
+    /// List prepared runs that can be passed to the MBE oracle.
+    Runs(MbeRunsCommand),
+    /// Write an MBE harness config for one prepared Multi-SWE-bench run.
+    WriteConfig(MbeWriteConfigCommand),
+    /// Read MBE final_report.json and print the verdict for one prepared run.
+    Verdict(MbeVerdictCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct MbeRequestArgs {
+    /// Path to the prepared run manifest. Omit when using --instance.
+    #[arg(long, value_name = "PATH")]
+    pub run: Option<PathBuf>,
+
+    /// Benchmark instance id; selects the latest completed attempt with a submission.
+    #[arg(long)]
+    pub instance: Option<String>,
+
+    /// Attempt number from `mbe runs --instance <id>`.
+    #[arg(long)]
+    pub attempt: Option<usize>,
+
+    /// Path to multi-swe-bench-submission.jsonl. Defaults to <prepared output_dir>/multi-swe-bench-submission.jsonl.
+    #[arg(long, value_name = "PATH")]
+    pub submission: Option<PathBuf>,
+
+    /// MBE output directory. Defaults to <prepared output_dir>/mbe.
+    #[arg(long, value_name = "DIR")]
+    pub output_dir: Option<PathBuf>,
+
+    /// Repository cache dir containing <org>/<repo>. Defaults from the prepared repo_root.
+    #[arg(long, value_name = "DIR")]
+    pub repo_dir: Option<PathBuf>,
+
+    /// Worker count for all MBE worker pools in the generated config.
+    #[arg(long, default_value_t = 1)]
+    pub workers: u32,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeRunsCommand {
+    /// Benchmark instance id.
+    #[arg(long)]
+    pub instance: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeCampaignCandidatesCommand {
+    /// Prototype 1 campaign id.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Show only candidates whose fix_patch is non-empty.
+    #[arg(long)]
+    pub nonempty_only: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeRunCampaignCandidateCommand {
+    /// Prototype 1 campaign id.
+    #[arg(long)]
+    pub campaign: String,
+
+    /// Prototype 1 node id to test.
+    #[arg(long)]
+    pub node: String,
+
+    /// MBE output directory. Defaults to the child treatment run's mbe directory.
+    #[arg(long, value_name = "DIR")]
+    pub output_dir: Option<PathBuf>,
+
+    /// Repository cache dir containing <org>/<repo>. Defaults from the prepared repo_root.
+    #[arg(long, value_name = "DIR")]
+    pub repo_dir: Option<PathBuf>,
+
+    /// Worker count for all MBE worker pools in the generated config.
+    #[arg(long, default_value_t = 1)]
+    pub workers: u32,
+
+    /// Python executable used to invoke `multi_swe_bench.harness.run_evaluation`.
+    #[arg(long, default_value = "python")]
+    pub python: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeRunCommand {
+    #[command(flatten)]
+    pub request: MbeRequestArgs,
+
+    /// Python executable used to invoke `multi_swe_bench.harness.run_evaluation`.
+    #[arg(long, default_value = "python")]
+    pub python: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeWriteConfigCommand {
+    #[command(flatten)]
+    pub request: MbeRequestArgs,
+
+    /// Python executable to render in the suggested harness command.
+    #[arg(long, default_value = "python")]
+    pub python: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct MbeVerdictCommand {
+    /// Path to the prepared run manifest.
+    #[arg(long, value_name = "PATH")]
+    pub run: PathBuf,
+
+    /// Path to MBE final_report.json.
+    #[arg(long, value_name = "PATH")]
+    pub report: PathBuf,
 }
 
 #[derive(Debug, Parser)]
@@ -1028,6 +1161,13 @@ impl Cli {
                     ExitCode::FAILURE
                 }
             },
+            Command::Mbe(cmd) => match cmd.run() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
             Command::Closure(cmd) => match cmd.run().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -1056,6 +1196,19 @@ impl RunCommand {
             RunSubcommand::Single(cmd) => cmd.run().await,
             RunSubcommand::Batch(cmd) => cmd.run().await,
             RunSubcommand::Replay(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl MbeCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            MbeSubcommand::Run(cmd) => cmd.run(),
+            MbeSubcommand::CampaignCandidates(cmd) => cmd.run(),
+            MbeSubcommand::RunCampaignCandidate(cmd) => cmd.run(),
+            MbeSubcommand::Runs(cmd) => cmd.run(),
+            MbeSubcommand::WriteConfig(cmd) => cmd.run(),
+            MbeSubcommand::Verdict(cmd) => cmd.run(),
         }
     }
 }
@@ -3583,6 +3736,197 @@ impl RunMsbAgentBatchCommand {
         if let Some(path) = artifacts.msb_submission {
             println!("{}", path.display());
         }
+        Ok(())
+    }
+}
+
+impl MbeRequestArgs {
+    fn into_request(self) -> Result<crate::mbe::Request, PrepareError> {
+        let options = mbe_options_with_workers(self.workers);
+
+        match (self.run, self.instance) {
+            (Some(run), None) => {
+                if self.attempt.is_some() {
+                    return Err(PrepareError::InvalidMbeRequest {
+                        detail: "--attempt requires --instance, not --run".to_string(),
+                    });
+                }
+                crate::mbe::Request::from_manifest(
+                    run,
+                    self.submission,
+                    self.output_dir,
+                    self.repo_dir,
+                    options,
+                )
+            }
+            (None, Some(instance)) => crate::mbe::Request::from_instance(
+                &instance,
+                self.attempt,
+                self.submission,
+                self.output_dir,
+                self.repo_dir,
+                options,
+            ),
+            (Some(_), Some(_)) => Err(PrepareError::InvalidMbeRequest {
+                detail: "specify only one of --run or --instance".to_string(),
+            }),
+            (None, None) => Err(PrepareError::InvalidMbeRequest {
+                detail: "specify --run <path> or --instance <id>".to_string(),
+            }),
+        }
+    }
+}
+
+fn mbe_options_with_workers(workers: u32) -> crate::mbe::Options {
+    let mut options = crate::mbe::Options::default();
+    options.workers = crate::mbe::Workers {
+        general: workers,
+        build_image: workers,
+        run_instance: workers,
+    };
+    options
+}
+
+impl MbeRunsCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        for candidate in crate::mbe::run_candidates(&self.instance)? {
+            let latest = if candidate.latest { "latest" } else { "" };
+            let submission = candidate
+                .submission_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
+                candidate.attempt,
+                latest,
+                candidate.execution_status,
+                candidate.submission_status,
+                candidate.run_id,
+                candidate.run_manifest.display(),
+                submission
+            );
+        }
+        Ok(())
+    }
+}
+
+impl MbeCampaignCandidatesCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        println!(
+            "generation\tnode\tparent\tpatch\tbytes\tlines\tinstance\ttreatment_campaign\tsubmission"
+        );
+        for candidate in crate::mbe::campaign_candidates(&self.campaign, self.nonempty_only)? {
+            let patch = if candidate.empty_patch() {
+                "empty"
+            } else {
+                "nonempty"
+            };
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                candidate.generation(),
+                candidate.node_id(),
+                candidate.parent_node_id().unwrap_or("-"),
+                patch,
+                candidate.fix_patch_bytes(),
+                candidate.fix_patch_lines(),
+                candidate.instance_id(),
+                candidate.treatment_campaign_id()?,
+                candidate.submission_path()?.display()
+            );
+        }
+        Ok(())
+    }
+}
+
+impl MbeRunCampaignCandidateCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let candidate = crate::mbe::campaign_candidate_by_node(&self.campaign, &self.node)?;
+        let request = crate::mbe::Request::from_campaign_candidate(
+            &candidate,
+            self.output_dir,
+            self.repo_dir,
+            mbe_options_with_workers(self.workers),
+        )?;
+        let run = request.run_harness(self.python)?;
+        println!("node: {}", candidate.node_id());
+        println!("config: {}", run.written.path.display());
+        println!("report: {}", run.written.report_path.display());
+        println!("command: {}", run.invocation.command_line());
+        println!(
+            "verdict: {}\t{}",
+            run.evidence.report_id, run.evidence.verdict
+        );
+        println!(
+            "instance_report: {}",
+            run.evaluation.instance_report_path.display()
+        );
+        println!("diagnostic: {}", run.evaluation.diagnostic);
+        println!(
+            "usable_for_selection: {}",
+            run.evaluation.usable_for_selection
+        );
+        Ok(())
+    }
+}
+
+impl MbeRunCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let request = self.request.into_request()?;
+        let run = request.run_harness(self.python)?;
+        println!("config: {}", run.written.path.display());
+        println!("report: {}", run.written.report_path.display());
+        println!("command: {}", run.invocation.command_line());
+        println!(
+            "verdict: {}\t{}",
+            run.evidence.report_id, run.evidence.verdict
+        );
+        println!(
+            "instance_report: {}",
+            run.evaluation.instance_report_path.display()
+        );
+        println!("diagnostic: {}", run.evaluation.diagnostic);
+        println!(
+            "usable_for_selection: {}",
+            run.evaluation.usable_for_selection
+        );
+        Ok(())
+    }
+}
+
+impl MbeWriteConfigCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let request = self.request.into_request()?;
+        let written = request.write_config()?;
+        let invocation = written.harness_invocation(self.python);
+        println!("config: {}", written.path.display());
+        println!("report: {}", written.report_path.display());
+        println!("command: {}", invocation.command_line());
+        Ok(())
+    }
+}
+
+impl MbeVerdictCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let prepared = crate::spec::PreparedSingleRun::load_manifest(self.run)?;
+        let report = crate::mbe::FinalReport::load(&self.report)?;
+        let evidence = crate::mbe::OracleEvidence::from_report(&prepared, self.report, &report)?;
+        let layout = crate::mbe::Layout::under(
+            evidence
+                .report_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
+            PathBuf::new(),
+        );
+        let evaluation = crate::mbe::OracleEvaluation::from_evidence(&prepared, evidence, &layout)?;
+        println!(
+            "{}\t{}\t{}\t{}",
+            evaluation.evidence.report_id,
+            evaluation.evidence.verdict,
+            evaluation.diagnostic,
+            evaluation.usable_for_selection
+        );
         Ok(())
     }
 }
@@ -13157,6 +13501,219 @@ mod tests {
             }) => {
                 assert_eq!(cmd.campaign, "campaign-1");
                 assert!(cmd.nonempty_only);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_write_config_parses_explicit_artifacts() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "write-config",
+            "--run",
+            "/tmp/run.json",
+            "--submission",
+            "/tmp/multi-swe-bench-submission.jsonl",
+            "--output-dir",
+            "/tmp/mbe",
+            "--repo-dir",
+            "/tmp/repos",
+            "--workers",
+            "2",
+        ])
+        .expect("mbe write-config should parse");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::WriteConfig(cmd),
+            }) => {
+                assert_eq!(cmd.request.run, Some(PathBuf::from("/tmp/run.json")));
+                assert_eq!(
+                    cmd.request.submission,
+                    Some(PathBuf::from("/tmp/multi-swe-bench-submission.jsonl"))
+                );
+                assert_eq!(cmd.request.instance, None);
+                assert_eq!(cmd.request.attempt, None);
+                assert_eq!(cmd.request.output_dir, Some(PathBuf::from("/tmp/mbe")));
+                assert_eq!(cmd.request.repo_dir, Some(PathBuf::from("/tmp/repos")));
+                assert_eq!(cmd.request.workers, 2);
+                assert_eq!(cmd.python, "python");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_run_parses_explicit_artifacts_and_python() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "run",
+            "--run",
+            "/tmp/run.json",
+            "--submission",
+            "/tmp/multi-swe-bench-submission.jsonl",
+            "--output-dir",
+            "/tmp/mbe",
+            "--repo-dir",
+            "/tmp/repos",
+            "--workers",
+            "2",
+            "--python",
+            "python3",
+        ])
+        .expect("mbe run should parse");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::Run(cmd),
+            }) => {
+                assert_eq!(cmd.request.run, Some(PathBuf::from("/tmp/run.json")));
+                assert_eq!(
+                    cmd.request.submission,
+                    Some(PathBuf::from("/tmp/multi-swe-bench-submission.jsonl"))
+                );
+                assert_eq!(cmd.request.instance, None);
+                assert_eq!(cmd.request.attempt, None);
+                assert_eq!(cmd.request.output_dir, Some(PathBuf::from("/tmp/mbe")));
+                assert_eq!(cmd.request.repo_dir, Some(PathBuf::from("/tmp/repos")));
+                assert_eq!(cmd.request.workers, 2);
+                assert_eq!(cmd.python, "python3");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_run_parses_run_only_default_artifacts() {
+        let parsed = Cli::try_parse_from(["ploke-eval", "mbe", "run", "--run", "/tmp/run.json"])
+            .expect("mbe run should parse with default artifact paths");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::Run(cmd),
+            }) => {
+                assert_eq!(cmd.request.run, Some(PathBuf::from("/tmp/run.json")));
+                assert_eq!(cmd.request.instance, None);
+                assert_eq!(cmd.request.attempt, None);
+                assert_eq!(cmd.request.submission, None);
+                assert_eq!(cmd.request.output_dir, None);
+                assert_eq!(cmd.request.repo_dir, None);
+                assert_eq!(cmd.request.workers, 1);
+                assert_eq!(cmd.python, "python");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_run_parses_instance_shortcut() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "run",
+            "--instance",
+            "BurntSushi__ripgrep-2209",
+            "--attempt",
+            "2",
+        ])
+        .expect("mbe run should parse with instance shortcut");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::Run(cmd),
+            }) => {
+                assert_eq!(cmd.request.run, None);
+                assert_eq!(
+                    cmd.request.instance,
+                    Some("BurntSushi__ripgrep-2209".to_string())
+                );
+                assert_eq!(cmd.request.attempt, Some(2));
+                assert_eq!(cmd.request.submission, None);
+                assert_eq!(cmd.request.output_dir, None);
+                assert_eq!(cmd.request.repo_dir, None);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_campaign_candidates_parses_campaign() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "campaign-candidates",
+            "--campaign",
+            "campaign-1",
+            "--nonempty-only",
+        ])
+        .expect("mbe campaign-candidates should parse");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::CampaignCandidates(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "campaign-1");
+                assert!(cmd.nonempty_only);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_run_campaign_candidate_parses_node() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "run-campaign-candidate",
+            "--campaign",
+            "campaign-1",
+            "--node",
+            "node-1",
+            "--output-dir",
+            "/tmp/mbe",
+            "--repo-dir",
+            "/tmp/repos",
+            "--workers",
+            "2",
+            "--python",
+            "python3",
+        ])
+        .expect("mbe run-campaign-candidate should parse");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::RunCampaignCandidate(cmd),
+            }) => {
+                assert_eq!(cmd.campaign, "campaign-1");
+                assert_eq!(cmd.node, "node-1");
+                assert_eq!(cmd.output_dir, Some(PathBuf::from("/tmp/mbe")));
+                assert_eq!(cmd.repo_dir, Some(PathBuf::from("/tmp/repos")));
+                assert_eq!(cmd.workers, 2);
+                assert_eq!(cmd.python, "python3");
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mbe_runs_parses_instance() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "mbe",
+            "runs",
+            "--instance",
+            "BurntSushi__ripgrep-2209",
+        ])
+        .expect("mbe runs should parse");
+
+        match parsed.command {
+            Command::Mbe(MbeCommand {
+                command: MbeSubcommand::Runs(cmd),
+            }) => {
+                assert_eq!(cmd.instance, "BurntSushi__ripgrep-2209");
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

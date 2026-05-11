@@ -25,6 +25,7 @@ tests/data/code_graph.ron
 
 # Data input/output
 crates/ploke-tui/data/
+crates/ploke-egui/data/
 
 # Ignore temp file for random stuff
 temp.md

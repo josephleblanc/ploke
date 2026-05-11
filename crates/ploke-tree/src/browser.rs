@@ -866,12 +866,15 @@ mod tests {
                 block_height: 3,
                 block_hash: "hash-3".to_owned(),
                 parent_block_hashes: vec!["hash-2".to_owned()],
+                ruling_parent: None,
                 selected_successor: SuccessorRefRecord {
                     runtime: ActorRefRecord::Process("successor".to_owned()),
                     artifact: ArtifactRefRecord {
                         value: "artifact:successor".to_owned(),
                     },
                 },
+                selected_node: None,
+                selected_branch: None,
                 selected_candidate: Some("candidate:a".to_owned()),
                 selected_occurrence_id: Some("occurrence-a".to_owned()),
                 selected_membership_id: Some("membership-a".to_owned()),
@@ -908,12 +911,15 @@ mod tests {
                 block_height: 3,
                 block_hash: "hash-3".to_owned(),
                 parent_block_hashes: vec!["hash-2".to_owned()],
+                ruling_parent: None,
                 selected_successor: SuccessorRefRecord {
                     runtime: ActorRefRecord::Process("successor".to_owned()),
                     artifact: ArtifactRefRecord {
                         value: "artifact:successor".to_owned(),
                     },
                 },
+                selected_node: None,
+                selected_branch: None,
                 selected_candidate: None,
                 selected_occurrence_id: None,
                 selected_membership_id: None,

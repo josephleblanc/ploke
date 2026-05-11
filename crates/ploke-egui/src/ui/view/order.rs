@@ -57,7 +57,7 @@ fn append_candidate_group<'a>(
 }
 
 fn center_selected(mut group: Vec<&Candidate>) -> Vec<&Candidate> {
-    group.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+    group.sort_by(|left, right| candidate_order_key(left).cmp(&candidate_order_key(right)));
 
     let mut selected = Vec::new();
     let mut other = Vec::new();
@@ -71,4 +71,8 @@ fn center_selected(mut group: Vec<&Candidate>) -> Vec<&Candidate> {
 
     let right = other.split_off(other.len() / 2);
     other.into_iter().chain(selected).chain(right).collect()
+}
+
+fn candidate_order_key(candidate: &Candidate) -> (Option<u64>, &str) {
+    (candidate.ruling_epoch(), candidate.id().as_str())
 }

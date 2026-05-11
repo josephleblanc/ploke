@@ -1,12 +1,30 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::closure::{ClosureClass, ClosureInstanceRow, load_closure_state};
+use crate::intervention::{
+    Prototype1NodeRecord, Prototype1RunnerDisposition, Prototype1RunnerResult,
+    load_runner_result_at,
+};
+use crate::projection::OperatorProjectionRead;
+use crate::run_registry::{RunExecutionStatus, RunSubmissionStatus};
+use crate::runner::MultiSweBenchSubmissionRecord;
 use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
 
 pub const CONFIG_FILE: &str = "mbe-evaluation-config.json";
+pub const EVALUATION_WORKDIR: &str = "evals";
 pub const FINAL_REPORT_FILE: &str = "final_report.json";
+pub const FIX_PATCH_RUN_LOG_FILE: &str = "fix-patch-run.log";
+pub const HARNESS_MODULE: &str = "multi_swe_bench.harness.run_evaluation";
+pub const INSTANCE_REPORT_FILE: &str = "report.json";
+pub const SUBMISSION_FILE: &str = "multi-swe-bench-submission.jsonl";
+const FIX_PATCH_RUN_LOG_READ_LIMIT: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -85,7 +103,243 @@ pub struct WrittenConfig {
     pub report_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessInvocation {
+    pub program: String,
+    pub args: Vec<String>,
+    pub config_path: PathBuf,
+    pub report_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessRun {
+    pub written: WrittenConfig,
+    pub invocation: HarnessInvocation,
+    pub evidence: OracleEvidence,
+    pub evaluation: OracleEvaluation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunCandidate {
+    pub attempt: usize,
+    pub latest: bool,
+    pub run_id: String,
+    pub instance_id: String,
+    pub run_manifest: PathBuf,
+    pub run_root: PathBuf,
+    pub submission_path: Option<PathBuf>,
+    pub execution_status: RunExecutionStatus,
+    pub submission_status: RunSubmissionStatus,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CampaignCandidate {
+    pub node: Prototype1NodeRecord,
+    pub runner_result: Prototype1RunnerResult,
+    pub closure_row: ClosureInstanceRow,
+    pub submission: MultiSweBenchSubmissionRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalReport {
+    pub total_instances: usize,
+    pub submitted_instances: usize,
+    pub completed_instances: usize,
+    pub incomplete_instances: usize,
+    pub resolved_instances: usize,
+    pub unresolved_instances: usize,
+    pub empty_patch_instances: usize,
+    pub error_instances: usize,
+    pub submitted_ids: Vec<String>,
+    pub completed_ids: Vec<String>,
+    pub incomplete_ids: Vec<String>,
+    pub resolved_ids: Vec<String>,
+    pub unresolved_ids: Vec<String>,
+    pub empty_patch_ids: Vec<String>,
+    pub error_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstanceReport {
+    pub org: String,
+    pub repo: String,
+    pub number: u64,
+    pub valid: Option<bool>,
+    pub error_msg: Option<String>,
+    pub fixed_tests: BTreeMap<String, TestTransition>,
+    pub p2p_tests: BTreeMap<String, TestTransition>,
+    pub f2p_tests: BTreeMap<String, TestTransition>,
+    pub s2p_tests: BTreeMap<String, TestTransition>,
+    pub n2p_tests: BTreeMap<String, TestTransition>,
+    pub run_result: StageResult,
+    pub test_patch_result: StageResult,
+    pub fix_patch_result: StageResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageResult {
+    pub passed_count: usize,
+    pub failed_count: usize,
+    pub skipped_count: usize,
+    pub passed_tests: BTreeSet<String>,
+    pub failed_tests: BTreeSet<String>,
+    pub skipped_tests: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestTransition {
+    pub run: TestStatus,
+    pub test: TestStatus,
+    pub fix: TestStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TestStatus {
+    #[serde(rename = "PASS")]
+    Pass,
+    #[serde(rename = "FAIL")]
+    Fail,
+    #[serde(rename = "SKIP")]
+    Skip,
+    #[serde(rename = "NONE")]
+    None,
+    #[serde(rename = "FAILED")]
+    Failed,
+    #[serde(rename = "PASSED")]
+    Passed,
+    #[serde(rename = "SKIPPED")]
+    Skipped,
+    #[serde(rename = "ERROR")]
+    Error,
+    #[serde(rename = "XFAIL")]
+    Xfail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Resolved,
+    Unresolved,
+    EmptyPatch,
+    Incomplete,
+    Error,
+    NotSubmitted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OracleEvidence {
+    pub report_path: PathBuf,
+    pub instance_id: String,
+    pub report_id: String,
+    pub verdict: Verdict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OracleEvaluation {
+    pub evidence: OracleEvidence,
+    pub instance_report_path: PathBuf,
+    pub instance_report: Option<InstanceReport>,
+    pub diagnostic: OracleDiagnostic,
+    pub usable_for_selection: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OracleDiagnostic {
+    Resolved,
+    UnresolvedTestsRan,
+    FixCompileFailed,
+    MissingFixResults,
+    InvalidInstanceReport,
+    MissingInstanceReport,
+    EmptyPatch,
+    Incomplete,
+    Error,
+    NotSubmitted,
+}
+
 impl Request {
+    pub fn from_instance(
+        instance_id: &str,
+        attempt: Option<usize>,
+        submission_path: Option<PathBuf>,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let candidate = select_run_candidate(instance_id, attempt)?;
+        Self::from_candidate(candidate, submission_path, output_dir, repo_dir, options)
+    }
+
+    pub fn from_candidate(
+        candidate: RunCandidate,
+        submission_path: Option<PathBuf>,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let submission_path = submission_path
+            .or(candidate.submission_path)
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "run {} has no registered MBE submission artifact",
+                    candidate.run_id
+                ),
+            })?;
+        let output_dir = output_dir.or_else(|| Some(candidate.run_root.join("mbe")));
+        Self::from_manifest(
+            candidate.run_manifest,
+            Some(submission_path),
+            output_dir,
+            repo_dir,
+            options,
+        )
+    }
+
+    pub fn from_campaign_candidate(
+        candidate: &CampaignCandidate,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let output_dir = match output_dir {
+            Some(path) => path,
+            None => candidate.run_root()?.join("mbe"),
+        };
+        Self::from_manifest(
+            candidate.run_manifest()?.to_path_buf(),
+            Some(candidate.submission_path()?.to_path_buf()),
+            Some(output_dir),
+            repo_dir,
+            options,
+        )
+    }
+
+    pub fn from_manifest(
+        run_manifest: PathBuf,
+        submission_path: Option<PathBuf>,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let prepared = PreparedSingleRun::load_manifest(run_manifest)?;
+        let submission_path =
+            submission_path.unwrap_or_else(|| prepared.output_dir.join(SUBMISSION_FILE));
+        let output_dir = output_dir.unwrap_or_else(|| prepared.output_dir.join("mbe"));
+        let repo_dir = match repo_dir {
+            Some(path) => path,
+            None => repo_cache_dir_for_prepared_run(&prepared)?,
+        };
+        Self::new(
+            prepared,
+            submission_path,
+            Layout::under(output_dir, repo_dir),
+            options,
+        )
+    }
+
     pub fn new(
         prepared: PreparedSingleRun,
         submission_path: PathBuf,
@@ -121,6 +375,7 @@ impl Request {
 
     pub fn harness_config(&self) -> Result<HarnessConfig, PrepareError> {
         let source = require_msb_source(&self.prepared)?;
+        let report_id = report_id_for_source(source);
 
         Ok(HarnessConfig {
             mode: Mode::Evaluation,
@@ -129,7 +384,7 @@ impl Request {
             dataset_files: vec![source.dataset_file.clone()],
             force_build: self.options.force_build,
             output_dir: self.layout.output_dir.clone(),
-            specifics: vec![source.instance_id.clone()],
+            specifics: vec![report_id],
             skips: Vec::new(),
             repo_dir: self.layout.repo_dir.clone(),
             need_clone: self.options.need_clone,
@@ -180,6 +435,420 @@ impl Request {
             report_path: self.layout.output_dir.join(FINAL_REPORT_FILE),
         })
     }
+
+    pub fn write_harness_invocation(
+        &self,
+        python: impl Into<String>,
+    ) -> Result<HarnessInvocation, PrepareError> {
+        let written = self.write_config()?;
+        Ok(written.harness_invocation(python))
+    }
+
+    pub fn run_harness(&self, python: impl Into<String>) -> Result<HarnessRun, PrepareError> {
+        let written = self.write_config()?;
+        let invocation = written.harness_invocation(python);
+        let status = Command::new(&invocation.program)
+            .args(&invocation.args)
+            .status()
+            .map_err(|source| PrepareError::MbeHarnessCommand {
+                command: invocation.command_line(),
+                source,
+            })?;
+        if !status.success() {
+            return Err(PrepareError::MbeHarnessStatus {
+                command: invocation.command_line(),
+                status: status.code().unwrap_or(-1),
+            });
+        }
+
+        let evidence = self.load_oracle_evidence_from(&written.report_path)?;
+        let evaluation = self.load_oracle_evaluation_from(&written.report_path)?;
+        Ok(HarnessRun {
+            written,
+            invocation,
+            evidence,
+            evaluation,
+        })
+    }
+
+    pub fn load_oracle_evidence(&self) -> Result<OracleEvidence, PrepareError> {
+        self.load_oracle_evidence_from(&self.layout.output_dir.join(FINAL_REPORT_FILE))
+    }
+
+    pub fn load_oracle_evidence_from(
+        &self,
+        report_path: &Path,
+    ) -> Result<OracleEvidence, PrepareError> {
+        let report = FinalReport::load(report_path)?;
+        OracleEvidence::from_report(&self.prepared, report_path.to_path_buf(), &report)
+    }
+
+    pub fn load_oracle_evaluation(&self) -> Result<OracleEvaluation, PrepareError> {
+        self.load_oracle_evaluation_from(&self.layout.output_dir.join(FINAL_REPORT_FILE))
+    }
+
+    pub fn load_oracle_evaluation_from(
+        &self,
+        report_path: &Path,
+    ) -> Result<OracleEvaluation, PrepareError> {
+        let final_report = FinalReport::load(report_path)?;
+        let evidence =
+            OracleEvidence::from_report(&self.prepared, report_path.to_path_buf(), &final_report)?;
+        OracleEvaluation::from_evidence(&self.prepared, evidence, &self.layout)
+    }
+}
+
+pub fn run_candidates(instance_id: &str) -> Result<Vec<RunCandidate>, PrepareError> {
+    let instances_root = crate::layout::instances_dir()?;
+    let mut registrations =
+        crate::run_registry::list_registrations_for_instance(&instances_root, instance_id)?;
+    registrations
+        .sort_by(|left, right| run_candidate_sort_key(left).cmp(&run_candidate_sort_key(right)));
+    let latest_index = registrations.len().saturating_sub(1);
+
+    Ok(registrations
+        .into_iter()
+        .enumerate()
+        .map(|(index, registration)| RunCandidate {
+            attempt: index + 1,
+            latest: index == latest_index,
+            run_id: registration.run_id,
+            instance_id: registration.frozen_spec.task_id,
+            run_manifest: registration.artifacts.run_manifest,
+            run_root: registration.artifacts.run_root,
+            submission_path: registration.artifacts.msb_submission,
+            execution_status: registration.lifecycle.execution_status,
+            submission_status: registration.lifecycle.submission_status,
+            started_at: registration.lifecycle.started_at,
+            finished_at: registration.lifecycle.finished_at,
+        })
+        .collect())
+}
+
+pub fn select_run_candidate(
+    instance_id: &str,
+    attempt: Option<usize>,
+) -> Result<RunCandidate, PrepareError> {
+    let candidates = run_candidates(instance_id)?;
+    if candidates.is_empty() {
+        return Err(PrepareError::MissingRunManifest(
+            crate::layout::instances_dir()?
+                .join(instance_id)
+                .join("runs")
+                .join("run-*/run.json"),
+        ));
+    }
+
+    if let Some(attempt) = attempt {
+        return candidates
+            .into_iter()
+            .find(|candidate| candidate.attempt == attempt)
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!("instance '{instance_id}' has no MBE candidate attempt {attempt}"),
+            });
+    }
+
+    candidates
+        .into_iter()
+        .rev()
+        .find(|candidate| {
+            candidate.execution_status == RunExecutionStatus::Completed
+                && matches!(
+                    candidate.submission_status,
+                    RunSubmissionStatus::NonemptyPatch | RunSubmissionStatus::EmptyPatch
+                )
+                && candidate
+                    .submission_path
+                    .as_ref()
+                    .is_some_and(|path| path.is_file())
+        })
+        .ok_or_else(|| PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "instance '{instance_id}' has no completed run with an MBE submission artifact"
+            ),
+        })
+}
+
+impl WrittenConfig {
+    pub fn harness_invocation(&self, python: impl Into<String>) -> HarnessInvocation {
+        HarnessInvocation {
+            program: python.into(),
+            args: vec![
+                "-m".to_string(),
+                HARNESS_MODULE.to_string(),
+                "--config".to_string(),
+                self.path.display().to_string(),
+            ],
+            config_path: self.path.clone(),
+            report_path: self.report_path.clone(),
+        }
+    }
+}
+
+impl HarnessInvocation {
+    pub fn command_line(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl FinalReport {
+    pub fn load(path: &Path) -> Result<Self, PrepareError> {
+        if !path.is_file() {
+            return Err(PrepareError::MissingMbeReport(path.to_path_buf()));
+        }
+        let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let report: Self =
+            serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub fn validate(&self) -> Result<(), PrepareError> {
+        validate_count("submitted", self.submitted_instances, &self.submitted_ids)?;
+        validate_count("completed", self.completed_instances, &self.completed_ids)?;
+        validate_count(
+            "incomplete",
+            self.incomplete_instances,
+            &self.incomplete_ids,
+        )?;
+        validate_count("resolved", self.resolved_instances, &self.resolved_ids)?;
+        validate_count(
+            "unresolved",
+            self.unresolved_instances,
+            &self.unresolved_ids,
+        )?;
+        validate_count(
+            "empty_patch",
+            self.empty_patch_instances,
+            &self.empty_patch_ids,
+        )?;
+        validate_count("error", self.error_instances, &self.error_ids)?;
+
+        let total_from_categories = self.resolved_instances
+            + self.unresolved_instances
+            + self.empty_patch_instances
+            + self.error_instances;
+        if self.total_instances != total_from_categories {
+            return Err(PrepareError::InvalidMbeReport {
+                detail: format!(
+                    "total_instances={} but resolved+unresolved+empty_patch+error={}",
+                    self.total_instances, total_from_categories
+                ),
+            });
+        }
+        if self.submitted_instances != self.total_instances {
+            return Err(PrepareError::InvalidMbeReport {
+                detail: format!(
+                    "submitted_instances={} but total_instances={}",
+                    self.submitted_instances, self.total_instances
+                ),
+            });
+        }
+        if self.completed_instances + self.incomplete_instances != self.total_instances {
+            return Err(PrepareError::InvalidMbeReport {
+                detail: format!(
+                    "completed+incomplete={} but total_instances={}",
+                    self.completed_instances + self.incomplete_instances,
+                    self.total_instances
+                ),
+            });
+        }
+
+        validate_terminal_membership(self)?;
+        Ok(())
+    }
+
+    pub fn verdict_for(&self, report_id: &str) -> Verdict {
+        if self.resolved_ids.iter().any(|id| id == report_id) {
+            Verdict::Resolved
+        } else if self.unresolved_ids.iter().any(|id| id == report_id) {
+            Verdict::Unresolved
+        } else if self.empty_patch_ids.iter().any(|id| id == report_id) {
+            Verdict::EmptyPatch
+        } else if self.error_ids.iter().any(|id| id == report_id) {
+            Verdict::Error
+        } else if self.incomplete_ids.iter().any(|id| id == report_id) {
+            Verdict::Incomplete
+        } else {
+            Verdict::NotSubmitted
+        }
+    }
+}
+
+impl InstanceReport {
+    pub fn load(path: &Path) -> Result<Self, PrepareError> {
+        if !path.is_file() {
+            return Err(PrepareError::MissingMbeReport(path.to_path_buf()));
+        }
+        let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let report: Self =
+            serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub fn report_id(&self) -> String {
+        format!("{}/{}:pr-{}", self.org, self.repo, self.number)
+    }
+
+    pub fn validate(&self) -> Result<(), PrepareError> {
+        self.run_result.validate("run_result")?;
+        self.test_patch_result.validate("test_patch_result")?;
+        self.fix_patch_result.validate("fix_patch_result")?;
+        Ok(())
+    }
+
+    pub fn fix_result_count(&self) -> usize {
+        self.fix_patch_result.total_count()
+    }
+}
+
+impl StageResult {
+    pub fn total_count(&self) -> usize {
+        self.passed_count + self.failed_count + self.skipped_count
+    }
+
+    pub fn validate(&self, label: &str) -> Result<(), PrepareError> {
+        validate_len(
+            &format!("{label}.passed"),
+            self.passed_count,
+            self.passed_tests.len(),
+        )?;
+        validate_len(
+            &format!("{label}.failed"),
+            self.failed_count,
+            self.failed_tests.len(),
+        )?;
+        validate_len(
+            &format!("{label}.skipped"),
+            self.skipped_count,
+            self.skipped_tests.len(),
+        )?;
+        validate_disjoint_stage_sets(label, self)?;
+        Ok(())
+    }
+}
+
+impl OracleEvidence {
+    pub fn from_report(
+        prepared: &PreparedSingleRun,
+        report_path: PathBuf,
+        report: &FinalReport,
+    ) -> Result<Self, PrepareError> {
+        let source = require_msb_source(prepared)?;
+        let report_id = report_id_for_source(source);
+        Ok(Self {
+            report_path,
+            instance_id: source.instance_id.clone(),
+            verdict: report.verdict_for(&report_id),
+            report_id,
+        })
+    }
+}
+
+impl OracleEvaluation {
+    pub fn from_evidence(
+        prepared: &PreparedSingleRun,
+        evidence: OracleEvidence,
+        layout: &Layout,
+    ) -> Result<Self, PrepareError> {
+        let source = require_msb_source(prepared)?;
+        let instance_report_path = instance_report_path(&layout.workdir, source);
+        let instance_report = if instance_report_path.is_file() {
+            Some(InstanceReport::load(&instance_report_path)?)
+        } else {
+            None
+        };
+        if let Some(report) = &instance_report {
+            let expected = report_id_for_source(source);
+            let actual = report.report_id();
+            if actual != expected {
+                return Err(PrepareError::InvalidMbeReport {
+                    detail: format!(
+                        "instance report id '{actual}' does not match expected '{expected}'"
+                    ),
+                });
+            }
+        }
+
+        let diagnostic = classify_oracle_diagnostic(
+            evidence.verdict,
+            instance_report.as_ref(),
+            &fix_patch_run_log_path(&layout.workdir, source),
+        )?;
+        Ok(Self {
+            evidence,
+            instance_report_path,
+            instance_report,
+            diagnostic,
+            usable_for_selection: diagnostic.usable_for_selection(),
+        })
+    }
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Resolved => "resolved",
+            Verdict::Unresolved => "unresolved",
+            Verdict::EmptyPatch => "empty_patch",
+            Verdict::Incomplete => "incomplete",
+            Verdict::Error => "error",
+            Verdict::NotSubmitted => "not_submitted",
+        }
+    }
+}
+
+impl fmt::Display for Verdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl OracleDiagnostic {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OracleDiagnostic::Resolved => "resolved",
+            OracleDiagnostic::UnresolvedTestsRan => "unresolved_tests_ran",
+            OracleDiagnostic::FixCompileFailed => "fix_compile_failed",
+            OracleDiagnostic::MissingFixResults => "missing_fix_results",
+            OracleDiagnostic::InvalidInstanceReport => "invalid_instance_report",
+            OracleDiagnostic::MissingInstanceReport => "missing_instance_report",
+            OracleDiagnostic::EmptyPatch => "empty_patch",
+            OracleDiagnostic::Incomplete => "incomplete",
+            OracleDiagnostic::Error => "error",
+            OracleDiagnostic::NotSubmitted => "not_submitted",
+        }
+    }
+
+    pub fn usable_for_selection(self) -> bool {
+        matches!(
+            self,
+            OracleDiagnostic::Resolved | OracleDiagnostic::UnresolvedTestsRan
+        )
+    }
+}
+
+impl fmt::Display for OracleDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Layout {
@@ -228,6 +897,216 @@ pub fn report_path(output_dir: &Path) -> PathBuf {
     output_dir.join(FINAL_REPORT_FILE)
 }
 
+impl CampaignCandidate {
+    pub fn node_id(&self) -> &str {
+        &self.node.node_id
+    }
+
+    pub fn generation(&self) -> u32 {
+        self.node.generation
+    }
+
+    pub fn parent_node_id(&self) -> Option<&str> {
+        self.node.parent_node_id.as_deref()
+    }
+
+    pub fn branch_id(&self) -> &str {
+        &self.node.branch_id
+    }
+
+    pub fn instance_id(&self) -> &str {
+        &self.closure_row.instance_id
+    }
+
+    pub fn treatment_campaign_id(&self) -> Result<&str, PrepareError> {
+        self.runner_result
+            .treatment_campaign_id
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!("node '{}' has no treatment campaign id", self.node.node_id),
+            })
+    }
+
+    pub fn run_manifest(&self) -> Result<&Path, PrepareError> {
+        self.closure_row
+            .artifacts
+            .run_manifest
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!("candidate node '{}' has no run manifest", self.node.node_id),
+            })
+    }
+
+    pub fn run_root(&self) -> Result<&Path, PrepareError> {
+        self.closure_row
+            .artifacts
+            .run_root
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!("candidate node '{}' has no run root", self.node.node_id),
+            })
+    }
+
+    pub fn submission_path(&self) -> Result<&Path, PrepareError> {
+        self.closure_row
+            .artifacts
+            .msb_submission
+            .as_deref()
+            .ok_or_else(|| PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "candidate node '{}' has no MBE submission artifact",
+                    self.node.node_id
+                ),
+            })
+    }
+
+    pub fn empty_patch(&self) -> bool {
+        self.submission.fix_patch.trim().is_empty()
+    }
+
+    pub fn fix_patch_bytes(&self) -> usize {
+        self.submission.fix_patch.len()
+    }
+
+    pub fn fix_patch_lines(&self) -> usize {
+        self.submission.fix_patch.lines().count()
+    }
+}
+
+pub fn campaign_candidates(
+    campaign_id: &str,
+    nonempty_only: bool,
+) -> Result<Vec<CampaignCandidate>, PrepareError> {
+    let prototype_root = crate::layout::campaigns_dir()?
+        .join(campaign_id)
+        .join("prototype1");
+    let nodes_dir = prototype_root.join("nodes");
+    let entries = fs::read_dir(&nodes_dir).map_err(|source| PrepareError::ReadManifest {
+        path: nodes_dir.clone(),
+        source,
+    })?;
+
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: nodes_dir.clone(),
+            source,
+        })?;
+        let node_dir = entry.path();
+        if !node_dir.is_dir() {
+            continue;
+        }
+        let node_path = node_dir.join("node.json");
+        let result_path = node_dir.join("runner-result.json");
+        if !node_path.is_file() || !result_path.is_file() {
+            continue;
+        }
+
+        let node = load_node_record_at(&node_path)?;
+        let result =
+            load_runner_result_at(&result_path, OperatorProjectionRead::projection_module())?;
+        candidates.extend(candidates_for_result(&node, &result, nonempty_only)?);
+    }
+
+    candidates.sort_by(|left, right| {
+        left.generation()
+            .cmp(&right.generation())
+            .then_with(|| {
+                left.runner_result
+                    .recorded_at
+                    .cmp(&right.runner_result.recorded_at)
+            })
+            .then_with(|| left.node_id().cmp(right.node_id()))
+    });
+    Ok(candidates)
+}
+
+pub fn campaign_candidate_by_node(
+    campaign_id: &str,
+    node_id: &str,
+) -> Result<CampaignCandidate, PrepareError> {
+    let candidates = campaign_candidates(campaign_id, false)?;
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.node_id() == node_id)
+        .ok_or_else(|| PrepareError::InvalidMbeRequest {
+            detail: format!("campaign '{campaign_id}' has no MBE candidate for node '{node_id}'"),
+        })
+}
+
+fn load_node_record_at(path: &Path) -> Result<Prototype1NodeRecord, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn load_submission_record(path: &Path) -> Result<MultiSweBenchSubmissionRecord, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    let Some(line) = lines.next() else {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: format!("MBE submission '{}' is empty", path.display()),
+        });
+    };
+    if lines.next().is_some() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "MBE campaign candidate submission '{}' contains more than one record",
+                path.display()
+            ),
+        });
+    }
+    serde_json::from_str(line).map_err(|source| PrepareError::ParseManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn candidates_for_result(
+    node: &Prototype1NodeRecord,
+    result: &Prototype1RunnerResult,
+    nonempty_only: bool,
+) -> Result<Vec<CampaignCandidate>, PrepareError> {
+    if result.disposition != Prototype1RunnerDisposition::Succeeded {
+        return Ok(Vec::new());
+    }
+    let Some(treatment_campaign_id) = result.treatment_campaign_id.as_deref() else {
+        return Ok(Vec::new());
+    };
+
+    let state = load_closure_state(treatment_campaign_id)?;
+    let mut candidates = Vec::new();
+    for row in state
+        .instances
+        .iter()
+        .filter(|row| row.instance_id == node.instance_id)
+    {
+        if row.eval_status != ClosureClass::Complete || row.artifacts.msb_submission.is_none() {
+            continue;
+        }
+        let submission_path = row.artifacts.msb_submission.as_deref().unwrap();
+        let submission = load_submission_record(submission_path)?;
+        if nonempty_only && submission.fix_patch.trim().is_empty() {
+            continue;
+        }
+        candidates.push(CampaignCandidate {
+            node: node.clone(),
+            runner_result: result.clone(),
+            closure_row: row.clone(),
+            submission,
+        });
+    }
+    Ok(candidates)
+}
+
 fn require_msb_source(
     prepared: &PreparedSingleRun,
 ) -> Result<&crate::spec::MultiSweBenchSource, PrepareError> {
@@ -240,6 +1119,212 @@ fn require_msb_source(
             ),
         }),
     }
+}
+
+fn repo_cache_dir_for_prepared_run(prepared: &PreparedSingleRun) -> Result<PathBuf, PrepareError> {
+    let source = require_msb_source(prepared)?;
+    let repo_dir = prepared
+        .repo_root
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "could not derive repo_dir from repo_root '{}'",
+                prepared.repo_root.display()
+            ),
+        })?;
+
+    let expected_repo_root = repo_dir.join(&source.org).join(&source.repo);
+    if expected_repo_root != prepared.repo_root {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "repo_root '{}' does not match expected MBE repo layout '{}'",
+                prepared.repo_root.display(),
+                expected_repo_root.display()
+            ),
+        });
+    }
+
+    Ok(repo_dir.to_path_buf())
+}
+
+fn report_id_for_source(source: &crate::spec::MultiSweBenchSource) -> String {
+    format!("{}/{}:pr-{}", source.org, source.repo, source.number)
+}
+
+fn instance_report_path(workdir: &Path, source: &crate::spec::MultiSweBenchSource) -> PathBuf {
+    workdir
+        .join(&source.org)
+        .join(&source.repo)
+        .join(EVALUATION_WORKDIR)
+        .join(format!("pr-{}", source.number))
+        .join(INSTANCE_REPORT_FILE)
+}
+
+fn fix_patch_run_log_path(workdir: &Path, source: &crate::spec::MultiSweBenchSource) -> PathBuf {
+    workdir
+        .join(&source.org)
+        .join(&source.repo)
+        .join(EVALUATION_WORKDIR)
+        .join(format!("pr-{}", source.number))
+        .join(FIX_PATCH_RUN_LOG_FILE)
+}
+
+fn classify_oracle_diagnostic(
+    verdict: Verdict,
+    report: Option<&InstanceReport>,
+    fix_log_path: &Path,
+) -> Result<OracleDiagnostic, PrepareError> {
+    match verdict {
+        Verdict::Resolved => Ok(OracleDiagnostic::Resolved),
+        Verdict::EmptyPatch => Ok(OracleDiagnostic::EmptyPatch),
+        Verdict::Incomplete => Ok(OracleDiagnostic::Incomplete),
+        Verdict::Error => Ok(OracleDiagnostic::Error),
+        Verdict::NotSubmitted => Ok(OracleDiagnostic::NotSubmitted),
+        Verdict::Unresolved => match report {
+            Some(report) if report.fix_result_count() == 0 => {
+                if fix_log_indicates_compile_failure(fix_log_path)? {
+                    Ok(OracleDiagnostic::FixCompileFailed)
+                } else {
+                    Ok(OracleDiagnostic::MissingFixResults)
+                }
+            }
+            Some(_) => Ok(OracleDiagnostic::UnresolvedTestsRan),
+            None => Ok(OracleDiagnostic::MissingInstanceReport),
+        },
+    }
+}
+
+fn fix_log_indicates_compile_failure(path: &Path) -> Result<bool, PrepareError> {
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let file = fs::File::open(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut text = String::new();
+    file.take(FIX_PATCH_RUN_LOG_READ_LIMIT)
+        .read_to_string(&mut text)
+        .map_err(|source| PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(text.contains("error[E") || text.contains("could not compile"))
+}
+
+fn run_candidate_sort_key(
+    registration: &crate::inner::registry::RunRegistration,
+) -> (String, String) {
+    (
+        registration
+            .lifecycle
+            .finished_at
+            .clone()
+            .unwrap_or_else(|| registration.lifecycle.updated_at.clone()),
+        registration.run_id.clone(),
+    )
+}
+
+fn shell_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b':'))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+fn validate_count(label: &str, expected: usize, ids: &[String]) -> Result<(), PrepareError> {
+    validate_len(label, expected, ids.len())
+}
+
+fn validate_len(label: &str, expected: usize, actual: usize) -> Result<(), PrepareError> {
+    if expected != actual {
+        return Err(PrepareError::InvalidMbeReport {
+            detail: format!(
+                "{label}_count={} but {label}_items has {} entries",
+                expected, actual
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_disjoint_stage_sets(label: &str, result: &StageResult) -> Result<(), PrepareError> {
+    if let Some(test) = result
+        .passed_tests
+        .intersection(&result.failed_tests)
+        .next()
+    {
+        return Err(PrepareError::InvalidMbeReport {
+            detail: format!("{label} test '{test}' appears in both passed_tests and failed_tests"),
+        });
+    }
+    if let Some(test) = result
+        .passed_tests
+        .intersection(&result.skipped_tests)
+        .next()
+    {
+        return Err(PrepareError::InvalidMbeReport {
+            detail: format!("{label} test '{test}' appears in both passed_tests and skipped_tests"),
+        });
+    }
+    if let Some(test) = result
+        .failed_tests
+        .intersection(&result.skipped_tests)
+        .next()
+    {
+        return Err(PrepareError::InvalidMbeReport {
+            detail: format!("{label} test '{test}' appears in both failed_tests and skipped_tests"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_terminal_membership(report: &FinalReport) -> Result<(), PrepareError> {
+    let mut seen = BTreeMap::<&str, &str>::new();
+    for (label, ids) in [
+        ("resolved", report.resolved_ids.as_slice()),
+        ("unresolved", report.unresolved_ids.as_slice()),
+        ("empty_patch", report.empty_patch_ids.as_slice()),
+        ("error", report.error_ids.as_slice()),
+    ] {
+        for id in ids {
+            if let Some(previous) = seen.insert(id.as_str(), label) {
+                return Err(PrepareError::InvalidMbeReport {
+                    detail: format!(
+                        "report id '{id}' appears in both {previous}_ids and {label}_ids"
+                    ),
+                });
+            }
+        }
+    }
+
+    let submitted: BTreeSet<&str> = report.submitted_ids.iter().map(String::as_str).collect();
+    for (label, ids) in [
+        ("completed", report.completed_ids.as_slice()),
+        ("incomplete", report.incomplete_ids.as_slice()),
+        ("resolved", report.resolved_ids.as_slice()),
+        ("unresolved", report.unresolved_ids.as_slice()),
+        ("empty_patch", report.empty_patch_ids.as_slice()),
+        ("error", report.error_ids.as_slice()),
+    ] {
+        for id in ids {
+            if !submitted.contains(id.as_str()) {
+                return Err(PrepareError::InvalidMbeReport {
+                    detail: format!(
+                        "report id '{id}' appears in {label}_ids but not submitted_ids"
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -274,21 +1359,84 @@ mod tests {
         }
     }
 
+    fn request(tmp: &Path) -> Request {
+        let submission_path = tmp.join("multi-swe-bench-submission.jsonl");
+        fs::create_dir_all(tmp.join("repos")).expect("create repos");
+        fs::write(tmp.join("dataset.jsonl"), "{}\n").expect("write dataset");
+        fs::write(&submission_path, "{}\n").expect("write submission");
+
+        Request::new(
+            prepared_run(tmp),
+            submission_path,
+            Layout::under(tmp.join("mbe"), tmp.join("repos")),
+            Options::default(),
+        )
+        .expect("valid request")
+    }
+
+    fn final_report_with_resolved_id(report_id: &str) -> FinalReport {
+        FinalReport {
+            total_instances: 1,
+            submitted_instances: 1,
+            completed_instances: 1,
+            incomplete_instances: 0,
+            resolved_instances: 1,
+            unresolved_instances: 0,
+            empty_patch_instances: 0,
+            error_instances: 0,
+            submitted_ids: vec![report_id.to_string()],
+            completed_ids: vec![report_id.to_string()],
+            incomplete_ids: Vec::new(),
+            resolved_ids: vec![report_id.to_string()],
+            unresolved_ids: Vec::new(),
+            empty_patch_ids: Vec::new(),
+            error_ids: Vec::new(),
+        }
+    }
+
+    fn stage_result(passed: usize, failed: usize, skipped: usize) -> StageResult {
+        let passed_tests = (0..passed)
+            .map(|index| format!("passed-{index}"))
+            .collect::<BTreeSet<_>>();
+        let failed_tests = (0..failed)
+            .map(|index| format!("failed-{index}"))
+            .collect::<BTreeSet<_>>();
+        let skipped_tests = (0..skipped)
+            .map(|index| format!("skipped-{index}"))
+            .collect::<BTreeSet<_>>();
+        StageResult {
+            passed_count: passed,
+            failed_count: failed,
+            skipped_count: skipped,
+            passed_tests,
+            failed_tests,
+            skipped_tests,
+        }
+    }
+
+    fn missing_fix_results_instance_report() -> InstanceReport {
+        InstanceReport {
+            org: "BurntSushi".to_string(),
+            repo: "ripgrep".to_string(),
+            number: 2209,
+            valid: Some(false),
+            error_msg: Some("After applying the fix patch, no test results were captured".into()),
+            fixed_tests: BTreeMap::new(),
+            p2p_tests: BTreeMap::new(),
+            f2p_tests: BTreeMap::new(),
+            s2p_tests: BTreeMap::new(),
+            n2p_tests: BTreeMap::new(),
+            run_result: stage_result(274, 0, 0),
+            test_patch_result: stage_result(274, 2, 0),
+            fix_patch_result: stage_result(0, 0, 0),
+        }
+    }
+
     #[test]
     fn request_projects_prepared_run_into_harness_config() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let submission_path = tmp.path().join("multi-swe-bench-submission.jsonl");
-        fs::create_dir_all(tmp.path().join("repos")).expect("create repos");
-        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
-        fs::write(&submission_path, "{}\n").expect("write submission");
-
-        let request = Request::new(
-            prepared_run(tmp.path()),
-            submission_path.clone(),
-            Layout::under(tmp.path().join("mbe"), tmp.path().join("repos")),
-            Options::default(),
-        )
-        .expect("valid request");
+        let request = request(tmp.path());
 
         let config = request.harness_config().expect("harness config");
 
@@ -297,7 +1445,7 @@ mod tests {
         assert_eq!(config.dataset_files, vec![tmp.path().join("dataset.jsonl")]);
         assert_eq!(
             config.specifics,
-            vec!["BurntSushi__ripgrep-2209".to_string()]
+            vec!["BurntSushi/ripgrep:pr-2209".to_string()]
         );
         assert!(!config.need_clone);
         assert_eq!(config.max_workers, 1);
@@ -306,19 +1454,8 @@ mod tests {
     #[test]
     fn write_config_persists_typed_harness_config() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let submission_path = tmp.path().join("multi-swe-bench-submission.jsonl");
-        fs::create_dir_all(tmp.path().join("repos")).expect("create repos");
-        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
-        fs::write(&submission_path, "{}\n").expect("write submission");
         let output_dir = tmp.path().join("mbe");
-
-        let request = Request::new(
-            prepared_run(tmp.path()),
-            submission_path,
-            Layout::under(output_dir.clone(), tmp.path().join("repos")),
-            Options::default(),
-        )
-        .expect("valid request");
+        let request = request(tmp.path());
 
         let written = request.write_config().expect("write config");
         let text = fs::read_to_string(&written.path).expect("read config");
@@ -328,5 +1465,260 @@ mod tests {
         assert_eq!(written.report_path, report_path(&output_dir));
         assert_eq!(config.output_dir, output_dir);
         assert_eq!(config.log_dir, tmp.path().join("mbe").join("logs"));
+    }
+
+    #[test]
+    fn written_config_projects_harness_invocation() {
+        let written = WrittenConfig {
+            path: PathBuf::from("/tmp/ploke eval/mbe-evaluation-config.json"),
+            report_path: PathBuf::from("/tmp/ploke eval/final_report.json"),
+        };
+
+        let invocation = written.harness_invocation("python3");
+
+        assert_eq!(invocation.program, "python3");
+        assert_eq!(
+            invocation.args,
+            vec![
+                "-m".to_string(),
+                HARNESS_MODULE.to_string(),
+                "--config".to_string(),
+                "/tmp/ploke eval/mbe-evaluation-config.json".to_string()
+            ]
+        );
+        assert_eq!(
+            invocation.command_line(),
+            "python3 -m multi_swe_bench.harness.run_evaluation --config '/tmp/ploke eval/mbe-evaluation-config.json'"
+        );
+    }
+
+    #[test]
+    fn request_from_manifest_defaults_mbe_layout_from_prepared_run() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prepared = prepared_run(tmp.path());
+        fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
+            .expect("create repo");
+        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
+        let run_manifest = tmp.path().join("run.json");
+        fs::write(
+            &run_manifest,
+            serde_json::to_string_pretty(&prepared).expect("serialize run"),
+        )
+        .expect("write run");
+        fs::create_dir_all(&prepared.output_dir).expect("create prepared output dir");
+        let submission_path = prepared.output_dir.join(SUBMISSION_FILE);
+        fs::write(&submission_path, "{}\n").expect("write submission");
+
+        let request = Request::from_manifest(run_manifest, None, None, None, Options::default())
+            .expect("request from manifest");
+
+        assert_eq!(
+            request.layout.output_dir,
+            tmp.path()
+                .join("instances")
+                .join("BurntSushi__ripgrep-2209")
+                .join("mbe")
+        );
+        assert_eq!(request.layout.repo_dir, tmp.path().join("repos"));
+        assert_eq!(request.submission_path, submission_path);
+    }
+
+    #[test]
+    fn request_from_candidate_uses_attempt_scoped_submission_and_output_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prepared = prepared_run(tmp.path());
+        fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
+            .expect("create repo");
+        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
+        fs::create_dir_all(&prepared.output_dir).expect("create prepared output dir");
+        let run_manifest = prepared.output_dir.join("run.json");
+        fs::write(
+            &run_manifest,
+            serde_json::to_string_pretty(&prepared).expect("serialize run"),
+        )
+        .expect("write run");
+        let run_root = prepared.output_dir.join("runs").join("run-1");
+        fs::create_dir_all(&run_root).expect("create run root");
+        let submission_path = run_root.join(SUBMISSION_FILE);
+        fs::write(&submission_path, "{}\n").expect("write attempt submission");
+
+        let request = Request::from_candidate(
+            RunCandidate {
+                attempt: 1,
+                latest: true,
+                run_id: "run-1".to_string(),
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                run_manifest,
+                run_root: run_root.clone(),
+                submission_path: Some(submission_path.clone()),
+                execution_status: RunExecutionStatus::Completed,
+                submission_status: RunSubmissionStatus::EmptyPatch,
+                started_at: None,
+                finished_at: None,
+            },
+            None,
+            None,
+            None,
+            Options::default(),
+        )
+        .expect("request from candidate");
+
+        assert_eq!(request.submission_path, submission_path);
+        assert_eq!(request.layout.output_dir, run_root.join("mbe"));
+        assert_eq!(request.layout.repo_dir, tmp.path().join("repos"));
+    }
+
+    #[test]
+    fn final_report_projects_oracle_evidence_for_prepared_run() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = request(tmp.path());
+        let report_path = tmp.path().join("final_report.json");
+        let report = final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209");
+        fs::write(
+            &report_path,
+            serde_json::to_string_pretty(&report).expect("serialize report"),
+        )
+        .expect("write report");
+
+        let evidence = request
+            .load_oracle_evidence_from(&report_path)
+            .expect("oracle evidence");
+
+        assert_eq!(evidence.instance_id, "BurntSushi__ripgrep-2209");
+        assert_eq!(evidence.report_id, "BurntSushi/ripgrep:pr-2209");
+        assert_eq!(evidence.verdict, Verdict::Resolved);
+        assert_eq!(evidence.report_path, report_path);
+    }
+
+    #[test]
+    fn final_report_rejects_count_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let report_path = tmp.path().join("final_report.json");
+        let mut report = final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209");
+        report.resolved_instances = 2;
+        fs::write(
+            &report_path,
+            serde_json::to_string_pretty(&report).expect("serialize report"),
+        )
+        .expect("write report");
+
+        let err = FinalReport::load(&report_path).expect_err("invalid report");
+        assert!(matches!(err, PrepareError::InvalidMbeReport { .. }));
+    }
+
+    #[test]
+    fn instance_report_loads_structured_stage_counts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let report_path = tmp.path().join("report.json");
+        let report = missing_fix_results_instance_report();
+        fs::write(
+            &report_path,
+            serde_json::to_string_pretty(&report).expect("serialize report"),
+        )
+        .expect("write report");
+
+        let loaded = InstanceReport::load(&report_path).expect("instance report");
+
+        assert_eq!(loaded.report_id(), "BurntSushi/ripgrep:pr-2209");
+        assert_eq!(loaded.run_result.total_count(), 274);
+        assert_eq!(loaded.test_patch_result.total_count(), 276);
+        assert_eq!(loaded.fix_result_count(), 0);
+    }
+
+    #[test]
+    fn oracle_evaluation_derives_missing_fix_results_from_instance_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = request(tmp.path());
+        let final_report_path = request.layout.output_dir.join(FINAL_REPORT_FILE);
+        fs::create_dir_all(&request.layout.output_dir).expect("create output dir");
+        let mut final_report = final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209");
+        final_report.resolved_instances = 0;
+        final_report.resolved_ids.clear();
+        final_report.unresolved_instances = 1;
+        final_report
+            .unresolved_ids
+            .push("BurntSushi/ripgrep:pr-2209".to_string());
+        fs::write(
+            &final_report_path,
+            serde_json::to_string_pretty(&final_report).expect("serialize final report"),
+        )
+        .expect("write final report");
+        let instance_report_path = request
+            .layout
+            .workdir
+            .join("BurntSushi")
+            .join("ripgrep")
+            .join(EVALUATION_WORKDIR)
+            .join("pr-2209")
+            .join(INSTANCE_REPORT_FILE);
+        fs::create_dir_all(
+            instance_report_path
+                .parent()
+                .expect("instance report parent"),
+        )
+        .expect("create instance report dir");
+        fs::write(
+            &instance_report_path,
+            serde_json::to_string_pretty(&missing_fix_results_instance_report())
+                .expect("serialize instance report"),
+        )
+        .expect("write instance report");
+
+        let evaluation = request
+            .load_oracle_evaluation_from(&final_report_path)
+            .expect("oracle evaluation");
+
+        assert_eq!(evaluation.evidence.verdict, Verdict::Unresolved);
+        assert_eq!(evaluation.diagnostic, OracleDiagnostic::MissingFixResults);
+        assert!(!evaluation.usable_for_selection);
+        assert_eq!(evaluation.instance_report_path, instance_report_path);
+    }
+
+    #[test]
+    fn oracle_evaluation_derives_fix_compile_failed_from_fix_log() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = request(tmp.path());
+        let final_report_path = request.layout.output_dir.join(FINAL_REPORT_FILE);
+        fs::create_dir_all(&request.layout.output_dir).expect("create output dir");
+        let mut final_report = final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209");
+        final_report.resolved_instances = 0;
+        final_report.resolved_ids.clear();
+        final_report.unresolved_instances = 1;
+        final_report
+            .unresolved_ids
+            .push("BurntSushi/ripgrep:pr-2209".to_string());
+        fs::write(
+            &final_report_path,
+            serde_json::to_string_pretty(&final_report).expect("serialize final report"),
+        )
+        .expect("write final report");
+        let source = match request.prepared.source.as_ref().expect("source") {
+            RunSource::MultiSweBench(source) => source,
+        };
+        let instance_report_path = instance_report_path(&request.layout.workdir, source);
+        fs::create_dir_all(
+            instance_report_path
+                .parent()
+                .expect("instance report parent"),
+        )
+        .expect("create instance report dir");
+        fs::write(
+            &instance_report_path,
+            serde_json::to_string_pretty(&missing_fix_results_instance_report())
+                .expect("serialize instance report"),
+        )
+        .expect("write instance report");
+        fs::write(
+            fix_patch_run_log_path(&request.layout.workdir, source),
+            "error[E0425]: cannot find function `replace_all_clipped`\nerror: could not compile `grep-printer`\n",
+        )
+        .expect("write fix log");
+
+        let evaluation = request
+            .load_oracle_evaluation_from(&final_report_path)
+            .expect("oracle evaluation");
+
+        assert_eq!(evaluation.diagnostic, OracleDiagnostic::FixCompileFailed);
+        assert!(!evaluation.usable_for_selection);
     }
 }

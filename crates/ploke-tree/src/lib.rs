@@ -53,6 +53,20 @@ pub struct RunForestInput {
     pub passive_evidence: PassiveEvidence,
 }
 
+/// Typed records loaded for one Prototype 1 run root.
+///
+/// This is a read-only record carrier for projection crates. It does not make
+/// scheduler sidecars authoritative and it does not interpret sealed History;
+/// callers choose the projection they need from the same loaded record set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunRecordSet {
+    pub forest_input: RunForestInput,
+    #[serde(default)]
+    pub history_blocks: Vec<SealedBlockRecord>,
+    #[serde(default)]
+    pub transition_journal: TransitionJournal,
+}
+
 /// UI-facing forest assembled from passive records.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunForest {
@@ -298,6 +312,14 @@ impl FsRunStore {
             successor_ready,
             successor_completion,
             passive_evidence: self.load_passive_evidence()?,
+        })
+    }
+
+    pub fn load_record_set(&self) -> Result<RunRecordSet, FsRunStoreError> {
+        Ok(RunRecordSet {
+            forest_input: self.load()?,
+            history_blocks: self.load_history_blocks()?,
+            transition_journal: self.load_transition_journal()?,
         })
     }
 
@@ -2086,6 +2108,49 @@ mod tests {
             journal.entries[1].record,
             JournalEntry::Resource(_)
         ));
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn fs_run_store_loads_record_set() {
+        let root = temp_run_root("record-set");
+        fs::create_dir_all(root.join("history").join("blocks")).expect("create history dir");
+
+        write_json(
+            &root.join("scheduler.json"),
+            &scheduler(vec![node("root", None, NodeStatusRecord::Succeeded)]),
+        );
+        fs::write(
+            root.join("transition-journal.jsonl"),
+            format!("{}\n", minimal_journal_line()),
+        )
+        .expect("write journal");
+        fs::write(
+            root.join("history")
+                .join("blocks")
+                .join("segment-000000.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::to_string(&synthetic_sealed_block(
+                    0,
+                    Vec::new(),
+                    &"4".repeat(64),
+                    None,
+                    "runtime-1",
+                ))
+                .expect("serialize sealed block")
+            ),
+        )
+        .expect("write history");
+
+        let records = FsRunStore::new(&root)
+            .load_record_set()
+            .expect("load record set");
+
+        assert_eq!(records.forest_input.scheduler.nodes.len(), 1);
+        assert_eq!(records.history_blocks.len(), 1);
+        assert_eq!(records.transition_journal.len(), 1);
 
         fs::remove_dir_all(root).expect("remove temp run");
     }

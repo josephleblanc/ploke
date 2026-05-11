@@ -7,6 +7,11 @@
 //! - operations performed by runtimes over target artifacts
 //!
 //! Records contribute evidence to this graph. They do not become the graph.
+//!
+//! This module owns semantic run facts for the operator UI. Layout caches,
+//! egui widget graphs, diagnostics, and side panels are views over this object.
+//! They should borrow from `Graph` when reading semantics and own only the
+//! state that belongs to the view itself.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -91,6 +96,10 @@ impl Graph {
 
     pub fn edges(&self) -> impl Iterator<Item = &Edge> {
         self.edges.values()
+    }
+
+    pub fn edge(&self, id: &EdgeId) -> Option<&Edge> {
+        self.edges.get(id)
     }
 
     pub fn edge_count(&self) -> usize {
@@ -185,6 +194,26 @@ impl Graph {
         let edge = Edge::artifact_patch(id.clone(), parent, candidate)
             .with_status(status)
             .with_patch(PatchEvidence::new(patch_id, evidence_id.clone()))
+            .with_evidence(evidence_id.clone());
+
+        let changed = self.insert_edge(edge)?;
+        if changed {
+            self.insert_evidence(Evidence::new(evidence_id, Subject::Edge(id)));
+        }
+
+        Ok(changed)
+    }
+
+    pub fn insert_history_succession_edge(
+        &mut self,
+        id: EdgeId,
+        parent: SchedulerNodeId,
+        selected: SchedulerNodeId,
+        block_height: u64,
+        evidence_id: EvidenceId,
+    ) -> Result<bool, GraphError> {
+        let edge = Edge::history_succession(id.clone(), parent, selected, block_height)
+            .with_status(TreatmentBranchStatus::Selected)
             .with_evidence(evidence_id.clone());
 
         let changed = self.insert_edge(edge)?;
@@ -306,6 +335,7 @@ pub struct Candidate {
     candidate_id: CandidateId,
     generation: u32,
     status: TreatmentBranchStatus,
+    ruling_epoch: Option<u64>,
     artifact_edge: Option<EdgeId>,
 }
 
@@ -323,6 +353,7 @@ impl Candidate {
             candidate_id,
             generation,
             status: TreatmentBranchStatus::Synthesized,
+            ruling_epoch: None,
             artifact_edge: None,
         }
     }
@@ -334,6 +365,11 @@ impl Candidate {
 
     pub fn with_status(mut self, status: TreatmentBranchStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn with_ruling_epoch(mut self, block_height: u64) -> Self {
+        self.ruling_epoch = Some(block_height);
         self
     }
 
@@ -364,6 +400,10 @@ impl Candidate {
 
     pub fn status(&self) -> TreatmentBranchStatus {
         self.status
+    }
+
+    pub fn ruling_epoch(&self) -> Option<u64> {
+        self.ruling_epoch
     }
 
     pub fn artifact_edge(&self) -> Option<&EdgeId> {
@@ -408,6 +448,22 @@ impl Edge {
             candidate: EdgeEndpoint::Candidate(candidate),
             kind: EdgeKind::CandidateTransition,
             status: TreatmentBranchStatus::Synthesized,
+            evidence: Vec::new(),
+        }
+    }
+
+    pub fn history_succession(
+        id: EdgeId,
+        parent: SchedulerNodeId,
+        selected: SchedulerNodeId,
+        block_height: u64,
+    ) -> Self {
+        Self {
+            id,
+            parent: EdgeEndpoint::Candidate(parent),
+            candidate: EdgeEndpoint::Candidate(selected),
+            kind: EdgeKind::HistorySuccession { block_height },
+            status: TreatmentBranchStatus::Selected,
             evidence: Vec::new(),
         }
     }
@@ -463,7 +519,7 @@ impl Edge {
     pub fn patch(&self) -> Option<&PatchEvidence> {
         match &self.kind {
             EdgeKind::ArtifactPatch { patch } => patch.as_ref(),
-            EdgeKind::CandidateTransition => None,
+            EdgeKind::CandidateTransition | EdgeKind::HistorySuccession { .. } => None,
         }
     }
 
@@ -481,6 +537,7 @@ pub enum EdgeEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EdgeKind {
     CandidateTransition,
+    HistorySuccession { block_height: u64 },
     ArtifactPatch { patch: Option<PatchEvidence> },
 }
 

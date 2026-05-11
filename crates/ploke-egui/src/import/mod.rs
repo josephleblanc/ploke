@@ -3,35 +3,46 @@
 //! This module adapts records loaded by `ploke-tree`; it does not parse
 //! Prototype 1 files directly and it does not add runtime authority.
 
+mod history;
+#[cfg(test)]
+mod tests;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
 use ploke_records::branch::TreatmentBranchStatus;
-use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord};
+use ploke_records::history::SealedBlockRecord;
 use ploke_records::ids::{BranchId, SchedulerNodeId};
 use ploke_records::scheduler::NodeRecord;
-use ploke_tree::{FsRunStore, FsRunStoreError, RunForestInput};
+use ploke_tree::{CoarseHistorySpine, FsRunStore, FsRunStoreError, RunForestInput, RunRecordSet};
 
 use crate::graph::{
     Artifact, Candidate, Edge, EdgeId, Evidence, EvidenceId, Graph, GraphError, Subject,
 };
 
+use history::{history_edge_id, history_evidence_id};
+
 pub fn graph_from_run_root(run_root: impl AsRef<Path>) -> Result<Graph, ImportError> {
     let store = FsRunStore::new(run_root.as_ref());
-    let input = store.load()?;
-    let history_blocks = store.load_history_blocks()?;
+    let records = store.load_record_set()?;
 
-    graph_from_run_records(&input, &history_blocks).map_err(ImportError::Graph)
+    graph_from_run_records(&records).map_err(ImportError::Graph)
 }
 
-pub fn graph_from_run_records(
+pub fn graph_from_run_records(records: &RunRecordSet) -> Result<Graph, GraphError> {
+    graph_from_run_parts(&records.forest_input, &records.history_blocks)
+}
+
+fn graph_from_run_parts(
     input: &RunForestInput,
     history_blocks: &[SealedBlockRecord],
 ) -> Result<Graph, GraphError> {
-    let selected_branches = selected_branches(input, history_blocks);
-    let selected_nodes = selected_nodes(history_blocks);
+    let history_spine = ploke_tree::build_coarse_history_spine(history_blocks);
+    let selected_branches = selected_branches(input, &history_spine);
+    let selected_nodes = history::selected_nodes(&history_spine);
+    let ruling_epochs = history::ruling_epochs(&history_spine);
     let nodes = merged_node_records(input);
 
     let mut graph = Graph::new();
@@ -73,6 +84,9 @@ pub fn graph_from_run_records(
         )
         .with_parent(node.parent_node_id.clone())
         .with_status(status);
+        if let Some(epoch) = ruling_epochs.get(&node.node_id).copied() {
+            candidate = candidate.with_ruling_epoch(epoch);
+        }
         if let Some(edge_id) = artifact_edge_id {
             candidate = candidate.with_artifact_edge(edge_id);
         }
@@ -103,6 +117,19 @@ pub fn graph_from_run_records(
         graph.insert_evidence(Evidence::new(evidence_id, Subject::Edge(edge_id)));
     }
 
+    for step in &history_spine.steps {
+        let (Some(ruler), Some(selected)) = (&step.ruling_parent, &step.selected_node) else {
+            continue;
+        };
+        graph.insert_history_succession_edge(
+            history_edge_id(step.block_height),
+            ruler.clone(),
+            selected.clone(),
+            step.block_height,
+            history_evidence_id(step.block_height),
+        )?;
+    }
+
     Ok(graph)
 }
 
@@ -119,9 +146,9 @@ fn merged_node_records(input: &RunForestInput) -> BTreeMap<SchedulerNodeId, &Nod
 
 fn selected_branches(
     input: &RunForestInput,
-    history_blocks: &[SealedBlockRecord],
+    history_spine: &CoarseHistorySpine,
 ) -> BTreeSet<BranchId> {
-    let mut selected = BTreeSet::new();
+    let mut selected = history::selected_branches(history_spine);
 
     if let Some(decision) = &input.scheduler.last_continuation_decision {
         if let Some(branch_id) = &decision.selected_next_branch_id {
@@ -129,32 +156,6 @@ fn selected_branches(
         }
     }
 
-    for block in history_blocks {
-        for entry in &block.entries {
-            let EntryPayloadRecord::SelectionDecision(selection) = &entry.core.payload else {
-                continue;
-            };
-            if let Some(branch_id) = &selection.decision.selected_branch_id {
-                selected.insert(BranchId(branch_id.clone()));
-            }
-        }
-    }
-
-    selected
-}
-
-fn selected_nodes(history_blocks: &[SealedBlockRecord]) -> BTreeSet<SchedulerNodeId> {
-    let mut selected = BTreeSet::new();
-    for block in history_blocks {
-        for entry in &block.entries {
-            let EntryPayloadRecord::SelectionDecision(selection) = &entry.core.payload else {
-                continue;
-            };
-            selected.insert(SchedulerNodeId(
-                selection.decision.candidate_node_id.clone(),
-            ));
-        }
-    }
     selected
 }
 
@@ -201,54 +202,5 @@ impl Error for ImportError {
 impl From<FsRunStoreError> for ImportError {
     fn from(error: FsRunStoreError) -> Self {
         Self::Store(error)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore]
-    fn real_run_imports_execution_spine() {
-        let run_root =
-            std::env::var("PLOKE_EGUI_RUN_ROOT").expect("PLOKE_EGUI_RUN_ROOT must be set");
-        let graph = graph_from_run_root(run_root).expect("import graph from run root");
-
-        println!(
-            "graph candidates={} candidate_edges={} artifacts={} artifact_edges={} selected_candidates={} evidence={}",
-            graph.candidate_count(),
-            graph.candidate_edge_count(),
-            graph.artifact_count(),
-            graph.artifact_edge_count(),
-            graph
-                .candidates()
-                .filter(|candidate| candidate.status() == TreatmentBranchStatus::Selected)
-                .count(),
-            graph.evidence_count()
-        );
-
-        assert!(
-            graph.candidate_count() > 0,
-            "real run should import candidate nodes"
-        );
-        assert!(
-            graph.candidate_edge_count() > 0,
-            "real run should import candidate edges"
-        );
-        assert!(
-            graph.artifact_count() > 0,
-            "real run should import artifact nodes"
-        );
-        assert!(
-            graph.artifact_edge_count() > 0,
-            "real run should import artifact edges"
-        );
-        assert!(
-            graph
-                .candidates()
-                .any(|candidate| candidate.status() == TreatmentBranchStatus::Selected),
-            "real run should mark the History-selected candidate"
-        );
     }
 }

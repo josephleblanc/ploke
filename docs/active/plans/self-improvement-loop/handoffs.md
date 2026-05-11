@@ -10,6 +10,10 @@ Use this as the shared restart list for the records/playback/frontend track. The
   Current operational handoff for the coarse/fine sealed-History playback slice and real-run record compatibility.
 - [`../../agents/2026-05-09_egui-wasm-observability-handoff.md`](../../agents/2026-05-09_egui-wasm-observability-handoff.md)
   Current frontend observability handoff for native/WASM egui work over playback models. Treat this as benchmark-evidence-first observability, not a generic run dashboard.
+- [`../../agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md`](../../agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md)
+  Current `ploke-egui` graph boundary and ordering invariant: build a read-only graph from `ploke-tree::RunRecordSet`, with sealed History as the primary ordering spine.
+- [`../../agents/2026-05-11_mbe-oracle-calibration-handoff.md`](../../agents/2026-05-11_mbe-oracle-calibration-handoff.md)
+  Current MBE/oracle calibration handoff for Prototype 1 loop outputs: gold/empty controls, compile-failed candidate diagnostics, and next patch-export questions.
 
 ## Supporting Contracts
 

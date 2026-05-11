@@ -1,11 +1,12 @@
 # Current Focus
 
-**Last Updated:** 2026-05-08
+**Last Updated:** 2026-05-11
 
 **Active planning surfaces:**
 
-- In-repo Cursor plan: [`.cursor/plans/prototype1_history_admitted_evaluation_f5b1343c.plan.md`](../.cursor/plans/prototype1_history_admitted_evaluation_f5b1343c.plan.md) — Prototype 1 successor selection: History-sealed admitted evaluation / commitments (see completed todos there; follow-ups may be new plan items).
-- `ploke-eval` inner rewrite cold-start: [`crates/ploke-eval/src/inner/HANDOFF.md`](../../crates/ploke-eval/src/inner/HANDOFF.md) (`RunIntent → FrozenRunSpec → RunRegistration`; next slice `RunRegistration → CheckedOutWorkspace`).
+- Self-improvement loop track index: [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md) — current routing table for Prototype 1 records/playback, egui observability, and MBE/oracle calibration.
+- Frontend observability: [`agents/2026-05-09_egui-wasm-observability-handoff.md`](agents/2026-05-09_egui-wasm-observability-handoff.md) — native/WASM egui work over loop playback models and benchmark evidence.
+- MBE/oracle calibration: [`agents/2026-05-11_mbe-oracle-calibration-handoff.md`](agents/2026-05-11_mbe-oracle-calibration-handoff.md) — current questions around compile-failed loop candidates, gold/empty MBE controls, and benchmark-base patch export.
 
 **Archived context (trajectory, not “active” paths):** Topical agent markdown that used to live beside this file was moved to [`docs/archive/agents/2026-04/`](../archive/agents/2026-04/README.md) and [`docs/archive/agents/2026-05/`](../archive/agents/2026-05/README.md) on 2026-05-08. Examples: eval/protocol closure sketch and control-plane audits in `2026-04/`, edit-surface / Prototype 1 note stack in `2026-05/`. The 2026-04-17 eval/protocol baseline narrative is still useful background: [Eval closure formal sketch](../archive/agents/2026-04/2026-04-16_eval-closure-formal-sketch.md), [protocol design reset](workflow/handoffs/2026-04-17_protocol-design-reset.md).
 
@@ -13,14 +14,19 @@
 
 ## What we're doing now
 
-Two parallel threads are documented above: **(1)** sealing successor-selection evidence into Prototype 1 History blocks per the Cursor plan, and **(2)** the `ploke-eval` inner run-registration workspace handoff. Pick the thread that matches the branch or user request; do not assume the older “protocol frontier walking” doc set is still under `docs/active/agents/`.
+Two active threads are running in this checkout:
+
+1. **Frontend observability:** build the egui-facing semantic graph/playback surface for loop runs.
+2. **MBE/oracle calibration:** make Multi-SWE-bench evidence trustworthy enough to integrate into loop evaluation and then surface in the frontend.
+
+They are related through the self-improvement-loop track, but the implementation work is disjoint. Pick the thread that matches the branch or user request; do not assume older Prototype 1 or protocol docs are current unless the handoff index points to them.
 
 ---
 
 ## Immediate next step
 
-1. For Prototype 1 / History: resume from the Cursor plan and [`crates/ploke-eval/src/cli/prototype1_state/history.rs`](../../crates/ploke-eval/src/cli/prototype1_state/history.rs); use archive links only for background (e.g. edit-surface phases under `docs/archive/agents/2026-05/`).
-2. For inner eval: follow [`crates/ploke-eval/src/inner/HANDOFF.md`](../../crates/ploke-eval/src/inner/HANDOFF.md) verification (`cargo test -p ploke-eval inner::`) before the next slice.
+1. For frontend observability: use [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md), then the egui handoff.
+2. For MBE/oracle calibration: use [`agents/2026-05-11_mbe-oracle-calibration-handoff.md`](agents/2026-05-11_mbe-oracle-calibration-handoff.md), then compare one candidate's admitted Artifact, submitted `fix_patch`, and MBE base checkout.
 
 ---
 
@@ -31,6 +37,9 @@ Two parallel threads are documented above: **(1)** sealing successor-selection e
 | “What were we up to?” | This doc and [`workflow/handoffs/recent-activity.md`](workflow/handoffs/recent-activity.md) |
 | Eval / protocol history (Apr 2026) | [Eval closure sketch](../archive/agents/2026-04/2026-04-16_eval-closure-formal-sketch.md), [failure/protocol audit dir](../archive/agents/2026-04/2026-04-17_eval-failure-and-protocol-audit/README.md), [design reset](workflow/handoffs/2026-04-17_protocol-design-reset.md) |
 | Edit surface / Prototype 1 notes (May 2026) | [`docs/archive/agents/2026-05/`](../archive/agents/2026-05/README.md) |
+| Self-improvement loop tracks | [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md) |
+| MBE / oracle calibration | [`agents/2026-05-11_mbe-oracle-calibration-handoff.md`](agents/2026-05-11_mbe-oracle-calibration-handoff.md) |
+| Frontend observability | [`agents/2026-05-09_egui-wasm-observability-handoff.md`](agents/2026-05-09_egui-wasm-observability-handoff.md) |
 | Target / run policy | [`workflow/target-capability-registry.md`](workflow/target-capability-registry.md) |
 | Agent doc index | [`agents/readme.md`](agents/readme.md) |
 

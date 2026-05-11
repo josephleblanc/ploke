@@ -3,6 +3,7 @@
 mod diagnostics;
 mod edge;
 mod geometry;
+mod label;
 mod layout;
 mod order;
 mod projection;
@@ -95,7 +96,7 @@ impl GraphView {
         self.navigation = navigation(self.view_style.layout.fit_padding, fit_now);
 
         let mut widget =
-            egui_graphs::GraphView::<_, _, _, _, _, _, layout::State, layout::CenteredTree>::new(
+            egui_graphs::GraphView::<_, _, _, _, _, _, layout::State, layout::Lineage>::new(
                 self.cache.graph_mut(),
             )
             .with_id(Some(self.id.clone()))
@@ -103,10 +104,12 @@ impl GraphView {
             .with_navigations(&self.navigation)
             .with_styles(&self.style);
 
+        label::reset_edge_label_diagnostics(ui.ctx());
         let response = ui.add(&mut widget);
-        self.diagnostics = self
-            .cache
-            .diagnostics(response.rect.size(), self.view_style);
+        let edge_labels = label::edge_label_diagnostics(ui.ctx());
+        self.diagnostics =
+            self.cache
+                .diagnostics(graph, response.rect.size(), self.view_style, edge_labels);
     }
 }
 
@@ -120,6 +123,32 @@ pub struct GraphViewDiagnostics {
     pub fitted_size: egui::Vec2,
     pub fitted_fill: egui::Vec2,
     pub center_offset: egui::Vec2,
+    pub edge_labels: EdgeLabelDiagnostics,
+    pub readability: GraphReadabilityDiagnostics,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EdgeLabelDiagnostics {
+    pub label_count: usize,
+    pub collision_count: usize,
+    pub edge_intersection_count: usize,
+    pub edge_collision_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphReadabilityDiagnostics {
+    pub edge_edge_crossings: usize,
+    pub edge_crossings_by_kind: EdgeCrossingsByKind,
+    pub long_edge_count: usize,
+    pub backtracking_edge_count: usize,
+    pub selected_path_crossings: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EdgeCrossingsByKind {
+    pub candidate_candidate: usize,
+    pub candidate_history: usize,
+    pub history_history: usize,
 }
 
 fn navigation(fit_padding: f32, fit_to_screen: bool) -> egui_graphs::SettingsNavigation {

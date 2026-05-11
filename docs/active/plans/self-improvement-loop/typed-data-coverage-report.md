@@ -39,8 +39,8 @@ to that graph.
 | Protocol artifacts | `ploke-records::protocol` converts implemented tool-call payloads and the six current writer procedures into named writer-side DTO/artifact shapes, and returns `ArtifactDecodeFailureRecord` for malformed payloads. `ploke-eval` tolerant listing now surfaces loaded artifacts plus typed decode/unsupported/future/malformed and identity-failure rows per visible `.json`; protocol aggregation consumes decoded tool-call variants, skips decoded non-tool-call variants, reports decoded tool-call payload-shape skips, and preserves typed unloaded rows. | Covered for current tool-call aggregate output; graph playback joins remain future work. |
 | Sealed History blocks | `ploke-records` has typed `SealedBlockRecord`; `ploke-tree` loads those for playback; legacy `ploke-eval` stored-block loader now uses typed stored entry DTOs. | Covered on shared-record path and eval reload path. |
 | History index projections | `history/index/by-hash.jsonl`, `by-lineage-height.jsonl`, and `heads.json` use typed store structures in `ploke-eval`, but are projections. | Covered by append-store projection deserialize/rebuildability test. |
-| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. Tool-call request arguments now use `ToolArgumentsJson` and decode through `ToolCallArguments` or typed parse-failure records for eval replay/projection paths. Tool-result failure/truncation summaries, turn-trace/observation replay, provider error/timeout rows, and provider-attempt timelines now use named typed projection records. | Foundation-covered for tool-call arguments, result/trace projection, and provider observation projection; graph/browser landing is queued under `run-execution-graph.browser-spine`, and provider DTO/tool bridge remains future work. |
-| Browser playback model | `PlaybackBrowserModel` and nested snapshots are typed. | Serialization/projection plus deserialize roundtrip coverage; next work is to orient it around the generative execution graph rather than only timeline/tree summaries. |
+| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. Tool-call request arguments now use `ToolArgumentsJson` and decode through `ToolCallArguments` or typed parse-failure records for eval replay/projection paths. Tool-result failure/truncation summaries, turn-trace/observation replay, provider error/timeout rows, and provider-attempt timelines now use named typed projection records. | Foundation-covered for tool-call arguments, result/trace projection, and provider observation projection; partial graph landing exists in `ploke-tree` / `ploke-egui`, while full History-spined join coverage and evidence attachment remain future work. Provider DTO/tool bridge remains future work. |
+| Browser playback model | `PlaybackBrowserModel` and nested snapshots are typed. | Serialization/projection plus deserialize roundtrip coverage; `ploke_tree::browser::RunExecutionGraph` now provides a partial generative execution graph projection. Next work is consolidating the canonical read-side graph/index in `ploke-tree` and attaching complete evidence joins, not treating the browser DTO as the semantic center. |
 | Child-plan manifests | `ChildPlanFiles` and nested `ChildFiles` in `crates/ploke-eval/src/cli/prototype1_state/parent.rs` define the parent-owned message-box body. | Covered as a typed parent transition message; not a scheduler projection. |
 | Streams/logs | `nodes/*/streams/*/*.log`. | Plain text logs; outside the owned JSON/JSONL typed-persistence target. |
 
@@ -68,13 +68,14 @@ itself a blocking typed-persistence gap.
    - Evidence: response DTO metadata/logprobs and tool-bridge rows remain assigned to `llm-attempts.dto-tool-bridge`.
    - Replace those provider-side DTO/tool-bridge projections in the queued slice.
 
-4. The browser model is typed but not yet centered on the generative execution
-   graph from `prototype1_state::mod`.
-   - Evidence: existing browser/egui work exposes timeline/tree summaries, but
-     not the core Runtime -> Surface(Artifact) -> PatchAttempt -> derived
-     Artifact -> hydrated Runtime chain.
-   - Establish that graph spine in `run-execution-graph.browser-spine`, then
-     attach typed tool-call and provider-attempt facts as evidence.
+4. A partial generative execution graph exists, but the canonical read-side
+   graph/index is not yet consolidated.
+   - Evidence: `ploke_tree::browser::RunExecutionGraph` is built by
+     `crates/ploke-tree/src/browser.rs`, and `ploke-egui` has its own
+     `graph::Graph` import path from `ploke_tree::RunRecordSet`.
+   - Remaining work is to consolidate the History-spined read-side graph in
+     `ploke-tree`, keep browser DTOs as projections, and attach typed
+     tool-call and provider-attempt facts as graph evidence.
 
 5. Tool-call and provider-attempt facts are foundation-typed but not yet
    operator-visible as evidence on the run execution graph.

@@ -1,18 +1,18 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use eframe::egui::Vec2;
+use eframe::egui::{Color32, Vec2};
 use petgraph::{Directed, stable_graph::StableGraph};
 use ploke_records::branch::TreatmentBranchStatus;
 use ploke_records::ids::{ArtifactId, SchedulerNodeId};
 
-use crate::graph::{Candidate, Edge, EdgeEndpoint, EdgeKind, Graph as DomainGraph};
+use crate::graph::{Candidate, Edge, EdgeEndpoint, EdgeId, EdgeKind, Graph as DomainGraph};
 
-use super::GraphViewDiagnostics;
 use super::diagnostics::graph_diagnostics;
 use super::edge::GraphEdgeShape;
 use super::order::visual_candidate_order;
 use super::style::{EdgeStyle, ViewStyle};
+use super::{EdgeLabelDiagnostics, GraphViewDiagnostics};
 
 pub(super) type WidgetGraph = egui_graphs::Graph<
     GraphNode,
@@ -66,10 +66,12 @@ impl GraphViewCache {
 
     pub(super) fn diagnostics(
         &self,
+        graph: &DomainGraph,
         viewport_size: Vec2,
         style: ViewStyle,
+        edge_labels: EdgeLabelDiagnostics,
     ) -> Option<GraphViewDiagnostics> {
-        graph_diagnostics(&self.graph, viewport_size, style)
+        graph_diagnostics(graph, &self.graph, viewport_size, style, edge_labels)
     }
 }
 
@@ -78,6 +80,7 @@ pub(super) enum GraphNode {
     Candidate {
         label: Arc<str>,
         status: TreatmentBranchStatus,
+        ruling_epoch: Option<u64>,
     },
     Artifact {
         id: ArtifactId,
@@ -86,9 +89,9 @@ pub(super) enum GraphNode {
 
 #[derive(Debug, Clone)]
 pub(super) struct GraphEdgePayload {
-    pub(super) id: Arc<str>,
+    pub(super) id: EdgeId,
     pub(super) label: Arc<str>,
-    pub(super) status: TreatmentBranchStatus,
+    pub(super) color: Color32,
     pub(super) style: EdgeStyle,
 }
 
@@ -109,15 +112,21 @@ fn build_candidate_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
         let raw_index = raw.add_node(GraphNode::Candidate {
             label: Arc::from(candidate_label(candidate, index)),
             status: candidate.status(),
+            ruling_epoch: candidate.ruling_epoch(),
         });
         index_by_candidate.insert(candidate.id().clone(), raw_index);
     }
 
+    let history_endpoints = history_succession_endpoints(graph);
     let mut edges: Vec<_> = graph
         .edges()
-        .filter(|edge| edge.kind() == &EdgeKind::CandidateTransition)
+        .filter(|edge| candidate_edge_visible(edge, &history_endpoints))
         .collect();
-    edges.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+    edges.sort_by(|left, right| {
+        edge_order_key(left)
+            .cmp(&edge_order_key(right))
+            .then_with(|| left.id().as_str().cmp(right.id().as_str()))
+    });
     for (index, edge) in edges.into_iter().enumerate() {
         let EdgeEndpoint::Candidate(parent_id) = edge.parent() else {
             continue;
@@ -137,9 +146,9 @@ fn build_candidate_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
             parent,
             candidate,
             GraphEdgePayload {
-                id: Arc::from(edge.id().as_str()),
+                id: edge.id().clone(),
                 label: candidate_edge_label(edge, index),
-                status: edge.status(),
+                color: style.edge.colors.color(edge.status()),
                 style: style.edge,
             },
         );
@@ -186,9 +195,9 @@ fn build_artifact_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
             parent,
             candidate,
             GraphEdgePayload {
-                id: Arc::from(edge.id().as_str()),
+                id: edge.id().clone(),
                 label: edge_label(edge, index),
-                status: edge.status(),
+                color: style.edge.colors.color(edge.status()),
                 style: style.edge,
             },
         );
@@ -220,8 +229,12 @@ struct NodeVisual {
 impl NodeVisual {
     fn from_node(node: &GraphNode, style: ViewStyle) -> Self {
         match node {
-            GraphNode::Candidate { label, status } => Self {
-                label: label.to_string(),
+            GraphNode::Candidate {
+                label,
+                status,
+                ruling_epoch,
+            } => Self {
+                label: candidate_node_label(label, *ruling_epoch),
                 color: Some(style.edge.colors.color(*status)),
             },
             GraphNode::Artifact { id } => Self {
@@ -240,11 +253,65 @@ fn candidate_label(candidate: &Candidate, index: usize) -> String {
     format!("C{} g{}", index + 1, candidate.generation())
 }
 
+fn candidate_node_label(label: &str, ruling_epoch: Option<u64>) -> String {
+    match ruling_epoch {
+        Some(epoch) => format!("B{epoch} {label}"),
+        None => label.to_owned(),
+    }
+}
+
 fn candidate_edge_label(edge: &Edge, index: usize) -> Arc<str> {
+    if matches!(edge.kind(), EdgeKind::HistorySuccession { .. }) {
+        return Arc::from("S");
+    }
+
     if edge.status() == TreatmentBranchStatus::Selected {
         Arc::from("S")
     } else {
         Arc::from(format!("C{}", index + 1))
+    }
+}
+
+fn candidate_edge_visible(
+    edge: &Edge,
+    history_endpoints: &HashSet<(SchedulerNodeId, SchedulerNodeId)>,
+) -> bool {
+    match edge.kind() {
+        EdgeKind::HistorySuccession { .. } => true,
+        EdgeKind::CandidateTransition => {
+            let (EdgeEndpoint::Candidate(parent), EdgeEndpoint::Candidate(candidate)) =
+                (edge.parent(), edge.candidate())
+            else {
+                return false;
+            };
+            !history_endpoints.contains(&(parent.clone(), candidate.clone()))
+        }
+        EdgeKind::ArtifactPatch { .. } => false,
+    }
+}
+
+fn history_succession_endpoints(
+    graph: &DomainGraph,
+) -> HashSet<(SchedulerNodeId, SchedulerNodeId)> {
+    graph
+        .edges()
+        .filter(|edge| matches!(edge.kind(), EdgeKind::HistorySuccession { .. }))
+        .filter_map(|edge| {
+            let (EdgeEndpoint::Candidate(parent), EdgeEndpoint::Candidate(candidate)) =
+                (edge.parent(), edge.candidate())
+            else {
+                return None;
+            };
+            Some((parent.clone(), candidate.clone()))
+        })
+        .collect()
+}
+
+fn edge_order_key(edge: &Edge) -> (u8, u64) {
+    match edge.kind() {
+        EdgeKind::HistorySuccession { block_height } => (0, *block_height),
+        EdgeKind::CandidateTransition => (1, 0),
+        EdgeKind::ArtifactPatch { .. } => (2, 0),
     }
 }
 

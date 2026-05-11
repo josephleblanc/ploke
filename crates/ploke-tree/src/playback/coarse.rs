@@ -1,4 +1,7 @@
-use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord, SuccessorRefRecord};
+use ploke_records::history::{
+    ActorRefRecord, EntryPayloadRecord, SealedBlockRecord, SuccessorRefRecord,
+};
+use ploke_records::ids::{BranchId, SchedulerNodeId};
 use ploke_records::playback::{Coarse, CoarseStep, CoarseStepRef, EvidenceStrength, RunPlayback};
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +11,13 @@ pub struct CoarseHistoryStep {
     pub block_height: u64,
     pub block_hash: String,
     pub parent_block_hashes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruling_parent: Option<SchedulerNodeId>,
     pub selected_successor: SuccessorRefRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_node: Option<SchedulerNodeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_branch: Option<BranchId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_candidate: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +121,13 @@ pub fn build_coarse_history_spine(blocks: &[SealedBlockRecord]) -> CoarseHistory
             block_height,
             block_hash,
             parent_block_hashes,
+            ruling_parent: parent_node_id(&block.state.header.common.ruling_authority),
             selected_successor: block.state.header.selected_successor.clone(),
+            selected_node: selection
+                .map(|selection| SchedulerNodeId(selection.decision.candidate_node_id.clone())),
+            selected_branch: selection
+                .and_then(|selection| selection.decision.selected_branch_id.as_ref())
+                .map(|branch_id| BranchId(branch_id.clone())),
             selected_candidate: selection
                 .and_then(|selection| selection.selected_candidate.as_ref())
                 .map(|subject| subject.value.clone()),
@@ -127,6 +142,15 @@ pub fn build_coarse_history_spine(blocks: &[SealedBlockRecord]) -> CoarseHistory
     }
 
     CoarseHistorySpine { steps, warnings }
+}
+
+fn parent_node_id(actor: &ActorRefRecord) -> Option<SchedulerNodeId> {
+    let ActorRefRecord::Process(value) = actor else {
+        return None;
+    };
+    value
+        .strip_prefix("parent:")
+        .map(|node_id| SchedulerNodeId(node_id.to_owned()))
 }
 
 /// Build a coarse sealed-History spine from already loaded typed records.
