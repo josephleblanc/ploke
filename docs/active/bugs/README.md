@@ -37,3 +37,5 @@ for near-term implementation planning.
   Prototype 1 can seal a historical successor Artifact with the previous parent's mutated surface root.
 - [`2026-05-10-prototype1-successor-hydration-surface-mismatch.md`](./2026-05-10-prototype1-successor-hydration-surface-mismatch.md)
   Prototype 1 compares selected-child Artifact surface evidence against the hydrated successor Parent checkout after parent identity is committed.
+- [`2026-05-11-prototype1-mbe-shared-instance-patch-provenance.md`](./2026-05-11-prototype1-mbe-shared-instance-patch-provenance.md)
+  Prototype 1 child self-validation can export MBE `fix_patch` evidence from a shared benchmark checkout instead of a candidate-owned instance target state.
