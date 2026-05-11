@@ -3,13 +3,14 @@
 //! Purpose: after approving a proposal, the system should schedule a rescan and
 //! surface a SysInfo message indicating so.
 //!
-//! Approach: stage a minimal proposal (no-op edits) and approve it, then assert
+//! Approach: stage a minimal real patch proposal and approve it, then assert
 //! the chat history includes a SysInfo message about scheduling a rescan.
 
 use std::sync::Arc;
 
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, file_hash::LargeFilePolicy};
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_io::{Diff, NsWriteSnippetData, PatchApplyOptions};
 use ploke_tui::{
     EventBus,
     app_state::core::{
@@ -19,6 +20,7 @@ use ploke_tui::{
     event_bus::EventBusCaps,
     user_config::MessageVerbosityProfile,
 };
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 async fn build_state(profile: MessageVerbosityProfile) -> (Arc<AppState>, Arc<EventBus>) {
@@ -49,11 +51,24 @@ async fn build_state(profile: MessageVerbosityProfile) -> (Arc<AppState>, Arc<Ev
     (state, event_bus)
 }
 
-async fn seed_and_approve_noop_ns_proposal(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    // Insert a no-op non-semantic proposal (empty ns edits) to take the approve path.
-    // `write_batch_ns([])` is expected to complete successfully and still emit the
-    // "Scheduled rescan..." SysInfo status text.
+async fn seed_and_approve_ns_proposal(state: &Arc<AppState>, event_bus: &Arc<EventBus>) -> TempDir {
+    let temp_dir = tempfile::tempdir().expect("temp workspace");
+    let file_path = temp_dir.path().join("notes.txt");
+    std::fs::write(&file_path, "alpha\nbeta\ngamma\n").expect("seed file");
+
     let req_id = uuid::Uuid::new_v4();
+    let edit = NsWriteSnippetData {
+        id: uuid::Uuid::new_v4(),
+        file_path: file_path.clone(),
+        expected_file_hash: None,
+        namespace: PROJECT_NAMESPACE_UUID,
+        diff: Diff::from(
+            "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+delta\n gamma\n"
+                .to_string(),
+        ),
+        options: PatchApplyOptions::default(),
+        large_file_policy: LargeFilePolicy::Skip,
+    };
     {
         let mut guard = state.proposals.write().await;
         guard.insert(
@@ -64,10 +79,10 @@ async fn seed_and_approve_noop_ns_proposal(state: &Arc<AppState>, event_bus: &Ar
                 call_id: ArcStr::from("test_tool_call:0"),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
-                edits_ns: vec![],
-                files: vec![],
+                edits_ns: vec![edit],
+                files: vec![file_path],
                 preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
-                    text: String::new(),
+                    text: "patch notes.txt".to_string(),
                 },
                 status: EditProposalStatus::Pending,
                 is_semantic: false,
@@ -81,6 +96,8 @@ async fn seed_and_approve_noop_ns_proposal(state: &Arc<AppState>, event_bus: &Ar
     )
     .await
     .expect("approve_edits timed out");
+
+    temp_dir
 }
 
 fn has_scheduled_rescan_message(chat: &ploke_tui::chat_history::ChatHistory) -> bool {
@@ -93,7 +110,7 @@ fn has_scheduled_rescan_message(chat: &ploke_tui::chat_history::ChatHistory) -> 
 #[tokio::test]
 async fn approve_emits_rescan_sysinfo_under_default_profile() {
     let (state, event_bus) = build_state(MessageVerbosityProfile::Minimal).await;
-    seed_and_approve_noop_ns_proposal(&state, &event_bus).await;
+    let _temp_dir = seed_and_approve_ns_proposal(&state, &event_bus).await;
 
     let chat_guard = state.chat.0.read().await;
     let found = has_scheduled_rescan_message(&chat_guard);
@@ -106,7 +123,7 @@ async fn approve_emits_rescan_sysinfo_under_default_profile() {
 #[tokio::test]
 async fn approve_emits_rescan_sysinfo_under_verbose_profile() {
     let (state, event_bus) = build_state(MessageVerbosityProfile::Verbose).await;
-    seed_and_approve_noop_ns_proposal(&state, &event_bus).await;
+    let _temp_dir = seed_and_approve_ns_proposal(&state, &event_bus).await;
 
     let chat_guard = state.chat.0.read().await;
     let found = has_scheduled_rescan_message(&chat_guard);

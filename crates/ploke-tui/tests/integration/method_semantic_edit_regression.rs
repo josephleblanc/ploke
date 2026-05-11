@@ -230,8 +230,12 @@ async fn apply_code_edit_reports_ambiguous_method_targets_explicitly() {
     let message = wire.llm["message"].as_str().expect("message string");
     assert!(
         message.starts_with(
-            "Ambiguous method target for canon=crate::impls::SimpleTrait::trait_method in file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/impls.rs;"
+            "Ambiguous method target for canon=crate::impls::SimpleTrait::trait_method in file="
         ),
+        "unexpected ambiguity message: {message}"
+    );
+    assert!(
+        message.contains("tests/fixture_crates/fixture_nodes/src/impls.rs;"),
         "unexpected ambiguity message: {message}"
     );
     assert!(
