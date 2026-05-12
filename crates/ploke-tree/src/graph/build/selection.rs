@@ -194,6 +194,18 @@ impl Builder {
                         branch_id: branch.branch_id.clone(),
                         candidate_id: branch.candidate_id.clone().map(CandidateId),
                         source_state_id: branch.source_state_id.clone(),
+                        parent_branch_id: payload
+                            .artifact
+                            .as_ref()
+                            .and_then(|artifact| artifact.resolved.parent_branch_id.clone()),
+                        base_artifact_id: payload.artifact.as_ref().and_then(|artifact| {
+                            artifact
+                                .surface
+                                .as_ref()
+                                .map(|surface| surface.base.artifact_id.clone())
+                        }),
+                        derived_artifact_id: artifact_after.clone(),
+                        patch_id: patch_id.clone(),
                         evidence: vec![evidence_id],
                     });
                 }

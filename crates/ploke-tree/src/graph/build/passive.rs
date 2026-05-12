@@ -386,6 +386,10 @@ mod tests {
             branch_id: "branch-1".to_owned(),
             candidate_id: None,
             source_state_id: None,
+            parent_branch_id: None,
+            base_artifact_id: None,
+            derived_artifact_id: None,
+            patch_id: None,
             evidence: Vec::new(),
         });
         builder.observe_node_branch("node-1", "branch-1");

@@ -43,6 +43,10 @@ pub struct CandidateBranchNode {
     pub branch_id: String,
     pub candidate_id: Option<CandidateId>,
     pub source_state_id: Option<String>,
+    pub parent_branch_id: Option<String>,
+    pub base_artifact_id: Option<ArtifactId>,
+    pub derived_artifact_id: Option<ArtifactId>,
+    pub patch_id: Option<PatchId>,
     pub evidence: Vec<EvidenceId>,
 }
 

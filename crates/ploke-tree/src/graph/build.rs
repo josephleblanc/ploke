@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 use ploke_records::history::{ActorRefRecord, ArtifactRefRecord};
 use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
+use ploke_records::scheduler::NodeRecord;
 
 use super::*;
 use crate::RunRecordSet;
@@ -110,6 +111,35 @@ impl Builder {
         self.branch_by_node_id
             .entry(node_id.to_owned())
             .or_insert_with(|| branch_id.to_owned());
+    }
+
+    fn observe_scheduler_branch(&mut self, node: &NodeRecord) {
+        if let Some(branch) = self
+            .graph
+            .candidates
+            .branches
+            .iter_mut()
+            .find(|branch| branch.branch_id == node.branch_id.0)
+        {
+            if branch.candidate_id.is_none() {
+                branch.candidate_id = Some(node.candidate_id.clone());
+            }
+            if branch.source_state_id.is_none() {
+                branch.source_state_id = Some(node.source_state_id.0.clone());
+            }
+            if branch.parent_branch_id.is_none() {
+                branch.parent_branch_id = node.parent_branch_id.as_ref().map(|id| id.0.clone());
+            }
+            if branch.base_artifact_id.is_none() {
+                branch.base_artifact_id = node.base_artifact_id.clone();
+            }
+            if branch.derived_artifact_id.is_none() {
+                branch.derived_artifact_id = node.derived_artifact_id.clone();
+            }
+            if branch.patch_id.is_none() {
+                branch.patch_id = node.patch_id.clone();
+            }
+        }
     }
 
     fn attach_to_node_branch(&mut self, node_id: &str, evidence_id: EvidenceId) {

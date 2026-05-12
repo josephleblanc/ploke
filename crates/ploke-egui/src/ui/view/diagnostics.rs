@@ -5,10 +5,8 @@ use petgraph::{
 };
 use ploke_records::branch::TreatmentBranchStatus;
 
-use crate::graph::{EdgeKind, Graph};
-
 use super::geometry::{cubic_point, curve_points, segments_intersect};
-use super::projection::WidgetGraph;
+use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
 use super::{
     EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphReadabilityDiagnostics, GraphViewDiagnostics,
@@ -17,7 +15,6 @@ use super::{
 const LONG_EDGE_MEDIAN_MULTIPLE: f32 = 2.0;
 
 pub(super) fn graph_diagnostics(
-    semantic_graph: &Graph,
     graph: &WidgetGraph,
     viewport_size: Vec2,
     style: ViewStyle,
@@ -46,16 +43,12 @@ pub(super) fn graph_diagnostics(
         fitted_fill,
         center_offset: fitted.center() - Rect::from_min_size(Pos2::ZERO, viewport_size).center(),
         edge_labels,
-        readability: readability_diagnostics(semantic_graph, graph, style),
+        readability: readability_diagnostics(graph, style),
     })
 }
 
-fn readability_diagnostics<'a>(
-    semantic_graph: &'a Graph,
-    graph: &WidgetGraph,
-    style: ViewStyle,
-) -> GraphReadabilityDiagnostics {
-    let edges = edge_curves(semantic_graph, graph, style);
+fn readability_diagnostics(graph: &WidgetGraph, style: ViewStyle) -> GraphReadabilityDiagnostics {
+    let edges = edge_curves(graph, style);
     let mut crossings = GraphReadabilityDiagnostics {
         long_edge_count: long_edge_count(&edges),
         backtracking_edge_count: backtracking_edge_count(&edges),
@@ -82,15 +75,15 @@ fn readability_diagnostics<'a>(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct EdgeCurve<'a> {
+struct EdgeCurve {
     source: NodeIndex,
     target: NodeIndex,
-    kind: &'a EdgeKind,
+    kind: ViewEdgeKind,
     status: TreatmentBranchStatus,
     points: [Pos2; 4],
 }
 
-impl EdgeCurve<'_> {
+impl EdgeCurve {
     fn shares_endpoint(self, other: &Self) -> bool {
         self.source == other.source
             || self.source == other.target
@@ -99,8 +92,10 @@ impl EdgeCurve<'_> {
     }
 
     fn is_selected_path(self) -> bool {
-        matches!(self.kind, EdgeKind::HistorySuccession { .. })
-            || self.status == TreatmentBranchStatus::Selected
+        matches!(
+            self.kind,
+            ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch
+        ) || self.status == TreatmentBranchStatus::Selected
     }
 
     fn chord_length(self) -> f32 {
@@ -112,16 +107,12 @@ impl EdgeCurve<'_> {
     }
 }
 
-fn edge_curves<'a>(
-    semantic_graph: &'a Graph,
-    graph: &WidgetGraph,
-    style: ViewStyle,
-) -> Vec<EdgeCurve<'a>> {
+fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
     graph
         .g()
         .edge_references()
         .filter_map(|edge| {
-            let semantic_edge = semantic_graph.edge(&edge.weight().payload().id)?;
+            let payload: &GraphEdgePayload = edge.weight().payload();
             let start = graph.g().node_weight(edge.source())?.location();
             let end = graph.g().node_weight(edge.target())?.location();
             if start == end {
@@ -131,15 +122,15 @@ fn edge_curves<'a>(
             Some(EdgeCurve {
                 source: edge.source(),
                 target: edge.target(),
-                kind: semantic_edge.kind(),
-                status: semantic_edge.status(),
+                kind: payload.kind,
+                status: payload.status,
                 points: curve_points(start, end, style.edge.curve),
             })
         })
         .collect()
 }
 
-fn long_edge_count(edges: &[EdgeCurve<'_>]) -> usize {
+fn long_edge_count(edges: &[EdgeCurve]) -> usize {
     let Some(median) = median_edge_length(edges) else {
         return 0;
     };
@@ -150,7 +141,7 @@ fn long_edge_count(edges: &[EdgeCurve<'_>]) -> usize {
         .count()
 }
 
-fn median_edge_length(edges: &[EdgeCurve<'_>]) -> Option<f32> {
+fn median_edge_length(edges: &[EdgeCurve]) -> Option<f32> {
     if edges.is_empty() {
         return None;
     }
@@ -163,11 +154,11 @@ fn median_edge_length(edges: &[EdgeCurve<'_>]) -> Option<f32> {
     Some(lengths[lengths.len() / 2])
 }
 
-fn backtracking_edge_count(edges: &[EdgeCurve<'_>]) -> usize {
+fn backtracking_edge_count(edges: &[EdgeCurve]) -> usize {
     edges.iter().filter(|edge| edge.backtracks()).count()
 }
 
-fn curves_cross(left: &EdgeCurve<'_>, right: &EdgeCurve<'_>, style: ViewStyle) -> bool {
+fn curves_cross(left: &EdgeCurve, right: &EdgeCurve, style: ViewStyle) -> bool {
     let segments = style.edge.curve.hit_segments.max(1);
     let mut left_start = left.points[0];
     for left_step in 1..=segments {
@@ -216,19 +207,14 @@ fn fit_bounds(bounds: Rect, viewport_size: Vec2, zoom: f32) -> Rect {
 }
 
 impl EdgeCrossingsByKind {
-    fn record(&mut self, left: &EdgeKind, right: &EdgeKind) {
+    fn record(&mut self, left: ViewEdgeKind, right: ViewEdgeKind) {
         match (left, right) {
-            (EdgeKind::CandidateTransition, EdgeKind::CandidateTransition) => {
-                self.candidate_candidate += 1;
+            (
+                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
+                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
+            ) => {
+                self.artifact_artifact += 1;
             }
-            (EdgeKind::HistorySuccession { .. }, EdgeKind::HistorySuccession { .. }) => {
-                self.history_history += 1;
-            }
-            (EdgeKind::CandidateTransition, EdgeKind::HistorySuccession { .. })
-            | (EdgeKind::HistorySuccession { .. }, EdgeKind::CandidateTransition) => {
-                self.candidate_history += 1;
-            }
-            (EdgeKind::ArtifactPatch { .. }, _) | (_, EdgeKind::ArtifactPatch { .. }) => {}
         }
     }
 }
