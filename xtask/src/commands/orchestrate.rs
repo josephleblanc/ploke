@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{CommandContext, XtaskError};
 
+mod lanes;
+
+use lanes::{LaneCommand, LaneSpec, LaneValidation};
+
 const DEFAULT_BOARD_PATH: &str = ".orchestrator/board.json";
 const DEFAULT_PACKET_DIR: &str = ".orchestrator/workers";
 const SCHEMA_VERSION: &str = "orchestrator-board.v1";
@@ -43,6 +47,9 @@ pub enum Orchestrate {
     Block(Block),
     /// Write a worker packet file from the current assignment.
     Packet(Packet),
+    /// Define and validate lane-owned edit surfaces.
+    #[command(subcommand)]
+    Lane(LaneCommand),
 }
 
 impl Orchestrate {
@@ -58,6 +65,7 @@ impl Orchestrate {
             Self::Review(cmd) => cmd.execute(ctx),
             Self::Block(cmd) => cmd.execute(ctx),
             Self::Packet(cmd) => cmd.execute(ctx),
+            Self::Lane(cmd) => cmd.execute(ctx),
         }
     }
 }
@@ -284,6 +292,16 @@ pub enum OrchestrateOutput {
         /// Packet path.
         path: String,
     },
+    /// Lane was added or replaced.
+    Lane {
+        /// Lane definition after the change.
+        lane: LaneSpec,
+    },
+    /// Lane validation result.
+    LaneValidation {
+        /// Validation result.
+        validation: LaneValidation,
+    },
 }
 
 /// Serializable board state.
@@ -297,6 +315,9 @@ pub struct Board {
     updated_at: String,
     /// Packet directory relative to workspace root unless absolute.
     packet_dir: PathBuf,
+    /// Lane-owned edit surface groups.
+    #[serde(default)]
+    lanes: BTreeMap<String, LaneSpec>,
     /// Known workers.
     workers: BTreeMap<String, WorkerSlot>,
     /// Known tasks.
@@ -418,6 +439,8 @@ pub struct BoardStatus {
     board: String,
     /// Packet directory.
     packet_dir: String,
+    /// Lane-owned edit surfaces.
+    lanes: Vec<LaneSpec>,
     /// Workers.
     workers: Vec<WorkerSlot>,
     /// Tasks grouped by state.
@@ -654,6 +677,7 @@ impl Board {
             created_at: now.clone(),
             updated_at: now,
             packet_dir,
+            lanes: BTreeMap::new(),
             workers: BTreeMap::new(),
             tasks: BTreeMap::new(),
             blockers: BTreeMap::new(),
@@ -701,9 +725,12 @@ impl Board {
         tasks.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.id.cmp(&b.id)));
         let mut blockers: Vec<_> = self.blockers.values().cloned().collect();
         blockers.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut lanes: Vec<_> = self.lanes.values().cloned().collect();
+        lanes.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(BoardStatus {
             board: display(ctx, board_path)?,
             packet_dir: display(ctx, &resolve(ctx, &self.packet_dir)?)?,
+            lanes,
             workers,
             tasks,
             blockers,
@@ -726,7 +753,7 @@ impl Board {
             Ok(())
         } else {
             Err(XtaskError::validation(format!("Unknown worker `{id}`"))
-                .with_recovery("Add it with `cargo xtask orchestrate worker <id>`."))
+                .with_recovery("Add it with `target/debug/xtask orchestrate worker <id>`."))
         }
     }
 
@@ -736,7 +763,7 @@ impl Board {
         } else {
             Err(
                 XtaskError::validation(format!("Unknown task `{id}`")).with_recovery(
-                    "Add it with `cargo xtask orchestrate add <id> --lane <lane> --title <title>`.",
+                    "Add it with `target/debug/xtask orchestrate add <id> --lane <lane> --title <title>`.",
                 ),
             )
         }
