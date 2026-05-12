@@ -1,4 +1,4 @@
-use eframe::egui::{Pos2, Vec2};
+use eframe::egui::{Pos2, Rect, Vec2};
 
 use super::style::{CurveStyle, EdgeStyle};
 
@@ -70,7 +70,48 @@ pub(super) fn segments_intersect(a: Pos2, b: Pos2, c: Pos2, d: Pos2) -> bool {
     let cd_a = cross(d - c, a - c);
     let cd_b = cross(d - c, b - c);
 
+    if nearly_zero(ab_c) && on_segment(a, b, c) {
+        return true;
+    }
+    if nearly_zero(ab_d) && on_segment(a, b, d) {
+        return true;
+    }
+    if nearly_zero(cd_a) && on_segment(c, d, a) {
+        return true;
+    }
+    if nearly_zero(cd_b) && on_segment(c, d, b) {
+        return true;
+    }
+
     ab_c.signum() != ab_d.signum() && cd_a.signum() != cd_b.signum()
+}
+
+pub(super) fn curve_intersects_rect(points: [Pos2; 4], target: Rect, segments: usize) -> bool {
+    let mut previous = points[0];
+    for step in 1..=segments.max(1) {
+        let current = cubic_point(points, step as f32 / segments.max(1) as f32);
+        if segment_intersects_rect(previous, current, target) {
+            return true;
+        }
+        previous = current;
+    }
+    false
+}
+
+pub(super) fn segment_intersects_rect(start: Pos2, end: Pos2, target: Rect) -> bool {
+    if target.contains(start) || target.contains(end) {
+        return true;
+    }
+
+    let top_left = target.left_top();
+    let top_right = target.right_top();
+    let bottom_right = target.right_bottom();
+    let bottom_left = target.left_bottom();
+
+    segments_intersect(start, end, top_left, top_right)
+        || segments_intersect(start, end, top_right, bottom_right)
+        || segments_intersect(start, end, bottom_right, bottom_left)
+        || segments_intersect(start, end, bottom_left, top_left)
 }
 
 fn distance_to_segment(start: Pos2, end: Pos2, point: Pos2) -> f32 {
@@ -86,4 +127,17 @@ fn distance_to_segment(start: Pos2, end: Pos2, point: Pos2) -> f32 {
 
 fn cross(left: Vec2, right: Vec2) -> f32 {
     left.x * right.y - left.y * right.x
+}
+
+fn nearly_zero(value: f32) -> bool {
+    value.abs() <= 1.0e-5
+}
+
+fn on_segment(start: Pos2, end: Pos2, point: Pos2) -> bool {
+    let min = Pos2::new(start.x.min(end.x), start.y.min(end.y));
+    let max = Pos2::new(start.x.max(end.x), start.y.max(end.y));
+    point.x >= min.x - 1.0e-5
+        && point.x <= max.x + 1.0e-5
+        && point.y >= min.y - 1.0e-5
+        && point.y <= max.y + 1.0e-5
 }

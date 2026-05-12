@@ -3,7 +3,6 @@ use petgraph::{
     stable_graph::NodeIndex,
     visit::{EdgeRef, IntoEdgeReferences},
 };
-use ploke_records::branch::TreatmentBranchStatus;
 
 use super::geometry::{cubic_point, curve_points, segments_intersect};
 use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
@@ -13,6 +12,7 @@ use super::{
 };
 
 const LONG_EDGE_MEDIAN_MULTIPLE: f32 = 2.0;
+const RANK_SPACING_MEDIAN_MULTIPLE: f32 = 2.0;
 
 pub(super) fn graph_diagnostics(
     graph: &WidgetGraph,
@@ -79,7 +79,6 @@ struct EdgeCurve {
     source: NodeIndex,
     target: NodeIndex,
     kind: ViewEdgeKind,
-    status: TreatmentBranchStatus,
     points: [Pos2; 4],
 }
 
@@ -92,14 +91,15 @@ impl EdgeCurve {
     }
 
     fn is_selected_path(self) -> bool {
-        matches!(
-            self.kind,
-            ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch
-        ) || self.status == TreatmentBranchStatus::Selected
+        self.kind == ViewEdgeKind::HistoryArtifact
     }
 
     fn chord_length(self) -> f32 {
         self.points[0].distance(self.points[3])
+    }
+
+    fn rank_distance(self) -> f32 {
+        (self.points[3].y - self.points[0].y).abs()
     }
 
     fn backtracks(self) -> bool {
@@ -123,7 +123,6 @@ fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
                 source: edge.source(),
                 target: edge.target(),
                 kind: payload.kind,
-                status: payload.status,
                 points: curve_points(start, end, style.edge.curve),
             })
         })
@@ -131,13 +130,18 @@ fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
 }
 
 fn long_edge_count(edges: &[EdgeCurve]) -> usize {
-    let Some(median) = median_edge_length(edges) else {
+    let Some(edge_median) = median_edge_length(edges) else {
         return 0;
     };
-    let threshold = median * LONG_EDGE_MEDIAN_MULTIPLE;
+    let rank_median = median_rank_distance(edges);
+    let edge_threshold = edge_median * LONG_EDGE_MEDIAN_MULTIPLE;
+    let rank_threshold = rank_median.map(|median| median * RANK_SPACING_MEDIAN_MULTIPLE);
     edges
         .iter()
-        .filter(|edge| edge.chord_length() > threshold)
+        .filter(|edge| {
+            edge.chord_length() > edge_threshold
+                || rank_threshold.is_some_and(|threshold| edge.rank_distance() > threshold)
+        })
         .count()
 }
 
@@ -152,6 +156,20 @@ fn median_edge_length(edges: &[EdgeCurve]) -> Option<f32> {
         .collect::<Vec<_>>();
     lengths.sort_by(|left, right| left.total_cmp(right));
     Some(lengths[lengths.len() / 2])
+}
+
+fn median_rank_distance(edges: &[EdgeCurve]) -> Option<f32> {
+    let mut distances = edges
+        .iter()
+        .map(|edge| edge.rank_distance())
+        .filter(|distance| *distance > 1.0)
+        .collect::<Vec<_>>();
+    if distances.is_empty() {
+        return None;
+    }
+
+    distances.sort_by(|left, right| left.total_cmp(right));
+    Some(distances[distances.len() / 2])
 }
 
 fn backtracking_edge_count(edges: &[EdgeCurve]) -> usize {
@@ -215,6 +233,98 @@ impl EdgeCrossingsByKind {
             ) => {
                 self.artifact_artifact += 1;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::{Color32, Pos2};
+    use petgraph::{Directed, stable_graph::StableGraph};
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::ui::view::projection::GraphNode;
+
+    #[test]
+    fn selected_path_crossings_ignore_unselected_artifact_patch_edges() {
+        let graph = crossing_graph(ViewEdgeKind::ArtifactPatch, ViewEdgeKind::ArtifactPatch);
+
+        let diagnostics = readability_diagnostics(&graph, ViewStyle::default());
+
+        assert_eq!(diagnostics.edge_edge_crossings, 1);
+        assert_eq!(diagnostics.selected_path_crossings, 0);
+    }
+
+    #[test]
+    fn selected_path_crossings_count_selected_edge_crossings() {
+        let graph = crossing_graph(ViewEdgeKind::HistoryArtifact, ViewEdgeKind::ArtifactPatch);
+
+        let diagnostics = readability_diagnostics(&graph, ViewStyle::default());
+
+        assert_eq!(diagnostics.edge_edge_crossings, 1);
+        assert_eq!(diagnostics.selected_path_crossings, 1);
+    }
+
+    #[test]
+    fn long_edge_count_includes_rank_spacing_outliers() {
+        let edges = [
+            test_edge(0, Pos2::new(0.0, 0.0), Pos2::new(200.0, 50.0)),
+            test_edge(1, Pos2::new(0.0, 0.0), Pos2::new(-200.0, 50.0)),
+            test_edge(2, Pos2::new(0.0, 0.0), Pos2::new(0.0, 120.0)),
+        ];
+
+        assert_eq!(long_edge_count(&edges), 1);
+    }
+
+    fn crossing_graph(left_kind: ViewEdgeKind, right_kind: ViewEdgeKind) -> WidgetGraph {
+        let style = ViewStyle::default();
+        let mut raw = StableGraph::<GraphNode, GraphEdgePayload, Directed>::default();
+        let left_start = raw.add_node(node("left-start"));
+        let left_end = raw.add_node(node("left-end"));
+        let right_start = raw.add_node(node("right-start"));
+        let right_end = raw.add_node(node("right-end"));
+
+        raw.add_edge(left_start, left_end, edge("P1", left_kind, style));
+        raw.add_edge(right_start, right_end, edge("P2", right_kind, style));
+
+        let mut graph: WidgetGraph = egui_graphs::to_graph_custom(
+            &raw,
+            |node| {
+                node.set_label(String::new());
+            },
+            |_edge| {},
+        );
+        graph.g_mut()[left_start].set_location(Pos2::new(0.0, 0.0));
+        graph.g_mut()[left_end].set_location(Pos2::new(100.0, 100.0));
+        graph.g_mut()[right_start].set_location(Pos2::new(100.0, 0.0));
+        graph.g_mut()[right_end].set_location(Pos2::new(0.0, 100.0));
+        graph
+    }
+
+    fn node(label: &'static str) -> GraphNode {
+        GraphNode::Artifact {
+            label: Arc::from(label),
+            color: Color32::WHITE,
+        }
+    }
+
+    fn edge(label: &'static str, kind: ViewEdgeKind, style: ViewStyle) -> GraphEdgePayload {
+        GraphEdgePayload {
+            label: Arc::from(label),
+            label_visible: true,
+            color: Color32::WHITE,
+            style: style.edge,
+            kind,
+        }
+    }
+
+    fn test_edge(index: usize, start: Pos2, end: Pos2) -> EdgeCurve {
+        EdgeCurve {
+            source: NodeIndex::new(index * 2),
+            target: NodeIndex::new(index * 2 + 1),
+            kind: ViewEdgeKind::ArtifactPatch,
+            points: [start, start, end, end],
         }
     }
 }

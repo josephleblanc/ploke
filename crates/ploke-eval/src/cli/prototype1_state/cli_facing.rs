@@ -47,8 +47,8 @@ use crate::{
         },
         prototype1_state::{
             backend::{
-                CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT, EditProposal, GitWorktreeBackend,
-                ProposedTouch, WorkspaceBackend, edit_surface_paths,
+                CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission,
+                GitWorktreeBackend, ProposedTouch, WorkspaceBackend, edit_surface_paths,
             },
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
@@ -58,12 +58,13 @@ use crate::{
             history::{
                 ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
                 CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
-                EvaluationPayload, Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
+                CheckedSurface, CheckedSurfaceGrant, CheckedSurfaceTransition, EvaluationPayload,
+                Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
                 SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
                 SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
                 SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
                 SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
-                SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch,
+                SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch, SurfaceWritable,
                 TraversalCandidateSource, TraversalEvidence, surface_attempt,
             },
             identity::{
@@ -80,8 +81,8 @@ use crate::{
             },
             observe,
             parent::{
-                Check, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles, Genesis, Parent,
-                Planned, Predecessor, Ready, Selectable, Startup, Unchecked,
+                AwaitingHarnessPlan, Check, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles,
+                Genesis, Parent, Planned, Predecessor, Ready, Selectable, Startup, Unchecked,
             },
             profile, selection as state_selection,
             successor::Record as SuccessorRecord,
@@ -557,6 +558,18 @@ struct ChildPlanReceipt {
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
+struct PublishedHarnessRequestReceipt {
+    parent: Parent<AwaitingHarnessPlan>,
+    request_path: PathBuf,
+    published:
+        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
+}
+
+enum ParentTargetSelection {
+    ChildPlan(ChildPlanReceipt),
+    AwaitingHarnessPlan(PublishedHarnessRequestReceipt),
+}
+
 struct PlannedChildren {
     parent: Parent<Selectable>,
     plan: Received<ChildPlan>,
@@ -839,15 +852,21 @@ enum CandidateGenerationError {
     )]
     MissingDeterministicEvidence { node_id: String },
     #[error(
-        "candidate-generator=broad-harness wrote request '{}' and prompt '{}'; write the resulting child plan to '{}'",
+        "candidate-generator=broad-harness published request '{}' (request_id='{}', request_hash='{}'), prompt '{}', and isolated candidate workspace '{}'; write a typed SubmittedBroadHarnessResult to request-bound submitted-result path '{}'",
         request_path.display(),
+        request_id,
+        request_hash,
         prompt_path.display(),
-        child_plan_path.display()
+        workspace_path.display(),
+        submitted_result_path.display()
     )]
     PendingBroadHarnessRequest {
+        request_id: String,
+        request_hash: String,
         request_path: PathBuf,
         prompt_path: PathBuf,
-        child_plan_path: PathBuf,
+        submitted_result_path: PathBuf,
+        workspace_path: PathBuf,
     },
 }
 
@@ -941,13 +960,16 @@ async fn run_parent_target_selection(
     parent: Parent<Ready>,
     config: CandidateGenerationConfig,
     child_budget: Prototype1ChildBudget,
-) -> Result<ChildPlanReceipt, PrepareError> {
+) -> Result<ParentTargetSelection, PrepareError> {
     match config {
         CandidateGenerationConfig::Legacy => {
-            run_legacy_parent_target_selection(campaign_id, manifest_path, repo_root, parent).await
+            run_legacy_parent_target_selection(campaign_id, manifest_path, repo_root, parent)
+                .await
+                .map(ParentTargetSelection::ChildPlan)
         }
         CandidateGenerationConfig::BroadHarness => {
             publish_broad_harness_child_plan_request(manifest_path, repo_root, parent, child_budget)
+                .map(ParentTargetSelection::AwaitingHarnessPlan)
         }
         CandidateGenerationConfig::DeterministicTuiTools => {
             publish_deterministic_tui_tools_child_plan(
@@ -957,6 +979,7 @@ async fn run_parent_target_selection(
                 parent,
                 child_budget,
             )
+            .map(ParentTargetSelection::ChildPlan)
         }
     }
 }
@@ -1071,26 +1094,35 @@ fn publish_broad_harness_child_plan_request(
     repo_root: &Path,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
-) -> Result<ChildPlanReceipt, PrepareError> {
+) -> Result<PublishedHarnessRequestReceipt, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
-    let request_paths = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request(
         manifest_path,
         repo_root,
         &parent_identity,
         child_budget,
     )?;
-    Err(CandidateGenerationError::PendingBroadHarnessRequest {
-        request_path: request_paths.request_path,
-        prompt_path: request_paths.prompt_path,
-        child_plan_path: request_paths.child_plan_path,
-    }
-    .into_prepare())
+    let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
+    debug_assert_eq!(
+        awaiting_parent.harness_request().request_id(),
+        publication.published.request_id()
+    );
+    debug_assert_eq!(
+        awaiting_parent.harness_request().request_hash(),
+        publication.published.request_hash()
+    );
+    Ok(PublishedHarnessRequestReceipt {
+        parent: awaiting_parent,
+        request_path: publication.request_path,
+        published: publication.published,
+    })
 }
 
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
+const TUI_EDIT_SURFACE_POLICY_ID: &str = "surface-policy:tool-surface-v1";
 
 fn publish_deterministic_tui_tools_child_plan(
     campaign_id: &str,
@@ -1105,8 +1137,7 @@ fn publish_deterministic_tui_tools_child_plan(
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
 
-    let generated =
-        produce_deterministic_tui_tools_candidates(repo_root, &parent_identity, child_budget)?;
+    let generated = produce_deterministic_tui_tools_candidates(repo_root, &parent, child_budget)?;
     let expected_generation = parent_identity.generation() + 1;
     let mut children = Vec::with_capacity(generated.checked.len());
 
@@ -1122,10 +1153,7 @@ fn publish_deterministic_tui_tools_child_plan(
             node_id: prototype1_node_id(&branch_id, expected_generation),
             parent_node_id: Some(parent_identity.node_id().to_string()),
             generation: expected_generation,
-            instance_id: parent_identity
-                .instance_id()
-                .map(str::to_string)
-                .unwrap_or_else(|| parent_identity.node_id().to_string()),
+            instance_id: parent.runtime_id().to_string(),
             source_state_id: parent_identity.branch_id().to_string(),
             operation_target: None,
             base_artifact_id: None,
@@ -1199,10 +1227,10 @@ fn publish_deterministic_tui_tools_child_plan(
     Ok(receipt)
 }
 
-struct BroadHarnessRequestPaths {
+struct BroadHarnessRequestPublication {
     request_path: PathBuf,
-    prompt_path: PathBuf,
-    child_plan_path: PathBuf,
+    published:
+        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
 fn publish_broad_edit_harness_request(
@@ -1210,19 +1238,16 @@ fn publish_broad_edit_harness_request(
     repo_root: &Path,
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
-) -> Result<BroadHarnessRequestPaths, PrepareError> {
+) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
     let request_path = request_dir.join(format!("{}.json", parent.node_id()));
     let prompt_path = request_dir.join(format!("{}.md", parent.node_id()));
-    let child_plan_path = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
-        manifest_path.to_path_buf(),
-        parent.node_id().to_string(),
-    ))
-    .path()
-    .to_path_buf();
-    let request =
-        crate::cli::prototype1_state::edit_surface::harness_request::BroadHarnessRequest::prototype1_workspace(
+    let submitted_result_path = prototype_root
+        .join("messages/edit-harness-result")
+        .join(format!("{}.json", parent.node_id()));
+    let published =
+        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest::prototype1_workspace(
             parent.node_id().to_string(),
             repo_root.to_path_buf(),
             crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget {
@@ -1230,25 +1255,31 @@ fn publish_broad_edit_harness_request(
                 max_children: child_budget.max,
             },
             &prototype_root,
-            &child_plan_path,
+            request_path,
+            prompt_path.clone(),
+            submitted_result_path,
         );
+    let request_path = published.request_path().to_path_buf();
     if let Some(parent) = request_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    write_json_file_pretty(&request_path, &request)?;
-    fs::write(&prompt_path, request.render_prompt(&child_plan_path)).map_err(|source| {
-        PrepareError::WriteManifest {
-            path: prompt_path.clone(),
-            source,
-        }
+    write_json_file_pretty(&request_path, &published)?;
+    fs::write(
+        published.prompt_path(),
+        published
+            .request()
+            .render_prompt(published.submitted_result_path()),
+    )
+    .map_err(|source| PrepareError::WriteManifest {
+        path: published.prompt_path().to_path_buf(),
+        source,
     })?;
-    Ok(BroadHarnessRequestPaths {
+    Ok(BroadHarnessRequestPublication {
         request_path,
-        prompt_path,
-        child_plan_path,
+        published,
     })
 }
 
@@ -1402,7 +1433,7 @@ fn validate_surface_evidence_binding(
             ),
         });
     }
-    let expected_policy = serde_name(&Prototype1EditSurface::PlokeTuiTools);
+    let expected_policy = TUI_EDIT_SURFACE_POLICY_ID;
     if surface.policy != expected_policy {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1574,10 +1605,11 @@ fn require_operation_target_binding(
 
 fn produce_deterministic_tui_tools_candidates(
     repo_root: &Path,
-    parent: &ParentIdentity,
+    parent: &Parent<Ready>,
     child_budget: Prototype1ChildBudget,
 ) -> Result<DeterministicTuiToolsCandidates, PrepareError> {
     let edit_surface = Prototype1EditSurface::PlokeTuiTools;
+    let parent_identity = parent.identity();
     if child_budget.min == 0 || child_budget.max == 0 || child_budget.min > child_budget.max {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1588,7 +1620,11 @@ fn produce_deterministic_tui_tools_candidates(
     }
     let max = child_budget.max as usize;
     let min = child_budget.min as usize;
-    let seed = format!("{}:{}", parent.node_id(), parent.generation());
+    let seed = format!(
+        "{}:{}",
+        parent_identity.node_id(),
+        parent_identity.generation()
+    );
     let replacements = (0..max).map(|index| {
         format!(
             "\n// prototype1 edit-surface candidate {}:{}; next: replace deterministic direct-splice generation with LLM proposal production.\n",
@@ -1619,13 +1655,25 @@ fn produce_deterministic_tui_tools_candidates(
             )
         };
 
-        let candidate = match backend.validate_edit_surface_candidate(repo_root, proposal.clone()) {
-            Ok(candidate) => candidate,
-            Err(source) => {
-                rejected_attempts.push(rejected_attempt(source.to_string(), &proposal));
+        let admission = match deterministic_tui_edit_surface_admission(
+            repo_root,
+            *parent.runtime_id(),
+            &proposal,
+        ) {
+            Ok(admission) => admission,
+            Err(reason) => {
+                rejected_attempts.push(rejected_attempt(reason, &proposal));
                 continue;
             }
         };
+        let candidate =
+            match backend.validate_edit_surface_candidate(repo_root, admission, proposal.clone()) {
+                Ok(candidate) => candidate,
+                Err(source) => {
+                    rejected_attempts.push(rejected_attempt(source.to_string(), &proposal));
+                    continue;
+                }
+            };
         if proposed_hashes.insert(candidate.proposed_content_hash().to_string()) {
             checked.push(candidate);
         }
@@ -1644,6 +1692,46 @@ fn produce_deterministic_tui_tools_candidates(
         checked,
         rejected_attempts,
     })
+}
+
+fn deterministic_tui_edit_surface_admission(
+    repo_root: &Path,
+    runtime_id: crate::loop_graph::RuntimeId,
+    proposal: &EditProposal,
+) -> Result<EditSurfaceAdmission, String> {
+    let mut paths = proposal
+        .touches
+        .iter()
+        .map(|touch| touch.relpath.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    let [target_relpath] = paths.as_slice() else {
+        return Err(format!(
+            "deterministic tui edit-surface proposal '{}' must target exactly one parent Artifact path, got {}",
+            proposal.proposal_id,
+            paths.len()
+        ));
+    };
+    let source_path = repo_root.join(target_relpath);
+    let source_content = fs::read_to_string(&source_path).map_err(|source| {
+        format!(
+            "deterministic tui edit-surface proposal '{}' could not read parent Artifact target '{}': {}",
+            proposal.proposal_id,
+            source_path.display(),
+            source
+        )
+    })?;
+    let artifact_id = crate::intervention::text_file_artifact_id(target_relpath, &source_content);
+    Ok(EditSurfaceAdmission::new(
+        crate::loop_graph::Coordinate {
+            runtime_id,
+            target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
+        },
+        crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+            TUI_EDIT_SURFACE_POLICY_ID,
+        ),
+    ))
 }
 
 fn deterministic_surface_proposals(
@@ -6085,7 +6173,7 @@ async fn resolve_child_plan(
     let receipt = if plan_at.path().exists() {
         receive_existing_child_plan(campaign_id, manifest_path, repo_root, parent)?
     } else {
-        run_parent_target_selection(
+        match run_parent_target_selection(
             campaign_id,
             manifest_path,
             repo_root,
@@ -6094,6 +6182,20 @@ async fn resolve_child_plan(
             child_budget,
         )
         .await?
+        {
+            ParentTargetSelection::ChildPlan(receipt) => receipt,
+            ParentTargetSelection::AwaitingHarnessPlan(receipt) => {
+                return Err(CandidateGenerationError::PendingBroadHarnessRequest {
+                    request_id: receipt.published.request_id().to_string(),
+                    request_hash: receipt.published.request_hash().to_string(),
+                    request_path: receipt.request_path,
+                    prompt_path: receipt.published.prompt_path().to_path_buf(),
+                    submitted_result_path: receipt.published.submitted_result_path().to_path_buf(),
+                    workspace_path: receipt.published.workspace_path().to_path_buf(),
+                }
+                .into_prepare());
+            }
+        }
     };
     let children = receipt
         .plan
@@ -7917,7 +8019,42 @@ impl Prototype1StateCommand {
             branch_id = %parent_identity.branch_id(),
             "resolved active parent identity"
         );
-        let parent = Parent::<Unchecked>::load(&manifest_path, parent_identity)?;
+        let parent = if let Some(invocation_path) = self.handoff_invocation.as_deref() {
+            let runtime_id = match invocation::load_executable(invocation_path)? {
+                InvocationAuthority::Successor(invocation) => {
+                    if invocation.campaign_id() != campaign_id {
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "handoff invocation campaign '{}' does not match command campaign '{}'",
+                                invocation.campaign_id(),
+                                campaign_id
+                            ),
+                        });
+                    }
+                    if invocation.node_id() != parent_identity.node_id() {
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "handoff invocation node '{}' does not match parent identity node '{}'",
+                                invocation.node_id(),
+                                parent_identity.node_id()
+                            ),
+                        });
+                    }
+                    invocation.runtime_id()
+                }
+                InvocationAuthority::Child(_) => {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "handoff invocation '{}' is a child invocation, expected successor",
+                            invocation_path.display()
+                        ),
+                    });
+                }
+            };
+            Parent::<Unchecked>::load_with_runtime_id(&manifest_path, parent_identity, runtime_id)?
+        } else {
+            Parent::<Unchecked>::load(&manifest_path, parent_identity)?
+        };
         let (parent, handoff_invocation) = acknowledge_prototype1_state_handoff(
             &self,
             &campaign_id,
@@ -9923,14 +10060,22 @@ stop_after = "complete"
     #[test]
     fn checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        init_indexed_repo(tmp.path());
         let relpath = PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs");
         let target = tmp.path().join(&relpath);
         fs::create_dir_all(target.parent().expect("target has parent")).expect("create target dir");
         fs::write(&target, "let old = 1;\n").expect("write target");
+        index_repo(tmp.path());
         let source_hash = format!("{:x}", Sha256::digest("let old = 1;\n".as_bytes()));
+        let base_artifact_id =
+            crate::intervention::text_file_artifact_id(&relpath, "let old = 1;\n");
         let checked = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
+                test_edit_surface_admission(
+                    Prototype1EditSurface::PlokeTuiTools,
+                    base_artifact_id,
+                ),
                 crate::cli::prototype1_state::backend::EditProposal {
                     surface: Prototype1EditSurface::PlokeTuiTools,
                     proposal_id: "proposal-1".to_string(),
@@ -10002,7 +10147,7 @@ stop_after = "complete"
         assert_eq!(surface.producer_id, TUI_EDIT_SURFACE_PRODUCER_ID);
         assert_eq!(surface.proposal_id, "proposal-1");
         assert_eq!(surface.run_id, "run-1");
-        assert_eq!(surface.policy, "workspace_except_ploke_eval");
+        assert_eq!(surface.policy, TUI_EDIT_SURFACE_POLICY_ID);
         assert_eq!(surface.target_relpath, relpath);
         assert_eq!(&surface.base.artifact_id, checked.base_artifact_id());
         assert_eq!(&surface.after.artifact_id, checked.derived_artifact_id());
@@ -10250,7 +10395,8 @@ stop_after = "complete"
     fn tui_edit_surface_producer_creates_default_checked_candidates() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let allowed = write_broad_surface_targets(tmp.path());
-        let parent = test_parent_identity();
+        let manifest = test_manifest_path(tmp.path());
+        let parent = ready_parent_for_test(&manifest, tmp.path());
 
         let generated = produce_deterministic_tui_tools_candidates(
             tmp.path(),
@@ -10321,7 +10467,7 @@ stop_after = "complete"
         .expect("published child plan");
 
         let body = receipt.plan.body();
-        assert_eq!(receipt.parent.identity().node_id(), "node-parent");
+        assert_eq!(receipt.parent.node().node_id, "node-parent");
         assert_eq!(body.children().len(), 1);
         assert!(body.rejected_surface_attempts().is_empty());
         assert!(receipt.rejected_surface_attempts.is_empty());
@@ -10350,39 +10496,55 @@ stop_after = "complete"
         let parent = ready_parent_for_test(&manifest_path, &repo_root);
         let budget = Prototype1ChildBudget { min: 2, max: 3 };
 
-        let err = match publish_broad_harness_child_plan_request(
-            &manifest_path,
-            &repo_root,
-            parent,
-            budget,
-        ) {
-            Ok(_) => panic!("broad surface should wait for an LLM harness child plan"),
-            Err(err) => err,
-        };
-        let PrepareError::InvalidBatchSelection { detail } = err else {
-            panic!("unexpected error variant");
-        };
-        assert!(detail.contains("broad harness request"));
+        let receipt =
+            publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+                .expect("broad surface should publish a typed harness request");
+        assert_eq!(receipt.parent.node().node_id, "node-parent");
 
         let request_path = prototype1_campaign_root(&manifest_path)
             .join("messages/edit-harness-request/node-parent.json");
         let prompt_path = prototype1_campaign_root(&manifest_path)
             .join("messages/edit-harness-request/node-parent.md");
-        let child_plan_path = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
-            manifest_path.clone(),
-            "node-parent".to_string(),
-        ));
+        let submitted_result_path = prototype1_campaign_root(&manifest_path)
+            .join("messages/edit-harness-result/node-parent.json");
+        let workspace_path =
+            prototype1_campaign_root(&manifest_path).join("workspaces/edit-harness/node-parent");
+        let legacy_child_plan_path =
+            crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+                manifest_path.clone(),
+                "node-parent".to_string(),
+            ));
 
+        assert_eq!(receipt.request_path, request_path);
+        assert_eq!(receipt.published.prompt_path(), prompt_path.as_path());
+        assert_eq!(
+            receipt.published.submitted_result_path(),
+            submitted_result_path.as_path()
+        );
+        assert_eq!(receipt.published.workspace_path(), workspace_path.as_path());
         assert!(request_path.exists());
         assert!(prompt_path.exists());
         assert!(
-            !child_plan_path.path().exists(),
+            !legacy_child_plan_path.path().exists(),
             "broad request must not occupy the child-plan box before the harness writes children"
         );
-        let request = serde_json::from_slice::<
-            crate::cli::prototype1_state::edit_surface::harness_request::BroadHarnessRequest,
+        assert!(
+            !submitted_result_path.exists(),
+            "broad request must publish a submitted-result target without pre-writing result evidence"
+        );
+        let published = serde_json::from_slice::<
+            crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
         >(&fs::read(&request_path).expect("read request"))
         .expect("typed request");
+        assert_eq!(published.request_id(), "broad-harness-request:node-parent");
+        assert!(!published.request_hash().is_empty());
+        assert_eq!(published.prompt_path(), prompt_path.as_path());
+        assert_eq!(
+            published.submitted_result_path(),
+            submitted_result_path.as_path()
+        );
+        assert_eq!(published.workspace_path(), workspace_path.as_path());
+        let request = published.request();
         assert_eq!(request.parent_node_id.as_str(), "node-parent");
         assert_eq!(request.child_budget.min_children, 2);
         assert_eq!(request.child_budget.max_children, 3);
@@ -10397,6 +10559,79 @@ stop_after = "complete"
         assert!(prompt.contains("protocol diagnoses"));
         assert!(prompt.contains("not as hard file targets"));
         assert!(prompt.contains("crates/ploke-eval/src/cli/prototype1_state/backend.rs"));
+        assert!(prompt.contains("Write the typed submitted-result evidence"));
+        assert!(prompt.contains(submitted_result_path.to_string_lossy().as_ref()));
+        assert!(prompt.contains(workspace_path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_broad_surface_targets(&repo_root);
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let parent_identity = parent.identity().clone();
+        let budget = Prototype1ChildBudget { min: 2, max: 3 };
+
+        let first = publish_broad_edit_harness_request(
+            &manifest_path,
+            &repo_root,
+            &parent_identity,
+            budget,
+        )
+        .expect("first publication");
+        let second = publish_broad_edit_harness_request(
+            &manifest_path,
+            &repo_root,
+            &parent_identity,
+            budget,
+        )
+        .expect("second publication");
+
+        let prototype_root = prototype1_campaign_root(&manifest_path);
+        assert_eq!(
+            first.request_path,
+            prototype_root.join("messages/edit-harness-request/node-parent.json")
+        );
+        assert_eq!(
+            second.request_path,
+            prototype_root.join("messages/edit-harness-request/node-parent-r2.json")
+        );
+        assert_eq!(
+            second.published.prompt_path(),
+            prototype_root
+                .join("messages/edit-harness-request/node-parent-r2.md")
+                .as_path()
+        );
+        assert_eq!(
+            second.published.submitted_result_path(),
+            prototype_root
+                .join("messages/edit-harness-result/node-parent-r2.json")
+                .as_path()
+        );
+        assert_eq!(
+            second.published.workspace_path(),
+            prototype_root
+                .join("workspaces/edit-harness/node-parent-r2")
+                .as_path()
+        );
+        assert_ne!(first.request_path, second.request_path);
+        assert_ne!(
+            first.published.prompt_path(),
+            second.published.prompt_path()
+        );
+        assert_ne!(
+            first.published.submitted_result_path(),
+            second.published.submitted_result_path()
+        );
+        assert_ne!(
+            first.published.workspace_path(),
+            second.published.workspace_path()
+        );
+        assert!(second.request_path.exists());
+        assert!(second.published.prompt_path().exists());
+        assert!(!second.published.submitted_result_path().exists());
     }
 
     #[test]
@@ -10436,6 +10671,32 @@ stop_after = "complete"
             panic!("unexpected error variant");
         };
         assert!(detail.contains("typed BroadHarnessRequest receipt"));
+    }
+
+    #[test]
+    fn broad_harness_pending_error_names_submitted_result_and_workspace() {
+        let detail = CandidateGenerationError::PendingBroadHarnessRequest {
+            request_id: "broad-harness-request:node-parent".to_string(),
+            request_hash: "hash-123".to_string(),
+            request_path: PathBuf::from(
+                "/tmp/prototype1/messages/edit-harness-request/node-parent.json",
+            ),
+            prompt_path: PathBuf::from(
+                "/tmp/prototype1/messages/edit-harness-request/node-parent.md",
+            ),
+            submitted_result_path: PathBuf::from(
+                "/tmp/prototype1/messages/edit-harness-result/node-parent.json",
+            ),
+            workspace_path: PathBuf::from("/tmp/prototype1/workspaces/edit-harness/node-parent"),
+        }
+        .to_string();
+
+        assert!(detail.contains("SubmittedBroadHarnessResult"));
+        assert!(detail.contains("request-bound submitted-result path"));
+        assert!(detail.contains("isolated candidate workspace"));
+        assert!(detail.contains("/tmp/prototype1/messages/edit-harness-result/node-parent.json"));
+        assert!(detail.contains("/tmp/prototype1/workspaces/edit-harness/node-parent"));
+        assert!(!detail.contains("write the resulting child plan"));
     }
 
     #[test]
@@ -10502,6 +10763,23 @@ stop_after = "complete"
         );
     }
 
+    fn test_edit_surface_admission(
+        surface: Prototype1EditSurface,
+        artifact_id: crate::loop_graph::ArtifactId,
+    ) -> crate::cli::prototype1_state::backend::EditSurfaceAdmission {
+        let policy = match surface {
+            Prototype1EditSurface::PlokeTuiTools => TUI_EDIT_SURFACE_POLICY_ID.to_string(),
+            other => serde_name(&other).to_string(),
+        };
+        crate::cli::prototype1_state::backend::EditSurfaceAdmission::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId::new(),
+                target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
+            },
+            crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(policy),
+        )
+    }
+
     fn checked_edit_surface_delta_for_test()
     -> crate::cli::prototype1_state::edit_surface::ArtifactDelta {
         use crate::cli::prototype1_state::edit_surface::{
@@ -10529,8 +10807,16 @@ stop_after = "complete"
         let span = view
             .resolve(&projection, &bounds, &target)
             .expect("resolve bounded target");
-        let grant = surface::Grant::new(base.clone(), bounds, surface::Area::new([span.clone()]))
-            .expect("grant");
+        let admission =
+            test_edit_surface_admission(Prototype1EditSurface::PlokeTuiTools, base.id().clone());
+        let grant = surface::Grant::for_coordinate(
+            admission.coordinate().clone(),
+            admission.policy().clone(),
+            base.clone(),
+            bounds,
+            surface::Area::new([span.clone()]),
+        )
+        .expect("grant");
         let touch = surface::Touch::new(span, "new");
         let harness = harness::Mock::new(view);
         let (proposal, _run) = harness
@@ -10944,17 +11230,32 @@ stop_after = "complete"
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-test",
             "run-test",
-            "ploke_tui_tools",
-            target_relpath.clone(),
-            SurfaceArtifactRef {
-                artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
-                hash: "base-hash".to_string(),
+            CheckedSurface {
+                grant: CheckedSurfaceGrant {
+                    coordinate: crate::loop_graph::Coordinate {
+                        runtime_id: crate::loop_graph::RuntimeId(uuid::Uuid::nil()),
+                        target: crate::loop_graph::OperationTarget::Artifact {
+                            artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
+                        },
+                    },
+                    policy: ProcedureRef::new(TUI_EDIT_SURFACE_POLICY_ID),
+                    writable: SurfaceWritable {
+                        target_relpath: target_relpath.clone(),
+                    },
+                },
+                transition: CheckedSurfaceTransition {
+                    target_relpath: target_relpath.clone(),
+                    base: SurfaceArtifactRef {
+                        artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
+                        hash: "base-hash".to_string(),
+                    },
+                    after: SurfaceArtifactRef {
+                        artifact_id: crate::loop_graph::ArtifactId::new("artifact:after-test"),
+                        hash: "after-hash".to_string(),
+                    },
+                    patch_id: crate::loop_graph::PatchId::new("patch:test"),
+                },
             },
-            SurfaceArtifactRef {
-                artifact_id: crate::loop_graph::ArtifactId::new("artifact:after-test"),
-                hash: "after-hash".to_string(),
-            },
-            crate::loop_graph::PatchId::new("patch:test"),
             source_hash,
             proposed_hash,
             crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,
@@ -10977,11 +11278,13 @@ stop_after = "complete"
         node: &mut Prototype1NodeRecord,
         resolved: &mut crate::intervention::ResolvedTreatmentBranch,
     ) {
+        let runtime_id = crate::loop_graph::RuntimeId(uuid::Uuid::nil()).to_string();
         let base = crate::loop_graph::ArtifactId::new("artifact:base-test");
         let after = crate::loop_graph::ArtifactId::new("artifact:after-test");
         let patch = crate::loop_graph::PatchId::new("patch:test");
         let source_hash = format!("{:x}", Sha256::digest("old".as_bytes()));
         let proposed_hash = format!("{:x}", Sha256::digest("new".as_bytes()));
+        node.instance_id = runtime_id;
         node.operation_target = Some(crate::loop_graph::OperationTarget::Artifact {
             artifact_id: base.clone(),
         });

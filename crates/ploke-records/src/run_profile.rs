@@ -105,6 +105,8 @@ impl Default for Generation {
 pub enum GenerationSource {
     Legacy,
     EditSurface,
+    BroadHarness,
+    DeterministicTuiTools,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -295,6 +297,36 @@ require_keep_for_continuation = false
 
         assert_eq!(decoded.search.explore_from_rejected, false);
         assert_eq!(decoded, parsed);
+    }
+
+    #[test]
+    fn run_profile_toml_parses_newer_generation_sources() {
+        let broad: RunProfileRecord = toml::from_str(
+            r#"
+schema_version = "prototype1-run-profile.v1"
+name = "broad"
+
+[generation]
+source = "broad-harness"
+"#,
+        )
+        .expect("broad-harness profile parses");
+        assert_eq!(broad.generation.source, GenerationSource::BroadHarness);
+
+        let deterministic: RunProfileRecord = toml::from_str(
+            r#"
+schema_version = "prototype1-run-profile.v1"
+name = "deterministic"
+
+[generation]
+source = "deterministic-tui-tools"
+"#,
+        )
+        .expect("deterministic-tui-tools profile parses");
+        assert_eq!(
+            deterministic.generation.source,
+            GenerationSource::DeterministicTuiTools
+        );
     }
 
     #[test]

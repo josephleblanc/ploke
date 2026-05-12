@@ -7,8 +7,6 @@ use eframe::egui::{
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
 
-use crate::graph::EdgeId;
-
 use super::geometry::{curve_points, distance_to_curve, endpoint_direction};
 use super::label::{EdgeLabelInput, place_edge_label, record_edge_label};
 use super::projection::GraphEdgePayload;
@@ -16,8 +14,8 @@ use super::style::{CurveStyle, EdgeStyle};
 
 #[derive(Debug, Clone)]
 pub(super) struct GraphEdgeShape {
-    id: EdgeId,
     label: Arc<str>,
+    label_visible: bool,
     color: Color32,
     selected: bool,
     style: EdgeStyle,
@@ -28,8 +26,8 @@ pub(super) struct GraphEdgeShape {
 impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
     fn from(edge: egui_graphs::EdgeProps<GraphEdgePayload>) -> Self {
         Self {
-            id: edge.payload.id,
             label: edge.payload.label,
+            label_visible: edge.payload.label_visible,
             color: edge.payload.color,
             selected: edge.selected,
             style: edge.payload.style,
@@ -146,43 +144,43 @@ where
             .into(),
         );
 
-        let galley = self.label_galley(ctx, color);
-        let placement = place_edge_label(EdgeLabelInput {
-            curve: screen_curve,
-            start_node: ctx.meta.canvas_to_screen_pos(start.location()),
-            end_node: ctx.meta.canvas_to_screen_pos(end.location()),
-            start_radius: screen_curve[0].distance(ctx.meta.canvas_to_screen_pos(start.location())),
-            end_radius: screen_curve[3].distance(ctx.meta.canvas_to_screen_pos(end.location())),
-            text_size: galley.rect.size(),
-            padding: Vec2::splat(3.0),
-            gap: self.style.label.gap,
-            stroke_width,
-        });
-        record_edge_label(ctx.ctx, placement.background, screen_curve);
-        let label_painter = ctx.ctx.layer_painter(LayerId::new(
-            Order::Foreground,
-            Id::new("ploke-egui.edge-labels"),
-        ));
-        label_painter.add(Shape::rect_filled(
-            placement.background,
-            2.0,
-            Color32::from_black_alpha(180),
-        ));
-        label_painter.add(TextShape::new(placement.text_pos, galley, color));
+        if self.label_visible {
+            let galley = self.label_galley(ctx, color);
+            let placement = place_edge_label(EdgeLabelInput {
+                curve: screen_curve,
+                start_node: ctx.meta.canvas_to_screen_pos(start.location()),
+                end_node: ctx.meta.canvas_to_screen_pos(end.location()),
+                start_radius: screen_curve[0]
+                    .distance(ctx.meta.canvas_to_screen_pos(start.location())),
+                end_radius: screen_curve[3].distance(ctx.meta.canvas_to_screen_pos(end.location())),
+                text_size: galley.rect.size(),
+                padding: Vec2::splat(3.0),
+                gap: self.style.label.gap,
+                stroke_width,
+            });
+            record_edge_label(ctx.ctx, placement.background, screen_curve);
+            let label_painter = ctx.ctx.layer_painter(LayerId::new(
+                Order::Foreground,
+                Id::new("ploke-egui.edge-labels"),
+            ));
+            label_painter.add(Shape::rect_filled(
+                placement.background,
+                2.0,
+                Color32::from_black_alpha(180),
+            ));
+            label_painter.add(TextShape::new(placement.text_pos, galley, color));
+        }
 
         shapes
     }
 
     fn update(&mut self, state: &egui_graphs::EdgeProps<GraphEdgePayload>) {
-        if self.id != state.payload.id {
-            self.id.clone_from(&state.payload.id);
+        if self.label.as_ref() != state.payload.label.as_ref() {
+            self.label = state.payload.label.clone();
             self.curve.set(None);
             self.label_galley = None;
         }
-        if self.label.as_ref() != state.payload.label.as_ref() {
-            self.label = state.payload.label.clone();
-            self.label_galley = None;
-        }
+        self.label_visible = state.payload.label_visible;
         if self.style.label != state.payload.style.label || self.color != state.payload.color {
             self.label_galley = None;
         }

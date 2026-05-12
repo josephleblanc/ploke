@@ -77,11 +77,16 @@ pub enum ChildScheduleModeRecord {
 pub enum ContinuationDispositionRecord {
     ContinueReady,
     ContinueExploreFromRejected,
+    ContinueHistoricalTraversal,
     StopMaxGenerations,
     StopMaxTotalNodes,
     StopNoSelectedBranch,
     StopOnFirstKeepSatisfied,
     StopSelectedBranchRejected,
+    StopHistoricalSelection,
+    StopNonDirectChildSelection,
+    StopHistoricalTraversalCycle,
+    StopHistoricalTraversalBudget,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,6 +349,35 @@ mod tests {
         let alias: ChildScheduleModeRecord =
             serde_json::from_str("\"full_batch\"").expect("deserialize old full_batch alias");
         assert_eq!(alias, ChildScheduleModeRecord::FullBatch);
+    }
+
+    #[test]
+    fn continuation_decision_accepts_newer_historical_variants() {
+        let historical: ContinuationDecisionRecord = serde_json::from_value(serde_json::json!({
+            "disposition": "continue_historical_traversal",
+            "selected_next_branch_id": "branch-history",
+            "selected_branch_disposition": "keep",
+            "next_generation": 2,
+            "total_nodes_after_continue": 7
+        }))
+        .expect("deserialize historical traversal continuation");
+        assert_eq!(
+            historical.disposition,
+            ContinuationDispositionRecord::ContinueHistoricalTraversal
+        );
+
+        let stop: ContinuationDecisionRecord = serde_json::from_value(serde_json::json!({
+            "disposition": "stop_historical_traversal_budget",
+            "selected_next_branch_id": null,
+            "selected_branch_disposition": null,
+            "next_generation": 2,
+            "total_nodes_after_continue": 7
+        }))
+        .expect("deserialize historical traversal budget stop");
+        assert_eq!(
+            stop.disposition,
+            ContinuationDispositionRecord::StopHistoricalTraversalBudget
+        );
     }
 
     #[test]

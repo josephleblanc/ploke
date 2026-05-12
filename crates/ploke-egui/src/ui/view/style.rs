@@ -1,5 +1,4 @@
 use eframe::egui::Color32;
-use ploke_records::branch::TreatmentBranchStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewStyle {
@@ -22,6 +21,8 @@ impl Default for ViewStyle {
 pub struct LayoutStyle {
     pub row_distance: f32,
     pub column_distance: f32,
+    pub lane_distance: f32,
+    pub max_columns: usize,
     pub fit_padding: f32,
     pub node_radius: f32,
 }
@@ -29,9 +30,11 @@ pub struct LayoutStyle {
 impl Default for LayoutStyle {
     fn default() -> Self {
         Self {
-            row_distance: 240.0,
-            column_distance: 90.0,
-            fit_padding: 0.18,
+            row_distance: 280.0,
+            column_distance: 132.0,
+            lane_distance: 164.0,
+            max_columns: 16,
+            fit_padding: 0.22,
             node_radius: 11.0,
         }
     }
@@ -96,8 +99,8 @@ pub struct CurveStyle {
 impl Default for CurveStyle {
     fn default() -> Self {
         Self {
-            rank_handle_fraction: 0.5,
-            min_handle: 48.0,
+            rank_handle_fraction: 0.45,
+            min_handle: 64.0,
             endpoint_max_arc_fraction: 0.35,
             hit_segments: 16,
         }
@@ -113,8 +116,8 @@ pub struct EdgeLabelStyle {
 impl Default for EdgeLabelStyle {
     fn default() -> Self {
         Self {
-            font_size: 13.0,
-            gap: 4.0,
+            font_size: 12.0,
+            gap: 7.0,
         }
     }
 }
@@ -128,23 +131,11 @@ pub struct StatusColors {
     pub dropped: Color32,
 }
 
-impl StatusColors {
-    pub fn color(self, status: TreatmentBranchStatus) -> Color32 {
-        match status {
-            TreatmentBranchStatus::Synthesized => self.synthesized,
-            TreatmentBranchStatus::Selected => self.selected,
-            TreatmentBranchStatus::Applied => self.applied,
-            TreatmentBranchStatus::Restored => self.restored,
-            TreatmentBranchStatus::Dropped => self.dropped,
-        }
-    }
-}
-
 impl Default for StatusColors {
     fn default() -> Self {
         Self {
             synthesized: Color32::from_rgb(118, 128, 142),
-            selected: Color32::from_rgb(52, 145, 95),
+            selected: Color32::from_rgb(33, 164, 106),
             applied: Color32::from_rgb(55, 118, 184),
             restored: Color32::from_rgb(126, 116, 95),
             dropped: Color32::from_rgb(178, 72, 72),

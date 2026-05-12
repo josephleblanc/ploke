@@ -743,18 +743,21 @@ enum State {
         base: surface::Ref,
         after: surface::Ref,
         touches: Vec<surface::Touch>,
+        authority: surface::GrantAuthority,
         check: surface::Check,
         writes: Vec<Write>,
     },
     Applied {
         proposal: String,
         run: String,
+        authority: surface::GrantAuthority,
         delta: ArtifactDelta,
         writes: Vec<Write>,
     },
     Rejected {
         proposal: String,
         run: String,
+        authority: surface::GrantAuthority,
         reason: String,
         writes: Vec<Write>,
     },
@@ -777,11 +780,13 @@ impl Apply {
 
         let proposal_id = proposal.id.clone();
         let run_id = proposal.run.clone();
+        let authority = check.authority().clone();
         if writes.len() != proposal.touches.len() {
             return Ok(Self {
                 state: State::Rejected {
                     proposal: proposal_id,
                     run: run_id,
+                    authority,
                     reason: format!(
                         "apply returned {} write results for {} touches",
                         writes.len(),
@@ -800,6 +805,7 @@ impl Apply {
                 state: State::Rejected {
                     proposal: proposal_id,
                     run: run_id,
+                    authority,
                     reason: "one or more touched spans were rejected".to_string(),
                     writes,
                 },
@@ -813,6 +819,7 @@ impl Apply {
                 base: proposal.base,
                 after: proposal.after,
                 touches: proposal.touches,
+                authority,
                 check,
                 writes,
             },
@@ -820,16 +827,17 @@ impl Apply {
     }
 
     pub(crate) fn validate(self, after_artifact: &surface::Artifact) -> Result<Self, Error> {
-        let (proposal, run, after, touches, check, writes) = match self.state {
+        let (proposal, run, after, touches, authority, check, writes) = match self.state {
             State::Reported {
                 proposal,
                 run,
                 base: _base,
                 after,
                 touches,
+                authority,
                 check,
                 writes,
-            } => (proposal, run, after, touches, check, writes),
+            } => (proposal, run, after, touches, authority, check, writes),
             state => return Ok(Self { state }),
         };
 
@@ -858,6 +866,7 @@ impl Apply {
             state: State::Applied {
                 proposal,
                 run,
+                authority,
                 delta: harness::ArtifactDelta::from_check(check),
                 writes,
             },
@@ -880,6 +889,14 @@ impl Apply {
         match &self.state {
             State::Applied { delta, .. } => Some(delta),
             State::Reported { .. } | State::Rejected { .. } => None,
+        }
+    }
+
+    pub(crate) fn authority(&self) -> &surface::GrantAuthority {
+        match &self.state {
+            State::Reported { authority, .. }
+            | State::Applied { authority, .. }
+            | State::Rejected { authority, .. } => authority,
         }
     }
 }

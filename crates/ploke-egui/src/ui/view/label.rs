@@ -1,7 +1,7 @@
 use eframe::egui::{Context, Id, Pos2, Rect, Vec2};
 
 use super::EdgeLabelDiagnostics;
-use super::geometry::{cubic_point, cubic_tangent, segments_intersect};
+use super::geometry::{cubic_point, cubic_tangent, curve_intersects_rect};
 
 const CANDIDATE_T: [f32; 7] = [0.50, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74];
 const CLEARANCE_SCALE: [f32; 4] = [1.0, 1.35, 1.7, 2.1];
@@ -52,7 +52,9 @@ pub(super) fn place_edge_label(input: EdgeLabelInput) -> EdgeLabelPlacement {
                     input.stroke_width,
                     clearance_scale,
                 );
-                if !hits_endpoint(background, input) && !Curve(input.curve).intersects(background) {
+                if !hits_endpoint(background, input)
+                    && !curve_intersects_rect(input.curve, background, COLLISION_SEGMENTS)
+                {
                     return EdgeLabelPlacement {
                         text_pos: background.min + input.padding,
                         background,
@@ -85,8 +87,7 @@ pub(super) fn reset_edge_label_diagnostics(ctx: &Context) {
 pub(super) fn record_edge_label(ctx: &Context, rect: Rect, curve: [Pos2; 4]) {
     ctx.data_mut(|data| {
         let frame = data.get_temp_mut_or_default::<EdgeLabelFrame>(label_frame_id());
-        frame.labels.push(rect);
-        frame.edges.push(curve);
+        frame.placements.push(EdgeLabelGeometry { rect, curve });
     });
 }
 
@@ -97,28 +98,33 @@ pub(super) fn edge_label_diagnostics(ctx: &Context) -> EdgeLabelDiagnostics {
     };
 
     EdgeLabelDiagnostics {
-        label_count: frame.labels.len(),
-        collision_count: label_collision_count(&frame.labels),
+        label_count: frame.placements.len(),
+        collision_count: label_collision_count(&frame.placements),
         edge_intersection_count: edge_intersection_count(&frame),
-        edge_collision_count: 0,
+        edge_collision_count: edge_collision_count(&frame),
     }
 }
 
 #[derive(Debug, Clone, Default)]
 struct EdgeLabelFrame {
-    labels: Vec<Rect>,
-    edges: Vec<[Pos2; 4]>,
+    placements: Vec<EdgeLabelGeometry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EdgeLabelGeometry {
+    rect: Rect,
+    curve: [Pos2; 4],
 }
 
 fn label_frame_id() -> Id {
     Id::new(EDGE_LABEL_FRAME_ID)
 }
 
-fn label_collision_count(rects: &[Rect]) -> usize {
+fn label_collision_count(placements: &[EdgeLabelGeometry]) -> usize {
     let mut count = 0;
-    for (index, rect) in rects.iter().enumerate() {
-        for other in rects.iter().skip(index + 1) {
-            if rect.intersects(*other) {
+    for (index, placement) in placements.iter().enumerate() {
+        for other in placements.iter().skip(index + 1) {
+            if placement.rect.intersects(other.rect) {
                 count += 1;
             }
         }
@@ -128,14 +134,27 @@ fn label_collision_count(rects: &[Rect]) -> usize {
 
 fn edge_intersection_count(frame: &EdgeLabelFrame) -> usize {
     let mut count = 0;
-    for rect in &frame.labels {
-        for curve in &frame.edges {
-            if Curve(*curve).intersects(*rect) {
+    for (index, placement) in frame.placements.iter().enumerate() {
+        for other in frame.placements.iter().enumerate() {
+            if index == other.0 {
+                continue;
+            }
+            if curve_intersects_rect(other.1.curve, placement.rect, COLLISION_SEGMENTS) {
                 count += 1;
             }
         }
     }
     count
+}
+
+fn edge_collision_count(frame: &EdgeLabelFrame) -> usize {
+    frame
+        .placements
+        .iter()
+        .filter(|placement| {
+            curve_intersects_rect(placement.curve, placement.rect, COLLISION_SEGMENTS)
+        })
+        .count()
 }
 
 fn preferred_side(curve: [Pos2; 4], t: f32) -> f32 {
@@ -202,54 +221,4 @@ fn hits_endpoint(rect: Rect, input: EdgeLabelInput) -> bool {
     let radius = input.end_radius + input.gap;
     let end = Rect::from_center_size(input.end_node, Vec2::splat(radius * 2.0));
     rect.intersects(end)
-}
-
-trait Intersects<T> {
-    fn intersects(&self, target: T) -> bool;
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Curve([Pos2; 4]);
-
-#[derive(Debug, Clone, Copy)]
-struct Segment {
-    start: Pos2,
-    end: Pos2,
-}
-
-impl Intersects<Rect> for Curve {
-    fn intersects(&self, target: Rect) -> bool {
-        let mut previous = self.0[0];
-        for step in 1..=COLLISION_SEGMENTS {
-            let current = cubic_point(self.0, step as f32 / COLLISION_SEGMENTS as f32);
-            if (Segment {
-                start: previous,
-                end: current,
-            })
-            .intersects(target)
-            {
-                return true;
-            }
-            previous = current;
-        }
-        false
-    }
-}
-
-impl Intersects<Rect> for Segment {
-    fn intersects(&self, target: Rect) -> bool {
-        if target.contains(self.start) || target.contains(self.end) {
-            return true;
-        }
-
-        let top_left = target.left_top();
-        let top_right = target.right_top();
-        let bottom_right = target.right_bottom();
-        let bottom_left = target.left_bottom();
-
-        segments_intersect(self.start, self.end, top_left, top_right)
-            || segments_intersect(self.start, self.end, top_right, bottom_right)
-            || segments_intersect(self.start, self.end, bottom_right, bottom_left)
-            || segments_intersect(self.start, self.end, bottom_left, top_left)
-    }
 }

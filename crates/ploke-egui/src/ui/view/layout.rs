@@ -8,19 +8,26 @@ use petgraph::{
 };
 use serde::{Deserialize, Serialize};
 
+const ROOT_GAP_MULTIPLE: f32 = 1.5;
+const DEFAULT_MAX_COLUMNS: usize = 16;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct State {
     pub(super) triggered: bool,
     pub(super) row_dist: f32,
     pub(super) col_dist: f32,
+    pub(super) lane_dist: f32,
+    pub(super) max_columns: usize,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
             triggered: false,
-            row_dist: 240.0,
-            col_dist: 90.0,
+            row_dist: 280.0,
+            col_dist: 132.0,
+            lane_dist: 164.0,
+            max_columns: DEFAULT_MAX_COLUMNS,
         }
     }
 }
@@ -46,16 +53,15 @@ impl Lineage {
     {
         let roots = sorted_nodes(graph.g().externals(Incoming));
         let mut visited = HashSet::new();
-        let mut next_root = 0usize;
+        let mut cursor = Cursor::default();
 
         for root in roots {
             if visited.contains(&root) {
                 continue;
             }
 
-            let root_x = next_root as f32 * state.col_dist * 2.0;
-            place_lineage(graph, &mut visited, root, 0, root_x, state);
-            next_root = next_root.saturating_add(1);
+            place_lineage(graph, &mut visited, root, 0, &mut cursor, state);
+            cursor.advance_root_gap(state);
         }
 
         let remaining = sorted_nodes(graph.g().node_indices());
@@ -64,9 +70,8 @@ impl Lineage {
                 continue;
             }
 
-            let root_x = next_root as f32 * state.col_dist * 2.0;
-            place_lineage(graph, &mut visited, node, 0, root_x, state);
-            next_root = next_root.saturating_add(1);
+            place_lineage(graph, &mut visited, node, 0, &mut cursor, state);
+            cursor.advance_root_gap(state);
         }
     }
 }
@@ -106,9 +111,10 @@ fn place_lineage<N, E, Ty, Ix, Dn, De>(
     visited: &mut HashSet<NodeIndex<Ix>>,
     node: NodeIndex<Ix>,
     depth: usize,
-    x: f32,
+    cursor: &mut Cursor,
     state: &State,
-) where
+) -> Placement
+where
     N: Clone,
     E: Clone,
     Ty: EdgeType,
@@ -117,16 +123,94 @@ fn place_lineage<N, E, Ty, Ix, Dn, De>(
     De: egui_graphs::DisplayEdge<N, E, Ty, Ix, Dn>,
 {
     visited.insert(node);
-    graph.g_mut()[node].set_location(Pos2::new(x, depth as f32 * state.row_dist));
 
     let children = sorted_nodes(graph.g().neighbors_directed(node, Outgoing))
         .into_iter()
         .filter(|child| !visited.contains(child))
         .collect::<Vec<_>>();
 
-    for (index, child) in children.iter().enumerate() {
-        let child_x = x + centered_offset(index, children.len(), state.col_dist);
-        place_lineage(graph, visited, *child, depth + 1, child_x, state);
+    let placement = if children.is_empty() {
+        cursor.take_leaf(state)
+    } else {
+        let mut child_placements = Vec::with_capacity(children.len());
+        for child in children {
+            child_placements.push(place_lineage(
+                graph,
+                visited,
+                child,
+                depth + 1,
+                cursor,
+                state,
+            ));
+        }
+
+        Placement::parent(&child_placements)
+    };
+
+    graph.g_mut()[node].set_location(placement.location(depth, state));
+    placement
+}
+
+#[derive(Debug, Default)]
+struct Cursor {
+    next_leaf: usize,
+}
+
+impl Cursor {
+    fn take_leaf(&mut self, state: &State) -> Placement {
+        let slot = self.next_leaf;
+        self.next_leaf = self.next_leaf.saturating_add(1);
+        let columns = state.max_columns.max(1);
+        Placement {
+            x: (slot % columns) as f32 * state.col_dist,
+            min_lane: slot / columns,
+            max_lane: slot / columns,
+        }
+    }
+
+    fn advance_root_gap(&mut self, state: &State) {
+        let gap = (ROOT_GAP_MULTIPLE.ceil() as usize).max(1);
+        self.next_leaf = self.next_leaf.saturating_add(gap);
+        let columns = state.max_columns.max(1);
+        let remainder = self.next_leaf % columns;
+        if remainder > columns.saturating_sub(gap + 1) {
+            self.next_leaf = self.next_leaf.saturating_add(columns - remainder);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Placement {
+    x: f32,
+    min_lane: usize,
+    max_lane: usize,
+}
+
+impl Placement {
+    fn parent(children: &[Self]) -> Self {
+        let x = children.iter().map(|child| child.x).sum::<f32>() / children.len() as f32;
+        let min_lane = children
+            .iter()
+            .map(|child| child.min_lane)
+            .min()
+            .expect("parent placement needs at least one child");
+        let max_lane = children
+            .iter()
+            .map(|child| child.max_lane)
+            .max()
+            .expect("parent placement needs at least one child");
+        Self {
+            x,
+            min_lane,
+            max_lane,
+        }
+    }
+
+    fn location(self, depth: usize, state: &State) -> Pos2 {
+        Pos2::new(
+            self.x,
+            depth as f32 * state.row_dist + self.min_lane as f32 * state.lane_dist,
+        )
     }
 }
 
@@ -137,11 +221,6 @@ where
     let mut nodes = nodes.collect::<Vec<_>>();
     nodes.sort_by_key(|node| node.index());
     nodes
-}
-
-fn centered_offset(index: usize, count: usize, spacing: f32) -> f32 {
-    let center = (count.saturating_sub(1)) as f32 / 2.0;
-    (index as f32 - center) * spacing
 }
 
 #[cfg(test)]
@@ -179,6 +258,8 @@ mod tests {
             triggered: false,
             row_dist: 240.0,
             col_dist: 90.0,
+            lane_dist: 160.0,
+            max_columns: 8,
         };
 
         Lineage::apply(&mut graph, &state);
@@ -196,6 +277,90 @@ mod tests {
         assert!(viewport_rect.contains(fitted.min));
         assert!(viewport_rect.contains(fitted.max));
         assert!(fitted.center().distance(viewport_rect.center()) < 0.5);
+    }
+
+    #[test]
+    fn lineage_layout_reserves_leaf_span_for_nested_subtrees() {
+        let mut raw = StableGraph::<&'static str, (), Directed>::default();
+        let parent = raw.add_node("parent");
+        let left = raw.add_node("left-subtree");
+        let right = raw.add_node("right-leaf");
+        let left_first = raw.add_node("left-first");
+        let left_second = raw.add_node("left-second");
+        let left_third = raw.add_node("left-third");
+
+        raw.add_edge(parent, left, ());
+        raw.add_edge(parent, right, ());
+        raw.add_edge(left, left_first, ());
+        raw.add_edge(left, left_second, ());
+        raw.add_edge(left, left_third, ());
+
+        let mut graph: egui_graphs::Graph<
+            &str,
+            (),
+            Directed,
+            petgraph::stable_graph::DefaultIx,
+            egui_graphs::DefaultNodeShape,
+            egui_graphs::DefaultEdgeShape,
+        > = egui_graphs::to_graph(&raw);
+        let state = State {
+            triggered: false,
+            row_dist: 240.0,
+            col_dist: 90.0,
+            lane_dist: 160.0,
+            max_columns: 8,
+        };
+
+        Lineage::apply(&mut graph, &state);
+
+        let left_x = graph.g().node_weight(left).unwrap().location().x;
+        let right_x = graph.g().node_weight(right).unwrap().location().x;
+        let left_first_x = graph.g().node_weight(left_first).unwrap().location().x;
+        let left_third_x = graph.g().node_weight(left_third).unwrap().location().x;
+        let parent_x = graph.g().node_weight(parent).unwrap().location().x;
+
+        assert_eq!(left_x, (left_first_x + left_third_x) / 2.0);
+        assert!(right_x - left_third_x >= state.col_dist);
+        assert_eq!(parent_x, (left_x + right_x) / 2.0);
+    }
+
+    #[test]
+    fn lineage_layout_wraps_wide_leaf_sets_into_lanes() {
+        let mut raw = StableGraph::<&'static str, (), Directed>::default();
+        let parent = raw.add_node("parent");
+        let leaves = (0..9)
+            .map(|_| {
+                let leaf = raw.add_node("leaf");
+                raw.add_edge(parent, leaf, ());
+                leaf
+            })
+            .collect::<Vec<_>>();
+
+        let mut graph: egui_graphs::Graph<
+            &str,
+            (),
+            Directed,
+            petgraph::stable_graph::DefaultIx,
+            egui_graphs::DefaultNodeShape,
+            egui_graphs::DefaultEdgeShape,
+        > = egui_graphs::to_graph(&raw);
+        let state = State {
+            triggered: false,
+            row_dist: 240.0,
+            col_dist: 90.0,
+            lane_dist: 160.0,
+            max_columns: 4,
+        };
+
+        Lineage::apply(&mut graph, &state);
+
+        let bounds = node_bounds(&graph).expect("test graph has nodes");
+        assert!(bounds.width() <= state.col_dist * (state.max_columns - 1) as f32 + 1.0);
+        assert!(bounds.height() >= state.row_dist + state.lane_dist * 2.0);
+
+        let first_leaf_y = graph.g().node_weight(leaves[0]).unwrap().location().y;
+        let wrapped_leaf_y = graph.g().node_weight(leaves[4]).unwrap().location().y;
+        assert_eq!(wrapped_leaf_y - first_leaf_y, state.lane_dist);
     }
 
     fn node_bounds<N, E, Ty, Ix, Dn, De>(

@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use ploke_records::branch::TreatmentBranchStatus;
 use ploke_records::history::{
     ActorRefRecord, AdmittedEntryRecord, AdmittedEntryStateRecord, ArtifactRefRecord,
     BlockCommonRecord, ClaimsRecord, EntryCoreRecord, EntryKindRecord, EntryPayloadRecord,
@@ -18,14 +17,12 @@ use ploke_records::ids::{
 };
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, SchedulerStateRecord};
 use ploke_records::selection::{self, Outcome};
-use ploke_tree::{PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal};
-
-use crate::graph::{EdgeEndpoint, EdgeKind};
+use ploke_tree::{Graph, PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal};
 
 use super::*;
 
 #[test]
-fn history_succession_preserves_scheduler_edge_as_distinct_evidence() {
+fn import_delegates_to_ploke_tree_graph() {
     let records = RunRecordSet {
         forest_input: RunForestInput {
             scheduler: scheduler(vec![
@@ -43,47 +40,10 @@ fn history_succession_preserves_scheduler_edge_as_distinct_evidence() {
         transition_journal: TransitionJournal::default(),
     };
 
-    let graph = graph_from_run_records(&records).expect("graph import");
+    let imported = graph_from_run_records(&records);
+    let expected = Graph::from_records(&records);
 
-    let selected = SchedulerNodeId("selected".to_owned());
-    let selected_candidate = graph
-        .candidates()
-        .find(|candidate| candidate.id() == &selected)
-        .expect("selected candidate imported");
-    assert_eq!(selected_candidate.status(), TreatmentBranchStatus::Selected);
-    assert_eq!(selected_candidate.ruling_epoch(), None);
-
-    let root = SchedulerNodeId("root".to_owned());
-    let root_candidate = graph
-        .candidates()
-        .find(|candidate| candidate.id() == &root)
-        .expect("root candidate imported");
-    assert_eq!(root_candidate.ruling_epoch(), Some(0));
-
-    let selected_incoming = graph
-        .edges()
-        .filter(|edge| {
-            matches!(
-                edge.candidate(),
-                EdgeEndpoint::Candidate(candidate) if candidate == &selected
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(selected_incoming.len(), 2);
-    assert_eq!(
-        selected_incoming
-            .iter()
-            .filter(|edge| matches!(edge.kind(), EdgeKind::CandidateTransition))
-            .count(),
-        1
-    );
-    assert_eq!(
-        selected_incoming
-            .iter()
-            .filter(|edge| matches!(edge.kind(), EdgeKind::HistorySuccession { block_height: 0 }))
-            .count(),
-        1
-    );
+    assert_eq!(imported, expected);
 }
 
 #[test]
@@ -93,27 +53,20 @@ fn real_run_imports_execution_spine() {
     let graph = graph_from_run_root(run_root).expect("import graph from run root");
 
     println!(
-        "graph candidates={} candidate_edges={} artifacts={} artifact_edges={} selected_candidates={} evidence={}",
-        graph.candidate_count(),
-        graph.candidate_edge_count(),
-        graph.artifact_count(),
-        graph.artifact_edge_count(),
-        graph
-            .candidates()
-            .filter(|candidate| candidate.status() == TreatmentBranchStatus::Selected)
-            .count(),
-        graph.evidence_count()
+        "graph blocks={} candidates={} artifacts={} selections={} runtimes={} operations={} evidence={}",
+        graph.history.blocks.len(),
+        graph.candidates.candidates.len(),
+        graph.artifacts.artifacts.len(),
+        graph.selections.selections.len(),
+        graph.runtimes.runtimes.len(),
+        graph.operations.operations.len(),
+        graph.evidence.attachments.len(),
     );
 
-    assert!(graph.candidate_count() > 0);
-    assert!(graph.candidate_edge_count() > 0);
-    assert!(graph.artifact_count() > 0);
-    assert!(graph.artifact_edge_count() > 0);
-    assert!(
-        graph
-            .candidates()
-            .any(|candidate| candidate.status() == TreatmentBranchStatus::Selected)
-    );
+    assert!(!graph.history.blocks.is_empty());
+    assert!(!graph.candidates.candidates.is_empty());
+    assert!(!graph.artifacts.artifacts.is_empty());
+    assert!(!graph.selections.selections.is_empty());
 }
 
 fn scheduler(nodes: Vec<NodeRecord>) -> SchedulerStateRecord {

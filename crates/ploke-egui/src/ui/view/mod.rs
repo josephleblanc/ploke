@@ -5,17 +5,15 @@ mod edge;
 mod geometry;
 mod label;
 mod layout;
-mod order;
 mod projection;
 mod style;
 
 use eframe::egui;
+use ploke_tree::Graph as DomainGraph;
 
 pub use style::{
     CurveStyle, EdgeLabelStyle, EdgeStyle, LabelStyle, LayoutStyle, StatusColors, ViewStyle,
 };
-
-use crate::graph::Graph as DomainGraph;
 
 use projection::GraphViewCache;
 
@@ -86,6 +84,8 @@ impl GraphView {
                     triggered: false,
                     row_dist: self.view_style.layout.row_distance,
                     col_dist: self.view_style.layout.column_distance,
+                    lane_dist: self.view_style.layout.lane_distance,
+                    max_columns: self.view_style.layout.max_columns,
                 },
                 Some(self.id.clone()),
             );
@@ -109,7 +109,7 @@ impl GraphView {
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
         self.diagnostics =
             self.cache
-                .diagnostics(graph, response.rect.size(), self.view_style, edge_labels);
+                .diagnostics(response.rect.size(), self.view_style, edge_labels);
     }
 }
 
@@ -146,9 +146,9 @@ pub struct GraphReadabilityDiagnostics {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EdgeCrossingsByKind {
+    pub artifact_artifact: usize,
     pub candidate_candidate: usize,
-    pub candidate_history: usize,
-    pub history_history: usize,
+    pub mixed: usize,
 }
 
 fn navigation(fit_padding: f32, fit_to_screen: bool) -> egui_graphs::SettingsNavigation {

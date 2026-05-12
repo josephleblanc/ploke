@@ -1,18 +1,18 @@
 //! Operator UI for inspecting Ploke execution as a graph.
 //!
-//! This crate centers on a single object: `Graph`. The graph is the
-//! operator-facing structure that connects artifacts, hydrated runtimes,
-//! transitions, and the evidence attached to them. It is not the source of
-//! truth for the loop; it is a read-only projection assembled from typed
-//! persisted records.
+//! This crate centers on renderable projections of `ploke_tree::Graph`. The
+//! graph connects artifacts, hydrated runtimes, transitions, and the evidence
+//! attached to them. `ploke-tree` owns that semantic object; this crate borrows
+//! from it and derives presentation data for egui.
 //!
-//! Design invariant: `Graph` is the semantic data object. Views borrow from it
-//! or derive temporary data from it; they do not clone semantic facts into
-//! parallel authorities. The borrow checker is part of this design discipline:
-//! when a view cache cannot hold references into `Graph`, that cache should own
-//! only view state and rejoin with `&Graph` when it needs semantics. Cloning is
-//! reserved for actual view artifacts such as labels, UI keys, or independent
-//! interaction state, not for bypassing semantic ownership.
+//! Design invariant: `ploke_tree::Graph` is the semantic data object. Views
+//! borrow from it or derive temporary data from it; they do not clone semantic
+//! facts into parallel authorities. The borrow checker is part of this design
+//! discipline: when a view cache cannot hold references into the graph, that
+//! cache should own only view state and rejoin with `&ploke_tree::Graph` when
+//! it needs semantics. Cloning is reserved for actual view artifacts such as
+//! labels, UI keys, or independent interaction state, not for bypassing
+//! semantic ownership.
 //!
 //! History, protocol records, tool calls, provider attempts, retries, timeouts,
 //! patch evidence, and diagnostics can all contribute facts to the graph. They
@@ -26,7 +26,6 @@
 pub mod demo;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod diagnostics;
-pub mod graph;
 pub mod import;
 pub mod ui;
 

@@ -9,9 +9,9 @@ use clap::Parser;
 use crate::demo::sample_graph;
 #[cfg(feature = "dev")]
 use crate::diagnostics::SnapshotSink;
-use crate::graph::Graph;
 use crate::import::graph_from_run_root;
 use crate::ui::app::OperatorApp;
+use ploke_tree::Graph;
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let run = Run::from_env();

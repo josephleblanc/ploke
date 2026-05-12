@@ -206,6 +206,9 @@ pub struct ParentStartedRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservedChildResultRecord {
+    TreatmentComplete {
+        treatment_campaign_id: String,
+    },
     Succeeded {
         evaluation_artifact_path: PathBuf,
         overall_disposition: crate::branch::Disposition,
@@ -503,6 +506,31 @@ mod tests {
                 "succeeded": {
                     "evaluation_artifact_path": "eval/report.json",
                     "overall_disposition": "keep"
+                }
+            }
+        });
+
+        let record: JournalEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(record).unwrap(), json);
+    }
+
+    #[test]
+    fn roundtrips_observe_child_treatment_complete_entry() {
+        let json = serde_json::json!({
+            "kind": "observe_child",
+            "transition_id": "33333333-3333-3333-3333-333333333333",
+            "runtime_id": "11111111-1111-1111-1111-111111111111",
+            "phase": "after",
+            "recorded_at": 1770000000000i64,
+            "generation": 1,
+            "refs": refs_json(),
+            "paths": paths_json(),
+            "world": world_json(),
+            "child_lifecycle": "terminated",
+            "runner_result_path": "nodes/node-1/result.json",
+            "result": {
+                "treatment_complete": {
+                    "treatment_campaign_id": "campaign-treatment-1"
                 }
             }
         });

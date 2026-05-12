@@ -9,6 +9,7 @@ use tracing::{info, instrument};
 use crate::{
     cli::prototype1_state::{
         backend::{GitWorktreeBackend, WorkspaceBackend},
+        edit_surface::harness_request::PublishedBroadHarnessRequest,
         history::{
             ArtifactLocator, BlockHead, BlockStore, BlockStoreError, FsBlockStore, HistoryError,
             LineageId, LineageState, StoreHead, SurfaceEvidence, TreeKeyCommitment,
@@ -24,20 +25,70 @@ use crate::{
         prototype1_node_record_path, prototype1_runner_request_path, prototype1_scheduler_path,
         runner_request_from_node,
     },
+    loop_graph::RuntimeId,
     spec::{PrepareError, Prototype1ParentIdentityContext, Prototype1ParentNodeContext},
 };
 
 /// Parent role before its artifact, identity, and scheduler facts agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Unchecked {}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Unchecked;
 
 /// Parent role after its artifact, identity, and scheduler facts agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Checked {}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Checked;
 
 /// Parent role after predecessor handoff, if any, has been acknowledged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Ready;
+
+/// Parent role after it has published a harness request and is awaiting a
+/// request-bound child-plan response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AwaitingHarnessPlan {
+    harness_request: PublishedBroadHarnessRequestIdentity,
+}
+
+/// Published request identity that binds a broad harness publication back to a
+/// waiting parent, even before the full request/result receipt path lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublishedBroadHarnessRequestIdentity {
+    request_id: String,
+    request_hash: String,
+}
+
+impl PublishedBroadHarnessRequestIdentity {
+    pub(crate) fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub(crate) fn request_hash(&self) -> PublishedBroadHarnessRequestHash<'_> {
+        PublishedBroadHarnessRequestHash(&self.request_hash)
+    }
+}
+
+impl From<&PublishedBroadHarnessRequest> for PublishedBroadHarnessRequestIdentity {
+    fn from(value: &PublishedBroadHarnessRequest) -> Self {
+        Self {
+            request_id: value.request_id().to_string(),
+            request_hash: value.request_hash().to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ready {}
+pub(crate) struct PublishedBroadHarnessRequestHash<'a>(&'a str);
+
+impl std::fmt::Display for PublishedBroadHarnessRequestHash<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl PartialEq<&str> for PublishedBroadHarnessRequestHash<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
 
 /// Startup evidence before a lineage predecessor exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,23 +103,24 @@ pub(crate) enum Predecessor {}
 pub(crate) enum Validated {}
 
 /// Parent role after it has packed a child-plan message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Planned {}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Planned;
 
 /// Parent role after it has received and validated its child-plan message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Selectable {}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Selectable;
 
 /// Parent role after it has locked lineage authority for successor handoff.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Retired {}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Retired;
 
 /// Runtime role carrier for a Parent in a known verification state.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Parent<S> {
+    runtime_id: RuntimeId,
     identity: ParentIdentity,
     node: Prototype1NodeRecord,
-    _state: PhantomData<S>,
+    state: S,
 }
 
 /// Evidence that this runtime may enter the ready Parent path.
@@ -436,6 +488,28 @@ impl Parent<Unchecked> {
         &self.identity
     }
 
+    pub(crate) fn load_with_runtime_id(
+        manifest_path: &Path,
+        identity: ParentIdentity,
+        runtime_id: RuntimeId,
+    ) -> Result<Self, PrepareError> {
+        let node = parent_node_projection(manifest_path, &identity);
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "artifact_identity",
+            transition = "ParentIdentity->Parent<Unchecked>",
+            runtime_id = %runtime_id,
+            campaign_id = %identity.campaign_id(),
+            parent_id = %identity.parent_id(),
+            node_id = %identity.node_id(),
+            generation = identity.generation(),
+            branch_id = %identity.branch_id(),
+            "loaded parent runtime identity from active Artifact"
+        );
+        Ok(Self::from_parts(runtime_id, identity, node))
+    }
+
     #[instrument(
         target = "ploke_exec",
         level = "info",
@@ -456,24 +530,7 @@ impl Parent<Unchecked> {
         manifest_path: &Path,
         identity: ParentIdentity,
     ) -> Result<Self, PrepareError> {
-        let node = parent_node_projection(manifest_path, &identity);
-        info!(
-            target: "ploke_exec",
-            role = "parent",
-            authority = "artifact_identity",
-            transition = "ParentIdentity->Parent<Unchecked>",
-            campaign_id = %identity.campaign_id(),
-            parent_id = %identity.parent_id(),
-            node_id = %identity.node_id(),
-            generation = identity.generation(),
-            branch_id = %identity.branch_id(),
-            "loaded parent runtime identity from active Artifact"
-        );
-        Ok(Self {
-            identity,
-            node,
-            _state: PhantomData,
-        })
+        Self::load_with_runtime_id(manifest_path, identity, RuntimeId::new())
     }
 
     #[instrument(
@@ -484,6 +541,7 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_backend",
             transition = "Parent<Unchecked>->Parent<Checked>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -511,6 +569,7 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "artifact_backend",
             transition = "Parent<Unchecked>->Parent<Checked>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -518,11 +577,7 @@ impl Parent<Unchecked> {
             branch_id = %self.identity.branch_id(),
             "validated parent checkout against artifact-carried identity"
         );
-        Ok(Parent {
-            identity: self.identity,
-            node: self.node,
-            _state: PhantomData,
-        })
+        Ok(self.cast())
     }
 
     #[instrument(
@@ -533,6 +588,7 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "history_successor_startup",
             transition = "Parent<Unchecked>->Parent<Ready>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -550,6 +606,7 @@ impl Parent<Unchecked> {
             role = "parent",
             authority = "history_successor_startup",
             transition = "Parent<Unchecked>->Parent<Ready>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -557,11 +614,7 @@ impl Parent<Unchecked> {
             branch_id = %self.identity.branch_id(),
             "admitted successor parent after sealed History startup validation"
         );
-        Ok(Parent {
-            identity: self.identity,
-            node: self.node,
-            _state: PhantomData,
-        })
+        Ok(self.cast())
     }
 }
 
@@ -578,6 +631,7 @@ impl Parent<Checked> {
             role = "parent",
             authority = "history_startup",
             transition = "Parent<Checked>->Parent<Ready>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -592,6 +646,7 @@ impl Parent<Checked> {
             role = "parent",
             authority = "history_startup",
             transition = "Parent<Checked>->Parent<Ready>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -599,11 +654,7 @@ impl Parent<Checked> {
             branch_id = %self.identity.branch_id(),
             "admitted checked parent after startup authority validation"
         );
-        Ok(Parent {
-            identity: self.identity,
-            node: self.node,
-            _state: PhantomData,
-        })
+        Ok(self.cast())
     }
 }
 
@@ -924,6 +975,7 @@ impl Parent<Ready> {
             role = "parent",
             authority = "parent_broadcast_channel",
             transition = "Parent<Ready>->Parent<Planned>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -937,6 +989,7 @@ impl Parent<Ready> {
             role = "parent",
             authority = "parent_broadcast_channel",
             transition = "Parent<Ready>->Parent<Planned>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -946,11 +999,56 @@ impl Parent<Ready> {
         );
         self.cast()
     }
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "info",
+        skip(self, harness_request),
+        fields(
+            role = "parent",
+            authority = "parent_broadcast_channel",
+            transition = "Parent<Ready>->Parent<AwaitingHarnessPlan>",
+            runtime_id = %self.runtime_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
+            request_id = %harness_request.request_id(),
+        )
+    )]
+    pub(crate) fn awaiting_harness_plan_for_request(
+        self,
+        harness_request: PublishedBroadHarnessRequestIdentity,
+    ) -> Parent<AwaitingHarnessPlan> {
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "parent_broadcast_channel",
+            transition = "Parent<Ready>->Parent<AwaitingHarnessPlan>",
+            runtime_id = %self.runtime_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
+            request_id = %harness_request.request_id(),
+            request_hash = %harness_request.request_hash(),
+            "published broad harness request and is awaiting a request-bound child-plan response"
+        );
+        self.into_state(AwaitingHarnessPlan { harness_request })
+    }
 }
 
 impl Parent<Planned> {
     pub(crate) fn identity(&self) -> &ParentIdentity {
         &self.identity
+    }
+}
+
+impl Parent<AwaitingHarnessPlan> {
+    pub(crate) fn harness_request(&self) -> &PublishedBroadHarnessRequestIdentity {
+        &self.state.harness_request
     }
 }
 
@@ -967,6 +1065,7 @@ impl Parent<Selectable> {
             role = "parent",
             authority = "crown_lineage_lock",
             transition = "Parent<Selectable>->Parent<Retired>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -980,6 +1079,7 @@ impl Parent<Selectable> {
             role = "parent",
             authority = "crown_lineage_lock",
             transition = "Parent<Selectable>->Parent<Retired>",
+            runtime_id = %self.runtime_id,
             campaign_id = %self.identity.campaign_id(),
             parent_id = %self.identity.parent_id(),
             node_id = %self.identity.node_id(),
@@ -992,16 +1092,51 @@ impl Parent<Selectable> {
     }
 }
 
+impl<S> Parent<S>
+where
+    S: Default,
+{
+    fn from_parts(
+        runtime_id: RuntimeId,
+        identity: ParentIdentity,
+        node: Prototype1NodeRecord,
+    ) -> Self {
+        Self {
+            runtime_id,
+            identity,
+            node,
+            state: S::default(),
+        }
+    }
+}
+
 impl<S> Parent<S> {
     pub(crate) fn node(&self) -> &Prototype1NodeRecord {
         &self.node
     }
 
-    fn cast<T>(self) -> Parent<T> {
+    pub(crate) fn runtime_id(&self) -> &RuntimeId {
+        &self.runtime_id
+    }
+
+    fn cast<T>(self) -> Parent<T>
+    where
+        T: Default,
+    {
         Parent {
+            runtime_id: self.runtime_id,
             identity: self.identity,
             node: self.node,
-            _state: PhantomData,
+            state: T::default(),
+        }
+    }
+
+    fn into_state<T>(self, state: T) -> Parent<T> {
+        Parent {
+            runtime_id: self.runtime_id,
+            identity: self.identity,
+            node: self.node,
+            state,
         }
     }
 }
@@ -1040,6 +1175,7 @@ mod tests {
 
     use crate::{
         cli::prototype1_state::{
+            edit_surface::harness_request::{HarnessChildBudget, PublishedBroadHarnessRequest},
             history::{ActorRef, ArtifactRef, EvidenceRef, SealBlock, SuccessorRef},
             identity::ParentIdentityRecord,
             inner::{LockCrown, Open},
@@ -1165,22 +1301,31 @@ mod tests {
         })
     }
 
+    fn runtime_id(node_id: &str, generation: u32) -> RuntimeId {
+        let mut bytes = [0_u8; 16];
+        for (dst, src) in bytes.iter_mut().zip(node_id.as_bytes().iter().copied()) {
+            *dst = src;
+        }
+        bytes[12..].copy_from_slice(&generation.to_be_bytes());
+        RuntimeId(uuid::Uuid::from_bytes(bytes))
+    }
+
     fn parent(node_id: &str, generation: u32) -> Parent<Ready> {
         let identity = identity(node_id, generation);
-        Parent {
-            node: node_record(node_id, generation, None),
+        Parent::from_parts(
+            runtime_id(node_id, generation),
             identity,
-            _state: PhantomData,
-        }
+            node_record(node_id, generation, None),
+        )
     }
 
     fn checked_parent(node_id: &str, generation: u32) -> Parent<Checked> {
         let identity = identity(node_id, generation);
-        Parent {
-            node: node_record(node_id, generation, None),
+        Parent::from_parts(
+            runtime_id(node_id, generation),
             identity,
-            _state: PhantomData,
-        }
+            node_record(node_id, generation, None),
+        )
     }
 
     fn node_record(
@@ -1250,6 +1395,7 @@ mod tests {
     #[test]
     fn parent_planning_transition_emits_authority_trace() {
         let parent = parent("parent-a", 0);
+        let runtime_id = *parent.runtime_id();
 
         let (_planned, trace) = collect_traces(|| parent.planned_from_locked_child_plan());
 
@@ -1260,6 +1406,7 @@ mod tests {
                 "authority=parent_broadcast_channel",
                 "role=parent",
                 "node_id=parent-a",
+                &format!("runtime_id={runtime_id}"),
             ],
         ));
         assert!(trace_contains(
@@ -1273,9 +1420,37 @@ mod tests {
     }
 
     #[test]
+    fn awaiting_harness_plan_accepts_published_request_identity() {
+        let published = PublishedBroadHarnessRequest::prototype1_workspace(
+            "parent-a".to_string(),
+            PathBuf::from("/repo"),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 3,
+            },
+            Path::new("/tmp/prototype1"),
+            PathBuf::from("/tmp/prompts/broad-harness.json"),
+            PathBuf::from("/tmp/prompts/broad-harness.md"),
+            PathBuf::from("/tmp/plans/child-plan.json"),
+        );
+
+        let awaiting = parent("parent-a", 0).awaiting_harness_plan_for_request((&published).into());
+
+        assert_eq!(
+            awaiting.harness_request().request_id(),
+            published.request_id()
+        );
+        assert_eq!(
+            awaiting.harness_request().request_hash(),
+            published.request_hash()
+        );
+    }
+
+    #[test]
     fn child_plan_receive_returns_received_capability_for_ready_parent() {
         let manifest_path = Path::new("/tmp/campaign.json");
         let sender = parent("parent-a", 0);
+        let sender_runtime_id = *sender.runtime_id();
         let child = node_record("child-1", 1, Some("parent-a"));
         let files = ChildPlanFiles::for_parent(
             manifest_path,
@@ -1290,6 +1465,7 @@ mod tests {
         let (selectable, received) = locked.unlock(planned).unwrap();
 
         assert_eq!(selectable.identity().node_id(), "parent-a");
+        assert_eq!(*selectable.runtime_id(), sender_runtime_id);
         assert!(received.body().contains_child("child-1"));
     }
 
@@ -1327,6 +1503,7 @@ mod tests {
     fn selectable_parent_locks_crown_and_retires() {
         let manifest_path = Path::new("/tmp/campaign.json");
         let sender = parent("parent-a", 0);
+        let runtime_id = *sender.runtime_id();
         let child = node_record("child-1", 1, Some("parent-a"));
         let files = ChildPlanFiles::for_parent(
             manifest_path,
@@ -1357,6 +1534,7 @@ mod tests {
         ));
 
         assert_eq!(retired.identity.node_id(), "parent-a");
+        assert_eq!(*retired.runtime_id(), runtime_id);
         assert!(locked.lineage_key().matches_debug_str("campaign"));
     }
 
@@ -1365,12 +1543,28 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");
         let parent = checked_parent("parent-a", 0);
+        let runtime_id = *parent.runtime_id();
 
         let startup =
             Startup::<Genesis>::from_history(parent.identity(), &manifest_path).expect("startup");
         let ready = parent.ready(startup).expect("ready parent");
 
         assert_eq!(ready.identity().node_id(), "parent-a");
+        assert_eq!(*ready.runtime_id(), runtime_id);
+    }
+
+    #[test]
+    fn unchecked_parent_load_keeps_explicit_runtime_id() {
+        let manifest_path = Path::new("/tmp/campaign.json");
+        let identity = identity("parent-a", 0);
+        let runtime_id = runtime_id("parent-a", 42);
+
+        let unchecked =
+            Parent::<Unchecked>::load_with_runtime_id(manifest_path, identity.clone(), runtime_id)
+                .expect("load unchecked parent");
+
+        assert_eq!(*unchecked.runtime_id(), runtime_id);
+        assert_eq!(unchecked.identity(), &identity);
     }
 
     #[test]

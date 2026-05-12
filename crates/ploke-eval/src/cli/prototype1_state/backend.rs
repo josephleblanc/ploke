@@ -16,13 +16,19 @@ use thiserror::Error;
 
 use crate::cli::Prototype1EditSurface;
 use crate::intervention::{text_file_artifact_id, text_replacement_patch_id};
-use crate::loop_graph::{ArtifactId, PatchId};
+use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 
-use super::edit_surface::{self, graph, request_policy, surface, tui};
+use super::edit_surface::{
+    self, graph,
+    harness_request::{BroadEditPolicy, PublishedBroadHarnessRequest},
+    harness_result::{SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError},
+    request_policy, surface, tui,
+};
 use super::event::ContentHash;
 use super::history::{
-    ArtifactSurface, HistoryError, HistoryHash, SurfaceArtifactRef, SurfaceCommitment,
-    SurfaceEvidence, SurfaceTouch, TreeKeyCommitment,
+    ArtifactSurface, CheckedSurface, CheckedSurfaceGrant, CheckedSurfaceTransition, HistoryError,
+    HistoryHash, ProcedureRef, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence,
+    SurfaceTouch, SurfaceWritable, TreeKeyCommitment,
 };
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
@@ -244,6 +250,39 @@ pub(crate) struct EditProposal {
     pub(crate) reported_after_file_hash: Option<String>,
 }
 
+/// Eval-owned authority required to admit an edit-surface proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EditSurfaceAdmission {
+    coordinate: Coordinate,
+    policy: surface::SurfacePolicyId,
+}
+
+impl EditSurfaceAdmission {
+    pub(crate) fn new(coordinate: Coordinate, policy: surface::SurfacePolicyId) -> Self {
+        Self { coordinate, policy }
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        &self.coordinate
+    }
+
+    pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
+        &self.policy
+    }
+
+    fn base_artifact_id(&self) -> Result<&ArtifactId, BackendError> {
+        match &self.coordinate.target {
+            OperationTarget::Artifact { artifact_id } => Ok(artifact_id),
+            target => Err(BackendError::EditSurfaceCheck {
+                detail: format!(
+                    "edit-surface admission requires OperationTarget::Artifact, got {:?}",
+                    target
+                ),
+            }),
+        }
+    }
+}
+
 /// Convert resolved TUI byte-span writes into the backend proposal carrier.
 ///
 /// `WriteSnippetData::expected_file_hash` is TUI tracking evidence, not the
@@ -322,14 +361,12 @@ pub(crate) struct CheckedSurfaceEdit {
     run_id: String,
     proposal_producer: request_policy::ProposalProducer,
     generator_surface: tui::GeneratorSurfaceVersion,
-    target_relpath: PathBuf,
+    checked_surface: CheckedSurface,
+    policy: surface::SurfacePolicyId,
     source_content: String,
     proposed_content: String,
     source_content_hash: String,
     proposed_content_hash: String,
-    base_artifact_id: ArtifactId,
-    patch_id: PatchId,
-    derived_artifact_id: ArtifactId,
     delta: edit_surface::ArtifactDelta,
 }
 
@@ -347,7 +384,15 @@ impl CheckedSurfaceEdit {
     }
 
     pub(crate) fn target_relpath(&self) -> &Path {
-        &self.target_relpath
+        &self.checked_surface.transition.target_relpath
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        &self.checked_surface.grant.coordinate
+    }
+
+    pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
+        &self.policy
     }
 
     pub(crate) fn source_content(&self) -> &str {
@@ -367,15 +412,15 @@ impl CheckedSurfaceEdit {
     }
 
     pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
-        &self.base_artifact_id
+        &self.checked_surface.transition.base.artifact_id
     }
 
     pub(crate) fn patch_id(&self) -> &PatchId {
-        &self.patch_id
+        &self.checked_surface.transition.patch_id
     }
 
     pub(crate) fn derived_artifact_id(&self) -> &ArtifactId {
-        &self.derived_artifact_id
+        &self.checked_surface.transition.after.artifact_id
     }
 
     pub(crate) fn delta(&self) -> &edit_surface::ArtifactDelta {
@@ -413,23 +458,71 @@ impl CheckedSurfaceEdit {
             producer_id,
             self.proposal_id.clone(),
             self.run_id.clone(),
-            crate::cli::serde_name(&self.surface),
-            self.target_relpath.clone(),
-            SurfaceArtifactRef {
-                artifact_id: self.delta.base().id().clone(),
-                hash: self.delta.base().hash().as_str().to_string(),
-            },
-            SurfaceArtifactRef {
-                artifact_id: self.delta.after().id().clone(),
-                hash: self.delta.after().hash().as_str().to_string(),
-            },
-            self.patch_id.clone(),
+            self.checked_surface.clone(),
             self.source_content_hash.clone(),
             self.proposed_content_hash.clone(),
             self.proposal_producer.clone(),
             self.generator_surface.clone(),
             touches,
         )
+    }
+}
+
+/// Backend-admitted broad harness result after request binding, workspace
+/// checks, and durable artifact derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AdmittedBroadHarnessResult {
+    request_id: String,
+    request_hash: String,
+    coordinate: Coordinate,
+    policy: surface::SurfacePolicyId,
+    workspace_root: PathBuf,
+    submitted_result_path: PathBuf,
+    changed_paths: Vec<PathBuf>,
+    base_artifact_id: ArtifactId,
+    derived_artifact_id: ArtifactId,
+    artifact_surface: ArtifactSurface,
+}
+
+impl AdmittedBroadHarnessResult {
+    pub(crate) fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub(crate) fn request_hash(&self) -> &str {
+        &self.request_hash
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        &self.coordinate
+    }
+
+    pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
+        &self.policy
+    }
+
+    pub(crate) fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    pub(crate) fn submitted_result_path(&self) -> &Path {
+        &self.submitted_result_path
+    }
+
+    pub(crate) fn changed_paths(&self) -> &[PathBuf] {
+        &self.changed_paths
+    }
+
+    pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
+        &self.base_artifact_id
+    }
+
+    pub(crate) fn derived_artifact_id(&self) -> &ArtifactId {
+        &self.derived_artifact_id
+    }
+
+    pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
+        &self.artifact_surface
     }
 }
 
@@ -593,6 +686,32 @@ pub(crate) enum BackendError {
     },
     #[error("checked edit-surface transition failed: {detail}")]
     EditSurfaceCheck { detail: String },
+    #[error("submitted broad harness result did not bind to the published request: {detail}")]
+    BroadHarnessRequestBinding { detail: String },
+    #[error(
+        "published broad harness source repository '{expected}' did not match active repo root '{observed}'"
+    )]
+    BroadHarnessSourceRepositoryMismatch {
+        expected: PathBuf,
+        observed: PathBuf,
+    },
+    #[error(
+        "published broad harness candidate workspace '{workspace}' is not isolated from source repository '{source_repository}'"
+    )]
+    BroadHarnessWorkspaceNotIsolated {
+        source_repository: PathBuf,
+        workspace: PathBuf,
+    },
+    #[error("submitted broad harness candidate workspace '{path}' has no admitted changes")]
+    BroadHarnessNoChanges { path: PathBuf },
+    #[error(
+        "submitted broad harness candidate workspace '{path}' is stale: expected base HEAD {expected_head}, observed {observed_head}"
+    )]
+    BroadHarnessStaleBase {
+        path: PathBuf,
+        expected_head: GitCommit,
+        observed_head: GitCommit,
+    },
 }
 
 /// Backend for realizing descendant workspaces.
@@ -955,6 +1074,7 @@ impl GitWorktreeBackend {
     pub(crate) fn validate_edit_surface_candidate(
         &self,
         repo_root: &Path,
+        admission: EditSurfaceAdmission,
         proposal: EditProposal,
     ) -> Result<CheckedSurfaceEdit, BackendError> {
         use super::edit_surface::graph::View as _;
@@ -1020,7 +1140,7 @@ impl GitWorktreeBackend {
         let proposed_content = fold_touches(&source_content, &touches);
         let proposed_hash = content_hash(&proposed_content);
         let proposed_surface_hash = surface::Hash::new(proposed_hash.clone());
-        let base_artifact_id = text_file_artifact_id(&target_relpath, &source_content);
+        let base_artifact_id = admission.base_artifact_id()?.clone();
         let derived_artifact_id = text_file_artifact_id(&target_relpath, &proposed_content);
         let patch_id =
             text_replacement_patch_id(&target_relpath, &source_content, &proposed_content);
@@ -1116,7 +1236,9 @@ impl GitWorktreeBackend {
             checked_touches.push(checked);
         }
 
-        let grant = surface::Grant::new(
+        let grant = surface::Grant::for_coordinate(
+            admission.coordinate.clone(),
+            admission.policy.clone(),
             base_ref.clone(),
             graph_bounds,
             surface::Area::new(
@@ -1165,12 +1287,34 @@ impl GitWorktreeBackend {
             .map_err(|err| BackendError::EditSurfaceCheck {
                 detail: err.to_string(),
             })?;
+        let applied_authority = applied.authority().clone();
         let delta = applied
             .delta()
             .cloned()
             .ok_or_else(|| BackendError::EditSurfaceCheck {
                 detail: "checked edit did not reach applied state".to_string(),
             })?;
+        let checked_surface = CheckedSurface {
+            grant: CheckedSurfaceGrant {
+                coordinate: applied_authority.coordinate().clone(),
+                policy: ProcedureRef::new(applied_authority.policy().as_str()),
+                writable: SurfaceWritable {
+                    target_relpath: target_relpath.clone(),
+                },
+            },
+            transition: CheckedSurfaceTransition {
+                target_relpath: target_relpath.clone(),
+                base: SurfaceArtifactRef {
+                    artifact_id: delta.base().id().clone(),
+                    hash: delta.base().hash().as_str().to_string(),
+                },
+                after: SurfaceArtifactRef {
+                    artifact_id: delta.after().id().clone(),
+                    hash: delta.after().hash().as_str().to_string(),
+                },
+                patch_id: patch_id.clone(),
+            },
+        };
 
         Ok(CheckedSurfaceEdit {
             surface: proposal_surface,
@@ -1178,15 +1322,104 @@ impl GitWorktreeBackend {
             run_id,
             proposal_producer,
             generator_surface,
-            target_relpath,
+            checked_surface,
+            policy: applied_authority.policy().clone(),
             source_content,
             proposed_content,
             source_content_hash: source_hash,
             proposed_content_hash: proposed_hash,
-            base_artifact_id,
-            patch_id,
-            derived_artifact_id,
             delta,
+        })
+    }
+
+    pub(crate) fn admit_submitted_broad_harness_result(
+        &self,
+        repo_root: &Path,
+        admission: EditSurfaceAdmission,
+        published: &PublishedBroadHarnessRequest,
+        submitted: &SubmittedBroadHarnessResult,
+    ) -> Result<AdmittedBroadHarnessResult, BackendError> {
+        submitted.verify_request(published).map_err(|err| {
+            BackendError::BroadHarnessRequestBinding {
+                detail: describe_submitted_broad_harness_result_error(&err),
+            }
+        })?;
+
+        let expected_source_repository = published.request().workspace.source_repository_path();
+        if expected_source_repository != repo_root {
+            return Err(BackendError::BroadHarnessSourceRepositoryMismatch {
+                expected: expected_source_repository.to_path_buf(),
+                observed: repo_root.to_path_buf(),
+            });
+        }
+
+        let candidate_root = published.workspace_path();
+        if candidate_root == repo_root
+            || candidate_root.starts_with(repo_root)
+            || repo_root.starts_with(candidate_root)
+        {
+            return Err(BackendError::BroadHarnessWorkspaceNotIsolated {
+                source_repository: repo_root.to_path_buf(),
+                workspace: candidate_root.to_path_buf(),
+            });
+        }
+
+        let source_dirty = dirty_paths(repo_root)?;
+        if !source_dirty.is_empty() {
+            return Err(BackendError::DirtyWorktree {
+                path: repo_root.to_path_buf(),
+                dirty_paths: source_dirty,
+            });
+        }
+
+        let expected_base_head = self.head_commit(repo_root)?;
+        let observed_candidate_head = self.head_commit(candidate_root)?;
+        if observed_candidate_head != expected_base_head {
+            return Err(BackendError::BroadHarnessStaleBase {
+                path: candidate_root.to_path_buf(),
+                expected_head: expected_base_head,
+                observed_head: observed_candidate_head,
+            });
+        }
+
+        let surface = prototype_surface_for_broad_edit_policy(published.request().edit_policy);
+        let changed_paths = changed_paths_between_roots(repo_root, candidate_root)?;
+        if changed_paths.is_empty() {
+            return Err(BackendError::BroadHarnessNoChanges {
+                path: candidate_root.to_path_buf(),
+            });
+        }
+        for path in &changed_paths {
+            validate_normal_repo_relpath(path)?;
+            if !path_matches_surface_policy(surface, path) {
+                return Err(BackendError::OutOfEditSurface {
+                    surface,
+                    path: path.clone(),
+                });
+            }
+        }
+
+        let base_artifact_id = admission.base_artifact_id()?.clone();
+        let request_id = published.request_id().to_string();
+        let persisted_head = self.persist_files(
+            candidate_root,
+            &changed_paths,
+            &format!("prototype1 broad harness result {request_id}"),
+        )?;
+        let derived_artifact_id = artifact_id_from_git_commit(&persisted_head);
+        let artifact_surface = self.artifact_surface(candidate_root)?;
+
+        Ok(AdmittedBroadHarnessResult {
+            request_id,
+            request_hash: published.request_hash().to_string(),
+            coordinate: admission.coordinate().clone(),
+            policy: admission.policy().clone(),
+            workspace_root: candidate_root.to_path_buf(),
+            submitted_result_path: submitted.candidate().submitted_result_path().to_path_buf(),
+            changed_paths,
+            base_artifact_id,
+            derived_artifact_id,
+            artifact_surface,
         })
     }
 
@@ -2064,6 +2297,14 @@ fn is_workspace_except_forbidden_path(path: &Path) -> bool {
             .is_some_and(|name| WORKSPACE_EXCEPT_AUTHORITY_FILENAMES.contains(&name))
 }
 
+fn prototype_surface_for_broad_edit_policy(policy: BroadEditPolicy) -> Prototype1EditSurface {
+    match policy {
+        BroadEditPolicy::WorkspaceExceptPlokeEval => {
+            Prototype1EditSurface::WorkspaceExceptPlokeEval
+        }
+    }
+}
+
 fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(BackendError::InvalidEditSurfacePath {
@@ -2134,6 +2375,28 @@ fn fold_touches(source: &str, touches: &[ProposedTouch]) -> String {
     result
 }
 
+fn changed_paths_between_roots(
+    before_root: &Path,
+    after_root: &Path,
+) -> Result<Vec<PathBuf>, BackendError> {
+    let mut paths = tracked_paths(before_root, ".")?;
+    paths.extend(tracked_paths(after_root, ".")?);
+    paths.extend(dirty_paths(after_root)?);
+    paths.sort();
+    paths.dedup();
+
+    let mut changed = Vec::new();
+    for path in paths {
+        validate_normal_repo_relpath(&path)?;
+        let before = repo_entry_bytes(before_root, &path)?;
+        let after = repo_entry_bytes(after_root, &path)?;
+        if before != after {
+            changed.push(path);
+        }
+    }
+    Ok(changed)
+}
+
 fn surface_hash(worktree_root: &Path, relpaths: &[PathBuf]) -> Result<HistoryHash, BackendError> {
     let mut relpaths = relpaths.to_vec();
     relpaths.sort();
@@ -2174,6 +2437,81 @@ fn surface_entry_bytes(path: &Path) -> Result<Vec<u8>, std::io::Error> {
             .into_bytes());
     }
     fs::read(path)
+}
+
+fn repo_entry_bytes(root: &Path, relpath: &Path) -> Result<Option<Vec<u8>>, BackendError> {
+    let absolute = root.join(relpath);
+    match fs::symlink_metadata(&absolute) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                let bytes = fs::read_link(&absolute)
+                    .map(|target| {
+                        target
+                            .as_os_str()
+                            .to_string_lossy()
+                            .into_owned()
+                            .into_bytes()
+                    })
+                    .map_err(|source| BackendError::ReadTarget {
+                        path: absolute,
+                        source,
+                    })?;
+                Ok(Some(bytes))
+            } else {
+                fs::read(&absolute)
+                    .map(Some)
+                    .map_err(|source| BackendError::ReadTarget {
+                        path: absolute,
+                        source,
+                    })
+            }
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(BackendError::ReadTarget {
+            path: absolute,
+            source,
+        }),
+    }
+}
+
+fn artifact_id_from_git_commit(commit: &GitCommit) -> ArtifactId {
+    ArtifactId::new(format!("artifact:git-commit:{}", commit.0))
+}
+
+fn describe_submitted_broad_harness_result_error(
+    error: &SubmittedBroadHarnessResultError,
+) -> String {
+    match error {
+        SubmittedBroadHarnessResultError::RequestIdMismatch { expected, actual } => {
+            format!("request_id mismatch: expected '{expected}', got '{actual}'")
+        }
+        SubmittedBroadHarnessResultError::RequestHashMismatch { expected, actual } => {
+            format!("request_hash mismatch: expected '{expected}', got '{actual}'")
+        }
+        SubmittedBroadHarnessResultError::ParentNodeMismatch { expected, actual } => format!(
+            "parent_node_id mismatch: expected '{}', got '{}'",
+            expected.as_str(),
+            actual.as_str()
+        ),
+        SubmittedBroadHarnessResultError::WorkspacePathMismatch { expected, actual } => format!(
+            "workspace_path mismatch: expected '{}', got '{}'",
+            expected.display(),
+            actual.display()
+        ),
+        SubmittedBroadHarnessResultError::SubmittedResultPathMismatch { expected, actual } => {
+            format!(
+                "submitted_result_path mismatch: expected '{}', got '{}'",
+                expected.display(),
+                actual.display()
+            )
+        }
+        SubmittedBroadHarnessResultError::ChangedFileOutsideWorkspace { workspace_relpath } => {
+            format!(
+                "changed file '{}' escaped the candidate workspace root",
+                workspace_relpath.display()
+            )
+        }
+    }
 }
 
 /// Execute one short-lived git command and return a typed backend error on
@@ -2260,10 +2598,19 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::edit_surface::graph::View as _;
+    use super::edit_surface::harness_request::{
+        EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget, PublishedBroadHarnessRequest,
+        SubmissionAuthorityBoundary,
+    };
+    use super::edit_surface::harness_result::{
+        SubmittedBroadHarnessResult, SubmittedChangeSummary, SubmittedCheckRecommendation,
+        SubmittedEvidenceCitation, SubmittedFileChange, SubmittedHarnessReturnEvidence,
+        SubmittedImprovementRationale,
+    };
     use super::edit_surface::{graph, request_policy, surface, tui};
     use super::{
-        BackendError, GitWorktreeBackend, WorkspaceBackend, WorktreeEntry, parse_dirty_paths,
-        parse_worktree_list,
+        AdmittedBroadHarnessResult, BackendError, EditSurfaceAdmission, GitWorktreeBackend,
+        WorkspaceBackend, WorktreeEntry, parse_dirty_paths, parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
@@ -2274,6 +2621,16 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use uuid::Uuid;
+
+    fn admission_for(artifact_id: crate::loop_graph::ArtifactId) -> EditSurfaceAdmission {
+        EditSurfaceAdmission::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
+            },
+            surface::SurfacePolicyId::new("policy:test-boundary"),
+        )
+    }
 
     fn run_git_test(repo_root: &std::path::Path, args: &[&str]) {
         let output = Command::new("git")
@@ -2301,6 +2658,159 @@ mod tests {
         run_git_test(repo_root, &["add", "README.md"]);
         run_git_test(repo_root, &["commit", "--no-gpg-sign", "-m", "base commit"]);
         tmp
+    }
+
+    struct BroadHarnessFixture {
+        _temp: tempfile::TempDir,
+        source_root: PathBuf,
+        prototype_root: PathBuf,
+        request_path: PathBuf,
+        prompt_path: PathBuf,
+        submitted_result_path: PathBuf,
+    }
+
+    impl BroadHarnessFixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let source_root = temp.path().join("source-repo");
+            fs::create_dir_all(&source_root).expect("create source repo dir");
+            run_git_test(&source_root, &["init"]);
+            run_git_test(
+                &source_root,
+                &["config", "user.email", "prototype1@example.com"],
+            );
+            run_git_test(&source_root, &["config", "user.name", "Prototype 1 Test"]);
+            fs::write(source_root.join("README.md"), "base\n").expect("write readme");
+            let protected = source_root.join("crates/ploke-eval/src");
+            fs::create_dir_all(&protected).expect("create protected dir");
+            fs::write(protected.join("lib.rs"), "pub fn protected() {}\n")
+                .expect("write protected file");
+            let allowed = source_root.join("src");
+            fs::create_dir_all(&allowed).expect("create allowed dir");
+            fs::write(allowed.join("feature.rs"), "pub fn feature() {}\n")
+                .expect("write allowed file");
+            for relpath in super::ploke_tui_tool_files() {
+                let path = source_root.join(relpath);
+                fs::create_dir_all(path.parent().expect("tool file parent"))
+                    .expect("create tool file parent");
+                fs::write(path, "tool surface\n").expect("write tool surface file");
+            }
+            for relpath in super::tool_description_paths() {
+                let path = source_root.join(relpath);
+                fs::create_dir_all(path.parent().expect("description file parent"))
+                    .expect("create description file parent");
+                fs::write(path, "tool description\n").expect("write tool description file");
+            }
+            run_git_test(&source_root, &["add", "."]);
+            run_git_test(
+                &source_root,
+                &["commit", "--no-gpg-sign", "-m", "broad harness base"],
+            );
+
+            let prototype_root = temp.path().join("prototype1");
+            let prompt_dir = prototype_root.join("messages/edit-harness-request");
+            let result_dir = prototype_root.join("messages/edit-harness-result");
+            fs::create_dir_all(&prompt_dir).expect("create prompt dir");
+            fs::create_dir_all(&result_dir).expect("create result dir");
+
+            Self {
+                _temp: temp,
+                source_root,
+                prototype_root,
+                request_path: prompt_dir.join("parent-node-7.json"),
+                prompt_path: prompt_dir.join("parent-node-7.md"),
+                submitted_result_path: result_dir.join("parent-node-7.json"),
+            }
+        }
+
+        fn published_request(&self) -> PublishedBroadHarnessRequest {
+            PublishedBroadHarnessRequest::prototype1_workspace(
+                "parent-node-7".to_string(),
+                self.source_root.clone(),
+                HarnessChildBudget {
+                    min_children: 1,
+                    max_children: 3,
+                },
+                &self.prototype_root,
+                self.request_path.clone(),
+                self.prompt_path.clone(),
+                self.submitted_result_path.clone(),
+            )
+        }
+
+        fn clone_candidate_workspace(&self, published: &PublishedBroadHarnessRequest) {
+            let candidate_root = published.workspace_path();
+            fs::create_dir_all(candidate_root.parent().expect("candidate workspace parent"))
+                .expect("create candidate workspace parent");
+            run_git_test(
+                self._temp.path(),
+                &[
+                    "clone",
+                    self.source_root
+                        .to_str()
+                        .expect("source root is valid utf-8"),
+                    candidate_root
+                        .to_str()
+                        .expect("candidate root is valid utf-8"),
+                ],
+            );
+            run_git_test(
+                candidate_root,
+                &["config", "user.email", "prototype1@example.com"],
+            );
+            run_git_test(candidate_root, &["config", "user.name", "Prototype 1 Test"]);
+        }
+    }
+
+    fn submitted_broad_harness_result(
+        published: &PublishedBroadHarnessRequest,
+        changed_paths: &[PathBuf],
+    ) -> SubmittedBroadHarnessResult {
+        SubmittedBroadHarnessResult::bind(
+            published,
+            SubmittedHarnessReturnEvidence {
+                authority_boundary: SubmissionAuthorityBoundary::submitted_evidence_only(),
+                change_summary: SubmittedChangeSummary {
+                    changed_files: changed_paths
+                        .iter()
+                        .cloned()
+                        .map(|workspace_relpath| SubmittedFileChange {
+                            workspace_relpath,
+                            summary: "Candidate broad harness change".to_string(),
+                        })
+                        .collect(),
+                },
+                guiding_evidence: vec![SubmittedEvidenceCitation {
+                    kind: EvidenceRootKind::HistoryBlocks,
+                    location: EvidenceRootLocation::Directory {
+                        path: PathBuf::from("/tmp/prototype1/history/blocks"),
+                    },
+                    summary: "History evidence suggested a broad harness update.".to_string(),
+                }],
+                rationale: SubmittedImprovementRationale {
+                    hypothesis:
+                        "Editing the allowed workspace surface should improve future descendants."
+                            .to_string(),
+                    expected_descendant_effect:
+                        "The admitted descendant should carry the candidate workspace improvement."
+                            .to_string(),
+                },
+                checks: vec![SubmittedCheckRecommendation {
+                    label: "backend tests".to_string(),
+                    command: "cargo test -p ploke-eval backend".to_string(),
+                    success_signal: "Backend admission tests pass.".to_string(),
+                }],
+            },
+        )
+        .expect("bind submitted broad harness result")
+    }
+
+    fn assert_candidate_clean(admitted: &AdmittedBroadHarnessResult) {
+        let dirty = super::dirty_paths(admitted.workspace_root()).expect("candidate dirty paths");
+        assert!(
+            dirty.is_empty(),
+            "candidate workspace should be clean after admission"
+        );
     }
 
     fn init_surface_repo(eval_text: &str, tool_text: &str) -> tempfile::TempDir {
@@ -2467,15 +2977,39 @@ R  old.rs -> new.rs
         let checked = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:base-surface")),
                 proposal_for(tmp.path(), relpath.clone(), "let old = 1;\n"),
             )
             .expect("single-file checked edit");
 
         assert_eq!(checked.target_relpath(), relpath.as_path());
+        assert_eq!(
+            checked.coordinate().target,
+            crate::loop_graph::OperationTarget::Artifact {
+                artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-surface"),
+            }
+        );
+        assert_eq!(checked.policy().as_str(), "policy:test-boundary");
         assert_eq!(checked.source_content(), "let old = 1;\n");
         assert_eq!(checked.proposed_content(), "let new = 1;\n");
         assert_eq!(checked.delta().touches().len(), 1);
         assert_ne!(checked.base_artifact_id(), checked.derived_artifact_id());
+
+        let evidence = checked
+            .surface_evidence("producer-test")
+            .expect("surface evidence");
+        let grant = evidence.grant.expect("checked grant evidence");
+        assert_eq!(grant.policy.as_str(), "policy:test-boundary");
+        assert_eq!(grant.writable.target_relpath, relpath);
+        assert_eq!(
+            grant.coordinate,
+            crate::cli::prototype1_state::history::SurfaceGrantCoordinate::Checked(
+                crate::cli::prototype1_state::history::CheckedSurfaceGrantCoordinate {
+                    runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                    target_artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-surface",),
+                },
+            )
+        );
     }
 
     #[test]
@@ -2517,7 +3051,11 @@ R  old.rs -> new.rs
         };
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), tracking_only)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:tracking-only")),
+                tracking_only,
+            )
             .expect_err("TUI TrackingHash is not the backend content hash");
         assert!(matches!(err, BackendError::StaleEditBaseHash { .. }));
 
@@ -2537,7 +3075,13 @@ R  old.rs -> new.rs
         assert_ne!(converted.touches[0].expected_file_hash, tracking_hash);
 
         let checked = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), converted.clone())
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new(
+                    "artifact:resolved-write",
+                )),
+                converted.clone(),
+            )
             .expect("converted proposal validates");
         assert_eq!(checked.target_relpath(), relpath.as_path());
         assert_eq!(checked.source_content_hash(), super::content_hash(source));
@@ -2579,7 +3123,14 @@ R  old.rs -> new.rs
                 converted.touches[0].replacement.clone(),
             )
             .expect("write lowers to touch");
-        let grant = surface::Grant::new(
+        let grant = surface::Grant::for_coordinate(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: tracking_ref.id().clone(),
+                },
+            },
+            surface::SurfacePolicyId::new("policy:test-boundary"),
             tracking_ref.clone(),
             graph_bounds,
             surface::Area::new([touch.span().clone()]),
@@ -2609,6 +3160,7 @@ R  old.rs -> new.rs
         let err = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:zero-touch")),
                 super::EditProposal {
                     surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
                     proposal_id: "proposal-1".to_string(),
@@ -2647,7 +3199,11 @@ R  old.rs -> new.rs
         });
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:multi-file")),
+                proposal,
+            )
             .expect_err("multi-file proposal must reject");
 
         assert!(matches!(err, BackendError::MultiFileEdit { .. }));
@@ -2709,7 +3265,11 @@ R  old.rs -> new.rs
         };
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:overlap")),
+                proposal,
+            )
             .expect_err("overlapping spans must reject");
 
         assert!(matches!(err, BackendError::OverlappingEditSpans { .. }));
@@ -2726,6 +3286,9 @@ R  old.rs -> new.rs
         let err = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new(
+                    "artifact:out-of-surface",
+                )),
                 proposal_for(tmp.path(), relpath, "let old = 1;\n"),
             )
             .expect_err("out-of-surface path must reject");
@@ -2829,7 +3392,11 @@ R  old.rs -> new.rs
         proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:archive-doc")),
+                proposal,
+            )
             .expect_err("archive docs are not parent mutation surface");
 
         assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
@@ -2844,7 +3411,11 @@ R  old.rs -> new.rs
         proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:untracked")),
+                proposal,
+            )
             .expect_err("untracked workspace file must not validate");
 
         assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
@@ -2866,7 +3437,13 @@ R  old.rs -> new.rs
         proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new(
+                    "artifact:parent-identity",
+                )),
+                proposal,
+            )
             .expect_err("parent identity is runtime authority, not editable surface");
 
         assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
@@ -2884,6 +3461,7 @@ R  old.rs -> new.rs
         let err = GitWorktreeBackend
             .validate_edit_surface_candidate(
                 tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:path-escape")),
                 proposal_for(tmp.path(), escaped, "let old = 1;\n"),
             )
             .expect_err("path escape must reject before surface prefix check");
@@ -2899,7 +3477,11 @@ R  old.rs -> new.rs
         proposal.touches[0].expected_file_hash = "stale".to_string();
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:stale-base")),
+                proposal,
+            )
             .expect_err("stale expected hash must reject");
 
         assert!(matches!(err, BackendError::StaleEditBaseHash { .. }));
@@ -2913,7 +3495,11 @@ R  old.rs -> new.rs
         proposal.reported_after_file_hash = Some("wrong-after".to_string());
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:wrong-after")),
+                proposal,
+            )
             .expect_err("wrong executor after hash must reject");
 
         assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
@@ -2928,7 +3514,13 @@ R  old.rs -> new.rs
         proposal.generator_surface.source_version = "forged-version".to_string();
 
         let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                admission_for(crate::loop_graph::ArtifactId::new(
+                    "artifact:generator-surface",
+                )),
+                proposal,
+            )
             .expect_err("mutated generator surface must reject");
 
         assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
@@ -2936,6 +3528,192 @@ R  old.rs -> new.rs
             err.to_string()
                 .contains("proposal generator surface mismatch")
         );
+    }
+
+    #[test]
+    fn edit_surface_bridge_requires_artifact_operation_target() {
+        let tmp = init_git_repo();
+        let relpath = write_tui_target(tmp.path(), "let old = 1;\n");
+        let proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(
+                tmp.path(),
+                EditSurfaceAdmission::new(
+                    crate::loop_graph::Coordinate {
+                        runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                        target: crate::loop_graph::OperationTarget::PatchSet {
+                            base_artifact_id: crate::loop_graph::ArtifactId::new("artifact:base"),
+                            patch_ids: vec![crate::loop_graph::PatchId::new("patch:1")],
+                        },
+                    },
+                    surface::SurfacePolicyId::new("policy:test-boundary"),
+                ),
+                proposal,
+            )
+            .expect_err("non-artifact coordinate must reject");
+
+        assert!(matches!(err, BackendError::EditSurfaceCheck { .. }));
+        assert!(
+            err.to_string()
+                .contains("requires OperationTarget::Artifact")
+        );
+    }
+
+    #[test]
+    fn admits_submitted_broad_harness_result_outside_protected_core() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("README.md");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "improved broad harness\n",
+        )
+        .expect("write candidate change");
+        let submitted = submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+
+        let admitted = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect("outside-protected-core change should admit");
+
+        assert_eq!(admitted.request_id(), published.request_id());
+        assert_eq!(admitted.request_hash(), published.request_hash());
+        assert_eq!(admitted.changed_paths(), &[changed]);
+        assert_eq!(
+            admitted.base_artifact_id(),
+            &crate::loop_graph::ArtifactId::new("artifact:broad-base")
+        );
+        assert_ne!(admitted.base_artifact_id(), admitted.derived_artifact_id());
+        assert!(
+            admitted
+                .derived_artifact_id()
+                .as_str()
+                .starts_with("artifact:git-commit:")
+        );
+        assert_eq!(
+            admitted.coordinate(),
+            admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")).coordinate()
+        );
+        assert_eq!(admitted.policy().as_str(), "policy:test-boundary");
+        assert_eq!(
+            admitted.artifact_surface(),
+            &GitWorktreeBackend
+                .artifact_surface(published.workspace_path())
+                .expect("measure admitted artifact surface")
+        );
+        assert_candidate_clean(&admitted);
+    }
+
+    #[test]
+    fn submitted_broad_harness_result_rejects_protected_core_edit() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("crates/ploke-eval/src/lib.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn protected() { panic!(\"mutated\") }\n",
+        )
+        .expect("write protected-core mutation");
+        let submitted = submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("protected-core edits must reject");
+
+        assert!(matches!(
+            err,
+            BackendError::OutOfEditSurface {
+                surface: crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
+                path
+            } if path == changed
+        ));
+        assert_eq!(
+            super::dirty_paths(published.workspace_path()).expect("candidate dirty paths"),
+            vec![PathBuf::from("crates/ploke-eval/src/lib.rs")]
+        );
+    }
+
+    #[test]
+    fn submitted_broad_harness_result_rejects_stale_base() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        fs::write(fixture.source_root.join("README.md"), "source advanced\n")
+            .expect("advance source repo");
+        run_git_test(fixture.source_root.as_path(), &["add", "README.md"]);
+        run_git_test(
+            fixture.source_root.as_path(),
+            &["commit", "--no-gpg-sign", "-m", "advance source"],
+        );
+
+        let changed = PathBuf::from("src/feature.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn feature() { println!(\"candidate\") }\n",
+        )
+        .expect("write candidate change");
+        let submitted = submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("stale candidate base must reject");
+
+        assert!(
+            matches!(err, BackendError::BroadHarnessStaleBase { path, .. } if path == published.workspace_path())
+        );
+    }
+
+    #[test]
+    fn submitted_broad_harness_result_rejects_request_mismatch() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("README.md");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "tampered request\n",
+        )
+        .expect("write candidate change");
+        let mut submitted =
+            submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+        submitted.request.request_hash = "tampered-request-hash".to_string();
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("request mismatch must reject");
+
+        assert!(matches!(
+            err,
+            BackendError::BroadHarnessRequestBinding { detail }
+                if detail.contains("request_hash mismatch")
+                    && detail.contains("tampered-request-hash")
+        ));
     }
 
     #[test]

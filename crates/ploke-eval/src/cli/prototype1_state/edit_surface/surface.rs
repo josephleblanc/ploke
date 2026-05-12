@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::cli::prototype1_state::history::EvidenceRef;
-use crate::loop_graph::ArtifactId;
+use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::{diagnosis, graph};
 
@@ -40,6 +41,19 @@ impl Ref {
 
     pub(crate) fn hash(&self) -> &Hash {
         &self.hash
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SurfacePolicyId(String);
+
+impl SurfacePolicyId {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -129,19 +143,50 @@ impl Touch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Grant {
+pub(crate) struct GrantAuthority {
+    coordinate: Coordinate,
+    policy: SurfacePolicyId,
+}
+
+impl GrantAuthority {
+    pub(crate) fn new(
+        coordinate: Coordinate,
+        policy: SurfacePolicyId,
+        artifact: &Ref,
+    ) -> Result<Self, Error> {
+        match &coordinate.target {
+            OperationTarget::Artifact { artifact_id } if artifact_id == artifact.id() => {
+                Ok(Self { coordinate, policy })
+            }
+            OperationTarget::Artifact { artifact_id } => Err(Error::CoordinateTargetMismatch {
+                grant_artifact: artifact.id().clone(),
+                coordinate_artifact: artifact_id.clone(),
+            }),
+            target => Err(Error::CoordinateTargetUnsupported {
+                target: target.clone(),
+            }),
+        }
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        &self.coordinate
+    }
+
+    pub(crate) fn policy(&self) -> &SurfacePolicyId {
+        &self.policy
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MaterialScope {
     artifact: Ref,
     graph: graph::Bounds,
     write: Area,
     forbidden: Area,
 }
 
-impl Grant {
-    pub(crate) fn new(artifact: Ref, graph: graph::Bounds, write: Area) -> Result<Self, Error> {
-        Self::with_forbidden(artifact, graph, write, Area::new([]))
-    }
-
-    pub(crate) fn with_forbidden(
+impl MaterialScope {
+    fn new(
         artifact: Ref,
         graph: graph::Bounds,
         write: Area,
@@ -158,7 +203,11 @@ impl Grant {
         })
     }
 
-    pub(crate) fn narrow(&self, graph: graph::Bounds) -> Result<Self, Error> {
+    fn artifact(&self) -> &Ref {
+        &self.artifact
+    }
+
+    fn narrow(&self, graph: graph::Bounds) -> Result<Self, Error> {
         if graph.artifact() != &self.artifact {
             return Err(Error::ArtifactMismatch);
         }
@@ -173,7 +222,7 @@ impl Grant {
         })
     }
 
-    pub(crate) fn check(&self, draft: Draft<'_>) -> Result<Check, Error> {
+    fn check(&self, draft: &Draft<'_>) -> Result<(), Error> {
         if draft.base != &self.artifact {
             return Err(Error::ArtifactMismatch);
         }
@@ -186,12 +235,93 @@ impl Grant {
             }
             self.write.check(touch.span())?;
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Grant {
+    authority: GrantAuthority,
+    material: MaterialScope,
+}
+
+impl Grant {
+    pub(crate) fn for_coordinate(
+        coordinate: Coordinate,
+        policy: SurfacePolicyId,
+        artifact: Ref,
+        graph: graph::Bounds,
+        write: Area,
+    ) -> Result<Self, Error> {
+        Self::for_coordinate_with_forbidden(
+            coordinate,
+            policy,
+            artifact,
+            graph,
+            write,
+            Area::new([]),
+        )
+    }
+
+    pub(crate) fn for_coordinate_with_forbidden(
+        coordinate: Coordinate,
+        policy: SurfacePolicyId,
+        artifact: Ref,
+        graph: graph::Bounds,
+        write: Area,
+        forbidden: Area,
+    ) -> Result<Self, Error> {
+        let material = MaterialScope::new(artifact, graph, write, forbidden)?;
+        let authority = GrantAuthority::new(coordinate, policy, material.artifact())?;
+        Ok(Self {
+            authority,
+            material,
+        })
+    }
+
+    fn for_objective_with_forbidden(
+        objective: &EditObjective,
+        artifact: Ref,
+        graph: graph::Bounds,
+        write: Area,
+        forbidden: Area,
+    ) -> Result<Self, Error> {
+        let material = MaterialScope::new(artifact, graph, write, forbidden)?;
+        let authority = objective.grant_authority(material.artifact())?;
+        Ok(Self {
+            authority,
+            material,
+        })
+    }
+
+    pub(crate) fn narrow(&self, graph: graph::Bounds) -> Result<Self, Error> {
+        Ok(Self {
+            authority: self.authority.clone(),
+            material: self.material.narrow(graph)?,
+        })
+    }
+
+    pub(crate) fn check(&self, draft: Draft<'_>) -> Result<Check, Error> {
+        self.material.check(&draft)?;
         Ok(Check {
+            authority: self.authority.clone(),
             proposal: draft.proposal.to_string(),
             base: draft.base.clone(),
             after: draft.after.clone(),
             touches: draft.touches.to_vec(),
         })
+    }
+
+    pub(crate) fn authority(&self) -> &GrantAuthority {
+        &self.authority
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        self.authority.coordinate()
+    }
+
+    pub(crate) fn policy(&self) -> &SurfacePolicyId {
+        self.authority.policy()
     }
 }
 
@@ -204,6 +334,7 @@ pub(crate) struct Draft<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Check {
+    authority: GrantAuthority,
     proposal: String,
     base: Ref,
     after: Ref,
@@ -222,6 +353,18 @@ impl Check {
             && &self.base == base
             && &self.after == after
             && self.touches == touches
+    }
+
+    pub(crate) fn authority(&self) -> &GrantAuthority {
+        &self.authority
+    }
+
+    pub(crate) fn coordinate(&self) -> &Coordinate {
+        self.authority.coordinate()
+    }
+
+    pub(crate) fn policy(&self) -> &SurfacePolicyId {
+        self.authority.policy()
     }
 
     pub(crate) fn into_parts(self) -> (Ref, Ref, Vec<Touch>) {
@@ -345,6 +488,16 @@ impl ObjectiveSpec {
     pub(crate) fn requested_candidates(&self) -> Option<usize> {
         self.requested_candidates
     }
+
+    fn surface_policy(&self) -> SurfacePolicyId {
+        match self.writable_intent {
+            WritableIntent::BroadEditableSurface => SurfacePolicyId::new("surface-policy:broad-v1"),
+            WritableIntent::ToolSurface => SurfacePolicyId::new("surface-policy:tool-surface-v1"),
+            WritableIntent::SemanticResolution => {
+                SurfacePolicyId::new("surface-policy:semantic-resolution-v1")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +534,19 @@ impl EditObjective {
 
     pub(crate) fn context_refs(&self) -> &[EvidenceRef] {
         &self.context_refs
+    }
+
+    fn grant_authority(&self, artifact: &Ref) -> Result<GrantAuthority, Error> {
+        GrantAuthority::new(
+            Coordinate {
+                runtime_id: RuntimeId(Uuid::nil()),
+                target: OperationTarget::Artifact {
+                    artifact_id: artifact.id().clone(),
+                },
+            },
+            self.spec.surface_policy(),
+            artifact,
+        )
     }
 }
 
@@ -420,7 +586,13 @@ impl EditableSurface {
                 .filter(|span| !protected_core.contains(span))
                 .cloned(),
         );
-        let grant = Grant::with_forbidden(artifact, graph, write, protected_core.forbidden)?;
+        let grant = Grant::for_objective_with_forbidden(
+            &objective,
+            artifact,
+            graph,
+            write,
+            protected_core.forbidden,
+        )?;
         Ok(Self { objective, grant })
     }
 
@@ -470,6 +642,15 @@ impl SurfaceRequest {
 pub(crate) enum Error {
     #[error("artifact identity did not match the granted surface")]
     ArtifactMismatch,
+    #[error(
+        "operation coordinate target artifact {coordinate_artifact} did not match granted artifact {grant_artifact}"
+    )]
+    CoordinateTargetMismatch {
+        grant_artifact: ArtifactId,
+        coordinate_artifact: ArtifactId,
+    },
+    #[error("surface grants only support artifact operation targets, got {target:?}")]
+    CoordinateTargetUnsupported { target: OperationTarget },
     #[error("graph bounds would widen the granted surface")]
     Widens,
     #[error("target is outside graph bounds: {0:?}")]

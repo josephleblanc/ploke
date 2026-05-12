@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use eframe::egui::{Color32, Vec2};
 use petgraph::{Directed, stable_graph::StableGraph};
-use ploke_records::branch::TreatmentBranchStatus;
+use ploke_records::ids::ArtifactId;
 use ploke_tree::Graph as DomainGraph;
 use ploke_tree::graph::{
-    ArtifactIdentity, ArtifactKey, ArtifactNode, CandidateBranchNode, CandidateNode,
-    HistoryBlockNode, SelectionNode,
+    ArtifactIdentity, ArtifactNode, CandidateBranchNode, CandidateNode, HistoryBlockNode,
+    SelectionNode,
 };
 
 use super::diagnostics::graph_diagnostics;
@@ -103,23 +103,21 @@ impl From<&DomainGraph> for GraphSignature {
 
 #[derive(Debug, Clone)]
 pub(super) enum GraphNode {
-    Artifact {
-        label: Arc<str>,
-        status: TreatmentBranchStatus,
-    },
-    Candidate {
-        label: Arc<str>,
-        status: TreatmentBranchStatus,
-    },
+    // egui_graphs owns widget payloads. These labels are render-only text; all
+    // semantic access stays in the borrowed GraphProjection before conversion.
+    Artifact { label: Arc<str>, color: Color32 },
+    Candidate { label: Arc<str>, color: Color32 },
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct GraphEdgePayload {
+    // Edge payloads are owned by egui_graphs; labels/colors/kinds here are
+    // render-only and must not be used as semantic graph authority.
     pub(super) label: Arc<str>,
+    pub(super) label_visible: bool,
     pub(super) color: Color32,
     pub(super) style: EdgeStyle,
     pub(super) kind: ViewEdgeKind,
-    pub(super) status: TreatmentBranchStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +127,7 @@ pub(super) enum ViewEdgeKind {
 }
 
 fn build_widget_graph(graph: &DomainGraph, style: ViewStyle) -> WidgetGraph {
-    match project_graph(graph) {
+    match project_graph(graph, style) {
         GraphProjection::ArtifactTree(view) => build_artifact_graph(view, style),
         GraphProjection::CandidateInventory(view) => build_candidate_inventory_graph(view, style),
     }
@@ -147,15 +145,16 @@ struct ArtifactTreeView<'g> {
 
 struct ArtifactViewNode<'g> {
     artifact: &'g ArtifactNode,
-    status: TreatmentBranchStatus,
+    color: Color32,
 }
 
 struct ArtifactEdge<'g> {
     parent: &'g ArtifactNode,
     child: &'g ArtifactNode,
     label: Arc<str>,
+    label_visible: bool,
     kind: ViewEdgeKind,
-    status: TreatmentBranchStatus,
+    color: Color32,
 }
 
 struct CandidateInventoryView<'g> {
@@ -164,24 +163,25 @@ struct CandidateInventoryView<'g> {
 
 struct CandidateViewNode<'g> {
     candidate: &'g CandidateNode,
-    status: TreatmentBranchStatus,
+    color: Color32,
 }
 
-fn project_graph(graph: &DomainGraph) -> GraphProjection<'_> {
-    let artifact_tree = project_artifact_branch_tree(graph);
+fn project_graph(graph: &DomainGraph, style: ViewStyle) -> GraphProjection<'_> {
+    let artifact_tree = project_artifact_branch_tree(graph, style);
     if !artifact_tree.artifacts.is_empty() {
         return GraphProjection::ArtifactTree(artifact_tree);
     }
 
-    let artifact_tree = project_history_artifact_tree(graph);
+    let artifact_tree = project_history_artifact_tree(graph, style);
     if !artifact_tree.artifacts.is_empty() {
         return GraphProjection::ArtifactTree(artifact_tree);
     }
 
-    GraphProjection::CandidateInventory(project_candidate_inventory(graph))
+    GraphProjection::CandidateInventory(project_candidate_inventory(graph, style))
 }
 
-fn project_artifact_branch_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
+fn project_artifact_branch_tree(graph: &DomainGraph, style: ViewStyle) -> ArtifactTreeView<'_> {
+    let passive_artifacts = passive_artifact_index(graph);
     let mut branches = graph.candidates.branches.iter().collect::<Vec<_>>();
     branches.sort_by(|left, right| {
         (
@@ -207,47 +207,68 @@ fn project_artifact_branch_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
             continue;
         };
 
-        let parent_key = ArtifactKey::PassiveId {
-            value: base_artifact_id.0.clone(),
-        };
-        let child_key = ArtifactKey::PassiveId {
-            value: derived_artifact_id.0.clone(),
-        };
-        let Some(parent) = graph.artifacts.artifacts.get(&parent_key) else {
+        let Some(parent) = passive_artifact(&passive_artifacts, base_artifact_id) else {
             continue;
         };
-        let Some(child) = graph.artifacts.artifacts.get(&child_key) else {
+        let Some(child) = passive_artifact(&passive_artifacts, derived_artifact_id) else {
             continue;
         };
 
-        let status = branch_status(graph, branch);
+        let branch_selected = branch_selected_by_graph(graph, branch);
+        let branch_color = if branch_selected {
+            style.edge.colors.selected
+        } else {
+            style.edge.colors.synthesized
+        };
         upsert_artifact(
             &mut artifacts,
             ArtifactViewNode {
                 artifact: parent,
-                status: TreatmentBranchStatus::Synthesized,
+                color: style.edge.colors.synthesized,
             },
+            style.edge.colors.selected,
         );
         upsert_artifact(
             &mut artifacts,
             ArtifactViewNode {
                 artifact: child,
-                status,
+                color: branch_color,
             },
+            style.edge.colors.selected,
         );
         edges.push(ArtifactEdge {
             parent,
             child,
             label: Arc::from(format!("P{}", index + 1)),
+            label_visible: false,
             kind: ViewEdgeKind::ArtifactPatch,
-            status,
+            color: branch_color,
         });
     }
 
     ArtifactTreeView { artifacts, edges }
 }
 
-fn project_history_artifact_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
+fn passive_artifact_index(graph: &DomainGraph) -> HashMap<&ArtifactId, &ArtifactNode> {
+    graph
+        .artifacts
+        .artifacts
+        .values()
+        .filter_map(|artifact| match &artifact.identity {
+            ArtifactIdentity::PassiveId(passive_id) => Some((passive_id, artifact)),
+            ArtifactIdentity::HistoryRef(_) => None,
+        })
+        .collect()
+}
+
+fn passive_artifact<'g>(
+    artifacts: &HashMap<&'g ArtifactId, &'g ArtifactNode>,
+    artifact_id: &ArtifactId,
+) -> Option<&'g ArtifactNode> {
+    artifacts.get(artifact_id).copied()
+}
+
+fn project_history_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ArtifactTreeView<'_> {
     let mut artifacts_by_history_ref = HashMap::new();
     for artifact in graph.artifacts.artifacts.values() {
         if let ArtifactIdentity::HistoryRef(history_ref) = &artifact.identity {
@@ -282,22 +303,25 @@ fn project_history_artifact_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
             &mut artifacts,
             ArtifactViewNode {
                 artifact: parent,
-                status: artifact_status(graph, parent),
+                color: artifact_color(graph, parent, style),
             },
+            style.edge.colors.selected,
         );
         upsert_artifact(
             &mut artifacts,
             ArtifactViewNode {
                 artifact: child,
-                status: artifact_status(graph, child),
+                color: artifact_color(graph, child, style),
             },
+            style.edge.colors.selected,
         );
         edges.push(ArtifactEdge {
             parent,
             child,
             label: Arc::from(format!("B{}", edge_block_height(block))),
+            label_visible: true,
             kind: ViewEdgeKind::HistoryArtifact,
-            status: TreatmentBranchStatus::Selected,
+            color: style.edge.colors.selected,
         });
     }
 
@@ -307,7 +331,7 @@ fn project_history_artifact_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
         for artifact in inventory {
             artifacts.push(ArtifactViewNode {
                 artifact,
-                status: artifact_status(graph, artifact),
+                color: artifact_color(graph, artifact, style),
             });
         }
     }
@@ -315,7 +339,7 @@ fn project_history_artifact_tree(graph: &DomainGraph) -> ArtifactTreeView<'_> {
     ArtifactTreeView { artifacts, edges }
 }
 
-fn artifact_status(graph: &DomainGraph, artifact: &ArtifactNode) -> TreatmentBranchStatus {
+fn artifact_color(graph: &DomainGraph, artifact: &ArtifactNode, style: ViewStyle) -> Color32 {
     if graph.history.blocks.values().any(|block| {
         matches!(
             &artifact.identity,
@@ -323,9 +347,9 @@ fn artifact_status(graph: &DomainGraph, artifact: &ArtifactNode) -> TreatmentBra
                 if history_ref.value == block.selected_successor.artifact.value
         )
     }) {
-        TreatmentBranchStatus::Selected
+        style.edge.colors.selected
     } else {
-        TreatmentBranchStatus::Synthesized
+        style.edge.colors.synthesized
     }
 }
 
@@ -333,33 +357,34 @@ fn edge_block_height(block: &HistoryBlockNode) -> u64 {
     block.block_height
 }
 
-fn upsert_artifact<'g>(artifacts: &mut Vec<ArtifactViewNode<'g>>, candidate: ArtifactViewNode<'g>) {
+fn upsert_artifact<'g>(
+    artifacts: &mut Vec<ArtifactViewNode<'g>>,
+    candidate: ArtifactViewNode<'g>,
+    selected_color: Color32,
+) {
     if let Some(existing) = artifacts
         .iter_mut()
         .find(|artifact| artifact.artifact.key == candidate.artifact.key)
     {
-        if existing.status != TreatmentBranchStatus::Selected
-            && candidate.status == TreatmentBranchStatus::Selected
-        {
-            existing.status = candidate.status;
+        if existing.color != selected_color && candidate.color == selected_color {
+            existing.color = candidate.color;
         }
         return;
     }
     artifacts.push(candidate);
 }
 
-fn branch_status(graph: &DomainGraph, branch: &CandidateBranchNode) -> TreatmentBranchStatus {
-    if graph.candidates.candidates.iter().any(|candidate| {
+fn branch_selected_by_graph(graph: &DomainGraph, branch: &CandidateBranchNode) -> bool {
+    graph.candidates.candidates.iter().any(|candidate| {
         candidate.branch_id.as_deref() == Some(branch.branch_id.as_str())
-            && candidate_status(graph, candidate) == TreatmentBranchStatus::Selected
-    }) {
-        TreatmentBranchStatus::Selected
-    } else {
-        TreatmentBranchStatus::Synthesized
-    }
+            && candidate_selected_by_graph(graph, candidate)
+    })
 }
 
-fn project_candidate_inventory(graph: &DomainGraph) -> CandidateInventoryView<'_> {
+fn project_candidate_inventory(
+    graph: &DomainGraph,
+    style: ViewStyle,
+) -> CandidateInventoryView<'_> {
     let mut candidates = graph.candidates.candidates.iter().collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         (&left.selection_entry_id.0, left.payload_index)
@@ -370,27 +395,31 @@ fn project_candidate_inventory(graph: &DomainGraph) -> CandidateInventoryView<'_
         candidates: candidates
             .into_iter()
             .map(|candidate| CandidateViewNode {
-                status: candidate_status(graph, candidate),
+                color: candidate_color(graph, candidate, style),
                 candidate,
             })
             .collect(),
     }
 }
 
-fn candidate_status(graph: &DomainGraph, candidate: &CandidateNode) -> TreatmentBranchStatus {
+fn candidate_color(graph: &DomainGraph, candidate: &CandidateNode, style: ViewStyle) -> Color32 {
+    if candidate_selected_by_graph(graph, candidate) {
+        style.edge.colors.selected
+    } else {
+        style.edge.colors.synthesized
+    }
+}
+
+fn candidate_selected_by_graph(graph: &DomainGraph, candidate: &CandidateNode) -> bool {
     let Some(selection) = graph
         .selections
         .selections
         .get(&candidate.selection_entry_id)
     else {
-        return TreatmentBranchStatus::Synthesized;
+        return false;
     };
 
-    if candidate_selected(selection, candidate) {
-        TreatmentBranchStatus::Selected
-    } else {
-        TreatmentBranchStatus::Synthesized
-    }
+    candidate_selected(selection, candidate)
 }
 
 fn candidate_selected(selection: &SelectionNode, candidate: &CandidateNode) -> bool {
@@ -428,7 +457,7 @@ fn build_artifact_graph(view: ArtifactTreeView<'_>, style: ViewStyle) -> WidgetG
     for artifact in view.artifacts {
         let index = raw.add_node(GraphNode::Artifact {
             label: Arc::from(artifact_label(artifact.artifact, style)),
-            status: artifact.status,
+            color: artifact.color,
         });
         index_by_artifact.insert(artifact.artifact as *const ArtifactNode, index);
     }
@@ -451,10 +480,10 @@ fn build_artifact_graph(view: ArtifactTreeView<'_>, style: ViewStyle) -> WidgetG
             child,
             GraphEdgePayload {
                 label: edge.label,
-                color: style.edge.colors.color(edge.status),
+                label_visible: edge.label_visible,
+                color: edge.color,
                 style: style.edge,
                 kind: edge.kind,
-                status: edge.status,
             },
         );
     }
@@ -471,7 +500,7 @@ fn build_candidate_inventory_graph(
     for (index, candidate) in view.candidates.into_iter().enumerate() {
         raw.add_node(GraphNode::Candidate {
             label: Arc::from(candidate_label(candidate.candidate, index)),
-            status: candidate.status,
+            color: candidate.color,
         });
     }
 
@@ -506,7 +535,7 @@ fn to_widget_graph(raw: &RawGraph, style: ViewStyle) -> WidgetGraph {
     egui_graphs::to_graph_custom(
         raw,
         |node: &mut WidgetNode| {
-            let visual = NodeVisual::from_node(node.payload(), style);
+            let visual = NodeVisual::from_node(node.payload());
             node.set_label(visual.label);
             if let Some(color) = visual.color {
                 node.set_color(color);
@@ -523,21 +552,19 @@ struct NodeVisual {
 }
 
 impl NodeVisual {
-    fn from_node(node: &GraphNode, style: ViewStyle) -> Self {
+    fn from_node(node: &GraphNode) -> Self {
         match node {
-            GraphNode::Artifact { label, status } | GraphNode::Candidate { label, status } => {
-                Self {
-                    label: label.to_string(),
-                    color: Some(style.edge.colors.color(*status)),
-                }
-            }
+            GraphNode::Artifact { label, color } | GraphNode::Candidate { label, color } => Self {
+                label: label.to_string(),
+                color: Some(*color),
+            },
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, ptr};
 
     use ploke_records::history::{
         ActorRefRecord, ArtifactRefRecord, ProcedureRefRecord, SurfaceCommitmentRecord,
@@ -555,12 +582,13 @@ mod tests {
     use ploke_tree::graph::{CandidateBranchNode, CandidateSource};
 
     use super::{GraphProjection, project_graph};
+    use crate::ui::view::ViewStyle;
 
     #[test]
     fn projection_prefers_artifact_branch_tree_when_branch_derivation_exists() {
         let graph = graph_with_artifact_branch();
 
-        match project_graph(&graph) {
+        match project_graph(&graph, ViewStyle::default()) {
             GraphProjection::ArtifactTree(view) => {
                 assert_eq!(view.artifacts.len(), 2);
                 assert_eq!(view.edges.len(), 1);
@@ -573,10 +601,48 @@ mod tests {
     }
 
     #[test]
+    fn projection_borrows_branch_artifact_nodes_from_graph() {
+        let graph = graph_with_artifact_branch();
+        let branch = graph.candidates.branches.first().expect("branch fixture");
+        let parent_id = branch
+            .base_artifact_id
+            .as_ref()
+            .expect("base artifact fixture");
+        let child_id = branch
+            .derived_artifact_id
+            .as_ref()
+            .expect("derived artifact fixture");
+        let passive_artifacts = super::passive_artifact_index(&graph);
+        let parent =
+            super::passive_artifact(&passive_artifacts, parent_id).expect("parent artifact");
+        let child = super::passive_artifact(&passive_artifacts, child_id).expect("child artifact");
+
+        match project_graph(&graph, ViewStyle::default()) {
+            GraphProjection::ArtifactTree(view) => {
+                assert!(
+                    view.artifacts
+                        .iter()
+                        .any(|node| ptr::eq(node.artifact, parent))
+                );
+                assert!(
+                    view.artifacts
+                        .iter()
+                        .any(|node| ptr::eq(node.artifact, child))
+                );
+                assert!(ptr::eq(view.edges[0].parent, parent));
+                assert!(ptr::eq(view.edges[0].child, child));
+            }
+            GraphProjection::CandidateInventory(_) => {
+                panic!("artifact branch view should borrow graph artifact nodes")
+            }
+        }
+    }
+
+    #[test]
     fn projection_falls_back_to_history_artifact_tree_when_branch_derivation_is_absent() {
         let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
 
-        match project_graph(&graph) {
+        match project_graph(&graph, ViewStyle::default()) {
             GraphProjection::ArtifactTree(view) => {
                 assert_eq!(view.artifacts.len(), 2);
                 assert_eq!(view.edges.len(), 1);
@@ -614,7 +680,7 @@ mod tests {
                 evidence: Vec::new(),
             });
 
-        match project_graph(&graph) {
+        match project_graph(&graph, ViewStyle::default()) {
             GraphProjection::CandidateInventory(view) => {
                 assert_eq!(view.candidates.len(), 1);
             }

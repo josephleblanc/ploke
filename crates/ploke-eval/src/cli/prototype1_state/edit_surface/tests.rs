@@ -11,7 +11,7 @@ use tokio::time::{Duration, Instant, sleep, timeout};
 use uuid::Uuid;
 
 use crate::cli::prototype1_state::history::EvidenceRef;
-use crate::loop_graph::ArtifactId;
+use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::{diagnosis, graph, harness, request_policy, surface, tui};
 use graph::View;
@@ -23,6 +23,36 @@ fn href(value: &str) -> surface::Hash {
 
 fn aref(id: &str, hash: &str) -> surface::Ref {
     surface::Ref::new(ArtifactId::new(id), href(hash))
+}
+
+fn surface_policy(value: &str) -> surface::SurfacePolicyId {
+    surface::SurfacePolicyId::new(value)
+}
+
+fn artifact_coordinate(runtime: RuntimeId, artifact_id: ArtifactId) -> Coordinate {
+    Coordinate {
+        runtime_id: runtime,
+        target: OperationTarget::Artifact { artifact_id },
+    }
+}
+
+fn granted_coordinate(artifact: &surface::Artifact) -> Coordinate {
+    artifact_coordinate(RuntimeId(Uuid::nil()), artifact.reference().id().clone())
+}
+
+fn granted_surface(
+    artifact: &surface::Artifact,
+    bounds: graph::Bounds,
+    write: surface::Area,
+) -> surface::Grant {
+    surface::Grant::for_coordinate(
+        granted_coordinate(artifact),
+        surface_policy("surface-policy:test-grant-v1"),
+        artifact.reference().clone(),
+        bounds,
+        write,
+    )
+    .expect("grant")
 }
 
 fn target(name: &str) -> graph::Target {
@@ -145,6 +175,14 @@ fn broad_surface_admits_writable_touch_outside_protected_core() {
         surface::ProtectedCore::new([child_span]),
     )
     .expect("editable surface");
+    assert_eq!(
+        editable.grant().coordinate(),
+        &granted_coordinate(&artifact)
+    );
+    assert_eq!(
+        editable.grant().policy().as_str(),
+        "surface-policy:broad-v1"
+    );
     let touch = surface::Touch::new(sibling_span, "fn sibling() {}");
 
     let check = editable
@@ -156,6 +194,8 @@ fn broad_surface_admits_writable_touch_outside_protected_core() {
             touches: &[touch],
         })
         .expect("touch outside protected core should pass");
+    assert_eq!(check.coordinate(), &granted_coordinate(&artifact));
+    assert_eq!(check.policy().as_str(), "surface-policy:broad-v1");
 
     let (base, after, touches) = check.into_parts();
     assert_eq!(base, artifact.reference().clone());
@@ -361,6 +401,14 @@ fn surface_request_admits_parent_context_into_broad_surface() {
         ]
     );
     assert_eq!(editable.objective().spec().requested_candidates(), Some(1));
+    assert_eq!(
+        editable.grant().coordinate(),
+        &granted_coordinate(&artifact)
+    );
+    assert_eq!(
+        editable.grant().policy().as_str(),
+        "surface-policy:semantic-resolution-v1"
+    );
 
     let allowed = surface::Touch::new(sibling_span, "fn sibling() {}");
     editable
@@ -612,8 +660,8 @@ fn material_span_outside_writable_surface_fails() {
     let allowed = graph
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         bounds,
         surface::Area::new([graph::Span::new(
             child.clone(),
@@ -622,8 +670,7 @@ fn material_span_outside_writable_surface_fails() {
             20,
             href("file:lib:v1"),
         )]),
-    )
-    .expect("grant");
+    );
     let touch = surface::Touch::new(allowed, "replacement");
     let err = grant
         .check(surface::Draft {
@@ -647,8 +694,8 @@ fn expected_file_hash_mismatch_fails() {
     let resolved = graph
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         bounds,
         surface::Area::new([graph::Span::new(
             child,
@@ -657,8 +704,7 @@ fn expected_file_hash_mismatch_fails() {
             40,
             href("file:lib:changed"),
         )]),
-    )
-    .expect("grant");
+    );
     let touch = surface::Touch::new(resolved.clone(), "replacement");
     let err = grant
         .check(surface::Draft {
@@ -697,12 +743,7 @@ fn valid_proposal_produces_artifact_delta_result() {
         .graph()
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
-        bounds,
-        surface::Area::new([resolved.clone()]),
-    )
-    .expect("grant");
+    let grant = granted_surface(&artifact, bounds, surface::Area::new([resolved.clone()]));
     let after = aref("artifact:after", "tree:after");
     let touch = surface::Touch::new(resolved, "fn child() {}");
     let (proposal, _run) = harness
@@ -740,12 +781,7 @@ fn checked_apply_rejects_mismatch() {
         .graph()
         .resolve(&projection, &bounds, &child)
         .expect("resolve child");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
-        bounds,
-        surface::Area::new([resolved.clone()]),
-    )
-    .expect("grant");
+    let grant = granted_surface(&artifact, bounds, surface::Area::new([resolved.clone()]));
     let after = aref("artifact:after", "tree:after");
     let touch = surface::Touch::new(resolved, "fn child() {}");
     let (proposal, _run) = harness
@@ -794,17 +830,18 @@ fn parent_ancestor_rules_can_narrow_but_not_widen_grant() {
     let child_span = graph
         .resolve(&projection, &initial, &child)
         .expect("resolve child");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         initial,
         surface::Area::new([root_span, child_span]),
-    )
-    .expect("grant");
+    );
 
     let ancestors = graph
         .bounds(&projection, &[graph::Rule::Ancestors(child)])
         .expect("ancestor bounds");
     let narrowed = grant.narrow(ancestors).expect("ancestor narrowing");
+    assert_eq!(narrowed.coordinate(), grant.coordinate());
+    assert_eq!(narrowed.policy(), grant.policy());
     let sibling_descendants = graph
         .bounds(&projection, &[graph::Rule::Descendants(root)])
         .expect("descendant bounds");
@@ -814,6 +851,89 @@ fn parent_ancestor_rules_can_narrow_but_not_widen_grant() {
 
     assert!(matches!(widened, surface::Error::Widens));
     assert!(projection.span(&sibling).is_some());
+}
+
+#[test]
+fn coordinate_target_artifact_mismatch_is_rejected() {
+    let (artifact, graph, _, child, _) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(&projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let resolved = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve child");
+    let coordinate = artifact_coordinate(
+        RuntimeId(Uuid::from_u128(1)),
+        ArtifactId::new("artifact:other"),
+    );
+
+    let err = surface::Grant::for_coordinate(
+        coordinate,
+        surface_policy("surface-policy:broad-v1"),
+        artifact.reference().clone(),
+        bounds,
+        surface::Area::new([resolved]),
+    )
+    .expect_err("coordinate target artifact mismatch must fail");
+
+    assert!(matches!(
+        err,
+        surface::Error::CoordinateTargetMismatch {
+            grant_artifact,
+            coordinate_artifact,
+        } if grant_artifact == ArtifactId::new("artifact:base")
+            && coordinate_artifact == ArtifactId::new("artifact:other")
+    ));
+}
+
+#[test]
+fn accepted_coordinate_grants_expose_coordinate_and_policy() {
+    let (artifact, graph, _, child, _) = fixture();
+    let projection = graph.project(&artifact).expect("project artifact");
+    let bounds = graph
+        .bounds(&projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let resolved = graph
+        .resolve(&projection, &bounds, &child)
+        .expect("resolve child");
+    let coordinate = artifact_coordinate(
+        RuntimeId(Uuid::from_u128(2)),
+        artifact.reference().id().clone(),
+    );
+    let policy = surface_policy("surface-policy:semantic-resolution-v1");
+
+    let grant = surface::Grant::for_coordinate(
+        coordinate.clone(),
+        policy.clone(),
+        artifact.reference().clone(),
+        bounds,
+        surface::Area::new([resolved.clone()]),
+    )
+    .expect("grant");
+
+    assert_eq!(grant.coordinate(), &coordinate);
+    assert_eq!(grant.policy(), &policy);
+    assert_eq!(
+        grant.policy().as_str(),
+        "surface-policy:semantic-resolution-v1"
+    );
+
+    let check = grant
+        .check(surface::Draft {
+            proposal: "proposal:authority-carrying-grant",
+            base: artifact.reference(),
+            after: &aref("artifact:after", "tree:after"),
+            touches: &[surface::Touch::new(resolved, "fn child() {}")],
+        })
+        .expect("surface check");
+    assert_eq!(check.coordinate(), &coordinate);
+    assert_eq!(check.policy(), &policy);
+
+    let (base, after, touches) = check.into_parts();
+    assert_eq!(base, artifact.reference().clone());
+    assert_eq!(after, aref("artifact:after", "tree:after"));
+    assert_eq!(touches.len(), 1);
 }
 
 #[test]
@@ -1123,12 +1243,11 @@ fn tui_apply_evidence_is_all_applied_or_rejected() {
             "fn sibling() {}",
         )
         .expect("sibling touch");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new([child_touch.span().clone(), sibling_touch.span().clone()]),
-    )
-    .expect("grant");
+    );
     let proposal = tui::Proposal::stage(tui::Stage {
         proposal: "proposal:apply",
         run: "run:apply",
@@ -1189,12 +1308,11 @@ fn tui_apply_wrong_after_artifact_hash_fails() {
             "fn child() {}",
         )
         .expect("touch");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new([touch.span().clone()]),
-    )
-    .expect("grant");
+    );
     let proposal = tui::Proposal::stage(tui::Stage {
         proposal: "proposal:apply",
         run: "run:apply",
@@ -1251,12 +1369,11 @@ fn tui_apply_wrong_touched_after_hash_fails() {
             "fn child() {}",
         )
         .expect("touch");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new([touch.span().clone()]),
-    )
-    .expect("grant");
+    );
     let after = aref("artifact:after", "tree:after");
     let proposal = tui::Proposal::stage(tui::Stage {
         proposal: "proposal:apply",
@@ -1321,12 +1438,11 @@ fn tui_apply_valid_after_artifact_validation_produces_delta() {
             "fn child() {}",
         )
         .expect("touch");
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new([touch.span().clone()]),
-    )
-    .expect("grant");
+    );
     let after = aref("artifact:after", "tree:after");
     let proposal = tui::Proposal::stage(tui::Stage {
         proposal: "proposal:apply",
@@ -1465,12 +1581,11 @@ async fn real_tui_resolver_touch_is_checked_before_adapter_apply() {
         .touches(&artifact, std::slice::from_ref(&expected_target), &writes)
         .expect("lower resolved writes");
     let touches = resolved.into_vec();
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new(touches.iter().map(|touch| touch.span().clone())),
-    )
-    .expect("grant");
+    );
     let harness = harness::Mock::new(graph);
     let after = aref("artifact:after", "tree:after");
     let (proposal, _run) = harness
@@ -1758,12 +1873,11 @@ Use exactly this JSON payload:
         )
         .expect("eval lowers live TUI writes into checked touches");
     let touches = resolved.into_vec();
-    let grant = surface::Grant::new(
-        artifact.reference().clone(),
+    let grant = granted_surface(
+        &artifact,
         graph_bounds,
         surface::Area::new(touches.iter().map(|touch| touch.span().clone())),
-    )
-    .expect("grant");
+    );
 
     let objective = surface::EditObjective::new(
         broad_objective_spec("live ploke-tui semantic edit proposal through Router"),

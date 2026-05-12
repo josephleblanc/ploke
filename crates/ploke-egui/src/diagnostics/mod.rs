@@ -84,10 +84,13 @@ pub struct Snapshot {
     pub long_edge_count: usize,
     pub backtracking_edge_count: usize,
     pub selected_path_crossings: usize,
+    pub findings: Vec<SnapshotFinding>,
 }
 
 impl Snapshot {
     fn from_diagnostics(sequence: u64, diagnostics: GraphViewDiagnostics) -> Self {
+        let findings = ranked_findings(&diagnostics);
+
         Self {
             schema_version: SNAPSHOT_VERSION.to_owned(),
             sequence,
@@ -105,31 +108,180 @@ impl Snapshot {
             edge_label_edge_collisions: diagnostics.edge_labels.edge_collision_count,
             edge_edge_crossings: diagnostics.readability.edge_edge_crossings,
             edge_crossings_by_kind: CrossingKinds {
+                artifact_artifact: diagnostics
+                    .readability
+                    .edge_crossings_by_kind
+                    .artifact_artifact,
                 candidate_candidate: diagnostics
                     .readability
                     .edge_crossings_by_kind
                     .candidate_candidate,
-                candidate_history: diagnostics
-                    .readability
-                    .edge_crossings_by_kind
-                    .candidate_history,
-                history_history: diagnostics
-                    .readability
-                    .edge_crossings_by_kind
-                    .history_history,
+                mixed: diagnostics.readability.edge_crossings_by_kind.mixed,
             },
             long_edge_count: diagnostics.readability.long_edge_count,
             backtracking_edge_count: diagnostics.readability.backtracking_edge_count,
             selected_path_crossings: diagnostics.readability.selected_path_crossings,
+            findings,
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotFinding {
+    pub severity: FindingSeverity,
+    pub title: String,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FindingSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+}
+
+fn ranked_findings(diagnostics: &GraphViewDiagnostics) -> Vec<SnapshotFinding> {
+    let mut findings = Vec::new();
+
+    let aspect_mismatch = diagnostics.aspect_ratio / diagnostics.viewport_aspect_ratio.max(0.01);
+    if diagnostics.fitted_fill.y < 0.15 || aspect_mismatch > 6.0 {
+        findings.push(SnapshotFinding {
+            severity: FindingSeverity::High,
+            title: "Graph composition collapses into a thin horizontal strip.".to_owned(),
+            evidence: vec![
+                format!("graph aspect ratio: {:.2}", diagnostics.aspect_ratio),
+                format!(
+                    "viewport aspect ratio: {:.2}",
+                    diagnostics.viewport_aspect_ratio
+                ),
+                format!(
+                    "fitted vertical fill: {:.0}%",
+                    diagnostics.fitted_fill.y * 100.0
+                ),
+            ],
+        });
+    }
+
+    if diagnostics.readability.selected_path_crossings > 0 {
+        findings.push(SnapshotFinding {
+            severity: if diagnostics.readability.selected_path_crossings >= 4 {
+                FindingSeverity::High
+            } else {
+                FindingSeverity::Medium
+            },
+            title: "Primary lineage is crossed by other edges.".to_owned(),
+            evidence: vec![format!(
+                "selected path crossings: {}",
+                diagnostics.readability.selected_path_crossings
+            )],
+        });
+    }
+
+    if diagnostics.edge_labels.collision_count > 0
+        || diagnostics.edge_labels.edge_collision_count > 0
+        || diagnostics.edge_labels.edge_intersection_count > 0
+    {
+        findings.push(SnapshotFinding {
+            severity: if diagnostics.edge_labels.collision_count
+                + diagnostics.edge_labels.edge_collision_count
+                + diagnostics.edge_labels.edge_intersection_count
+                >= 6
+            {
+                FindingSeverity::High
+            } else {
+                FindingSeverity::Medium
+            },
+            title: "Edge labels compete with nearby graph geometry.".to_owned(),
+            evidence: vec![
+                format!(
+                    "label collisions: {}",
+                    diagnostics.edge_labels.collision_count
+                ),
+                format!(
+                    "edge intersections: {}",
+                    diagnostics.edge_labels.edge_intersection_count
+                ),
+                format!(
+                    "edge collisions: {}",
+                    diagnostics.edge_labels.edge_collision_count
+                ),
+            ],
+        });
+    }
+
+    if diagnostics.readability.edge_edge_crossings > 0 {
+        findings.push(SnapshotFinding {
+            severity: if diagnostics.readability.edge_edge_crossings >= 8 {
+                FindingSeverity::High
+            } else {
+                FindingSeverity::Medium
+            },
+            title: "Edge crossings reduce graph scanability.".to_owned(),
+            evidence: vec![
+                format!(
+                    "edge crossings: {}",
+                    diagnostics.readability.edge_edge_crossings
+                ),
+                format!(
+                    "artifact/artifact crossings: {}",
+                    diagnostics
+                        .readability
+                        .edge_crossings_by_kind
+                        .artifact_artifact
+                ),
+                format!(
+                    "mixed crossings: {}",
+                    diagnostics.readability.edge_crossings_by_kind.mixed
+                ),
+            ],
+        });
+    }
+
+    if diagnostics.readability.long_edge_count > 0 {
+        findings.push(SnapshotFinding {
+            severity: if diagnostics.readability.long_edge_count >= 4 {
+                FindingSeverity::Medium
+            } else {
+                FindingSeverity::Low
+            },
+            title: "Long edges make local relationships harder to follow.".to_owned(),
+            evidence: vec![format!(
+                "long edges: {}",
+                diagnostics.readability.long_edge_count
+            )],
+        });
+    }
+
+    if diagnostics.readability.backtracking_edge_count > 0 {
+        findings.push(SnapshotFinding {
+            severity: if diagnostics.readability.backtracking_edge_count >= 3 {
+                FindingSeverity::Medium
+            } else {
+                FindingSeverity::Low
+            },
+            title: "Backtracking edges weaken top-down task flow.".to_owned(),
+            evidence: vec![format!(
+                "backtracking edges: {}",
+                diagnostics.readability.backtracking_edge_count
+            )],
+        });
+    }
+
+    findings.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    findings
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrossingKinds {
+    pub artifact_artifact: usize,
     pub candidate_candidate: usize,
-    pub candidate_history: usize,
-    pub history_history: usize,
+    pub mixed: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -144,5 +296,112 @@ impl From<Vec2> for Pair {
             x: value.x,
             y: value.y,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::Vec2;
+
+    use super::*;
+    use crate::ui::view::{EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphReadabilityDiagnostics};
+
+    #[test]
+    fn snapshot_findings_are_ranked_by_severity() {
+        let snapshot = Snapshot::from_diagnostics(
+            1,
+            GraphViewDiagnostics {
+                node_count: 4,
+                graph_size: Vec2::new(400.0, 300.0),
+                viewport_size: Vec2::new(800.0, 600.0),
+                aspect_ratio: 1.33,
+                viewport_aspect_ratio: 1.33,
+                fitted_size: Vec2::new(600.0, 450.0),
+                fitted_fill: Vec2::new(0.75, 0.75),
+                center_offset: Vec2::ZERO,
+                edge_labels: EdgeLabelDiagnostics {
+                    label_count: 6,
+                    collision_count: 5,
+                    edge_intersection_count: 1,
+                    edge_collision_count: 0,
+                },
+                readability: GraphReadabilityDiagnostics {
+                    edge_edge_crossings: 3,
+                    edge_crossings_by_kind: EdgeCrossingsByKind {
+                        artifact_artifact: 1,
+                        candidate_candidate: 0,
+                        mixed: 2,
+                    },
+                    long_edge_count: 1,
+                    backtracking_edge_count: 0,
+                    selected_path_crossings: 5,
+                },
+            },
+        );
+
+        let severities: Vec<_> = snapshot
+            .findings
+            .iter()
+            .map(|finding| finding.severity)
+            .collect();
+        assert_eq!(
+            severities,
+            vec![
+                FindingSeverity::High,
+                FindingSeverity::High,
+                FindingSeverity::Medium,
+                FindingSeverity::Low
+            ]
+        );
+        assert_eq!(
+            snapshot.findings[0].title,
+            "Edge labels compete with nearby graph geometry."
+        );
+    }
+
+    #[test]
+    fn clean_snapshot_has_no_findings() {
+        let snapshot = Snapshot::from_diagnostics(
+            1,
+            GraphViewDiagnostics {
+                node_count: 1,
+                graph_size: Vec2::new(100.0, 100.0),
+                viewport_size: Vec2::new(200.0, 200.0),
+                aspect_ratio: 1.0,
+                viewport_aspect_ratio: 1.0,
+                fitted_size: Vec2::new(100.0, 100.0),
+                fitted_fill: Vec2::new(0.5, 0.5),
+                center_offset: Vec2::ZERO,
+                edge_labels: EdgeLabelDiagnostics::default(),
+                readability: GraphReadabilityDiagnostics::default(),
+            },
+        );
+
+        assert!(snapshot.findings.is_empty());
+    }
+
+    #[test]
+    fn thin_horizontal_composition_is_high_severity() {
+        let snapshot = Snapshot::from_diagnostics(
+            1,
+            GraphViewDiagnostics {
+                node_count: 31,
+                graph_size: Vec2::new(7790.0, 282.0),
+                viewport_size: Vec2::new(674.0, 584.0),
+                aspect_ratio: 27.6,
+                viewport_aspect_ratio: 1.15,
+                fitted_size: Vec2::new(552.0, 20.0),
+                fitted_fill: Vec2::new(0.82, 0.034),
+                center_offset: Vec2::ZERO,
+                edge_labels: EdgeLabelDiagnostics::default(),
+                readability: GraphReadabilityDiagnostics::default(),
+            },
+        );
+
+        assert_eq!(snapshot.findings[0].severity, FindingSeverity::High);
+        assert_eq!(
+            snapshot.findings[0].title,
+            "Graph composition collapses into a thin horizontal strip."
+        );
     }
 }
