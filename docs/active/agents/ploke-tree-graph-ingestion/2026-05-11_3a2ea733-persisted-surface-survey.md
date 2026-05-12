@@ -330,7 +330,7 @@ first-class `RunRecordSet` inputs:
 | `llm-full-responses.jsonl` | provider response evidence | locate writer/type before loader |
 | `prototype1_observation_*.jsonl` | observation/retry/timeout projections | locate writer/type before loader |
 | `prototype1-loop-trace.json` | legacy trace projection | do not use as source unless reauthorized |
-| `agent-turn-summary.json`, `agent-turn-trace.json` | turn-level observability | add typed owner/loader, then graph turn evidence |
+| `agent-turn-summary.json`, `agent-turn-trace.json` | turn-level observability | done for typed owner, direct run-root loader, and passive graph evidence; remaining issue is canonical passive tool transport ownership |
 | `protocol-artifacts/<name>.json` | protocol evidence | already has writer; align configured directory with run/campaign discovery |
 | model/provider/target registry and dataset cache files | run environment context | graph metadata only when tied to a concrete run |
 
