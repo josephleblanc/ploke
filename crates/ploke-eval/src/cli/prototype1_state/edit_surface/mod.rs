@@ -10,6 +10,7 @@
 pub(crate) mod diagnosis;
 pub(crate) mod graph;
 pub(crate) mod harness;
+pub(crate) mod harness_request;
 pub(crate) mod request_policy;
 pub(crate) mod route;
 pub(crate) mod surface;

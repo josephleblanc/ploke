@@ -574,7 +574,8 @@ pub enum Prototype1TraversalMetrics {
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1CandidateGenerator {
     Legacy,
-    TuiEditSurface,
+    BroadHarness,
+    DeterministicTuiTools,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -631,12 +632,8 @@ pub struct Prototype1StateCommand {
     pub successor_selection_metrics: Prototype1TraversalMetrics,
 
     /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::TuiEditSurface)]
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarness)]
     pub candidate_generator: Prototype1CandidateGenerator,
-
-    /// Bounded edit surface used by edit-surface candidate generation.
-    #[arg(long, value_enum, default_value_t = Prototype1EditSurface::WorkspaceExceptPlokeEval)]
-    pub edit_surface: Prototype1EditSurface,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -12710,9 +12707,7 @@ mod tests {
             "--stop-after",
             "build",
             "--candidate-generator",
-            "tui-edit-surface",
-            "--edit-surface",
-            "workspace-except-ploke-eval",
+            "broad-harness",
         ])
         .expect("loop prototype1-state should parse");
 
@@ -12729,11 +12724,7 @@ mod tests {
                 assert_eq!(cmd.stop_after, Prototype1StateStopAfter::Build);
                 assert_eq!(
                     cmd.candidate_generator,
-                    Prototype1CandidateGenerator::TuiEditSurface
-                );
-                assert_eq!(
-                    cmd.edit_surface,
-                    Prototype1EditSurface::WorkspaceExceptPlokeEval
+                    Prototype1CandidateGenerator::BroadHarness
                 );
             }
             other => panic!("unexpected command shape: {:?}", other),
@@ -12770,7 +12761,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_prototype1_state_candidate_generator_defaults_to_tui_edit_surface() {
+    fn loop_prototype1_state_candidate_generator_defaults_to_broad_harness_surface() {
         let parsed = Cli::try_parse_from(["ploke-eval", "loop", "prototype1-state"])
             .expect("loop prototype1-state should parse with generator defaults");
 
@@ -12780,11 +12771,7 @@ mod tests {
             }) => {
                 assert_eq!(
                     cmd.candidate_generator,
-                    Prototype1CandidateGenerator::TuiEditSurface
-                );
-                assert_eq!(
-                    cmd.edit_surface,
-                    Prototype1EditSurface::WorkspaceExceptPlokeEval
+                    Prototype1CandidateGenerator::BroadHarness
                 );
             }
             other => panic!("unexpected command shape: {:?}", other),

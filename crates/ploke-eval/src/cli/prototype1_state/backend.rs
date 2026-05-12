@@ -27,6 +27,10 @@ use super::history::{
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
 pub(crate) const EVAL_CORE_SURFACE_ROOT: &str = "crates/ploke-eval";
+// This list is the ploke-eval-owned authority boundary for
+// WorkspaceExceptPlokeEval. Ordinary child edits that touch these surfaces are
+// expected to be rejected before admission or to prevent the child process from
+// becoming a valid descendant.
 const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
     EVAL_CORE_SURFACE_ROOT,
     ".ploke",

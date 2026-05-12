@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     cli::{
-        Prototype1CandidateGenerator, Prototype1EditSurface, Prototype1StateStopAfter,
-        Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+        Prototype1CandidateGenerator, Prototype1StateStopAfter, Prototype1SuccessorSelection,
+        Prototype1TraversalMetrics,
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1SearchPolicy},
     layout::ploke_eval_home,
@@ -134,39 +134,19 @@ impl Default for Search {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Generation {
     pub(crate) source: GenerationSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) surface: Option<GenerationSurface>,
 }
 
 impl Generation {
     fn validate(self) -> Result<(), PrepareError> {
-        match (self.source, self.surface) {
-            (GenerationSource::Legacy, None) => Ok(()),
-            (GenerationSource::Legacy, Some(_)) => Err(profile_error(
-                "profile generation.surface is only valid when generation.source = 'edit-surface'",
-            )),
-            (GenerationSource::EditSurface, Some(_)) => Ok(()),
-            (GenerationSource::EditSurface, None) => Err(profile_error(
-                "profile generation.source = 'edit-surface' requires generation.surface",
-            )),
-        }
+        Ok(())
     }
 
     pub(crate) fn candidate_generator(self) -> Prototype1CandidateGenerator {
         match self.source {
             GenerationSource::Legacy => Prototype1CandidateGenerator::Legacy,
-            GenerationSource::EditSurface => Prototype1CandidateGenerator::TuiEditSurface,
-        }
-    }
-
-    pub(crate) fn edit_surface(self) -> Prototype1EditSurface {
-        match self
-            .surface
-            .unwrap_or(GenerationSurface::WorkspaceExceptPlokeEval)
-        {
-            GenerationSurface::PlokeTuiTools => Prototype1EditSurface::PlokeTuiTools,
-            GenerationSurface::WorkspaceExceptPlokeEval => {
-                Prototype1EditSurface::WorkspaceExceptPlokeEval
+            GenerationSource::BroadHarness => Prototype1CandidateGenerator::BroadHarness,
+            GenerationSource::DeterministicTuiTools => {
+                Prototype1CandidateGenerator::DeterministicTuiTools
             }
         }
     }
@@ -175,8 +155,7 @@ impl Generation {
 impl Default for Generation {
     fn default() -> Self {
         Self {
-            source: GenerationSource::EditSurface,
-            surface: Some(GenerationSurface::WorkspaceExceptPlokeEval),
+            source: GenerationSource::BroadHarness,
         }
     }
 }
@@ -185,14 +164,8 @@ impl Default for Generation {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum GenerationSource {
     Legacy,
-    EditSurface,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum GenerationSurface {
-    PlokeTuiTools,
-    WorkspaceExceptPlokeEval,
+    BroadHarness,
+    DeterministicTuiTools,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -522,8 +495,7 @@ require_keep_for_continuation = false
 explore_from_rejected = true
 
 [generation]
-source = "edit-surface"
-surface = "workspace-except-ploke-eval"
+source = "broad-harness"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -542,7 +514,7 @@ debug_tools = true
 
         assert_eq!(
             profile.generation.candidate_generator(),
-            Prototype1CandidateGenerator::TuiEditSurface
+            Prototype1CandidateGenerator::BroadHarness
         );
         assert_eq!(
             profile.selection.traversal_metrics(),
@@ -555,6 +527,16 @@ debug_tools = true
         assert_eq!(
             profile.execution.state_stop_after(),
             Prototype1StateStopAfter::Complete
+        );
+    }
+
+    #[test]
+    fn default_generation_uses_broad_harness_surface() {
+        let generation = Generation::default();
+
+        assert_eq!(
+            generation.candidate_generator(),
+            Prototype1CandidateGenerator::BroadHarness
         );
     }
 

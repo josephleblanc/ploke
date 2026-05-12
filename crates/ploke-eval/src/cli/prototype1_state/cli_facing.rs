@@ -581,7 +581,7 @@ struct PlannedChildOutcome {
     artifact_surface: Option<ArtifactSurface>,
 }
 
-struct TuiEditSurfaceCandidates {
+struct DeterministicTuiToolsCandidates {
     checked: Vec<CheckedSurfaceEdit>,
     rejected_attempts: Vec<surface_attempt::Evidence>,
 }
@@ -706,37 +706,52 @@ impl SelectionSealMaterial {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CandidateGenerationConfig {
-    generator: Prototype1CandidateGenerator,
-    edit_surface: Prototype1EditSurface,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CandidateGenerationPath {
+enum CandidateGenerationConfig {
     Legacy,
-    TuiEditSurface(Prototype1EditSurface),
+    BroadHarness,
+    DeterministicTuiTools,
 }
 
 impl CandidateGenerationConfig {
     fn from_command(command: &Prototype1StateCommand) -> Self {
-        Self {
-            generator: command.candidate_generator,
-            edit_surface: command.edit_surface,
-        }
+        Self::from_generator(command.candidate_generator)
     }
 
     fn from_profile_generation(generation: profile::Generation) -> Self {
-        Self {
-            generator: generation.candidate_generator(),
-            edit_surface: generation.edit_surface(),
+        Self::from_generator(generation.candidate_generator())
+    }
+
+    fn from_generator(generator: Prototype1CandidateGenerator) -> Self {
+        match generator {
+            Prototype1CandidateGenerator::Legacy => Self::Legacy,
+            Prototype1CandidateGenerator::BroadHarness => Self::BroadHarness,
+            Prototype1CandidateGenerator::DeterministicTuiTools => Self::DeterministicTuiTools,
         }
     }
 
-    fn path(self) -> CandidateGenerationPath {
-        match self.generator {
-            Prototype1CandidateGenerator::Legacy => CandidateGenerationPath::Legacy,
-            Prototype1CandidateGenerator::TuiEditSurface => {
-                CandidateGenerationPath::TuiEditSurface(self.edit_surface)
+    fn ensure_live_complete_admitted(self) -> Result<(), PrepareError> {
+        match self {
+            Self::Legacy => Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
+            }),
+            Self::BroadHarness => Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1 hard stop before child planning: broad-harness is a pending request path until a typed harness request-to-child-plan receipt is implemented".to_string(),
+            }),
+            Self::DeterministicTuiTools => Ok(()),
+        }
+    }
+
+    fn validate_received_child_plan(self, children: &[ChildFiles]) -> Result<(), PrepareError> {
+        match self {
+            Self::Legacy => Ok(()),
+            Self::BroadHarness => Err(PrepareError::InvalidBatchSelection {
+                detail: "candidate-generator=broad-harness cannot consume an existing child plan without a typed BroadHarnessRequest receipt binding request identity, policy, objective, and surface evidence".to_string(),
+            }),
+            Self::DeterministicTuiTools => {
+                for child in children {
+                    validate_requested_tui_surface_child(child)?;
+                }
+                Ok(())
             }
         }
     }
@@ -789,7 +804,7 @@ impl Prototype1StateRunShape {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 enum CandidateGenerationError {
     #[error(
-        "candidate-generator=tui-edit-surface target '{}' for edit-surface={surface:?} is missing from the parent checkout",
+        "candidate-generator=deterministic-tui-tools target '{}' for edit-surface={surface:?} is missing from the parent checkout",
         path.display()
     )]
     MissingEditSurfaceTarget {
@@ -797,7 +812,7 @@ enum CandidateGenerationError {
         path: PathBuf,
     },
     #[error(
-        "candidate-generator=tui-edit-surface produced {produced} unique checked candidates for edit-surface={surface:?}, fewer than required minimum {min}"
+        "candidate-generator=deterministic-tui-tools produced {produced} unique checked candidates for edit-surface={surface:?}, fewer than required minimum {min}"
     )]
     InsufficientUniqueProposals {
         surface: Prototype1EditSurface,
@@ -823,6 +838,17 @@ enum CandidateGenerationError {
         "deterministic tui edit-surface candidate '{node_id}' is missing checked edit-surface evidence"
     )]
     MissingDeterministicEvidence { node_id: String },
+    #[error(
+        "candidate-generator=broad-harness wrote request '{}' and prompt '{}'; write the resulting child plan to '{}'",
+        request_path.display(),
+        prompt_path.display(),
+        child_plan_path.display()
+    )]
+    PendingBroadHarnessRequest {
+        request_path: PathBuf,
+        prompt_path: PathBuf,
+        child_plan_path: PathBuf,
+    },
 }
 
 impl CandidateGenerationError {
@@ -916,20 +942,21 @@ async fn run_parent_target_selection(
     config: CandidateGenerationConfig,
     child_budget: Prototype1ChildBudget,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    match config.path() {
-        CandidateGenerationPath::Legacy => {
+    match config {
+        CandidateGenerationConfig::Legacy => {
             run_legacy_parent_target_selection(campaign_id, manifest_path, repo_root, parent).await
         }
-        CandidateGenerationPath::TuiEditSurface(edit_surface) => {
-            run_tui_edit_surface_parent_target_selection(
+        CandidateGenerationConfig::BroadHarness => {
+            publish_broad_harness_child_plan_request(manifest_path, repo_root, parent, child_budget)
+        }
+        CandidateGenerationConfig::DeterministicTuiTools => {
+            publish_deterministic_tui_tools_child_plan(
                 campaign_id,
                 manifest_path,
                 repo_root,
                 parent,
-                edit_surface,
                 child_budget,
             )
-            .await
         }
     }
 }
@@ -1039,45 +1066,47 @@ async fn run_legacy_parent_target_selection(
     )
 }
 
-async fn run_tui_edit_surface_parent_target_selection(
-    campaign_id: &str,
+fn publish_broad_harness_child_plan_request(
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
-    edit_surface: Prototype1EditSurface,
-    child_budget: Prototype1ChildBudget,
-) -> Result<ChildPlanReceipt, PrepareError> {
-    publish_tui_edit_surface_child_plan(
-        campaign_id,
-        manifest_path,
-        repo_root,
-        parent,
-        edit_surface,
-        child_budget,
-    )
-}
-
-const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
-
-fn publish_tui_edit_surface_child_plan(
-    campaign_id: &str,
-    manifest_path: &Path,
-    repo_root: &Path,
-    parent: Parent<Ready>,
-    edit_surface: Prototype1EditSurface,
     child_budget: Prototype1ChildBudget,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
-
-    let generated = produce_tui_edit_surface_candidates(
+    let request_paths = publish_broad_edit_harness_request(
+        manifest_path,
         repo_root,
-        edit_surface,
         &parent_identity,
         child_budget,
     )?;
+    Err(CandidateGenerationError::PendingBroadHarnessRequest {
+        request_path: request_paths.request_path,
+        prompt_path: request_paths.prompt_path,
+        child_plan_path: request_paths.child_plan_path,
+    }
+    .into_prepare())
+}
+
+const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
+
+fn publish_deterministic_tui_tools_child_plan(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    child_budget: Prototype1ChildBudget,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    let edit_surface = Prototype1EditSurface::PlokeTuiTools;
+    let parent_identity = parent.identity().clone();
+    let root_node = parent.node().clone();
+    let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
+    write_node_projection(&running_parent)?;
+
+    let generated =
+        produce_deterministic_tui_tools_candidates(repo_root, &parent_identity, child_budget)?;
     let expected_generation = parent_identity.generation() + 1;
     let mut children = Vec::with_capacity(generated.checked.len());
 
@@ -1168,6 +1197,59 @@ fn publish_tui_edit_surface_child_plan(
         locked,
     )?;
     Ok(receipt)
+}
+
+struct BroadHarnessRequestPaths {
+    request_path: PathBuf,
+    prompt_path: PathBuf,
+    child_plan_path: PathBuf,
+}
+
+fn publish_broad_edit_harness_request(
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: &ParentIdentity,
+    child_budget: Prototype1ChildBudget,
+) -> Result<BroadHarnessRequestPaths, PrepareError> {
+    let prototype_root = prototype1_campaign_root(manifest_path);
+    let request_dir = prototype_root.join("messages/edit-harness-request");
+    let request_path = request_dir.join(format!("{}.json", parent.node_id()));
+    let prompt_path = request_dir.join(format!("{}.md", parent.node_id()));
+    let child_plan_path = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent.node_id().to_string(),
+    ))
+    .path()
+    .to_path_buf();
+    let request =
+        crate::cli::prototype1_state::edit_surface::harness_request::BroadHarnessRequest::prototype1_workspace(
+            parent.node_id().to_string(),
+            repo_root.to_path_buf(),
+            crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget {
+                min_children: child_budget.min,
+                max_children: child_budget.max,
+            },
+            &prototype_root,
+            &child_plan_path,
+        );
+    if let Some(parent) = request_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_json_file_pretty(&request_path, &request)?;
+    fs::write(&prompt_path, request.render_prompt(&child_plan_path)).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: prompt_path.clone(),
+            source,
+        }
+    })?;
+    Ok(BroadHarnessRequestPaths {
+        request_path,
+        prompt_path,
+        child_plan_path,
+    })
 }
 
 fn persist_rejected_surface_attempt_child_plan(
@@ -1267,6 +1349,17 @@ fn validate_deterministic_surface_evidence(child: &ChildFiles) -> Result<(), Pre
             ),
         });
     }
+    if !matches!(
+        surface.proposal_producer,
+        crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter
+    ) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "deterministic tui edit-surface child '{}' carried Router-backed proposal provenance",
+                node.node_id
+            ),
+        });
+    }
     validate_surface_evidence_binding(node, child.resolved(), surface)
 }
 
@@ -1309,23 +1402,12 @@ fn validate_surface_evidence_binding(
             ),
         });
     }
-    let expected_policy = serde_name(&Prototype1EditSurface::WorkspaceExceptPlokeEval);
+    let expected_policy = serde_name(&Prototype1EditSurface::PlokeTuiTools);
     if surface.policy != expected_policy {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "deterministic tui edit-surface child '{}' carried policy '{}', expected '{}'",
                 node.node_id, surface.policy, expected_policy
-            ),
-        });
-    }
-    if !matches!(
-        surface.proposal_producer,
-        crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter
-    ) {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "deterministic tui edit-surface child '{}' carried router-backed proposal producer {:?}",
-                node.node_id, surface.proposal_producer
             ),
         });
     }
@@ -1490,12 +1572,12 @@ fn require_operation_target_binding(
     }
 }
 
-fn produce_tui_edit_surface_candidates(
+fn produce_deterministic_tui_tools_candidates(
     repo_root: &Path,
-    edit_surface: Prototype1EditSurface,
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
-) -> Result<TuiEditSurfaceCandidates, PrepareError> {
+) -> Result<DeterministicTuiToolsCandidates, PrepareError> {
+    let edit_surface = Prototype1EditSurface::PlokeTuiTools;
     if child_budget.min == 0 || child_budget.max == 0 || child_budget.min > child_budget.max {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1514,8 +1596,7 @@ fn produce_tui_edit_surface_candidates(
             index + 1
         )
     });
-    let proposals =
-        deterministic_surface_proposals(repo_root, edit_surface, &seed, replacements, min, max)?;
+    let proposals = deterministic_surface_proposals(repo_root, &seed, replacements, min, max)?;
     let backend = GitWorktreeBackend;
     let mut checked = Vec::with_capacity(proposals.len());
     let mut rejected_attempts = Vec::new();
@@ -1559,7 +1640,7 @@ fn produce_tui_edit_surface_candidates(
         .into_prepare());
     }
 
-    Ok(TuiEditSurfaceCandidates {
+    Ok(DeterministicTuiToolsCandidates {
         checked,
         rejected_attempts,
     })
@@ -1567,13 +1648,13 @@ fn produce_tui_edit_surface_candidates(
 
 fn deterministic_surface_proposals(
     repo_root: &Path,
-    edit_surface: Prototype1EditSurface,
     seed: &str,
     replacements: impl IntoIterator<Item = String>,
     min: usize,
     max: usize,
 ) -> Result<Vec<EditProposal>, PrepareError> {
-    let targets = deterministic_surface_targets(repo_root, edit_surface)?;
+    let edit_surface = Prototype1EditSurface::PlokeTuiTools;
+    let targets = deterministic_surface_targets(repo_root)?;
     let offset = deterministic_target_offset(seed, targets.len());
     let mut proposals = Vec::new();
     let mut proposed_hashes = BTreeSet::new();
@@ -1635,10 +1716,8 @@ fn deterministic_surface_proposals(
     Ok(proposals)
 }
 
-fn deterministic_surface_targets(
-    repo_root: &Path,
-    edit_surface: Prototype1EditSurface,
-) -> Result<Vec<PathBuf>, PrepareError> {
+fn deterministic_surface_targets(repo_root: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+    let edit_surface = Prototype1EditSurface::PlokeTuiTools;
     let mut targets = edit_surface_paths(repo_root, edit_surface)
         .map_err(|source| {
             CandidateGenerationError::EvidenceProjection {
@@ -1654,7 +1733,7 @@ fn deterministic_surface_targets(
     if targets.is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "candidate-generator=tui-edit-surface found no writable text targets for edit-surface={edit_surface:?}; protected root '{}'",
+                "candidate-generator=deterministic-tui-tools found no writable text targets for edit-surface={edit_surface:?}; protected root '{}'",
                 EVAL_CORE_SURFACE_ROOT
             ),
         });
@@ -6023,11 +6102,7 @@ async fn resolve_child_plan(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    if candidate_generation.generator == Prototype1CandidateGenerator::TuiEditSurface {
-        for child in &children {
-            validate_requested_tui_surface_child(child)?;
-        }
-    }
+    candidate_generation.validate_received_child_plan(&children)?;
 
     let children = if let Some(node_id) = selected_node_id {
         let candidate = children
@@ -7917,15 +7992,10 @@ impl Prototype1StateCommand {
         } else {
             None
         };
-        if run_shape.stop_after == Prototype1StateStopAfter::Complete
-            && matches!(
-                run_shape.candidate_generation.path(),
-                CandidateGenerationPath::Legacy
-            )
-        {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
-            });
+        if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            run_shape
+                .candidate_generation
+                .ensure_live_complete_admitted()?;
         }
         let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
             let current_node_count = persisted_prototype1_node_count(&manifest_path)?;
@@ -9533,23 +9603,17 @@ mod tests {
             successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
             successor_selection_seed: 0,
             successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-            candidate_generator: Prototype1CandidateGenerator::TuiEditSurface,
-            edit_surface: Prototype1EditSurface::WorkspaceExceptPlokeEval,
+            candidate_generator: Prototype1CandidateGenerator::BroadHarness,
             format: InspectOutputFormat::Table,
         }
     }
 
     #[test]
-    fn candidate_generation_config_dispatches_tui_edit_surface_by_default() {
+    fn candidate_generation_config_dispatches_broad_harness_surface_by_default() {
         let command = state_command_without_ids();
         let config = CandidateGenerationConfig::from_command(&command);
 
-        assert_eq!(
-            config.path(),
-            CandidateGenerationPath::TuiEditSurface(
-                Prototype1EditSurface::WorkspaceExceptPlokeEval
-            )
-        );
+        assert_eq!(config, CandidateGenerationConfig::BroadHarness);
     }
 
     #[test]
@@ -9786,18 +9850,21 @@ mod tests {
     }
 
     #[test]
-    fn candidate_generation_config_dispatches_tui_edit_surface() {
+    fn candidate_generation_config_dispatches_broad_harness_surface() {
         let mut command = state_command_without_ids();
-        command.candidate_generator = Prototype1CandidateGenerator::TuiEditSurface;
-        command.edit_surface = Prototype1EditSurface::WorkspaceExceptPlokeEval;
+        command.candidate_generator = Prototype1CandidateGenerator::BroadHarness;
         let config = CandidateGenerationConfig::from_command(&command);
 
-        assert_eq!(
-            config.path(),
-            CandidateGenerationPath::TuiEditSurface(
-                Prototype1EditSurface::WorkspaceExceptPlokeEval
-            )
-        );
+        assert_eq!(config, CandidateGenerationConfig::BroadHarness);
+    }
+
+    #[test]
+    fn candidate_generation_config_dispatches_deterministic_tui_tools_fixture() {
+        let mut command = state_command_without_ids();
+        command.candidate_generator = Prototype1CandidateGenerator::DeterministicTuiTools;
+        let config = CandidateGenerationConfig::from_command(&command);
+
+        assert_eq!(config, CandidateGenerationConfig::DeterministicTuiTools);
     }
 
     #[test]
@@ -9818,8 +9885,7 @@ require_keep_for_continuation = false
 explore_from_rejected = true
 
 [generation]
-source = "edit-surface"
-surface = "workspace-except-ploke-eval"
+source = "broad-harness"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -9844,10 +9910,8 @@ stop_after = "complete"
             Prototype1StateRunShape::resolve(&command, &manifest_path).expect("run shape resolves");
 
         assert_eq!(
-            shape.candidate_generation.path(),
-            CandidateGenerationPath::TuiEditSurface(
-                Prototype1EditSurface::WorkspaceExceptPlokeEval
-            )
+            shape.candidate_generation,
+            CandidateGenerationConfig::BroadHarness
         );
         assert_eq!(
             shape.successor_selection_metrics,
@@ -9868,7 +9932,7 @@ stop_after = "complete"
             .validate_edit_surface_candidate(
                 tmp.path(),
                 crate::cli::prototype1_state::backend::EditProposal {
-                    surface: Prototype1EditSurface::WorkspaceExceptPlokeEval,
+                    surface: Prototype1EditSurface::PlokeTuiTools,
                     proposal_id: "proposal-1".to_string(),
                     run_id: "run-1".to_string(),
                     proposal_producer:
@@ -9908,7 +9972,7 @@ stop_after = "complete"
 
         let child = child_files_from_checked_edit(
             "campaign",
-            Prototype1EditSurface::WorkspaceExceptPlokeEval,
+            Prototype1EditSurface::PlokeTuiTools,
             node,
             &checked,
             false,
@@ -10132,13 +10196,27 @@ stop_after = "complete"
 
     fn write_broad_surface_targets(repo_root: &Path) -> Vec<PathBuf> {
         init_indexed_repo(repo_root);
-        let allowed = vec![
+        let mut allowed = vec![
             PathBuf::from("crates/ploke-core/src/lib.rs"),
             PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+            PathBuf::from("crates/ploke-tui/src/rag/tools.rs"),
+            PathBuf::from("crates/ploke-tui/src/rag/editing.rs"),
             PathBuf::from("docs/operator-note.md"),
         ];
+        allowed.extend(
+            ToolName::ALL
+                .iter()
+                .map(|tool| PathBuf::from(tool.description_artifact_relpath())),
+        );
+        allowed.sort();
+        allowed.dedup();
         for relpath in &allowed {
-            write_surface_target(repo_root, relpath, "pub fn sentinel() {}\n");
+            let content = if relpath.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                "pub fn sentinel() {}\n"
+            } else {
+                "surface fixture\n"
+            };
+            write_surface_target(repo_root, relpath, content);
         }
         write_surface_target(
             repo_root,
@@ -10174,9 +10252,8 @@ stop_after = "complete"
         let allowed = write_broad_surface_targets(tmp.path());
         let parent = test_parent_identity();
 
-        let generated = produce_tui_edit_surface_candidates(
+        let generated = produce_deterministic_tui_tools_candidates(
             tmp.path(),
-            Prototype1EditSurface::WorkspaceExceptPlokeEval,
             &parent,
             Prototype1SearchPolicy::default().child_budget,
         )
@@ -10192,7 +10269,7 @@ stop_after = "complete"
             .collect::<BTreeSet<_>>();
         assert_eq!(hashes.len(), checked.len());
         assert!(checked.iter().all(|candidate| {
-            candidate.surface() == Prototype1EditSurface::WorkspaceExceptPlokeEval
+            candidate.surface() == Prototype1EditSurface::PlokeTuiTools
                 && allowed
                     .iter()
                     .any(|allowed| allowed == candidate.target_relpath())
@@ -10212,26 +10289,13 @@ stop_after = "complete"
             "\n// distinct candidate\n".to_string(),
         ];
 
-        let proposals = deterministic_surface_proposals(
-            tmp.path(),
-            Prototype1EditSurface::WorkspaceExceptPlokeEval,
-            "seed",
-            replacements.clone(),
-            1,
-            3,
-        )
-        .expect("deduped proposals");
+        let proposals =
+            deterministic_surface_proposals(tmp.path(), "seed", replacements.clone(), 1, 3)
+                .expect("deduped proposals");
         assert_eq!(proposals.len(), 2);
 
-        let error = deterministic_surface_proposals(
-            tmp.path(),
-            Prototype1EditSurface::WorkspaceExceptPlokeEval,
-            "seed",
-            replacements,
-            3,
-            3,
-        )
-        .expect_err("duplicates cannot satisfy min");
+        let error = deterministic_surface_proposals(tmp.path(), "seed", replacements, 3, 3)
+            .expect_err("duplicates cannot satisfy min");
         let PrepareError::InvalidBatchSelection { detail } = error else {
             panic!("unexpected error variant");
         };
@@ -10245,21 +10309,20 @@ stop_after = "complete"
         let repo_root = tmp.path().join("repo");
         write_broad_surface_targets(&repo_root);
         let parent = ready_parent_for_test(&manifest_path, &repo_root);
-        let budget = Prototype1ChildBudget { min: 2, max: 3 };
+        let budget = Prototype1ChildBudget { min: 1, max: 1 };
 
-        let receipt = publish_tui_edit_surface_child_plan(
+        let receipt = publish_deterministic_tui_tools_child_plan(
             "campaign",
             &manifest_path,
             &repo_root,
             parent,
-            Prototype1EditSurface::WorkspaceExceptPlokeEval,
             budget,
         )
         .expect("published child plan");
 
         let body = receipt.plan.body();
         assert_eq!(receipt.parent.identity().node_id(), "node-parent");
-        assert_eq!(body.children().len(), 3);
+        assert_eq!(body.children().len(), 1);
         assert!(body.rejected_surface_attempts().is_empty());
         assert!(receipt.rejected_surface_attempts.is_empty());
         assert_eq!(body.parent_node_id(), "node-parent");
@@ -10276,6 +10339,103 @@ stop_after = "complete"
             assert!(node.node_dir.join("node.json").exists());
             assert!(node.runner_request_path.exists());
         }
+    }
+
+    #[test]
+    fn broad_workspace_edit_surface_publishes_harness_request_not_fake_children() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_broad_surface_targets(&repo_root);
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let budget = Prototype1ChildBudget { min: 2, max: 3 };
+
+        let err = match publish_broad_harness_child_plan_request(
+            &manifest_path,
+            &repo_root,
+            parent,
+            budget,
+        ) {
+            Ok(_) => panic!("broad surface should wait for an LLM harness child plan"),
+            Err(err) => err,
+        };
+        let PrepareError::InvalidBatchSelection { detail } = err else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("broad harness request"));
+
+        let request_path = prototype1_campaign_root(&manifest_path)
+            .join("messages/edit-harness-request/node-parent.json");
+        let prompt_path = prototype1_campaign_root(&manifest_path)
+            .join("messages/edit-harness-request/node-parent.md");
+        let child_plan_path = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+            manifest_path.clone(),
+            "node-parent".to_string(),
+        ));
+
+        assert!(request_path.exists());
+        assert!(prompt_path.exists());
+        assert!(
+            !child_plan_path.path().exists(),
+            "broad request must not occupy the child-plan box before the harness writes children"
+        );
+        let request = serde_json::from_slice::<
+            crate::cli::prototype1_state::edit_surface::harness_request::BroadHarnessRequest,
+        >(&fs::read(&request_path).expect("read request"))
+        .expect("typed request");
+        assert_eq!(request.parent_node_id.as_str(), "node-parent");
+        assert_eq!(request.child_budget.min_children, 2);
+        assert_eq!(request.child_budget.max_children, 3);
+        assert!(
+            request
+                .evidence_roots
+                .iter()
+                .any(|root| root.kind
+                    == crate::cli::prototype1_state::edit_surface::harness_request::EvidenceRootKind::HistoryBlocks)
+        );
+        let prompt = fs::read_to_string(prompt_path).expect("read prompt");
+        assert!(prompt.contains("protocol diagnoses"));
+        assert!(prompt.contains("not as hard file targets"));
+        assert!(prompt.contains("crates/ploke-eval/src/cli/prototype1_state/backend.rs"));
+    }
+
+    #[test]
+    fn broad_harness_complete_run_requires_typed_request_receipt() {
+        let err = CandidateGenerationConfig::BroadHarness
+            .ensure_live_complete_admitted()
+            .expect_err("broad harness is pending until request receipt exists");
+
+        let PrepareError::InvalidBatchSelection { detail } = err else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("typed harness request-to-child-plan receipt"));
+    }
+
+    #[test]
+    fn broad_harness_rejects_unbound_existing_child_plan() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_broad_surface_targets(&repo_root);
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let budget = Prototype1ChildBudget { min: 1, max: 1 };
+        let receipt = publish_deterministic_tui_tools_child_plan(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            parent,
+            budget,
+        )
+        .expect("published deterministic child plan");
+
+        let err = CandidateGenerationConfig::BroadHarness
+            .validate_received_child_plan(receipt.plan.body().children())
+            .expect_err("broad harness must not consume unbound child plans");
+
+        let PrepareError::InvalidBatchSelection { detail } = err else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("typed BroadHarnessRequest receipt"));
     }
 
     #[test]
@@ -10784,7 +10944,7 @@ stop_after = "complete"
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-test",
             "run-test",
-            "workspace_except_ploke_eval",
+            "ploke_tui_tools",
             target_relpath.clone(),
             SurfaceArtifactRef {
                 artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
@@ -11289,6 +11449,10 @@ stop_after = "complete"
         };
 
         assert!(matches!(err, PrepareError::InvalidBatchSelection { .. }));
+        assert!(
+            err.to_string()
+                .contains("Router-backed proposal provenance")
+        );
     }
 
     #[test]

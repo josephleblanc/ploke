@@ -41,3 +41,5 @@ for near-term implementation planning.
   Prototype 1 child self-validation can export MBE `fix_patch` evidence from a shared benchmark checkout instead of a candidate-owned instance target state.
 - [`2026-05-11-prototype1-workspace-except-eval-selects-archive-targets.md`](./2026-05-11-prototype1-workspace-except-eval-selects-archive-targets.md)
   Prototype 1 live edit-surface generation still uses a deterministic mock target picker; archive/core target selection was mitigated by `5f92eb6e`, and MBE validation needs rerun.
+- [`2026-05-12-prototype1-broad-harness-request-plan-erasure.md`](./2026-05-12-prototype1-broad-harness-request-plan-erasure.md)
+  Prototype 1 `BroadHarness` erases pending request state and request-bound child-plan provenance into flat generator/validation paths.

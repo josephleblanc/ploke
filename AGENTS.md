@@ -69,6 +69,18 @@ Maintain this list when a bug is discovered that would have been prevented by pr
   - Collapsed shape: bare `ArtifactSurface` / `selected_surface` / `InstalledSuccessorArtifact` let the handoff path compare selected-child Artifact surface evidence to the hydrated successor Parent checkout after `parent_identity.json` was committed.
   - Missing structure: selected-child Artifact surface and hydrated-successor Parent surface should be distinct role/state carriers, e.g. `ArtifactSurface<SelectedChild>` and `ArtifactSurface<HydratedSuccessorParent>`, connected only by a `SuccessorHydration<SelectedChild, HydratedSuccessorParent>` transition.
   - Preventing type constraint: selected-child surface validation must happen before parent hydration; post-hydration startup surface must be minted by the hydration transition. No API may compare or seal a bare `ArtifactSurface` without encoding which artifact/parent state it measures.
+- `docs/active/bugs/2026-05-12-prototype1-broad-harness-request-plan-erasure.md`
+  - Affected files:
+    - `crates/ploke-eval/src/cli.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/profile.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_request.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness.rs`
+    - `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+  - Collapsed shape: `BroadHarness` / `requires_surface_evidence` / `validate_requested_tui_surface_child` treated pending broad harness requests, deterministic TUI child plans, and future Router-backed harness plans as the same generator/provenance relation.
+  - Missing structure: published harness request, awaiting Parent state, request-bound child plan, and harness-specific surface evidence should be distinct role/state carriers, e.g. `HarnessRequest<Broad, Published>`, `Parent<AwaitingHarnessPlan<Broad>>`, `ChildPlan<For<HarnessRequest<Broad, Published>>>`, `SurfaceEvidence<DeterministicTuiTools>`, and `SurfaceEvidence<RouterBackedHarness>`.
+  - Preventing type constraint: a complete live run may only materialize children from a generator state that has produced typed child-plan evidence for that generator. No API may satisfy `BroadHarness` with an unbound `ChildPlan`, and deterministic TUI evidence must require non-Router provenance unless a separate Router-backed harness carrier is present.
 
 ## Anti-Blob Guardrails
 
