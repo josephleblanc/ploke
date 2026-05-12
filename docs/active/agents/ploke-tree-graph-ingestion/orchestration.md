@@ -121,17 +121,23 @@ Current file ownership, relative to a Prototype 1 run root unless noted:
 
 | Persisted file or pattern | Typed record owner | Loader target | Graph status |
 |---|---|---|---|
-| `scheduler.json` | `ploke_records::scheduler::SchedulerStateRecord` | `RunForestInput.scheduler` | loaded, not ingested |
-| `nodes/*/node.json` | `ploke_records::scheduler::NodeRecord` | `RunForestInput.node_records` | loaded, not ingested |
-| configured `parent_identity.json` path | `ploke_records::identity::ParentIdentityRecord` | `RunForestInput.parent_identity` | loaded, not ingested |
-| `nodes/*/successor-ready/*.json` | `ploke_records::invocation::SuccessorReadyRecord` | `RunForestInput.successor_ready` | loaded, not ingested |
-| `nodes/*/successor-completion/*.json` | `ploke_records::invocation::SuccessorCompletionRecord` | `RunForestInput.successor_completion` | loaded, not ingested |
+| `scheduler.json` | `ploke_records::scheduler::SchedulerStateRecord` | `RunForestInput.scheduler` | scheduler/status evidence only |
+| `nodes/*/node.json` | `ploke_records::scheduler::NodeRecord` | `RunForestInput.node_records` | node/runtime metadata evidence |
+| configured `parent_identity.json` path | `ploke_records::identity::ParentIdentityRecord` | `RunForestInput.parent_identity` | parent identity evidence |
+| `nodes/*/successor-ready/*.json` | `ploke_records::invocation::SuccessorReadyRecord` | `RunForestInput.successor_ready` | handoff/runtime evidence |
+| `nodes/*/successor-completion/*.json` | `ploke_records::invocation::SuccessorCompletionRecord` | `RunForestInput.successor_completion` | completion evidence |
 | `history/blocks/segment-*.jsonl` | `ploke_records::history::SealedBlockRecord` | `RunRecordSet.history_blocks` | core History spine |
-| `transition-journal.jsonl` | `ploke_records::journal::JournalEntry` | `RunRecordSet.transition_journal` and passive count evidence | loaded, not ingested |
-| `branches.json` object or JSONL log | `ploke_records::branch::{Prototype1BranchRegistry, BranchLogRecord}` | `PassiveEvidence.branch_registry` summary | loaded summary, not ingested |
-| nested `channels/**/*.jsonl` | `ploke_records::channel::Envelope<ToParent/ToChild>` | `PassiveEvidence.channel_envelopes` summary | loaded summary, not ingested |
+| `transition-journal.jsonl` | `ploke_records::journal::JournalEntry` | `RunRecordSet.transition_journal` and passive count evidence | append-only transition evidence, secondary to History |
+| `branches.json` object or JSONL log | `ploke_records::branch::{Prototype1BranchRegistry, BranchLogRecord}` | `PassiveEvidence.branch_registry` summary | branch/comparison summary evidence |
+| nested `channels/**/*.jsonl` | `ploke_records::channel::Envelope<ToParent/ToChild>` | `PassiveEvidence.channel_envelopes` summary | communication summary evidence |
+| `messages/child-plan/*.json` | `ploke_records::child_plan::ChildPlanRecord` | `PassiveEvidence.child_plans` | child-plan summary evidence |
 | `evaluations/*.json` | `ploke_records::evaluation::Artifact` | `PassiveEvidence.evaluations` | evidence attachment |
 | configured protocol artifacts dir `*.json` | `ploke_records::protocol::Artifact` | `PassiveEvidence.protocol_artifacts` | evidence attachment |
+| `run-profile.toml`, `run-profile.commitment.json` | `ploke_records::run_profile::{RunProfileRecord, RunProfileCommitmentRecord}` | `PassiveEvidence.run_profile` | run-profile metadata evidence |
+| `nodes/*/runner-request.json` | `ploke_records::scheduler::RunnerRequestRecord` | `PassiveEvidence.run_attempts` | run-attempt evidence |
+| `nodes/*/runner-result.json` | `ploke_records::scheduler::RunnerResultRecord` | `PassiveEvidence.run_attempts` | run-attempt evidence |
+| `nodes/*/invocations/*.json` | `ploke_records::invocation::InvocationRecord` | `PassiveEvidence.run_attempts` | runtime/operation evidence |
+| `nodes/*/results/*.json` | `ploke_records::scheduler::RunnerResultRecord` | `PassiveEvidence.attempt_runner_results` | attempt-scoped result evidence |
 
 If a worker needs a file not listed here, it should report the missing row
 first. Do not add an alternate reader in a graph or renderer module.

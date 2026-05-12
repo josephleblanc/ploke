@@ -11,15 +11,27 @@ Start here when delegating work on the graph import boundary:
   hard edit boundaries.
 - [`implementation-lanes.md`](implementation-lanes.md)
   Proposed module split and parallel worker lanes for `RunRecordSet`, graph
-  types, graph builders, and future record families.
+  types, graph builders, and future record families. This is the durable
+  ownership/conceptual lane map, not live task state; current execution state
+  lives in `.orchestrator/board.json` and worker packets.
+- [`2026-05-12-handoff.md`](2026-05-12-handoff.md)
+  Current restart/status handoff for the completed graph-ingestion wave,
+  verification state, stale board state, and next cleanup steps.
 - [`2026-05-11_3a2ea733-persisted-surface-survey.md`](2026-05-11_3a2ea733-persisted-surface-survey.md)
-  Fresh metadata/source survey of persisted `.ploke-eval` files, worktree
-  exclusions, current loader coverage, and unresolved loader rows.
+  Historical metadata/source survey of persisted `.ploke-eval` files and
+  worktree exclusions. Use the inventory and latest handoff for current
+  loaded/ingested status.
 - [`../2026-05-11_ploke-tree-graph-ingestion-inventory.md`](../2026-05-11_ploke-tree-graph-ingestion-inventory.md)
   Current source-family tracker: what is loaded into `RunRecordSet`, what is
   ingested into `Graph`, and what is still missing.
 - [`../2026-05-11_ploke-egui-graph-import-boundary-handoff.md`](../2026-05-11_ploke-egui-graph-import-boundary-handoff.md)
-  Current restart handoff for the graph/import boundary and UI direction.
+  Prior UI/import-boundary context that explains why `ploke-egui` should
+  project from `ploke-tree::Graph`.
+
+Historical worker/reviewer/retainer reports in this directory are evidence
+records from orchestration waves. They are not current planning state unless
+the README, implementation lanes, inventory, or latest handoff fold the finding
+forward.
 
 Core model:
 

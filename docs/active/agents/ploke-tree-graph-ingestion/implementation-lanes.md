@@ -3,6 +3,10 @@
 This file describes how to split work across sub-agents without losing the
 single-graph model.
 
+This is not a live task board. When `.orchestrator` is active, task state,
+assignment, completion, and review status belong in the board and worker
+packets. This file keeps durable ownership, sequencing, and lane boundaries.
+
 The graph is comprehensive by design. The lane split is not deciding whether a
 persisted loop-relevant file "belongs" in the graph; it decides which layer
 loads it, which typed shape owns it, and how it is represented: core relation,
@@ -30,45 +34,37 @@ impl Graph {
 Implementation modules may be numerous, but they all mutate one internal
 builder and finish into one `Graph`.
 
+Current implementation is flatter than this directional target; create new
+files only when the current modules become too large or ownership gets unclear.
+
 ```text
 crates/ploke-tree/src/
   store/
     mod.rs
     fs.rs
     record_set.rs
-    forest.rs
-    history.rs
-    journal.rs
-    passive/
-      mod.rs
-      branch.rs
-      channel.rs
-      evaluation.rs
-      protocol.rs
+    evidence.rs
 
   graph/
     mod.rs
     types/
-      mod.rs
-      history.rs
-      selection.rs
       artifact.rs
-      runtime.rs
       evidence.rs
+      history.rs
+      operation.rs
+      runtime.rs
+      selection.rs
       warning.rs
     build/
-      mod.rs
+      branch.rs
+      channel.rs
+      handoff.rs
       history.rs
-      selection.rs
-      scheduler.rs
       journal.rs
       passive.rs
-      evaluation.rs
-      protocol.rs
-      patch.rs
-      tool.rs
-      provider.rs
-      database.rs
+      run_attempts.rs
+      scheduler.rs
+      selection.rs
 ```
 
 This is a direction, not a requirement to create every file immediately.
@@ -92,12 +88,12 @@ adding a loader.
 | `nodes/*/channels/*/{parent-to-child,child-to-parent}.jsonl` | 1, then 4 | communication evidence and channel metadata |
 | `evaluations/branch-*.json` | 1, 3 | evaluation evidence attached to candidates/branches |
 | configured `protocol-artifacts/*.json` | 1, 3, then 5 | protocol evidence; align configured dir with current discovery |
-| `nodes/*/runner-request.json` | 5 | runner request evidence; passive owner exists |
-| `nodes/*/runner-result.json` | 5 | runner result evidence; passive owner exists |
-| `nodes/*/invocations/*.json` | 5 | runtime invocation/handoff boundary evidence |
-| `nodes/*/results/*.json` | 5 | result evidence; passive shape unresolved |
+| `nodes/*/runner-request.json` | 5 | loaded into `PassiveEvidence.run_attempts`; graph evidence only, not History authority |
+| `nodes/*/runner-result.json` | 5 | loaded into `PassiveEvidence.run_attempts`; graph evidence only, not History authority |
+| `nodes/*/invocations/*.json` | 5 | loaded into `PassiveEvidence.run_attempts`; runtime/operation evidence only |
+| `nodes/*/results/*.json` | 5 | loaded into `PassiveEvidence.attempt_runner_results`; attempt-scoped result evidence |
 | `messages/child-plan/node-*.json` | 5 | passive owner and store loader exist; graph currently attaches summary-only evidence |
-| `agent-turn-summary.json`, `agent-turn-trace.json` | 5 | blocked on nested tool UI/error payload typing before passive owner can be added |
+| `agent-turn-summary.json`, `agent-turn-trace.json` | 5 | tool UI/error contract boundary exists through `ploke_records::tool_contracts`; still needs agent-turn passive owner/loader |
 | `llm-full-responses.jsonl`, `prototype1_observation_*.jsonl` | 5 | provider/observation evidence after writer/type resolution |
 | `record.json.gz` | 5 | replay/provenance metadata or locator |
 | `run-profile.toml`, `run-profile.commitment.json` | 5 | passive owner, store loader, and graph metadata evidence exist |
@@ -275,18 +271,22 @@ Current status notes:
   summary-only graph evidence now exist.
 - `run-profile.toml` and `run-profile.commitment.json`: passive records and
   store loading now exist; graph metadata evidence also exists.
-- `agent-turn-summary.json` and `agent-turn-trace.json`: blocked before passive
-  ownership because `ToolCompletedRecord` / `ToolFailedRecord` UI payloads can
-  contain nested LLM retry JSON. Resolve the tool UI/error payload boundary
-  before adding an `agent_turn` record module.
+- `nodes/*/runner-request.json`, `nodes/*/runner-result.json`,
+  `nodes/*/invocations/*.json`, and `nodes/*/results/*.json`: passive loading
+  and graph evidence now exist through `RunAttemptEvidence` and
+  `attempt_runner_results`.
+- `agent-turn-summary.json` and `agent-turn-trace.json`: the tool UI/error
+  payload boundary now exists through `ploke_records::tool_contracts`; the
+  remaining work is an agent-turn passive record owner, store loader, and graph
+  evidence attachment.
 
 Projection follow-up:
 
-- Browser/fine playback still carries bare `membership_id` and one path still
-  aligns memberships by vector index. It should preserve
-  `{ candidate_set_root, membership_id }` or project directly from
-  `ploke-tree::Graph` membership keys before the UI treats membership IDs as
-  stable detail keys.
+- Internal fine playback preserves `candidate_set_root` and no longer relies on
+  vector-index matching. It may still use unique label matching when stronger
+  selected identity evidence is absent. Future UI views should borrow membership
+  facts from `ploke-tree::Graph` instead of treating compatibility fields as
+  authority.
 
 No-goals:
 
