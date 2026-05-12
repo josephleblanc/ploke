@@ -35,3 +35,14 @@ pub trait Record: Serialize {
     const SCHEMA: &'static str;
     const FORMAT: RecordFormat;
 }
+
+/// Explicit live-to-record projection boundary.
+///
+/// This trait is intentionally structural only. It does not perform I/O or own
+/// persistence side effects; authority-owning crates remain responsible for
+/// deciding when and where a projected record is written.
+pub trait ToRecord {
+    type Record;
+
+    fn to_record(&self) -> Self::Record;
+}

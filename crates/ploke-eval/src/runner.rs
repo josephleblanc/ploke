@@ -26,11 +26,29 @@ use ploke_llm::router_only::{
     },
 };
 use ploke_llm::{ModelId, ProviderKey, ProviderSlug, SupportsTools};
+use ploke_records::agent_turn::{
+    AgentTurnArtifactRecord as PersistedAgentTurnArtifactRecord, AgentTurnSummaryRecord,
+    AgentTurnTraceRecord, ExpectedFileChangeRecord as PersistedExpectedFileChangeRecord,
+    FinishReasonRecord, FunctionCallMarker, LlmMetadataRecord as PersistedLlmMetadataRecord,
+    LlmResponseRecord as PersistedLlmResponseRecord,
+    MessageSnapshotRecord as PersistedMessageSnapshotRecord, ObservedTurnEventRecord,
+    PatchArtifactRecord as PersistedPatchArtifactRecord,
+    PerformanceMetricsRecord as PersistedPerformanceMetricsRecord,
+    ProposalSnapshotRecord as PersistedProposalSnapshotRecord, ProviderFunctionCallRecord,
+    ProviderToolCallRecord, RequestMessageRecord as PersistedRequestMessageRecord,
+    RequestRoleRecord, TokenUsageRecord as PersistedTokenUsageRecord,
+    ToolCompletedRecord as PersistedToolCompletedRecord, ToolErrorCodeRecord, ToolErrorWireRecord,
+    ToolFailedRecord as PersistedToolFailedRecord, ToolLlmErrorPayloadRecord,
+    ToolRequestRecord as PersistedToolRequestRecord, ToolRetryContextFieldRecord,
+    ToolRetryContextRecord, ToolRetryContextValueRecord, ToolUiFieldRecord, ToolUiPayloadRecord,
+    ToolVerbosityRecord, TurnFinishedRecord as PersistedTurnFinishedRecord,
+};
 use ploke_records::evaluation::{
     BENCHMARK_PATCH_PROJECTION_SCHEMA_V1, BenchmarkCheckoutRef, BenchmarkPatchProjectionRecord,
     MultiSweBenchTarget, PatchProjectionCheck, PatchProjectionCheckState, RunArtifactRef,
     SubmissionPatchRef,
 };
+use ploke_records::record::ToRecord;
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
@@ -835,6 +853,358 @@ pub struct ExpectedFileChangeRecord {
     pub before_sha256: Option<String>,
     pub after_sha256: Option<String>,
     pub changed: bool,
+}
+
+impl ToRecord for ToolRequestRecord {
+    type Record = PersistedToolRequestRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedToolRequestRecord {
+            request_id: self.request_id.clone(),
+            parent_id: self.parent_id.clone(),
+            call_id: self.call_id.clone(),
+            tool: self.tool.clone(),
+            arguments: self.arguments.clone(),
+        }
+    }
+}
+
+impl ToRecord for ToolCompletedRecord {
+    type Record = PersistedToolCompletedRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedToolCompletedRecord {
+            request_id: self.request_id.clone(),
+            parent_id: self.parent_id.clone(),
+            call_id: self.call_id.clone(),
+            tool: self.tool.clone(),
+            content: self.content.clone(),
+            ui_payload: self.ui_payload.as_ref().map(tool_ui_payload_record),
+            latency_ms: self.latency_ms,
+        }
+    }
+}
+
+impl ToRecord for ToolFailedRecord {
+    type Record = PersistedToolFailedRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedToolFailedRecord {
+            request_id: self.request_id.clone(),
+            parent_id: self.parent_id.clone(),
+            call_id: self.call_id.clone(),
+            tool: self.tool.clone(),
+            error: self.error.clone(),
+            ui_payload: self.ui_payload.as_ref().map(tool_ui_payload_record),
+            latency_ms: self.latency_ms,
+        }
+    }
+}
+
+impl ToRecord for MessageSnapshotRecord {
+    type Record = PersistedMessageSnapshotRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedMessageSnapshotRecord {
+            id: self.id.clone(),
+            kind: self.kind.clone(),
+            status: self.status.clone(),
+            tool_call_id: self.tool_call_id.clone(),
+            content_len: self.content_len,
+            content_preview: self.content_preview.clone(),
+        }
+    }
+}
+
+impl ToRecord for TurnFinishedRecord {
+    type Record = PersistedTurnFinishedRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedTurnFinishedRecord {
+            session_id: self.session_id.clone(),
+            request_id: self.request_id.clone(),
+            parent_id: self.parent_id.clone(),
+            assistant_message_id: self.assistant_message_id.clone(),
+            outcome: self.outcome.clone(),
+            error_id: self.error_id.clone(),
+            summary: self.summary.clone(),
+            attempts: self.attempts,
+        }
+    }
+}
+
+impl ToRecord for ProposalSnapshotRecord {
+    type Record = PersistedProposalSnapshotRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedProposalSnapshotRecord {
+            request_id: self.request_id.clone(),
+            call_id: self.call_id.clone(),
+            status: self.status.clone(),
+            files: self.files.clone(),
+            preview_mode: self.preview_mode.clone(),
+        }
+    }
+}
+
+impl ToRecord for ExpectedFileChangeRecord {
+    type Record = PersistedExpectedFileChangeRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedExpectedFileChangeRecord {
+            path: self.path.clone(),
+            existed_before: self.existed_before,
+            exists_after: self.exists_after,
+            before_sha256: self.before_sha256.clone(),
+            after_sha256: self.after_sha256.clone(),
+            changed: self.changed,
+        }
+    }
+}
+
+impl ToRecord for PatchArtifact {
+    type Record = PersistedPatchArtifactRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedPatchArtifactRecord {
+            edit_proposals: self
+                .edit_proposals
+                .iter()
+                .map(ToRecord::to_record)
+                .collect(),
+            create_proposals: self
+                .create_proposals
+                .iter()
+                .map(ToRecord::to_record)
+                .collect(),
+            applied: self.applied,
+            all_proposals_applied: self.all_proposals_applied,
+            expected_file_changes: self
+                .expected_file_changes
+                .iter()
+                .map(ToRecord::to_record)
+                .collect(),
+            any_expected_file_changed: self.any_expected_file_changed,
+            all_expected_files_changed: self.all_expected_files_changed,
+        }
+    }
+}
+
+impl ToRecord for ObservedTurnEvent {
+    type Record = ObservedTurnEventRecord;
+
+    fn to_record(&self) -> Self::Record {
+        match self {
+            Self::DebugCommand(value) => ObservedTurnEventRecord::DebugCommand(value.clone()),
+            Self::LlmEvent(value) => ObservedTurnEventRecord::LlmEvent(value.clone()),
+            Self::LlmResponse(record) => {
+                ObservedTurnEventRecord::LlmResponse(llm_response_record(record))
+            }
+            Self::ToolRequested(record) => {
+                ObservedTurnEventRecord::ToolRequested(record.to_record())
+            }
+            Self::ToolCompleted(record) => {
+                ObservedTurnEventRecord::ToolCompleted(record.to_record())
+            }
+            Self::ToolFailed(record) => ObservedTurnEventRecord::ToolFailed(record.to_record()),
+            Self::MessageUpdated(record) => {
+                ObservedTurnEventRecord::MessageUpdated(record.to_record())
+            }
+            Self::TurnFinished(record) => ObservedTurnEventRecord::TurnFinished(record.to_record()),
+        }
+    }
+}
+
+impl ToRecord for AgentTurnArtifact {
+    type Record = PersistedAgentTurnArtifactRecord;
+
+    fn to_record(&self) -> Self::Record {
+        PersistedAgentTurnArtifactRecord {
+            task_id: self.task_id.clone(),
+            selected_model: self.selected_model.to_string(),
+            issue_prompt: self.issue_prompt.clone(),
+            user_message_id: self.user_message_id.clone(),
+            events: self.events.iter().map(ToRecord::to_record).collect(),
+            prompt_debug: self.prompt_debug.clone(),
+            terminal_record: self.terminal_record.as_ref().map(ToRecord::to_record),
+            final_assistant_message: self
+                .final_assistant_message
+                .as_ref()
+                .map(ToRecord::to_record),
+            patch_artifact: self.patch_artifact.to_record(),
+            llm_prompt: self.llm_prompt.iter().map(request_message_record).collect(),
+            llm_response: self.llm_response.clone(),
+        }
+    }
+}
+
+fn llm_response_record(record: &LlmResponseRecord) -> PersistedLlmResponseRecord {
+    PersistedLlmResponseRecord {
+        content: record.content.clone(),
+        model: record.model.clone(),
+        usage: record.usage.map(token_usage_record),
+        finish_reason: record.finish_reason.as_ref().map(finish_reason_record),
+        metadata: record.metadata.as_ref().map(llm_metadata_record),
+    }
+}
+
+fn request_message_record(message: &RequestMessage) -> PersistedRequestMessageRecord {
+    PersistedRequestMessageRecord {
+        role: match message.role {
+            ploke_llm::manager::Role::User => RequestRoleRecord::User,
+            ploke_llm::manager::Role::Assistant => RequestRoleRecord::Assistant,
+            ploke_llm::manager::Role::System => RequestRoleRecord::System,
+            ploke_llm::manager::Role::Tool => RequestRoleRecord::Tool,
+        },
+        content: message.content.clone(),
+        tool_call_id: message.tool_call_id.as_ref().map(ToString::to_string),
+        tool_calls: message
+            .tool_calls
+            .as_ref()
+            .map(|calls| calls.iter().map(provider_tool_call_record).collect()),
+    }
+}
+
+fn provider_tool_call_record(call: &ploke_llm::response::ToolCall) -> ProviderToolCallRecord {
+    ProviderToolCallRecord {
+        call_id: call.call_id.to_string(),
+        call_type: FunctionCallMarker,
+        function: ProviderFunctionCallRecord {
+            name: call.function.name,
+            arguments: call.function.arguments.as_str().into(),
+        },
+    }
+}
+
+fn token_usage_record(usage: ploke_llm::response::TokenUsage) -> PersistedTokenUsageRecord {
+    PersistedTokenUsageRecord {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+    }
+}
+
+fn finish_reason_record(reason: &ploke_llm::response::FinishReason) -> FinishReasonRecord {
+    match reason {
+        ploke_llm::response::FinishReason::Stop => FinishReasonRecord::Stop,
+        ploke_llm::response::FinishReason::Length => FinishReasonRecord::Length,
+        ploke_llm::response::FinishReason::ContentFilter => FinishReasonRecord::ContentFilter,
+        ploke_llm::response::FinishReason::ToolCalls => FinishReasonRecord::ToolCalls,
+        ploke_llm::response::FinishReason::Timeout => FinishReasonRecord::Timeout,
+        ploke_llm::response::FinishReason::Error(message) => {
+            FinishReasonRecord::Error(message.clone())
+        }
+    }
+}
+
+fn llm_metadata_record(
+    metadata: &ploke_llm::types::meta::LLMMetadata,
+) -> PersistedLlmMetadataRecord {
+    PersistedLlmMetadataRecord {
+        model: metadata.model.clone(),
+        usage: token_usage_record(metadata.usage),
+        finish_reason: finish_reason_record(&metadata.finish_reason),
+        processing_time: metadata.processing_time,
+        cost: metadata.cost,
+        performance: PersistedPerformanceMetricsRecord {
+            tokens_per_second: metadata.performance.tokens_per_second,
+            time_to_first_token: metadata.performance.time_to_first_token,
+            queue_time: metadata.performance.queue_time,
+        },
+    }
+}
+
+fn tool_ui_payload_record(payload: &ploke_tui::tools::ToolUiPayload) -> ToolUiPayloadRecord {
+    ToolUiPayloadRecord {
+        tool: payload.tool,
+        call_id: payload.call_id.to_string(),
+        request_id: payload.request_id.map(|value| value.to_string()),
+        proposal_id: payload.proposal_id.map(|value| value.to_string()),
+        summary: payload.summary.clone(),
+        fields: payload
+            .fields
+            .iter()
+            .map(|field| ToolUiFieldRecord {
+                name: field.name.to_string(),
+                value: field.value.to_string(),
+            })
+            .collect(),
+        details: payload.details.clone(),
+        verbosity: match payload.verbosity {
+            ploke_tui::tools::ToolVerbosity::Minimal => ToolVerbosityRecord::Minimal,
+            ploke_tui::tools::ToolVerbosity::Normal => ToolVerbosityRecord::Normal,
+            ploke_tui::tools::ToolVerbosity::Verbose => ToolVerbosityRecord::Verbose,
+        },
+        error: payload.error.as_ref().map(tool_error_wire_record),
+        error_code: payload.error_code.map(tool_error_code_record),
+    }
+}
+
+fn tool_error_wire_record(error: &ploke_tui::tools::ToolErrorWire) -> ToolErrorWireRecord {
+    ToolErrorWireRecord {
+        user: error.user.clone(),
+        llm: ToolLlmErrorPayloadRecord {
+            ok: error.llm.ok,
+            tool: error.llm.tool,
+            code: tool_error_code_record(error.llm.code),
+            field: error.llm.field.clone(),
+            expected: error.llm.expected.clone(),
+            received: error.llm.received.clone(),
+            message: error.llm.message.clone(),
+            snippet: error.llm.snippet.clone(),
+            retry_hint: error.llm.retry_hint.clone(),
+            retry_context: error
+                .llm
+                .retry_context
+                .as_ref()
+                .map(tool_retry_context_record),
+        },
+        system: error.system.clone(),
+    }
+}
+
+fn tool_retry_context_record(
+    context: &ploke_tui::tools::ToolRetryContext,
+) -> ToolRetryContextRecord {
+    ToolRetryContextRecord {
+        fields: context
+            .fields
+            .iter()
+            .map(|field| ToolRetryContextFieldRecord {
+                name: field.name.clone(),
+                value: match &field.value {
+                    ploke_tui::tools::ToolRetryContextValue::Null => {
+                        ToolRetryContextValueRecord::Null
+                    }
+                    ploke_tui::tools::ToolRetryContextValue::Bool(value) => {
+                        ToolRetryContextValueRecord::Bool(*value)
+                    }
+                    ploke_tui::tools::ToolRetryContextValue::Number(value) => {
+                        ToolRetryContextValueRecord::Number(value.clone())
+                    }
+                    ploke_tui::tools::ToolRetryContextValue::String(value) => {
+                        ToolRetryContextValueRecord::String(value.clone())
+                    }
+                    ploke_tui::tools::ToolRetryContextValue::StringList(value) => {
+                        ToolRetryContextValueRecord::StringList(value.clone())
+                    }
+                },
+            })
+            .collect(),
+    }
+}
+
+fn tool_error_code_record(code: ploke_tui::tools::ToolErrorCode) -> ToolErrorCodeRecord {
+    match code {
+        ploke_tui::tools::ToolErrorCode::FieldTooLarge => ToolErrorCodeRecord::FieldTooLarge,
+        ploke_tui::tools::ToolErrorCode::WrongType => ToolErrorCodeRecord::WrongType,
+        ploke_tui::tools::ToolErrorCode::MissingField => ToolErrorCodeRecord::MissingField,
+        ploke_tui::tools::ToolErrorCode::MalformedDiff => ToolErrorCodeRecord::MalformedDiff,
+        ploke_tui::tools::ToolErrorCode::InvalidFormat => ToolErrorCodeRecord::InvalidFormat,
+        ploke_tui::tools::ToolErrorCode::Io => ToolErrorCodeRecord::Io,
+        ploke_tui::tools::ToolErrorCode::Timeout => ToolErrorCodeRecord::Timeout,
+        ploke_tui::tools::ToolErrorCode::Internal => ToolErrorCodeRecord::Internal,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2478,7 +2848,7 @@ impl RunMsbAgentSingleRequest {
                 &expected_file_baselines,
             )
             .await?;
-            write_json(&turn_summary_path, &turn_artifact)?;
+            write_agent_turn_summary(&turn_summary_path, &turn_artifact)?;
             steps.push("benchmark_turn_completed".to_string());
             let full_response_trace = match (
                 full_response_trace_source.as_ref(),
@@ -3393,7 +3763,7 @@ async fn run_benchmark_turn(
         llm_response: None,
     };
     let mut tool_request_started_at: HashMap<String, Instant> = HashMap::new();
-    write_json(trace_path, &artifact)?;
+    write_agent_turn_trace(trace_path, &artifact)?;
 
     loop {
         app.pump_pending_events().await;
@@ -3425,7 +3795,7 @@ async fn run_benchmark_turn(
         if remaining.is_zero() {
             artifact.patch_artifact =
                 collect_patch_artifact_with_expected(state, expected_file_baselines).await?;
-            write_json(trace_path, &artifact)?;
+            write_agent_turn_trace(trace_path, &artifact)?;
             return Err(PrepareError::Timeout {
                 phase: "benchmark_turn",
                 secs: prepared.budget.wall_clock_secs as u64,
@@ -3438,7 +3808,7 @@ async fn run_benchmark_turn(
                 match debug {
                     Some(debug) => {
                         artifact.events.push(ObservedTurnEvent::DebugCommand(debug.as_str().to_string()));
-                        write_json(trace_path, &artifact)?;
+                        write_agent_turn_trace(trace_path, &artifact)?;
                     }
                     None => {
                         return Err(PrepareError::EventStreamClosed { phase: "benchmark_turn_debug" });
@@ -3455,7 +3825,7 @@ async fn run_benchmark_turn(
                             &mut tool_request_started_at,
                         )
                         .await;
-                        write_json(trace_path, &artifact)?;
+                        write_agent_turn_trace(trace_path, &artifact)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => {
@@ -3473,7 +3843,7 @@ async fn run_benchmark_turn(
                             &mut tool_request_started_at,
                         )
                         .await;
-                        write_json(trace_path, &artifact)?;
+                        write_agent_turn_trace(trace_path, &artifact)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => {
@@ -3495,7 +3865,7 @@ async fn run_benchmark_turn(
     // Note: llm_prompt and llm_response are now captured via events in handle_benchmark_event
     // This avoids the need for mutable state access and TTL mutation side effects
 
-    write_json(trace_path, &artifact)?;
+    write_agent_turn_trace(trace_path, &artifact)?;
     Ok(artifact)
 }
 
@@ -3558,7 +3928,7 @@ async fn drain_post_terminal_events(
         }
 
         if observed_event {
-            write_json(trace_path, &artifact)?;
+            write_agent_turn_trace(trace_path, &artifact)?;
         }
 
         if Instant::now() >= deadline {
@@ -3815,6 +4185,16 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> 
         path: path.to_path_buf(),
         source,
     })
+}
+
+fn write_agent_turn_trace(path: &Path, artifact: &AgentTurnArtifact) -> Result<(), PrepareError> {
+    let record = AgentTurnTraceRecord(artifact.to_record());
+    write_json(path, &record)
+}
+
+fn write_agent_turn_summary(path: &Path, artifact: &AgentTurnArtifact) -> Result<(), PrepareError> {
+    let record = AgentTurnSummaryRecord(artifact.to_record());
+    write_json(path, &record)
 }
 
 fn write_jsonl_line<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> {
@@ -5380,6 +5760,92 @@ mod tests {
         assert_eq!(artifact.terminal_record.as_ref().unwrap().summary, "done");
     }
 
+    #[test]
+    fn agent_turn_projection_converts_live_tool_payload_to_record_schema() {
+        let call_id = ploke_core::ArcStr::from("call-1");
+        let mut payload = ploke_tui::tools::ToolUiPayload::new(
+            ToolName::ApplyCodeEdit,
+            call_id.clone(),
+            "edit staged",
+        )
+        .with_field("status", "staged")
+        .with_details("ready")
+        .with_verbosity(ToolVerbosity::Verbose);
+        let tool_error = ploke_tui::tools::ToolError::new(
+            ToolName::ApplyCodeEdit,
+            ploke_tui::tools::ToolErrorCode::InvalidFormat,
+            "invalid patch",
+        )
+        .field("patch");
+        payload.error = Some(tool_error.to_wire());
+        payload.error_code = Some(ploke_tui::tools::ToolErrorCode::InvalidFormat);
+
+        let artifact = AgentTurnArtifact {
+            task_id: "case-123".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "prompt".to_string(),
+            user_message_id: Uuid::new_v4().to_string(),
+            events: vec![ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
+                request_id: Uuid::new_v4().to_string(),
+                parent_id: Uuid::new_v4().to_string(),
+                call_id: call_id.to_string(),
+                tool: ToolName::ApplyCodeEdit.as_str().to_string(),
+                content: "ok".to_string(),
+                ui_payload: Some(payload),
+                latency_ms: 17,
+            })],
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        };
+
+        let trace = AgentTurnTraceRecord(artifact.to_record());
+        let ObservedTurnEventRecord::ToolCompleted(completed) = &trace.0.events[0] else {
+            panic!("expected tool completed event");
+        };
+        let projected = completed.ui_payload.as_ref().expect("projected ui payload");
+        assert_eq!(projected.summary, "edit staged");
+        assert_eq!(projected.verbosity, ToolVerbosityRecord::Verbose);
+        assert_eq!(
+            projected.error_code,
+            Some(ToolErrorCodeRecord::InvalidFormat)
+        );
+        assert_eq!(projected.fields[0].name, "status");
+        assert_eq!(projected.fields[0].value, "staged");
+        assert_eq!(
+            projected
+                .error
+                .as_ref()
+                .map(|error| error.llm.message.as_str()),
+            Some("invalid patch")
+        );
+
+        let encoded = serde_json::to_string(&trace).expect("serialize projected trace");
+        let decoded: ploke_records::agent_turn::AgentTurnTraceRecord =
+            serde_json::from_str(&encoded).expect("deserialize projected trace");
+        let ObservedTurnEventRecord::ToolCompleted(decoded_completed) = &decoded.0.events[0] else {
+            panic!("expected decoded tool completed event");
+        };
+        assert_eq!(
+            decoded_completed
+                .ui_payload
+                .as_ref()
+                .and_then(|payload| payload.error_code),
+            Some(ToolErrorCodeRecord::InvalidFormat)
+        );
+    }
+
     #[tokio::test]
     async fn handle_benchmark_event_captures_prompt_constructed() {
         use ploke_llm::manager::Role;
@@ -5665,7 +6131,7 @@ mod tests {
             llm_prompt: Vec::new(),
             llm_response: None,
         };
-        write_json(&trace_path, &artifact).expect("seed trace");
+        write_agent_turn_trace(&trace_path, &artifact).expect("seed trace");
 
         let (_debug_tx, mut debug_rx) = mpsc::channel(1);
         let (realtime_tx, mut realtime_rx) = broadcast::channel(8);

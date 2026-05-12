@@ -114,6 +114,13 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - For this plan, `ploke-eval` owns grants, checks, History admission, runtime hydration, and successor selection; `ploke-tui` is a harness/executor behind a trait boundary.
 - TUI proposal state, CLI output, logs, mutable reports, and monitor views are not source truth. A Parent may diagnose and choose surfaces only from typed evidence or explicitly admitted projections.
 
+## Agent-Turn Record Projection Work
+
+- Before extending `agent-turn-trace.json`, `agent-turn-summary.json`, or tool UI/error payload persistence, read `docs/active/agents/2026-05-12_agent-turn-record-projection-handoff.md`.
+- Treat `ploke-records::agent_turn` as the canonical owner of the persisted `agent-turn` schema.
+- Treat `crates/ploke-eval/src/runner.rs` as the current live-to-record writer boundary for `agent-turn` artifacts unless the crate graph is intentionally restructured first.
+- Do not expand the feature-gated `ploke-records <-tool_contracts-> ploke-tui` bridge to solve new persisted-schema ownership needs when an explicit records-owned projection will do.
+
 ## Prototype 1 History Audit
 
 - Operational policy: audit the Prototype 1 History/Crown implementation at least once per week with combined human and LLM review.

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::record::{Record, RecordFamily, RecordFormat};
-use crate::tool_contracts::{ToolArgumentsJson, ToolName, ToolUiPayload};
+use crate::tool_contracts::{ToolArgumentsJson, ToolName};
 
 pub const AGENT_TURN_TRACE_SCHEMA_V1: &str = "agent-turn-trace.v1";
 pub const AGENT_TURN_SUMMARY_SCHEMA_V1: &str = "agent-turn-summary.v1";
@@ -216,7 +216,7 @@ pub struct ToolCompletedRecord {
     pub call_id: String,
     pub tool: String,
     pub content: String,
-    pub ui_payload: Option<ToolUiPayload>,
+    pub ui_payload: Option<ToolUiPayloadRecord>,
     #[serde(default)]
     pub latency_ms: u64,
 }
@@ -229,9 +229,118 @@ pub struct ToolFailedRecord {
     pub call_id: String,
     pub tool: Option<String>,
     pub error: String,
-    pub ui_payload: Option<ToolUiPayload>,
+    pub ui_payload: Option<ToolUiPayloadRecord>,
     #[serde(default)]
     pub latency_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolVerbosityRecord {
+    Minimal,
+    Normal,
+    Verbose,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolUiFieldRecord {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolUiPayloadRecord {
+    pub tool: ToolName,
+    pub call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<ToolUiFieldRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    pub verbosity: ToolVerbosityRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ToolErrorWireRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<ToolErrorCodeRecord>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolErrorCodeRecord {
+    #[serde(alias = "FieldTooLarge")]
+    FieldTooLarge,
+    #[serde(alias = "WrongType")]
+    WrongType,
+    #[serde(alias = "MissingField")]
+    MissingField,
+    #[serde(alias = "MalformedDiff")]
+    MalformedDiff,
+    #[serde(alias = "InvalidFormat")]
+    InvalidFormat,
+    #[serde(alias = "Io")]
+    Io,
+    #[serde(alias = "Timeout")]
+    Timeout,
+    #[serde(alias = "Internal")]
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolErrorWireRecord {
+    pub user: String,
+    pub llm: ToolLlmErrorPayloadRecord,
+    pub system: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolLlmErrorPayloadRecord {
+    pub ok: bool,
+    pub tool: ToolName,
+    pub code: ToolErrorCodeRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub received: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_context: Option<ToolRetryContextRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolRetryContextRecord {
+    pub fields: Vec<ToolRetryContextFieldRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolRetryContextFieldRecord {
+    pub name: String,
+    pub value: ToolRetryContextValueRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ToolRetryContextValueRecord {
+    Null,
+    Bool(bool),
+    Number(String),
+    String(String),
+    StringList(Vec<String>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -433,5 +542,59 @@ mod tests {
             serde_json::from_str(&encoded).expect("deserialize summary");
 
         assert_eq!(decoded.0.task_id, "task-1");
+    }
+
+    #[test]
+    fn tool_ui_payload_record_roundtrips_current_agent_turn_shape() {
+        let payload = ToolUiPayloadRecord {
+            tool: ToolName::ApplyCodeEdit,
+            call_id: "call-1".to_string(),
+            request_id: Some("7a703948-f5df-4c35-aef6-631cd169ef7c".to_string()),
+            proposal_id: Some("4c775c08-c673-4e88-8c36-209c83f3ba45".to_string()),
+            summary: "edit staged".to_string(),
+            fields: vec![
+                ToolUiFieldRecord {
+                    name: "status".to_string(),
+                    value: "staged".to_string(),
+                },
+                ToolUiFieldRecord {
+                    name: "file".to_string(),
+                    value: "src/lib.rs".to_string(),
+                },
+            ],
+            details: Some("Ready to apply".to_string()),
+            verbosity: ToolVerbosityRecord::Normal,
+            error: Some(ToolErrorWireRecord {
+                user: "apply_code_edit: invalid patch".to_string(),
+                llm: ToolLlmErrorPayloadRecord {
+                    ok: false,
+                    tool: ToolName::ApplyCodeEdit,
+                    code: ToolErrorCodeRecord::InvalidFormat,
+                    field: Some("patch".to_string()),
+                    expected: Some("unified diff".to_string()),
+                    received: Some("plain text".to_string()),
+                    message: "invalid patch".to_string(),
+                    snippet: Some("@@ broken".to_string()),
+                    retry_hint: Some("Send a unified diff".to_string()),
+                    retry_context: Some(ToolRetryContextRecord {
+                        fields: vec![ToolRetryContextFieldRecord {
+                            name: "candidate_files".to_string(),
+                            value: ToolRetryContextValueRecord::StringList(vec![
+                                "src/lib.rs".to_string(),
+                                "src/main.rs".to_string(),
+                            ]),
+                        }],
+                    }),
+                },
+                system: "tool=ApplyCodeEdit code=InvalidFormat: invalid patch".to_string(),
+            }),
+            error_code: Some(ToolErrorCodeRecord::InvalidFormat),
+        };
+
+        let encoded = serde_json::to_string(&payload).expect("serialize tool ui payload record");
+        let decoded: ToolUiPayloadRecord =
+            serde_json::from_str(&encoded).expect("deserialize tool ui payload record");
+
+        assert_eq!(decoded, payload);
     }
 }
