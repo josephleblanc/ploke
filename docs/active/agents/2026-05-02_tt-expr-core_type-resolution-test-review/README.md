@@ -2,7 +2,7 @@
 
 - Date: 2026-05-02
 - Task title: Type-use resolution test review
-- Task description: Independent sub-agent reviews of the new parser type-use resolution tests, including correctness, coverage, false-positive risks, fixture-driven gaps, and TDD next cases.
+- Task description: Historical independent sub-agent reviews of parser type-use resolution tests, including correctness, coverage, false-positive risks, fixture-driven gaps, and TDD next cases. These notes predate the current v2 typed relation coverage and should be read as legacy-context input, not as the current coverage map.
 - Related planning files: `docs/active/agents/readme.md`
 
 ## Reports

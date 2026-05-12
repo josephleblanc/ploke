@@ -24,9 +24,12 @@ This keeps composite type structure intact while still giving query code durable
 5. Implement one semantic surface at a time, then rerun the narrow focused tests through a sub-agent.
 6. When a red bucket turns green, update the known-limitations doc and the corpus coverage table in the test file.
 
-## Current Red Bucket
+## Current Limitation Bucket
 
-The current intentionally red bucket is documented as `KL-008`: typed graph constraint surfaces.
+The current documented limitation bucket is `KL-008`: typed graph constraint
+surfaces. Some items are covered by intentionally red or missing strict
+contracts; others are supported in fresh fixtures but still need real-corpus
+backup coverage.
 
 The remaining surfaces are:
 
@@ -66,7 +69,7 @@ parameter types, or precise associated item owners/defaults.
 
 ## Generic-Bound Owner Policy
 
-The current red tests assert two related but different queries:
+The current generic-bound contracts assert two related but different queries:
 
 - Containing-item reachability, for example `GenericArray -> ArrayLength` and `Date -> TimeZone`.
 - Generic-param-owned reachability, for example `DateTime::Tz -> TimeZone`.
@@ -82,4 +85,5 @@ There is already a parser-side `GenericRelation` enum that describes generic dec
 - Do not relax schema import, backup fixture loading, or correctness validation to make stale fixtures pass.
 - Do not silently skip unresolved type surfaces; keep missing paths visible through red tests or known-limitations docs.
 - Use sub-agents for focused test execution as required by `AGENTS.md`.
-- Keep this workflow doc and the handoff README in sync when the active red bucket or implementation strategy changes.
+- Keep this workflow doc and the handoff README in sync when the active
+  limitation bucket, red-test bucket, or implementation strategy changes.

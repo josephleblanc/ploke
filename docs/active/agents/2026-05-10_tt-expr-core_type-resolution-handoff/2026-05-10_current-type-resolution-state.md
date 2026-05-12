@@ -3,7 +3,7 @@
 - Date: 2026-05-10
 - Task title: Current type-resolution restart context
 - Task description: Handoff summary for revisiting the `tt-expr-core` type-resolution work after a pause.
-- Related planning files: `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/README.md`, `docs/active/agents/2026-05-02_tt-expr-core_type-resolution-test-review/README.md`, `docs/active/agents/2026-05-05_tt-expr-core_type-resolution-perf/README.md`
+- Related planning files: `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/README.md`, `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/2026-05-10_current-type-resolution-workflow.md`, `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/type-graph-tightening-review/synthesis.md`, `docs/design/known_limitations/KL-008-typed-type-graph-constraint-surfaces.md`
 
 ## Branch State
 
@@ -24,8 +24,16 @@ Recent type-resolution commit sequence:
 - `f2e03059 Add type-context expansion types to ploke-db`
 - `42fe564a Add type-context expansion to RAG retrieval`
 - `3c63975a Add type context to RAG context parts`
+- `bbce7a39 Implement typed graph generic bound coverage`
+- `c4a45452 Harden typed type graph resolution`
+- `ce8f2f19 Refresh fixture registry for typed graph tests`
+- `c39f8c7c Stabilize TUI typed graph test run`
+- `cead86fb Limit dev and test debug info`
 
-The current uncommitted change at handoff time was the restoration of `crates/ploke-tui/src/tools/request_code_context.rs` from `3c63975a^`. The latest commit deleted that file while `tools/mod.rs` and `llm/manager/mod.rs` still referenced the request-code-context tool. Restoring it made `cargo build --release` pass locally with warnings only.
+The worktree was clean after `cead86fb`. The earlier handoff-time restoration
+of `crates/ploke-tui/src/tools/request_code_context.rs` has been resolved;
+that file is present, and later commits stabilized the typed graph fixture and
+TUI test surfaces.
 
 ## Semantic Shape
 
@@ -71,14 +79,20 @@ This means a query can move from a function to its return type root, through nes
 
 ## Existing Handoff And Review Docs
 
+- `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/2026-05-10_current-type-resolution-workflow.md`
+  Current workflow for continuing typed graph work: strict tests first, document red buckets, implement one semantic surface at a time, and keep `KL-008` in sync.
+- `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/type-graph-tightening-review/synthesis.md`
+  Multi-reviewer synthesis for tightening lax type graph boundaries; its progress section tracks addressed and still-open hardening tasks.
+- `docs/design/known_limitations/KL-008-typed-type-graph-constraint-surfaces.md`
+  Active known-limitation tracker for remaining typed graph constraint surfaces, including the distinction between fresh-ingestion support and real-corpus backup coverage.
 - `docs/active/agents/2026-05-02_tt-expr-core_type-resolution-test-review/README.md`
-  Index for two independent reviews of the parser type-use/type-relation tests.
+  Historical index for two independent reviews of parser type-use/type-relation tests that predate the current v2 typed relation coverage.
 - `docs/active/agents/2026-05-02_tt-expr-core_type-resolution-test-review/2026-05-02_agent-a_type-resolution-test-review.md`
   Detailed critique of current legacy report-style tests, false-positive risks, fixture gaps, and TDD next cases.
 - `docs/active/agents/2026-05-02_tt-expr-core_type-resolution-test-review/2026-05-02_agent-b_type-resolution-test-review.md`
   Independent review with similar conclusions: add exact identity checks, missing role coverage, import-chain cases, and transform persistence checks.
 - `docs/active/agents/2026-05-05_tt-expr-core_type-resolution-perf/2026-05-05_type-resolution-v1-v2-perf.md`
-  Performance comparison between legacy resolver and typed v2 resolver. V2 is much faster in resolver-only benches, but corpus runs showed import-chain depth failures on `dtolnay__proc-macro2` and `dtolnay__syn`.
+  Historical performance comparison between legacy resolver and typed v2 resolver. V2 was much faster in resolver-only benches, but corpus runs showed import-chain depth failures on `dtolnay__proc-macro2` and `dtolnay__syn`.
 
 ## Current Test Coverage Shape
 
@@ -164,11 +178,21 @@ Current corpus-contract status after adding edge-pushing real-corpus tests and r
 
 ## Suggested Restart Point
 
-Start from the v2 relation model rather than reviving slot mutation as the main abstraction. The next useful work is to tighten the typed relation surface:
+Start from the v2 relation model rather than reviving slot mutation as the
+main abstraction. The tightening review has already addressed several earlier
+API hazards: typed resolver owner scopes, typed transform role/kind wrappers,
+qualified containment decoding, source-scoped parser assertion helpers,
+role-aware DB reachability helpers, and query-time endpoint-family validation.
+Continue from the still-open items in
+`type-graph-tightening-review/synthesis.md`:
 
-- Add missing role tests in `type_relations_v2.rs`.
+- Define durable `type_use.slot_index` / slot-coordinate semantics.
+- Expand parser exact-source coverage across more roles in `type_relations_v2.rs`.
+- Expand DB role-aware reachability coverage across more `TypeUseRole` surfaces.
+- Decide whether endpoint-family invariants need insert-time enforcement or whether query-time validation remains the intended boundary.
+- Add precise associated type/const item ownership before expanding associated item defaults and impl associated definitions.
+- Clean up `KL-008` whenever fresh-fixture support and real-corpus backup coverage diverge.
 - Write real-target corpus tests that push beyond current passing contracts. Prefer strict tests over placeholders: if a capability is not implemented, let the test fail with the concrete missing traversal.
-- Use those failing or edge tests to document current limitations directly next to the contract they expose.
 - Add import-chain stress cases that mirror backlink coverage: renamed imports, glob imports, and multi-hop re-exports used in actual type slots, especially in real corpus crates.
 - Add real-corpus where-clause contracts now that predicate owners and bounds are represented structurally for fresh ingestion.
 - Add transform/DB/RAG integration tests for exact `type_use` + `type_contains` + `type_relation` query behavior.

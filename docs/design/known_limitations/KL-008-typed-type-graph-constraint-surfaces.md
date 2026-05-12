@@ -14,8 +14,9 @@ well when they are represented as roots in `type_use` and terminal nodes in
 `type_relation`. Real-corpus backup contracts now pass for function params and
 returns, method params and returns, fields, type aliases, impl self/trait roots,
 const/static types, references, slices, arrays, named generic arguments,
-generic declaration bounds, type where-clause predicates, qualified associated
-type projections, and trait associated type bounds.
+generic declaration bounds, qualified associated type projections, and trait
+associated type bounds. Type where-clause predicates are supported for fresh
+ingestion, but real-corpus backup contracts for them have not been added yet.
 
 Some Rust constraint surfaces are still parsed or stored only as metadata, or
 are not represented precisely enough to become reachable typed graph relations:

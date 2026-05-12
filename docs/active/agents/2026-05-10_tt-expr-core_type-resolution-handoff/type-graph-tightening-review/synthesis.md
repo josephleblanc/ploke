@@ -136,6 +136,8 @@ The third slice should add exact-set and role-aware tests before changing broade
 - Parser relation tests now have a reusable source-scoped exact-set assertion helper, with initial coverage for qualified projection, associated type bound, where-predicate, generic-supertrait, and nested generic field sources.
 - DB reachability tests now have a role/slot-aware helper that first selects the intended `type_use` root and then asserts the reachable target path from that exact root, with explicit exact-vs-minimum depth expectations.
 - DB type graph query APIs now validate persisted `type_relation` endpoint families before surfacing paths, with focused tests that inject invalid ordinary/trait family crossings and assert owner/target queries exclude them.
+- KL-008 now distinguishes fresh-fixture where-clause support from missing
+  real-corpus where-clause backup contracts.
 
 ### Still Open
 
@@ -144,4 +146,5 @@ The third slice should add exact-set and role-aware tests before changing broade
 - DB reachability role-aware coverage should be expanded across more roles; the helper exists, but coverage is not yet comprehensive.
 - DB persistence still stores endpoint families as UUID/string rows; query-time invariant tests exist, but insert-time rejection or a stronger persisted schema is still open.
 - Associated type bounds are still owned by the containing trait as a convenience surface, not by precise associated type item nodes.
-- KL-008 still needs a cleanup pass to distinguish fresh-fixture where-clause support from real-corpus backup coverage.
+- Real-corpus where-clause backup contracts are still missing even though
+  fresh-fixture where-clause support is documented in KL-008.
