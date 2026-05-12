@@ -60,8 +60,9 @@ pub mod ui;
 pub mod validators;
 
 pub use error::{
-    Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, allowed_tool_names,
-    tool_io_error, tool_ui_error,
+    Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, ToolLlmErrorPayload,
+    ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField, ToolRetryContextValue,
+    allowed_tool_names, tool_io_error, tool_ui_error,
 };
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 

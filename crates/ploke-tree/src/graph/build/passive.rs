@@ -54,6 +54,10 @@ impl Builder {
         if let Some(run_profile) = evidence.run_profile.as_ref() {
             self.ingest_run_profile(run_profile);
         }
+        if let Some(run_attempts) = evidence.run_attempts.as_ref() {
+            self.ingest_run_attempts(run_attempts);
+        }
+        self.ingest_attempt_runner_results(&evidence.attempt_runner_results);
     }
 
     fn ingest_child_plan_summary(&mut self, evidence: &ChildPlanEvidence) {

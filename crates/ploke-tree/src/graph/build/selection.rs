@@ -6,9 +6,10 @@ mod membership;
 mod tests;
 
 use ploke_records::history::{
-    AdmittedEntryRecord, SelectionDecisionEntryRecord, TraversalCandidateSourceRecord,
+    AdmittedEntryRecord, EvaluationPayloadRecord, SelectionDecisionEntryRecord,
+    TraversalCandidateSourceRecord,
 };
-use ploke_records::ids::CandidateId;
+use ploke_records::ids::{CandidateId, Coordinate, RuntimeId};
 
 use crate::graph::{
     CandidateBranchNode, CandidateMembershipKey, CandidateMembershipNode, CandidateNode,
@@ -182,6 +183,9 @@ impl Builder {
                 EvidenceKind::CandidatePayload,
                 payload.source_refs.clone(),
             );
+            if let Some(coordinate) = operation_coordinate(payload) {
+                self.attach_to_operation_coordinate(&coordinate, evidence_id);
+            }
             if let Some(sealed_evidence) = payload.sealed_evidence.as_ref() {
                 for branch in &sealed_evidence.branches {
                     self.graph.candidates.branches.push(CandidateBranchNode {
@@ -256,4 +260,18 @@ impl Builder {
             );
         }
     }
+}
+
+fn operation_coordinate(payload: &EvaluationPayloadRecord) -> Option<Coordinate> {
+    let runtime_id = payload
+        .sealed_evidence
+        .as_ref()?
+        .coordinate
+        .primary_runtime_id
+        .as_ref()?;
+    let target = payload.artifact.as_ref()?.node.operation_target.clone()?;
+    Some(Coordinate {
+        runtime_id: RuntimeId(runtime_id.clone()),
+        target,
+    })
 }

@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
+use ploke_records::invocation::InvocationRecord;
 use ploke_records::journal::JournalEntry;
 use ploke_records::protocol::Artifact as ProtocolArtifact;
 use ploke_records::run_profile::{RunProfileCommitmentRecord, RunProfileRecord};
+use ploke_records::scheduler::{RunnerRequestRecord, RunnerResultRecord};
 use serde::{Deserialize, Serialize};
 
 /// Passive evidence counts loaded beside the scheduler tree.
@@ -26,6 +28,10 @@ pub struct PassiveEvidence {
     pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_profile: Option<RunProfileEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_attempts: Option<RunAttemptEvidence>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attempt_runner_results: BTreeMap<String, RunnerResultRecord>,
 }
 
 /// Typed transition journal loaded in append order from `transition-journal.jsonl`.
@@ -158,4 +164,26 @@ pub struct RunProfileEvidence {
     pub profile: Option<RunProfileRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commitment: Option<RunProfileCommitmentRecord>,
+}
+
+/// Read-only runner request/result and invocation records loaded from node dirs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RunAttemptEvidence {
+    pub summary: RunAttemptSummary,
+    pub runner_requests: BTreeMap<String, RunnerRequestRecord>,
+    pub runner_results: BTreeMap<String, RunnerResultRecord>,
+    pub invocations: BTreeMap<String, InvocationRecord>,
+}
+
+/// Counts from persisted runner attempt metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunAttemptSummary {
+    pub runner_request_file_count: usize,
+    pub runner_request_parsed_count: usize,
+    pub runner_result_file_count: usize,
+    pub runner_result_parsed_count: usize,
+    pub invocation_file_count: usize,
+    pub invocation_parsed_count: usize,
+    pub child_invocation_count: usize,
+    pub successor_invocation_count: usize,
 }

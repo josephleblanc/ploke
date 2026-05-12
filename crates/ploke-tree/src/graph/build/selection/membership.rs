@@ -63,7 +63,10 @@ pub(super) fn for_payload<'a>(
     if let Some(selected) = selected
         && selected.applies_to(payload)
     {
+        let mut selected_identity_recorded = false;
+
         if let Some(membership_id) = selected.membership_id {
+            selected_identity_recorded = true;
             match unique_membership(memberships.iter().filter(|member| {
                 member.membership_id.as_ref() == Some(membership_id)
                     && member.candidate == payload.candidate
@@ -74,6 +77,7 @@ pub(super) fn for_payload<'a>(
         }
 
         if let Some(occurrence_id) = selected.occurrence_id {
+            selected_identity_recorded = true;
             match unique_membership(memberships.iter().filter(|member| {
                 member.occurrence_id.as_ref() == Some(occurrence_id)
                     && member.candidate == payload.candidate
@@ -81,6 +85,10 @@ pub(super) fn for_payload<'a>(
                 Resolution::Missing => {}
                 resolved => return resolved,
             }
+        }
+
+        if selected_identity_recorded {
+            return Resolution::Missing;
         }
     }
 
@@ -191,6 +199,28 @@ mod tests {
         };
 
         assert_eq!(member.membership_id.as_ref(), Some(&selected_membership));
+    }
+
+    #[test]
+    fn selected_membership_does_not_fall_back_to_candidate_label() {
+        let payload = payload_with_coordinate("candidate:same", "node:first");
+        let selected_membership = CandidateMembershipId("membership:missing".to_owned());
+        let selected = Selected {
+            candidate_node_id: "node:first",
+            selected_candidate: Some(&payload.candidate),
+            occurrence_id: None,
+            membership_id: Some(&selected_membership),
+        };
+        let memberships = vec![membership(
+            "candidate:same",
+            Some(CandidateMembershipId("membership:other".to_owned())),
+            "hash-other",
+        )];
+
+        assert!(matches!(
+            for_payload(&payload, Some(&selected), &memberships),
+            Resolution::Missing
+        ));
     }
 
     fn payload(candidate: &str) -> EvaluationPayloadRecord {

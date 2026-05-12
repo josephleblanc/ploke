@@ -1,18 +1,23 @@
+use ploke_records::branch::{ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus};
 use ploke_records::history::{
-    ActorRefRecord, AdmittedEntryRecord, AdmittedEntryStateRecord, CandidateCoordinateRecord,
-    CandidateEvidenceRecord, CandidateLifecycleRecord, CandidateSetMembershipRecord,
-    CandidateSetProofRecord, CandidateSetRecord, CandidateSetRootRecord, EntryCoreRecord,
-    EntryKindRecord, EntryPayloadRecord, EvaluationPayloadRecord, EvidenceRefRecord,
-    ObservedEntryRecord, OperationalEnvironmentRecord, ProcedureRefRecord,
-    SelectionDecisionEntryRecord, SelectionScopeRecord, SubjectRefRecord,
+    ActorRefRecord, AdmittedEntryRecord, AdmittedEntryStateRecord, CandidateArtifactRecord,
+    CandidateCoordinateRecord, CandidateEvidenceRecord, CandidateLifecycleRecord,
+    CandidateSetMembershipRecord, CandidateSetProofRecord, CandidateSetRecord,
+    CandidateSetRootRecord, EntryCoreRecord, EntryKindRecord, EntryPayloadRecord,
+    EvaluationPayloadRecord, EvidenceRefRecord, ObservedEntryRecord, OperationalEnvironmentRecord,
+    ProcedureRefRecord, SelectionDecisionEntryRecord, SelectionScopeRecord, SubjectRefRecord,
 };
 use ploke_records::ids::{
-    BlockId, CandidateMembershipId, CandidateOccurrenceId, EntryId, HistoryHash, LineageId,
-    RecordedAt,
+    ArtifactId, BlockId, BranchId, CandidateId, CandidateMembershipId, CandidateOccurrenceId,
+    EntryId, HistoryHash, InstanceId, LineageId, OperationTarget, RecordedAt, RuntimeId,
+    SchedulerNodeId, SourceStateId,
 };
+use ploke_records::scheduler::{NodeRecord, NodeStatusRecord};
 use ploke_records::selection::{Decision, Outcome};
 
-use crate::graph::{CandidateMembershipKey, GraphWarningKind};
+use crate::graph::{
+    CandidateMembershipKey, EvidenceKind, GraphWarningKind, OperationKey, OperationTargetKey,
+};
 
 use super::super::Builder;
 
@@ -93,6 +98,78 @@ fn selected_coordinate_payload_uses_recorded_selected_membership() {
     assert_eq!(builder.graph.candidates.candidates[1].membership_id, None);
     assert!(builder.graph.warnings.iter().any(|warning| {
         warning.kind == GraphWarningKind::CandidateSetMembershipAmbiguousForPayload
+    }));
+}
+
+#[test]
+fn selected_coordinate_payload_does_not_use_label_only_membership_fallback() {
+    let other_membership = CandidateMembershipId("membership:other".to_owned());
+    let missing_selected_membership = CandidateMembershipId("membership:missing".to_owned());
+    let mut selection = selection(
+        vec![payload_with_coordinate(
+            "candidate:same",
+            "node:first",
+            "runtime:first",
+        )],
+        vec![membership(
+            "candidate:same",
+            Some(other_membership),
+            "hash-other",
+        )],
+    );
+    selection.selected_candidate = Some(SubjectRefRecord {
+        value: "candidate:same".to_owned(),
+    });
+    selection.selected_membership_id = Some(missing_selected_membership);
+    selection.decision.candidate_node_id = "node:first".to_owned();
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    assert_eq!(builder.graph.candidates.candidates[0].membership_id, None);
+    assert_eq!(builder.graph.candidates.candidates[0].membership_key, None);
+    assert!(
+        builder
+            .graph
+            .warnings
+            .iter()
+            .any(|warning| { warning.kind == GraphWarningKind::SelectedMembershipMissing })
+    );
+    assert!(builder.graph.warnings.iter().any(|warning| {
+        warning.kind == GraphWarningKind::CandidateSetMembershipMissingForPayload
+    }));
+}
+
+#[test]
+fn selection_payload_populates_runtime_target_operation_identity() {
+    let selection = selection(
+        vec![payload_with_operation("candidate:a", "node-1", "runtime-1")],
+        vec![membership(
+            "candidate:a",
+            Some(CandidateMembershipId("m1".to_owned())),
+            "hash-a",
+        )],
+    );
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    let key = OperationKey::RuntimeTarget {
+        runtime_id: RuntimeId("runtime-1".to_owned()),
+        target: OperationTargetKey::Artifact {
+            artifact_id: ArtifactId("artifact-before".to_owned()),
+        },
+    };
+    let operation = builder
+        .graph
+        .operations
+        .operations
+        .get(&key)
+        .expect("selection payload operation is indexed by runtime and target");
+    assert!(operation.evidence.iter().any(|id| {
+        builder.graph.evidence.attachments[id].kind == EvidenceKind::CandidatePayload
     }));
 }
 
@@ -378,6 +455,82 @@ fn payload_with_coordinate(
         child_diagnostics: Vec::new(),
     });
     payload
+}
+
+fn payload_with_operation(
+    candidate: &str,
+    node_id: &str,
+    runtime_id: &str,
+) -> EvaluationPayloadRecord {
+    let mut payload = payload_with_coordinate(candidate, node_id, runtime_id);
+    payload.artifact = Some(CandidateArtifactRecord {
+        schema_version: 1,
+        node: operation_node_record(),
+        resolved: resolved_branch(),
+        surface: None,
+    });
+    payload
+}
+
+fn operation_node_record() -> NodeRecord {
+    NodeRecord {
+        schema_version: "prototype1-treatment-node.v1".to_owned(),
+        node_id: SchedulerNodeId("node-1".to_owned()),
+        parent_node_id: None,
+        generation: 1,
+        instance_id: InstanceId("instance-1".to_owned()),
+        source_state_id: SourceStateId("source-1".to_owned()),
+        operation_target: Some(operation_target()),
+        base_artifact_id: Some(ArtifactId("artifact-before".to_owned())),
+        patch_id: None,
+        derived_artifact_id: Some(ArtifactId("artifact-after".to_owned())),
+        parent_branch_id: None,
+        branch_id: BranchId("branch-1".to_owned()),
+        candidate_id: CandidateId("candidate-1".to_owned()),
+        target_relpath: "src/lib.rs".into(),
+        node_dir: "nodes/node-1".into(),
+        workspace_root: "worktree".into(),
+        binary_path: "target/debug/ploke".into(),
+        runner_request_path: "runner-request.json".into(),
+        runner_result_path: "runner-result.json".into(),
+        status: NodeStatusRecord::Succeeded,
+        created_at: "2026-05-11T00:00:00Z".to_owned(),
+        updated_at: "2026-05-11T00:01:00Z".to_owned(),
+    }
+}
+
+fn resolved_branch() -> ResolvedTreatmentBranch {
+    ResolvedTreatmentBranch {
+        instance_id: "instance-1".to_owned(),
+        source_state_id: "source-1".to_owned(),
+        parent_branch_id: None,
+        target_relpath: "src/lib.rs".into(),
+        source_content: "before".to_owned(),
+        source_content_hash: "hash-before".to_owned(),
+        selected_branch_id: Some("branch-1".to_owned()),
+        branch: TreatmentBranchNode {
+            branch_id: "branch-1".to_owned(),
+            candidate_id: "candidate-1".to_owned(),
+            patch_id: None,
+            branch_label: "branch 1".to_owned(),
+            synthesized_spec_id: "spec-1".to_owned(),
+            proposed_content: "after".to_owned(),
+            proposed_content_hash: "hash-after".to_owned(),
+            generation_target: Some(operation_target()),
+            generation_coordinate: None,
+            status: TreatmentBranchStatus::Synthesized,
+            apply_id: None,
+            applied_content_hash: None,
+            derived_artifact_id: Some(ArtifactId("artifact-after".to_owned())),
+            latest_evaluation: None,
+        },
+    }
+}
+
+fn operation_target() -> OperationTarget {
+    OperationTarget::Artifact {
+        artifact_id: ArtifactId("artifact-before".to_owned()),
+    }
 }
 
 fn membership(

@@ -152,7 +152,7 @@ Common path patterns:
 | `nodes/node-*/channels/<runtime-id>/child-to-parent.jsonl` | 405 | counted/parsed as passive channel evidence |
 | `evaluations/branch-*.json` | 369 | loaded as evaluation evidence |
 | `nodes/node-*/runner-result.json` | 351 | not loaded into `RunRecordSet` |
-| `messages/child-plan/node-*.json` | 155 | not loaded into `RunRecordSet` |
+| `messages/child-plan/node-*.json` | 155 | loaded as passive child-plan evidence; graph summary evidence only |
 | `scheduler.json` | 81 | loaded into `RunForestInput.scheduler` |
 | `nodes/node-*/successor-ready/<runtime-id>.json` | 73 | loaded into `RunForestInput.successor_ready` |
 | `nodes/node-*/successor-completion/<runtime-id>.json` | 71 | loaded into `RunForestInput.successor_completion` |
@@ -163,8 +163,8 @@ Common path patterns:
 | `history/index/by-lineage-height.jsonl` | 18 | projection/index; future rebuildability/check metadata |
 | `history/index/by-hash.jsonl` | 18 | projection/index; future rebuildability/check metadata |
 | `history/blocks/segment-000000.jsonl` | 18 | loaded as sealed History blocks |
-| `run-profile.toml` | 12 | not loaded into `RunRecordSet` |
-| `run-profile.commitment.json` | 12 | not loaded into `RunRecordSet` |
+| `run-profile.toml` | 12 | loaded as passive run-profile metadata evidence |
+| `run-profile.commitment.json` | 12 | loaded as passive run-profile commitment evidence |
 
 Size signals outside `target`:
 
@@ -262,6 +262,8 @@ Current `ploke-tree::FsRunStore` loads:
 | `transition-journal.jsonl` | `RunRecordSet.transition_journal` plus passive counts | loaded, not ingested |
 | `branches.json` | `PassiveEvidence.branch_registry` summary | loaded summary, not ingested |
 | nested `channels/**/*.jsonl` | `PassiveEvidence.channel_envelopes` summary | loaded summary, not ingested |
+| `messages/child-plan/*.json` | `PassiveEvidence.child_plans` | summary-only evidence attachment |
+| `run-profile.toml`, `run-profile.commitment.json` | `PassiveEvidence.run_profile` | metadata evidence attachment |
 | `evaluations/*.json` | `PassiveEvidence.evaluations` | evidence attachment |
 | configured protocol artifacts dir `*.json` | `PassiveEvidence.protocol_artifacts` | evidence attachment |
 
@@ -284,7 +286,7 @@ in the writer survey, but they are not counted here as passive ownership.
 | `nodes/node-*/channels/<runtime-id>/child-to-parent.jsonl` | `channel::Envelope<ToParent>` | `PassiveEvidence.channel_envelopes` | no | high | summary evidence only |
 | `evaluations/branch-*.json` | `evaluation::Artifact` | `PassiveEvidence.evaluations` | evidence | high | evidence attachment only |
 | `nodes/node-*/runner-result.json` | `scheduler::RunnerResultRecord` | missing | no | high | no tree loader |
-| `messages/child-plan/node-*.json` | missing | missing | no | high | no passive owner |
+| `messages/child-plan/node-*.json` | `child_plan::ChildPlanRecord` | `PassiveEvidence.child_plans` | evidence | high | summary-only evidence; no child branch/runtime authority |
 | `scheduler.json` | `scheduler::SchedulerStateRecord` | `RunForestInput.scheduler` | no | high | loaded projection input only |
 | `nodes/node-*/successor-ready/<runtime-id>.json` | `invocation::SuccessorReadyRecord` | `RunForestInput.successor_ready` | no | high | handoff evidence only |
 | `nodes/node-*/successor-completion/<runtime-id>.json` | `invocation::SuccessorCompletionRecord` | `RunForestInput.successor_completion` | no | high | handoff evidence only |
@@ -295,7 +297,7 @@ in the writer survey, but they are not counted here as passive ownership.
 | `protocol-artifacts/*.json` | `protocol::Artifact` | `PassiveEvidence.protocol_artifacts` | evidence | high | caller-configured directory only |
 | `history/index/{heads.json,by-lineage-height.jsonl,by-hash.jsonl}` | missing | missing | no | high | projection/index; needs metadata/check shape if used |
 | `record.json.gz` | missing exact; adjacent eval `RunRecord` | missing | no | high | tree does not read it |
-| `run-profile.toml` / `run-profile.commitment.json` | missing exact; adjacent eval `Prototype1RunProfile` / `RunProfileCommitment` | missing | no | high | no passive owner or tree loader |
+| `run-profile.toml` / `run-profile.commitment.json` | `run_profile::RunProfileRecord` / `run_profile::RunProfileCommitmentRecord` | `PassiveEvidence.run_profile` | evidence | high | metadata evidence only; no lineage/runtime/artifact authority |
 | `execution-log.json` / `indexing-status.json` / `parse-failure.json` / `snapshot-status.json` / `repo-state.json` / `final-snapshot.db` | missing exact; adjacent eval-side run-history bundle | missing | no | high | eval owns bundle, tree does not |
 | `campaign.json` / `closure-state.json` | missing exact | missing | no | medium | setup/closure only; passive metadata shape needed if graph uses them |
 | `last-run.json` / `selection.json` / `prototype1-monitor-target.json` | missing exact; adjacent eval `LastRunRecord` / `ActiveSelection` / `ActivePrototype1MonitorTarget` | missing | no | high | active/projection metadata only |
@@ -303,10 +305,11 @@ in the writer survey, but they are not counted here as passive ownership.
 | `llm-full-responses.jsonl` / `prototype1_observation_*.jsonl` | missing | missing | no | high | no passive owner; only eval-side references found |
 | `nodes/node-*/bin/ploke-eval` | missing | missing | no | high | binary artifact; needs digest/provenance metadata if used |
 
-Bottom line: `history/blocks/segment-*.jsonl` is currently the only graph-spine
-input. Evaluation and protocol artifacts attach as evidence. Everything else
-is loaded-but-not-ingested, passive-owner-present-but-not-loaded, or not yet
-owned by `ploke-records`.
+Bottom line: `history/blocks/segment-*.jsonl` is currently the graph-spine
+input. Evaluation artifacts, configured protocol artifacts, child-plan
+messages, and run-profile records attach as typed evidence. Remaining rows are
+loaded-but-not-ingested, passive-owner-present-but-not-loaded, or not yet owned
+by `ploke-records`.
 
 ## Missing Or Unresolved Loader Rows
 
@@ -319,10 +322,7 @@ first-class `RunRecordSet` inputs:
 | `nodes/*/runner-result.json` | runner output / execution result facts | `ploke-records` passive type, `ploke-tree::store`, then graph evidence |
 | `nodes/*/invocations/*.json` | runtime handoff boundary | typed passive mirror before graph evidence |
 | `nodes/*/results/*.json` | node/runtime result payloads; observed on disk | targeted type/writer audit needed |
-| `messages/child-plan/node-*.json` | parent message-box body / child plan evidence | targeted type/writer audit needed |
 | `record.json.gz` | replay artifact | graph replay/provenance metadata input |
-| `run-profile.toml` | run profile | run configuration metadata input |
-| `run-profile.commitment.json` | profile commitment | reproducibility/provenance metadata input |
 | `history/index/*` | rebuildable History indexes | rebuildability/check metadata input |
 | `stdout.log`, `stderr.log` | stream logs | log locator/metadata input, not History authority |
 | `llm-full-responses.jsonl` | provider response evidence | locate writer/type before loader |

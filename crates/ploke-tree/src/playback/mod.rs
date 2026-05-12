@@ -7,5 +7,6 @@ pub use coarse::{
     project_coarse_history_spine,
 };
 pub use fine::{
-    fine_run_playback_from_sealed_history, fine_run_playback_ref_steps_from_sealed_history,
+    fine_history_steps_from_sealed_history, fine_run_playback_from_sealed_history,
+    fine_run_playback_ref_steps_from_sealed_history,
 };

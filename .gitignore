@@ -94,6 +94,7 @@ logs/
 docs/dependency_details/cozo/notes/vectors.md
 .env
 /local-target
+.orchestrator/
 .serena/
 .scratch*
 crates/ploke-tui/local-target/

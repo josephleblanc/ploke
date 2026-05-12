@@ -6,9 +6,9 @@ use crate::{
     rag::editing::spawn_auto_confirm_edits,
     rag::tools::apply_ns_code_edit_tool,
     tools::ToolResult,
+    tools::ToolRetryContext,
     tools::validators::{validate_file_path_basic, validate_unified_diff},
 };
-use serde_json::json;
 
 /// Type for non-semantic file patching
 pub struct NsPatch;
@@ -282,20 +282,24 @@ fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError
     for (idx, patch) in params.patches.iter().enumerate() {
         validate_file_path_basic(ToolName::NsPatch, "file", patch.file.as_ref(), false).map_err(
             |err| {
-                ToolInvocationError::Validation(err.retry_context(json!({
-                    "patch_index": idx,
-                    "field": "file",
-                })))
+                ToolInvocationError::Validation(
+                    err.retry_context(
+                        ToolRetryContext::new()
+                            .field("patch_index", idx)
+                            .field("field", "file"),
+                    ),
+                )
             },
         )?;
 
         validate_unified_diff(ToolName::NsPatch, "diff", patch.diff.as_ref()).map_err(|err| {
             ToolInvocationError::Validation(
                 err.retry_hint("Provide a unified diff with ---/+++ headers and @@ hunks.")
-                    .retry_context(json!({
-                        "patch_index": idx,
-                        "field": "diff",
-                    })),
+                    .retry_context(
+                        ToolRetryContext::new()
+                            .field("patch_index", idx)
+                            .field("field", "diff"),
+                    ),
             )
         })?;
 
@@ -310,10 +314,11 @@ fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError
                 .expected("one-sentence description")
                 .received("empty string")
                 .retry_hint("Provide a short sentence describing why the change is needed.")
-                .retry_context(json!({
-                    "patch_index": idx,
-                    "field": "reasoning",
-                })),
+                .retry_context(
+                    ToolRetryContext::new()
+                        .field("patch_index", idx)
+                        .field("field", "reasoning"),
+                ),
             ));
         }
     }

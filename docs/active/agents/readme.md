@@ -27,7 +27,11 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-05-09_run-playback-typed-observability-plan.md`](2026-05-09_run-playback-typed-observability-plan.md) — plan for typed, iterable `RunPlayback` / `RunPlaybackRef` projections that can feed CLI debugging, `ploke-tree`, and a future UI/WebAssembly observability front end.
 - [`2026-05-09_egui-wasm-observability-plan.md`](2026-05-09_egui-wasm-observability-plan.md) — plan for building an interactive egui/WASM frontend. Phases 0-1 done, Phase 2 (egui crate) next.
 - [`2026-05-09_egui-wasm-observability-handoff.md`](2026-05-09_egui-wasm-observability-handoff.md) — cold-restart handoff for the egui/WASM observability thread.
+- [`2026-05-11_ploke-egui-graph-import-boundary-handoff.md`](2026-05-11_ploke-egui-graph-import-boundary-handoff.md) — current restart spine for consolidating Prototype 1 run data around `ploke-tree::Graph` and keeping egui/browser surfaces as projections.
+- [`2026-05-11_ploke-tree-graph-ingestion-inventory.md`](2026-05-11_ploke-tree-graph-ingestion-inventory.md) — companion tracker mapping accepted typed-persistence surfaces to current `ploke-tree::Graph` ingestion status.
+- [`ploke-tree-graph-ingestion/`](ploke-tree-graph-ingestion/README.md) — coordination packet for sub-agent lanes, edit boundaries, retry rules, and module organization around `ploke-tree::Graph` ingestion.
 - [`2026-05-11_mbe-oracle-calibration-handoff.md`](2026-05-11_mbe-oracle-calibration-handoff.md) — restart packet for MBE/oracle calibration over Prototype 1 loop outputs, including gold/empty controls and candidate patch-export questions.
+- [`2026-05-11_mbe-oracle-calibration-plan.md`](2026-05-11_mbe-oracle-calibration-plan.md) — active plan for child-owned MBE instance targets, patch projection provenance, cleanup, and oracle eligibility gating.
 - [`death-by-slice/`](death-by-slice/README.md) — ledger for narrow implementation slices that later fail because policy, identity, authority, or state was not preserved across runtime boundaries.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.

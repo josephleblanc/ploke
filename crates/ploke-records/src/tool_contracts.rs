@@ -12,7 +12,9 @@
 //! persisted/replay/UI readers, not access to the TUI runtime.
 
 pub use ploke_tui::tools::{
-    ToolName,
+    ToolErrorCode, ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolName,
+    ToolRetryContext, ToolRetryContextField, ToolRetryContextValue, ToolUiField, ToolUiPayload,
+    ToolVerbosity,
     cargo::{
         CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
         CargoToolParamsOwned, CargoToolResult,
@@ -363,5 +365,115 @@ mod tests {
                 .expect("deserialize legacy object arguments");
 
         assert_eq!(captured.as_str(), r#"{"file":"src/lib.rs","start_line":1}"#);
+    }
+
+    #[test]
+    fn tool_error_wire_roundtrips_typed_retry_context() {
+        let raw = r#"{
+            "user":"create_file: invalid path",
+            "llm":{
+                "ok":false,
+                "tool":"create_file",
+                "code":"invalid_format",
+                "field":"file_path",
+                "expected":null,
+                "received":null,
+                "message":"invalid path",
+                "snippet":null,
+                "retry_hint":"Use a workspace-root-relative path.",
+                "retry_context":{
+                    "fields":[
+                        {"name":"input_path","value":{"kind":"string","value":"../outside.rs"}},
+                        {"name":"expected","value":{"kind":"string_list","value":["error","overwrite"]}}
+                    ]
+                }
+            },
+            "system":"tool=CreateFile code=InvalidFormat: invalid path"
+        }"#;
+
+        let wire = ToolErrorWire::parse(raw).expect("parse typed tool error wire");
+        assert_eq!(wire.llm.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(
+            wire.llm
+                .retry_context
+                .as_ref()
+                .and_then(|ctx| ctx.get("input_path"))
+                .and_then(ToolRetryContextValue::as_str),
+            Some("../outside.rs")
+        );
+
+        let encoded = serde_json::to_string(&wire).expect("serialize typed tool error wire");
+        let reparsed = ToolErrorWire::parse(&encoded).expect("reparse typed tool error wire");
+        assert_eq!(
+            reparsed.llm["retry_context"]
+                .as_object()
+                .and_then(|ctx| ctx.get("input_path"))
+                .and_then(ToolLlmErrorValue::as_str),
+            Some("../outside.rs")
+        );
+    }
+
+    #[test]
+    fn tool_error_wire_serde_deserialize_initializes_llm_index() {
+        let raw = r#"{
+            "user":"create_file: invalid path",
+            "llm":{
+                "ok":false,
+                "tool":"create_file",
+                "code":"invalid_format",
+                "field":"file_path",
+                "expected":null,
+                "received":null,
+                "message":"invalid path",
+                "snippet":null,
+                "retry_hint":"Use a workspace-root-relative path.",
+                "retry_context":{
+                    "fields":[
+                        {"name":"input_path","value":{"kind":"string","value":"../outside.rs"}}
+                    ]
+                }
+            },
+            "system":"tool=CreateFile code=InvalidFormat: invalid path"
+        }"#;
+
+        let wire: ToolErrorWire =
+            serde_json::from_str(raw).expect("serde-deserialize typed tool error wire");
+
+        assert_eq!(
+            wire.llm["retry_context"]
+                .as_object()
+                .and_then(|ctx| ctx.get("input_path"))
+                .and_then(ToolLlmErrorValue::as_str),
+            Some("../outside.rs")
+        );
+    }
+
+    #[test]
+    fn tool_error_wire_accepts_legacy_debug_code_spelling() {
+        let raw = r#"{
+            "user":"create_file: invalid path",
+            "llm":{
+                "ok":false,
+                "tool":"create_file",
+                "code":"InvalidFormat",
+                "field":"file_path",
+                "expected":null,
+                "received":null,
+                "message":"invalid path",
+                "snippet":null,
+                "retry_hint":null,
+                "retry_context":null
+            },
+            "system":"tool=CreateFile code=InvalidFormat: invalid path"
+        }"#;
+
+        let wire = ToolErrorWire::parse(raw).expect("parse legacy code spelling");
+
+        assert_eq!(wire.llm.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(
+            wire.llm["code"].as_str(),
+            Some("InvalidFormat"),
+            "public index keeps the previous LLM-facing debug code label"
+        );
     }
 }

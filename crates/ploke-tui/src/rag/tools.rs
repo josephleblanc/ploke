@@ -18,7 +18,7 @@ use similar::{ChangeTag, TextDiff};
 use tracing::debug;
 
 use crate::tools::create_file::CreateFileCtx;
-use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
+use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolRetryContext, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
@@ -530,16 +530,18 @@ fn function_to_method_hint(
     owner_name: Option<&str>,
     item_name: &str,
 ) -> ToolError {
-    let retry_context = serde_json::json!({
-        "requested_node_type": "function",
-        "suggested_node_type": "method",
-        "file_path": file_path.display().to_string(),
-        "canon": canon,
-        "module_path": module_path,
-        "owner_name": owner_name,
-        "item_name": item_name,
-        "reason": "unique method target exists at the same coordinates",
-    });
+    let retry_context = ToolRetryContext::new()
+        .field("requested_node_type", "function")
+        .field("suggested_node_type", "method")
+        .field("file_path", file_path.display().to_string())
+        .field("canon", canon)
+        .field("module_path", module_path.to_vec())
+        .field("owner_name", owner_name)
+        .field("item_name", item_name)
+        .field(
+            "reason",
+            "unique method target exists at the same coordinates",
+        );
 
     ToolError::new(
         tool,
@@ -566,16 +568,18 @@ fn ambiguous_method_target_error(
     item_name: &str,
     candidate_count: usize,
 ) -> ToolError {
-    let retry_context = serde_json::json!({
-        "requested_node_type": "method",
-        "file_path": file_path.display().to_string(),
-        "canon": canon,
-        "module_path": module_path,
-        "owner_name": owner_name,
-        "item_name": item_name,
-        "candidate_count": candidate_count,
-        "reason": "multiple method targets matched after corrected method parsing",
-    });
+    let retry_context = ToolRetryContext::new()
+        .field("requested_node_type", "method")
+        .field("file_path", file_path.display().to_string())
+        .field("canon", canon)
+        .field("module_path", module_path.to_vec())
+        .field("owner_name", owner_name)
+        .field("item_name", item_name)
+        .field("candidate_count", candidate_count)
+        .field(
+            "reason",
+            "multiple method targets matched after corrected method parsing",
+        );
 
     ToolError::new(
         tool,

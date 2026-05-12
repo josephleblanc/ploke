@@ -240,15 +240,15 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
         match crate::utils::path_scoping::resolve_tool_path(p.as_path(), &primary_root, &policy) {
             Ok(pb) => pb,
             Err(err) => {
-                let retry_context = json!({
-                    "input_path": params.file_path.as_str(),
-                    "workspace_root": primary_root.display().to_string(),
-                });
                 let tool_error = tool_call_params
                     .tool_error_from_message(format!("invalid path: {}", err))
                     .field("file_path")
                     .retry_hint("Use a workspace-root-relative or absolute path under the loaded workspace.")
-                    .retry_context(retry_context);
+                    .retry_context(
+                        ToolRetryContext::new()
+                            .field("input_path", params.file_path.as_str())
+                            .field("workspace_root", primary_root.display().to_string()),
+                    );
                 tool_call_params.tool_call_failed_error(tool_error);
                 return;
             }
@@ -271,15 +271,15 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
         Some("overwrite") => OnExists::Overwrite,
         Some("error") | None => OnExists::Error,
         Some(other) => {
-            let retry_context = json!({
-                "on_exists": other,
-                "expected": ["error", "overwrite"],
-            });
             let tool_error = tool_call_params
                 .tool_error_from_message(format!("invalid on_exists: {}", other))
                 .field("on_exists")
                 .retry_hint("Use `on_exists: \"error\"` or `on_exists: \"overwrite\"`.")
-                .retry_context(retry_context);
+                .retry_context(
+                    ToolRetryContext::new()
+                        .field("on_exists", other)
+                        .field("expected", vec!["error", "overwrite"]),
+                );
             tool_call_params.tool_call_failed_error(tool_error);
             return;
         }

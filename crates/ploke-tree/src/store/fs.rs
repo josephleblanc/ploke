@@ -11,14 +11,18 @@ use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::SealedBlockRecord;
 use ploke_records::identity::ParentIdentityRecord;
-use ploke_records::invocation::{SuccessorCompletionRecord, SuccessorReadyRecord};
+use ploke_records::invocation::{
+    InvocationRecord, Role, SuccessorCompletionRecord, SuccessorReadyRecord,
+};
 use ploke_records::journal::JournalEntry;
 use ploke_records::protocol::{
     Artifact as ProtocolArtifact, TOOL_CALL_INTENT_SEGMENTATION, TOOL_CALL_REVIEW,
     TOOL_CALL_SEGMENT_REVIEW,
 };
 use ploke_records::run_profile::{RunProfileCommitmentRecord, RunProfileRecord};
-use ploke_records::scheduler::{NodeRecord, SchedulerStateRecord};
+use ploke_records::scheduler::{
+    NodeRecord, RunnerRequestRecord, RunnerResultRecord, SchedulerStateRecord,
+};
 use serde::Deserialize;
 
 use crate::{RunForest, assemble_run_forest};
@@ -26,8 +30,8 @@ use crate::{RunForest, assemble_run_forest};
 use super::{
     BranchRegistryEvidence, ChannelEvidence, ChildPlanEvidence, ChildPlanSummary,
     EvaluationArtifactSummary, EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord,
-    PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunForestInput,
-    RunProfileEvidence, RunRecordSet, TransitionJournal,
+    PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence,
+    RunAttemptSummary, RunForestInput, RunProfileEvidence, RunRecordSet, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -171,6 +175,8 @@ impl FsRunStore {
             evaluations: self.load_evaluation_evidence()?,
             protocol_artifacts: self.load_protocol_artifacts_evidence()?,
             run_profile: self.load_run_profile_evidence()?,
+            run_attempts: self.load_run_attempt_evidence()?,
+            attempt_runner_results: self.load_attempt_runner_results()?,
         })
     }
 
@@ -439,6 +445,84 @@ impl FsRunStore {
         }))
     }
 
+    fn load_run_attempt_evidence(&self) -> Result<Option<RunAttemptEvidence>, FsRunStoreError> {
+        let nodes_root = self.run_root.join("nodes");
+        if !nodes_root.is_dir() {
+            return Ok(None);
+        }
+
+        let mut summary = RunAttemptSummary::default();
+        let mut runner_requests = BTreeMap::new();
+        let mut runner_results = BTreeMap::new();
+        let mut invocations = BTreeMap::new();
+
+        for node_dir in sorted_child_dirs(&nodes_root)? {
+            let request_path = node_dir.join("runner-request.json");
+            if request_path.is_file() {
+                summary.runner_request_file_count += 1;
+                let request = self.read_json::<RunnerRequestRecord>(&request_path)?;
+                summary.runner_request_parsed_count += 1;
+                runner_requests.insert(run_relative_key(&self.run_root, &request_path), request);
+            }
+
+            let result_path = node_dir.join("runner-result.json");
+            if result_path.is_file() {
+                summary.runner_result_file_count += 1;
+                let result = self.read_json::<RunnerResultRecord>(&result_path)?;
+                summary.runner_result_parsed_count += 1;
+                runner_results.insert(run_relative_key(&self.run_root, &result_path), result);
+            }
+
+            for invocation_path in sorted_json_files(&node_dir.join("invocations"))? {
+                summary.invocation_file_count += 1;
+                let invocation = self.read_json::<InvocationRecord>(&invocation_path)?;
+                summary.invocation_parsed_count += 1;
+                match invocation.role {
+                    Role::Child => summary.child_invocation_count += 1,
+                    Role::Successor => summary.successor_invocation_count += 1,
+                }
+                invocations.insert(
+                    run_relative_key(&self.run_root, &invocation_path),
+                    invocation,
+                );
+            }
+        }
+
+        if summary.runner_request_file_count == 0
+            && summary.runner_result_file_count == 0
+            && summary.invocation_file_count == 0
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(RunAttemptEvidence {
+            summary,
+            runner_requests,
+            runner_results,
+            invocations,
+        }))
+    }
+
+    fn load_attempt_runner_results(
+        &self,
+    ) -> Result<BTreeMap<String, RunnerResultRecord>, FsRunStoreError> {
+        let nodes_root = self.run_root.join("nodes");
+        if !nodes_root.is_dir() {
+            return Ok(BTreeMap::new());
+        }
+
+        let mut attempt_runner_results = BTreeMap::new();
+        for node_dir in sorted_child_dirs(&nodes_root)? {
+            for result_path in sorted_json_files(&node_dir.join("results"))? {
+                let result = self.read_json::<RunnerResultRecord>(&result_path)?;
+                attempt_runner_results
+                    .insert(run_relative_key(&self.run_root, &result_path), result);
+            }
+        }
+
+        Ok(attempt_runner_results)
+    }
+
     fn read_json<T>(&self, path: &Path) -> Result<T, FsRunStoreError>
     where
         T: for<'de> Deserialize<'de>,
@@ -700,4 +784,11 @@ fn protocol_artifact_key(path: &Path) -> String {
         .or_else(|| path.file_name().and_then(|name| name.to_str()))
         .unwrap_or("unknown")
         .to_owned()
+}
+
+fn run_relative_key(run_root: &Path, path: &Path) -> String {
+    path.strip_prefix(run_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }

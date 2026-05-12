@@ -17,12 +17,20 @@ pub use warning::*;
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Graph {
+    /// Sealed History is the primary ordering and authority spine.
     pub history: HistoryIndex,
     pub authority: AuthorityIndex,
+    /// Recoverable checkout identities observed through History and evidence.
     pub artifacts: ArtifactIndex,
+    /// Concrete hydrated executions observed through actors and passive records.
     pub runtimes: RuntimeIndex,
+    /// Generative or compositional actions. Evidence may mention these before
+    /// they are promoted to core History facts.
+    pub operations: OperationIndex,
+    /// Selection candidate universes and their set-scoped memberships.
     pub candidates: CandidateIndex,
     pub selections: SelectionIndex,
+    /// Typed attachments that explain graph objects without replacing History.
     pub evidence: EvidenceIndex,
     pub warnings: Vec<GraphWarning>,
 }
@@ -34,6 +42,7 @@ impl Default for Graph {
             authority: AuthorityIndex::default(),
             artifacts: ArtifactIndex::default(),
             runtimes: RuntimeIndex::default(),
+            operations: OperationIndex::default(),
             candidates: CandidateIndex::default(),
             selections: SelectionIndex::default(),
             evidence: EvidenceIndex::default(),

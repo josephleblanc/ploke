@@ -8,7 +8,7 @@
 #[cfg(feature = "projection")]
 use crate::{
     CoarseHistorySpine, CoarseHistoryWarning, build_coarse_history_spine,
-    fine_run_playback_from_sealed_history,
+    playback::fine_history_steps_from_sealed_history,
 };
 use ploke_records::branch::Disposition;
 use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, PatchId, RuntimeId};
@@ -152,6 +152,8 @@ pub struct PlaybackBrowserStep {
     pub occurrence_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub membership_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_set_root: Option<String>,
     // ── detail snapshots (populated by enriched projections) ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<EvaluationSnapshot>,
@@ -254,6 +256,7 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
             candidate_id: None,
             occurrence_id: step.selected_occurrence_id.clone(),
             membership_id: step.selected_membership_id.clone(),
+            candidate_set_root: None,
             evaluation: None,
             surface: None,
             protocol: None,
@@ -275,30 +278,34 @@ pub fn coarse_history_browser_model(spine: &CoarseHistorySpine) -> PlaybackBrows
 pub fn fine_history_browser_model_from_blocks(
     blocks: &[SealedBlockRecord],
 ) -> PlaybackBrowserModel {
-    let playback = fine_run_playback_from_sealed_history(blocks);
+    let playback = fine_history_steps_from_sealed_history(blocks);
     let steps = playback
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(index, step)| PlaybackBrowserStep {
-            index,
-            id: step.id.clone(),
-            fine_kind: Some(step.kind),
-            order: Some(step.order),
-            block_height: step.order.block_height,
-            block_hash: block_hash_from_fine_step(step.id.as_str()).unwrap_or_default(),
-            label: step.label.clone(),
-            selected_candidate: None,
-            considered_candidate_count: 0,
-            warning_count: 0,
-            evidence: step.evidence,
-            node_id: None,
-            branch_id: None,
-            candidate_id: None,
-            occurrence_id: step.occurrence_id.clone(),
-            membership_id: step.membership_id.clone(),
-            evaluation: None,
-            surface: None,
-            protocol: None,
+        .map(|(index, step)| {
+            let block_hash = block_hash_from_fine_step(&step.id).unwrap_or_default();
+            PlaybackBrowserStep {
+                index,
+                id: step.id,
+                fine_kind: Some(step.kind),
+                order: Some(step.order),
+                block_height: step.order.block_height,
+                block_hash,
+                label: step.label,
+                selected_candidate: None,
+                considered_candidate_count: 0,
+                warning_count: 0,
+                evidence: step.evidence,
+                node_id: None,
+                branch_id: None,
+                candidate_id: None,
+                occurrence_id: step.occurrence_id,
+                membership_id: step.membership_id,
+                candidate_set_root: step.candidate_set_root,
+                evaluation: None,
+                surface: None,
+                protocol: None,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -972,6 +979,7 @@ mod tests {
                 candidate_id: Some("candidate-abc123".to_owned()),
                 occurrence_id: Some("occurrence-abc123".to_owned()),
                 membership_id: Some("membership-abc123".to_owned()),
+                candidate_set_root: Some("root-abc123".to_owned()),
                 evaluation: Some(EvaluationSnapshot {
                     disposition: Disposition::Keep,
                     tool_calls_total: 4,
@@ -1081,6 +1089,7 @@ mod tests {
                 candidate_id: None,
                 occurrence_id: None,
                 membership_id: None,
+                candidate_set_root: None,
                 evaluation: None,
                 surface: None,
                 protocol: None,

@@ -672,9 +672,10 @@ mod tests {
         CandidateOccurrenceId, EntryId, HistoryHash, HistoryStateRoot, InstanceId, LineageId,
         RecordedAt, RuntimeId, SchedulerNodeId, SourceStateId,
     };
+    use ploke_records::invocation::{InvocationRecord, Role};
     use ploke_records::journal::JournalEntry;
     use ploke_records::playback::{EvidenceStrength, FineStepKind, RunPlaybackRef};
-    use ploke_records::scheduler::SchedulerStateRecord;
+    use ploke_records::scheduler::{RunnerRequestRecord, RunnerResultRecord, SchedulerStateRecord};
     use ploke_records::selection::{Decision, Outcome};
 
     use super::*;
@@ -1399,6 +1400,111 @@ mod tests {
     }
 
     #[test]
+    fn fs_run_store_loads_run_attempt_evidence() {
+        let root = temp_run_root("run-attempts");
+        let root_node = node("root", None, NodeStatusRecord::Succeeded);
+        let child_node = node("child", Some("root"), NodeStatusRecord::Succeeded);
+        let child_dir = root.join("nodes").join("child");
+        fs::create_dir_all(child_dir.join("invocations")).expect("create invocation dir");
+        fs::create_dir_all(child_dir.join("results")).expect("create results dir");
+        fs::create_dir_all(root.join("nodes").join("root")).expect("create root node dir");
+
+        write_json(
+            &root.join("scheduler.json"),
+            &scheduler(vec![root_node, child_node.clone()]),
+        );
+        let request = runner_request(&child_node);
+        write_json(&child_dir.join("runner-request.json"), &request);
+        write_json(
+            &child_dir.join("runner-result.json"),
+            &runner_result(&child_node),
+        );
+        let mut attempt_result = runner_result(&child_node);
+        attempt_result.recorded_at = "2026-05-08T12:01:30Z".to_owned();
+        write_json(
+            &child_dir.join("results").join("runtime-1.json"),
+            &attempt_result,
+        );
+        write_json(
+            &child_dir.join("invocations").join("runtime-1.json"),
+            &InvocationRecord {
+                schema_version: "prototype1-invocation.v1".to_owned(),
+                role: Role::Child,
+                campaign_id: "campaign-1".to_owned(),
+                node_id: child_node.node_id.as_str().to_owned(),
+                runtime_id: RuntimeId("runtime-1".to_owned()),
+                journal_path: root.join("transition-journal.jsonl"),
+                channel_root: Some(child_dir.join("channels").join("runtime-1")),
+                node: Some(child_node),
+                request: Some(request),
+                resolved: None,
+                active_parent_root: None,
+                created_at: "2026-05-08T12:01:00Z".to_owned(),
+            },
+        );
+
+        let records = FsRunStore::new(&root)
+            .load_record_set()
+            .expect("load record set");
+        let attempts = records
+            .forest_input
+            .passive_evidence
+            .run_attempts
+            .as_ref()
+            .expect("run attempt evidence");
+
+        assert_eq!(attempts.summary.runner_request_file_count, 1);
+        assert_eq!(attempts.summary.runner_request_parsed_count, 1);
+        assert_eq!(attempts.summary.runner_result_file_count, 1);
+        assert_eq!(attempts.summary.runner_result_parsed_count, 1);
+        assert_eq!(attempts.summary.invocation_file_count, 1);
+        assert_eq!(attempts.summary.invocation_parsed_count, 1);
+        assert_eq!(attempts.summary.child_invocation_count, 1);
+        assert_eq!(attempts.summary.successor_invocation_count, 0);
+        assert_eq!(
+            attempts
+                .runner_requests
+                .get("nodes/child/runner-request.json")
+                .expect("runner request")
+                .node_id
+                .as_str(),
+            "child"
+        );
+        assert_eq!(
+            attempts
+                .runner_results
+                .get("nodes/child/runner-result.json")
+                .expect("runner result")
+                .branch_id
+                .as_str(),
+            "branch-child"
+        );
+        assert_eq!(
+            records
+                .forest_input
+                .passive_evidence
+                .attempt_runner_results
+                .get("nodes/child/results/runtime-1.json")
+                .expect("attempt runner result")
+                .recorded_at
+                .as_str(),
+            "2026-05-08T12:01:30Z"
+        );
+        assert_eq!(
+            attempts
+                .invocations
+                .get("nodes/child/invocations/runtime-1.json")
+                .expect("invocation")
+                .runtime_id
+                .0
+                .as_str(),
+            "runtime-1"
+        );
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
     fn fs_run_store_loads_run_profile_evidence() {
         let root = temp_run_root("run-profile");
         fs::create_dir_all(&root).expect("create run root");
@@ -1854,6 +1960,46 @@ debug_tools = true
             branch_id: format!("branch-{node_id}"),
             artifact_branch: Some(format!("artifact-{node_id}")),
             created_at: "2026-05-08T12:00:00Z".to_owned(),
+        }
+    }
+
+    fn runner_request(node: &NodeRecord) -> RunnerRequestRecord {
+        RunnerRequestRecord {
+            schema_version: "prototype1-runner-request.v1".to_owned(),
+            campaign_id: CampaignId("campaign-1".to_owned()),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            operation_target: node.operation_target.clone(),
+            base_artifact_id: node.base_artifact_id.clone(),
+            patch_id: node.patch_id.clone(),
+            derived_artifact_id: node.derived_artifact_id.clone(),
+            branch_id: node.branch_id.clone(),
+            target_relpath: node.target_relpath.clone(),
+            workspace_root: node.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            stop_on_error: true,
+            runner_args: vec!["prototype1".to_owned(), "runner".to_owned()],
+        }
+    }
+
+    fn runner_result(node: &NodeRecord) -> RunnerResultRecord {
+        RunnerResultRecord {
+            schema_version: "prototype1-runner-result.v1".to_owned(),
+            campaign_id: CampaignId("campaign-1".to_owned()),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            branch_id: node.branch_id.clone(),
+            status: node.status,
+            disposition: ploke_records::scheduler::RunnerDispositionRecord::Succeeded,
+            treatment_campaign_id: Some("campaign-1-treatment".to_owned()),
+            evaluation_artifact_path: Some(PathBuf::from("evaluations/branch-child.json")),
+            detail: None,
+            exit_code: Some(0),
+            stdout_excerpt: Some(String::new()),
+            stderr_excerpt: Some(String::new()),
+            recorded_at: "2026-05-08T12:02:00Z".to_owned(),
         }
     }
 

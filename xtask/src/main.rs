@@ -122,7 +122,7 @@ use error::XtaskError;
 fn print_combined_usage() {
     print_usage();
     eprintln!();
-    eprintln!("For `parse`, `db`, and other structured commands:");
+    eprintln!("For `parse`, `db`, `orchestrate`, and other structured commands:");
     eprintln!("  cargo xtask --help");
 }
 

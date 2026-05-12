@@ -31,6 +31,7 @@ use std::path::Path;
 
 // Re-export command modules
 pub mod db;
+pub mod orchestrate;
 pub mod parse;
 pub mod parse_debug;
 

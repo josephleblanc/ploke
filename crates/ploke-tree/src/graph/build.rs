@@ -10,13 +10,15 @@ mod history;
 mod journal;
 #[path = "build/passive.rs"]
 mod passive;
+#[path = "build/run_attempts.rs"]
+mod run_attempts;
 #[path = "build/scheduler.rs"]
 mod scheduler;
 #[path = "build/selection.rs"]
 mod selection;
 
 use ploke_records::history::{ActorRefRecord, ArtifactRefRecord};
-use ploke_records::ids::{ArtifactId, RuntimeId};
+use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::*;
 use crate::RunRecordSet;
@@ -113,6 +115,59 @@ impl Builder {
         let key = ArtifactKey::from_passive_id(artifact_id);
         if let Some(artifact) = self.graph.artifacts.artifacts.get_mut(&key) {
             artifact.evidence.push(evidence_id);
+        }
+    }
+
+    fn observe_operation_coordinate(&mut self, coordinate: &Coordinate) {
+        self.observe_runtime(&coordinate.runtime_id);
+        self.observe_operation_target(&coordinate.target);
+
+        let key = OperationKey::from_coordinate(coordinate);
+        self.graph
+            .operations
+            .operations
+            .entry(key.clone())
+            .and_modify(|operation| {
+                if operation.coordinate.is_none() {
+                    operation.coordinate = Some(coordinate.clone());
+                }
+            })
+            .or_insert_with(|| OperationNode {
+                key,
+                coordinate: Some(coordinate.clone()),
+                evidence: Vec::new(),
+            });
+    }
+
+    fn attach_to_operation_coordinate(&mut self, coordinate: &Coordinate, evidence_id: EvidenceId) {
+        self.observe_operation_coordinate(coordinate);
+        let key = OperationKey::from_coordinate(coordinate);
+        if let Some(operation) = self.graph.operations.operations.get_mut(&key) {
+            operation.evidence.push(evidence_id);
+        }
+    }
+
+    fn observe_operation_target(&mut self, target: &OperationTarget) {
+        match target {
+            OperationTarget::Artifact { artifact_id } => {
+                self.observe_artifact_id(artifact_id);
+            }
+            OperationTarget::PatchSet {
+                base_artifact_id, ..
+            } => {
+                self.observe_artifact_id(base_artifact_id);
+            }
+            OperationTarget::ArtifactSet {
+                base_artifact_id,
+                artifact_ids,
+            } => {
+                if let Some(base_artifact_id) = base_artifact_id {
+                    self.observe_artifact_id(base_artifact_id);
+                }
+                for artifact_id in artifact_ids {
+                    self.observe_artifact_id(artifact_id);
+                }
+            }
         }
     }
 
