@@ -2,9 +2,10 @@
 
 - date: 2026-05-11 local / 2026-05-11 UTC
 - campaign: `p1-mbe-provenance-4g3c-20260511-1`
-- status: alive, blocks live validation of MBE patch provenance fix
+- status: mitigated by material surface gate; rerun needed for live validation
 - related bug: `docs/active/bugs/2026-05-11-prototype1-mbe-shared-instance-patch-provenance.md`
 - related commit: `c2d0f1eb Fix MBE patch projection provenance`
+- mitigation commit: `5f92eb6e Restrict prototype1 workspace edit surface`
 
 ## Summary
 
@@ -37,11 +38,43 @@ child-owned MBE duplicate target directories:
 nodes/<child-node>/instance-targets/<treatment-campaign-id>/BurntSushi/ripgrep
 ```
 
+## 2026-05-12 Mitigation
+
+Commit `5f92eb6e` tightened the existing parent-side material surface gate for
+`workspace-except-ploke-eval`. The broad surface now excludes tracked paths
+under:
+
+```text
+.cargo
+docs/archive
+docs/active/bugs
+```
+
+and rejects dependency/toolchain capability files by filename:
+
+```text
+Cargo.toml
+Cargo.lock
+rust-toolchain.toml
+```
+
+The same predicate is used for both enumeration and validation, so tracked
+archive docs should no longer be selected by the deterministic producer or
+accepted later as valid parent mutation targets. Regression tests were added
+for archive docs and capability files.
+
+This is a mitigation, not a full design fix. The deterministic EOF-comment
+producer still exists, and it still fabricates parent-side candidate edits
+instead of using a real `ploke-tui` harness proposal. The remaining design debt
+is to replace that mock live path with a real broad-minus-core parent mutation
+route, where the parent supplies context/objective, `ploke-tui` proposes edits,
+and `ploke-eval` gates the resulting touches.
+
 ## Impact
 
-This blocks live validation of the MBE patch provenance fix. The commit
-`c2d0f1eb` may still be structurally correct, but it has not been exercised by
-a live child self-eval path because child artifact persistence failed earlier.
+This blocked live validation of the MBE patch provenance fix. The commit
+`c2d0f1eb` may still be structurally correct, but it has not yet been exercised
+by a live child self-eval path after the `5f92eb6e` surface-gate mitigation.
 
 The current `workspace-except-ploke-eval` behavior also makes Prototype 1 run
 semantics misleading: the name suggests a meaningful editable workspace surface,
@@ -134,7 +167,7 @@ and then produce grants over `R/W/F` sets. Until that exists, the honest
 prototype behavior is blank-slate plus post-hoc diff validation, not fabricated
 target attribution.
 
-After this is fixed, rerun the 4-generation / 3-child campaign and verify the
+After this mitigation, rerun the 4-generation / 3-child campaign and verify the
 MBE provenance path reaches child self-eval and creates child-owned target
 directories under:
 
