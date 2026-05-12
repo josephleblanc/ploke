@@ -10,6 +10,8 @@
 //! crates may depend on these records to read evidence surfaces without gaining
 //! authority constructors.
 
+#[cfg(feature = "tool-contracts")]
+pub mod agent_turn;
 pub mod branch;
 pub mod channel;
 pub mod child_plan;

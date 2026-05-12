@@ -49,10 +49,10 @@ impl<'de> Deserialize<'de> for ToolArgumentsJson {
     where
         D: Deserializer<'de>,
     {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        let raw = match value {
-            serde_json::Value::String(raw) => raw,
-            other => other.to_string(),
+        let captured = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        let raw = match serde_json::from_str::<String>(captured.get()) {
+            Ok(raw) => raw,
+            Err(_) => captured.get().to_string(),
         };
         Ok(Self { raw })
     }

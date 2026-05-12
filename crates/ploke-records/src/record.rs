@@ -17,6 +17,8 @@ pub enum RecordFamily {
     ProtocolArtifact,
     RunProfile,
     RunProfileCommitment,
+    AgentTurnTrace,
+    AgentTurnSummary,
 }
 
 /// Wire format used by a persisted record family.

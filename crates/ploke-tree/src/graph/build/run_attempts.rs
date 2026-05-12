@@ -66,6 +66,7 @@ impl Builder {
     }
 
     fn observe_runner_request_metadata(&mut self, path: &str, request: &RunnerRequestRecord) {
+        self.observe_node_branch(request.node_id.as_str(), request.branch_id.as_str());
         if let Some(base_artifact_id) = request.base_artifact_id.as_ref() {
             self.observe_artifact_id(base_artifact_id);
         }

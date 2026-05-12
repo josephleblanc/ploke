@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use ploke_records::agent_turn::{AgentTurnArtifactRecord, ObservedTurnEventRecord};
 use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::invocation::InvocationRecord;
@@ -30,6 +31,8 @@ pub struct PassiveEvidence {
     pub run_profile: Option<RunProfileEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_attempts: Option<RunAttemptEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_turns: Option<AgentTurnEvidence>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub attempt_runner_results: BTreeMap<String, RunnerResultRecord>,
 }
@@ -186,4 +189,118 @@ pub struct RunAttemptSummary {
     pub invocation_parsed_count: usize,
     pub child_invocation_count: usize,
     pub successor_invocation_count: usize,
+}
+
+/// Read-only typed evidence loaded from agent-turn trace and summary artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTurnEvidence {
+    pub summary: AgentTurnEvidenceSummary,
+    pub traces: BTreeMap<String, AgentTurnArtifactEvidence>,
+    pub summaries: BTreeMap<String, AgentTurnArtifactEvidence>,
+}
+
+/// Counts from persisted agent-turn artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTurnEvidenceSummary {
+    pub trace_file_count: usize,
+    pub trace_parsed_count: usize,
+    pub summary_file_count: usize,
+    pub summary_parsed_count: usize,
+    pub artifact_with_terminal_record_count: usize,
+    pub artifact_with_final_message_count: usize,
+    pub artifact_with_applied_patch_count: usize,
+    pub tool_request_event_count: usize,
+    pub tool_completed_event_count: usize,
+    pub tool_failed_event_count: usize,
+}
+
+impl AgentTurnEvidenceSummary {
+    pub fn observe_artifact(&mut self, artifact: &AgentTurnArtifactEvidence) {
+        if artifact.terminal_outcome.is_some() {
+            self.artifact_with_terminal_record_count += 1;
+        }
+        if artifact.final_assistant_message_id.is_some() {
+            self.artifact_with_final_message_count += 1;
+        }
+        if artifact.patch_applied {
+            self.artifact_with_applied_patch_count += 1;
+        }
+        self.tool_request_event_count += artifact.tool_request_event_count;
+        self.tool_completed_event_count += artifact.tool_completed_event_count;
+        self.tool_failed_event_count += artifact.tool_failed_event_count;
+    }
+}
+
+/// Passive projection over fields already parsed through `ploke_records::agent_turn`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentTurnArtifactEvidence {
+    pub task_id: String,
+    pub selected_model: String,
+    pub user_message_id: String,
+    pub event_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_outcome: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_assistant_message_id: Option<String>,
+    pub patch_applied: bool,
+    pub all_proposals_applied: bool,
+    pub edit_proposal_count: usize,
+    pub create_proposal_count: usize,
+    pub expected_file_change_count: usize,
+    pub llm_prompt_message_count: usize,
+    pub has_llm_response: bool,
+    pub tool_request_event_count: usize,
+    pub tool_completed_event_count: usize,
+    pub tool_failed_event_count: usize,
+}
+
+impl AgentTurnArtifactEvidence {
+    pub fn from_record(record: &AgentTurnArtifactRecord) -> Self {
+        let tool_request_event_count = record
+            .events
+            .iter()
+            .filter(|event| matches!(event, ObservedTurnEventRecord::ToolRequested(_)))
+            .count();
+        let tool_completed_event_count = record
+            .events
+            .iter()
+            .filter(|event| matches!(event, ObservedTurnEventRecord::ToolCompleted(_)))
+            .count();
+        let tool_failed_event_count = record
+            .events
+            .iter()
+            .filter(|event| matches!(event, ObservedTurnEventRecord::ToolFailed(_)))
+            .count();
+
+        Self {
+            task_id: record.task_id.clone(),
+            selected_model: record.selected_model.clone(),
+            user_message_id: record.user_message_id.clone(),
+            event_count: record.events.len(),
+            terminal_outcome: record
+                .terminal_record
+                .as_ref()
+                .map(|terminal| terminal.outcome.clone()),
+            terminal_attempts: record
+                .terminal_record
+                .as_ref()
+                .map(|terminal| terminal.attempts),
+            final_assistant_message_id: record
+                .final_assistant_message
+                .as_ref()
+                .map(|message| message.id.clone()),
+            patch_applied: record.patch_artifact.applied,
+            all_proposals_applied: record.patch_artifact.all_proposals_applied,
+            edit_proposal_count: record.patch_artifact.edit_proposals.len(),
+            create_proposal_count: record.patch_artifact.create_proposals.len(),
+            expected_file_change_count: record.patch_artifact.expected_file_changes.len(),
+            llm_prompt_message_count: record.llm_prompt.len(),
+            has_llm_response: record.llm_response.is_some(),
+            tool_request_event_count,
+            tool_completed_event_count,
+            tool_failed_event_count,
+        }
+    }
 }

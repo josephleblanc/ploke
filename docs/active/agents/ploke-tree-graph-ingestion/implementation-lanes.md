@@ -93,8 +93,8 @@ adding a loader.
 | `nodes/*/invocations/*.json` | 5 | loaded into `PassiveEvidence.run_attempts`; runtime/operation evidence only |
 | `nodes/*/results/*.json` | 5 | loaded into `PassiveEvidence.attempt_runner_results`; attempt-scoped result evidence |
 | `messages/child-plan/node-*.json` | 5 | passive owner and store loader exist; graph currently attaches summary-only evidence |
-| `agent-turn-summary.json`, `agent-turn-trace.json` | 5 | tool UI/error contract boundary exists through `ploke_records::tool_contracts`; still needs agent-turn passive owner/loader |
-| `llm-full-responses.jsonl`, `prototype1_observation_*.jsonl` | 5 | provider/observation evidence after writer/type resolution |
+| `agent-turn-summary.json`, `agent-turn-trace.json` | 5 | passive owner, direct run-root store loader, and graph evidence attachment exist; remaining gap is canonical passive tool transport ownership |
+| `llm-full-responses.jsonl`, `prototype1_observation_*.jsonl` | 5 | separate provider/full-response family; needs passive owner before `ploke-tree` ingestion |
 | `record.json.gz` | 5 | replay/provenance metadata or locator |
 | `run-profile.toml`, `run-profile.commitment.json` | 5 | passive owner, store loader, and graph metadata evidence exist |
 | `history/index/*` | 6 | rebuildability/check metadata derived from History |
@@ -253,7 +253,7 @@ Ownership:
 Candidate families:
 
 - tool calls/results;
-- agent turn trace/summary;
+- canonical passive tool transport ownership for agent-turn/tool evidence;
 - patch artifacts and MBE packaging;
 - provider attempts/retries/timeouts/full responses;
 - database context and prompt evidence.
@@ -275,10 +275,25 @@ Current status notes:
   `nodes/*/invocations/*.json`, and `nodes/*/results/*.json`: passive loading
   and graph evidence now exist through `RunAttemptEvidence` and
   `attempt_runner_results`.
-- `agent-turn-summary.json` and `agent-turn-trace.json`: the tool UI/error
-  payload boundary now exists through `ploke_records::tool_contracts`; the
-  remaining work is an agent-turn passive record owner, store loader, and graph
-  evidence attachment.
+- `agent-turn-summary.json` and `agent-turn-trace.json`: typed passive records,
+  direct run-root `RunRecordSet` loading, and graph evidence attachment now
+  exist. The loader intentionally checks only direct run-root files and ignores
+  nested lookalikes. Graph attachment keeps ambiguous agent-turn evidence as an
+  agent-turn evidence subject with loaded-summary and artifact locators; nested
+  `nodes/<node-id>/...` artifacts may get scheduler-node locators and known
+  branch/candidate context, but are no longer weak-joined to runtime or
+  operation nodes by node id.
+- Agent-turn's remaining gap is dependency architecture: current parsing uses
+  `ploke-records/tool-contracts`, which re-exports canonical tool DTOs from
+  `ploke-tui`. Do not copy or mirror `ToolName`, `ToolUiPayload`,
+  `ToolErrorWire`, or related tool DTOs into `ploke-records`. The intended
+  cleanup is to move passive tool transport DTOs once to a shared canonical
+  home, then let `ploke-records` wrap persisted records around those canonical
+  types while `ploke-tui` keeps tool execution and validation authority.
+- Provider/full-response evidence remains a separate unresolved family. Do not
+  treat agent-turn ownership or graph ingestion as resolving
+  `llm-full-responses.jsonl` or `prototype1_observation_*.jsonl`; those need a
+  distinct passive owner before `ploke-tree` ingestion.
 
 Projection follow-up:
 

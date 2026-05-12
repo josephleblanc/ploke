@@ -17,6 +17,8 @@ mod scheduler;
 #[path = "build/selection.rs"]
 mod selection;
 
+use std::collections::BTreeMap;
+
 use ploke_records::history::{ActorRefRecord, ArtifactRefRecord};
 use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
@@ -39,6 +41,7 @@ impl Graph {
 struct Builder {
     graph: Graph,
     next_evidence_id: u64,
+    branch_by_node_id: BTreeMap<String, String>,
 }
 
 impl Builder {
@@ -100,6 +103,18 @@ impl Builder {
             if candidate.branch_id.as_deref() == Some(branch_id) {
                 candidate.evidence.push(evidence_id);
             }
+        }
+    }
+
+    fn observe_node_branch(&mut self, node_id: &str, branch_id: &str) {
+        self.branch_by_node_id
+            .entry(node_id.to_owned())
+            .or_insert_with(|| branch_id.to_owned());
+    }
+
+    fn attach_to_node_branch(&mut self, node_id: &str, evidence_id: EvidenceId) {
+        if let Some(branch_id) = self.branch_by_node_id.get(node_id).cloned() {
+            self.attach_to_branch(&branch_id, evidence_id);
         }
     }
 

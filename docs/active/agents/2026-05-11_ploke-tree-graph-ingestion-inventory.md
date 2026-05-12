@@ -24,6 +24,8 @@ surfaces still must not become History authority.
 - `evidence`: attached through `EvidenceAttachment` / `EvidenceLocator`.
 - `loaded-not-ingested`: typed records are loaded by `ploke-tree`, but
   `Graph::from_records` does not currently index them.
+- `implemented-under-review`: implementation reports say typed records/loaders
+  exist, but reviewer findings still block acceptance.
 - `not-loaded`: no `RunRecordSet` / graph input path exists yet.
 - `projection-target`: derived projection over graph/loaders, not a source for
   graph construction.
@@ -59,18 +61,19 @@ Current inputs consumed by `Graph::from_records(&RunRecordSet)`:
 
 Current loaded inputs not yet consumed by `Graph::from_records`:
 
-- none from the first loaded passive-evidence set. Further loader families
-  remain pending below.
+- none identified for the agent-turn family. Agent-turn trace/summary evidence
+  is loaded into `RunRecordSet` and attached by `Graph::from_records` as
+  passive evidence, but its dependency boundary remains unresolved.
 
 ## Family Rollup
 
 | Family | Current graph ingestion | Notes |
 |---|---|---|
 | `protocol-artifacts` | partial `evidence` | Parsed protocol artifacts attach by path and protocol coordinate. Decode/store implementation surfaces are not separate core graph authority. |
-| `tool-calls-results` | `not-loaded` | Tool calls/results should attach to runtime turns, operations, provider attempts, and patch/evaluation evidence after typed run-record loaders exist. The shared tool UI/error contract boundary now exists through `ploke_records::tool_contracts`; agent-turn records still need a passive owner/loader. |
+| `tool-calls-results` | partial `evidence` / `not-loaded` | Agent-turn trace/summary records have typed `ploke_records::agent_turn` ownership, direct run-root `RunRecordSet` loading, and passive graph evidence attachment. Remaining gap: `ploke-tree` reaches the passive reader through `ploke-records/tool-contracts`, which pulls in canonical tool DTOs from `ploke-tui`. Do not resolve this by copying tool DTOs into `ploke-records`; move passive transport DTOs once to a shared canonical home before further cleanup. Tool call/result operation nodes remain pending. |
 | `monitor-projections` | partial `evidence` / `not-loaded` | Scheduler/node/status records are now attached as secondary evidence. Preview/slice/log projections should not become authority. |
 | `edit-surface-patch-evidence` | partial `core` / `evidence` | History selection payloads provide candidate artifact, surface, patch, and selection evidence. Proposal registry and live grant/check surfaces are deferred. |
-| `llm-attempts` | `not-loaded` | Provider attempts, timeouts, retries, and full response logs should attach as operation/runtime-turn evidence later. |
+| `llm-attempts` | `not-loaded` | Provider attempts, timeouts, retries, and full response logs are not covered by the agent-turn record family. They need a separate passive owner before `ploke-tree` can load or ingest them. |
 | `database-context` | `not-loaded` | Prompt/context evidence should attach to runtime turns, tool calls, or operations after a typed evidence carrier exists. |
 | `evaluation-oracle-targets` | partial `core` / `evidence` | History selection payloads and evaluation artifacts are currently the strongest covered areas. Scheduler/run-record packaging surfaces are not yet graph inputs. |
 
@@ -86,7 +89,7 @@ Current loaded inputs not yet consumed by `Graph::from_records`:
 | `tool.call.record.arguments` | `not-loaded` | Attach to tool call nodes/evidence once turn/tool records are loaded. |
 | `tool.request.arguments.capture` | `not-loaded` | Attach to outbound tool request evidence, not to History authority. |
 | `tool.execution.record` | `not-loaded` | Attach request/result pairs to runtime turn or operation evidence. |
-| `tool.response.full_response_trace` | `not-loaded` | Attach provider response evidence through typed trace records, not raw logs. |
+| `tool.response.full_response_trace` | `not-loaded` | Attach provider response evidence through typed trace records, not raw logs. Current agent-turn work does not cover run-local full-response sidecars. |
 | `tool.result.trace.projection` | `not-loaded` | Projection should be derived from typed tool evidence or attached as weak evidence. |
 | `prototype1.scheduler_json` | `evidence` | Loaded by `RunForestInput`; graph uses it for labels/status evidence only, not ordering authority. |
 | `prototype1.node_request_projection` | `evidence` | Runner request evidence is loaded through `PassiveEvidence.run_attempts` and attaches to artifact/runtime/operation evidence without becoming History authority. |
@@ -94,7 +97,7 @@ Current loaded inputs not yet consumed by `Graph::from_records`:
 | `prototype1.metrics_projection` | `not-loaded` | Attach metrics as evaluation/candidate evidence after typed loader exists. |
 | `prototype1.history_preview_document` | `projection-target` | Should be derived from sealed History / graph, not used to build graph. |
 | `prototype1.history_preview_slice` | `projection-target` | Should be derived from sealed History / graph, not used to build graph. |
-| `prototype1.agent_turn_trace` | `not-loaded` | Tool UI/error contract boundary exists; passive agent-turn record owner, loader, and graph evidence attachment remain. |
+| `prototype1.agent_turn_trace` | `evidence` | Passive owner is `ploke_records::agent_turn`; `ploke-tree` loads direct run-root trace/summary files into `RunRecordSet`; `Graph::from_records` attaches them as passive evidence. Dependency cleanup remains unresolved because the canonical tool DTOs currently live in `ploke-tui`. |
 | `prototype1.observation_jsonl` | `not-loaded` | Attach as weak typed observation evidence only when it can be joined safely. |
 | `prototype1.slice_jsonl` | `projection-target` | Projection/debug surface; should not create graph authority. |
 | `edit_surface.grant_check` | `defer` | Live grant/check authority stays outside graph unless mirrored by passive evidence. |
@@ -112,7 +115,7 @@ Current loaded inputs not yet consumed by `Graph::from_records`:
 | `llm.attempt.provider_error` | `not-loaded` | Attach to failed provider attempt evidence. |
 | `llm.attempt.timeout` | `not-loaded` | Attach to timeout/retry evidence, not scheduler status. |
 | `llm.attempt.timeline` | `not-loaded` | Attach as typed provider attempt timeline once available. |
-| `llm.attempt.full_response_logs` | `not-loaded` | Attach via typed full-response records, not raw log parsing. |
+| `llm.attempt.full_response_logs` | `not-loaded` | Attach via typed full-response records, not raw log parsing. `llm-full-responses.jsonl` still needs its own typed passive record/loader. |
 | `llm.dto.openai_response` | `defer` | DTO cleanup belongs in `ploke-llm`; graph consumes typed attempt/response evidence. |
 | `llm.tool_bridge.records` | `defer` | Bridge DTOs should reach graph through typed tool/provider evidence. |
 | `db.context.intent_and_tool_result` | `not-loaded` | Attach to tool call / prompt / operation evidence after typed carrier exists. |
@@ -134,18 +137,27 @@ Current loaded inputs not yet consumed by `Graph::from_records`:
 
 ## Immediate Graph Gaps
 
-1. Tool calls/results and agent-turn files are not loaded into `RunRecordSet`.
-   The shared tool contract boundary exists, but the agent-turn passive record
-   owner/loader has not been added.
+1. Agent-turn trace/summary files now have typed ownership in
+   `ploke_records::agent_turn`, direct run-root `RunRecordSet` loading in
+   `ploke-tree`, and passive `Graph::from_records` evidence attachment.
+   Remaining cleanup is dependency architecture, not ingestion: passive
+   tool transport DTOs still live under `ploke-tui` and are re-exported through
+   `ploke-records/tool-contracts`. Do not copy or mirror `ToolName`,
+   `ToolUiPayload`, `ToolErrorWire`, or related tool DTOs into
+   `ploke-records`.
 2. Patch artifact snapshots and MBE packaging evidence are not loaded into
    `RunRecordSet`.
 3. Provider attempts/retries/timeouts are not loaded into `RunRecordSet`.
-4. Database context/prompt evidence is not loaded into `RunRecordSet`.
-5. `crates/ploke-tree/src/lib.rs` still owns store-focused tests and forest /
+   Provider/full-response sidecars are outside the agent-turn family and need a
+   separate passive record owner before graph ingestion.
+4. Tool call/result operation nodes remain pending. The current agent-turn graph
+   ingestion attaches artifact-level passive evidence only.
+5. Database context/prompt evidence is not loaded into `RunRecordSet`.
+6. `crates/ploke-tree/src/lib.rs` still owns store-focused tests and forest /
    browser projection assembly. `FsRunStore` itself has moved to `store/fs.rs`.
-6. `crates/ploke-records/src/history/payload.rs` is now large enough that the
+7. `crates/ploke-records/src/history/payload.rs` is now large enough that the
    next surface/request-policy addition should split payload submodules first.
-7. Internal fine playback now preserves set-scoped membership identity. Future
+8. Internal fine playback now preserves set-scoped membership identity. Future
    UI views should borrow membership facts from `ploke-tree::Graph` instead of
    treating compatibility fields as authority.
 

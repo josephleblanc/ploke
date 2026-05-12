@@ -1,7 +1,12 @@
-use crate::graph::{EvidenceKind, EvidenceLocator, EvidenceSubject};
+use std::path::PathBuf;
+
+use crate::graph::{
+    AgentTurnArtifactKind, AgentTurnArtifactMetadata, EvidenceKind, EvidenceLocator,
+    EvidenceSubject,
+};
 use crate::{
-    ChildPlanEvidence, EvaluationEvidence, PassiveEvidence, ProtocolArtifactsEvidence,
-    RunProfileEvidence,
+    AgentTurnArtifactEvidence, AgentTurnEvidence, ChildPlanEvidence, EvaluationEvidence,
+    PassiveEvidence, ProtocolArtifactsEvidence, RunProfileEvidence,
 };
 
 use super::Builder;
@@ -56,6 +61,9 @@ impl Builder {
         }
         if let Some(run_attempts) = evidence.run_attempts.as_ref() {
             self.ingest_run_attempts(run_attempts);
+        }
+        if let Some(agent_turns) = evidence.agent_turns.as_ref() {
+            self.ingest_agent_turns(agent_turns);
         }
         self.ingest_attempt_runner_results(&evidence.attempt_runner_results);
     }
@@ -158,6 +166,115 @@ impl Builder {
             );
         }
     }
+
+    fn ingest_agent_turns(&mut self, evidence: &AgentTurnEvidence) {
+        self.attach_located_evidence(
+            EvidenceSubject::AgentTurnEvidenceSummary {
+                trace_file_count: evidence.summary.trace_file_count,
+                trace_parsed_count: evidence.summary.trace_parsed_count,
+                summary_file_count: evidence.summary.summary_file_count,
+                summary_parsed_count: evidence.summary.summary_parsed_count,
+                artifact_with_terminal_record_count: evidence
+                    .summary
+                    .artifact_with_terminal_record_count,
+                artifact_with_final_message_count: evidence
+                    .summary
+                    .artifact_with_final_message_count,
+                artifact_with_applied_patch_count: evidence
+                    .summary
+                    .artifact_with_applied_patch_count,
+                tool_request_event_count: evidence.summary.tool_request_event_count,
+                tool_completed_event_count: evidence.summary.tool_completed_event_count,
+                tool_failed_event_count: evidence.summary.tool_failed_event_count,
+            },
+            EvidenceKind::AgentTurnEvidenceSummary,
+            vec![EvidenceLocator::LoadedSummary {
+                name: "agent_turns",
+            }],
+        );
+
+        for (path, artifact) in &evidence.traces {
+            self.ingest_agent_turn_artifact(path, artifact, AgentTurnArtifactKind::Trace);
+        }
+        for (path, artifact) in &evidence.summaries {
+            self.ingest_agent_turn_artifact(path, artifact, AgentTurnArtifactKind::Summary);
+        }
+    }
+
+    fn ingest_agent_turn_artifact(
+        &mut self,
+        path: &str,
+        artifact: &AgentTurnArtifactEvidence,
+        kind: AgentTurnArtifactKind,
+    ) {
+        let node_id = agent_turn_path_node_id(path);
+        let mut locators = vec![
+            EvidenceLocator::LoadedSummary {
+                name: match kind {
+                    AgentTurnArtifactKind::Trace => "agent_turn_trace",
+                    AgentTurnArtifactKind::Summary => "agent_turn_summary",
+                },
+            },
+            EvidenceLocator::AgentTurnArtifact {
+                path: PathBuf::from(path),
+                kind,
+                task_id: artifact.task_id.clone(),
+            },
+        ];
+        if let Some(node_id) = node_id.as_ref() {
+            locators.push(EvidenceLocator::SchedulerNode {
+                node_id: node_id.clone(),
+            });
+        }
+
+        let evidence_id = self.attach_located_evidence(
+            EvidenceSubject::AgentTurnArtifact(agent_turn_metadata(artifact)),
+            match kind {
+                AgentTurnArtifactKind::Trace => EvidenceKind::AgentTurnTraceArtifact,
+                AgentTurnArtifactKind::Summary => EvidenceKind::AgentTurnSummaryArtifact,
+            },
+            locators,
+        );
+
+        if let Some(node_id) = node_id.as_ref() {
+            self.attach_to_node_branch(node_id, evidence_id);
+        }
+    }
+}
+
+fn agent_turn_metadata(artifact: &AgentTurnArtifactEvidence) -> AgentTurnArtifactMetadata {
+    AgentTurnArtifactMetadata {
+        task_id: artifact.task_id.clone(),
+        selected_model: artifact.selected_model.clone(),
+        user_message_id: artifact.user_message_id.clone(),
+        event_count: artifact.event_count,
+        terminal_outcome: artifact.terminal_outcome.clone(),
+        terminal_attempts: artifact.terminal_attempts,
+        final_assistant_message_id: artifact.final_assistant_message_id.clone(),
+        patch_applied: artifact.patch_applied,
+        all_proposals_applied: artifact.all_proposals_applied,
+        edit_proposal_count: artifact.edit_proposal_count,
+        create_proposal_count: artifact.create_proposal_count,
+        expected_file_change_count: artifact.expected_file_change_count,
+        llm_prompt_message_count: artifact.llm_prompt_message_count,
+        has_llm_response: artifact.has_llm_response,
+        tool_request_event_count: artifact.tool_request_event_count,
+        tool_completed_event_count: artifact.tool_completed_event_count,
+        tool_failed_event_count: artifact.tool_failed_event_count,
+    }
+}
+
+fn agent_turn_path_node_id(path: &str) -> Option<String> {
+    let mut components = path.split('/');
+    while let Some(component) = components.next() {
+        if component == "nodes" {
+            return components
+                .next()
+                .filter(|node_id| !node_id.is_empty())
+                .map(str::to_owned);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -165,6 +282,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use ploke_records::ids::{ArtifactId, Coordinate, EntryId, OperationTarget, RuntimeId};
     use ploke_records::run_profile::{
         Execution, ExecutionStopAfter, Generation, GenerationSource, GenerationSurface,
         RUN_PROFILE_COMMITMENT_SCHEMA_VERSION, RUN_PROFILE_SCHEMA_VERSION,
@@ -173,10 +291,16 @@ mod tests {
     };
     use ploke_records::scheduler::{ChildBudgetRecord, ChildScheduleModeRecord};
 
-    use crate::graph::{EvidenceKind, EvidenceSubject, RunProfileMetadata};
-    use crate::{ChildPlanEvidence, ChildPlanSummary, PassiveEvidence, RunProfileEvidence};
+    use crate::graph::{
+        AgentTurnArtifactKind, CandidateBranchNode, EvidenceKind, EvidenceLocator, EvidenceSubject,
+        OperationKey, OperationTargetKey, RunProfileMetadata,
+    };
+    use crate::{
+        AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, ChildPlanEvidence,
+        ChildPlanSummary, PassiveEvidence, RunProfileEvidence,
+    };
 
-    use super::Builder;
+    use super::{Builder, agent_turn_metadata};
 
     #[test]
     fn passive_child_plans_attach_summary_only_evidence() {
@@ -244,6 +368,177 @@ mod tests {
             evidence.kind == EvidenceKind::RunProfileCommitment
                 && evidence.subject == EvidenceSubject::RunProfileCommitment(commitment.clone())
         }));
+    }
+
+    #[test]
+    fn passive_agent_turn_node_artifact_remains_node_scoped_not_runtime_or_operation_evidence() {
+        let runtime_id = RuntimeId("runtime:child".to_owned());
+        let coordinate = Coordinate {
+            runtime_id: runtime_id.clone(),
+            target: OperationTarget::Artifact {
+                artifact_id: ArtifactId("artifact-before".to_owned()),
+            },
+        };
+        let mut builder = Builder::default();
+        builder.graph.candidates.branches.push(CandidateBranchNode {
+            selection_entry_id: EntryId("selection-1".to_owned()),
+            payload_index: 0,
+            branch_id: "branch-1".to_owned(),
+            candidate_id: None,
+            source_state_id: None,
+            evidence: Vec::new(),
+        });
+        builder.observe_node_branch("node-1", "branch-1");
+        builder.observe_runtime(&runtime_id);
+        builder.observe_operation_coordinate(&coordinate);
+
+        let artifact = agent_turn_artifact();
+        let mut passive = PassiveEvidence::default();
+        passive.agent_turns = Some(AgentTurnEvidence {
+            summary: AgentTurnEvidenceSummary {
+                summary_file_count: 1,
+                summary_parsed_count: 1,
+                artifact_with_terminal_record_count: 1,
+                artifact_with_final_message_count: 1,
+                artifact_with_applied_patch_count: 1,
+                tool_request_event_count: 2,
+                tool_completed_event_count: 1,
+                tool_failed_event_count: 1,
+                ..AgentTurnEvidenceSummary::default()
+            },
+            traces: BTreeMap::new(),
+            summaries: BTreeMap::from([(
+                "nodes/node-1/output/agent-turn-summary.json".to_owned(),
+                artifact.clone(),
+            )]),
+        });
+
+        builder.ingest_passive_evidence(&passive);
+        let graph = builder.finish();
+
+        assert!(graph.history.blocks.is_empty());
+        assert!(graph.authority.epochs_by_lineage.is_empty());
+        assert!(graph.evidence.attachments.values().any(|evidence| {
+            evidence.kind == EvidenceKind::AgentTurnEvidenceSummary
+                && matches!(
+                    evidence.subject,
+                    EvidenceSubject::AgentTurnEvidenceSummary {
+                        summary_file_count: 1,
+                        summary_parsed_count: 1,
+                        tool_request_event_count: 2,
+                        tool_completed_event_count: 1,
+                        tool_failed_event_count: 1,
+                        ..
+                    }
+                )
+        }));
+
+        let runtime = graph
+            .runtimes
+            .runtimes
+            .get(&runtime_id)
+            .expect("runtime exists independently of agent-turn evidence");
+        assert!(runtime.evidence.iter().all(|id| {
+            graph.evidence.attachments[id].kind != EvidenceKind::AgentTurnSummaryArtifact
+        }));
+
+        let operation_key = OperationKey::RuntimeTarget {
+            runtime_id,
+            target: OperationTargetKey::Artifact {
+                artifact_id: ArtifactId("artifact-before".to_owned()),
+            },
+        };
+        let operation = graph
+            .operations
+            .operations
+            .get(&operation_key)
+            .expect("operation exists independently of agent-turn evidence");
+        assert!(operation.evidence.iter().all(|id| {
+            graph.evidence.attachments[id].kind != EvidenceKind::AgentTurnSummaryArtifact
+        }));
+
+        let branch = graph
+            .candidates
+            .branches
+            .iter()
+            .find(|branch| branch.branch_id == "branch-1")
+            .expect("branch joined by node id");
+        assert!(branch.evidence.iter().any(|id| {
+            let evidence = &graph.evidence.attachments[id];
+            evidence.kind == EvidenceKind::AgentTurnSummaryArtifact
+                && evidence.subject
+                    == EvidenceSubject::AgentTurnArtifact(agent_turn_metadata(&artifact))
+                && evidence.locators.iter().any(|locator| {
+                    locator
+                        == &EvidenceLocator::AgentTurnArtifact {
+                            path: PathBuf::from("nodes/node-1/output/agent-turn-summary.json"),
+                            kind: AgentTurnArtifactKind::Summary,
+                            task_id: "task-1".to_owned(),
+                        }
+                })
+                && evidence.locators.iter().any(|locator| {
+                    locator
+                        == &EvidenceLocator::SchedulerNode {
+                            node_id: "node-1".to_owned(),
+                        }
+                })
+        }));
+    }
+
+    #[test]
+    fn passive_agent_turn_root_artifact_remains_evidence_only_when_node_join_is_absent() {
+        let mut builder = Builder::default();
+        let mut passive = PassiveEvidence::default();
+        passive.agent_turns = Some(AgentTurnEvidence {
+            summary: AgentTurnEvidenceSummary {
+                trace_file_count: 1,
+                trace_parsed_count: 1,
+                ..AgentTurnEvidenceSummary::default()
+            },
+            traces: BTreeMap::from([("agent-turn-trace.json".to_owned(), agent_turn_artifact())]),
+            summaries: BTreeMap::new(),
+        });
+
+        builder.ingest_passive_evidence(&passive);
+        let graph = builder.finish();
+
+        assert!(graph.history.blocks.is_empty());
+        assert!(graph.authority.epochs_by_lineage.is_empty());
+        assert!(graph.runtimes.runtimes.is_empty());
+        assert!(graph.operations.operations.is_empty());
+        assert!(graph.evidence.attachments.values().any(|evidence| {
+            evidence.kind == EvidenceKind::AgentTurnTraceArtifact
+                && evidence.locators.iter().any(|locator| {
+                    locator
+                        == &EvidenceLocator::AgentTurnArtifact {
+                            path: PathBuf::from("agent-turn-trace.json"),
+                            kind: AgentTurnArtifactKind::Trace,
+                            task_id: "task-1".to_owned(),
+                        }
+                })
+        }));
+    }
+
+    fn agent_turn_artifact() -> AgentTurnArtifactEvidence {
+        AgentTurnArtifactEvidence {
+            task_id: "task-1".to_owned(),
+            selected_model: "openai/gpt-5".to_owned(),
+            user_message_id: "user-1".to_owned(),
+            event_count: 5,
+            terminal_outcome: Some("completed".to_owned()),
+            terminal_attempts: Some(1),
+            final_assistant_message_id: Some("assistant-1".to_owned()),
+            patch_applied: true,
+            all_proposals_applied: true,
+            edit_proposal_count: 1,
+            create_proposal_count: 0,
+            expected_file_change_count: 1,
+            llm_prompt_message_count: 3,
+            has_llm_response: true,
+            tool_request_event_count: 2,
+            tool_completed_event_count: 1,
+            tool_failed_event_count: 1,
+        }
     }
 
     fn run_profile_record() -> RunProfileRecord {

@@ -42,6 +42,7 @@ impl Builder {
     }
 
     fn ingest_scheduler_node(&mut self, node: &NodeRecord) {
+        self.observe_node_branch(node.node_id.as_str(), node.branch_id.as_str());
         let evidence_id = self.attach_located_evidence(
             EvidenceSubject::SchedulerNode(node.node_id.to_string()),
             EvidenceKind::SchedulerNodeRecord,

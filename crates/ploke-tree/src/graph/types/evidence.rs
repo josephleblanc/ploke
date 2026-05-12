@@ -26,6 +26,33 @@ pub struct EvidenceAttachment {
     pub locators: Vec<EvidenceLocator>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentTurnArtifactKind {
+    Trace,
+    Summary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTurnArtifactMetadata {
+    pub task_id: String,
+    pub selected_model: String,
+    pub user_message_id: String,
+    pub event_count: usize,
+    pub terminal_outcome: Option<String>,
+    pub terminal_attempts: Option<u32>,
+    pub final_assistant_message_id: Option<String>,
+    pub patch_applied: bool,
+    pub all_proposals_applied: bool,
+    pub edit_proposal_count: usize,
+    pub create_proposal_count: usize,
+    pub expected_file_change_count: usize,
+    pub llm_prompt_message_count: usize,
+    pub has_llm_response: bool,
+    pub tool_request_event_count: usize,
+    pub tool_completed_event_count: usize,
+    pub tool_failed_event_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunProfileMetadata {
     pub schema_version: String,
@@ -111,6 +138,11 @@ pub enum EvidenceLocator {
         subject_id: String,
         run_id: String,
     },
+    AgentTurnArtifact {
+        path: PathBuf,
+        kind: AgentTurnArtifactKind,
+        task_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +218,19 @@ pub enum EvidenceSubject {
     },
     RunProfileSummary(RunProfileMetadata),
     RunProfileCommitment(RunProfileCommitmentRecord),
+    AgentTurnEvidenceSummary {
+        trace_file_count: usize,
+        trace_parsed_count: usize,
+        summary_file_count: usize,
+        summary_parsed_count: usize,
+        artifact_with_terminal_record_count: usize,
+        artifact_with_final_message_count: usize,
+        artifact_with_applied_patch_count: usize,
+        tool_request_event_count: usize,
+        tool_completed_event_count: usize,
+        tool_failed_event_count: usize,
+    },
+    AgentTurnArtifact(AgentTurnArtifactMetadata),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,4 +257,7 @@ pub enum EvidenceKind {
     ProtocolArtifact,
     RunProfileSummary,
     RunProfileCommitment,
+    AgentTurnEvidenceSummary,
+    AgentTurnTraceArtifact,
+    AgentTurnSummaryArtifact,
 }

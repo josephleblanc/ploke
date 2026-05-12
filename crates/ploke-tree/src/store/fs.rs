@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
+use ploke_records::agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord};
 use ploke_records::branch::{BranchLogBody, BranchLogRecord, Prototype1BranchRegistry};
 use ploke_records::channel::{Envelope, ToChild, ToParent};
 use ploke_records::child_plan::ChildPlanRecord;
@@ -28,10 +29,11 @@ use serde::Deserialize;
 use crate::{RunForest, assemble_run_forest};
 
 use super::{
-    BranchRegistryEvidence, ChannelEvidence, ChildPlanEvidence, ChildPlanSummary,
-    EvaluationArtifactSummary, EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord,
-    PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence,
-    RunAttemptSummary, RunForestInput, RunProfileEvidence, RunRecordSet, TransitionJournal,
+    AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, BranchRegistryEvidence,
+    ChannelEvidence, ChildPlanEvidence, ChildPlanSummary, EvaluationArtifactSummary,
+    EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord, PassiveEvidence,
+    ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence, RunAttemptSummary,
+    RunForestInput, RunProfileEvidence, RunRecordSet, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -176,6 +178,7 @@ impl FsRunStore {
             protocol_artifacts: self.load_protocol_artifacts_evidence()?,
             run_profile: self.load_run_profile_evidence()?,
             run_attempts: self.load_run_attempt_evidence()?,
+            agent_turns: self.load_agent_turn_evidence()?,
             attempt_runner_results: self.load_attempt_runner_results()?,
         })
     }
@@ -503,6 +506,44 @@ impl FsRunStore {
         }))
     }
 
+    fn load_agent_turn_evidence(&self) -> Result<Option<AgentTurnEvidence>, FsRunStoreError> {
+        let trace_paths = expected_agent_turn_files(&self.run_root, "agent-turn-trace.json");
+        let summary_paths = expected_agent_turn_files(&self.run_root, "agent-turn-summary.json");
+        if trace_paths.is_empty() && summary_paths.is_empty() {
+            return Ok(None);
+        }
+
+        let mut summary = AgentTurnEvidenceSummary {
+            trace_file_count: trace_paths.len(),
+            summary_file_count: summary_paths.len(),
+            ..AgentTurnEvidenceSummary::default()
+        };
+        let mut traces = BTreeMap::new();
+        let mut summaries = BTreeMap::new();
+
+        for path in trace_paths {
+            let record = self.read_json::<AgentTurnTraceRecord>(&path)?;
+            summary.trace_parsed_count += 1;
+            let artifact = AgentTurnArtifactEvidence::from_record(&record.0);
+            summary.observe_artifact(&artifact);
+            traces.insert(run_relative_key(&self.run_root, &path), artifact);
+        }
+
+        for path in summary_paths {
+            let record = self.read_json::<AgentTurnSummaryRecord>(&path)?;
+            summary.summary_parsed_count += 1;
+            let artifact = AgentTurnArtifactEvidence::from_record(&record.0);
+            summary.observe_artifact(&artifact);
+            summaries.insert(run_relative_key(&self.run_root, &path), artifact);
+        }
+
+        Ok(Some(AgentTurnEvidence {
+            summary,
+            traces,
+            summaries,
+        }))
+    }
+
     fn load_attempt_runner_results(
         &self,
     ) -> Result<BTreeMap<String, RunnerResultRecord>, FsRunStoreError> {
@@ -778,6 +819,15 @@ fn sorted_nested_channel_jsonl_files(run_root: &Path) -> Result<Vec<PathBuf>, Fs
     Ok(paths)
 }
 
+fn expected_agent_turn_files(run_root: &Path, file_name: &str) -> Vec<PathBuf> {
+    let path = run_root.join(file_name);
+    if path.is_file() {
+        vec![path]
+    } else {
+        Vec::new()
+    }
+}
+
 fn protocol_artifact_key(path: &Path) -> String {
     path.file_stem()
         .and_then(|name| name.to_str())
@@ -791,4 +841,206 @@ fn run_relative_key(run_root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn load_record_set_loads_agent_turn_trace_and_summary_evidence() {
+        let root = temp_run_root("agent-turn");
+        fs::create_dir_all(root.join("nodes").join("child").join("output"))
+            .expect("create nested output dir");
+        fs::write(
+            root.join("scheduler.json"),
+            minimal_scheduler_json().to_string(),
+        )
+        .expect("write scheduler");
+        fs::write(
+            root.join("agent-turn-trace.json"),
+            agent_turn_artifact_json("trace-task", true).to_string(),
+        )
+        .expect("write trace");
+        fs::write(
+            root.join("agent-turn-summary.json"),
+            agent_turn_artifact_json("summary-task", false).to_string(),
+        )
+        .expect("write summary");
+        fs::write(
+            root.join("nodes")
+                .join("child")
+                .join("output")
+                .join("agent-turn-trace.json"),
+            agent_turn_artifact_json("nested-trace-task", false).to_string(),
+        )
+        .expect("write nested trace lookalike");
+        fs::write(
+            root.join("nodes")
+                .join("child")
+                .join("output")
+                .join("agent-turn-summary.json"),
+            agent_turn_artifact_json("nested-summary-task", true).to_string(),
+        )
+        .expect("write nested summary lookalike");
+
+        let records = FsRunStore::new(&root)
+            .load_record_set()
+            .expect("load record set");
+        let agent_turns = records
+            .forest_input
+            .passive_evidence
+            .agent_turns
+            .as_ref()
+            .expect("agent-turn evidence");
+
+        assert_eq!(agent_turns.summary.trace_file_count, 1);
+        assert_eq!(agent_turns.summary.trace_parsed_count, 1);
+        assert_eq!(agent_turns.summary.summary_file_count, 1);
+        assert_eq!(agent_turns.summary.summary_parsed_count, 1);
+        assert_eq!(agent_turns.summary.artifact_with_terminal_record_count, 2);
+        assert_eq!(agent_turns.summary.artifact_with_final_message_count, 2);
+        assert_eq!(agent_turns.summary.artifact_with_applied_patch_count, 1);
+        assert_eq!(agent_turns.summary.tool_request_event_count, 2);
+        assert_eq!(agent_turns.summary.tool_completed_event_count, 2);
+        assert_eq!(agent_turns.summary.tool_failed_event_count, 2);
+
+        let trace = agent_turns
+            .traces
+            .get("agent-turn-trace.json")
+            .expect("trace artifact evidence");
+        assert_eq!(trace.task_id, "trace-task");
+        assert_eq!(trace.selected_model, "openai/gpt-5");
+        assert!(trace.patch_applied);
+        assert_eq!(trace.expected_file_change_count, 1);
+        assert_eq!(trace.terminal_outcome.as_deref(), Some("completed"));
+
+        let summary = agent_turns
+            .summaries
+            .get("agent-turn-summary.json")
+            .expect("summary artifact evidence");
+        assert_eq!(summary.task_id, "summary-task");
+        assert!(!summary.patch_applied);
+        assert_eq!(summary.llm_prompt_message_count, 1);
+        assert!(summary.has_llm_response);
+        assert!(
+            !agent_turns
+                .traces
+                .contains_key("nodes/child/output/agent-turn-trace.json")
+        );
+        assert!(
+            !agent_turns
+                .summaries
+                .contains_key("nodes/child/output/agent-turn-summary.json")
+        );
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    fn temp_run_root(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ploke-tree-fs-store-{prefix}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn minimal_scheduler_json() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "prototype1-scheduler.v1",
+            "campaign_id": "campaign-1",
+            "updated_at": "2026-05-12T12:00:00Z",
+            "nodes": []
+        })
+    }
+
+    fn agent_turn_artifact_json(task_id: &str, patch_applied: bool) -> serde_json::Value {
+        serde_json::json!({
+            "task_id": task_id,
+            "selected_model": "openai/gpt-5",
+            "issue_prompt": "Fix the bug.",
+            "user_message_id": "user-1",
+            "events": [
+                {"ToolRequested": {
+                    "request_id": "req-1",
+                    "parent_id": "parent-1",
+                    "call_id": "call-1",
+                    "tool": "read_file",
+                    "arguments": "{\"file\":\"src/lib.rs\"}"
+                }},
+                {"ToolCompleted": {
+                    "request_id": "req-1",
+                    "parent_id": "parent-1",
+                    "call_id": "call-1",
+                    "tool": "read_file",
+                    "content": "ok",
+                    "ui_payload": null,
+                    "latency_ms": 42
+                }},
+                {"ToolFailed": {
+                    "request_id": "req-2",
+                    "parent_id": "parent-1",
+                    "call_id": "call-2",
+                    "tool": "apply_code_edit",
+                    "error": "no match",
+                    "ui_payload": null,
+                    "latency_ms": 13
+                }},
+                {"TurnFinished": {
+                    "session_id": "session-1",
+                    "request_id": "req-1",
+                    "parent_id": "parent-1",
+                    "assistant_message_id": "assistant-1",
+                    "outcome": "completed",
+                    "error_id": null,
+                    "summary": "done",
+                    "attempts": 1
+                }}
+            ],
+            "prompt_debug": null,
+            "terminal_record": {
+                "session_id": "session-1",
+                "request_id": "req-1",
+                "parent_id": "parent-1",
+                "assistant_message_id": "assistant-1",
+                "outcome": "completed",
+                "error_id": null,
+                "summary": "done",
+                "attempts": 1
+            },
+            "final_assistant_message": {
+                "id": "assistant-1",
+                "kind": "Assistant",
+                "status": "Completed",
+                "tool_call_id": null,
+                "content_len": 4,
+                "content_preview": "done"
+            },
+            "patch_artifact": {
+                "edit_proposals": [],
+                "create_proposals": [],
+                "applied": patch_applied,
+                "all_proposals_applied": patch_applied,
+                "expected_file_changes": [{
+                    "path": "src/lib.rs",
+                    "existed_before": true,
+                    "exists_after": true,
+                    "before_sha256": "sha256:before",
+                    "after_sha256": "sha256:after",
+                    "changed": patch_applied
+                }],
+                "any_expected_file_changed": patch_applied,
+                "all_expected_files_changed": patch_applied
+            },
+            "llm_prompt": [{
+                "role": "user",
+                "content": "Fix the bug."
+            }],
+            "llm_response": "done"
+        })
+    }
 }
