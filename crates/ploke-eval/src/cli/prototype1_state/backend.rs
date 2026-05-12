@@ -35,9 +35,15 @@ const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
     ".codex-skill-staging",
     ".tmp",
     ".symlinks",
+    ".cargo",
+    "docs/archive",
+    "docs/active/bugs",
     "target",
     "dist",
 ];
+
+const WORKSPACE_EXCEPT_AUTHORITY_FILENAMES: &[&str] =
+    &["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 
 /// Git branch name for one backend-managed child lineage.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2009,7 +2015,7 @@ pub(crate) fn edit_surface_paths(
         Prototype1EditSurface::WorkspaceExceptPlokeEval => {
             let paths = tracked_paths(worktree_root, ".")?
                 .into_iter()
-                .filter(|path| !is_workspace_authority_path(path))
+                .filter(|path| !is_workspace_except_forbidden_path(path))
                 .collect::<Vec<_>>();
             if paths.is_empty() {
                 return Err(BackendError::EmptySurfacePathspec {
@@ -2038,14 +2044,20 @@ fn path_matches_surface_policy(surface: Prototype1EditSurface, path: &Path) -> b
             path.starts_with("crates/ploke-tui/src/tools")
                 || ploke_tui_tool_files().iter().any(|allowed| allowed == path)
         }
-        Prototype1EditSurface::WorkspaceExceptPlokeEval => !is_workspace_authority_path(path),
+        Prototype1EditSurface::WorkspaceExceptPlokeEval => {
+            !is_workspace_except_forbidden_path(path)
+        }
     }
 }
 
-fn is_workspace_authority_path(path: &Path) -> bool {
+fn is_workspace_except_forbidden_path(path: &Path) -> bool {
     WORKSPACE_EXCEPT_AUTHORITY_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| WORKSPACE_EXCEPT_AUTHORITY_FILENAMES.contains(&name))
 }
 
 fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
@@ -2728,6 +2740,10 @@ R  old.rs -> new.rs
             ".codex-skill-staging/staged.md",
             ".tmp/scratch.md",
             ".symlinks/CatColab-symlink",
+            ".cargo/config.toml",
+            "docs/archive/agents/old-plan.md",
+            "docs/active/bugs/alive-bug.md",
+            "crates/ploke-tui/Cargo.toml",
             "target/debug/build-note.md",
             "dist/bundle.md",
         ] {
@@ -2756,6 +2772,10 @@ R  old.rs -> new.rs
             ".codex-skill-staging/staged.md",
             ".tmp/scratch.md",
             ".symlinks/CatColab-symlink",
+            ".cargo/config.toml",
+            "docs/archive/agents/old-plan.md",
+            "docs/active/bugs/alive-bug.md",
+            "crates/ploke-tui/Cargo.toml",
             "target/debug/build-note.md",
             "dist/bundle.md",
         ] {
@@ -2764,6 +2784,51 @@ R  old.rs -> new.rs
                 "{relpath} must not be editable surface"
             );
         }
+    }
+
+    #[test]
+    fn workspace_except_surface_excludes_root_capability_files() {
+        let tmp = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let repo_root = tmp.path();
+        for relpath in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+            fs::write(repo_root.join(relpath), "capability\n").expect("write capability fixture");
+            run_git_test(repo_root, &["add", relpath]);
+        }
+
+        let paths = super::edit_surface_paths(
+            repo_root,
+            crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
+        )
+        .expect("workspace surface paths");
+
+        for relpath in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+            assert!(
+                !paths.iter().any(|path| *path == PathBuf::from(relpath)),
+                "{relpath} must not be editable surface"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_except_validation_rejects_archive_doc() {
+        let tmp = init_surface_repo("pub fn policy() {}\n", "same\n");
+        let relpath = PathBuf::from("docs/archive/agents/old-plan.md");
+        let path = tmp.path().join(&relpath);
+        fs::create_dir_all(path.parent().expect("archive path has parent"))
+            .expect("create archive parent");
+        fs::write(&path, "let old = 1;\n").expect("write archive fixture");
+        run_git_test(
+            tmp.path(),
+            &["add", relpath.to_str().expect("test relpath is utf-8")],
+        );
+        let mut proposal = proposal_for(tmp.path(), relpath, "let old = 1;\n");
+        proposal.surface = crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval;
+
+        let err = GitWorktreeBackend
+            .validate_edit_surface_candidate(tmp.path(), proposal)
+            .expect_err("archive docs are not parent mutation surface");
+
+        assert!(matches!(err, BackendError::OutOfEditSurface { .. }));
     }
 
     #[test]
