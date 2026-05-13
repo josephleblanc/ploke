@@ -526,6 +526,149 @@ impl AdmittedBroadHarnessResult {
     }
 }
 
+/// Backend view of one headless TUI attempt after the executor has returned.
+///
+/// This is intentionally only a workspace-diff carrier. The TUI app remains
+/// responsible for running the chat/tools; the backend validates the resulting
+/// candidate checkout before any admission path is allowed to persist it as an
+/// Artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TuiAttemptDiff {
+    source_root: PathBuf,
+    candidate_root: PathBuf,
+    surface: Prototype1EditSurface,
+    base_head: GitCommit,
+    changed_paths: Vec<PathBuf>,
+}
+
+impl TuiAttemptDiff {
+    pub(crate) fn source_root(&self) -> &Path {
+        &self.source_root
+    }
+
+    pub(crate) fn candidate_root(&self) -> &Path {
+        &self.candidate_root
+    }
+
+    pub(crate) fn surface(&self) -> Prototype1EditSurface {
+        self.surface
+    }
+
+    pub(crate) fn base_head(&self) -> &GitCommit {
+        &self.base_head
+    }
+
+    pub(crate) fn changed_paths(&self) -> &[PathBuf] {
+        &self.changed_paths
+    }
+
+    fn into_changed_paths(self) -> Vec<PathBuf> {
+        self.changed_paths
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RetryDisposition {
+    RetryPrompt,
+    RefreshWorkspace,
+    Abort,
+}
+
+/// Retry-friendly boundary rejection for a returned TUI attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttemptRejection {
+    SourceDirty {
+        path: PathBuf,
+        dirty_paths: Vec<PathBuf>,
+    },
+    WorkspaceNotIsolated {
+        source_repository: PathBuf,
+        workspace: PathBuf,
+    },
+    NoChange {
+        path: PathBuf,
+    },
+    StaleBase {
+        path: PathBuf,
+        expected_head: GitCommit,
+        observed_head: GitCommit,
+    },
+    InvalidPath {
+        path: PathBuf,
+    },
+    OutOfPolicy {
+        surface: Prototype1EditSurface,
+        path: PathBuf,
+    },
+    UnexpectedDirty {
+        path: PathBuf,
+        dirty_paths: Vec<PathBuf>,
+    },
+}
+
+impl AttemptRejection {
+    pub(crate) fn disposition(&self) -> RetryDisposition {
+        match self {
+            Self::NoChange { .. } | Self::OutOfPolicy { .. } | Self::UnexpectedDirty { .. } => {
+                RetryDisposition::RetryPrompt
+            }
+            Self::StaleBase { .. } => RetryDisposition::RefreshWorkspace,
+            Self::SourceDirty { .. }
+            | Self::WorkspaceNotIsolated { .. }
+            | Self::InvalidPath { .. } => RetryDisposition::Abort,
+        }
+    }
+
+    fn into_backend_error(self) -> BackendError {
+        match self {
+            Self::SourceDirty { path, dirty_paths } => {
+                BackendError::DirtyWorktree { path, dirty_paths }
+            }
+            Self::WorkspaceNotIsolated {
+                source_repository,
+                workspace,
+            } => BackendError::BroadHarnessWorkspaceNotIsolated {
+                source_repository,
+                workspace,
+            },
+            Self::NoChange { path } => BackendError::BroadHarnessNoChanges { path },
+            Self::StaleBase {
+                path,
+                expected_head,
+                observed_head,
+            } => BackendError::BroadHarnessStaleBase {
+                path,
+                expected_head,
+                observed_head,
+            },
+            Self::InvalidPath { path } => BackendError::InvalidEditSurfacePath { path },
+            Self::OutOfPolicy { surface, path } => BackendError::OutOfEditSurface { surface, path },
+            Self::UnexpectedDirty { path, dirty_paths } => {
+                BackendError::DirtyWorktree { path, dirty_paths }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TuiAttemptOutcome {
+    Accepted(TuiAttemptDiff),
+    Rejected(AttemptRejection),
+}
+
+impl TuiAttemptOutcome {
+    pub(crate) fn rejected(rejection: AttemptRejection) -> Self {
+        Self::Rejected(rejection)
+    }
+
+    fn into_result(self) -> Result<TuiAttemptDiff, BackendError> {
+        match self {
+            Self::Accepted(diff) => Ok(diff),
+            Self::Rejected(rejection) => Err(rejection.into_backend_error()),
+        }
+    }
+}
+
 /// Realized descendant workspace.
 ///
 /// This is the backend's concrete witness that a child artifact world exists.
@@ -1363,6 +1506,41 @@ impl GitWorktreeBackend {
             });
         }
 
+        let diff = self
+            .validate_tui_attempt(repo_root, published)?
+            .into_result()?;
+        let candidate_root = diff.candidate_root().to_path_buf();
+        let changed_paths = diff.into_changed_paths();
+
+        let base_artifact_id = admission.base_artifact_id()?.clone();
+        let request_id = published.request_id().to_string();
+        let persisted_head = self.persist_files(
+            &candidate_root,
+            &changed_paths,
+            &format!("prototype1 broad harness result {request_id}"),
+        )?;
+        let derived_artifact_id = artifact_id_from_git_commit(&persisted_head);
+        let artifact_surface = self.artifact_surface(&candidate_root)?;
+
+        Ok(AdmittedBroadHarnessResult {
+            request_id,
+            request_hash: published.request_hash().to_string(),
+            coordinate: admission.coordinate().clone(),
+            policy: admission.policy().clone(),
+            workspace_root: candidate_root,
+            submitted_result_path: submitted.candidate().submitted_result_path().to_path_buf(),
+            changed_paths,
+            base_artifact_id,
+            derived_artifact_id,
+            artifact_surface,
+        })
+    }
+
+    pub(crate) fn validate_tui_attempt(
+        &self,
+        repo_root: &Path,
+        published: &PublishedBroadHarnessRequest,
+    ) -> Result<TuiAttemptOutcome, BackendError> {
         let expected_source_repository = published.request().workspace.source_repository_path();
         if expected_source_repository != repo_root {
             return Err(BackendError::BroadHarnessSourceRepositoryMismatch {
@@ -1376,69 +1554,133 @@ impl GitWorktreeBackend {
             || candidate_root.starts_with(repo_root)
             || repo_root.starts_with(candidate_root)
         {
-            return Err(BackendError::BroadHarnessWorkspaceNotIsolated {
-                source_repository: repo_root.to_path_buf(),
-                workspace: candidate_root.to_path_buf(),
-            });
+            return Ok(TuiAttemptOutcome::rejected(
+                AttemptRejection::WorkspaceNotIsolated {
+                    source_repository: repo_root.to_path_buf(),
+                    workspace: candidate_root.to_path_buf(),
+                },
+            ));
         }
 
         let source_dirty = dirty_paths(repo_root)?;
         if !source_dirty.is_empty() {
-            return Err(BackendError::DirtyWorktree {
+            return Ok(TuiAttemptOutcome::rejected(AttemptRejection::SourceDirty {
                 path: repo_root.to_path_buf(),
                 dirty_paths: source_dirty,
-            });
+            }));
         }
 
         let expected_base_head = self.head_commit(repo_root)?;
         let observed_candidate_head = self.head_commit(candidate_root)?;
         if observed_candidate_head != expected_base_head {
-            return Err(BackendError::BroadHarnessStaleBase {
+            return Ok(TuiAttemptOutcome::rejected(AttemptRejection::StaleBase {
                 path: candidate_root.to_path_buf(),
                 expected_head: expected_base_head,
                 observed_head: observed_candidate_head,
-            });
+            }));
         }
 
         let surface = prototype_surface_for_broad_edit_policy(published.request().edit_policy);
         let changed_paths = changed_paths_between_roots(repo_root, candidate_root)?;
         if changed_paths.is_empty() {
-            return Err(BackendError::BroadHarnessNoChanges {
+            return Ok(TuiAttemptOutcome::rejected(AttemptRejection::NoChange {
                 path: candidate_root.to_path_buf(),
-            });
+            }));
         }
+
         for path in &changed_paths {
-            validate_normal_repo_relpath(path)?;
+            if validate_normal_repo_relpath(path).is_err() {
+                return Ok(TuiAttemptOutcome::rejected(AttemptRejection::InvalidPath {
+                    path: path.clone(),
+                }));
+            }
             if !path_matches_surface_policy(surface, path) {
-                return Err(BackendError::OutOfEditSurface {
+                return Ok(TuiAttemptOutcome::rejected(AttemptRejection::OutOfPolicy {
                     surface,
                     path: path.clone(),
-                });
+                }));
             }
         }
 
-        let base_artifact_id = admission.base_artifact_id()?.clone();
-        let request_id = published.request_id().to_string();
-        let persisted_head = self.persist_files(
-            candidate_root,
-            &changed_paths,
-            &format!("prototype1 broad harness result {request_id}"),
-        )?;
-        let derived_artifact_id = artifact_id_from_git_commit(&persisted_head);
-        let artifact_surface = self.artifact_surface(candidate_root)?;
+        let candidate_dirty = dirty_paths(candidate_root)?;
+        let unexpected_dirty = candidate_dirty
+            .into_iter()
+            .filter(|dirty| !changed_paths.iter().any(|changed| changed == dirty))
+            .collect::<Vec<_>>();
+        if !unexpected_dirty.is_empty() {
+            return Ok(TuiAttemptOutcome::rejected(
+                AttemptRejection::UnexpectedDirty {
+                    path: candidate_root.to_path_buf(),
+                    dirty_paths: unexpected_dirty,
+                },
+            ));
+        }
 
-        Ok(AdmittedBroadHarnessResult {
-            request_id,
-            request_hash: published.request_hash().to_string(),
-            coordinate: admission.coordinate().clone(),
-            policy: admission.policy().clone(),
-            workspace_root: candidate_root.to_path_buf(),
-            submitted_result_path: submitted.candidate().submitted_result_path().to_path_buf(),
+        Ok(TuiAttemptOutcome::Accepted(TuiAttemptDiff {
+            source_root: repo_root.to_path_buf(),
+            candidate_root: candidate_root.to_path_buf(),
+            surface,
+            base_head: expected_base_head,
             changed_paths,
-            base_artifact_id,
-            derived_artifact_id,
-            artifact_surface,
-        })
+        }))
+    }
+
+    pub(crate) fn prepare_broad_harness_workspace(
+        &self,
+        repo_root: &Path,
+        published: &PublishedBroadHarnessRequest,
+    ) -> Result<(), BackendError> {
+        let workspace = published.workspace_path();
+        if let Some(parent) = workspace.parent() {
+            fs::create_dir_all(parent).map_err(|source| BackendError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        match self.find_worktree(repo_root, workspace)? {
+            Some(_) => {
+                let dirty_paths = dirty_paths(workspace)?;
+                if !dirty_paths.is_empty() {
+                    return Err(BackendError::DirtyWorktree {
+                        path: workspace.to_path_buf(),
+                        dirty_paths,
+                    });
+                }
+                let expected_base_head = self.head_commit(repo_root)?;
+                let observed_head = self.head_commit(workspace)?;
+                if observed_head != expected_base_head {
+                    run_git(
+                        workspace,
+                        &["reset", "--hard", expected_base_head.0.as_str()],
+                        format!(
+                            "git reset --hard {} in {}",
+                            expected_base_head,
+                            workspace.display()
+                        ),
+                    )?;
+                }
+            }
+            None if workspace.exists() => {
+                return Err(BackendError::UnmanagedPath {
+                    path: workspace.to_path_buf(),
+                });
+            }
+            None => {
+                run_git(
+                    repo_root,
+                    &[
+                        "worktree",
+                        "add",
+                        workspace.to_string_lossy().as_ref(),
+                        "HEAD",
+                    ],
+                    format!("git worktree add {} HEAD", workspace.display()),
+                )?;
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) fn generator_surface_for_proposed_touches(
@@ -2293,7 +2535,7 @@ fn edit_surface_contains_path(
         .any(|surface_path| surface_path == path))
 }
 
-fn path_matches_surface_policy(surface: Prototype1EditSurface, path: &Path) -> bool {
+pub(crate) fn path_matches_surface_policy(surface: Prototype1EditSurface, path: &Path) -> bool {
     match surface {
         Prototype1EditSurface::PlokeTuiTools => {
             path.starts_with("crates/ploke-tui/src/tools")
@@ -2315,7 +2557,9 @@ fn is_workspace_except_forbidden_path(path: &Path) -> bool {
             .is_some_and(|name| WORKSPACE_EXCEPT_AUTHORITY_FILENAMES.contains(&name))
 }
 
-fn prototype_surface_for_broad_edit_policy(policy: BroadEditPolicy) -> Prototype1EditSurface {
+pub(crate) fn prototype_surface_for_broad_edit_policy(
+    policy: BroadEditPolicy,
+) -> Prototype1EditSurface {
     match policy {
         BroadEditPolicy::WorkspaceExceptPlokeEval => {
             Prototype1EditSurface::WorkspaceExceptPlokeEval
@@ -2323,7 +2567,7 @@ fn prototype_surface_for_broad_edit_policy(policy: BroadEditPolicy) -> Prototype
     }
 }
 
-fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
+pub(crate) fn validate_normal_repo_relpath(path: &Path) -> Result<(), BackendError> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(BackendError::InvalidEditSurfacePath {
             path: path.to_path_buf(),
@@ -2630,9 +2874,9 @@ mod tests {
     };
     use super::edit_surface::{graph, request_policy, surface, tui};
     use super::{
-        AdmittedBroadHarnessResult, BackendError, EditSurfaceAdmission, GitWorktreeBackend,
-        WorkspaceBackend, WorktreeEntry, describe_submitted_broad_harness_result_error,
-        parse_dirty_paths, parse_worktree_list,
+        AdmittedBroadHarnessResult, AttemptRejection, BackendError, EditSurfaceAdmission,
+        GitWorktreeBackend, RetryDisposition, TuiAttemptOutcome, WorkspaceBackend, WorktreeEntry,
+        describe_submitted_broad_harness_result_error, parse_dirty_paths, parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
@@ -3591,6 +3835,151 @@ R  old.rs -> new.rs
             err.to_string()
                 .contains("requires OperationTarget::Artifact")
         );
+    }
+
+    #[test]
+    fn validates_tui_attempt_diff_for_allowed_candidate_change() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("src/feature.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn feature() { println!(\"candidate\") }\n",
+        )
+        .expect("write candidate change");
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(fixture.source_root.as_path(), &published)
+            .expect("validate attempt diff");
+
+        let TuiAttemptOutcome::Accepted(diff) = outcome else {
+            panic!("allowed candidate change should validate");
+        };
+        assert_eq!(diff.source_root(), fixture.source_root.as_path());
+        assert_eq!(diff.candidate_root(), published.workspace_path());
+        assert_eq!(
+            diff.surface(),
+            crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval
+        );
+        assert_eq!(diff.changed_paths(), &[changed]);
+        assert_eq!(
+            diff.base_head(),
+            &GitWorktreeBackend
+                .head_commit(fixture.source_root.as_path())
+                .expect("source head")
+        );
+    }
+
+    #[test]
+    fn tui_attempt_diff_rejects_noop_candidate() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(fixture.source_root.as_path(), &published)
+            .expect("validate noop attempt");
+
+        assert!(matches!(
+            &outcome,
+            TuiAttemptOutcome::Rejected(AttemptRejection::NoChange { path })
+                if path == published.workspace_path()
+        ));
+        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
+            panic!("noop candidate should reject");
+        };
+        assert_eq!(rejection.disposition(), RetryDisposition::RetryPrompt);
+    }
+
+    #[test]
+    fn tui_attempt_diff_rejects_dirty_source_repo() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+        fs::write(fixture.source_root.join("README.md"), "dirty source\n")
+            .expect("dirty source repo");
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(fixture.source_root.as_path(), &published)
+            .expect("validate dirty-source attempt");
+
+        assert!(matches!(
+            &outcome,
+            TuiAttemptOutcome::Rejected(AttemptRejection::SourceDirty { path, dirty_paths })
+                if path == &fixture.source_root && dirty_paths == &vec![PathBuf::from("README.md")]
+        ));
+        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
+            panic!("dirty source should reject");
+        };
+        assert_eq!(rejection.disposition(), RetryDisposition::Abort);
+    }
+
+    #[test]
+    fn tui_attempt_diff_rejects_protected_candidate_path() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("crates/ploke-eval/src/lib.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn protected() { panic!(\"mutated\") }\n",
+        )
+        .expect("write protected-core mutation");
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(fixture.source_root.as_path(), &published)
+            .expect("validate protected attempt");
+
+        assert!(matches!(
+            &outcome,
+            TuiAttemptOutcome::Rejected(AttemptRejection::OutOfPolicy {
+                surface: crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
+                path
+            }) if path == &changed
+        ));
+        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
+            panic!("protected candidate should reject");
+        };
+        assert_eq!(rejection.disposition(), RetryDisposition::RetryPrompt);
+    }
+
+    #[test]
+    fn tui_attempt_diff_rejects_stale_base() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        fs::write(fixture.source_root.join("README.md"), "source advanced\n")
+            .expect("advance source repo");
+        run_git_test(fixture.source_root.as_path(), &["add", "README.md"]);
+        run_git_test(
+            fixture.source_root.as_path(),
+            &["commit", "--no-gpg-sign", "-m", "advance source"],
+        );
+
+        let changed = PathBuf::from("src/feature.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn feature() { println!(\"candidate\") }\n",
+        )
+        .expect("write candidate change");
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(fixture.source_root.as_path(), &published)
+            .expect("validate stale-base attempt");
+
+        assert!(matches!(
+            &outcome,
+            TuiAttemptOutcome::Rejected(AttemptRejection::StaleBase { path, .. })
+                if path == published.workspace_path()
+        ));
+        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
+            panic!("stale base should reject");
+        };
+        assert_eq!(rejection.disposition(), RetryDisposition::RefreshWorkspace);
     }
 
     #[test]

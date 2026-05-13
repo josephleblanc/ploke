@@ -1193,6 +1193,240 @@ fn tui_adapter_rejects_auto_apply_stage_request() {
     assert!(matches!(err, tui::Error::AutoApply));
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BoundaryOutcome {
+    Retry(RetryReason),
+    Applied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RetryReason {
+    NoEdit,
+    OutsideSurface,
+    Protected,
+    PartialApply,
+    Validation,
+    Stage,
+    Surface,
+}
+
+fn boundary_outcome(
+    proposal: &str,
+    run: &str,
+    base: &surface::Artifact,
+    projection: &tui::Projection,
+    grant: &surface::Grant,
+    touches: Vec<surface::Touch>,
+    writes: Vec<tui::Write>,
+    after: &surface::Artifact,
+) -> BoundaryOutcome {
+    if touches.is_empty() {
+        return BoundaryOutcome::Retry(RetryReason::NoEdit);
+    }
+
+    let proposal = match tui::Proposal::stage(tui::Stage {
+        proposal,
+        run,
+        base: base.reference(),
+        after: after.reference().clone(),
+        projection,
+        touches,
+        auto_apply: false,
+    }) {
+        Ok(proposal) => proposal,
+        Err(_) => return BoundaryOutcome::Retry(RetryReason::Stage),
+    };
+    let check = match grant.check(proposal.draft()) {
+        Ok(check) => check,
+        Err(surface::Error::Forbidden(_)) => {
+            return BoundaryOutcome::Retry(RetryReason::Protected);
+        }
+        Err(surface::Error::OutsideGraph(_) | surface::Error::OutsideMaterial(_)) => {
+            return BoundaryOutcome::Retry(RetryReason::OutsideSurface);
+        }
+        Err(_) => return BoundaryOutcome::Retry(RetryReason::Surface),
+    };
+    let apply = match tui::Apply::from_results(proposal, check, writes) {
+        Ok(apply) => apply,
+        Err(_) => return BoundaryOutcome::Retry(RetryReason::Validation),
+    };
+    if apply.is_rejected() {
+        return BoundaryOutcome::Retry(RetryReason::PartialApply);
+    }
+
+    match apply.validate(after) {
+        Ok(apply) if apply.is_applied() => BoundaryOutcome::Applied,
+        Ok(_) | Err(_) => BoundaryOutcome::Retry(RetryReason::Validation),
+    }
+}
+
+fn first_applied(
+    outcomes: impl IntoIterator<Item = BoundaryOutcome>,
+    max_attempts: usize,
+) -> Result<usize, RetryReason> {
+    let mut last = RetryReason::NoEdit;
+    for (index, outcome) in outcomes.into_iter().take(max_attempts).enumerate() {
+        match outcome {
+            BoundaryOutcome::Applied => return Ok(index + 1),
+            BoundaryOutcome::Retry(reason) => last = reason,
+        }
+    }
+    Err(last)
+}
+
+#[test]
+fn adapter_boundary_rejects_no_edit_before_apply() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child)])
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let grant = granted_surface(&artifact, graph_bounds, surface::Area::new([]));
+    let after = surface::Artifact::new(
+        aref("artifact:after", "tree:after"),
+        [(PathBuf::from("src/lib.rs"), href("file:lib:v1"))],
+    );
+
+    let outcome = boundary_outcome(
+        "proposal:no-edit",
+        "run:no-edit",
+        &artifact,
+        &projection,
+        &grant,
+        vec![],
+        vec![],
+        &after,
+    );
+
+    assert_eq!(outcome, BoundaryOutcome::Retry(RetryReason::NoEdit));
+}
+
+#[test]
+fn adapter_boundary_rejects_out_of_surface_and_protected_touches() {
+    let (artifact, graph, _, child, sibling) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let child_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive child bounds");
+    let all_bounds = graph
+        .bounds(
+            &graph_projection,
+            &[
+                graph::Rule::Include(child.clone()),
+                graph::Rule::Include(sibling.clone()),
+            ],
+        )
+        .expect("derive all bounds");
+    let projection = tui_projection(&graph_projection);
+    let child_span = graph
+        .resolve(&graph_projection, &child_bounds, &child)
+        .expect("resolve child");
+    let sibling_span = graph
+        .resolve(&graph_projection, &all_bounds, &sibling)
+        .expect("resolve sibling");
+    let after = surface::Artifact::new(
+        aref("artifact:after", "tree:after"),
+        [(PathBuf::from("src/lib.rs"), href("file:lib:v2"))],
+    );
+
+    let surface_only_child = granted_surface(
+        &artifact,
+        child_bounds.clone(),
+        surface::Area::new([child_span.clone()]),
+    );
+    let outside = boundary_outcome(
+        "proposal:outside",
+        "run:outside",
+        &artifact,
+        &projection,
+        &surface_only_child,
+        vec![surface::Touch::new(sibling_span, "fn sibling() {}")],
+        vec![],
+        &after,
+    );
+    assert_eq!(outside, BoundaryOutcome::Retry(RetryReason::OutsideSurface));
+
+    let protected = surface::Grant::for_coordinate_with_forbidden(
+        granted_coordinate(&artifact),
+        surface_policy("surface-policy:test-protected"),
+        artifact.reference().clone(),
+        child_bounds,
+        surface::Area::new([child_span.clone()]),
+        surface::Area::new([child_span.clone()]),
+    )
+    .expect("protected grant");
+    let protected_touch = surface::Touch::new(child_span, "fn child() {}");
+    let rejected = boundary_outcome(
+        "proposal:protected",
+        "run:protected",
+        &artifact,
+        &projection,
+        &protected,
+        vec![protected_touch],
+        vec![],
+        &after,
+    );
+
+    assert_eq!(rejected, BoundaryOutcome::Retry(RetryReason::Protected));
+}
+
+#[test]
+fn adapter_boundary_admits_successful_bounded_candidate() {
+    let (artifact, graph, _, child, _) = fixture();
+    let graph_projection = graph.project(&artifact).expect("project artifact");
+    let graph_bounds = graph
+        .bounds(&graph_projection, &[graph::Rule::Include(child.clone())])
+        .expect("derive bounds");
+    let projection = tui_projection(&graph_projection);
+    let span = graph
+        .resolve(&graph_projection, &graph_bounds, &child)
+        .expect("resolve child");
+    let touch = surface::Touch::new(span.clone(), "fn child() {}");
+    let grant = granted_surface(&artifact, graph_bounds, surface::Area::new([span.clone()]));
+    let after_hash = href("file:lib:v2");
+    let after = surface::Artifact::new(
+        aref("artifact:after", "tree:after"),
+        [(PathBuf::from("src/lib.rs"), after_hash.clone())],
+    );
+    let write = tui::Write::applied(&touch, after_hash);
+
+    let outcome = boundary_outcome(
+        "proposal:success",
+        "run:success",
+        &artifact,
+        &projection,
+        &grant,
+        vec![touch],
+        vec![write],
+        &after,
+    );
+
+    assert_eq!(outcome, BoundaryOutcome::Applied);
+}
+
+#[test]
+fn adapter_boundary_shapes_retry_until_success_or_exhaustion() {
+    let success = first_applied(
+        [
+            BoundaryOutcome::Retry(RetryReason::Protected),
+            BoundaryOutcome::Retry(RetryReason::PartialApply),
+            BoundaryOutcome::Applied,
+        ],
+        3,
+    );
+    assert_eq!(success, Ok(3));
+
+    let exhausted = first_applied(
+        [
+            BoundaryOutcome::Retry(RetryReason::NoEdit),
+            BoundaryOutcome::Retry(RetryReason::OutsideSurface),
+        ],
+        2,
+    );
+    assert_eq!(exhausted, Err(RetryReason::OutsideSurface));
+}
+
 #[test]
 fn tui_apply_evidence_is_all_applied_or_rejected() {
     let (artifact, graph, _, child, sibling) = fixture();

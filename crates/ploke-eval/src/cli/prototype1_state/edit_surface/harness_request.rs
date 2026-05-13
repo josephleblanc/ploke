@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
+use crate::cli::prototype1_state::{backend::EditSurfaceAdmission, history::ArtifactSurface};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::surface;
@@ -21,6 +21,8 @@ pub(crate) struct BroadHarnessRequest {
     pub(crate) child_budget: HarnessChildBudget,
     pub(crate) protected_core: ProtectedCorePointer,
     pub(crate) evaluation: EvaluationBrief,
+    #[serde(default = "contract::Bundle::empty")]
+    pub(crate) contract: contract::Bundle,
     pub(crate) evidence_roots: Vec<EvidenceRoot>,
     pub(crate) return_evidence: ReturnEvidenceContract,
     pub(crate) instructions: Vec<HarnessInstruction>,
@@ -31,6 +33,279 @@ pub(crate) type PublishedBroadHarnessRequest = request::Request<request::Broad, 
 
 // structural-naming:allow compatibility alias; active carrier is request::Binding<surface::SurfacePolicyId>.
 pub(crate) type RequestAdmissionBinding = request::Binding<surface::SurfacePolicyId>;
+
+pub(crate) mod contract {
+    use std::path::{Path, PathBuf};
+
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Bundle {
+        pub(crate) digest: Digest,
+        pub(crate) validation: Validation,
+        pub(crate) attempt: Attempt,
+    }
+
+    impl Bundle {
+        pub(crate) fn prototype1(prototype_root: &Path) -> Self {
+            Self {
+                digest: Digest {
+                    paths: vec![
+                        PathRef {
+                            label: "latest evaluation reports".to_string(),
+                            path: prototype_root.join("evaluations"),
+                            role: PathRole::LatestEvaluations,
+                        },
+                        PathRef {
+                            label: "node protocol artifacts".to_string(),
+                            path: prototype_root.join("nodes"),
+                            role: PathRole::ProtocolArtifacts,
+                        },
+                        PathRef {
+                            label: "sealed history blocks".to_string(),
+                            path: prototype_root.join("history/blocks"),
+                            role: PathRole::HistoryBlocks,
+                        },
+                    ],
+                    facts: vec![
+                        Fact {
+                            label: "authority".to_string(),
+                            value:
+                                "The submitted result is evidence only; ploke-eval owns admission."
+                                    .to_string(),
+                            source: None,
+                        },
+                        Fact {
+                            label: "oracle reports".to_string(),
+                            value: "Use final_report.json when present and cite the source path."
+                                .to_string(),
+                            source: None,
+                        },
+                    ],
+                },
+                validation: Validation {
+                    commands: vec![
+                        Command {
+                            label: "compile ploke-eval".to_string(),
+                            program: "cargo".to_string(),
+                            args: vec![
+                                "check".to_string(),
+                                "-p".to_string(),
+                                "ploke-eval".to_string(),
+                            ],
+                            workdir: Workdir::CandidateWorkspace,
+                            success: "command exits successfully".to_string(),
+                        },
+                        Command {
+                            label: "edit surface tests".to_string(),
+                            program: "cargo".to_string(),
+                            args: vec![
+                                "test".to_string(),
+                                "-p".to_string(),
+                                "ploke-eval".to_string(),
+                                "edit_surface".to_string(),
+                            ],
+                            workdir: Workdir::CandidateWorkspace,
+                            success: "edit_surface tests pass".to_string(),
+                        },
+                    ],
+                },
+                attempt: Attempt {
+                    max_attempts: 4,
+                    timeout: Timeout {
+                        turn_seconds: 900,
+                        tool_seconds: 180,
+                    },
+                    retry: Retry {
+                        on_rejected_surface: true,
+                        on_no_edit: true,
+                        on_tool_failure: true,
+                    },
+                },
+            }
+        }
+
+        pub(crate) fn empty() -> Self {
+            Self {
+                digest: Digest {
+                    paths: Vec::new(),
+                    facts: Vec::new(),
+                },
+                validation: Validation {
+                    commands: Vec::new(),
+                },
+                attempt: Attempt {
+                    max_attempts: 1,
+                    timeout: Timeout {
+                        turn_seconds: 0,
+                        tool_seconds: 0,
+                    },
+                    retry: Retry {
+                        on_rejected_surface: false,
+                        on_no_edit: false,
+                        on_tool_failure: false,
+                    },
+                },
+            }
+        }
+
+        pub(crate) fn render(&self) -> String {
+            let mut rendered = String::new();
+
+            rendered.push_str("## Latest Evidence Digest\n\n");
+            if self.digest.paths.is_empty() && self.digest.facts.is_empty() {
+                rendered.push_str(
+                    "- No compact digest was attached; inspect the evidence roots directly.\n",
+                );
+            }
+            for path in &self.digest.paths {
+                rendered.push_str(&format!(
+                    "- {}: {} ({})\n",
+                    path.label,
+                    path.path.display(),
+                    path.role.label()
+                ));
+            }
+            for fact in &self.digest.facts {
+                match &fact.source {
+                    Some(source) => rendered.push_str(&format!(
+                        "- {}: {} [{}]\n",
+                        fact.label,
+                        fact.value,
+                        source.display()
+                    )),
+                    None => rendered.push_str(&format!("- {}: {}\n", fact.label, fact.value)),
+                }
+            }
+            rendered.push('\n');
+
+            rendered.push_str("## Validation Contract\n\n");
+            if self.validation.commands.is_empty() {
+                rendered.push_str("- No required validation commands were attached.\n");
+            }
+            for command in &self.validation.commands {
+                rendered.push_str(&format!(
+                    "- {}: `{}` from {}; success signal: {}\n",
+                    command.label,
+                    command.render(),
+                    command.workdir.label(),
+                    command.success
+                ));
+            }
+            rendered.push('\n');
+
+            rendered.push_str("## Attempt Policy\n\n");
+            rendered.push_str(&format!(
+                "- Maximum attempts: {}\n- Turn timeout: {} seconds\n- Tool timeout: {} seconds\n",
+                self.attempt.max_attempts,
+                self.attempt.timeout.turn_seconds,
+                self.attempt.timeout.tool_seconds
+            ));
+            rendered.push_str(&format!(
+                "- Retry on rejected surface: {}\n- Retry on no edit: {}\n- Retry on tool failure: {}\n",
+                self.attempt.retry.on_rejected_surface,
+                self.attempt.retry.on_no_edit,
+                self.attempt.retry.on_tool_failure
+            ));
+            rendered
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Digest {
+        pub(crate) paths: Vec<PathRef>,
+        pub(crate) facts: Vec<Fact>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct PathRef {
+        pub(crate) label: String,
+        pub(crate) path: PathBuf,
+        pub(crate) role: PathRole,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum PathRole {
+        LatestEvaluations,
+        ProtocolArtifacts,
+        HistoryBlocks,
+    }
+
+    impl PathRole {
+        fn label(self) -> &'static str {
+            match self {
+                Self::LatestEvaluations => "latest evaluations",
+                Self::ProtocolArtifacts => "protocol artifacts",
+                Self::HistoryBlocks => "sealed history",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Fact {
+        pub(crate) label: String,
+        pub(crate) value: String,
+        pub(crate) source: Option<PathBuf>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Validation {
+        pub(crate) commands: Vec<Command>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Command {
+        pub(crate) label: String,
+        pub(crate) program: String,
+        pub(crate) args: Vec<String>,
+        pub(crate) workdir: Workdir,
+        pub(crate) success: String,
+    }
+
+    impl Command {
+        fn render(&self) -> String {
+            std::iter::once(self.program.as_str())
+                .chain(self.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Workdir {
+        CandidateWorkspace,
+    }
+
+    impl Workdir {
+        fn label(self) -> &'static str {
+            match self {
+                Self::CandidateWorkspace => "candidate workspace",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Attempt {
+        pub(crate) max_attempts: u32,
+        pub(crate) timeout: Timeout,
+        pub(crate) retry: Retry,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Timeout {
+        pub(crate) turn_seconds: u64,
+        pub(crate) tool_seconds: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Retry {
+        pub(crate) on_rejected_surface: bool,
+        pub(crate) on_no_edit: bool,
+        pub(crate) on_tool_failure: bool,
+    }
+}
 
 pub(crate) mod request {
     use std::{marker::PhantomData, path::PathBuf};
@@ -114,10 +389,12 @@ pub(crate) mod request {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(bound = "")]
     pub(crate) struct Reference<K, S> {
         identity: Identity<K>,
         hash: Hash<K>,
+        #[serde(skip)]
         _state: PhantomData<fn() -> S>,
     }
 
@@ -247,6 +524,69 @@ pub(crate) mod request {
                 request,
                 _state: PhantomData,
             }
+        }
+    }
+}
+
+pub(crate) mod child {
+    use std::path::{Path, PathBuf};
+
+    use serde::{Deserialize, Serialize};
+
+    use super::{ArtifactSurface, RequestAdmissionBinding, request};
+
+    /// Request-bound evidence carried by a child plan minted from an admitted
+    /// broad harness result.
+    ///
+    /// The active transition is still owned by `ploke-eval`: this is the durable
+    /// projection that keeps the child from downgrading into an unbound
+    /// text-branch candidate after admission.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Evidence {
+        pub(crate) schema_version: u32,
+        pub(crate) request: request::Reference<request::Broad, request::Published>,
+        pub(crate) admission_binding: RequestAdmissionBinding,
+        pub(crate) submitted_result_path: PathBuf,
+        pub(crate) changed_paths: Vec<PathBuf>,
+        pub(crate) artifact_surface: ArtifactSurface,
+    }
+
+    impl Evidence {
+        pub(crate) fn admitted(
+            request: request::Reference<request::Broad, request::Published>,
+            admission_binding: RequestAdmissionBinding,
+            submitted_result_path: PathBuf,
+            changed_paths: Vec<PathBuf>,
+            artifact_surface: ArtifactSurface,
+        ) -> Self {
+            Self {
+                schema_version: 1,
+                request,
+                admission_binding,
+                submitted_result_path,
+                changed_paths,
+                artifact_surface,
+            }
+        }
+
+        pub(crate) fn request(&self) -> &request::Reference<request::Broad, request::Published> {
+            &self.request
+        }
+
+        pub(crate) fn admission_binding(&self) -> &RequestAdmissionBinding {
+            &self.admission_binding
+        }
+
+        pub(crate) fn submitted_result_path(&self) -> &Path {
+            &self.submitted_result_path
+        }
+
+        pub(crate) fn changed_paths(&self) -> &[PathBuf] {
+            &self.changed_paths
+        }
+
+        pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
+            &self.artifact_surface
         }
     }
 }
@@ -863,6 +1203,7 @@ impl BroadHarnessRequest {
                 selection: SelectionAuthority::HistoryBackedSuccessorSelection,
                 guidance: GuidancePolicy::ProtocolDiagnosticsAreContext,
             },
+            contract: contract::Bundle::prototype1(prototype_root),
             evidence_roots: vec![
                 EvidenceRoot {
                     kind: EvidenceRootKind::SubmittedResultOutput,
@@ -958,6 +1299,9 @@ impl BroadHarnessRequest {
 
         prompt.push_str("## Protected Core\n\n");
         prompt.push_str(&self.render_protected_core());
+        prompt.push('\n');
+
+        prompt.push_str(&self.contract.render());
         prompt.push('\n');
 
         prompt.push_str("## Evidence\n\n");
@@ -1243,6 +1587,17 @@ mod tests {
                 ReturnEvidenceField::SuggestedChecks,
             ]
         );
+        assert_eq!(decoded.request.contract.attempt.max_attempts, 4);
+        assert_eq!(decoded.request.contract.validation.commands.len(), 2);
+        assert!(
+            decoded
+                .request
+                .contract
+                .digest
+                .paths
+                .iter()
+                .any(|path| path.path.ends_with("evaluations"))
+        );
         assert_eq!(
             decoded.admission_binding().base_artifact_id(),
             &ArtifactId::new("artifact:/repo/live-parent")
@@ -1273,6 +1628,11 @@ mod tests {
         assert!(prompt.contains(
             "Authority boundary: admission=not claimed, grant=not claimed, child_plan=not claimed"
         ));
+        assert!(prompt.contains("## Latest Evidence Digest"));
+        assert!(prompt.contains("## Validation Contract"));
+        assert!(prompt.contains("cargo check -p ploke-eval"));
+        assert!(prompt.contains("## Attempt Policy"));
+        assert!(prompt.contains("Maximum attempts: 4"));
         let output_line = format!(
             "Write the typed submitted-result evidence to {}.",
             fixture.submitted_result_path.display()

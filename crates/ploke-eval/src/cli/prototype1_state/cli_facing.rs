@@ -47,13 +47,22 @@ use crate::{
         },
         prototype1_state::{
             backend::{
-                CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission,
-                GitWorktreeBackend, ProposedTouch, WorkspaceBackend, edit_surface_paths,
+                AdmittedBroadHarnessResult, CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT,
+                EditProposal, EditSurfaceAdmission, GitWorktreeBackend, ProposedTouch,
+                WorkspaceBackend, edit_surface_paths,
             },
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
             c3::SpawnChild,
             c4::{ObserveChild, ObservedChild},
+            edit_surface::{
+                harness_result::{
+                    SubmittedBroadHarnessResult, SubmittedChangeSummary,
+                    SubmittedCheckRecommendation, SubmittedEvidenceCitation, SubmittedFileChange,
+                    SubmittedHarnessReturnEvidence, SubmittedImprovementRationale,
+                },
+                tui_adapter,
+            },
             event::RecordedAt,
             history::{
                 ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
@@ -594,6 +603,8 @@ struct PlannedChildOutcome {
     artifact_surface: Option<ArtifactSurface>,
 }
 
+const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
+
 struct DeterministicTuiToolsCandidates {
     checked: Vec<CheckedSurfaceEdit>,
     rejected_attempts: Vec<surface_attempt::Evidence>,
@@ -747,9 +758,7 @@ impl CandidateGenerationConfig {
             Self::Legacy => Err(PrepareError::InvalidBatchSelection {
                 detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
             }),
-            Self::BroadHarnessRequest => Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1 hard stop before child planning: broad-harness-request is a pending request path until a typed harness request-to-child-plan receipt is implemented".to_string(),
-            }),
+            Self::BroadHarnessRequest => Ok(()),
             Self::DeterministicTuiTools => Ok(()),
         }
     }
@@ -757,9 +766,12 @@ impl CandidateGenerationConfig {
     fn validate_received_child_plan(self, children: &[ChildFiles]) -> Result<(), PrepareError> {
         match self {
             Self::Legacy => Ok(()),
-            Self::BroadHarnessRequest => Err(PrepareError::InvalidBatchSelection {
-                detail: "candidate-generator=broad-harness-request cannot consume an existing child plan without a typed BroadHarnessRequest receipt binding request identity, policy, objective, and surface evidence".to_string(),
-            }),
+            Self::BroadHarnessRequest => {
+                for child in children {
+                    validate_requested_broad_harness_child(child)?;
+                }
+                Ok(())
+            }
             Self::DeterministicTuiTools => {
                 for child in children {
                     validate_requested_tui_surface_child(child)?;
@@ -1123,6 +1135,376 @@ fn publish_broad_harness_child_plan_request(
     })
 }
 
+fn broad_harness_admission_for_parent<S>(
+    parent: &Parent<S>,
+) -> Result<EditSurfaceAdmission, PrepareError> {
+    let artifact_id = parent.node().derived_artifact_id.clone().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "parent '{}' is missing a derived artifact id required for broad-harness request admission",
+                parent.node().node_id
+            ),
+        }
+    })?;
+    Ok(EditSurfaceAdmission::new(
+        crate::loop_graph::Coordinate {
+            runtime_id: *parent.runtime_id(),
+            target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
+        },
+        crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+            "workspace except ploke-eval",
+        ),
+    ))
+}
+
+fn try_admit_request_result(
+    repo_root: &Path,
+    receipt: &HarnessRequestReceipt,
+) -> Result<Option<AdmittedBroadHarnessResult>, PrepareError> {
+    let result_path = receipt.published.submitted_result_path();
+    let backend = GitWorktreeBackend;
+    let admission = broad_harness_admission_for_parent(&receipt.parent)?;
+    let mut last_rejection = None;
+    for attempt in 1..=BROAD_TUI_ATTEMPT_LIMIT {
+        if !result_path.exists() {
+            info!(
+                target: EXECUTION_DEBUG_TARGET,
+                request_id = %receipt.published.request_id(),
+                request_hash = %receipt.published.request_hash(),
+                attempt,
+                max_attempts = BROAD_TUI_ATTEMPT_LIMIT,
+                submitted_result_path = %result_path.display(),
+                "broad headless-tui continuation hook found no submitted result yet"
+            );
+            continue;
+        }
+
+        let bytes =
+            fs::read(result_path).map_err(|source| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "could not read submitted broad harness result '{}': {source}",
+                    result_path.display()
+                ),
+            })?;
+        let submitted =
+            serde_json::from_slice::<SubmittedBroadHarnessResult>(&bytes).map_err(|source| {
+                PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "could not decode submitted broad harness result '{}': {source}",
+                        result_path.display()
+                    ),
+                }
+            })?;
+
+        match backend.admit_submitted_broad_harness_result(
+            repo_root,
+            admission.clone(),
+            &receipt.published,
+            &submitted,
+        ) {
+            Ok(admitted) => {
+                info!(
+                    target: EXECUTION_DEBUG_TARGET,
+                    request_id = %admitted.request_id(),
+                    request_hash = %admitted.request_hash(),
+                    attempt,
+                    changed_paths = admitted.changed_paths().len(),
+                    workspace = %admitted.workspace_root().display(),
+                    "admitted broad harness submitted result at complete-mode continuation hook"
+                );
+                return Ok(Some(admitted));
+            }
+            Err(source) => {
+                let detail = source.to_string();
+                warn!(
+                    target: EXECUTION_DEBUG_TARGET,
+                    request_id = %receipt.published.request_id(),
+                    request_hash = %receipt.published.request_hash(),
+                    attempt,
+                    max_attempts = BROAD_TUI_ATTEMPT_LIMIT,
+                    error = %detail,
+                    "rejected broad harness submitted result at complete-mode continuation hook"
+                );
+                last_rejection = Some(detail);
+            }
+        }
+    }
+
+    if let Some(detail) = last_rejection {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad-harness-request submitted result failed admission after {BROAD_TUI_ATTEMPT_LIMIT} attempt(s): {detail}"
+            ),
+        });
+    }
+
+    Ok(None)
+}
+
+async fn run_broad_headless_tui_attempt(
+    receipt: &HarnessRequestReceipt,
+) -> Result<(), PrepareError> {
+    let backend = GitWorktreeBackend;
+    let repo_root = receipt
+        .published
+        .request()
+        .workspace
+        .source_repository_path();
+    backend
+        .prepare_broad_harness_workspace(repo_root, &receipt.published)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to prepare broad headless-tui workspace: {source}"),
+        })?;
+
+    let prompt = fs::read_to_string(receipt.published.prompt_path()).map_err(|source| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read broad harness prompt '{}': {source}",
+                receipt.published.prompt_path().display()
+            ),
+        }
+    })?;
+    let contract = &receipt.published.request().contract;
+    let max_attempts = contract
+        .attempt
+        .max_attempts
+        .max(BROAD_TUI_ATTEMPT_LIMIT as u32);
+    let timeout_secs = contract
+        .attempt
+        .timeout
+        .turn_seconds
+        .max(Duration::from_secs(60).as_secs());
+    let budget = tui_adapter::Budget::new(max_attempts, timeout_secs).map_err(|source| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!("invalid broad headless-tui attempt budget: {source}"),
+        }
+    })?;
+
+    let run = tui_adapter::run_headless(
+        receipt.published.workspace_path(),
+        &prompt,
+        budget,
+        receipt.published.request().edit_policy,
+    )
+    .await
+    .map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!("broad headless-tui attempt failed: {source}"),
+    })?;
+
+    let terminal = run
+        .terminal()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
+        })?;
+    match terminal {
+        tui_adapter::HeadlessTerminal::Applied { changed_paths, .. } => {
+            let changed_files = changed_paths
+                .iter()
+                .map(|path| SubmittedFileChange {
+                    workspace_relpath: path
+                        .strip_prefix(receipt.published.workspace_path())
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|_| path.clone()),
+                    summary: "Changed by headless ploke-tui adapter attempt.".to_string(),
+                })
+                .collect::<Vec<_>>();
+            let return_evidence = SubmittedHarnessReturnEvidence {
+                authority_boundary: receipt
+                    .published
+                    .request()
+                    .return_evidence
+                    .authority_boundary
+                    .clone(),
+                change_summary: SubmittedChangeSummary { changed_files },
+                guiding_evidence: receipt
+                    .published
+                    .request()
+                    .evidence_roots
+                    .iter()
+                    .take(6)
+                    .map(|root| SubmittedEvidenceCitation {
+                        kind: root.kind,
+                        location: root.location.clone(),
+                        summary: "Available to the headless TUI attempt as request evidence."
+                            .to_string(),
+                    })
+                    .collect(),
+                rationale: SubmittedImprovementRationale {
+                    hypothesis:
+                        "Headless ploke-tui produced a bounded self-edit for descendant evaluation."
+                            .to_string(),
+                    expected_descendant_effect:
+                        "ploke-eval will compile and evaluate the admitted child artifact."
+                            .to_string(),
+                },
+                checks: receipt
+                    .published
+                    .request()
+                    .contract
+                    .validation
+                    .commands
+                    .iter()
+                    .map(|command| SubmittedCheckRecommendation {
+                        label: command.label.clone(),
+                        command: std::iter::once(command.program.as_str())
+                            .chain(command.args.iter().map(String::as_str))
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        success_signal: command.success.clone(),
+                    })
+                    .collect(),
+            };
+            let submitted = SubmittedBroadHarnessResult::bind(&receipt.published, return_evidence)
+                .map_err(|source| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to bind headless TUI submitted result: {source:?}"),
+                })?;
+            if let Some(parent) = receipt.published.submitted_result_path().parent() {
+                fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            write_json_file_pretty(receipt.published.submitted_result_path(), &submitted)?;
+            Ok(())
+        }
+        tui_adapter::HeadlessTerminal::Exhausted { attempts, last } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui exhausted {attempts} attempt(s) without an admissible edit: {last}"
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::CompletedWithoutEdit { outcome, summary } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui completed without staging an edit: outcome={outcome}; {summary}"
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::ToolFailed { error } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!("headless ploke-tui tool failed: {error}"),
+            })
+        }
+        tui_adapter::HeadlessTerminal::NoEdit => Err(PrepareError::InvalidBatchSelection {
+            detail: "headless ploke-tui produced no edit".to_string(),
+        }),
+        tui_adapter::HeadlessTerminal::TimedOut { secs } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!("headless ploke-tui timed out after {secs} seconds"),
+            })
+        }
+    }
+}
+
+fn publish_broad_harness_child_plan_from_admitted(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    receipt: HarnessRequestReceipt,
+    admitted: AdmittedBroadHarnessResult,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    if admitted.changed_paths().len() != 1 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad headless-tui proof-of-concept currently admits exactly one changed file into a child plan; observed {} changed paths",
+                admitted.changed_paths().len()
+            ),
+        });
+    }
+    let target_relpath = admitted.changed_paths()[0].clone();
+    let source_content = fs::read_to_string(repo_root.join(&target_relpath)).map_err(|source| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read source file '{}' for broad child plan: {source}",
+                repo_root.join(&target_relpath).display()
+            ),
+        }
+    })?;
+    let proposed_content = fs::read_to_string(admitted.workspace_root().join(&target_relpath))
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read candidate file '{}' for broad child plan: {source}",
+                admitted.workspace_root().join(&target_relpath).display()
+            ),
+        })?;
+    let parent_identity = receipt.parent.identity().clone();
+    let expected_generation = parent_identity.generation() + 1;
+    let candidate_id = format!("broad-harness-g{}-01", expected_generation);
+    let branch_id =
+        treatment_branch_id(&parent_identity.branch_id(), &target_relpath, &candidate_id);
+    let source_content_hash = format!("{:x}", Sha256::digest(source_content.as_bytes()));
+    let proposed_content_hash = format!("{:x}", Sha256::digest(proposed_content.as_bytes()));
+    let resolved = crate::intervention::ResolvedTreatmentBranch {
+        instance_id: receipt.parent.runtime_id().to_string(),
+        source_state_id: parent_identity.branch_id().to_string(),
+        parent_branch_id: Some(parent_identity.branch_id().to_string()),
+        target_relpath: target_relpath.clone(),
+        source_content,
+        source_content_hash,
+        selected_branch_id: Some(branch_id.clone()),
+        branch: TreatmentBranchNode {
+            branch_id: branch_id.clone(),
+            candidate_id,
+            patch_id: Some(crate::loop_graph::PatchId::new(format!(
+                "broad-harness:{}",
+                admitted.request_id()
+            ))),
+            branch_label: format!("broad harness edit {}", admitted.request_id()),
+            synthesized_spec_id: "prototype1:broad-headless-tui-adapter-v1".to_string(),
+            proposed_content,
+            proposed_content_hash,
+            generation_target: Some(crate::loop_graph::OperationTarget::Artifact {
+                artifact_id: admitted.base_artifact_id().clone(),
+            }),
+            generation_coordinate: Some(admitted.coordinate().clone()),
+            status: TreatmentBranchStatus::Selected,
+            apply_id: Some(admitted.request_id().to_string()),
+            applied_content_hash: None,
+            derived_artifact_id: Some(admitted.derived_artifact_id().clone()),
+        },
+    };
+    let (node, _request) = write_treatment_evaluation_projection(
+        campaign_id,
+        manifest_path,
+        &resolved,
+        expected_generation,
+        Some(parent_identity.node_id()),
+        repo_root,
+        false,
+    )?;
+    let evidence =
+        crate::cli::prototype1_state::edit_surface::harness_request::child::Evidence::admitted(
+            receipt.published.reference(),
+            receipt.published.admission_binding().clone(),
+            admitted.submitted_result_path().to_path_buf(),
+            admitted.changed_paths().to_vec(),
+            admitted.artifact_surface().clone(),
+        );
+    let child = ChildFiles::from_resolved(campaign_id, node, resolved, false)
+        .with_harness_evidence(evidence);
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, vec![child]);
+    let at = files.message_at();
+    let ready_parent = receipt.parent.accept_harness_plan();
+    let open = Open::<ChildPlan>::from_sender(ready_parent, files);
+    let (planned, locked) = open
+        .lock(at, |at, body| {
+            validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+        })
+        .map_err(|err| {
+            let (_parent, source) = err.into_parts();
+            source
+        })?;
+    receive_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        &parent_identity,
+        planned,
+        locked,
+    )
+}
+
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
 const TUI_EDIT_SURFACE_POLICY_ID: &str = "surface-policy:tool-surface-v1";
 
@@ -1293,23 +1675,7 @@ fn broad_harness_request_admission_binding(
     crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
     PrepareError,
 > {
-    let artifact_id = parent.node().derived_artifact_id.clone().ok_or_else(|| {
-        PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "parent '{}' is missing a derived artifact id required for broad-harness request publication",
-                parent.identity().node_id()
-            ),
-        }
-    })?;
-    let admission = EditSurfaceAdmission::new(
-        crate::loop_graph::Coordinate {
-            runtime_id: *parent.runtime_id(),
-            target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
-        },
-        crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
-            "workspace except ploke-eval",
-        ),
-    );
+    let admission = broad_harness_admission_for_parent(parent)?;
     crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::from_admission(
         &admission,
     )
@@ -1398,6 +1764,116 @@ fn validate_and_write_tui_child_plan(
     }
 
     write_child_plan_file(path, body)
+}
+
+fn validate_and_write_broad_harness_child_plan(
+    parent: &ParentIdentity,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    let expected_generation = parent.generation() + 1;
+    if body.parent_node_id() != parent.node_id() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child plan recipient '{}' did not match parent '{}'",
+                body.parent_node_id(),
+                parent.node_id()
+            ),
+        });
+    }
+    if body.child_generation() != expected_generation {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child plan generation {} did not match expected generation {}",
+                body.child_generation(),
+                expected_generation
+            ),
+        });
+    }
+    if body.children().is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "broad harness child plan must contain one admitted child".to_string(),
+        });
+    }
+    for child in body.children() {
+        validate_requested_broad_harness_child(child)?;
+    }
+    write_child_plan_file(path, body)
+}
+
+fn validate_requested_broad_harness_child(child: &ChildFiles) -> Result<(), PrepareError> {
+    let node = child.node_record();
+    if child.resolved().branch.synthesized_spec_id != "prototype1:broad-headless-tui-adapter-v1" {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' was not produced by the headless TUI adapter",
+                node.node_id
+            ),
+        });
+    }
+    if node.derived_artifact_id.is_none() || node.base_artifact_id.is_none() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' is missing base or derived artifact identity",
+                node.node_id
+            ),
+        });
+    }
+    if child.resolved().target_relpath != node.target_relpath {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' target '{}' did not match resolved target '{}'",
+                node.node_id,
+                node.target_relpath.display(),
+                child.resolved().target_relpath.display()
+            ),
+        });
+    }
+    let Some(evidence) = child.harness_evidence() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' is missing request-bound admission evidence",
+                node.node_id
+            ),
+        });
+    };
+    if evidence.request().request_id() != child.resolved().branch.apply_id.as_deref().unwrap_or("")
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' request evidence did not match branch apply_id",
+                node.node_id
+            ),
+        });
+    }
+    if Some(evidence.admission_binding().coordinate())
+        != child.resolved().branch.generation_coordinate.as_ref()
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' admission coordinate did not match generation coordinate",
+                node.node_id
+            ),
+        });
+    }
+    if !evidence.changed_paths().contains(&node.target_relpath) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' request evidence does not include target '{}'",
+                node.node_id,
+                node.target_relpath.display()
+            ),
+        });
+    }
+    if evidence.submitted_result_path().as_os_str().is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' has empty submitted-result evidence path",
+                node.node_id
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn validate_deterministic_surface_evidence(child: &ChildFiles) -> Result<(), PrepareError> {
@@ -6224,15 +6700,31 @@ async fn resolve_child_plan(
         {
             ParentTargetSelection::ChildPlan(receipt) => receipt,
             ParentTargetSelection::AwaitingHarnessPlan(receipt) => {
-                return Err(CandidateGenerationError::PendingBroadHarnessRequest {
-                    request_id: receipt.published.request_id().to_string(),
-                    request_hash: receipt.published.request_hash().to_string(),
-                    request_path: receipt.request_path,
-                    prompt_path: receipt.published.prompt_path().to_path_buf(),
-                    submitted_result_path: receipt.published.submitted_result_path().to_path_buf(),
-                    workspace_path: receipt.published.workspace_path().to_path_buf(),
+                if !receipt.published.submitted_result_path().exists() {
+                    run_broad_headless_tui_attempt(&receipt).await?;
                 }
-                .into_prepare());
+                if let Some(admitted) = try_admit_request_result(repo_root, &receipt)? {
+                    publish_broad_harness_child_plan_from_admitted(
+                        campaign_id,
+                        manifest_path,
+                        repo_root,
+                        receipt,
+                        admitted,
+                    )?
+                } else {
+                    return Err(CandidateGenerationError::PendingBroadHarnessRequest {
+                        request_id: receipt.published.request_id().to_string(),
+                        request_hash: receipt.published.request_hash().to_string(),
+                        request_path: receipt.request_path,
+                        prompt_path: receipt.published.prompt_path().to_path_buf(),
+                        submitted_result_path: receipt
+                            .published
+                            .submitted_result_path()
+                            .to_path_buf(),
+                        workspace_path: receipt.published.workspace_path().to_path_buf(),
+                    }
+                    .into_prepare());
+                }
             }
         }
     };
@@ -6380,6 +6872,7 @@ fn run_planned_child(
     let request = child.runner_request().clone();
     let resolved = child.resolved().clone();
     let surface = child.surface().cloned();
+    let harness = child.harness_evidence().cloned();
     let node_id = node.node_id.clone();
     let child_path_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
@@ -6461,7 +6954,9 @@ fn run_planned_child(
     let mut child_runtime = None;
     let mut evaluation_report = None;
     let mut selection_input = None;
-    let mut artifact_surface = None;
+    let mut artifact_surface = harness
+        .as_ref()
+        .map(|evidence| evidence.artifact_surface().clone());
     let outcome = if stop_after == Prototype1StateStopAfter::Materialize {
         "materialized".to_string()
     } else {
@@ -10724,15 +11219,10 @@ stop_after = "complete"
     }
 
     #[test]
-    fn broad_harness_complete_run_requires_typed_request_receipt() {
-        let err = CandidateGenerationConfig::BroadHarnessRequest
+    fn broad_harness_complete_run_reaches_request_continuation_hook() {
+        CandidateGenerationConfig::BroadHarnessRequest
             .ensure_live_complete_admitted()
-            .expect_err("broad harness is pending until request receipt exists");
-
-        let PrepareError::InvalidBatchSelection { detail } = err else {
-            panic!("unexpected error variant");
-        };
-        assert!(detail.contains("typed harness request-to-child-plan receipt"));
+            .expect("broad harness should reach the request-bound continuation hook");
     }
 
     #[test]
@@ -10759,7 +11249,37 @@ stop_after = "complete"
         let PrepareError::InvalidBatchSelection { detail } = err else {
             panic!("unexpected error variant");
         };
-        assert!(detail.contains("typed BroadHarnessRequest receipt"));
+        assert!(detail.contains("was not produced by the headless TUI adapter"));
+    }
+
+    #[test]
+    fn broad_harness_child_requires_request_bound_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut node = test_node(tmp.path(), "node-broad", "branch-broad", "candidate-broad");
+        node.base_artifact_id = Some(crate::loop_graph::ArtifactId::new("artifact:base"));
+        node.derived_artifact_id = Some(crate::loop_graph::ArtifactId::new("artifact:derived"));
+        let mut resolved = test_resolved(&node);
+        resolved.branch.synthesized_spec_id =
+            "prototype1:broad-headless-tui-adapter-v1".to_string();
+        resolved.branch.apply_id = Some("broad-harness-request:node-parent".to_string());
+        resolved.branch.generation_coordinate = Some(crate::loop_graph::Coordinate {
+            runtime_id: crate::loop_graph::RuntimeId::new(),
+            target: crate::loop_graph::OperationTarget::Artifact {
+                artifact_id: node.base_artifact_id.clone().expect("base artifact"),
+            },
+        });
+        resolved.branch.generation_target = Some(crate::loop_graph::OperationTarget::Artifact {
+            artifact_id: node.base_artifact_id.clone().expect("base artifact"),
+        });
+        let child = ChildFiles::from_resolved("campaign", node, resolved, false);
+
+        let err = validate_requested_broad_harness_child(&child)
+            .expect_err("request-bound broad child evidence is mandatory");
+
+        let PrepareError::InvalidBatchSelection { detail } = err else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("missing request-bound admission evidence"));
     }
 
     #[test]

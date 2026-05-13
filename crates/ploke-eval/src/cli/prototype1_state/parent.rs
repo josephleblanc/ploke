@@ -204,6 +204,8 @@ pub(crate) struct ChildFiles {
     resolved: ResolvedTreatmentBranch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     surface: Option<SurfaceEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    harness: Option<harness_request::child::Evidence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,11 +258,20 @@ impl ChildFiles {
             node,
             resolved,
             surface: None,
+            harness: None,
         }
     }
 
     pub(crate) fn with_surface(mut self, evidence: SurfaceEvidence) -> Self {
         self.surface = Some(evidence);
+        self
+    }
+
+    pub(crate) fn with_harness_evidence(
+        mut self,
+        evidence: harness_request::child::Evidence,
+    ) -> Self {
+        self.harness = Some(evidence);
         self
     }
 
@@ -282,6 +293,10 @@ impl ChildFiles {
 
     pub(crate) fn surface(&self) -> Option<&SurfaceEvidence> {
         self.surface.as_ref()
+    }
+
+    pub(crate) fn harness_evidence(&self) -> Option<&harness_request::child::Evidence> {
+        self.harness.as_ref()
     }
 }
 
@@ -1011,6 +1026,10 @@ impl Parent<Planned> {
 }
 
 impl Parent<AwaitingHarnessPlan> {
+    pub(crate) fn identity(&self) -> &ParentIdentity {
+        &self.identity
+    }
+
     pub(crate) fn harness_request(
         &self,
     ) -> &harness_request::request::Reference<
@@ -1018,6 +1037,25 @@ impl Parent<AwaitingHarnessPlan> {
         harness_request::request::Published,
     > {
         &self.state.harness_request
+    }
+
+    pub(crate) fn accept_harness_plan(self) -> Parent<Ready> {
+        info!(
+            target: "ploke_exec",
+            role = "parent",
+            authority = "parent_broadcast_channel",
+            transition = "Parent<AwaitingHarnessPlan>->Parent<Ready>",
+            runtime_id = %self.runtime_id,
+            campaign_id = %self.identity.campaign_id(),
+            parent_id = %self.identity.parent_id(),
+            node_id = %self.identity.node_id(),
+            generation = self.identity.generation(),
+            branch_id = %self.identity.branch_id(),
+            request_id = %self.state.harness_request.request_id(),
+            request_hash = %self.state.harness_request.request_hash(),
+            "accepted request-bound harness response and resumed child-plan locking"
+        );
+        self.into_state(Ready)
     }
 }
 

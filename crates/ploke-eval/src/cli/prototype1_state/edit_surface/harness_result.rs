@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::harness_request::{
     EvidenceRootKind, EvidenceRootLocation, ParentNodeRef, PublishedBroadHarnessRequest,
-    RequestAdmissionBinding, SubmissionAuthorityBoundary,
+    RequestAdmissionBinding, SubmissionAuthorityBoundary, contract,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -12,6 +12,8 @@ pub(crate) struct SubmittedBroadHarnessResult {
     pub(crate) schema: SubmittedBroadHarnessResultSchema,
     pub(crate) request: SubmittedRequestBinding,
     pub(crate) candidate: SubmittedBroadHarnessCandidate,
+    #[serde(default = "contract::Bundle::empty")]
+    pub(crate) contract: contract::Bundle,
     pub(crate) return_evidence: SubmittedHarnessReturnEvidence,
 }
 
@@ -120,6 +122,7 @@ impl SubmittedBroadHarnessResult {
                 workspace_path: published.workspace_path().to_path_buf(),
                 submitted_result_path: published.submitted_result_path().to_path_buf(),
             },
+            contract: published.request().contract.clone(),
             return_evidence,
         };
         submitted.verify_request(published)?;
@@ -378,6 +381,8 @@ mod tests {
             decoded_submitted.return_evidence.authority_boundary,
             SubmissionAuthorityBoundary::submitted_evidence_only()
         );
+        assert_eq!(decoded_submitted.contract, published.request().contract);
+        assert_eq!(decoded_submitted.contract.validation.commands.len(), 2);
         assert_eq!(
             decoded_submitted
                 .return_evidence
