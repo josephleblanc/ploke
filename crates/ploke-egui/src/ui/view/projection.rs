@@ -1050,7 +1050,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
     let mut artifact_nodes = BTreeMap::new();
     let mut history_refs = HashMap::new();
     let mut passive_ids = HashMap::new();
-    let current_parent = current_parent_artifact_ref(graph);
+    let selected_ruler = selected_ruler_artifact_ref(graph);
     let mut lineage_refs = HashSet::new();
     let mut lineage_edges = HashSet::new();
     if let Some(lineage) = primary_lineage(graph) {
@@ -1072,7 +1072,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             &mut raw,
             &mut artifact_nodes,
             artifact,
-            current_parent,
+            selected_ruler,
             style,
         );
         match &artifact.identity {
@@ -1217,14 +1217,14 @@ fn primary_lineage(graph: &DomainGraph) -> Option<&LineageNode> {
         })
 }
 
-fn current_parent_artifact_ref(graph: &DomainGraph) -> Option<&str> {
+fn selected_ruler_artifact_ref(graph: &DomainGraph) -> Option<&str> {
     let lineage = primary_lineage(graph)?;
     lineage
         .blocks
         .iter()
         .filter_map(|block_hash| graph.history.blocks.get(block_hash))
         .max_by_key(|block| block.block_height)
-        .map(|block| block.active_artifact.value.as_str())
+        .map(|block| block.selected_successor.artifact.value.as_str())
 }
 
 fn full_debug_record_count(graph: &DomainGraph) -> usize {
@@ -1460,7 +1460,7 @@ fn add_artifact_tree_node<'a>(
     raw: &mut RawGraph,
     artifact_nodes: &mut BTreeMap<&'a ArtifactKey, NodeIndex>,
     artifact: &'a ArtifactNode,
-    current_parent: Option<&str>,
+    selected_ruler: Option<&str>,
     style: ViewStyle,
 ) -> NodeIndex {
     if let Some(node) = artifact_nodes.get(&artifact.key).copied() {
@@ -1470,7 +1470,7 @@ fn add_artifact_tree_node<'a>(
     let node = raw.add_node(GraphNode::Artifact {
         label: Arc::from(artifact.primary_label(style)),
         detail: Arc::from(artifact.detail_text()),
-        color: artifact_tree_color(artifact, current_parent, style),
+        color: artifact_tree_color(artifact, selected_ruler, style),
         layers: GraphLayerMask::ARTIFACT,
         visible: true,
     });
@@ -1540,13 +1540,13 @@ fn artifact_color(graph: &DomainGraph, artifact: &ArtifactNode, style: ViewStyle
 
 fn artifact_tree_color(
     artifact: &ArtifactNode,
-    current_parent: Option<&str>,
+    selected_ruler: Option<&str>,
     style: ViewStyle,
 ) -> Color32 {
     if matches!(
-        (&artifact.identity, current_parent),
-        (ArtifactIdentity::HistoryRef(history_ref), Some(current))
-            if history_ref.value == current
+        (&artifact.identity, selected_ruler),
+        (ArtifactIdentity::HistoryRef(history_ref), Some(ruler))
+            if history_ref.value == ruler
     ) {
         style.edge.colors.selected
     } else {
@@ -2087,6 +2087,7 @@ fn to_widget_graph(raw: &RawGraph, style: ViewStyle) -> WidgetGraph {
 mod tests {
     use std::collections::BTreeMap;
 
+    use petgraph::stable_graph::NodeIndex;
     use ploke_records::history::{
         ActorRefRecord, ArtifactRefRecord, ProcedureRefRecord, SurfaceCommitmentRecord,
         SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
@@ -2221,6 +2222,51 @@ mod tests {
     }
 
     #[test]
+    fn artifact_tree_edges_flow_from_parent_to_child() {
+        let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
+        let projected = project_artifact_tree(&graph, ViewStyle::default());
+
+        let parent = artifact_node(&projected, "artifact:parent");
+        let child = artifact_node(&projected, "artifact:child");
+
+        assert!(
+            projected
+                .raw
+                .edges_connecting(parent, child)
+                .next()
+                .is_some(),
+            "artifact tree edges must flow parent -> child"
+        );
+        assert!(
+            projected
+                .raw
+                .edges_connecting(child, parent)
+                .next()
+                .is_none(),
+            "artifact tree must not reverse the git-tree direction"
+        );
+    }
+
+    #[test]
+    fn artifact_tree_highlights_selected_successor_as_next_ruler() {
+        let style = ViewStyle::default();
+        let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
+        let projected = project_artifact_tree(&graph, style);
+
+        let parent = artifact_node(&projected, "artifact:parent");
+        let child = artifact_node(&projected, "artifact:child");
+
+        assert_eq!(
+            node_color(&projected.raw[parent]),
+            Some(style.edge.colors.synthesized)
+        );
+        assert_eq!(
+            node_color(&projected.raw[child]),
+            Some(style.edge.colors.selected)
+        );
+    }
+
+    #[test]
     fn primary_labels_are_short_handles() {
         let graph = graph_with_candidate_inventory_selection();
         let projected = legacy_all_record_projection(&graph, ViewStyle::default());
@@ -2268,6 +2314,17 @@ mod tests {
             .node_weights()
             .filter(|node| node.kind_name() == kind)
             .count()
+    }
+
+    fn artifact_node(projected: &super::ProjectedGraph, artifact_ref: &str) -> NodeIndex {
+        projected
+            .raw
+            .node_indices()
+            .find(|node| {
+                projected.raw[*node].kind_name() == "artifact"
+                    && projected.raw[*node].detail().contains(artifact_ref)
+            })
+            .expect("artifact node should be projected")
     }
 
     fn node_color(node: &GraphNode) -> Option<eframe::egui::Color32> {

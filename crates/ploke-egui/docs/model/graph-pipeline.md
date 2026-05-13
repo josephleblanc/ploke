@@ -139,6 +139,15 @@ All live graph modes use the artifact/lineage projection. Record-level graph
 statistics should be exposed as bounded diagnostics derived from `&DomainGraph`,
 not by rendering every loaded record as one large debug graph.
 
+## Artifact Tree Invariant
+
+The default `ArtifactTree` mode is the git-tree product surface. It must render
+artifact patch edges from parent artifact to child artifact so the root parent
+is above its descendants in the top-down layout. The latest selected successor
+artifact on the primary lineage is the next `Parent<Ruler>` and must be visually
+highlighted as the current ruler candidate. The previous parent remains visible
+as the source of the patch edge, not as the highlighted node.
+
 ## Current Problem Area
 
 The current cache owns a full `WidgetGraph`:
