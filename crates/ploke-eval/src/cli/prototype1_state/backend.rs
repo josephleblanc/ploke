@@ -1053,6 +1053,11 @@ impl GitWorktreeBackend {
         })
     }
 
+    pub(crate) fn artifact_id_for_head(&self, root: &Path) -> Result<ArtifactId, BackendError> {
+        let head = self.head_commit(root)?;
+        Ok(artifact_id_from_git_commit(&head))
+    }
+
     /// Fully qualified branch ref used when verifying existing worktree state.
     fn branch_ref(&self, branch: &GitBranch) -> GitBranchRef {
         GitBranchRef(format!("refs/heads/{}", branch.0))
