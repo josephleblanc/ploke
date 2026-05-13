@@ -38,8 +38,16 @@ pub(super) fn graph_diagnostics(
 
     Some(GraphViewDiagnostics {
         mode,
-        node_count: graph.g().node_count(),
-        edge_count: graph.g().edge_count(),
+        node_count: graph
+            .g()
+            .node_weights()
+            .filter(|node| node.payload().visible())
+            .count(),
+        edge_count: graph
+            .g()
+            .edge_weights()
+            .filter(|edge| edge.payload().visible())
+            .count(),
         connectivity,
         graph_size,
         viewport_size,
@@ -121,8 +129,16 @@ fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
         .edge_references()
         .filter_map(|edge| {
             let payload: &GraphEdgePayload = edge.weight().payload();
-            let start = graph.g().node_weight(edge.source())?.location();
-            let end = graph.g().node_weight(edge.target())?.location();
+            if !payload.visible() {
+                return None;
+            }
+            let source = graph.g().node_weight(edge.source())?;
+            let target = graph.g().node_weight(edge.target())?;
+            if !source.payload().visible() || !target.payload().visible() {
+                return None;
+            }
+            let start = source.location();
+            let end = target.location();
             if start == end {
                 return None;
             }
@@ -159,6 +175,7 @@ fn median_node_rank_gap(graph: &WidgetGraph) -> Option<f32> {
     let mut ranks = graph
         .g()
         .node_weights()
+        .filter(|node| node.payload().visible())
         .map(|node| node.location().y)
         .filter(|rank| rank.is_finite())
         .collect::<Vec<_>>();
@@ -231,7 +248,10 @@ fn curves_cross(left: &EdgeCurve, right: &EdgeCurve, style: ViewStyle) -> bool {
 }
 
 fn node_bounds(graph: &WidgetGraph) -> Option<Rect> {
-    let mut nodes = graph.g().node_weights();
+    let mut nodes = graph
+        .g()
+        .node_weights()
+        .filter(|node| node.payload().visible());
     let first = nodes.next()?.location();
     let mut min = first;
     let mut max = first;
@@ -286,7 +306,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::ui::view::projection::GraphNode;
+    use crate::ui::view::projection::{GraphLayerMask, GraphNode};
 
     #[test]
     fn selected_path_crossings_ignore_unselected_artifact_patch_edges() {
@@ -380,6 +400,8 @@ mod tests {
             label: Arc::from(label),
             detail: Arc::from(label),
             color: Color32::WHITE,
+            layers: GraphLayerMask::ARTIFACT,
+            visible: true,
         }
     }
 
@@ -395,6 +417,8 @@ mod tests {
             color,
             style: style.edge,
             kind,
+            layers: GraphLayerMask::ARTIFACT,
+            visible: true,
         }
     }
 

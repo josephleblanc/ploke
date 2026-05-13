@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Write as _,
     sync::Arc,
 };
 
@@ -8,16 +9,18 @@ use petgraph::{
     Directed,
     Direction::Incoming,
     stable_graph::{NodeIndex, StableGraph},
+    visit::EdgeRef,
 };
 use ploke_records::ids::ArtifactId;
 use ploke_tree::Graph as DomainGraph;
 use ploke_tree::graph::{
-    ArtifactIdentity, ArtifactNode, CandidateBranchNode, CandidateNode, EvidenceSubject,
-    OperationKey, OperationTargetKey, SelectionNode,
+    ArtifactIdentity, ArtifactKey, ArtifactNode, CandidateBranchNode, CandidateNode,
+    EvidenceSubject, LineageNode, OperationKey, OperationTargetKey, SelectionNode,
 };
 
 use super::diagnostics::graph_diagnostics;
 use super::edge::GraphEdgeShape;
+use super::node::GraphNodeShape;
 use super::style::{EdgeStyle, ViewStyle};
 use super::{
     ComponentRootDiagnostic, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
@@ -29,7 +32,7 @@ pub(super) type WidgetGraph = egui_graphs::Graph<
     GraphEdgePayload,
     Directed,
     petgraph::stable_graph::DefaultIx,
-    egui_graphs::DefaultNodeShape,
+    GraphNodeShape,
     GraphEdgeShape,
 >;
 type RawGraph = StableGraph<GraphNode, GraphEdgePayload, Directed>;
@@ -38,7 +41,7 @@ type WidgetNode = egui_graphs::Node<
     GraphEdgePayload,
     Directed,
     petgraph::stable_graph::DefaultIx,
-    egui_graphs::DefaultNodeShape,
+    GraphNodeShape,
 >;
 
 #[derive(Debug)]
@@ -70,21 +73,42 @@ impl GraphViewCache {
         mode: GraphViewMode,
     ) -> bool {
         let signature = GraphSignature::from(graph);
-        if self.signature == Some(signature) && self.style == style && self.mode == mode {
+        let projection_changed = self.signature != Some(signature)
+            || self.style != style
+            || self.mode.is_full_debug() != mode.is_full_debug();
+        let mode_changed = self.mode != mode;
+
+        if !projection_changed && !mode_changed {
             return false;
         }
 
-        self.signature = Some(signature);
-        self.style = style;
+        if projection_changed {
+            self.signature = Some(signature);
+            self.style = style;
+            let built = build_widget_graph(graph, style, mode);
+            self.graph = built.graph;
+            self.connectivity = built.connectivity;
+        }
         self.mode = mode;
-        let built = build_widget_graph(graph, style, mode);
-        self.graph = built.graph;
-        self.connectivity = built.connectivity;
+        self.apply_visibility(mode);
         true
     }
 
     pub(super) fn graph_mut(&mut self) -> &mut WidgetGraph {
         &mut self.graph
+    }
+
+    pub(super) fn layout_state(&self, style: ViewStyle) -> super::layout::State {
+        super::layout::State {
+            triggered: false,
+            row_dist: style.layout.row_distance,
+            col_dist: style.layout.column_distance,
+            lane_dist: style.layout.lane_distance,
+            max_columns: style.layout.max_columns,
+            visibility_filter_active: true,
+            visible_nodes: self.visible_node_indices(),
+            visible_edges: self.visible_edge_indices(),
+        }
     }
 
     pub(super) fn diagnostics(
@@ -107,11 +131,125 @@ impl GraphViewCache {
         let selected = self.graph.selected_nodes().first().copied()?;
         let node = self.graph.g().node_weight(selected)?;
         let payload = node.payload();
+        if !payload.visible() {
+            return None;
+        }
         Some(GraphSelectionDetail {
             kind: payload.kind_name().to_owned(),
             label: payload.label().to_owned(),
             detail: payload.detail().to_owned(),
         })
+    }
+
+    fn apply_visibility(&mut self, mode: GraphViewMode) {
+        let mask = mode.layer_mask();
+        for node in self.graph.g_mut().node_weights_mut() {
+            let visible = node.payload().layers().contains_any(mask);
+            node.payload_mut().set_visible(visible);
+            if !visible {
+                node.set_selected(false);
+                node.set_hovered(false);
+                node.set_dragged(false);
+            }
+        }
+
+        let edge_visibility = self
+            .graph
+            .g()
+            .edge_indices()
+            .map(|edge| {
+                let Some((source, target)) = self.graph.g().edge_endpoints(edge) else {
+                    return (edge, false);
+                };
+                let Some(payload) = self.graph.g().edge_weight(edge).map(|edge| edge.payload())
+                else {
+                    return (edge, false);
+                };
+                let source_visible = self
+                    .graph
+                    .g()
+                    .node_weight(source)
+                    .is_some_and(|node| node.payload().visible());
+                let target_visible = self
+                    .graph
+                    .g()
+                    .node_weight(target)
+                    .is_some_and(|node| node.payload().visible());
+                (
+                    edge,
+                    payload.layers.contains_any(mask) && source_visible && target_visible,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (edge, visible) in edge_visibility {
+            if let Some(edge) = self.graph.g_mut().edge_weight_mut(edge) {
+                edge.payload_mut().set_visible(visible);
+                if !visible {
+                    edge.set_selected(false);
+                }
+            }
+        }
+
+        self.graph.set_selected_nodes(
+            self.graph
+                .selected_nodes()
+                .iter()
+                .copied()
+                .filter(|node| {
+                    self.graph
+                        .g()
+                        .node_weight(*node)
+                        .is_some_and(|node| node.payload().visible())
+                })
+                .collect(),
+        );
+        self.graph.set_selected_edges(
+            self.graph
+                .selected_edges()
+                .iter()
+                .copied()
+                .filter(|edge| {
+                    self.graph
+                        .g()
+                        .edge_weight(*edge)
+                        .is_some_and(|edge| edge.payload().visible())
+                })
+                .collect(),
+        );
+    }
+
+    fn visible_node_indices(&self) -> Vec<usize> {
+        let mut nodes = self
+            .graph
+            .g()
+            .node_indices()
+            .filter(|node| {
+                self.graph
+                    .g()
+                    .node_weight(*node)
+                    .is_some_and(|node| node.payload().visible())
+            })
+            .map(|node| node.index())
+            .collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes
+    }
+
+    fn visible_edge_indices(&self) -> Vec<usize> {
+        let mut edges = self
+            .graph
+            .g()
+            .edge_indices()
+            .filter(|edge| {
+                self.graph
+                    .g()
+                    .edge_weight(*edge)
+                    .is_some_and(|edge| edge.payload().visible())
+            })
+            .map(|edge| edge.index())
+            .collect::<Vec<_>>();
+        edges.sort_unstable();
+        edges
     }
 }
 
@@ -150,6 +288,46 @@ impl From<&DomainGraph> for GraphSignature {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GraphLayerMask(u8);
+
+impl GraphLayerMask {
+    pub(super) const EMPTY: Self = Self(0);
+    pub(super) const ARTIFACT: Self = Self(1 << 0);
+    pub(super) const LINEAGE: Self = Self(1 << 1);
+    pub(super) const DEBUG: Self = Self(1 << 2);
+
+    fn contains_any(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+}
+
+impl std::ops::BitOr for GraphLayerMask {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl GraphViewMode {
+    fn layer_mask(self) -> GraphLayerMask {
+        match self {
+            Self::ArtifactTree => GraphLayerMask::ARTIFACT,
+            Self::Lineage => GraphLayerMask::LINEAGE,
+            Self::ArtifactAndLineage => GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE,
+            Self::Empty => GraphLayerMask::EMPTY,
+            Self::FullDebug => {
+                GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE | GraphLayerMask::DEBUG
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) enum GraphNode {
     // egui_graphs owns widget payloads. Labels are compact render-only text;
@@ -158,23 +336,31 @@ pub(super) enum GraphNode {
         label: Arc<str>,
         detail: Arc<str>,
         color: Color32,
+        layers: GraphLayerMask,
+        visible: bool,
     },
     Candidate {
         label: Arc<str>,
         detail: Arc<str>,
         color: Color32,
+        layers: GraphLayerMask,
+        visible: bool,
     },
     Record {
         kind: GraphNodeKind,
         label: Arc<str>,
         detail: Arc<str>,
         color: Color32,
+        layers: GraphLayerMask,
+        visible: bool,
     },
     Synthetic {
         kind: GraphNodeKind,
         label: Arc<str>,
         detail: Arc<str>,
         color: Color32,
+        layers: GraphLayerMask,
+        visible: bool,
     },
 }
 
@@ -202,6 +388,51 @@ impl GraphNode {
             | Self::Candidate { detail, .. }
             | Self::Record { detail, .. }
             | Self::Synthetic { detail, .. } => detail,
+        }
+    }
+
+    fn color(&self) -> Color32 {
+        match self {
+            Self::Artifact { color, .. }
+            | Self::Candidate { color, .. }
+            | Self::Record { color, .. }
+            | Self::Synthetic { color, .. } => *color,
+        }
+    }
+
+    pub(super) fn visible(&self) -> bool {
+        match self {
+            Self::Artifact { visible, .. }
+            | Self::Candidate { visible, .. }
+            | Self::Record { visible, .. }
+            | Self::Synthetic { visible, .. } => *visible,
+        }
+    }
+
+    fn set_visible(&mut self, visible: bool) {
+        match self {
+            Self::Artifact { visible: slot, .. }
+            | Self::Candidate { visible: slot, .. }
+            | Self::Record { visible: slot, .. }
+            | Self::Synthetic { visible: slot, .. } => *slot = visible,
+        }
+    }
+
+    fn layers(&self) -> GraphLayerMask {
+        match self {
+            Self::Artifact { layers, .. }
+            | Self::Candidate { layers, .. }
+            | Self::Record { layers, .. }
+            | Self::Synthetic { layers, .. } => *layers,
+        }
+    }
+
+    fn add_layer(&mut self, layer: GraphLayerMask) {
+        match self {
+            Self::Artifact { layers, .. }
+            | Self::Candidate { layers, .. }
+            | Self::Record { layers, .. }
+            | Self::Synthetic { layers, .. } => layers.insert(layer),
         }
     }
 }
@@ -250,6 +481,18 @@ pub(super) struct GraphEdgePayload {
     pub(super) color: Color32,
     pub(super) style: EdgeStyle,
     pub(super) kind: ViewEdgeKind,
+    pub(super) layers: GraphLayerMask,
+    pub(super) visible: bool,
+}
+
+impl GraphEdgePayload {
+    pub(super) fn visible(&self) -> bool {
+        self.visible
+    }
+
+    fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +523,8 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
         label: Arc::from("run"),
         detail: Arc::from("loaded Prototype 1 run graph"),
         color: style.edge.colors.applied,
+        layers: GraphLayerMask::DEBUG,
+        visible: true,
     });
 
     let mut lineage_nodes = HashMap::new();
@@ -382,9 +627,11 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
 
     for artifact in graph.artifacts.artifacts.values() {
         let node = raw.add_node(GraphNode::Artifact {
-            label: Arc::from(artifact_label(artifact, style)),
-            detail: Arc::from(artifact_detail(artifact)),
+            label: Arc::from(artifact.primary_label(style)),
+            detail: Arc::from(artifact.detail_text()),
             color: artifact_color(graph, artifact, style),
+            layers: GraphLayerMask::ARTIFACT | GraphLayerMask::DEBUG,
+            visible: true,
         });
         artifact_nodes.insert(&artifact.key, node);
         match &artifact.identity {
@@ -486,9 +733,11 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
     });
     for candidate in candidates {
         let node = raw.add_node(GraphNode::Candidate {
-            label: Arc::from(candidate_label(candidate)),
-            detail: Arc::from(candidate_detail(candidate)),
+            label: Arc::from(candidate.primary_label(style)),
+            detail: Arc::from(candidate.detail_text()),
             color: candidate_color(graph, candidate, style),
+            layers: GraphLayerMask::DEBUG,
+            visible: true,
         });
         candidate_nodes.insert(
             (&candidate.selection_entry_id, candidate.payload_index),
@@ -586,7 +835,7 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
         let node = raw.add_node(record_node(
             GraphNodeKind::Branch,
             format!("P{}", index + 1),
-            branch_detail(branch),
+            branch.detail_text(),
             if branch_selected {
                 style.edge.colors.selected
             } else {
@@ -657,8 +906,8 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
     for operation in graph.operations.operations.values() {
         let node = raw.add_node(record_node(
             GraphNodeKind::Operation,
-            operation_label(&operation.key),
-            format!("operation: {:?}", operation.key),
+            operation.key.primary_label(style),
+            operation.key.detail_text(),
             style.edge.colors.restored,
         ));
         match &operation.key {
@@ -765,12 +1014,26 @@ pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedG
 }
 
 fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGraph {
-    let full = project_graph(graph, style);
     let mut raw = RawGraph::default();
     let mut artifact_nodes = BTreeMap::new();
     let mut history_refs = HashMap::new();
     let mut passive_ids = HashMap::new();
     let current_parent = current_parent_artifact_ref(graph);
+    let mut lineage_refs = HashSet::new();
+    let mut lineage_edges = HashSet::new();
+    if let Some(lineage) = primary_lineage(graph) {
+        for block in lineage
+            .blocks
+            .iter()
+            .filter_map(|block_hash| graph.history.blocks.get(block_hash))
+        {
+            let parent = block.active_artifact.value.as_str();
+            let child = block.selected_successor.artifact.value.as_str();
+            lineage_refs.insert(parent);
+            lineage_refs.insert(child);
+            lineage_edges.insert((parent, child));
+        }
+    }
 
     for artifact in graph.artifacts.artifacts.values() {
         let node = add_artifact_tree_node(
@@ -783,6 +1046,9 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         match &artifact.identity {
             ArtifactIdentity::HistoryRef(history_ref) => {
                 history_refs.insert(history_ref.value.as_str(), node);
+                if lineage_refs.contains(history_ref.value.as_str()) {
+                    raw[node].add_layer(GraphLayerMask::LINEAGE);
+                }
             }
             ArtifactIdentity::PassiveId(artifact_id) => {
                 passive_ids.insert(artifact_id, node);
@@ -807,7 +1073,14 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         else {
             continue;
         };
-        if add_unique_edge(
+        let parent_ref = block.active_artifact.value.as_str();
+        let child_ref = block.selected_successor.artifact.value.as_str();
+        let layers = if lineage_edges.contains(&(parent_ref, child_ref)) {
+            GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE
+        } else {
+            GraphLayerMask::ARTIFACT
+        };
+        if add_unique_edge_with_layers(
             &mut raw,
             parent,
             child,
@@ -815,6 +1088,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             true,
             ViewEdgeKind::ArtifactPatch,
             style,
+            layers,
         ) {
             patch_index += 1;
         }
@@ -848,7 +1122,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         ) else {
             continue;
         };
-        if add_unique_edge(
+        if add_unique_edge_with_layers(
             &mut raw,
             base,
             derived,
@@ -856,14 +1130,15 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             true,
             ViewEdgeKind::ArtifactPatch,
             style,
+            GraphLayerMask::ARTIFACT,
         ) {
             patch_index += 1;
         }
     }
 
     let components = component_roots(&raw);
-    let hidden_record_count = full.raw.node_count().saturating_sub(raw.node_count());
-    let hidden_edge_count = full.raw.edge_count().saturating_sub(raw.edge_count());
+    let hidden_record_count = full_debug_record_count(graph).saturating_sub(raw.node_count());
+    let hidden_edge_count = full_debug_edge_count(graph).saturating_sub(raw.edge_count());
     let connectivity = GraphConnectivityDiagnostics {
         component_count_before_anchoring: components.len(),
         component_roots_before_anchoring: components
@@ -884,78 +1159,294 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
     ProjectedGraph { raw, connectivity }
 }
 
-fn primary_lineage_blocks<'a>(
-    graph: &'a DomainGraph,
-) -> Option<(
-    &'a ploke_records::ids::LineageId,
-    Vec<&'a ploke_tree::graph::HistoryBlockNode>,
-)> {
+fn primary_lineage(graph: &DomainGraph) -> Option<&LineageNode> {
     graph
         .history
         .lineages
         .values()
-        .filter_map(|lineage| {
-            let mut blocks = lineage
+        .filter(|lineage| {
+            lineage
+                .blocks
+                .iter()
+                .any(|block_hash| graph.history.blocks.contains_key(block_hash))
+        })
+        .max_by_key(|lineage| {
+            let mut block_count = 0;
+            let mut max_height = 0;
+            for block in lineage
                 .blocks
                 .iter()
                 .filter_map(|block_hash| graph.history.blocks.get(block_hash))
-                .collect::<Vec<_>>();
-            blocks.sort_by_key(|block| block.block_height);
-            if blocks.is_empty() {
-                None
-            } else {
-                Some((&lineage.lineage_id, blocks))
+            {
+                block_count += 1;
+                max_height = max_height.max(block.block_height);
             }
-        })
-        .max_by_key(|(_, blocks)| {
-            (
-                blocks.len(),
-                blocks
-                    .iter()
-                    .map(|block| block.block_height)
-                    .max()
-                    .unwrap_or_default(),
-            )
+            (block_count, max_height)
         })
 }
 
 fn current_parent_artifact_ref(graph: &DomainGraph) -> Option<&str> {
-    let (_, blocks) = primary_lineage_blocks(graph)?;
-    blocks
-        .into_iter()
+    let lineage = primary_lineage(graph)?;
+    lineage
+        .blocks
+        .iter()
+        .filter_map(|block_hash| graph.history.blocks.get(block_hash))
         .max_by_key(|block| block.block_height)
         .map(|block| block.active_artifact.value.as_str())
 }
 
-fn add_artifact_tree_node(
+fn full_debug_record_count(graph: &DomainGraph) -> usize {
+    1 + graph.history.lineages.len()
+        + graph.history.blocks.len()
+        + graph.history.entries.len()
+        + graph.artifacts.artifacts.len()
+        + graph.runtimes.runtimes.len()
+        + graph.selections.selections.len()
+        + graph.candidates.candidates.len()
+        + graph.candidates.memberships.len()
+        + graph.candidates.branches.len()
+        + graph.operations.operations.len()
+        + graph.evidence.attachments.len()
+        + graph.warnings.len()
+}
+
+fn full_debug_edge_count(graph: &DomainGraph) -> usize {
+    let mut count = graph.history.lineages.len();
+
+    for block in graph.history.blocks.values() {
+        if graph.history.lineages.contains_key(&block.lineage_id) {
+            count += 1;
+        }
+        count += block
+            .parent_block_hashes
+            .iter()
+            .filter(|hash| graph.history.blocks.contains_key(*hash))
+            .count();
+        if has_history_artifact(graph, block.active_artifact.value.as_str()) {
+            count += 1;
+        }
+        if has_history_artifact(graph, block.selected_successor.artifact.value.as_str()) {
+            count += 1;
+        }
+        if let ploke_records::history::ActorRefRecord::Runtime(runtime_id) =
+            &block.selected_successor.runtime
+        {
+            if graph.runtimes.runtimes.contains_key(runtime_id) {
+                count += 1;
+            }
+        }
+    }
+
+    count += graph
+        .history
+        .entries
+        .values()
+        .filter(|entry| graph.history.blocks.contains_key(&entry.block_hash))
+        .count();
+
+    count += graph
+        .selections
+        .selections
+        .values()
+        .filter(|selection| graph.history.entries.contains_key(&selection.entry_id))
+        .count();
+
+    for candidate in &graph.candidates.candidates {
+        if graph
+            .selections
+            .selections
+            .contains_key(&candidate.selection_entry_id)
+        {
+            count += 1;
+        }
+        if candidate
+            .artifact_after
+            .as_ref()
+            .is_some_and(|artifact| has_passive_artifact(graph, artifact))
+        {
+            count += 1;
+        }
+        if candidate
+            .membership_key
+            .as_ref()
+            .is_some_and(|key| graph.candidates.memberships.contains_key(key))
+        {
+            count += 1;
+        }
+        if candidate
+            .branch_id
+            .as_deref()
+            .is_some_and(|branch_id| has_branch(graph, branch_id))
+        {
+            count += 1;
+        }
+    }
+
+    count += graph
+        .candidates
+        .memberships
+        .values()
+        .filter(|membership| {
+            graph
+                .selections
+                .selections
+                .contains_key(&membership.selection_entry_id)
+        })
+        .count();
+
+    for branch in &graph.candidates.branches {
+        if graph
+            .selections
+            .selections
+            .contains_key(&branch.selection_entry_id)
+        {
+            count += 1;
+        }
+        if branch
+            .base_artifact_id
+            .as_ref()
+            .is_some_and(|artifact| has_passive_artifact(graph, artifact))
+        {
+            count += 1;
+        }
+        if branch
+            .derived_artifact_id
+            .as_ref()
+            .is_some_and(|artifact| has_passive_artifact(graph, artifact))
+        {
+            count += 1;
+        }
+    }
+
+    for operation in graph.operations.operations.values() {
+        match &operation.key {
+            OperationKey::HistoryEntry { entry_id } => {
+                if graph.history.entries.contains_key(entry_id) {
+                    count += 1;
+                }
+            }
+            OperationKey::RuntimeTarget { runtime_id, target } => {
+                if graph.runtimes.runtimes.contains_key(runtime_id) {
+                    count += 1;
+                }
+                count += operation_target_edge_count(graph, target);
+            }
+        }
+    }
+
+    count += graph
+        .evidence
+        .attachments
+        .values()
+        .filter(|evidence| evidence_subject_has_loaded_node(graph, &evidence.subject))
+        .count();
+    count + graph.warnings.len()
+}
+
+fn operation_target_edge_count(graph: &DomainGraph, target: &OperationTargetKey) -> usize {
+    match target {
+        OperationTargetKey::Artifact { artifact_id } => {
+            usize::from(has_passive_artifact(graph, artifact_id))
+        }
+        OperationTargetKey::PatchSet {
+            base_artifact_id, ..
+        } => usize::from(has_passive_artifact(graph, base_artifact_id)),
+        OperationTargetKey::ArtifactSet {
+            base_artifact_id,
+            artifact_ids,
+        } => {
+            base_artifact_id.as_ref().map_or(0, |artifact| {
+                usize::from(has_passive_artifact(graph, artifact))
+            }) + artifact_ids
+                .iter()
+                .filter(|artifact| has_passive_artifact(graph, artifact))
+                .count()
+        }
+    }
+}
+
+fn evidence_subject_has_loaded_node(graph: &DomainGraph, subject: &EvidenceSubject) -> bool {
+    match subject {
+        EvidenceSubject::HistoryBlock(block_hash) => graph.history.blocks.contains_key(block_hash),
+        EvidenceSubject::HistoryEntry(entry_id) => graph.history.entries.contains_key(entry_id),
+        EvidenceSubject::Runtime(runtime_id) => graph.runtimes.runtimes.contains_key(runtime_id),
+        EvidenceSubject::Artifact(artifact_id) => has_passive_artifact(graph, artifact_id),
+        EvidenceSubject::Candidate {
+            selection_entry_id,
+            payload_index,
+        } => graph.candidates.candidates.iter().any(|candidate| {
+            &candidate.selection_entry_id == selection_entry_id
+                && candidate.payload_index == *payload_index
+        }),
+        EvidenceSubject::Branch(branch_id) => has_branch(graph, branch_id),
+        EvidenceSubject::Selection(entry_id) => graph.selections.selections.contains_key(entry_id),
+        EvidenceSubject::SchedulerCampaign(_)
+        | EvidenceSubject::SchedulerNode(_)
+        | EvidenceSubject::TransitionJournalSummary { .. }
+        | EvidenceSubject::TransitionJournalLoadedEntries { .. }
+        | EvidenceSubject::BranchRegistrySummary { .. }
+        | EvidenceSubject::HistoryStorageSummary { .. }
+        | EvidenceSubject::ChannelSummary { .. }
+        | EvidenceSubject::EvaluationSummary { .. }
+        | EvidenceSubject::ChildPlanSummary { .. }
+        | EvidenceSubject::ProtocolArtifactSummary { .. }
+        | EvidenceSubject::ProtocolArtifact { .. }
+        | EvidenceSubject::RunProfileSummary(_)
+        | EvidenceSubject::RunProfileCommitment(_)
+        | EvidenceSubject::AgentTurnEvidenceSummary { .. }
+        | EvidenceSubject::AgentTurnArtifact(_) => false,
+    }
+}
+
+fn has_history_artifact(graph: &DomainGraph, value: &str) -> bool {
+    graph.artifacts.artifacts.values().any(|artifact| {
+        matches!(
+            &artifact.identity,
+            ArtifactIdentity::HistoryRef(history_ref) if history_ref.value == value
+        )
+    })
+}
+
+fn has_passive_artifact(graph: &DomainGraph, artifact_id: &ArtifactId) -> bool {
+    graph.artifacts.artifacts.values().any(|artifact| {
+        matches!(
+            &artifact.identity,
+            ArtifactIdentity::PassiveId(passive_id) if passive_id == artifact_id
+        )
+    })
+}
+
+fn has_branch(graph: &DomainGraph, branch_id: &str) -> bool {
+    graph
+        .candidates
+        .branches
+        .iter()
+        .any(|branch| branch.branch_id == branch_id)
+}
+
+fn add_artifact_tree_node<'a>(
     raw: &mut RawGraph,
-    artifact_nodes: &mut BTreeMap<String, NodeIndex>,
-    artifact: &ArtifactNode,
+    artifact_nodes: &mut BTreeMap<&'a ArtifactKey, NodeIndex>,
+    artifact: &'a ArtifactNode,
     current_parent: Option<&str>,
     style: ViewStyle,
 ) -> NodeIndex {
-    let key = artifact_key(artifact);
-    if let Some(node) = artifact_nodes.get(&key).copied() {
+    if let Some(node) = artifact_nodes.get(&artifact.key).copied() {
         return node;
     }
 
     let node = raw.add_node(GraphNode::Artifact {
-        label: Arc::from(artifact_label(artifact, style)),
-        detail: Arc::from(artifact_detail(artifact)),
+        label: Arc::from(artifact.primary_label(style)),
+        detail: Arc::from(artifact.detail_text()),
         color: artifact_tree_color(artifact, current_parent, style),
+        layers: GraphLayerMask::ARTIFACT,
+        visible: true,
     });
-    artifact_nodes.insert(key, node);
+    artifact_nodes.insert(&artifact.key, node);
     node
 }
 
-fn artifact_key(artifact: &ArtifactNode) -> String {
-    match &artifact.identity {
-        ArtifactIdentity::HistoryRef(history_ref) => format!("history:{}", history_ref.value),
-        ArtifactIdentity::PassiveId(artifact_id) => format!("passive:{}", artifact_id.0),
-    }
-}
-
-fn add_unique_edge(
+fn add_unique_edge_with_layers(
     raw: &mut RawGraph,
     source: NodeIndex,
     target: NodeIndex,
@@ -963,11 +1454,28 @@ fn add_unique_edge(
     label_visible: bool,
     kind: ViewEdgeKind,
     style: ViewStyle,
+    layers: GraphLayerMask,
 ) -> bool {
-    if raw.edges_connecting(source, target).next().is_some() {
+    if let Some(edge) = raw
+        .edges_connecting(source, target)
+        .next()
+        .map(|edge| edge.id())
+    {
+        if let Some(payload) = raw.edge_weight_mut(edge) {
+            payload.layers.insert(layers);
+        }
         return false;
     }
-    add_edge(raw, source, target, label, label_visible, kind, style);
+    add_edge_with_layers(
+        raw,
+        source,
+        target,
+        label,
+        label_visible,
+        kind,
+        style,
+        layers,
+    );
     true
 }
 
@@ -977,7 +1485,10 @@ fn build_widget_graph(
     mode: GraphViewMode,
 ) -> BuiltWidgetGraph {
     let projected: ProjectedGraph = match mode {
-        GraphViewMode::ArtifactTree => project_artifact_tree(graph, style),
+        GraphViewMode::ArtifactTree
+        | GraphViewMode::Lineage
+        | GraphViewMode::ArtifactAndLineage
+        | GraphViewMode::Empty => project_artifact_tree(graph, style),
         GraphViewMode::FullDebug => project_graph(graph, style),
     };
     BuiltWidgetGraph {
@@ -1070,37 +1581,6 @@ fn candidate_selected(selection: &SelectionNode, candidate: &CandidateNode) -> b
         .is_some_and(|selected| selected == &candidate.subject)
 }
 
-fn artifact_label(artifact: &ArtifactNode, style: ViewStyle) -> String {
-    truncate_label(match &artifact.identity {
-        ArtifactIdentity::HistoryRef(history_ref) => {
-            format!(
-                "A:{}",
-                compact_id(&style.labels.artifact(history_ref.value.as_str()))
-            )
-        }
-        ArtifactIdentity::PassiveId(artifact_id) => {
-            format!(
-                "A:{}",
-                compact_id(&style.labels.artifact(artifact_id.0.as_str()))
-            )
-        }
-    })
-}
-
-fn candidate_label(candidate: &CandidateNode) -> String {
-    let base = format!(
-        "C{}:{}",
-        compact_id(&candidate.selection_entry_id.0),
-        candidate.payload_index + 1
-    );
-    truncate_label(
-        candidate
-            .generation
-            .map(|generation| format!("{base} g{generation}"))
-            .unwrap_or(base),
-    )
-}
-
 fn record_node(
     kind: GraphNodeKind,
     label: impl Into<String>,
@@ -1112,6 +1592,8 @@ fn record_node(
         label: Arc::from(truncate_label(label.into())),
         detail: Arc::from(detail.into()),
         color,
+        layers: GraphLayerMask::DEBUG,
+        visible: true,
     }
 }
 
@@ -1124,6 +1606,28 @@ fn add_edge(
     kind: ViewEdgeKind,
     style: ViewStyle,
 ) {
+    add_edge_with_layers(
+        raw,
+        source,
+        target,
+        label,
+        label_visible,
+        kind,
+        style,
+        GraphLayerMask::DEBUG,
+    );
+}
+
+fn add_edge_with_layers(
+    raw: &mut RawGraph,
+    source: NodeIndex,
+    target: NodeIndex,
+    label: impl Into<Arc<str>>,
+    label_visible: bool,
+    kind: ViewEdgeKind,
+    style: ViewStyle,
+    layers: GraphLayerMask,
+) {
     raw.add_edge(
         source,
         target,
@@ -1133,6 +1637,8 @@ fn add_edge(
             color: edge_color(kind, style),
             style: style.edge,
             kind,
+            layers,
+            visible: true,
         },
     );
 }
@@ -1261,54 +1767,136 @@ fn evidence_subject_node(
     }
 }
 
-fn artifact_detail(artifact: &ArtifactNode) -> String {
-    match &artifact.identity {
-        ArtifactIdentity::HistoryRef(history_ref) => {
-            format!("artifact history ref: {}", history_ref.value)
+trait PrimaryLabel {
+    fn primary_label(&self, style: ViewStyle) -> String {
+        prefixed_compact_label(self.prefix(), self.source(style))
+    }
+
+    fn prefix(&self) -> &'static str;
+
+    fn source<'a>(&'a self, style: ViewStyle) -> &'a str;
+}
+
+trait DetailText {
+    fn detail_text(&self) -> String;
+}
+
+impl PrimaryLabel for ArtifactNode {
+    fn prefix(&self) -> &'static str {
+        "A"
+    }
+
+    fn source<'a>(&'a self, style: ViewStyle) -> &'a str {
+        match &self.identity {
+            ArtifactIdentity::HistoryRef(history_ref) => {
+                style.labels.artifact(history_ref.value.as_str())
+            }
+            ArtifactIdentity::PassiveId(artifact_id) => {
+                style.labels.artifact(artifact_id.0.as_str())
+            }
         }
-        ArtifactIdentity::PassiveId(artifact_id) => format!("artifact_id: {}", artifact_id.0),
     }
 }
 
-fn candidate_detail(candidate: &CandidateNode) -> String {
-    format!(
-        "selection_entry_id: {}\npayload_index: {}\nsubject: {}\nnode_id: {:?}\nbranch_id: {:?}\noccurrence_id: {:?}\nmembership_id: {:?}",
-        candidate.selection_entry_id.0,
-        candidate.payload_index,
-        candidate.subject.value,
-        candidate.node_id,
-        candidate.branch_id,
-        candidate.occurrence_id,
-        candidate.membership_id
-    )
-}
-
-fn branch_detail(branch: &CandidateBranchNode) -> String {
-    format!(
-        "branch_id: {}\nselection_entry_id: {}\npayload_index: {}\ncandidate_id: {:?}\nbase_artifact_id: {:?}\nderived_artifact_id: {:?}\npatch_id: {:?}",
-        branch.branch_id,
-        branch.selection_entry_id.0,
-        branch.payload_index,
-        branch.candidate_id,
-        branch.base_artifact_id,
-        branch.derived_artifact_id,
-        branch.patch_id
-    )
-}
-
-fn operation_label(key: &OperationKey) -> String {
-    match key {
-        OperationKey::HistoryEntry { entry_id } => format!("O:{}", compact_id(&entry_id.0)),
-        OperationKey::RuntimeTarget { runtime_id, .. } => {
-            format!("O:{}", compact_id(&runtime_id.0))
+impl DetailText for ArtifactNode {
+    fn detail_text(&self) -> String {
+        match &self.identity {
+            ArtifactIdentity::HistoryRef(history_ref) => {
+                format!("artifact history ref: {}", history_ref.value)
+            }
+            ArtifactIdentity::PassiveId(artifact_id) => format!("artifact_id: {}", artifact_id.0),
         }
+    }
+}
+
+impl PrimaryLabel for CandidateNode {
+    fn prefix(&self) -> &'static str {
+        "C"
+    }
+
+    fn source<'a>(&'a self, _style: ViewStyle) -> &'a str {
+        self.selection_entry_id.0.as_str()
+    }
+
+    fn primary_label(&self, _style: ViewStyle) -> String {
+        let mut label = String::with_capacity(8);
+        label.push('C');
+        let _ = write!(label, "{}", self.payload_index + 1);
+        label
+    }
+}
+
+impl DetailText for CandidateNode {
+    fn detail_text(&self) -> String {
+        format!(
+            "selection_entry_id: {}\npayload_index: {}\nsubject: {}\nnode_id: {:?}\nbranch_id: {:?}\noccurrence_id: {:?}\nmembership_id: {:?}",
+            self.selection_entry_id.0,
+            self.payload_index,
+            self.subject.value,
+            self.node_id,
+            self.branch_id,
+            self.occurrence_id,
+            self.membership_id
+        )
+    }
+}
+
+impl DetailText for CandidateBranchNode {
+    fn detail_text(&self) -> String {
+        format!(
+            "branch_id: {}\nselection_entry_id: {}\npayload_index: {}\ncandidate_id: {:?}\nbase_artifact_id: {:?}\nderived_artifact_id: {:?}\npatch_id: {:?}",
+            self.branch_id,
+            self.selection_entry_id.0,
+            self.payload_index,
+            self.candidate_id,
+            self.base_artifact_id,
+            self.derived_artifact_id,
+            self.patch_id
+        )
+    }
+}
+
+impl PrimaryLabel for OperationKey {
+    fn prefix(&self) -> &'static str {
+        "O"
+    }
+
+    fn source<'a>(&'a self, _style: ViewStyle) -> &'a str {
+        match self {
+            OperationKey::HistoryEntry { entry_id } => entry_id.0.as_str(),
+            OperationKey::RuntimeTarget { runtime_id, .. } => runtime_id.0.as_str(),
+        }
+    }
+}
+
+impl DetailText for OperationKey {
+    fn detail_text(&self) -> String {
+        format!("operation: {self:?}")
     }
 }
 
 const MAX_PRIMARY_LABEL_CHARS: usize = 12;
 
+fn prefixed_compact_label(prefix: &str, value: &str) -> String {
+    let compact = compact_id_fragment(value);
+    let mut label =
+        String::with_capacity(MAX_PRIMARY_LABEL_CHARS.min(prefix.len() + compact.len() + 1));
+    label.push_str(prefix);
+    label.push(':');
+    push_truncated(
+        &mut label,
+        compact,
+        MAX_PRIMARY_LABEL_CHARS.saturating_sub(prefix.len() + 1),
+    );
+    label
+}
+
 fn compact_id(value: &str) -> String {
-    let trimmed = value
+    truncate_label(compact_id_fragment(value))
+}
+
+fn compact_id_fragment(value: &str) -> &str {
+    value
         .strip_prefix("artifact:")
         .or_else(|| value.strip_prefix("runtime:"))
         .or_else(|| value.strip_prefix("candidate:"))
@@ -1317,19 +1905,26 @@ fn compact_id(value: &str) -> String {
         .or_else(|| value.strip_prefix("block:"))
         .or_else(|| value.strip_prefix("membership:"))
         .or_else(|| value.strip_prefix("patch:"))
-        .unwrap_or(value);
-    truncate_label(trimmed)
+        .unwrap_or(value)
 }
 
 fn truncate_label(value: impl AsRef<str>) -> String {
     let value = value.as_ref();
-    if value.chars().count() <= MAX_PRIMARY_LABEL_CHARS {
-        return value.to_owned();
+    let mut label = String::with_capacity(value.len().min(MAX_PRIMARY_LABEL_CHARS));
+    push_truncated(&mut label, value, MAX_PRIMARY_LABEL_CHARS);
+    label
+}
+
+fn push_truncated(label: &mut String, value: &str, max_chars: usize) {
+    if value.chars().count() <= max_chars {
+        label.push_str(value);
+        return;
     }
-    let visible_chars = MAX_PRIMARY_LABEL_CHARS.saturating_sub(3);
-    let mut chars = value.chars();
-    let prefix = chars.by_ref().take(visible_chars).collect::<String>();
-    format!("{prefix}...")
+    let visible_chars = max_chars.saturating_sub(3);
+    for ch in value.chars().take(visible_chars) {
+        label.push(ch);
+    }
+    label.push_str("...");
 }
 
 #[derive(Debug)]
@@ -1402,6 +1997,8 @@ fn anchor_unattached_components(
         label: Arc::from("unattached"),
         detail: Arc::from("synthetic anchor for records not connected by loaded graph facts"),
         color: style.edge.colors.dropped,
+        layers: GraphLayerMask::DEBUG,
+        visible: true,
     });
     add_edge(
         raw,
@@ -1429,34 +2026,16 @@ fn to_widget_graph(raw: &RawGraph, style: ViewStyle) -> WidgetGraph {
     egui_graphs::to_graph_custom(
         raw,
         |node: &mut WidgetNode| {
-            let visual = NodeVisual::from_node(node.payload());
-            node.set_label(visual.label);
-            if let Some(color) = visual.color {
-                node.set_color(color);
-            }
-            node.display_mut().radius = style.layout.node_radius;
+            let (label, color) = {
+                let payload = node.payload();
+                (payload.label().to_owned(), payload.color())
+            };
+            node.set_label(label);
+            node.set_color(color);
+            node.display_mut().set_radius(style.layout.node_radius);
         },
         |_edge| {},
     )
-}
-
-struct NodeVisual {
-    label: String,
-    color: Option<eframe::egui::Color32>,
-}
-
-impl NodeVisual {
-    fn from_node(node: &GraphNode) -> Self {
-        match node {
-            GraphNode::Artifact { label, color, .. }
-            | GraphNode::Candidate { label, color, .. }
-            | GraphNode::Record { label, color, .. }
-            | GraphNode::Synthetic { label, color, .. } => Self {
-                label: label.to_string(),
-                color: Some(*color),
-            },
-        }
-    }
 }
 
 #[cfg(test)]

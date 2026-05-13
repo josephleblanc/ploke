@@ -5,6 +5,7 @@ mod edge;
 mod geometry;
 mod label;
 mod layout;
+mod node;
 mod projection;
 mod style;
 
@@ -97,13 +98,7 @@ impl GraphView {
         if self.cache.refresh(graph, self.view_style, self.mode) {
             egui_graphs::set_layout_state(
                 ui,
-                layout::State {
-                    triggered: false,
-                    row_dist: self.view_style.layout.row_distance,
-                    col_dist: self.view_style.layout.column_distance,
-                    lane_dist: self.view_style.layout.lane_distance,
-                    max_columns: self.view_style.layout.max_columns,
-                },
+                self.cache.layout_state(self.view_style),
                 Some(self.id.clone()),
             );
             self.fit_next_frame = true;
@@ -151,6 +146,9 @@ pub struct GraphViewDiagnostics {
 pub enum GraphViewMode {
     #[default]
     ArtifactTree,
+    Lineage,
+    ArtifactAndLineage,
+    Empty,
     FullDebug,
 }
 
@@ -158,8 +156,15 @@ impl GraphViewMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ArtifactTree => "artifact-tree",
+            Self::Lineage => "lineage",
+            Self::ArtifactAndLineage => "artifact-and-lineage",
+            Self::Empty => "empty",
             Self::FullDebug => "full-debug",
         }
+    }
+
+    fn is_full_debug(self) -> bool {
+        matches!(self, Self::FullDebug)
     }
 }
 

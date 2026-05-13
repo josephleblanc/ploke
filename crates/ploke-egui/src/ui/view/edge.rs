@@ -18,6 +18,7 @@ pub(super) struct GraphEdgeShape {
     label_visible: bool,
     color: Color32,
     selected: bool,
+    visible: bool,
     style: EdgeStyle,
     curve: Cell<Option<EdgeCurve>>,
     label_galley: Option<EdgeLabelGalley>,
@@ -25,11 +26,13 @@ pub(super) struct GraphEdgeShape {
 
 impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
     fn from(edge: egui_graphs::EdgeProps<GraphEdgePayload>) -> Self {
+        let visible = edge.payload.visible();
         Self {
             label: edge.payload.label,
             label_visible: edge.payload.label_visible,
             color: edge.payload.color,
             selected: edge.selected,
+            visible,
             style: edge.payload.style,
             curve: Cell::new(None),
             label_galley: None,
@@ -119,6 +122,9 @@ where
         end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
         ctx: &egui_graphs::DrawContext,
     ) -> Vec<Shape> {
+        if !self.visible {
+            return Vec::new();
+        }
         if end.location() == start.location() {
             return Vec::new();
         }
@@ -186,6 +192,7 @@ where
         }
         self.color = state.payload.color;
         self.selected = state.selected;
+        self.visible = state.payload.visible();
         self.style = state.payload.style;
     }
 
@@ -195,6 +202,9 @@ where
         end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
         pos: Pos2,
     ) -> bool {
+        if !self.visible {
+            return false;
+        }
         if end.location() == start.location() {
             return false;
         }
@@ -209,6 +219,9 @@ where
         start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
         end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
     ) -> Option<(Pos2, Pos2)> {
+        if !self.visible {
+            return None;
+        }
         let (start_point, end_point) = attachment_points(start, end, self.style.curve);
         let curve = self.curve(start_point, end_point);
         let min = Pos2::new(

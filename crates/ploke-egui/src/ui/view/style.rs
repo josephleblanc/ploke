@@ -47,11 +47,11 @@ pub struct LabelStyle {
 }
 
 impl LabelStyle {
-    pub fn artifact(self, id: &str) -> String {
-        self.trim_artifact(id).to_owned()
+    pub fn artifact<'a>(self, id: &'a str) -> &'a str {
+        self.trim_artifact(id)
     }
 
-    fn trim_artifact(self, id: &str) -> &str {
+    fn trim_artifact<'a>(self, id: &'a str) -> &'a str {
         id.strip_prefix(self.artifact_id_prefix).unwrap_or(id)
     }
 }

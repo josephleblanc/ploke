@@ -118,6 +118,24 @@ fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {
             view.set_mode(GraphViewMode::ArtifactTree);
         }
         if ui
+            .selectable_label(view.mode() == GraphViewMode::Lineage, "Lineage")
+            .clicked()
+        {
+            view.set_mode(GraphViewMode::Lineage);
+        }
+        if ui
+            .selectable_label(view.mode() == GraphViewMode::ArtifactAndLineage, "Both")
+            .clicked()
+        {
+            view.set_mode(GraphViewMode::ArtifactAndLineage);
+        }
+        if ui
+            .selectable_label(view.mode() == GraphViewMode::Empty, "None")
+            .clicked()
+        {
+            view.set_mode(GraphViewMode::Empty);
+        }
+        if ui
             .selectable_label(view.mode() == GraphViewMode::FullDebug, "Full debug")
             .clicked()
         {

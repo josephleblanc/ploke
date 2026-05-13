@@ -5,37 +5,15 @@ use petgraph::{
     Direction::{Incoming, Outgoing},
     EdgeType,
     stable_graph::{IndexType, NodeIndex},
+    visit::EdgeRef,
 };
-use serde::{Deserialize, Serialize};
+
+use super::{State, sorted_nodes};
 
 const ROOT_GAP_MULTIPLE: f32 = 1.5;
-const DEFAULT_MAX_COLUMNS: usize = 16;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct State {
-    pub(super) triggered: bool,
-    pub(super) row_dist: f32,
-    pub(super) col_dist: f32,
-    pub(super) lane_dist: f32,
-    pub(super) max_columns: usize,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            triggered: false,
-            row_dist: 280.0,
-            col_dist: 132.0,
-            lane_dist: 164.0,
-            max_columns: DEFAULT_MAX_COLUMNS,
-        }
-    }
-}
-
-impl egui_graphs::LayoutState for State {}
 
 #[derive(Debug, Default)]
-pub(super) struct Lineage {
+pub(in crate::ui::view) struct Lineage {
     state: State,
 }
 
@@ -51,7 +29,14 @@ impl Lineage {
         Dn: egui_graphs::DisplayNode<N, E, Ty, Ix>,
         De: egui_graphs::DisplayEdge<N, E, Ty, Ix, Dn>,
     {
-        let roots = sorted_nodes(graph.g().externals(Incoming));
+        let roots = sorted_nodes(graph.g().node_indices().filter(|node| {
+            state.node_visible(*node)
+                && graph
+                    .g()
+                    .edges_directed(*node, Incoming)
+                    .filter(|edge| state.edge_visible(edge.id()))
+                    .all(|edge| !state.node_visible(edge.source()))
+        }));
         let mut visited = HashSet::new();
         let mut cursor = Cursor::default();
 
@@ -64,7 +49,12 @@ impl Lineage {
             cursor.advance_root_gap(state);
         }
 
-        let remaining = sorted_nodes(graph.g().node_indices());
+        let remaining = sorted_nodes(
+            graph
+                .g()
+                .node_indices()
+                .filter(|node| state.node_visible(*node)),
+        );
         for node in remaining {
             if visited.contains(&node) {
                 continue;
@@ -124,10 +114,17 @@ where
 {
     visited.insert(node);
 
-    let children = sorted_nodes(graph.g().neighbors_directed(node, Outgoing))
-        .into_iter()
-        .filter(|child| !visited.contains(child))
-        .collect::<Vec<_>>();
+    let children = sorted_nodes(
+        graph
+            .g()
+            .edges_directed(node, Outgoing)
+            .filter(|edge| state.edge_visible(edge.id()))
+            .map(|edge| edge.target()),
+    )
+    .into_iter()
+    .filter(|child| state.node_visible(*child))
+    .filter(|child| !visited.contains(child))
+    .collect::<Vec<_>>();
 
     let placement = if children.is_empty() {
         cursor.take_leaf(state)
@@ -214,15 +211,6 @@ impl Placement {
     }
 }
 
-fn sorted_nodes<Ix>(nodes: impl Iterator<Item = NodeIndex<Ix>>) -> Vec<NodeIndex<Ix>>
-where
-    Ix: IndexType,
-{
-    let mut nodes = nodes.collect::<Vec<_>>();
-    nodes.sort_by_key(|node| node.index());
-    nodes
-}
-
 #[cfg(test)]
 mod tests {
     use eframe::egui::{Pos2, Rect, Vec2};
@@ -260,6 +248,9 @@ mod tests {
             col_dist: 90.0,
             lane_dist: 160.0,
             max_columns: 8,
+            visibility_filter_active: false,
+            visible_nodes: Vec::new(),
+            visible_edges: Vec::new(),
         };
 
         Lineage::apply(&mut graph, &state);
@@ -309,6 +300,9 @@ mod tests {
             col_dist: 90.0,
             lane_dist: 160.0,
             max_columns: 8,
+            visibility_filter_active: false,
+            visible_nodes: Vec::new(),
+            visible_edges: Vec::new(),
         };
 
         Lineage::apply(&mut graph, &state);
@@ -350,6 +344,9 @@ mod tests {
             col_dist: 90.0,
             lane_dist: 160.0,
             max_columns: 4,
+            visibility_filter_active: false,
+            visible_nodes: Vec::new(),
+            visible_edges: Vec::new(),
         };
 
         Lineage::apply(&mut graph, &state);
