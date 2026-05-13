@@ -13,9 +13,11 @@ use petgraph::{
 };
 use ploke_records::ids::ArtifactId;
 use ploke_tree::Graph as DomainGraph;
+#[cfg(test)]
+use ploke_tree::graph::SelectionNode;
 use ploke_tree::graph::{
     ArtifactIdentity, ArtifactKey, ArtifactNode, CandidateBranchNode, CandidateNode,
-    EvidenceSubject, LineageNode, OperationKey, OperationTargetKey, SelectionNode,
+    EvidenceSubject, LineageNode, OperationKey, OperationTargetKey,
 };
 
 use super::diagnostics::graph_diagnostics;
@@ -73,9 +75,7 @@ impl GraphViewCache {
         mode: GraphViewMode,
     ) -> bool {
         let signature = GraphSignature::from(graph);
-        let projection_changed = self.signature != Some(signature)
-            || self.style != style
-            || self.mode.is_full_debug() != mode.is_full_debug();
+        let projection_changed = self.signature != Some(signature) || self.style != style;
         let mode_changed = self.mode != mode;
 
         if !projection_changed && !mode_changed {
@@ -295,6 +295,7 @@ impl GraphLayerMask {
     pub(super) const EMPTY: Self = Self(0);
     pub(super) const ARTIFACT: Self = Self(1 << 0);
     pub(super) const LINEAGE: Self = Self(1 << 1);
+    #[cfg(test)]
     pub(super) const DEBUG: Self = Self(1 << 2);
 
     fn contains_any(self, other: Self) -> bool {
@@ -321,9 +322,6 @@ impl GraphViewMode {
             Self::Lineage => GraphLayerMask::LINEAGE,
             Self::ArtifactAndLineage => GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE,
             Self::Empty => GraphLayerMask::EMPTY,
-            Self::FullDebug => {
-                GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE | GraphLayerMask::DEBUG
-            }
         }
     }
 }
@@ -339,6 +337,7 @@ pub(super) enum GraphNode {
         layers: GraphLayerMask,
         visible: bool,
     },
+    #[cfg(test)]
     Candidate {
         label: Arc<str>,
         detail: Arc<str>,
@@ -346,6 +345,7 @@ pub(super) enum GraphNode {
         layers: GraphLayerMask,
         visible: bool,
     },
+    #[cfg(test)]
     Record {
         kind: GraphNodeKind,
         label: Arc<str>,
@@ -354,6 +354,7 @@ pub(super) enum GraphNode {
         layers: GraphLayerMask,
         visible: bool,
     },
+    #[cfg(test)]
     Synthetic {
         kind: GraphNodeKind,
         label: Arc<str>,
@@ -368,75 +369,99 @@ impl GraphNode {
     fn kind_name(&self) -> &'static str {
         match self {
             Self::Artifact { .. } => "artifact",
+            #[cfg(test)]
             Self::Candidate { .. } => "candidate",
+            #[cfg(test)]
             Self::Record { kind, .. } | Self::Synthetic { kind, .. } => kind.as_str(),
         }
     }
 
     fn label(&self) -> &str {
         match self {
-            Self::Artifact { label, .. }
-            | Self::Candidate { label, .. }
-            | Self::Record { label, .. }
-            | Self::Synthetic { label, .. } => label,
+            Self::Artifact { label, .. } => label,
+            #[cfg(test)]
+            Self::Candidate { label, .. } => label,
+            #[cfg(test)]
+            Self::Record { label, .. } => label,
+            #[cfg(test)]
+            Self::Synthetic { label, .. } => label,
         }
     }
 
     fn detail(&self) -> &str {
         match self {
-            Self::Artifact { detail, .. }
-            | Self::Candidate { detail, .. }
-            | Self::Record { detail, .. }
-            | Self::Synthetic { detail, .. } => detail,
+            Self::Artifact { detail, .. } => detail,
+            #[cfg(test)]
+            Self::Candidate { detail, .. } => detail,
+            #[cfg(test)]
+            Self::Record { detail, .. } => detail,
+            #[cfg(test)]
+            Self::Synthetic { detail, .. } => detail,
         }
     }
 
     fn color(&self) -> Color32 {
         match self {
-            Self::Artifact { color, .. }
-            | Self::Candidate { color, .. }
-            | Self::Record { color, .. }
-            | Self::Synthetic { color, .. } => *color,
+            Self::Artifact { color, .. } => *color,
+            #[cfg(test)]
+            Self::Candidate { color, .. } => *color,
+            #[cfg(test)]
+            Self::Record { color, .. } => *color,
+            #[cfg(test)]
+            Self::Synthetic { color, .. } => *color,
         }
     }
 
     pub(super) fn visible(&self) -> bool {
         match self {
-            Self::Artifact { visible, .. }
-            | Self::Candidate { visible, .. }
-            | Self::Record { visible, .. }
-            | Self::Synthetic { visible, .. } => *visible,
+            Self::Artifact { visible, .. } => *visible,
+            #[cfg(test)]
+            Self::Candidate { visible, .. } => *visible,
+            #[cfg(test)]
+            Self::Record { visible, .. } => *visible,
+            #[cfg(test)]
+            Self::Synthetic { visible, .. } => *visible,
         }
     }
 
     fn set_visible(&mut self, visible: bool) {
         match self {
-            Self::Artifact { visible: slot, .. }
-            | Self::Candidate { visible: slot, .. }
-            | Self::Record { visible: slot, .. }
-            | Self::Synthetic { visible: slot, .. } => *slot = visible,
+            Self::Artifact { visible: slot, .. } => *slot = visible,
+            #[cfg(test)]
+            Self::Candidate { visible: slot, .. } => *slot = visible,
+            #[cfg(test)]
+            Self::Record { visible: slot, .. } => *slot = visible,
+            #[cfg(test)]
+            Self::Synthetic { visible: slot, .. } => *slot = visible,
         }
     }
 
     fn layers(&self) -> GraphLayerMask {
         match self {
-            Self::Artifact { layers, .. }
-            | Self::Candidate { layers, .. }
-            | Self::Record { layers, .. }
-            | Self::Synthetic { layers, .. } => *layers,
+            Self::Artifact { layers, .. } => *layers,
+            #[cfg(test)]
+            Self::Candidate { layers, .. } => *layers,
+            #[cfg(test)]
+            Self::Record { layers, .. } => *layers,
+            #[cfg(test)]
+            Self::Synthetic { layers, .. } => *layers,
         }
     }
 
     fn add_layer(&mut self, layer: GraphLayerMask) {
         match self {
-            Self::Artifact { layers, .. }
-            | Self::Candidate { layers, .. }
-            | Self::Record { layers, .. }
-            | Self::Synthetic { layers, .. } => layers.insert(layer),
+            Self::Artifact { layers, .. } => layers.insert(layer),
+            #[cfg(test)]
+            Self::Candidate { layers, .. } => layers.insert(layer),
+            #[cfg(test)]
+            Self::Record { layers, .. } => layers.insert(layer),
+            #[cfg(test)]
+            Self::Synthetic { layers, .. } => layers.insert(layer),
         }
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum GraphNodeKind {
     Run,
@@ -453,6 +478,7 @@ pub(super) enum GraphNodeKind {
     Warning,
 }
 
+#[cfg(test)]
 impl GraphNodeKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -498,10 +524,15 @@ impl GraphEdgePayload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ViewEdgeKind {
     ArtifactPatch,
+    #[cfg(test)]
     HistoryArtifact,
+    #[cfg(test)]
     Candidate,
+    #[cfg(test)]
     Operation,
+    #[cfg(test)]
     Evidence,
+    #[cfg(test)]
     Synthetic,
 }
 
@@ -516,7 +547,8 @@ pub(super) struct ProjectedGraph {
     connectivity: GraphConnectivityDiagnostics,
 }
 
-pub(super) fn project_graph(graph: &DomainGraph, style: ViewStyle) -> ProjectedGraph {
+#[cfg(test)]
+fn legacy_all_record_projection(graph: &DomainGraph, style: ViewStyle) -> ProjectedGraph {
     let mut raw = RawGraph::default();
     let run = raw.add_node(GraphNode::Synthetic {
         kind: GraphNodeKind::Run,
@@ -1482,21 +1514,16 @@ fn add_unique_edge_with_layers(
 fn build_widget_graph(
     graph: &DomainGraph,
     style: ViewStyle,
-    mode: GraphViewMode,
+    _mode: GraphViewMode,
 ) -> BuiltWidgetGraph {
-    let projected: ProjectedGraph = match mode {
-        GraphViewMode::ArtifactTree
-        | GraphViewMode::Lineage
-        | GraphViewMode::ArtifactAndLineage
-        | GraphViewMode::Empty => project_artifact_tree(graph, style),
-        GraphViewMode::FullDebug => project_graph(graph, style),
-    };
+    let projected = project_artifact_tree(graph, style);
     BuiltWidgetGraph {
         graph: to_widget_graph(&projected.raw, style),
         connectivity: projected.connectivity,
     }
 }
 
+#[cfg(test)]
 fn artifact_color(graph: &DomainGraph, artifact: &ArtifactNode, style: ViewStyle) -> Color32 {
     if graph.history.blocks.values().any(|block| {
         matches!(
@@ -1527,6 +1554,7 @@ fn artifact_tree_color(
     }
 }
 
+#[cfg(test)]
 fn branch_selected_by_graph(graph: &DomainGraph, branch: &CandidateBranchNode) -> bool {
     graph.candidates.candidates.iter().any(|candidate| {
         candidate.branch_id.as_deref() == Some(branch.branch_id.as_str())
@@ -1534,6 +1562,7 @@ fn branch_selected_by_graph(graph: &DomainGraph, branch: &CandidateBranchNode) -
     })
 }
 
+#[cfg(test)]
 fn candidate_color(graph: &DomainGraph, candidate: &CandidateNode, style: ViewStyle) -> Color32 {
     if candidate_selected_by_graph(graph, candidate) {
         style.edge.colors.selected
@@ -1542,6 +1571,7 @@ fn candidate_color(graph: &DomainGraph, candidate: &CandidateNode, style: ViewSt
     }
 }
 
+#[cfg(test)]
 fn candidate_selected_by_graph(graph: &DomainGraph, candidate: &CandidateNode) -> bool {
     let Some(selection) = graph
         .selections
@@ -1554,6 +1584,7 @@ fn candidate_selected_by_graph(graph: &DomainGraph, candidate: &CandidateNode) -
     candidate_selected(selection, candidate)
 }
 
+#[cfg(test)]
 fn candidate_selected(selection: &SelectionNode, candidate: &CandidateNode) -> bool {
     if let (Some(root), Some(selected_membership_id)) = (
         selection.candidate_set_root.as_ref(),
@@ -1581,6 +1612,7 @@ fn candidate_selected(selection: &SelectionNode, candidate: &CandidateNode) -> b
         .is_some_and(|selected| selected == &candidate.subject)
 }
 
+#[cfg(test)]
 fn record_node(
     kind: GraphNodeKind,
     label: impl Into<String>,
@@ -1597,6 +1629,7 @@ fn record_node(
     }
 }
 
+#[cfg(test)]
 fn add_edge(
     raw: &mut RawGraph,
     source: NodeIndex,
@@ -1645,15 +1678,21 @@ fn add_edge_with_layers(
 
 fn edge_color(kind: ViewEdgeKind, style: ViewStyle) -> Color32 {
     match kind {
-        ViewEdgeKind::HistoryArtifact => style.edge.colors.selected,
         ViewEdgeKind::ArtifactPatch => style.edge.colors.synthesized,
+        #[cfg(test)]
+        ViewEdgeKind::HistoryArtifact => style.edge.colors.selected,
+        #[cfg(test)]
         ViewEdgeKind::Candidate => style.edge.colors.selected,
+        #[cfg(test)]
         ViewEdgeKind::Operation => style.edge.colors.applied,
+        #[cfg(test)]
         ViewEdgeKind::Evidence => style.edge.colors.restored,
+        #[cfg(test)]
         ViewEdgeKind::Synthetic => style.edge.colors.dropped,
     }
 }
 
+#[cfg(test)]
 fn connect_operation_target(
     raw: &mut RawGraph,
     operation: NodeIndex,
@@ -1725,6 +1764,7 @@ fn connect_operation_target(
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn evidence_subject_node(
     subject: &EvidenceSubject,
@@ -1891,10 +1931,6 @@ fn prefixed_compact_label(prefix: &str, value: &str) -> String {
     label
 }
 
-fn compact_id(value: &str) -> String {
-    truncate_label(compact_id_fragment(value))
-}
-
 fn compact_id_fragment(value: &str) -> &str {
     value
         .strip_prefix("artifact:")
@@ -1908,6 +1944,12 @@ fn compact_id_fragment(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+#[cfg(test)]
+fn compact_id(value: &str) -> String {
+    truncate_label(compact_id_fragment(value))
+}
+
+#[cfg(test)]
 fn truncate_label(value: impl AsRef<str>) -> String {
     let value = value.as_ref();
     let mut label = String::with_capacity(value.len().min(MAX_PRIMARY_LABEL_CHARS));
@@ -1929,6 +1971,7 @@ fn push_truncated(label: &mut String, value: &str, max_chars: usize) {
 
 #[derive(Debug)]
 struct ComponentRoot {
+    #[cfg(test)]
     index: NodeIndex,
     kind: &'static str,
     label: String,
@@ -1966,6 +2009,7 @@ fn component_roots(raw: &RawGraph) -> Vec<ComponentRoot> {
             .unwrap_or(component[0]);
         let payload = &raw[root];
         roots.push(ComponentRoot {
+            #[cfg(test)]
             index: root,
             kind: payload.kind_name(),
             label: payload.label().to_owned(),
@@ -1975,6 +2019,7 @@ fn component_roots(raw: &RawGraph) -> Vec<ComponentRoot> {
     roots
 }
 
+#[cfg(test)]
 fn anchor_unattached_components(
     raw: &mut RawGraph,
     run: NodeIndex,
@@ -2057,13 +2102,15 @@ mod tests {
     use ploke_records::ids::{ArtifactId, CandidateId, EntryId};
     use ploke_tree::graph::{CandidateBranchNode, CandidateSource};
 
-    use super::{GraphNode, MAX_PRIMARY_LABEL_CHARS, project_artifact_tree, project_graph};
+    use super::{
+        GraphNode, MAX_PRIMARY_LABEL_CHARS, legacy_all_record_projection, project_artifact_tree,
+    };
     use crate::ui::view::ViewStyle;
 
     #[test]
     fn projection_composes_branch_artifacts_candidates_and_selection() {
         let graph = graph_with_artifact_branch_selection();
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
         assert_eq!(count_nodes(&projected, "candidate"), 1);
@@ -2078,7 +2125,7 @@ mod tests {
         graph.candidates = candidate_graph.candidates;
         graph.selections = candidate_graph.selections;
 
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
 
         assert_eq!(count_nodes(&projected, "history-block"), 1);
         assert_eq!(count_nodes(&projected, "artifact"), 2);
@@ -2089,7 +2136,7 @@ mod tests {
     #[test]
     fn projection_adds_unattached_anchor_for_components_without_loaded_relations() {
         let graph = graph_with_candidate_inventory_selection();
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
 
         assert!(projected.connectivity.component_count_before_anchoring > 1);
         assert_eq!(count_nodes(&projected, "unattached"), 1);
@@ -2176,7 +2223,7 @@ mod tests {
     #[test]
     fn primary_labels_are_short_handles() {
         let graph = graph_with_candidate_inventory_selection();
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
 
         for node in projected.raw.node_weights() {
             assert!(
@@ -2190,7 +2237,7 @@ mod tests {
     #[test]
     fn full_raw_ids_remain_in_node_detail_text() {
         let graph = graph_with_candidate_inventory_selection();
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
 
         assert!(projected.raw.node_weights().any(|node| {
             node.kind_name() == "candidate" && node.detail().contains("candidate:duplicate")
@@ -2200,7 +2247,7 @@ mod tests {
     #[test]
     fn selected_candidate_color_uses_membership_key() {
         let graph = graph_with_candidate_inventory_selection();
-        let projected = project_graph(&graph, ViewStyle::default());
+        let projected = legacy_all_record_projection(&graph, ViewStyle::default());
         let selected = projected
             .raw
             .node_weights()

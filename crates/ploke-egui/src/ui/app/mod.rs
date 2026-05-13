@@ -37,6 +37,11 @@ impl OperatorApp {
         &self.graph
     }
 
+    pub fn with_mode(mut self, mode: GraphViewMode) -> Self {
+        self.view.set_mode(mode);
+        self
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_snapshot_sink(mut self, sink: SnapshotSink) -> Self {
         self.diagnostics_sink = Some(sink);
@@ -135,12 +140,6 @@ fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {
         {
             view.set_mode(GraphViewMode::Empty);
         }
-        if ui
-            .selectable_label(view.mode() == GraphViewMode::FullDebug, "Full debug")
-            .clicked()
-        {
-            view.set_mode(GraphViewMode::FullDebug);
-        }
     });
 }
 
@@ -185,15 +184,6 @@ fn render_diagnostics(ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
         "Synthetic anchors visible: {}",
         diagnostics.connectivity.synthetic_anchors_visible
     ));
-    if diagnostics.mode == GraphViewMode::FullDebug {
-        for root in diagnostics
-            .connectivity
-            .component_roots_before_anchoring
-            .iter()
-        {
-            ui.label(format!("Component root: {} {}", root.kind, root.label));
-        }
-    }
     ui.label(format!(
         "Graph: {:.0} x {:.0}",
         diagnostics.graph_size.x, diagnostics.graph_size.y

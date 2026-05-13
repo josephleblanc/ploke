@@ -149,7 +149,6 @@ pub enum GraphViewMode {
     Lineage,
     ArtifactAndLineage,
     Empty,
-    FullDebug,
 }
 
 impl GraphViewMode {
@@ -159,12 +158,7 @@ impl GraphViewMode {
             Self::Lineage => "lineage",
             Self::ArtifactAndLineage => "artifact-and-lineage",
             Self::Empty => "empty",
-            Self::FullDebug => "full-debug",
         }
-    }
-
-    fn is_full_debug(self) -> bool {
-        matches!(self, Self::FullDebug)
     }
 }
 

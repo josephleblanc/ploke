@@ -282,6 +282,13 @@ fn fit_bounds(bounds: Rect, viewport_size: Vec2, zoom: f32) -> Rect {
 
 impl EdgeCrossingsByKind {
     fn record(&mut self, left: ViewEdgeKind, right: ViewEdgeKind) {
+        #[cfg(not(test))]
+        {
+            let _ = (left, right);
+            self.artifact_artifact += 1;
+        }
+
+        #[cfg(test)]
         match (left, right) {
             (
                 ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,

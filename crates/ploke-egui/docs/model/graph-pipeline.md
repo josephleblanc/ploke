@@ -135,11 +135,9 @@ GraphViewMode::ArtifactAndLineage  -> show both layers
 GraphViewMode::Empty               -> show neither layer
 ```
 
-`FullDebug` may remain a separate debug projection because it intentionally
-contains records that are not part of the product artifact/lineage surface.
-Default artifact/lineage diagnostics should be derived directly from
-`&DomainGraph`; they should not build the full debug projection as an
-intermediate count source.
+All live graph modes use the artifact/lineage projection. Record-level graph
+statistics should be exposed as bounded diagnostics derived from `&DomainGraph`,
+not by rendering every loaded record as one large debug graph.
 
 ## Current Problem Area
 

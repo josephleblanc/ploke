@@ -11,13 +11,14 @@ use crate::demo::sample_graph;
 use crate::diagnostics::SnapshotSink;
 use crate::import::graph_from_run_root;
 use crate::ui::app::OperatorApp;
+use crate::ui::view::GraphViewMode;
 use ploke_tree::Graph;
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let run = Run::from_env();
     let options = eframe::NativeOptions::default();
     let graph = initial_graph(run.run_root)?;
-    let app = app(graph, run.snapshot)?;
+    let app = app(graph, run.mode, run.snapshot)?;
     eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
     Ok(())
 }
@@ -30,8 +31,8 @@ fn initial_graph(run_root: Option<PathBuf>) -> Result<Graph, Box<dyn Error>> {
     Ok(graph_from_run_root(run_root)?)
 }
 
-fn app(graph: Graph, snapshot: bool) -> Result<OperatorApp, Box<dyn Error>> {
-    let app = OperatorApp::new(graph);
+fn app(graph: Graph, mode: GraphViewMode, snapshot: bool) -> Result<OperatorApp, Box<dyn Error>> {
+    let app = OperatorApp::new(graph).with_mode(mode);
     #[cfg(feature = "dev")]
     {
         if !snapshot {
@@ -50,6 +51,7 @@ fn app(graph: Graph, snapshot: bool) -> Result<OperatorApp, Box<dyn Error>> {
 #[derive(Debug)]
 struct Run {
     run_root: Option<PathBuf>,
+    mode: GraphViewMode,
     snapshot: bool,
 }
 
@@ -60,6 +62,7 @@ impl Run {
             let args = Args::parse();
             return Self {
                 run_root: args.run_root.or(args.positional_run_root),
+                mode: args.mode.unwrap_or_default(),
                 snapshot: args.snapshot,
             };
         }
@@ -68,6 +71,7 @@ impl Run {
         {
             Self {
                 run_root: std::env::args_os().nth(1).map(PathBuf::from),
+                mode: GraphViewMode::ArtifactTree,
                 snapshot: false,
             }
         }
@@ -86,6 +90,27 @@ struct Args {
 
     #[arg(long)]
     snapshot: bool,
+
+    #[arg(
+        long,
+        value_name = "MODE",
+        value_parser = parse_mode,
+        help = "Initial graph mode: artifact-tree, lineage, both, or none"
+    )]
+    mode: Option<GraphViewMode>,
+}
+
+#[cfg(feature = "dev")]
+fn parse_mode(value: &str) -> Result<GraphViewMode, String> {
+    match value {
+        "artifact-tree" | "artifact" => Ok(GraphViewMode::ArtifactTree),
+        "lineage" => Ok(GraphViewMode::Lineage),
+        "artifact-and-lineage" | "both" => Ok(GraphViewMode::ArtifactAndLineage),
+        "empty" | "none" => Ok(GraphViewMode::Empty),
+        other => Err(format!(
+            "unknown graph mode '{other}' (expected artifact-tree, lineage, both, or none)"
+        )),
+    }
 }
 
 #[cfg(feature = "dev")]

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
+use crate::ui::view::GraphViewDiagnostics;
 
 const SNAPSHOT_VERSION: &str = "ploke-egui.graph-diagnostics.v1";
 const DEFAULT_MAX_SNAPSHOTS: u64 = 10;
@@ -111,16 +111,7 @@ impl Snapshot {
             component_count_before_anchoring: diagnostics
                 .connectivity
                 .component_count_before_anchoring,
-            component_roots_before_anchoring: if diagnostics.mode == GraphViewMode::FullDebug {
-                diagnostics
-                    .connectivity
-                    .component_roots_before_anchoring
-                    .iter()
-                    .map(|root| format!("{} {}", root.kind, root.label))
-                    .collect()
-            } else {
-                Vec::new()
-            },
+            component_roots_before_anchoring: Vec::new(),
             hidden_record_count: diagnostics.connectivity.hidden_record_count,
             hidden_edge_count: diagnostics.connectivity.hidden_edge_count,
             hidden_evidence_count: diagnostics.connectivity.hidden_evidence_count,
