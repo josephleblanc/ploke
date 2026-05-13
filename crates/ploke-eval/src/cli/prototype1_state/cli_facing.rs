@@ -876,7 +876,7 @@ enum CandidateGenerationError {
     )]
     MissingDeterministicEvidence { node_id: String },
     #[error(
-        "candidate-generator=broad-harness-request published request '{}' (request_id='{}', request_hash='{}'), prompt '{}', and isolated candidate workspace '{}'; write a typed SubmittedBroadHarnessResult to request-bound submitted-result path '{}'",
+        "candidate-generator=broad-harness-request published request '{}' (request_id='{}', request_hash='{}'), prompt '{}', and isolated candidate workspace '{}'; awaiting staged edit result, with submitted-result path reserved at '{}'",
         request_path.display(),
         request_id,
         request_hash,
@@ -1752,15 +1752,11 @@ fn publish_broad_edit_harness_request(
         })?;
     }
     write_json_file_pretty(&request_path, &published)?;
-    fs::write(
-        published.prompt_path(),
-        published
-            .request()
-            .render_prompt(published.submitted_result_path()),
-    )
-    .map_err(|source| PrepareError::WriteManifest {
-        path: published.prompt_path().to_path_buf(),
-        source,
+    fs::write(published.prompt_path(), published.request().render_prompt()).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: published.prompt_path().to_path_buf(),
+            source,
+        }
     })?;
     Ok(BroadHarnessRequestPublication {
         request_path,
@@ -11358,11 +11354,13 @@ stop_after = "complete"
                 .any(|root| root.kind == EvidenceRootKind::HistoryBlocks)
         );
         let prompt = fs::read_to_string(prompt_path).expect("read prompt");
-        assert!(prompt.contains("protocol diagnoses"));
+        assert!(prompt.contains("Use diagnoses as context"));
         assert!(prompt.contains("not as hard file targets"));
         assert!(prompt.contains("crates/ploke-eval/src/cli/prototype1_state/backend.rs"));
-        assert!(prompt.contains("Write the typed submitted-result evidence"));
-        assert!(prompt.contains(submitted_result_path.to_string_lossy().as_ref()));
+        assert!(prompt.contains("Use the available edit tools to stage one candidate change"));
+        assert!(prompt.contains("Use unified-diff patch tools"));
+        assert!(!prompt.contains("Write the typed submitted-result evidence"));
+        assert!(!prompt.contains(submitted_result_path.to_string_lossy().as_ref()));
         assert!(prompt.contains(workspace_path.to_string_lossy().as_ref()));
     }
 

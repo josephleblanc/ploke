@@ -69,9 +69,9 @@ pub(crate) mod contract {
                     ],
                     facts: vec![
                         Fact {
-                            label: "authority".to_string(),
+                            label: "edit submission".to_string(),
                             value:
-                                "The submitted result is evidence only; ploke-eval owns admission."
+                                "Use the available edit tools to stage the candidate change; do not create separate result or bookkeeping files."
                                     .to_string(),
                             source: None,
                         },
@@ -994,9 +994,7 @@ pub(crate) enum ProtectedCorePolicy {
 impl ProtectedCorePolicy {
     fn label(self) -> &'static str {
         match self {
-            Self::WorkspaceExceptPlokeEvalAuthoritySet => {
-                "workspace-except-ploke-eval authority prefixes and filenames"
-            }
+            Self::WorkspaceExceptPlokeEvalAuthoritySet => "protected core prefixes and filenames",
         }
     }
 }
@@ -1011,7 +1009,7 @@ impl ProtectedCoreConsequence {
     fn label(self) -> &'static str {
         match self {
             Self::RejectBeforeAdmissionOrInvalidDescendant => {
-                "edits to protected authority are rejected before admission or prevent a valid descendant from starting"
+                "edits to protected core paths are rejected or produce an invalid candidate"
             }
         }
     }
@@ -1047,7 +1045,9 @@ pub(crate) enum SelectionAuthority {
 impl SelectionAuthority {
     fn label(self) -> &'static str {
         match self {
-            Self::HistoryBackedSuccessorSelection => "History-backed successor selection",
+            Self::HistoryBackedSuccessorSelection => {
+                "future selection compares candidate descendants"
+            }
         }
     }
 }
@@ -1061,9 +1061,7 @@ pub(crate) enum GuidancePolicy {
 impl GuidancePolicy {
     fn label(self) -> &'static str {
         match self {
-            Self::ProtocolDiagnosticsAreContext => {
-                "protocol diagnoses are guidance, not hard file targets"
-            }
+            Self::ProtocolDiagnosticsAreContext => "diagnoses are guidance, not hard file targets",
         }
     }
 }
@@ -1180,28 +1178,28 @@ pub(crate) enum HarnessInstruction {
     TreatProtocolDiagnosticsAsGuidance,
     EditBroadSurfaceOutsideProtectedCore,
     ChooseLikelyDescendantImprovement,
-    WriteSubmittedResult,
+    #[serde(alias = "write_submitted_result")]
+    StageCandidateChange,
 }
 
 impl HarnessInstruction {
-    fn render(self, submitted_result_path: &Path) -> String {
+    fn render(self) -> String {
         match self {
             Self::InspectRepositoryAndEvidence => {
                 "Inspect the repository and the listed evidence before choosing edits.".to_string()
             }
             Self::TreatProtocolDiagnosticsAsGuidance => {
-                "Use protocol diagnoses as context about possible tool or workflow issues, not as hard file targets.".to_string()
+                "Use diagnoses as context about possible tool or workflow issues, not as hard file targets.".to_string()
             }
             Self::EditBroadSurfaceOutsideProtectedCore => {
-                "You may edit any useful part of the allowed workspace surface outside the protected ploke-eval authority core.".to_string()
+                "You may edit any useful part of the allowed workspace surface outside the protected core.".to_string()
             }
             Self::ChooseLikelyDescendantImprovement => {
                 "Choose edits that you judge most likely to improve descendant performance under the evaluation and successor-selection loop.".to_string()
             }
-            Self::WriteSubmittedResult => format!(
-                "Write the typed submitted-result evidence to {}. This submission is evidence only; ploke-eval later checks it and may mint a ChildPlan after admission.",
-                submitted_result_path.display()
-            ),
+            Self::StageCandidateChange => {
+                "Use the available edit tools to stage one candidate change. Prefer semantic edit tools for Rust item replacements. Use unified-diff patch tools for docs, configs, tests, non-Rust files, or edits that do not map cleanly to a semantic item. Do not create extra report, result, bookkeeping, or control files unless they are part of the source change you are proposing.".to_string()
+            }
         }
     }
 }
@@ -1247,29 +1245,12 @@ impl SubmissionAuthorityBoundary {
             child_plan: SubmissionAuthorityClaim::NotClaimed,
         }
     }
-
-    fn render(&self) -> String {
-        format!(
-            "admission={}, grant={}, child_plan={}",
-            self.admission.label(),
-            self.grant.label(),
-            self.child_plan.label()
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SubmissionAuthorityClaim {
     NotClaimed,
-}
-
-impl SubmissionAuthorityClaim {
-    fn label(self) -> &'static str {
-        match self {
-            Self::NotClaimed => "not claimed",
-        }
-    }
 }
 
 impl BroadHarnessRequest {
@@ -1362,14 +1343,14 @@ impl BroadHarnessRequest {
                 HarnessInstruction::TreatProtocolDiagnosticsAsGuidance,
                 HarnessInstruction::EditBroadSurfaceOutsideProtectedCore,
                 HarnessInstruction::ChooseLikelyDescendantImprovement,
-                HarnessInstruction::WriteSubmittedResult,
+                HarnessInstruction::StageCandidateChange,
             ],
         }
     }
 
-    pub(crate) fn render_prompt(&self, submitted_result_path: &Path) -> String {
+    pub(crate) fn render_prompt(&self) -> String {
         let mut prompt = String::new();
-        prompt.push_str("# Prototype 1 broad edit harness request\n\n");
+        prompt.push_str("# Broad code edit request\n\n");
         prompt.push_str(&format!("Parent node: {}\n", self.parent_node_id.as_str()));
         prompt.push_str(&format!(
             "Source repository snapshot: {}\n",
@@ -1405,6 +1386,9 @@ impl BroadHarnessRequest {
 
         prompt.push_str("## Evidence\n\n");
         for root in &self.evidence_roots {
+            if root.kind == EvidenceRootKind::SubmittedResultOutput {
+                continue;
+            }
             prompt.push_str(&format!(
                 "- {}: {} ({})\n",
                 root.kind.label(),
@@ -1414,11 +1398,8 @@ impl BroadHarnessRequest {
         }
         prompt.push('\n');
 
-        prompt.push_str("## Return Evidence\n\n");
-        prompt.push_str(&format!(
-            "- Authority boundary: {}\n",
-            self.return_evidence.authority_boundary.render()
-        ));
+        prompt.push_str("## After Staging\n\n");
+        prompt.push_str("- Briefly explain the staged edit after the tool call succeeds.\n");
         for field in &self.return_evidence.fields {
             prompt.push_str(&format!("- {}\n", field.label()));
         }
@@ -1426,10 +1407,7 @@ impl BroadHarnessRequest {
 
         prompt.push_str("## Instructions\n\n");
         for instruction in &self.instructions {
-            prompt.push_str(&format!(
-                "- {}\n",
-                instruction.render(submitted_result_path)
-            ));
+            prompt.push_str(&format!("- {}\n", instruction.render()));
         }
         prompt
     }
@@ -1708,13 +1686,11 @@ mod tests {
     }
 
     #[test]
-    fn prompt_names_submitted_result_instead_of_child_plan() {
+    fn prompt_instructs_tui_model_to_stage_edit_with_tools() {
         let fixture = Fixture::new();
         let published = fixture.published_request();
 
-        let prompt = published
-            .request()
-            .render_prompt(published.submitted_result_path());
+        let prompt = published.request().render_prompt();
 
         let workspace_line = format!(
             "Mutable candidate workspace: {}",
@@ -1724,19 +1700,28 @@ mod tests {
                 .display()
         );
         assert!(prompt.contains(&workspace_line));
-        assert!(prompt.contains(
-            "Authority boundary: admission=not claimed, grant=not claimed, child_plan=not claimed"
-        ));
         assert!(prompt.contains("## Latest Evidence Digest"));
         assert!(prompt.contains("## Validation Contract"));
         assert!(prompt.contains("cargo check -p ploke-eval"));
         assert!(prompt.contains("## Attempt Policy"));
         assert!(prompt.contains("Maximum attempts: 4"));
-        let output_line = format!(
-            "Write the typed submitted-result evidence to {}.",
-            fixture.submitted_result_path.display()
+        assert!(prompt.contains("Use the available edit tools to stage one candidate change."));
+        assert!(prompt.contains("Prefer semantic edit tools for Rust item replacements."));
+        assert!(prompt.contains("Use unified-diff patch tools"));
+        assert!(
+            prompt.contains("Do not create extra report, result, bookkeeping, or control files")
         );
-        assert!(prompt.contains(&output_line));
+        assert!(prompt.contains("## After Staging"));
+        assert!(prompt.contains("what files you changed"));
+        assert!(
+            !prompt.contains(fixture.submitted_result_path.to_str().unwrap()),
+            "model-facing prompt must not name the eval-owned submitted result path"
+        );
+        assert!(!prompt.contains("submitted-result"));
+        assert!(!prompt.contains("submitted result output"));
+        assert!(!prompt.contains("Authority boundary"));
+        assert!(!prompt.contains("ChildPlan"));
+        assert!(!prompt.contains("admission"));
         assert!(!prompt.contains("Write the resulting child plan"));
     }
 
