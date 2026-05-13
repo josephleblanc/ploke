@@ -10,6 +10,8 @@ use sha2::{Digest as _, Sha256};
 use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
+use super::surface;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct BroadHarnessRequest {
     pub(crate) schema: BroadHarnessRequestSchema,
@@ -24,16 +26,229 @@ pub(crate) struct BroadHarnessRequest {
     pub(crate) instructions: Vec<HarnessInstruction>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct PublishedBroadHarnessRequest {
-    pub(crate) schema: PublishedBroadHarnessRequestSchema,
-    pub(crate) request_id: String,
-    pub(crate) request_hash: String,
-    pub(crate) request_path: PathBuf,
-    pub(crate) prompt_path: PathBuf,
-    pub(crate) submitted_result_path: PathBuf,
-    pub(crate) admission_binding: RequestAdmissionBinding,
-    pub(crate) request: BroadHarnessRequest,
+// structural-naming:allow compatibility alias; active carrier is request::Request<request::Broad, request::Published>.
+pub(crate) type PublishedBroadHarnessRequest = request::Request<request::Broad, request::Published>;
+
+// structural-naming:allow compatibility alias; active carrier is request::Binding<surface::SurfacePolicyId>.
+pub(crate) type RequestAdmissionBinding = request::Binding<surface::SurfacePolicyId>;
+
+pub(crate) mod request {
+    use std::{marker::PhantomData, path::PathBuf};
+
+    use serde::{Deserialize, Deserializer, Serialize, de};
+
+    use crate::loop_graph::{ArtifactId, Coordinate};
+
+    use super::{BroadHarnessRequest, RequestAdmissionPolicyId, RequestSchema};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Broad {}
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Draft {}
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Published {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(transparent)]
+    pub(crate) struct Identity<K> {
+        value: String,
+        #[serde(skip)]
+        _kind: PhantomData<fn() -> K>,
+    }
+
+    impl<K> Identity<K> {
+        pub(super) fn new(value: impl Into<String>) -> Self {
+            Self {
+                value: value.into(),
+                _kind: PhantomData,
+            }
+        }
+
+        pub(crate) fn as_str(&self) -> &str {
+            &self.value
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(transparent)]
+    pub(crate) struct Hash<K> {
+        value: String,
+        #[serde(skip)]
+        _kind: PhantomData<fn() -> K>,
+    }
+
+    impl<K> Hash<K> {
+        pub(super) fn new(value: impl Into<String>) -> Self {
+            Self {
+                value: value.into(),
+                _kind: PhantomData,
+            }
+        }
+
+        pub(super) fn empty() -> Self {
+            Self::new(String::new())
+        }
+
+        pub(crate) fn as_str(&self) -> &str {
+            &self.value
+        }
+    }
+
+    impl<K> std::fmt::Display for Hash<K> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.as_str())
+        }
+    }
+
+    impl<K> PartialEq<&str> for Hash<K> {
+        fn eq(&self, other: &&str) -> bool {
+            self.as_str() == *other
+        }
+    }
+
+    impl<K> PartialEq<str> for Hash<K> {
+        fn eq(&self, other: &str) -> bool {
+            self.as_str() == other
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Reference<K, S> {
+        identity: Identity<K>,
+        hash: Hash<K>,
+        _state: PhantomData<fn() -> S>,
+    }
+
+    impl<K, S> Reference<K, S> {
+        pub(super) fn new(identity: Identity<K>, hash: Hash<K>) -> Self {
+            Self {
+                identity,
+                hash,
+                _state: PhantomData,
+            }
+        }
+
+        pub(crate) fn request_id(&self) -> &str {
+            self.identity.as_str()
+        }
+
+        pub(crate) fn request_hash(&self) -> &Hash<K> {
+            &self.hash
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+    #[serde(bound = "")]
+    pub(crate) struct Binding<P> {
+        coordinate: Coordinate,
+        target_artifact_id: ArtifactId,
+        policy_id: RequestAdmissionPolicyId,
+        #[serde(skip)]
+        _policy: PhantomData<fn() -> P>,
+    }
+
+    impl<P> Binding<P> {
+        pub(super) fn new_unchecked(
+            coordinate: Coordinate,
+            target_artifact_id: ArtifactId,
+            policy_id: RequestAdmissionPolicyId,
+        ) -> Self {
+            Self {
+                coordinate,
+                target_artifact_id,
+                policy_id,
+                _policy: PhantomData,
+            }
+        }
+
+        pub(crate) fn coordinate(&self) -> &Coordinate {
+            &self.coordinate
+        }
+
+        pub(crate) fn target_artifact_id(&self) -> &ArtifactId {
+            &self.target_artifact_id
+        }
+
+        pub(crate) fn policy_id(&self) -> &RequestAdmissionPolicyId {
+            &self.policy_id
+        }
+    }
+
+    impl<'de, P> Deserialize<'de> for Binding<P> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Record {
+                coordinate: Coordinate,
+                target_artifact_id: ArtifactId,
+                policy_id: RequestAdmissionPolicyId,
+            }
+
+            let record = Record::deserialize(deserializer)?;
+            match &record.coordinate.target {
+                crate::loop_graph::OperationTarget::Artifact { artifact_id }
+                    if artifact_id == &record.target_artifact_id =>
+                {
+                    Ok(Self::new_unchecked(
+                        record.coordinate,
+                        record.target_artifact_id,
+                        record.policy_id,
+                    ))
+                }
+                actual_target => Err(de::Error::custom(format!(
+                    "request binding coordinate target {:?} does not match target artifact {}",
+                    actual_target, record.target_artifact_id
+                ))),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(bound = "")]
+    pub(crate) struct Request<K, S> {
+        pub(crate) schema: RequestSchema,
+        pub(crate) request_id: Identity<K>,
+        pub(crate) request_hash: Hash<K>,
+        pub(crate) request_path: PathBuf,
+        pub(crate) prompt_path: PathBuf,
+        pub(crate) submitted_result_path: PathBuf,
+        pub(crate) admission_binding:
+            Binding<crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId>,
+        pub(crate) request: BroadHarnessRequest,
+        #[serde(skip)]
+        _state: PhantomData<fn() -> S>,
+    }
+
+    impl<K> Request<K, Published> {
+        pub(super) fn new_published(
+            schema: RequestSchema,
+            request_id: Identity<K>,
+            request_hash: Hash<K>,
+            request_path: PathBuf,
+            prompt_path: PathBuf,
+            submitted_result_path: PathBuf,
+            admission_binding: Binding<
+                crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId,
+            >,
+            request: BroadHarnessRequest,
+        ) -> Self {
+            Self {
+                schema,
+                request_id,
+                request_hash,
+                request_path,
+                prompt_path,
+                submitted_result_path,
+                admission_binding,
+                request,
+                _state: PhantomData,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,7 +259,7 @@ pub(crate) enum BroadHarnessRequestSchema {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PublishedBroadHarnessRequestSchema {
+pub(crate) enum RequestSchema {
     V1,
 }
 
@@ -172,39 +387,29 @@ impl ParentNodeRef {
     }
 }
 
-/// Request-time authority identity that later admission must match before backend checks.
-///
-/// This is binding evidence only. It is not itself admission.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct RequestAdmissionBinding {
-    pub(crate) coordinate: Coordinate,
-    pub(crate) target_artifact_id: ArtifactId,
-    pub(crate) policy_id: RequestAdmissionPolicyId,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RequestAdmissionBindingError {
+pub(crate) enum RequestBindingError {
     CoordinateTargetMismatch {
         expected_target_artifact_id: ArtifactId,
         actual_target: OperationTarget,
     },
 }
 
-impl RequestAdmissionBinding {
+impl request::Binding<surface::SurfacePolicyId> {
     pub(crate) fn new(
         coordinate: Coordinate,
         target_artifact_id: ArtifactId,
         policy_id: impl Into<String>,
-    ) -> Result<Self, RequestAdmissionBindingError> {
+    ) -> Result<Self, RequestBindingError> {
         match &coordinate.target {
             OperationTarget::Artifact { artifact_id } if artifact_id == &target_artifact_id => {
-                Ok(Self {
+                Ok(Self::new_unchecked(
                     coordinate,
                     target_artifact_id,
-                    policy_id: RequestAdmissionPolicyId::new(policy_id),
-                })
+                    RequestAdmissionPolicyId::new(policy_id),
+                ))
             }
-            actual_target => Err(RequestAdmissionBindingError::CoordinateTargetMismatch {
+            actual_target => Err(RequestBindingError::CoordinateTargetMismatch {
                 expected_target_artifact_id: target_artifact_id,
                 actual_target: actual_target.clone(),
             }),
@@ -213,12 +418,12 @@ impl RequestAdmissionBinding {
 
     pub(crate) fn from_admission(
         admission: &EditSurfaceAdmission,
-    ) -> Result<Self, RequestAdmissionBindingError> {
+    ) -> Result<Self, RequestBindingError> {
         let coordinate = admission.coordinate().clone();
         let target_artifact_id = match &coordinate.target {
             OperationTarget::Artifact { artifact_id } => artifact_id.clone(),
             actual_target => {
-                return Err(RequestAdmissionBindingError::CoordinateTargetMismatch {
+                return Err(RequestBindingError::CoordinateTargetMismatch {
                     expected_target_artifact_id: ArtifactId::new(
                         "<admission target artifact>".to_string(),
                     ),
@@ -241,20 +446,8 @@ impl RequestAdmissionBinding {
             .expect("prototype workspace admission binding should match its target artifact")
     }
 
-    pub(crate) fn coordinate(&self) -> &Coordinate {
-        &self.coordinate
-    }
-
-    pub(crate) fn target_artifact_id(&self) -> &ArtifactId {
-        &self.target_artifact_id
-    }
-
     pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
-        &self.target_artifact_id
-    }
-
-    pub(crate) fn policy_id(&self) -> &RequestAdmissionPolicyId {
-        &self.policy_id
+        self.target_artifact_id()
     }
 }
 
@@ -811,7 +1004,7 @@ impl BroadHarnessRequest {
     }
 }
 
-impl PublishedBroadHarnessRequest {
+impl request::Request<request::Broad, request::Published> {
     pub(crate) fn prototype1_workspace(
         parent_node_id: String,
         source_repository: PathBuf,
@@ -820,7 +1013,7 @@ impl PublishedBroadHarnessRequest {
         request_path: PathBuf,
         prompt_path: PathBuf,
         submitted_result_path: PathBuf,
-        admission_binding: RequestAdmissionBinding,
+        admission_binding: request::Binding<surface::SurfacePolicyId>,
     ) -> Self {
         let workspace_path = prototype_root
             .join("workspaces/edit-harness")
@@ -844,26 +1037,30 @@ impl PublishedBroadHarnessRequest {
             prototype_root,
             &submitted_result_path,
         );
-        let mut published = Self {
-            schema: PublishedBroadHarnessRequestSchema::V1,
-            request_id: publication.request_id(&parent_node_id),
-            request_hash: String::new(),
+        let mut published = Self::new_published(
+            RequestSchema::V1,
+            request::Identity::new(publication.request_id(&parent_node_id)),
+            request::Hash::empty(),
             request_path,
             prompt_path,
             submitted_result_path,
             admission_binding,
             request,
-        };
-        published.request_hash = published.compute_request_hash();
+        );
+        published.request_hash = request::Hash::new(published.compute_request_hash());
         published
     }
 
     pub(crate) fn request_id(&self) -> &str {
-        &self.request_id
+        self.request_id.as_str()
     }
 
     pub(crate) fn request_hash(&self) -> &str {
-        &self.request_hash
+        self.request_hash.as_str()
+    }
+
+    pub(crate) fn reference(&self) -> request::Reference<request::Broad, request::Published> {
+        request::Reference::new(self.request_id.clone(), self.request_hash.clone())
     }
 
     pub(crate) fn request_path(&self) -> &Path {
@@ -878,7 +1075,7 @@ impl PublishedBroadHarnessRequest {
         &self.submitted_result_path
     }
 
-    pub(crate) fn admission_binding(&self) -> &RequestAdmissionBinding {
+    pub(crate) fn admission_binding(&self) -> &request::Binding<surface::SurfacePolicyId> {
         &self.admission_binding
     }
 
@@ -892,16 +1089,16 @@ impl PublishedBroadHarnessRequest {
 
     pub(crate) fn with_admission_binding(
         mut self,
-        admission_binding: RequestAdmissionBinding,
+        admission_binding: request::Binding<surface::SurfacePolicyId>,
     ) -> Self {
         self.admission_binding = admission_binding;
-        self.request_hash = self.compute_request_hash();
+        self.request_hash = request::Hash::new(self.compute_request_hash());
         self
     }
 
     fn compute_request_hash(&self) -> String {
-        let preimage = PublishedBroadHarnessRequestPreimage {
-            request_id: &self.request_id,
+        let preimage = RequestPreimage {
+            request_id: self.request_id(),
             request_path: &self.request_path,
             prompt_path: &self.prompt_path,
             submitted_result_path: &self.submitted_result_path,
@@ -914,13 +1111,21 @@ impl PublishedBroadHarnessRequest {
     }
 }
 
+impl From<&request::Request<request::Broad, request::Published>>
+    for request::Reference<request::Broad, request::Published>
+{
+    fn from(value: &request::Request<request::Broad, request::Published>) -> Self {
+        value.reference()
+    }
+}
+
 #[derive(Serialize)]
-struct PublishedBroadHarnessRequestPreimage<'a> {
+struct RequestPreimage<'a> {
     request_id: &'a str,
     request_path: &'a PathBuf,
     prompt_path: &'a PathBuf,
     submitted_result_path: &'a PathBuf,
-    admission_binding: &'a RequestAdmissionBinding,
+    admission_binding: &'a request::Binding<surface::SurfacePolicyId>,
     request: &'a BroadHarnessRequest,
 }
 

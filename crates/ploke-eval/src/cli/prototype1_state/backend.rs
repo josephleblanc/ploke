@@ -26,9 +26,9 @@ use super::edit_surface::{
 };
 use super::event::ContentHash;
 use super::history::{
-    ArtifactSurface, CheckedSurface, CheckedSurfaceGrant, CheckedSurfaceTransition, HistoryError,
-    HistoryHash, ProcedureRef, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence,
-    SurfaceTouch, SurfaceWritable, TreeKeyCommitment,
+    ArtifactSurface, CheckedSurface, CheckedSurfaceTransition, HistoryError, HistoryHash,
+    ProcedureRef, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
+    SurfaceWritable, TreeKeyCommitment, grant,
 };
 use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
 
@@ -387,8 +387,8 @@ impl CheckedSurfaceEdit {
         &self.checked_surface.transition.target_relpath
     }
 
-    pub(crate) fn coordinate(&self) -> &Coordinate {
-        &self.checked_surface.grant.coordinate
+    pub(crate) fn coordinate(&self) -> Coordinate {
+        self.checked_surface.grant.coordinate().operation()
     }
 
     pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
@@ -1294,27 +1294,30 @@ impl GitWorktreeBackend {
             .ok_or_else(|| BackendError::EditSurfaceCheck {
                 detail: "checked edit did not reach applied state".to_string(),
             })?;
-        let checked_surface = CheckedSurface {
-            grant: CheckedSurfaceGrant {
-                coordinate: applied_authority.coordinate().clone(),
-                policy: ProcedureRef::new(applied_authority.policy().as_str()),
-                writable: SurfaceWritable {
-                    target_relpath: target_relpath.clone(),
-                },
+        let transition = CheckedSurfaceTransition {
+            target_relpath: target_relpath.clone(),
+            base: SurfaceArtifactRef {
+                artifact_id: delta.base().id().clone(),
+                hash: delta.base().hash().as_str().to_string(),
             },
-            transition: CheckedSurfaceTransition {
-                target_relpath: target_relpath.clone(),
-                base: SurfaceArtifactRef {
-                    artifact_id: delta.base().id().clone(),
-                    hash: delta.base().hash().as_str().to_string(),
-                },
-                after: SurfaceArtifactRef {
-                    artifact_id: delta.after().id().clone(),
-                    hash: delta.after().hash().as_str().to_string(),
-                },
-                patch_id: patch_id.clone(),
+            after: SurfaceArtifactRef {
+                artifact_id: delta.after().id().clone(),
+                hash: delta.after().hash().as_str().to_string(),
             },
+            patch_id: patch_id.clone(),
         };
+        let grant = grant::Grant::<grant::Checked>::checked(
+            applied_authority.coordinate().clone(),
+            ProcedureRef::new(applied_authority.policy().as_str()),
+            SurfaceWritable {
+                target_relpath: target_relpath.clone(),
+            },
+            &transition,
+        )
+        .map_err(|err| BackendError::EditSurfaceCheck {
+            detail: err.to_string(),
+        })?;
+        let checked_surface = CheckedSurface { grant, transition };
 
         Ok(CheckedSurfaceEdit {
             surface: proposal_surface,
@@ -3025,15 +3028,21 @@ R  old.rs -> new.rs
         let grant = evidence.grant.expect("checked grant evidence");
         assert_eq!(grant.policy.as_str(), "policy:test-boundary");
         assert_eq!(grant.writable.target_relpath, relpath);
-        assert_eq!(
-            grant.coordinate,
-            crate::cli::prototype1_state::history::SurfaceGrantCoordinate::Checked(
-                crate::cli::prototype1_state::history::CheckedSurfaceGrantCoordinate {
-                    runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
-                    target_artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-surface",),
-                },
-            )
-        );
+        match grant.coordinate {
+            crate::cli::prototype1_state::history::grant::AnyCoordinate::Checked(coordinate) => {
+                assert_eq!(
+                    coordinate.runtime_id(),
+                    crate::loop_graph::RuntimeId(Uuid::nil())
+                );
+                assert_eq!(
+                    coordinate.target_artifact_id(),
+                    &crate::loop_graph::ArtifactId::new("artifact:base-surface")
+                );
+            }
+            crate::cli::prototype1_state::history::grant::AnyCoordinate::Admitted(_) => {
+                panic!("checked edit should keep checked grant coordinate")
+            }
+        }
     }
 
     #[test]

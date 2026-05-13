@@ -1108,6 +1108,7 @@ pub(crate) struct HistoryPreview {
 }
 
 #[derive(Debug, Clone, Serialize)]
+// structural-naming:allow projection/export wrapper over ChildEvidenceSet.
 pub(crate) struct ChildEvidenceProjection {
     schema_version: String,
     generated_at: String,

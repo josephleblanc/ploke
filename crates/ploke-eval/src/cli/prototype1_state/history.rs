@@ -2876,7 +2876,7 @@ pub(crate) struct SurfaceEvidence {
     pub(crate) policy: String,
     pub(crate) target_relpath: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) grant: Option<SurfaceGrantEvidence>,
+    pub(crate) grant: Option<grant::Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) check: Option<SurfaceCheckEvidence>,
     pub(crate) base: SurfaceArtifactRef,
@@ -2902,23 +2902,16 @@ pub(crate) struct SurfaceEvidence {
 /// explicit carrier that preserves checked runtime authority immediately and
 /// can later refine that authority to an admitted candidate coordinate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SurfaceGrantEvidence {
-    pub(crate) coordinate: SurfaceGrantCoordinate,
+pub(crate) struct GrantEvidence {
+    pub(crate) coordinate: grant::AnyCoordinate,
     pub(crate) policy: ProcedureRef,
     pub(crate) writable: SurfaceWritable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckedSurface {
-    pub(crate) grant: CheckedSurfaceGrant,
+    pub(crate) grant: grant::Grant<grant::Checked>,
     pub(crate) transition: CheckedSurfaceTransition,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CheckedSurfaceGrant {
-    pub(crate) coordinate: crate::loop_graph::Coordinate,
-    pub(crate) policy: ProcedureRef,
-    pub(crate) writable: SurfaceWritable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2929,23 +2922,425 @@ pub(crate) struct CheckedSurfaceTransition {
     pub(crate) patch_id: PatchId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum SurfaceGrantCoordinate {
-    Checked(CheckedSurfaceGrantCoordinate),
-    Admitted(AdmittedSurfaceGrantCoordinate),
-}
+pub(crate) mod grant {
+    use super::*;
+    use std::marker::PhantomData;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CheckedSurfaceGrantCoordinate {
-    pub(crate) runtime_id: crate::loop_graph::RuntimeId,
-    pub(crate) target_artifact_id: ArtifactId,
-}
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct Checked;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct AdmittedSurfaceGrantCoordinate {
-    pub(crate) candidate: CandidateCoordinate,
-    pub(crate) target_artifact_id: ArtifactId,
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct Admitted;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Coordinate<S> {
+        record: record::Coordinate,
+        state: PhantomData<S>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Grant<S> {
+        coordinate: Coordinate<S>,
+        policy: ProcedureRef,
+        writable: SurfaceWritable,
+    }
+
+    pub(crate) type Evidence = super::GrantEvidence;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(untagged)]
+    pub(crate) enum AnyCoordinate {
+        Checked(Coordinate<Checked>),
+        Admitted(Coordinate<Admitted>),
+    }
+
+    pub(crate) mod record {
+        use super::*;
+
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        pub(crate) struct Checked {
+            pub(crate) runtime_id: crate::loop_graph::RuntimeId,
+            pub(crate) target_artifact_id: ArtifactId,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        pub(crate) struct Admitted {
+            pub(crate) candidate: CandidateCoordinate,
+            pub(crate) target_artifact_id: ArtifactId,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) enum Coordinate {
+            Checked(Checked),
+            Admitted(Admitted),
+        }
+    }
+
+    impl Coordinate<Checked> {
+        fn from_operation(
+            coordinate: &crate::loop_graph::Coordinate,
+        ) -> Result<Self, HistoryError> {
+            let crate::loop_graph::OperationTarget::Artifact { artifact_id } = &coordinate.target
+            else {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant requires OperationTarget::Artifact, got {:?}",
+                        coordinate.target
+                    ),
+                });
+            };
+            Ok(Self {
+                record: record::Coordinate::Checked(record::Checked {
+                    runtime_id: coordinate.runtime_id,
+                    target_artifact_id: artifact_id.clone(),
+                }),
+                state: PhantomData,
+            })
+        }
+
+        pub(crate) fn runtime_id(&self) -> crate::loop_graph::RuntimeId {
+            match &self.record {
+                record::Coordinate::Checked(coordinate) => coordinate.runtime_id,
+                record::Coordinate::Admitted(_) => unreachable!("checked coordinate state"),
+            }
+        }
+
+        pub(crate) fn operation(&self) -> crate::loop_graph::Coordinate {
+            crate::loop_graph::Coordinate {
+                runtime_id: self.runtime_id(),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: self.target_artifact_id().clone(),
+                },
+            }
+        }
+    }
+
+    impl Coordinate<Admitted> {
+        fn from_candidate(candidate: CandidateCoordinate, target_artifact_id: ArtifactId) -> Self {
+            Self {
+                record: record::Coordinate::Admitted(record::Admitted {
+                    candidate,
+                    target_artifact_id,
+                }),
+                state: PhantomData,
+            }
+        }
+
+        pub(crate) fn candidate(&self) -> &CandidateCoordinate {
+            match &self.record {
+                record::Coordinate::Checked(_) => unreachable!("admitted coordinate state"),
+                record::Coordinate::Admitted(coordinate) => &coordinate.candidate,
+            }
+        }
+    }
+
+    impl<S> Coordinate<S> {
+        pub(crate) fn target_artifact_id(&self) -> &ArtifactId {
+            match &self.record {
+                record::Coordinate::Checked(coordinate) => &coordinate.target_artifact_id,
+                record::Coordinate::Admitted(coordinate) => &coordinate.target_artifact_id,
+            }
+        }
+
+        fn runtime_id_opt(&self) -> Option<crate::loop_graph::RuntimeId> {
+            match &self.record {
+                record::Coordinate::Checked(coordinate) => Some(coordinate.runtime_id),
+                record::Coordinate::Admitted(coordinate) => coordinate
+                    .candidate
+                    .primary_runtime_id
+                    .as_deref()
+                    .and_then(|runtime_id| runtime_id.parse().ok()),
+            }
+        }
+    }
+
+    impl Grant<Checked> {
+        pub(crate) fn checked(
+            coordinate: crate::loop_graph::Coordinate,
+            policy: ProcedureRef,
+            writable: SurfaceWritable,
+            transition: &CheckedSurfaceTransition,
+        ) -> Result<Self, HistoryError> {
+            if writable.target_relpath != transition.target_relpath {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant target '{}' did not match checked target '{}'",
+                        writable.target_relpath.display(),
+                        transition.target_relpath.display()
+                    ),
+                });
+            }
+            let coordinate = Coordinate::<Checked>::from_operation(&coordinate)?;
+            if coordinate.target_artifact_id() != &transition.base.artifact_id {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant target artifact '{}' did not match checked base artifact '{}'",
+                        coordinate.target_artifact_id(),
+                        transition.base.artifact_id
+                    ),
+                });
+            }
+            Ok(Self {
+                coordinate,
+                policy,
+                writable,
+            })
+        }
+
+        pub(super) fn admit(
+            self,
+            admitted: Grant<Admitted>,
+        ) -> Result<Grant<Admitted>, HistoryError> {
+            if self.policy != admitted.policy {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant policy '{}' did not match admitted policy '{}'",
+                        self.policy.as_str(),
+                        admitted.policy.as_str()
+                    ),
+                });
+            }
+            if self.writable != admitted.writable {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant target '{}' did not match admitted target '{}'",
+                        self.writable.target_relpath.display(),
+                        admitted.writable.target_relpath.display()
+                    ),
+                });
+            }
+            if self.coordinate.target_artifact_id() != admitted.coordinate.target_artifact_id() {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant target artifact '{}' did not match admitted target artifact '{}'",
+                        self.coordinate.target_artifact_id(),
+                        admitted.coordinate.target_artifact_id()
+                    ),
+                });
+            }
+            let expected_runtime = self.coordinate.runtime_id();
+            let actual_runtime = admitted.coordinate.runtime_id_opt().ok_or_else(|| {
+                HistoryError::InvalidSelectionDecision {
+                    detail: "admitted surface grant is missing runtime identity".to_string(),
+                }
+            })?;
+            if expected_runtime != actual_runtime {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "checked surface grant runtime '{}' did not match admitted runtime '{}'",
+                        expected_runtime, actual_runtime
+                    ),
+                });
+            }
+            Ok(admitted)
+        }
+    }
+
+    impl Grant<Admitted> {
+        pub(super) fn from_candidate_artifact(
+            node: &crate::intervention::Prototype1NodeRecord,
+            resolved: &crate::intervention::ResolvedTreatmentBranch,
+            surface: &SurfaceEvidence,
+        ) -> Result<Option<Self>, HistoryError> {
+            let operation_target_artifact = node
+                .operation_target
+                .as_ref()
+                .and_then(crate::intervention::operation_target_artifact_id);
+            if let (Some(operation_target_artifact), Some(base_artifact_id)) =
+                (operation_target_artifact, node.base_artifact_id.as_ref())
+                && operation_target_artifact != base_artifact_id
+            {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "candidate operation target '{}' did not match base artifact '{}'",
+                        operation_target_artifact, base_artifact_id
+                    ),
+                });
+            }
+            let Some(target_artifact_id) = operation_target_artifact
+                .cloned()
+                .or_else(|| node.base_artifact_id.clone())
+            else {
+                return Ok(None);
+            };
+            if target_artifact_id != surface.base.artifact_id {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "grant target artifact '{}' did not match checked base artifact '{}'",
+                        target_artifact_id, surface.base.artifact_id
+                    ),
+                });
+            }
+            if resolved.target_relpath != surface.target_relpath {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "grant target '{}' did not match checked target '{}'",
+                        resolved.target_relpath.display(),
+                        surface.target_relpath.display()
+                    ),
+                });
+            }
+            Ok(Some(Self {
+                coordinate: Coordinate::<Admitted>::from_candidate(
+                    CandidateCoordinate {
+                        node_id: node.node_id.clone(),
+                        parent_node_id: node.parent_node_id.clone(),
+                        branch_id: Some(node.branch_id.clone()),
+                        generation: Some(node.generation),
+                        plan_index: None,
+                        primary_runtime_id: Some(node.instance_id.clone()),
+                    },
+                    target_artifact_id,
+                ),
+                policy: ProcedureRef::new(surface.policy.clone()),
+                writable: SurfaceWritable {
+                    target_relpath: surface.target_relpath.clone(),
+                },
+            }))
+        }
+    }
+
+    impl<S> Grant<S> {
+        pub(crate) fn coordinate(&self) -> &Coordinate<S> {
+            &self.coordinate
+        }
+
+        pub(crate) fn policy(&self) -> &ProcedureRef {
+            &self.policy
+        }
+
+        pub(crate) fn writable(&self) -> &SurfaceWritable {
+            &self.writable
+        }
+
+        pub(super) fn into_evidence(self) -> Evidence
+        where
+            AnyCoordinate: From<Coordinate<S>>,
+        {
+            Evidence {
+                coordinate: self.coordinate.into(),
+                policy: self.policy,
+                writable: self.writable,
+            }
+        }
+    }
+
+    impl TryFrom<Evidence> for Grant<Checked> {
+        type Error = HistoryError;
+
+        fn try_from(evidence: Evidence) -> Result<Self, Self::Error> {
+            let AnyCoordinate::Checked(coordinate) = evidence.coordinate else {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: "surface grant is not checked authority".to_string(),
+                });
+            };
+            Ok(Self {
+                coordinate,
+                policy: evidence.policy,
+                writable: evidence.writable,
+            })
+        }
+    }
+
+    impl TryFrom<Evidence> for Grant<Admitted> {
+        type Error = HistoryError;
+
+        fn try_from(evidence: Evidence) -> Result<Self, Self::Error> {
+            let AnyCoordinate::Admitted(coordinate) = evidence.coordinate else {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: "surface grant is not admitted authority".to_string(),
+                });
+            };
+            Ok(Self {
+                coordinate,
+                policy: evidence.policy,
+                writable: evidence.writable,
+            })
+        }
+    }
+
+    impl From<Coordinate<Checked>> for AnyCoordinate {
+        fn from(coordinate: Coordinate<Checked>) -> Self {
+            Self::Checked(coordinate)
+        }
+    }
+
+    impl From<Coordinate<Admitted>> for AnyCoordinate {
+        fn from(coordinate: Coordinate<Admitted>) -> Self {
+            Self::Admitted(coordinate)
+        }
+    }
+
+    impl AnyCoordinate {
+        pub(crate) fn target_artifact_id(&self) -> &ArtifactId {
+            match self {
+                Self::Checked(coordinate) => coordinate.target_artifact_id(),
+                Self::Admitted(coordinate) => coordinate.target_artifact_id(),
+            }
+        }
+
+        pub(super) fn runtime_id(&self) -> Option<crate::loop_graph::RuntimeId> {
+            match self {
+                Self::Checked(coordinate) => Some(coordinate.runtime_id()),
+                Self::Admitted(coordinate) => coordinate.runtime_id_opt(),
+            }
+        }
+
+        pub(super) fn candidate(&self) -> Option<&CandidateCoordinate> {
+            match self {
+                Self::Checked(_) => None,
+                Self::Admitted(coordinate) => Some(coordinate.candidate()),
+            }
+        }
+    }
+
+    impl Serialize for Coordinate<Checked> {
+        fn serialize<T>(&self, serializer: T) -> Result<T::Ok, T::Error>
+        where
+            T: serde::Serializer,
+        {
+            match &self.record {
+                record::Coordinate::Checked(coordinate) => coordinate.serialize(serializer),
+                record::Coordinate::Admitted(_) => unreachable!("checked coordinate state"),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Coordinate<Checked> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            Ok(Self {
+                record: record::Coordinate::Checked(record::Checked::deserialize(deserializer)?),
+                state: PhantomData,
+            })
+        }
+    }
+
+    impl Serialize for Coordinate<Admitted> {
+        fn serialize<T>(&self, serializer: T) -> Result<T::Ok, T::Error>
+        where
+            T: serde::Serializer,
+        {
+            match &self.record {
+                record::Coordinate::Checked(_) => unreachable!("admitted coordinate state"),
+                record::Coordinate::Admitted(coordinate) => coordinate.serialize(serializer),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Coordinate<Admitted> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            Ok(Self {
+                record: record::Coordinate::Admitted(record::Admitted::deserialize(deserializer)?),
+                state: PhantomData,
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3073,7 +3468,7 @@ impl SurfaceEvidence {
         generator_surface: super::edit_surface::tui::GeneratorSurfaceVersion,
         touches: Vec<SurfaceTouch>,
     ) -> Result<Self, HistoryError> {
-        let grant = SurfaceGrantEvidence::from_checked(&checked.grant, &checked.transition)?;
+        let grant = grant::Evidence::from_checked(&checked.grant, &checked.transition)?;
         let touches_digest = HistoryHash::of_domain_json(
             "prototype1.history.surface_evidence.touches.v1",
             &touches,
@@ -3092,7 +3487,7 @@ impl SurfaceEvidence {
             producer_id: producer_id.into(),
             proposal_id: proposal_id.into(),
             run_id: run_id.into(),
-            policy: checked.grant.policy.as_str().to_string(),
+            policy: checked.grant.policy().as_str().to_string(),
             target_relpath: checked.transition.target_relpath.clone(),
             grant: Some(grant),
             check: None,
@@ -3189,7 +3584,7 @@ impl SurfaceEvidence {
         self.bind_transition(node, resolved)?;
         match (
             self.grant.take(),
-            SurfaceGrantEvidence::from_candidate_artifact(node, resolved, &self)?,
+            grant::Evidence::from_candidate_artifact(node, resolved, &self)?,
         ) {
             (Some(grant), Some(admitted)) => {
                 self.grant = Some(grant.admit(admitted)?);
@@ -3287,35 +3682,21 @@ impl SurfaceEvidence {
     }
 }
 
-impl SurfaceGrantEvidence {
+impl GrantEvidence {
     fn from_checked(
-        grant: &CheckedSurfaceGrant,
+        grant: &grant::Grant<grant::Checked>,
         transition: &CheckedSurfaceTransition,
     ) -> Result<Self, HistoryError> {
-        if grant.writable.target_relpath != transition.target_relpath {
+        if grant.writable().target_relpath != transition.target_relpath {
             return Err(HistoryError::InvalidSelectionDecision {
                 detail: format!(
                     "checked surface grant target '{}' did not match checked target '{}'",
-                    grant.writable.target_relpath.display(),
+                    grant.writable().target_relpath.display(),
                     transition.target_relpath.display()
                 ),
             });
         }
-        let coordinate = SurfaceGrantCoordinate::checked(&grant.coordinate)?;
-        if coordinate.target_artifact_id() != &transition.base.artifact_id {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant target artifact '{}' did not match checked base artifact '{}'",
-                    coordinate.target_artifact_id(),
-                    transition.base.artifact_id
-                ),
-            });
-        }
-        Ok(Self {
-            coordinate,
-            policy: grant.policy.clone(),
-            writable: grant.writable.clone(),
-        })
+        Ok(grant.clone().into_evidence())
     }
 
     fn from_candidate_artifact(
@@ -3323,111 +3704,16 @@ impl SurfaceGrantEvidence {
         resolved: &crate::intervention::ResolvedTreatmentBranch,
         surface: &SurfaceEvidence,
     ) -> Result<Option<Self>, HistoryError> {
-        let operation_target_artifact = node
-            .operation_target
-            .as_ref()
-            .and_then(crate::intervention::operation_target_artifact_id);
-        if let (Some(operation_target_artifact), Some(base_artifact_id)) =
-            (operation_target_artifact, node.base_artifact_id.as_ref())
-            && operation_target_artifact != base_artifact_id
-        {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "candidate operation target '{}' did not match base artifact '{}'",
-                    operation_target_artifact, base_artifact_id
-                ),
-            });
-        }
-        let Some(target_artifact_id) = operation_target_artifact
-            .cloned()
-            .or_else(|| node.base_artifact_id.clone())
-        else {
-            return Ok(None);
-        };
-        if target_artifact_id != surface.base.artifact_id {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "grant target artifact '{}' did not match checked base artifact '{}'",
-                    target_artifact_id, surface.base.artifact_id
-                ),
-            });
-        }
-        if resolved.target_relpath != surface.target_relpath {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "grant target '{}' did not match checked target '{}'",
-                    resolved.target_relpath.display(),
-                    surface.target_relpath.display()
-                ),
-            });
-        }
-        Ok(Some(Self {
-            coordinate: SurfaceGrantCoordinate::Admitted(AdmittedSurfaceGrantCoordinate {
-                candidate: CandidateCoordinate {
-                    node_id: node.node_id.clone(),
-                    parent_node_id: node.parent_node_id.clone(),
-                    branch_id: Some(node.branch_id.clone()),
-                    generation: Some(node.generation),
-                    plan_index: None,
-                    primary_runtime_id: Some(node.instance_id.clone()),
-                },
-                target_artifact_id,
-            }),
-            policy: ProcedureRef::new(surface.policy.clone()),
-            writable: SurfaceWritable {
-                target_relpath: surface.target_relpath.clone(),
-            },
-        }))
+        grant::Grant::<grant::Admitted>::from_candidate_artifact(node, resolved, surface)
+            .map(|grant| grant.map(grant::Grant::into_evidence))
     }
 
-    fn admit(self, admitted: SurfaceGrantEvidence) -> Result<Self, HistoryError> {
-        if self.policy != admitted.policy {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant policy '{}' did not match admitted policy '{}'",
-                    self.policy.as_str(),
-                    admitted.policy.as_str()
-                ),
-            });
-        }
-        if self.writable != admitted.writable {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant target '{}' did not match admitted target '{}'",
-                    self.writable.target_relpath.display(),
-                    admitted.writable.target_relpath.display()
-                ),
-            });
-        }
-        if self.coordinate.target_artifact_id() != admitted.coordinate.target_artifact_id() {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant target artifact '{}' did not match admitted target artifact '{}'",
-                    self.coordinate.target_artifact_id(),
-                    admitted.coordinate.target_artifact_id()
-                ),
-            });
-        }
-        let expected_runtime =
-            self.coordinate
-                .runtime_id()
-                .ok_or_else(|| HistoryError::InvalidSelectionDecision {
-                    detail: "checked surface grant is missing runtime identity".to_string(),
-                })?;
-        let actual_runtime = admitted.coordinate.runtime_id().ok_or_else(|| {
-            HistoryError::InvalidSelectionDecision {
-                detail: "admitted surface grant is missing runtime identity".to_string(),
-            }
-        })?;
-        if expected_runtime != actual_runtime {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant runtime '{}' did not match admitted runtime '{}'",
-                    expected_runtime, actual_runtime
-                ),
-            });
-        }
-        Ok(admitted)
+    fn admit(self, admitted: grant::Evidence) -> Result<Self, HistoryError> {
+        let checked = grant::Grant::<grant::Checked>::try_from(self)?;
+        let admitted = grant::Grant::<grant::Admitted>::try_from(admitted)?;
+        checked
+            .admit(admitted)
+            .map(grant::Grant::<grant::Admitted>::into_evidence)
     }
 
     fn verify(&self, surface: &SurfaceEvidence) -> Result<(), HistoryError> {
@@ -3485,49 +3771,6 @@ impl SurfaceGrantEvidence {
             }
         }
         Ok(())
-    }
-}
-
-impl SurfaceGrantCoordinate {
-    fn checked(coordinate: &crate::loop_graph::Coordinate) -> Result<Self, HistoryError> {
-        let crate::loop_graph::OperationTarget::Artifact { artifact_id } = &coordinate.target
-        else {
-            return Err(HistoryError::InvalidSelectionDecision {
-                detail: format!(
-                    "checked surface grant requires OperationTarget::Artifact, got {:?}",
-                    coordinate.target
-                ),
-            });
-        };
-        Ok(Self::Checked(CheckedSurfaceGrantCoordinate {
-            runtime_id: coordinate.runtime_id,
-            target_artifact_id: artifact_id.clone(),
-        }))
-    }
-
-    fn target_artifact_id(&self) -> &ArtifactId {
-        match self {
-            Self::Checked(coordinate) => &coordinate.target_artifact_id,
-            Self::Admitted(coordinate) => &coordinate.target_artifact_id,
-        }
-    }
-
-    fn runtime_id(&self) -> Option<crate::loop_graph::RuntimeId> {
-        match self {
-            Self::Checked(coordinate) => Some(coordinate.runtime_id),
-            Self::Admitted(coordinate) => coordinate
-                .candidate
-                .primary_runtime_id
-                .as_deref()
-                .and_then(|runtime_id| runtime_id.parse().ok()),
-        }
-    }
-
-    fn candidate(&self) -> Option<&CandidateCoordinate> {
-        match self {
-            Self::Checked(_) => None,
-            Self::Admitted(coordinate) => Some(&coordinate.candidate),
-        }
     }
 }
 
@@ -7049,33 +7292,34 @@ mod tests {
             artifact_id: ArtifactId::new(base_artifact_id),
             hash: "base-hash".to_string(),
         };
+        let transition = CheckedSurfaceTransition {
+            target_relpath: target_relpath.clone(),
+            base,
+            after: SurfaceArtifactRef {
+                artifact_id: ArtifactId::new(after_artifact_id),
+                hash: "after-hash".to_string(),
+            },
+            patch_id: PatchId::new(patch_id),
+        };
+        let grant = grant::Grant::<grant::Checked>::checked(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(uuid::Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: transition.base.artifact_id.clone(),
+                },
+            },
+            ProcedureRef::new("policy:surface:test"),
+            SurfaceWritable {
+                target_relpath: target_relpath.clone(),
+            },
+            &transition,
+        )
+        .expect("checked grant");
         SurfaceEvidence::checked(
             "producer-1",
             "proposal-1",
             "run-1",
-            CheckedSurface {
-                grant: CheckedSurfaceGrant {
-                    coordinate: crate::loop_graph::Coordinate {
-                        runtime_id: crate::loop_graph::RuntimeId(uuid::Uuid::nil()),
-                        target: crate::loop_graph::OperationTarget::Artifact {
-                            artifact_id: base.artifact_id.clone(),
-                        },
-                    },
-                    policy: ProcedureRef::new("policy:surface:test"),
-                    writable: SurfaceWritable {
-                        target_relpath: target_relpath.clone(),
-                    },
-                },
-                transition: CheckedSurfaceTransition {
-                    target_relpath: target_relpath.clone(),
-                    base,
-                    after: SurfaceArtifactRef {
-                        artifact_id: ArtifactId::new(after_artifact_id),
-                        hash: "after-hash".to_string(),
-                    },
-                    patch_id: PatchId::new(patch_id),
-                },
-            },
+            CheckedSurface { grant, transition },
             "source-content-hash",
             "proposed-content-hash",
             crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,
@@ -8727,17 +8971,17 @@ mod tests {
         let grant = evidence.grant.as_ref().expect("typed grant evidence");
         assert_eq!(grant.policy, ProcedureRef::new("policy:surface:test"));
         match &grant.coordinate {
-            SurfaceGrantCoordinate::Checked(coordinate) => {
+            grant::AnyCoordinate::Checked(coordinate) => {
                 assert_eq!(
-                    coordinate.runtime_id,
+                    coordinate.runtime_id(),
                     crate::loop_graph::RuntimeId(uuid::Uuid::nil())
                 );
                 assert_eq!(
-                    coordinate.target_artifact_id,
-                    ArtifactId::new("artifact:base")
+                    coordinate.target_artifact_id(),
+                    &ArtifactId::new("artifact:base")
                 );
             }
-            SurfaceGrantCoordinate::Admitted(_) => {
+            grant::AnyCoordinate::Admitted(_) => {
                 panic!("checked surface evidence should keep checked grant coordinate")
             }
         }
@@ -8780,18 +9024,18 @@ mod tests {
         assert_eq!(surface.schema_version, 5);
         assert_eq!(grant.policy, ProcedureRef::new("policy:surface:test"));
         match &grant.coordinate {
-            SurfaceGrantCoordinate::Checked(_) => {
+            grant::AnyCoordinate::Checked(_) => {
                 panic!("candidate binding should refine the grant to admitted coordinates")
             }
-            SurfaceGrantCoordinate::Admitted(coordinate) => {
+            grant::AnyCoordinate::Admitted(coordinate) => {
                 let expected_runtime = crate::loop_graph::RuntimeId(uuid::Uuid::nil()).to_string();
                 assert_eq!(
-                    coordinate.target_artifact_id,
-                    ArtifactId::new("artifact:base")
+                    coordinate.target_artifact_id(),
+                    &ArtifactId::new("artifact:base")
                 );
-                assert_eq!(coordinate.candidate.node_id, "node-a");
+                assert_eq!(coordinate.candidate().node_id, "node-a");
                 assert_eq!(
-                    coordinate.candidate.primary_runtime_id.as_deref(),
+                    coordinate.candidate().primary_runtime_id.as_deref(),
                     Some(expected_runtime.as_str())
                 );
             }
@@ -8841,17 +9085,17 @@ mod tests {
         assert_eq!(surface.schema_version, 5);
         let grant = surface.grant.as_ref().expect("surface grant evidence");
         match &grant.coordinate {
-            SurfaceGrantCoordinate::Checked(coordinate) => {
+            grant::AnyCoordinate::Checked(coordinate) => {
                 assert_eq!(
-                    coordinate.runtime_id,
+                    coordinate.runtime_id(),
                     crate::loop_graph::RuntimeId(uuid::Uuid::nil())
                 );
                 assert_eq!(
-                    coordinate.target_artifact_id,
-                    ArtifactId::new("artifact:base")
+                    coordinate.target_artifact_id(),
+                    &ArtifactId::new("artifact:base")
                 );
             }
-            SurfaceGrantCoordinate::Admitted(_) => {
+            grant::AnyCoordinate::Admitted(_) => {
                 panic!("candidate facts should not invent admitted grant coordinates")
             }
         }

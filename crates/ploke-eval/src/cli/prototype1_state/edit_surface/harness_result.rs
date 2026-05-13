@@ -10,7 +10,7 @@ use super::harness_request::{
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SubmittedBroadHarnessResult {
     pub(crate) schema: SubmittedBroadHarnessResultSchema,
-    pub(crate) request: SubmittedBroadHarnessRequestBinding,
+    pub(crate) request: SubmittedRequestBinding,
     pub(crate) candidate: SubmittedBroadHarnessCandidate,
     pub(crate) return_evidence: SubmittedHarnessReturnEvidence,
 }
@@ -22,7 +22,7 @@ pub(crate) enum SubmittedBroadHarnessResultSchema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct SubmittedBroadHarnessRequestBinding {
+pub(crate) struct SubmittedRequestBinding {
     pub(crate) request_id: String,
     pub(crate) request_hash: String,
     pub(crate) parent_node_id: ParentNodeRef,
@@ -115,7 +115,7 @@ impl SubmittedBroadHarnessResult {
     ) -> Result<Self, SubmittedBroadHarnessResultError> {
         let submitted = Self {
             schema: SubmittedBroadHarnessResultSchema::V1,
-            request: SubmittedBroadHarnessRequestBinding::from_published(published),
+            request: SubmittedRequestBinding::from_published(published),
             candidate: SubmittedBroadHarnessCandidate {
                 workspace_path: published.workspace_path().to_path_buf(),
                 submitted_result_path: published.submitted_result_path().to_path_buf(),
@@ -130,7 +130,7 @@ impl SubmittedBroadHarnessResult {
         &self,
         published: &PublishedBroadHarnessRequest,
     ) -> Result<(), SubmittedBroadHarnessResultError> {
-        let expected = SubmittedBroadHarnessRequestBinding::from_published(published);
+        let expected = SubmittedRequestBinding::from_published(published);
         if self.request.request_id != expected.request_id {
             return Err(SubmittedBroadHarnessResultError::RequestIdMismatch {
                 expected: expected.request_id,
@@ -188,7 +188,7 @@ impl SubmittedBroadHarnessResult {
         self.verify_changed_files()
     }
 
-    pub(crate) fn request(&self) -> &SubmittedBroadHarnessRequestBinding {
+    pub(crate) fn request(&self) -> &SubmittedRequestBinding {
         &self.request
     }
 
@@ -215,7 +215,7 @@ impl SubmittedBroadHarnessResult {
     }
 }
 
-impl SubmittedBroadHarnessRequestBinding {
+impl SubmittedRequestBinding {
     fn from_published(published: &PublishedBroadHarnessRequest) -> Self {
         Self {
             request_id: published.request_id().to_string(),

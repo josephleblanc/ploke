@@ -58,14 +58,14 @@ use crate::{
             history::{
                 ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
                 CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
-                CheckedSurface, CheckedSurfaceGrant, CheckedSurfaceTransition, EvaluationPayload,
-                Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
-                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
-                SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
-                SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
-                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
-                SubjectRef, SurfaceArtifactRef, SurfaceEvidence, SurfaceTouch, SurfaceWritable,
-                TraversalCandidateSource, TraversalEvidence, surface_attempt,
+                CheckedSurface, CheckedSurfaceTransition, EvaluationPayload, Generation, History,
+                HistoryHash, ProcedureRef, Scope, ScopeFor, SealedBranchEvidence,
+                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
+                SealedEvaluationEvidence, SealedEvaluatorIdentity, SealedEvidenceCitation,
+                SealedRuntimeEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
+                SelectionProjectionFailureKind, SelectionScope, SubjectRef, SurfaceArtifactRef,
+                SurfaceEvidence, SurfaceTouch, SurfaceWritable, TraversalCandidateSource,
+                TraversalEvidence, surface_attempt,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -558,7 +558,7 @@ struct ChildPlanReceipt {
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
-struct PublishedHarnessRequestReceipt {
+struct HarnessRequestReceipt {
     parent: Parent<AwaitingHarnessPlan>,
     request_path: PathBuf,
     published:
@@ -567,7 +567,7 @@ struct PublishedHarnessRequestReceipt {
 
 enum ParentTargetSelection {
     ChildPlan(ChildPlanReceipt),
-    AwaitingHarnessPlan(PublishedHarnessRequestReceipt),
+    AwaitingHarnessPlan(HarnessRequestReceipt),
 }
 
 struct PlannedChildren {
@@ -1094,7 +1094,7 @@ fn publish_broad_harness_child_plan_request(
     repo_root: &Path,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
-) -> Result<PublishedHarnessRequestReceipt, PrepareError> {
+) -> Result<HarnessRequestReceipt, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
@@ -1116,7 +1116,7 @@ fn publish_broad_harness_child_plan_request(
         awaiting_parent.harness_request().request_hash(),
         publication.published.request_hash()
     );
-    Ok(PublishedHarnessRequestReceipt {
+    Ok(HarnessRequestReceipt {
         parent: awaiting_parent,
         request_path: publication.request_path,
         published: publication.published,
@@ -11315,36 +11315,39 @@ stop_after = "complete"
                 }],
             )
             .expect("generator surface");
+        let transition = CheckedSurfaceTransition {
+            target_relpath: target_relpath.clone(),
+            base: SurfaceArtifactRef {
+                artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
+                hash: "base-hash".to_string(),
+            },
+            after: SurfaceArtifactRef {
+                artifact_id: crate::loop_graph::ArtifactId::new("artifact:after-test"),
+                hash: "after-hash".to_string(),
+            },
+            patch_id: crate::loop_graph::PatchId::new("patch:test"),
+        };
+        let grant = crate::cli::prototype1_state::history::grant::Grant::<
+            crate::cli::prototype1_state::history::grant::Checked,
+        >::checked(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(uuid::Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: transition.base.artifact_id.clone(),
+                },
+            },
+            ProcedureRef::new(TUI_EDIT_SURFACE_POLICY_ID),
+            SurfaceWritable {
+                target_relpath: target_relpath.clone(),
+            },
+            &transition,
+        )
+        .expect("checked surface grant");
         SurfaceEvidence::checked(
             TUI_EDIT_SURFACE_PRODUCER_ID,
             "proposal-test",
             "run-test",
-            CheckedSurface {
-                grant: CheckedSurfaceGrant {
-                    coordinate: crate::loop_graph::Coordinate {
-                        runtime_id: crate::loop_graph::RuntimeId(uuid::Uuid::nil()),
-                        target: crate::loop_graph::OperationTarget::Artifact {
-                            artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
-                        },
-                    },
-                    policy: ProcedureRef::new(TUI_EDIT_SURFACE_POLICY_ID),
-                    writable: SurfaceWritable {
-                        target_relpath: target_relpath.clone(),
-                    },
-                },
-                transition: CheckedSurfaceTransition {
-                    target_relpath: target_relpath.clone(),
-                    base: SurfaceArtifactRef {
-                        artifact_id: crate::loop_graph::ArtifactId::new("artifact:base-test"),
-                        hash: "base-hash".to_string(),
-                    },
-                    after: SurfaceArtifactRef {
-                        artifact_id: crate::loop_graph::ArtifactId::new("artifact:after-test"),
-                        hash: "after-hash".to_string(),
-                    },
-                    patch_id: crate::loop_graph::PatchId::new("patch:test"),
-                },
-            },
+            CheckedSurface { grant, transition },
             source_hash,
             proposed_hash,
             crate::cli::prototype1_state::edit_surface::request_policy::ProposalProducer::NonRouter,

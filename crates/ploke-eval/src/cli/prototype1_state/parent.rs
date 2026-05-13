@@ -9,7 +9,7 @@ use tracing::{info, instrument};
 use crate::{
     cli::prototype1_state::{
         backend::{GitWorktreeBackend, WorkspaceBackend},
-        edit_surface::harness_request::PublishedBroadHarnessRequest,
+        edit_surface::harness_request,
         history::{
             ArtifactLocator, BlockHead, BlockStore, BlockStoreError, FsBlockStore, HistoryError,
             LineageId, LineageState, StoreHead, SurfaceEvidence, TreeKeyCommitment,
@@ -45,49 +45,10 @@ pub(crate) struct Ready;
 /// request-bound child-plan response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AwaitingHarnessPlan {
-    harness_request: PublishedBroadHarnessRequestIdentity,
-}
-
-/// Published request identity that binds a broad harness publication back to a
-/// waiting parent, even before the full request/result receipt path lands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PublishedBroadHarnessRequestIdentity {
-    request_id: String,
-    request_hash: String,
-}
-
-impl PublishedBroadHarnessRequestIdentity {
-    pub(crate) fn request_id(&self) -> &str {
-        &self.request_id
-    }
-
-    pub(crate) fn request_hash(&self) -> PublishedBroadHarnessRequestHash<'_> {
-        PublishedBroadHarnessRequestHash(&self.request_hash)
-    }
-}
-
-impl From<&PublishedBroadHarnessRequest> for PublishedBroadHarnessRequestIdentity {
-    fn from(value: &PublishedBroadHarnessRequest) -> Self {
-        Self {
-            request_id: value.request_id().to_string(),
-            request_hash: value.request_hash().to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PublishedBroadHarnessRequestHash<'a>(&'a str);
-
-impl std::fmt::Display for PublishedBroadHarnessRequestHash<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-impl PartialEq<&str> for PublishedBroadHarnessRequestHash<'_> {
-    fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
-    }
+    harness_request: harness_request::request::Reference<
+        harness_request::request::Broad,
+        harness_request::request::Published,
+    >,
 }
 
 /// Startup evidence before a lineage predecessor exists.
@@ -1019,7 +980,10 @@ impl Parent<Ready> {
     )]
     pub(crate) fn awaiting_harness_plan_for_request(
         self,
-        harness_request: PublishedBroadHarnessRequestIdentity,
+        harness_request: harness_request::request::Reference<
+            harness_request::request::Broad,
+            harness_request::request::Published,
+        >,
     ) -> Parent<AwaitingHarnessPlan> {
         info!(
             target: "ploke_exec",
@@ -1047,7 +1011,12 @@ impl Parent<Planned> {
 }
 
 impl Parent<AwaitingHarnessPlan> {
-    pub(crate) fn harness_request(&self) -> &PublishedBroadHarnessRequestIdentity {
+    pub(crate) fn harness_request(
+        &self,
+    ) -> &harness_request::request::Reference<
+        harness_request::request::Broad,
+        harness_request::request::Published,
+    > {
         &self.state.harness_request
     }
 }
