@@ -6,12 +6,25 @@ Scope: bounded discovery only. No code edits were made.
 
 Question: how patches are applied together, how multiple touched files are represented and validated together, how clean/dirty/stale-base/protected-core/surface checks work, how `ploke-tui` harness failures are represented, and how `ploke-eval` knows when a sub-agent returns.
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` changes the broad/hyper-agent
+path described below. `ploke-eval` now invokes headless `ploke-tui` for each
+broad request slot in complete mode, writes a typed submitted result for an
+applied proposal, admits the actual candidate workspace diff, and converts
+admitted transactions into child-plan entries. Multi-file broad workspace diffs
+are allowed when all changed paths pass backend policy checks.
+
+The older deterministic checked-edit path still has a single-file proposal
+limit. The newer broad path is not limited that way; its remaining gaps are the
+formal grant/touch proof spine and separately enforced tool-level timeout.
+
 ## Executive Finding
 
 The current implementation has two different paths:
 
 - **Implemented deterministic/eval-side checked edit path:** `ploke-eval` can validate an already-produced proposal, derive checked touches, run grant/check/apply evidence in memory, and materialize a single-file checked child candidate.
-- **Pending broad/hyper-agent path:** `ploke-eval` publishes a broad harness request and prompt, then stops with a pending submitted-result path. It does not yet invoke `ploke-tui` as the live sub-agent, wait for its return, turn a submitted result into a request-bound child plan, or convert the submitted broad result into checked bounded edit evidence.
+- **Broad/hyper-agent path before `bd00056b`:** `ploke-eval` published a broad harness request and prompt, then stopped with a pending submitted-result path. After `bd00056b`, complete mode invokes headless `ploke-tui`, writes a typed submitted result for an applied proposal, admits the actual workspace diff, and turns admitted broad transactions into child-plan entries.
 
 So: handling the current blocker is necessary, but not sufficient by itself unless the implementation also adds the adapter/continuation pieces below.
 
@@ -91,7 +104,7 @@ There is currently no implemented `ploke-eval` adapter that normalizes all of th
 
 For the current broad/hyper-agent path, it does not yet have a live wait loop:
 
-- Complete live mode rejects `BroadHarnessRequest` until a typed request-to-child-plan receipt exists ([crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:745](../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L745)).
+- Before `bd00056b`, complete live mode rejected `BroadHarnessRequest` until a typed request-to-child-plan receipt existed ([crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:745](../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L745)). Current complete mode has a broad request-batch continuation.
 - When selected, the broad path publishes request JSON and prompt markdown, moves the parent into `Parent<AwaitingHarnessPlan>`, and returns a pending request error naming the submitted-result path ([crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1092](../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L1092), [crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6190](../../../../crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs#L6190)).
 - `Parent<AwaitingHarnessPlan>` carries only `request::Reference<Broad, Published>` ([crates/ploke-eval/src/cli/prototype1_state/parent.rs:44](../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L44), [crates/ploke-eval/src/cli/prototype1_state/parent.rs:981](../../../../crates/ploke-eval/src/cli/prototype1_state/parent.rs#L981)).
 - Submitted result verification exists as a typed record check against published request identity, request hash, parent node, workspace path, submitted-result path, admission binding, and relative changed file paths ([crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_result.rs:111](../../../../crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_result.rs#L111)).

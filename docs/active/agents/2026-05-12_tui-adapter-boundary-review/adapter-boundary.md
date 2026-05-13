@@ -5,6 +5,18 @@ Date: 2026-05-12
 Scope: read-only review of the current bounded surface edit boundary between
 `ploke-eval` and `ploke-tui`. No code changes were made.
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` supersedes the parts of this
+review that describe complete mode as stopping at `PendingBroadHarnessRequest`.
+The live broad path now has an eval-owned headless `ploke-tui` continuation:
+one request slot per child-budget slot, request-bound submitted results, backend
+admission against the live `EditSurfaceAdmission`, and child-plan sealing from
+admitted broad transactions.
+
+The boundary caveat still matters: this is the current runnable adapter path,
+not yet the final production `Harness` trait implementation described below.
+
 ## Verdict
 
 If the broad-harness continuation blocker is handled, the parent runtime can
@@ -395,9 +407,11 @@ is still test-scout wiring rather than the complete-loop adapter.
 
 2. Request-bound continuation for broad harness results.
 
-   Complete mode needs to consume `AdmittedBroadHarnessResult` and mint the next
-   typed state: request-bound child plan or admitted candidate Artifact. Today it
-   stops with `PendingBroadHarnessRequest`.
+   Historical pre-`bd00056b` gap: complete mode needed to consume
+   `AdmittedBroadHarnessResult` and mint the next typed state. Current complete
+   mode has that first continuation path through broad request-batch fanout and
+   child-plan sealing. The remaining work is making the durable evidence and
+   formal surface-check spine as strong as the long-term boundary requires.
 
 3. Durable run/error record for harness outcomes.
 

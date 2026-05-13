@@ -7,9 +7,18 @@ Source of truth:
 - `docs/workflow/evalnomicon/drafts/edit-surface/model.md`
 - `docs/active/agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`
 
-Stale plan to ignore:
+2026-05-13 update:
 
-- `docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md`
+- Commit `bd00056b Add broad harness request fanout` moves this summary's
+  "current blocker" into partially resolved state. Mandatory admission binding
+  is now checked against the live `EditSurfaceAdmission`, and complete mode can
+  seal broad request-bound admitted transactions into child plans.
+- The older transition plan is no longer stale as a whole; its early status
+  section is historical, and its long-term `SurfaceGrant` / `CheckedProposal`
+  direction still applies.
+- Remaining gaps are durability/proof gaps: verified loading of request
+  publications, richer formal grant/touch evidence for broad workspace diffs,
+  and separately enforced tool timeouts.
 
 ## What Changed
 
@@ -101,4 +110,3 @@ Latest observed status during this work:
 ```
 
 No journal or JSONL payloads were read for routine health checks.
-

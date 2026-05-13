@@ -2,6 +2,20 @@
 
 Scope: current `ploke-eval` TUI adapter implementation wave. Review used targeted reads only and applied the structural-carrier-gate / structural-naming guidance conceptually.
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` partially resolves the high
+finding below. The broad path now keeps a batch of published request slots,
+admits each submitted result against the live `EditSurfaceAdmission`, and
+projects admitted transaction evidence into broad child-plan entries instead of
+accepting an unbound child plan. The complete path validates broad children as
+request/admission-derived children before running them.
+
+This is still not the full desired structural form. The remaining issue is
+durable and formal: request/admission/surface evidence should become a stronger
+typed child-plan/History projection, and broad workspace-diff admission should
+eventually converge with the formal `SurfaceGrant` / `CheckedProposal` spine.
+
 ## Findings
 
 ### High: Broad harness request/admission binding is dropped before child-plan validation

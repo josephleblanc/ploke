@@ -7,6 +7,21 @@ directory, with the implementation contract needed to resolve the primary
 blocker: complete live runs default to `BroadHarnessRequest`, but that generator
 still stops before child planning.
 
+## 2026-05-13 Resolution Note
+
+Commit `bd00056b Add broad harness request fanout` resolves blocker 1 for the
+current Prototype 1 run shape. Complete live mode now accepts
+`BroadHarnessRequest`, publishes one request slot per child-budget slot, invokes
+the headless `ploke-tui` adapter when a submitted result is absent, admits each
+request-bound workspace diff through backend checks, and seals a child plan from
+the admitted transactions.
+
+This file remains useful as the design contract that the implementation was
+meant to satisfy. Treat the sections below as pre-resolution context unless
+they discuss the still-open durability and proof gaps: clean campaign worktree,
+verified publication loading, durable grant projection, compatibility aliases,
+and eventual formal `SurfaceGrant`/`CheckedProposal` coverage.
+
 ## Current Blockers
 
 1. `BroadHarnessRequest` is the default generation posture, but complete live

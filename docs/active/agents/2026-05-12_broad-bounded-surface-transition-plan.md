@@ -14,13 +14,22 @@ It sits on top of:
 
 ## Status
 
+2026-05-13 update: commit `bd00056b Add broad harness request fanout`
+implements the first live complete-mode broad fanout slice. The broad path no
+longer stops at request publication. It publishes a batch of request slots from
+the child budget, invokes headless `ploke-tui` per slot, admits request-bound
+workspace diffs, and seals a child plan from admitted transactions. The older
+status bullets below describe the pre-fanout starting point and should be read
+as historical context for the transition plan.
+
 Current implementation state after the first broad-surface slice:
 
 - Slice 1 is landed.
 - Broad request publication now crosses a typed parent transition instead of
   existing only as a `PrepareError` string.
 - The broad path still stops before proposal admission or child materialization.
-- Complete live runs still reject `BroadHarness`.
+- Historical pre-`bd00056b` state: complete live runs still rejected
+  `BroadHarness`.
 
 Code landed in:
 

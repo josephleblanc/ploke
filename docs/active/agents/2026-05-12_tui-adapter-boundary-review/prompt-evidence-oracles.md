@@ -6,6 +6,19 @@ Scope: current `ploke-eval` to broad-harness / `ploke-tui` boundary, with emphas
 
 No code changes were made.
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` supersedes the specific
+claims below that complete mode still stops after publishing a broad request or
+rejects `BroadHarnessRequest` at the live complete gate. Complete mode now uses
+the prompt/evidence contract as the input to a headless `ploke-tui` attempt per
+request slot, binds the submitted result back to the published request, and
+admits the actual workspace diff before sealing children.
+
+The prompt/evidence analysis remains relevant: the prompt is context and
+contract text, not authority. The live admission checks are still owned by
+`ploke-eval`.
+
 ## Short Answer
 
 If blocker 1 is handled only by converting `BroadHarnessRequest` into "some child plan", that is not enough. The correct continuation must bind a harness submission back to the published request, live admission, protected-core policy, actual candidate workspace diff, checked surface evidence, child validation, and History context.
@@ -17,8 +30,13 @@ Implemented path:
 - `BroadHarnessRequest` contains the request payload: parent, workspace, edit policy, child budget, protected core pointer, evaluation brief, evidence roots, return-evidence contract, and instructions. See `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_request.rs:16-26`.
 - The prompt is rendered by `BroadHarnessRequest::render_prompt`, which writes parent node, source repo, mutable workspace, edit policy, child budget, evaluation, protected core, evidence roots, return-evidence fields, and instructions. See `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_request.rs:930-991`.
 - Publication writes both JSON and markdown prompt files under `messages/edit-harness-request`. See `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1238-1283`.
-- Complete mode still stops when the broad request is produced. `run_child_fanout` receives `ParentTargetSelection::AwaitingHarnessPlan` and returns `PendingBroadHarnessRequest`. See `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6225-6235`.
-- The live complete gate also rejects `BroadHarnessRequest` until a typed request-to-child-plan receipt exists. See `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:745-753`.
+- Before `bd00056b`, complete mode stopped when the broad request was produced:
+  `run_child_fanout` received `ParentTargetSelection::AwaitingHarnessPlan` and
+  returned `PendingBroadHarnessRequest`. See
+  `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6225-6235`.
+- After `bd00056b`, the live complete gate accepts `BroadHarnessRequest` and
+  continues through request-batch fanout, headless `ploke-tui`, backend
+  admission, and child-plan sealing.
 
 ## Prompt Currently Wired
 
@@ -278,7 +296,12 @@ This is consistent with the orientation doc, which says `ploke-eval` owns grants
 
 5. Add multi-patch bundle semantics.
 
-   The first admitted broad continuation should either:
+   Historical pre-`bd00056b` recommendation. The current broad continuation
+   admits changed-path bundles as one candidate Artifact transition when all
+   paths pass backend policy checks. Remaining work is to give that bundle a
+   stronger formal `SurfaceGrant` / read-write-touch evidence projection.
+
+   The first admitted broad continuation was expected to either:
 
    - support one changed file and reject the rest explicitly, or
    - introduce a bundle carrier that validates all touched files under one candidate Artifact transition.

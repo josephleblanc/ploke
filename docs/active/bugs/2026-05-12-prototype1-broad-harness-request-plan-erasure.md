@@ -1,14 +1,36 @@
 # Prototype 1 Broad Harness Request/Plan Erasure
 
-Status: active
+Status: partially resolved by `bd00056b`; residual proof/durability gaps remain
 Discovered: 2026-05-12
+
+## 2026-05-13 Resolution Note
+
+Commit `bd00056b Add broad harness request fanout` fixes the immediate live
+complete-run failure shape:
+
+- `BroadHarnessRequest` is admitted for complete runs;
+- one published broad request slot is allocated per child-budget slot;
+- each slot is bound to the live request/admission context;
+- headless `ploke-tui` can produce the submitted result;
+- backend admission rechecks request binding, live admission binding, source
+  cleanliness, base staleness, path policy, non-empty diff, and unexpected dirty
+  paths before deriving a child artifact transaction;
+- broad child plans are constructed from admitted transactions, not from an
+  unbound existing child-plan file.
+
+The original bug remains useful as a structural warning. The still-open parts
+are not the old hard stop, but the longer-term proof boundary: verified loading
+of published request records, durable grant projection shape, and replacing the
+current broad workspace-diff admission path with the full formal
+`SurfaceGrant`/`CheckedProposal` spine where appropriate.
 
 ## Summary
 
-`BroadHarness` is modeled as a normal candidate generator even though the current
-implementation only publishes an external harness request and then stops with
-`PendingBroadHarnessRequest`. On resume, an existing child plan is accepted
-without being bound to the `BroadHarnessRequest` that was published.
+Original pre-`bd00056b` failure: `BroadHarness` was modeled as a normal
+candidate generator even though the implementation only published an external
+harness request and then stopped with `PendingBroadHarnessRequest`. On resume,
+an existing child plan could be accepted without being bound to the
+`BroadHarnessRequest` that was published.
 
 This collapses the semantic distinction between:
 
@@ -53,10 +75,12 @@ represented as an error string rather than a typed transition such as:
 Parent<Ready> -> Parent<AwaitingHarnessPlan<Broad>>
 ```
 
-## Current Mitigation
+## Current Mitigation / Remaining Boundary
 
-The live complete-run path must not admit `BroadHarness` as a normal runnable
-candidate generator until the request-to-plan receipt exists.
+The live complete-run path now admits `BroadHarnessRequest` only through the
+request-batch continuation implemented in `bd00056b`. It must continue to reject
+any path that tries to satisfy broad harness with an unbound existing child
+plan, raw submitted JSON, or prompt output.
 
 Existing child plans must not satisfy `BroadHarness` without a receipt that binds
 at least:
@@ -92,9 +116,10 @@ DTO that later relies on caller discipline.
 
 ## Verification Targets
 
-- A complete live run rejects `BroadHarness` until typed request-plan receipt
-  support exists.
+- A complete live run with `source = "broad-harness-request"` publishes request
+  slots, admits request-bound transactions, and seals children only after the
+  configured minimum admission count.
 - `BroadHarness` rejects an existing unbound child plan.
 - Deterministic TUI validation rejects Router-backed proposal provenance.
-- Future broad harness child plans cannot be constructed without a request-bound
-  receipt.
+- Future broad harness child plans cannot be constructed without
+  request/admission-bound evidence.

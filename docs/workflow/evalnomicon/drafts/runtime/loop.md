@@ -30,13 +30,14 @@ baseline parent runtime
 ```
 
 This remains a narrow prototype, but the narrowness is a safety/budget choice,
-not a semantic limit of the trampoline model. The current implementation has
-focused on tool-description artifacts loaded into the binary with
-`include_str!`; the long-term direction is a bounded source-edit surface that
-may include the analysis protocol, evaluator framework, and other code used to
-build future successors. Branch-control decisions still remain grounded in
-mechanized evaluation and external oracle signals rather than LLM self-judgment
-or child self-promotion.
+not a semantic limit of the trampoline model. The early implementation focused
+on tool-description artifacts loaded into the binary with `include_str!`. The
+current source-edit path is broader: an admitted profile can select
+`broad-harness-request`, causing the parent to publish request-bound isolated
+candidate workspaces, run the headless `ploke-tui` harness, admit the resulting
+workspace diffs, and materialize child artifacts. Branch-control decisions still
+remain grounded in mechanized evaluation and external oracle signals rather
+than LLM self-judgment or child self-promotion.
 
 ## Framework Anchors
 
@@ -83,14 +84,16 @@ Prototype 1 remains intentionally narrow.
 - keep the editable surface explicitly bounded
 - keep search shallow
 - defer merge/union over disjoint edits
-- defer unbounded arbitrary source mutation
+- defer unbounded arbitrary source mutation; broad source edits are currently
+  bounded by request binding, isolated workspaces, path-policy admission, and
+  protected-core exclusion
 - defer distributed/multi-machine consensus
 
 The goal is still to prove one real end-to-end self-modifying loop over a small
-surface before broadening the target class. The intended broadening is still
-source-level self-editing: the valid patch target set may grow to include the
-runtime, analysis protocols, and evaluation framework, provided the selected
-successor compiles and passes the configured validation/oracle gates.
+surface before broadening the target class. The current broad-harness slice is
+the first source-level self-editing path: the valid patch target set may include
+multiple files outside the protected `ploke-eval` authority core, provided the
+selected successor compiles and passes the configured validation/oracle gates.
 
 ## Core Evaluation Boundary
 

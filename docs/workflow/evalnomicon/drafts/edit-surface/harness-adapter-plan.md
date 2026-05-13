@@ -5,6 +5,38 @@ Status: working implementation plan.
 This note turns the edit-surface model into an implementation brief for
 Prototype 1 candidate creation through a harness such as `ploke-tui`.
 
+## Current Implementation Snapshot, 2026-05-13
+
+Commit `bd00056b Add broad harness request fanout` moved the broad path from a
+single pending request into a live complete-mode fanout prototype:
+
+- admitted profiles may use `source = "broad-harness-request"`;
+- the parent publishes one broad request slot per child budget slot;
+- each broad slot carries a singleton request budget, `min = 1, max = 1`;
+- complete mode invokes the headless `ploke-tui` adapter for each slot when no
+  submitted result already exists;
+- `SubmittedBroadHarnessResult` is request-bound and checked against the live
+  `EditSurfaceAdmission` before a child transaction is admitted;
+- the backend admits the actual candidate workspace diff, so a single broad
+  child may contain multiple changed files when all changed paths remain inside
+  the broad policy;
+- the batch is sealed as a normal child plan only after at least the configured
+  minimum number of admitted broad transactions exists.
+
+This is sufficient to run a broad 5-generation, 3-child Prototype 1 campaign
+and exercise multi-file child artifacts through `ploke-tui`. It is not the full
+long-term adapter boundary described below. In particular:
+
+- the current broad path is an eval-owned headless-TUI continuation path, not
+  yet the production `Harness` trait implementation;
+- path-policy admission is live, but the richer formal `SurfaceGrant` /
+  read-write-touch proof spine is not yet the only broad admission path;
+- `tool_seconds` is present in the request contract and prompt, but only
+  `max_attempts` and the overall turn timeout are enforced by the adapter;
+- the current 3-child campaign is strict: if any required slot fails to produce
+  an admitted transaction, that parent fanout fails rather than proceeding with
+  fewer children.
+
 The central framing is:
 
 ```text

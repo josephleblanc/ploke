@@ -20,6 +20,26 @@ Changed files reviewed:
 - `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` supersedes the high-severity
+finding below that default `BroadHarnessRequest` complete runs reject before
+child planning. Complete mode now has a request-bound continuation path:
+
+```text
+Parent<Ready>
+  -> HarnessRequestBatch
+  -> headless ploke-tui attempt per request slot
+  -> SubmittedBroadHarnessResult
+  -> AdmittedBroadHarnessResult
+  -> ChildPlan when admitted.len() >= child_budget.min
+```
+
+The structural concerns about verified publication loading, durable grant
+projection shape, and compatibility aliases remain relevant. The live broad
+path is runnable, but it is still a prototype workspace-diff admission path, not
+the full formal `SurfaceGrant` / `CheckedProposal` end state.
+
 ## Findings
 
 ### High: default `prototype1-state` is not ready for a long complete loop
@@ -156,7 +176,16 @@ Because these are type aliases, the compiler still sees the structural carrier u
 
 ## Residual Risk
 
-The recent change is directionally aligned with the stated invariants, but it is not yet ready as the default path for a 15-generation / 128-node complete loop. The deterministic TUI path is still the runnable complete path. The broad harness path is structurally safer than before, but it pauses at request publication and has no typed request-to-child-plan continuation.
+Historical pre-`bd00056b` assessment: the change reviewed here was
+directionally aligned with the stated invariants, but it was not yet ready as
+the default path for a 15-generation / 128-node complete loop. At that time the
+deterministic TUI path was still the runnable complete path, and broad harness
+paused at request publication with no typed request-to-child-plan continuation.
+
+Current assessment after `bd00056b`: broad harness is a runnable complete-mode
+prototype path, but the remaining structural risks are verified publication
+loading, durable grant projection shape, and convergence with the formal
+`SurfaceGrant` / `CheckedProposal` proof spine.
 
 The highest structural residual risk is persisted evidence loading: request publications and grant coordinates can still be deserialized as if they were already valid active carriers. That should be treated as a verification-boundary gap before relying on broad harness artifacts in longer runs.
 

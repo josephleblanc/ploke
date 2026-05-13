@@ -7,9 +7,17 @@ proxy toward the HyperAgents-style broad child harness while preserving the
 authority model in
 `docs/workflow/evalnomicon/drafts/edit-surface/model.md`.
 
-Ignore `docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md`
-for this thread. It is stale relative to the edit-surface model and the current
-mandatory grant authority implementation.
+2026-05-13 update: commit `bd00056b Add broad harness request fanout` implements
+the next runnable broad-harness slice from this handoff. Complete mode now
+publishes a request batch, runs headless `ploke-tui` for each slot, admits
+request-bound workspace diffs, and materializes a child plan from admitted
+transactions. Statements below that say the broad path only publishes a request
+and fails closed are pre-implementation context.
+
+The older transition plan should no longer be ignored wholesale. Its early
+status section is historical, but its long-term `SurfaceGrant` /
+`CheckedProposal` direction still names the proof boundary that remains after
+the current workspace-diff broad fanout slice.
 
 ## Source Documents
 

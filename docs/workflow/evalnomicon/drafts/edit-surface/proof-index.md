@@ -6,6 +6,44 @@ This document records what each validation test proves, where the test lives,
 why the proof is non-trivial, and how the proof maps back to the formal
 surface/edit language in the plan.
 
+## Current Broad Fanout Coverage, 2026-05-13
+
+Commit `bd00056b Add broad harness request fanout` adds live broad fanout
+coverage beyond the earlier single-request stop point:
+
+- `broad_workspace_edit_surface_live_publication_allocates_budget_slots_from_active_head`
+  proves broad publication allocates one request slot per child-budget slot and
+  derives the active base artifact from the parent checkout when the node record
+  does not already carry it.
+- `broad_harness_batch_admits_three_transactions_into_three_children` proves
+  three request-bound admitted broad transactions can become three child-plan
+  entries.
+- `broad_harness_batch_rejects_below_minimum_admitted_transactions` proves the
+  broad batch does not silently proceed below the configured minimum child
+  budget.
+- `broad_harness` covers request binding, submitted-result admission, protected
+  path rejection, stale-base rejection, multi-file diff admission, child
+  validation, and materialization drift checks for the broad path.
+
+Formal reading:
+
+```text
+HarnessRequest<Broad, Published> x N
+  -> SubmittedBroadHarnessResult x N
+  -> AdmittedBroadHarnessResult x M
+  -> ChildPlan only if M >= child_budget.min
+```
+
+This is now strong enough to exercise a broad multi-file edit run. It still is
+not full formal closure of the long-term edit-surface proof:
+
+- the current broad path admits workspace diffs through the broad path policy,
+  not exclusively through formal read/write touch evidence;
+- the headless `ploke-tui` adapter is wired as the current executor path, not
+  yet as the final production `Harness` trait implementation;
+- request contract `tool_seconds` is rendered but not separately enforced by
+  the adapter.
+
 If a test cannot be mapped to a formal object or judgment, treat that as a
 design smell:
 

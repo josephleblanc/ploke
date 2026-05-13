@@ -7,6 +7,26 @@ Scope: recent Prototype 1 structural-carrier and broad-harness changes, reviewed
 
 Code changes made by this reviewer: none.
 
+## 2026-05-13 Update
+
+The primary broad-harness blocker described below was addressed after this
+review by commit `bd00056b Add broad harness request fanout`.
+`BroadHarnessRequest` is no longer rejected at the complete-mode gate: the live
+path now allocates request slots from the child budget, invokes the headless
+`ploke-tui` adapter per slot, admits request-bound broad transactions, and
+seals a child plan when the configured minimum admitted transactions exists.
+
+This review remains useful as historical evidence for why that change was
+needed, but its recommendation to use `DeterministicTuiTools` as the only
+runnable long-loop path is stale. Current residual risks are narrower:
+
+- run from a clean, setup-created campaign worktree;
+- the broad batch is strict when the profile requires exactly 3 children;
+- `tool_seconds` is still contract text, not a separately enforced adapter
+  timeout;
+- richer formal `SurfaceGrant` / read-write-touch proof is still future work
+  for the broad workspace-diff path.
+
 ## Verdict
 
 Not ready for an unattended long loop using the current default broad-harness path. The broad-harness request carrier work is moving in the right direction, but the live `Complete` path still hard-stops before child planning for `BroadHarnessRequest`, and the request-to-child-plan receipt/admission path is not yet wired into continuation. A long loop is only plausible after a clean-worktree gate and either:
@@ -16,11 +36,11 @@ Not ready for an unattended long loop using the current default broad-harness pa
 
 ## Findings
 
-### Blocker: Default complete runs select broad harness, but complete mode rejects broad harness before child planning
+### Historical Blocker, Fixed By `bd00056b`: Default complete runs selected broad harness, but complete mode rejected broad harness before child planning
 
 `Prototype1StateCommand` defaults `candidate_generator` to `BroadHarnessRequest` in `crates/ploke-eval/src/cli.rs:634-636`. Run profiles also default generation source to broad harness in `crates/ploke-eval/src/cli/prototype1_state/profile.rs:157-161`.
 
-The live complete path then rejects that generator: `CandidateGenerationConfig::ensure_live_complete_admitted` returns an error for `BroadHarnessRequest` with the message that the typed request-to-child-plan receipt is not implemented in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:745-753`. The complete run calls that gate at `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:8171-8175`.
+At review time, the live complete path rejected that generator: `CandidateGenerationConfig::ensure_live_complete_admitted` returned an error for `BroadHarnessRequest` with the message that the typed request-to-child-plan receipt was not implemented in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:745-753`. The complete run called that gate at `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:8171-8175`.
 
 For a 15-generation / 128-node long loop, this means the default configuration does not start an autonomous complete run. It intentionally stops at the broad-harness request boundary.
 

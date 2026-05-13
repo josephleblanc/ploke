@@ -1,5 +1,19 @@
 # Review: Run Readiness for Broad Headless TUI Adapter
 
+## 2026-05-13 Update
+
+Commit `bd00056b Add broad harness request fanout` addresses the one-file
+materialization limit called out in finding 5. Broad batch publication now
+allocates multiple request slots, each admitted broad transaction can carry
+multiple changed paths, and each admitted transaction is materialized as one
+child artifact entry. The current live 5x3 broad campaign is exercising the
+end-to-end adapter path that this review called unproven.
+
+The other cautions remain relevant: backend admission is the authoritative path
+check, submitted evidence fields remain projection/guidance rather than source
+truth, and the headless TUI loop may still fail operationally under real model
+traffic.
+
 ## Findings
 
 1. **High: The live broad path depends on an unproven real `ploke-tui` chat/tool loop.**
@@ -14,8 +28,8 @@
 4. **Medium: Child plan projection drops the admitted artifact surface.**
    Admission computes `artifact_surface` on the accepted candidate workspace (`crates/ploke-eval/src/cli/prototype1_state/backend.rs:1522-1535`), but `publish_broad_harness_child_plan_from_admitted` only carries base/derived artifact ids and a single target file into `ResolvedTreatmentBranch`/`ChildFiles` (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1402-1472`). `validate_requested_broad_harness_child` checks producer id, artifact id presence, and target consistency, but not the admitted surface measurement (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1790-1818`). This avoids the earlier deterministic-surface path, but it means the broad child plan is not carrying the same surface evidence that admission just minted.
 
-5. **Low: The broad adapter only materializes exactly one changed file.**
-   Admission can accept a diff with multiple changed paths, but child-plan publication rejects anything except one changed file (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1402-1410`). That is a clear proof-of-concept limit, not an invariant break, but it makes live broad harness runs fragile unless the prompt/model reliably edits exactly one file.
+5. **Historical, fixed by `bd00056b`: the broad adapter only materialized exactly one changed file.**
+   Before `bd00056b`, admission could accept a diff with multiple changed paths, but child-plan publication rejected anything except one changed file (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1402-1410`). Current broad fanout materializes admitted broad transactions as child entries and supports multi-file changed-path sets inside each admitted transaction.
 
 ## Open Questions
 
