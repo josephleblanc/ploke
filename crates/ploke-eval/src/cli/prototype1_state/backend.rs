@@ -21,7 +21,7 @@ use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 use super::edit_surface::{
     self, graph,
     harness_request::{BroadEditPolicy, PublishedBroadHarnessRequest, RequestAdmissionBinding},
-    harness_result::{SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError},
+    harness_result::{SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError, transaction},
     request_policy, surface, tui,
 };
 use super::event::ContentHash;
@@ -468,61 +468,47 @@ impl CheckedSurfaceEdit {
     }
 }
 
-/// Backend-admitted broad harness result after request binding, workspace
-/// checks, and durable artifact derivation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AdmittedBroadHarnessResult {
-    request_id: String,
-    request_hash: String,
-    coordinate: Coordinate,
-    policy: surface::SurfacePolicyId,
-    workspace_root: PathBuf,
-    submitted_result_path: PathBuf,
-    changed_paths: Vec<PathBuf>,
-    base_artifact_id: ArtifactId,
-    derived_artifact_id: ArtifactId,
-    artifact_surface: ArtifactSurface,
-}
+pub(crate) type AdmittedBroadHarnessResult = transaction::Transaction<transaction::state::Admitted>;
 
-impl AdmittedBroadHarnessResult {
+impl transaction::Transaction<transaction::state::Admitted> {
     pub(crate) fn request_id(&self) -> &str {
-        &self.request_id
+        self.request().request_id()
     }
 
     pub(crate) fn request_hash(&self) -> &str {
-        &self.request_hash
+        self.request().request_hash().as_str()
     }
 
     pub(crate) fn coordinate(&self) -> &Coordinate {
-        &self.coordinate
+        self.admission().binding().coordinate()
     }
 
-    pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
-        &self.policy
+    pub(crate) fn policy(&self) -> &edit_surface::harness_request::RequestAdmissionPolicyId {
+        self.admission().binding().policy_id()
     }
 
     pub(crate) fn workspace_root(&self) -> &Path {
-        &self.workspace_root
+        self.workspace().candidate_root()
     }
 
     pub(crate) fn submitted_result_path(&self) -> &Path {
-        &self.submitted_result_path
+        self.submission().result_path()
     }
 
     pub(crate) fn changed_paths(&self) -> &[PathBuf] {
-        &self.changed_paths
+        self.changes().paths()
     }
 
     pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
-        &self.base_artifact_id
+        self.artifact().base_artifact_id()
     }
 
     pub(crate) fn derived_artifact_id(&self) -> &ArtifactId {
-        &self.derived_artifact_id
+        self.artifact().derived_artifact_id()
     }
 
     pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
-        &self.artifact_surface
+        self.artifact().surface()
     }
 }
 
@@ -753,6 +739,8 @@ pub(crate) enum BackendError {
         expected: PathBuf,
         observed: PathBuf,
     },
+    #[error("artifact workspace '{path}' is detached and has no branch identity")]
+    DetachedArtifactWorkspace { path: PathBuf },
     #[error("target file '{path}' is missing from the realized worktree")]
     MissingTarget { path: PathBuf },
     #[error(
@@ -1022,10 +1010,47 @@ impl GitWorktreeBackend {
         GitBranch(format!("prototype1-{node_id}"))
     }
 
+    fn broad_harness_branch_name(&self, request_id: &str) -> GitBranch {
+        GitBranch(format!(
+            "prototype1-broad-{}",
+            sanitize_git_branch_component(request_id)
+        ))
+    }
+
     /// Deterministic child workspace location under the node-owned storage
     /// root.
     fn workspace_root(&self, node_dir: &Path) -> PathBuf {
         node_dir.join("worktree")
+    }
+
+    pub(crate) fn workspace_for_artifact_root(
+        &self,
+        workspace_root: &Path,
+    ) -> Result<Workspace, BackendError> {
+        if !workspace_root.exists() {
+            return Err(BackendError::MissingPath {
+                path: workspace_root.to_path_buf(),
+            });
+        }
+        let branch =
+            self.current_branch(workspace_root)
+                .map(GitBranch)
+                .map_err(|err| match err {
+                    BackendError::ParentCheckoutMismatch { path, detail }
+                        if detail.contains("detached") =>
+                    {
+                        BackendError::DetachedArtifactWorkspace { path }
+                    }
+                    other => other,
+                })?;
+        let head = self.head_commit(workspace_root)?;
+        Ok(Workspace {
+            parent_root: PathBuf::new(),
+            parent_head: GitCommit(String::new()),
+            branch,
+            root: workspace_root.to_path_buf(),
+            head,
+        })
     }
 
     /// Fully qualified branch ref used when verifying existing worktree state.
@@ -1510,6 +1535,8 @@ impl GitWorktreeBackend {
             .validate_tui_attempt(repo_root, published)?
             .into_result()?;
         let candidate_root = diff.candidate_root().to_path_buf();
+        let source_root = diff.source_root().to_path_buf();
+        let base_head = diff.base_head().to_string();
         let changed_paths = diff.into_changed_paths();
 
         let base_artifact_id = admission.base_artifact_id()?.clone();
@@ -1522,18 +1549,20 @@ impl GitWorktreeBackend {
         let derived_artifact_id = artifact_id_from_git_commit(&persisted_head);
         let artifact_surface = self.artifact_surface(&candidate_root)?;
 
-        Ok(AdmittedBroadHarnessResult {
-            request_id,
-            request_hash: published.request_hash().to_string(),
-            coordinate: admission.coordinate().clone(),
-            policy: admission.policy().clone(),
-            workspace_root: candidate_root,
-            submitted_result_path: submitted.candidate().submitted_result_path().to_path_buf(),
-            changed_paths,
-            base_artifact_id,
-            derived_artifact_id,
-            artifact_surface,
-        })
+        let changes = transaction::ChangeSet::new(changed_paths)
+            .map_err(transaction_error_to_backend_error)?;
+
+        Ok(transaction::Transaction::admit(
+            published.reference(),
+            transaction::Admission::new(live_admission_binding),
+            transaction::Workspace::new(source_root, candidate_root, Some(base_head)),
+            transaction::Derivation::new(base_artifact_id, derived_artifact_id, artifact_surface),
+            changes,
+            transaction::Submission::new(
+                submitted.candidate().submitted_result_path().to_path_buf(),
+            ),
+            None,
+        ))
     }
 
     pub(crate) fn validate_tui_attempt(
@@ -1631,6 +1660,7 @@ impl GitWorktreeBackend {
         published: &PublishedBroadHarnessRequest,
     ) -> Result<(), BackendError> {
         let workspace = published.workspace_path();
+        let branch = self.broad_harness_branch_name(published.request_id());
         if let Some(parent) = workspace.parent() {
             fs::create_dir_all(parent).map_err(|source| BackendError::CreateDir {
                 path: parent.to_path_buf(),
@@ -1639,7 +1669,19 @@ impl GitWorktreeBackend {
         }
 
         match self.find_worktree(repo_root, workspace)? {
-            Some(_) => {
+            Some(entry) => {
+                let observed_branch = entry
+                    .branch
+                    .clone()
+                    .unwrap_or_else(|| GitBranchRef("detached".to_string()));
+                let expected_branch = self.branch_ref(&branch);
+                if observed_branch != expected_branch {
+                    return Err(BackendError::BranchMismatch {
+                        path: workspace.to_path_buf(),
+                        expected_branch,
+                        observed_branch,
+                    });
+                }
                 let dirty_paths = dirty_paths(workspace)?;
                 if !dirty_paths.is_empty() {
                     return Err(BackendError::DirtyWorktree {
@@ -1672,10 +1714,12 @@ impl GitWorktreeBackend {
                     &[
                         "worktree",
                         "add",
+                        "-b",
+                        branch.0.as_str(),
                         workspace.to_string_lossy().as_ref(),
                         "HEAD",
                     ],
-                    format!("git worktree add {} HEAD", workspace.display()),
+                    format!("git worktree add -b {branch} {} HEAD", workspace.display()),
                 )?;
             }
         }
@@ -2779,6 +2823,19 @@ fn describe_submitted_broad_harness_result_error(
     }
 }
 
+fn transaction_error_to_backend_error(error: transaction::Error) -> BackendError {
+    let detail = match error {
+        transaction::Error::EmptyChangeSet => {
+            "admitted transaction change set was empty".to_string()
+        }
+        transaction::Error::ChangedPathOutsideWorkspace { path } => format!(
+            "admitted transaction changed path '{}' was not a normal repository-relative path",
+            path.display()
+        ),
+    };
+    BackendError::BroadHarnessRequestBinding { detail }
+}
+
 /// Execute one short-lived git command and return a typed backend error on
 /// failure, preserving stderr for diagnostics.
 fn run_git(
@@ -2804,6 +2861,30 @@ fn run_git(
             status: output.status.code().unwrap_or(-1),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         })
+    }
+}
+
+fn sanitize_git_branch_component(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+    for ch in input.chars() {
+        let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-');
+        let next = if allowed { ch } else { '-' };
+        if next == '-' {
+            if !last_was_dash {
+                output.push(next);
+            }
+            last_was_dash = true;
+        } else {
+            output.push(next);
+            last_was_dash = false;
+        }
+    }
+    let trimmed = output.trim_matches(['.', '-']).to_string();
+    if trimmed.is_empty() {
+        "request".to_string()
+    } else {
+        trimmed
     }
 }
 
@@ -4009,6 +4090,19 @@ R  old.rs -> new.rs
         assert_eq!(admitted.request_hash(), published.request_hash());
         assert_eq!(admitted.changed_paths(), &[changed]);
         assert_eq!(
+            admitted.workspace().source_root(),
+            fixture.source_root.as_path()
+        );
+        assert_eq!(
+            admitted.workspace().candidate_root(),
+            published.workspace_path()
+        );
+        assert!(admitted.workspace().base_head().is_some());
+        assert_eq!(
+            admitted.submitted_result_path(),
+            published.submitted_result_path()
+        );
+        assert_eq!(
             admitted.base_artifact_id(),
             &crate::loop_graph::ArtifactId::new("artifact:broad-base")
         );
@@ -4029,6 +4123,70 @@ R  old.rs -> new.rs
             &GitWorktreeBackend
                 .artifact_surface(published.workspace_path())
                 .expect("measure admitted artifact surface")
+        );
+        assert_candidate_clean(&admitted);
+    }
+
+    #[test]
+    fn admits_two_file_submitted_broad_harness_result_outside_protected_core() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let readme = PathBuf::from("README.md");
+        let feature = PathBuf::from("src/feature.rs");
+        fs::write(
+            published.workspace_path().join(&readme),
+            "improved broad harness\n",
+        )
+        .expect("write readme candidate change");
+        fs::write(
+            published.workspace_path().join(&feature),
+            "pub fn feature() { println!(\"candidate\") }\n",
+        )
+        .expect("write feature candidate change");
+        let submitted =
+            submitted_broad_harness_result(&published, &[readme.clone(), feature.clone()]);
+
+        let admitted = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect("two-file outside-protected-core change should admit");
+
+        assert_eq!(admitted.request_id(), published.request_id());
+        assert_eq!(admitted.request_hash(), published.request_hash());
+        assert_eq!(admitted.changed_paths(), &[readme.clone(), feature.clone()]);
+        assert_eq!(
+            admitted.base_artifact_id(),
+            &crate::loop_graph::ArtifactId::new("artifact:broad-base")
+        );
+        assert_ne!(admitted.base_artifact_id(), admitted.derived_artifact_id());
+        assert!(
+            admitted
+                .derived_artifact_id()
+                .as_str()
+                .starts_with("artifact:git-commit:")
+        );
+        let evidence = admitted.child_evidence();
+        assert_eq!(evidence.changed_paths(), &[readme, feature]);
+        assert_eq!(
+            evidence
+                .artifact()
+                .expect("transaction projects artifact evidence")
+                .derived_artifact_id,
+            admitted.derived_artifact_id().clone()
+        );
+        assert_eq!(
+            evidence
+                .workspace()
+                .expect("transaction projects workspace evidence")
+                .base_head
+                .as_deref(),
+            admitted.workspace().base_head()
         );
         assert_candidate_clean(&admitted);
     }
@@ -4067,6 +4225,48 @@ R  old.rs -> new.rs
             super::dirty_paths(published.workspace_path()).expect("candidate dirty paths"),
             vec![PathBuf::from("crates/ploke-eval/src/lib.rs")]
         );
+    }
+
+    #[test]
+    fn submitted_broad_harness_result_rejects_mixed_allowed_and_protected_changes() {
+        let fixture = BroadHarnessFixture::new();
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+
+        let allowed = PathBuf::from("README.md");
+        let protected = PathBuf::from("crates/ploke-eval/src/lib.rs");
+        fs::write(
+            published.workspace_path().join(&allowed),
+            "allowed broad harness change\n",
+        )
+        .expect("write allowed candidate change");
+        fs::write(
+            published.workspace_path().join(&protected),
+            "pub fn protected() { panic!(\"mutated\") }\n",
+        )
+        .expect("write protected-core mutation");
+        let submitted =
+            submitted_broad_harness_result(&published, &[allowed.clone(), protected.clone()]);
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("mixed allowed/protected edits must reject");
+
+        assert!(matches!(
+            err,
+            BackendError::OutOfEditSurface {
+                surface: crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
+                path
+            } if path == protected
+        ));
+        let dirty = super::dirty_paths(published.workspace_path()).expect("candidate dirty paths");
+        assert!(dirty.contains(&allowed));
+        assert!(dirty.contains(&protected));
     }
 
     #[test]

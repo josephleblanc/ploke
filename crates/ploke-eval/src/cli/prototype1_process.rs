@@ -126,7 +126,7 @@ use std::process::Command as ProcessCommand;
 use tracing::debug;
 
 use super::*;
-use crate::cli::prototype1_state::backend::{GitWorktreeBackend, WorkspaceBackend};
+use crate::cli::prototype1_state::backend::{BackendError, GitWorktreeBackend, WorkspaceBackend};
 use crate::cli::prototype1_state::channel::{Channel, Cursor, FileTransport, ToParent};
 use crate::cli::prototype1_state::child::Child;
 use crate::cli::prototype1_state::cli_facing::{
@@ -336,6 +336,43 @@ mod tests {
     }
 
     #[test]
+    fn child_artifact_workspace_accepts_broad_harness_artifact_root() {
+        let tmp = tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let workspace_root = tmp
+            .path()
+            .join("prototype1")
+            .join("workspaces")
+            .join("edit-harness")
+            .join("node-1");
+        fs::create_dir_all(&workspace_root).expect("workspace root");
+        run_git_test(&workspace_root, &["init"]);
+        fs::write(workspace_root.join("README.md"), "artifact\n").expect("write artifact");
+        run_git_test(&workspace_root, &["add", "."]);
+        run_git_test(
+            &workspace_root,
+            &[
+                "-c",
+                "user.email=prototype1-test@example.invalid",
+                "-c",
+                "user.name=Prototype1 Test",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "artifact",
+            ],
+        );
+        let mut node = test_node(tmp.path());
+        node.workspace_root = workspace_root.clone();
+
+        let workspace = child_artifact_workspace(&GitWorktreeBackend, &manifest_path, &node)
+            .expect("broad harness artifact workspace");
+
+        assert_eq!(workspace.root, workspace_root);
+        assert!(!workspace.branch.0.is_empty());
+    }
+
+    #[test]
     fn child_projection_gate_rejects_shared_checkout_cwd() {
         let tmp = tempdir().expect("tempdir");
         let node = test_node(tmp.path());
@@ -392,6 +429,15 @@ mod tests {
                 .to_string()
                 .contains("outside child instance target root")
         );
+    }
+
+    fn run_git_test(repo_root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .status()
+            .expect("git command");
+        assert!(status.success(), "git {args:?} failed");
     }
 
     fn write_test_registration(
@@ -678,12 +724,13 @@ fn install_prototype1_successor_artifact(
     let artifact = selected.selected();
     let node = artifact.node();
     let resolved = artifact.resolved();
-    let workspace = backend
-        .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
-        .map_err(|source| PrepareError::DatabaseSetup {
+    let manifest_path = campaign_manifest_path(campaign_id)?;
+    let workspace = child_artifact_workspace(&backend, &manifest_path, node).map_err(|source| {
+        PrepareError::DatabaseSetup {
             phase: "prototype1_successor_artifact_prepare",
             detail: source.to_string(),
-        })?;
+        }
+    })?;
     let selected_parent_identity = ParentIdentity::from_node(
         campaign_id.to_string(),
         node,
@@ -708,7 +755,6 @@ fn install_prototype1_successor_artifact(
                 phase: "prototype1_successor_worktree_cleanup",
                 detail: source.to_string(),
             })?;
-        let manifest_path = campaign_manifest_path(campaign_id)?;
         cleanup_prototype1_child_build_products(&manifest_path, campaign_id, node)?;
         install_committed_successor_artifact(
             campaign_id,
@@ -730,6 +776,31 @@ fn install_prototype1_successor_artifact(
             Some(current_parent.clone()),
         )
     }
+}
+
+fn child_artifact_workspace(
+    backend: &GitWorktreeBackend,
+    campaign_manifest_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+) -> Result<crate::cli::prototype1_state::backend::Workspace, BackendError> {
+    match backend.workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root) {
+        Ok(workspace) => Ok(workspace),
+        Err(err @ BackendError::WorkspacePathMismatch { .. })
+            if is_broad_harness_workspace(campaign_manifest_path, &node.workspace_root) =>
+        {
+            backend.workspace_for_artifact_root(&node.workspace_root)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn is_broad_harness_workspace(campaign_manifest_path: &Path, workspace_root: &Path) -> bool {
+    workspace_root.starts_with(
+        campaign_manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("prototype1/workspaces/edit-harness"),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1147,11 +1218,12 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
     resolved: &ResolvedTreatmentBranch,
 ) -> Result<ArtifactSurface, PrepareError> {
     let backend = GitWorktreeBackend;
-    let workspace = backend
-        .workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_child_artifact_prepare",
-            detail: source.to_string(),
+    let workspace =
+        child_artifact_workspace(&backend, campaign_manifest_path, node).map_err(|source| {
+            PrepareError::DatabaseSetup {
+                phase: "prototype1_child_artifact_prepare",
+                detail: source.to_string(),
+            }
         })?;
     let message = format!(
         "prototype1: persist buildable artifact for node {}",

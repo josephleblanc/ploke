@@ -59,7 +59,7 @@ use crate::{
                 harness_result::{
                     SubmittedBroadHarnessResult, SubmittedChangeSummary,
                     SubmittedCheckRecommendation, SubmittedEvidenceCitation, SubmittedFileChange,
-                    SubmittedHarnessReturnEvidence, SubmittedImprovementRationale,
+                    SubmittedHarnessReturnEvidence, SubmittedImprovementRationale, transaction,
                 },
                 tui_adapter,
             },
@@ -1160,6 +1160,7 @@ fn broad_harness_admission_for_parent<S>(
 fn try_admit_request_result(
     repo_root: &Path,
     receipt: &HarnessRequestReceipt,
+    executor: Option<&transaction::Executor>,
 ) -> Result<Option<AdmittedBroadHarnessResult>, PrepareError> {
     let result_path = receipt.published.submitted_result_path();
     let backend = GitWorktreeBackend;
@@ -1203,6 +1204,11 @@ fn try_admit_request_result(
             &submitted,
         ) {
             Ok(admitted) => {
+                let admitted = if let Some(executor) = executor {
+                    admitted.with_executor(executor.clone())
+                } else {
+                    admitted
+                };
                 info!(
                     target: EXECUTION_DEBUG_TARGET,
                     request_id = %admitted.request_id(),
@@ -1243,7 +1249,7 @@ fn try_admit_request_result(
 
 async fn run_broad_headless_tui_attempt(
     receipt: &HarnessRequestReceipt,
-) -> Result<(), PrepareError> {
+) -> Result<Option<transaction::Executor>, PrepareError> {
     let backend = GitWorktreeBackend;
     let repo_root = receipt
         .published
@@ -1297,7 +1303,11 @@ async fn run_broad_headless_tui_attempt(
             detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
         })?;
     match terminal {
-        tui_adapter::HeadlessTerminal::Applied { changed_paths, .. } => {
+        tui_adapter::HeadlessTerminal::Applied {
+            proposal_id,
+            request_id,
+            changed_paths,
+        } => {
             let changed_files = changed_paths
                 .iter()
                 .map(|path| SubmittedFileChange {
@@ -1365,7 +1375,11 @@ async fn run_broad_headless_tui_attempt(
                 })?;
             }
             write_json_file_pretty(receipt.published.submitted_result_path(), &submitted)?;
-            Ok(())
+            Ok(Some(transaction::Executor::new(
+                Some(request_id.to_string()),
+                Some(proposal_id.to_string()),
+                None,
+            )))
         }
         tui_adapter::HeadlessTerminal::Exhausted { attempts, last } => {
             Err(PrepareError::InvalidBatchSelection {
@@ -1404,14 +1418,14 @@ fn publish_broad_harness_child_plan_from_admitted(
     receipt: HarnessRequestReceipt,
     admitted: AdmittedBroadHarnessResult,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    if admitted.changed_paths().len() != 1 {
+    if admitted.changed_paths().is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "broad headless-tui proof-of-concept currently admits exactly one changed file into a child plan; observed {} changed paths",
-                admitted.changed_paths().len()
-            ),
+            detail: "broad harness admitted transaction had no changed paths".to_string(),
         });
     }
+    // Legacy child-plan payloads still carry a file-level treatment branch. For
+    // broad transactions this is only a projection anchor; C1 materialization
+    // consumes the request-bound harness evidence below.
     let target_relpath = admitted.changed_paths()[0].clone();
     let source_content = fs::read_to_string(repo_root.join(&target_relpath)).map_err(|source| {
         PrepareError::InvalidBatchSelection {
@@ -1473,14 +1487,7 @@ fn publish_broad_harness_child_plan_from_admitted(
         repo_root,
         false,
     )?;
-    let evidence =
-        crate::cli::prototype1_state::edit_surface::harness_request::child::Evidence::admitted(
-            receipt.published.reference(),
-            receipt.published.admission_binding().clone(),
-            admitted.submitted_result_path().to_path_buf(),
-            admitted.changed_paths().to_vec(),
-            admitted.artifact_surface().clone(),
-        );
+    let evidence = admitted.child_evidence();
     let child = ChildFiles::from_resolved(campaign_id, node, resolved, false)
         .with_harness_evidence(evidence);
     let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, vec![child]);
@@ -1862,6 +1869,54 @@ fn validate_requested_broad_harness_child(child: &ChildFiles) -> Result<(), Prep
                 "broad harness child '{}' request evidence does not include target '{}'",
                 node.node_id,
                 node.target_relpath.display()
+            ),
+        });
+    }
+    let Some(workspace) = evidence.workspace() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' is missing admitted workspace evidence",
+                node.node_id
+            ),
+        });
+    };
+    if workspace.candidate_root.as_os_str().is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' has empty admitted candidate workspace",
+                node.node_id
+            ),
+        });
+    }
+    let Some(artifact) = evidence.artifact() else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' is missing admitted artifact evidence",
+                node.node_id
+            ),
+        });
+    };
+    if Some(&artifact.base_artifact_id) != node.base_artifact_id.as_ref() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' base artifact evidence did not match node base artifact",
+                node.node_id
+            ),
+        });
+    }
+    if Some(&artifact.derived_artifact_id) != node.derived_artifact_id.as_ref() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' derived artifact evidence did not match node derived artifact",
+                node.node_id
+            ),
+        });
+    }
+    if child.resolved().branch.derived_artifact_id.as_ref() != Some(&artifact.derived_artifact_id) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child '{}' branch derived artifact did not match admitted artifact evidence",
+                node.node_id
             ),
         });
     }
@@ -6700,10 +6755,13 @@ async fn resolve_child_plan(
         {
             ParentTargetSelection::ChildPlan(receipt) => receipt,
             ParentTargetSelection::AwaitingHarnessPlan(receipt) => {
+                let mut executor = None;
                 if !receipt.published.submitted_result_path().exists() {
-                    run_broad_headless_tui_attempt(&receipt).await?;
+                    executor = run_broad_headless_tui_attempt(&receipt).await?;
                 }
-                if let Some(admitted) = try_admit_request_result(repo_root, &receipt)? {
+                if let Some(admitted) =
+                    try_admit_request_result(repo_root, &receipt, executor.as_ref())?
+                {
                     publish_broad_harness_child_plan_from_admitted(
                         campaign_id,
                         manifest_path,
@@ -6919,11 +6977,14 @@ fn run_planned_child(
         "resolved prototype1 candidate for parent turn"
     );
 
-    let c2 = match MaterializeBranch::new()
-        .transition(c1, &mut journal)
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_state_materialize", format!("{err:?}"))
-        })? {
+    let materialized = if let Some(evidence) = harness.as_ref() {
+        MaterializeBranch::new().transition_with_harness(c1, evidence, &mut journal)
+    } else {
+        MaterializeBranch::new().transition(c1, &mut journal)
+    };
+    let c2 = match materialized.map_err(|err| {
+        prototype1_state_transition_error("prototype1_state_materialize", format!("{err:?}"))
+    })? {
         Outcome::Advanced(next) => {
             info!(
                 target: EXECUTION_DEBUG_TARGET,
@@ -10873,6 +10934,26 @@ stop_after = "complete"
         assert!(status.success(), "git add failed");
     }
 
+    fn commit_indexed_repo(repo_root: &Path, message: &str) {
+        let status = std::process::Command::new("git")
+            .current_dir(repo_root)
+            .args([
+                "-c",
+                "user.email=prototype1-test@example.invalid",
+                "-c",
+                "user.name=Prototype1 Test",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                message,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git commit");
+        assert!(status.success(), "git commit failed");
+    }
+
     fn write_surface_target(repo_root: &Path, relpath: &Path, content: &str) {
         let target = repo_root.join(relpath);
         fs::create_dir_all(target.parent().expect("target parent")).expect("create target dir");
@@ -10942,6 +11023,40 @@ stop_after = "complete"
             SurfacePolicyId::new("workspace except ploke-eval"),
         ))
         .expect("construct request admission binding")
+    }
+
+    fn submitted_broad_harness_result_for_paths(
+        published: &PublishedBroadHarnessRequest,
+        changed_paths: &[PathBuf],
+    ) -> SubmittedBroadHarnessResult {
+        SubmittedBroadHarnessResult::bind(
+            published,
+            SubmittedHarnessReturnEvidence {
+                authority_boundary: published
+                    .request()
+                    .return_evidence
+                    .authority_boundary
+                    .clone(),
+                change_summary: SubmittedChangeSummary {
+                    changed_files: changed_paths
+                        .iter()
+                        .cloned()
+                        .map(|workspace_relpath| SubmittedFileChange {
+                            workspace_relpath,
+                            summary: "candidate broad harness change".to_string(),
+                        })
+                        .collect(),
+                },
+                guiding_evidence: Vec::new(),
+                rationale: SubmittedImprovementRationale {
+                    hypothesis: "multi-file candidate should become one Artifact".to_string(),
+                    expected_descendant_effect:
+                        "child materialization uses admitted artifact evidence".to_string(),
+                },
+                checks: Vec::new(),
+            },
+        )
+        .expect("submitted broad harness result")
     }
 
     #[test]
@@ -11280,6 +11395,194 @@ stop_after = "complete"
             panic!("unexpected error variant");
         };
         assert!(detail.contains("missing request-bound admission evidence"));
+    }
+
+    #[test]
+    fn broad_harness_multi_file_admission_mints_one_artifact_child() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        let changed_paths = {
+            let allowed = write_broad_surface_targets(&repo_root);
+            commit_indexed_repo(&repo_root, "broad surface fixture");
+            vec![allowed[0].clone(), allowed[1].clone()]
+        };
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let publication = publish_broad_edit_harness_request(
+            &manifest_path,
+            &repo_root,
+            parent.identity(),
+            Prototype1ChildBudget { min: 1, max: 1 },
+            test_broad_request_admission_binding(),
+        )
+        .expect("published request");
+        let awaiting_parent =
+            parent.awaiting_harness_plan_for_request((&publication.published).into());
+        let receipt = HarnessRequestReceipt {
+            parent: awaiting_parent,
+            request_path: publication.request_path,
+            published: publication.published,
+        };
+        let candidate_root = receipt.published.workspace_path().to_path_buf();
+        GitWorktreeBackend
+            .prepare_broad_harness_workspace(&repo_root, &receipt.published)
+            .expect("prepare broad harness workspace");
+        for relpath in &changed_paths {
+            write_surface_target(
+                &candidate_root,
+                relpath,
+                &format!("candidate edit for {}\n", relpath.display()),
+            );
+        }
+        let submitted =
+            submitted_broad_harness_result_for_paths(&receipt.published, &changed_paths);
+        let admitted = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                &repo_root,
+                EditSurfaceAdmission::new(
+                    receipt.published.admission_binding().coordinate().clone(),
+                    SurfacePolicyId::new(
+                        receipt.published.admission_binding().policy_id().as_str(),
+                    ),
+                ),
+                &receipt.published,
+                &submitted,
+            )
+            .expect("admit broad harness result");
+        let admitted_derived = admitted.derived_artifact_id().clone();
+
+        let child_plan = publish_broad_harness_child_plan_from_admitted(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            receipt,
+            admitted,
+        )
+        .expect("multi-file admitted transaction should mint one child artifact");
+
+        let children = child_plan.plan.body().children();
+        assert_eq!(children.len(), 1);
+        let child = &children[0];
+        let evidence = child.harness_evidence().expect("harness evidence");
+        assert_eq!(evidence.changed_paths(), changed_paths.as_slice());
+        assert_eq!(
+            evidence
+                .workspace()
+                .expect("workspace evidence")
+                .candidate_root,
+            candidate_root
+        );
+        assert_eq!(
+            evidence
+                .artifact()
+                .expect("artifact evidence")
+                .derived_artifact_id,
+            admitted_derived
+        );
+
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+        let c1 = C1::from_child_plan(
+            "campaign",
+            manifest_path.clone(),
+            child.node_record().clone(),
+            child.runner_request().clone(),
+            child.resolved().clone(),
+            repo_root,
+        )
+        .expect("load c1");
+        let c2 = match MaterializeBranch::new()
+            .transition_with_harness(c1, evidence, &mut journal)
+            .expect("broad materialization")
+        {
+            Outcome::Advanced(next) => next,
+            Outcome::Rejected(never) => match never {},
+        };
+
+        assert_eq!(c2.artifact().repo_root(), candidate_root.as_path());
+        assert_eq!(c2.node().workspace_root, candidate_root);
+        assert_eq!(c2.request().workspace_root, c2.node().workspace_root);
+    }
+
+    #[test]
+    fn broad_harness_materialization_rejects_post_admission_drift() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        let changed_paths = {
+            let allowed = write_broad_surface_targets(&repo_root);
+            commit_indexed_repo(&repo_root, "broad surface fixture");
+            vec![allowed[0].clone(), allowed[1].clone()]
+        };
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let publication = publish_broad_edit_harness_request(
+            &manifest_path,
+            &repo_root,
+            parent.identity(),
+            Prototype1ChildBudget { min: 1, max: 1 },
+            test_broad_request_admission_binding(),
+        )
+        .expect("published request");
+        let awaiting_parent =
+            parent.awaiting_harness_plan_for_request((&publication.published).into());
+        let receipt = HarnessRequestReceipt {
+            parent: awaiting_parent,
+            request_path: publication.request_path,
+            published: publication.published,
+        };
+        let candidate_root = receipt.published.workspace_path().to_path_buf();
+        GitWorktreeBackend
+            .prepare_broad_harness_workspace(&repo_root, &receipt.published)
+            .expect("prepare broad harness workspace");
+        for relpath in &changed_paths {
+            write_surface_target(
+                &candidate_root,
+                relpath,
+                &format!("candidate edit for {}\n", relpath.display()),
+            );
+        }
+        let submitted =
+            submitted_broad_harness_result_for_paths(&receipt.published, &changed_paths);
+        let admitted = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                &repo_root,
+                EditSurfaceAdmission::new(
+                    receipt.published.admission_binding().coordinate().clone(),
+                    SurfacePolicyId::new(
+                        receipt.published.admission_binding().policy_id().as_str(),
+                    ),
+                ),
+                &receipt.published,
+                &submitted,
+            )
+            .expect("admit broad harness result");
+        let child_plan = publish_broad_harness_child_plan_from_admitted(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            receipt,
+            admitted,
+        )
+        .expect("multi-file admitted transaction should mint one child artifact");
+        let child = &child_plan.plan.body().children()[0];
+        let evidence = child.harness_evidence().expect("harness evidence");
+
+        write_surface_target(&candidate_root, &changed_paths[0], "post-admission drift\n");
+
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+        let c1 = C1::from_child_plan(
+            "campaign",
+            manifest_path.clone(),
+            child.node_record().clone(),
+            child.runner_request().clone(),
+            child.resolved().clone(),
+            repo_root,
+        )
+        .expect("load c1");
+        let err = MaterializeBranch::new()
+            .transition_with_harness(c1, evidence, &mut journal)
+            .expect_err("post-admission candidate drift must reject");
+
+        assert!(format!("{err:?}").contains("HarnessArtifactMeasurement"));
     }
 
     #[test]

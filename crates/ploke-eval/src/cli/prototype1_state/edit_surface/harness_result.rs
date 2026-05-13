@@ -6,6 +6,291 @@ use super::harness_request::{
     EvidenceRootKind, EvidenceRootLocation, ParentNodeRef, PublishedBroadHarnessRequest,
     RequestAdmissionBinding, SubmissionAuthorityBoundary, contract,
 };
+use crate::cli::prototype1_state::history::ArtifactSurface;
+use crate::loop_graph::ArtifactId;
+
+pub(crate) mod transaction {
+    use std::{
+        marker::PhantomData,
+        path::{Path, PathBuf},
+    };
+
+    use serde::{Deserialize, Serialize};
+
+    use super::{ArtifactId, ArtifactSurface, RequestAdmissionBinding};
+    use crate::cli::prototype1_state::edit_surface::harness_request::{child, request};
+
+    pub(crate) mod state {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(crate) enum Admitted {}
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(bound = "")]
+    pub(crate) struct Transaction<S> {
+        pub(crate) schema_version: u32,
+        request: request::Reference<request::Broad, request::Published>,
+        admission: Admission,
+        workspace: Workspace,
+        artifact: Derivation,
+        changes: ChangeSet,
+        submission: Submission,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        executor: Option<Executor>,
+        #[serde(skip)]
+        _state: PhantomData<fn() -> S>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Admission {
+        binding: RequestAdmissionBinding,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Workspace {
+        source_root: PathBuf,
+        candidate_root: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_head: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Derivation {
+        base_artifact_id: ArtifactId,
+        derived_artifact_id: ArtifactId,
+        surface: ArtifactSurface,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct ChangeSet {
+        paths: Vec<PathBuf>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Submission {
+        result_path: PathBuf,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Executor {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        record_path: Option<PathBuf>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) enum Error {
+        EmptyChangeSet,
+        ChangedPathOutsideWorkspace { path: PathBuf },
+    }
+
+    impl Admission {
+        pub(crate) fn new(binding: RequestAdmissionBinding) -> Self {
+            Self { binding }
+        }
+
+        pub(crate) fn binding(&self) -> &RequestAdmissionBinding {
+            &self.binding
+        }
+    }
+
+    impl Workspace {
+        pub(crate) fn new(
+            source_root: PathBuf,
+            candidate_root: PathBuf,
+            base_head: Option<String>,
+        ) -> Self {
+            Self {
+                source_root,
+                candidate_root,
+                base_head,
+            }
+        }
+
+        pub(crate) fn source_root(&self) -> &Path {
+            &self.source_root
+        }
+
+        pub(crate) fn candidate_root(&self) -> &Path {
+            &self.candidate_root
+        }
+
+        pub(crate) fn base_head(&self) -> Option<&str> {
+            self.base_head.as_deref()
+        }
+    }
+
+    impl Derivation {
+        pub(crate) fn new(
+            base_artifact_id: ArtifactId,
+            derived_artifact_id: ArtifactId,
+            surface: ArtifactSurface,
+        ) -> Self {
+            Self {
+                base_artifact_id,
+                derived_artifact_id,
+                surface,
+            }
+        }
+
+        pub(crate) fn base_artifact_id(&self) -> &ArtifactId {
+            &self.base_artifact_id
+        }
+
+        pub(crate) fn derived_artifact_id(&self) -> &ArtifactId {
+            &self.derived_artifact_id
+        }
+
+        pub(crate) fn surface(&self) -> &ArtifactSurface {
+            &self.surface
+        }
+    }
+
+    impl ChangeSet {
+        pub(crate) fn new(paths: Vec<PathBuf>) -> Result<Self, Error> {
+            if paths.is_empty() {
+                return Err(Error::EmptyChangeSet);
+            }
+            if let Some(path) = paths.iter().find(|path| !is_normal_relative(path)) {
+                return Err(Error::ChangedPathOutsideWorkspace { path: path.clone() });
+            }
+            Ok(Self { paths })
+        }
+
+        pub(crate) fn paths(&self) -> &[PathBuf] {
+            &self.paths
+        }
+    }
+
+    impl Submission {
+        pub(crate) fn new(result_path: PathBuf) -> Self {
+            Self { result_path }
+        }
+
+        pub(crate) fn result_path(&self) -> &Path {
+            &self.result_path
+        }
+    }
+
+    impl Executor {
+        pub(crate) fn new(
+            run_id: Option<String>,
+            attempt_id: Option<String>,
+            record_path: Option<PathBuf>,
+        ) -> Self {
+            Self {
+                run_id,
+                attempt_id,
+                record_path,
+            }
+        }
+
+        pub(crate) fn run_id(&self) -> Option<&str> {
+            self.run_id.as_deref()
+        }
+
+        pub(crate) fn attempt_id(&self) -> Option<&str> {
+            self.attempt_id.as_deref()
+        }
+
+        pub(crate) fn record_path(&self) -> Option<&Path> {
+            self.record_path.as_deref()
+        }
+    }
+
+    impl Transaction<state::Admitted> {
+        pub(crate) fn admit(
+            request: request::Reference<request::Broad, request::Published>,
+            admission: Admission,
+            workspace: Workspace,
+            artifact: Derivation,
+            changes: ChangeSet,
+            submission: Submission,
+            executor: Option<Executor>,
+        ) -> Self {
+            Self {
+                schema_version: 1,
+                request,
+                admission,
+                workspace,
+                artifact,
+                changes,
+                submission,
+                executor,
+                _state: PhantomData,
+            }
+        }
+
+        pub(crate) fn request(&self) -> &request::Reference<request::Broad, request::Published> {
+            &self.request
+        }
+
+        pub(crate) fn admission(&self) -> &Admission {
+            &self.admission
+        }
+
+        pub(crate) fn workspace(&self) -> &Workspace {
+            &self.workspace
+        }
+
+        pub(crate) fn artifact(&self) -> &Derivation {
+            &self.artifact
+        }
+
+        pub(crate) fn changes(&self) -> &ChangeSet {
+            &self.changes
+        }
+
+        pub(crate) fn submission(&self) -> &Submission {
+            &self.submission
+        }
+
+        pub(crate) fn executor(&self) -> Option<&Executor> {
+            self.executor.as_ref()
+        }
+
+        pub(crate) fn with_executor(mut self, executor: Executor) -> Self {
+            self.executor = Some(executor);
+            self
+        }
+
+        pub(crate) fn child_evidence(&self) -> child::Evidence {
+            child::Evidence::admitted(
+                self.request.clone(),
+                self.admission.binding.clone(),
+                self.submission.result_path.clone(),
+                self.changes.paths.clone(),
+                self.artifact.surface.clone(),
+            )
+            .with_workspace(child::WorkspaceEvidence::new(
+                self.workspace.source_root.clone(),
+                self.workspace.candidate_root.clone(),
+                self.workspace.base_head.clone(),
+            ))
+            .with_artifact(child::ArtifactEvidence::new(
+                self.artifact.base_artifact_id.clone(),
+                self.artifact.derived_artifact_id.clone(),
+            ))
+            .with_executor(self.executor.as_ref().map(|executor| {
+                child::ExecutorEvidence::new(
+                    executor.run_id.clone(),
+                    executor.attempt_id.clone(),
+                    executor.record_path.clone(),
+                )
+            }))
+        }
+    }
+
+    fn is_normal_relative(path: &Path) -> bool {
+        !path.is_absolute()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SubmittedBroadHarnessResult {
@@ -258,6 +543,8 @@ mod tests {
     use super::*;
     use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
     use crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget;
+    use crate::cli::prototype1_state::history::ArtifactSurface;
+    use crate::loop_graph::ArtifactId;
     use std::fs;
     use tempfile::TempDir;
 
@@ -442,6 +729,148 @@ mod tests {
     }
 
     #[test]
+    fn admitted_transaction_round_trips_with_structural_axes() {
+        let fixture = Fixture::new();
+        let published = fixture.bound_published_request();
+        let transaction = sample_transaction(&published);
+
+        let json = serde_json::to_string(&transaction).expect("serialize transaction");
+        let decoded =
+            serde_json::from_str::<transaction::Transaction<transaction::state::Admitted>>(&json)
+                .expect("deserialize transaction");
+
+        assert_eq!(decoded, transaction);
+        assert_eq!(decoded.request(), &published.reference());
+        assert_eq!(decoded.admission().binding(), published.admission_binding());
+        assert_eq!(
+            decoded.workspace().source_root(),
+            Path::new("/tmp/ploke-workspace")
+        );
+        assert_eq!(decoded.workspace().base_head(), Some("git:base-head"));
+        assert_eq!(
+            decoded.artifact().base_artifact_id(),
+            &ArtifactId::new("artifact:broad-base")
+        );
+        assert_eq!(
+            decoded.artifact().derived_artifact_id(),
+            &ArtifactId::new("artifact:broad-derived")
+        );
+        assert_eq!(
+            decoded.changes().paths(),
+            &[
+                PathBuf::from("src/first.rs"),
+                PathBuf::from("src/second.rs")
+            ]
+        );
+        assert_eq!(
+            decoded.submission().result_path(),
+            published.submitted_result_path()
+        );
+        assert_eq!(
+            decoded.executor().and_then(|executor| executor.run_id()),
+            Some("run-1")
+        );
+    }
+
+    #[test]
+    fn admitted_transaction_projects_child_evidence() {
+        let fixture = Fixture::new();
+        let published = fixture.bound_published_request();
+        let transaction = sample_transaction(&published);
+
+        let evidence = transaction.child_evidence();
+
+        assert_eq!(evidence.request(), &published.reference());
+        assert_eq!(evidence.admission_binding(), published.admission_binding());
+        assert_eq!(
+            evidence.submitted_result_path(),
+            published.submitted_result_path()
+        );
+        assert_eq!(
+            evidence.changed_paths(),
+            &[
+                PathBuf::from("src/first.rs"),
+                PathBuf::from("src/second.rs")
+            ]
+        );
+        assert_eq!(
+            evidence.artifact_surface(),
+            transaction.artifact().surface()
+        );
+        let workspace = evidence.workspace().expect("workspace projection");
+        assert_eq!(workspace.source_root, PathBuf::from("/tmp/ploke-workspace"));
+        assert_eq!(workspace.candidate_root, published.workspace_path());
+        assert_eq!(workspace.base_head.as_deref(), Some("git:base-head"));
+        let artifact = evidence.artifact().expect("artifact projection");
+        assert_eq!(
+            artifact.base_artifact_id,
+            ArtifactId::new("artifact:broad-base")
+        );
+        assert_eq!(
+            artifact.derived_artifact_id,
+            ArtifactId::new("artifact:broad-derived")
+        );
+        let executor = evidence.executor().expect("executor projection");
+        assert_eq!(executor.run_id.as_deref(), Some("run-1"));
+        assert_eq!(executor.attempt_id.as_deref(), Some("attempt-1"));
+        assert_eq!(
+            executor.record_path.as_deref(),
+            Some(Path::new("attempts/run-1.json"))
+        );
+    }
+
+    #[test]
+    fn submitted_result_alone_does_not_drive_child_projection() {
+        let fixture = Fixture::new();
+        let published = fixture.bound_published_request();
+        let mut submitted = SubmittedBroadHarnessResult::bind(&published, sample_return_evidence())
+            .expect("bind submitted broad harness result");
+        submitted.return_evidence.change_summary.changed_files = vec![SubmittedFileChange {
+            workspace_relpath: PathBuf::from("src/submitted-only.rs"),
+            summary: "submitted summary is not admission".to_string(),
+        }];
+        submitted
+            .verify_request(&published)
+            .expect("submitted evidence still binds to request");
+
+        let evidence = sample_transaction(&published).child_evidence();
+
+        assert_eq!(
+            evidence.changed_paths(),
+            &[
+                PathBuf::from("src/first.rs"),
+                PathBuf::from("src/second.rs")
+            ]
+        );
+        assert_ne!(
+            evidence.changed_paths(),
+            &[PathBuf::from("src/submitted-only.rs")]
+        );
+    }
+
+    #[test]
+    fn admitted_transaction_rejects_unadmitted_change_sets() {
+        assert_eq!(
+            transaction::ChangeSet::new(Vec::new()).expect_err("empty changes reject"),
+            transaction::Error::EmptyChangeSet
+        );
+        assert_eq!(
+            transaction::ChangeSet::new(vec![PathBuf::from("../outside.rs")])
+                .expect_err("parent path rejects"),
+            transaction::Error::ChangedPathOutsideWorkspace {
+                path: PathBuf::from("../outside.rs")
+            }
+        );
+        assert_eq!(
+            transaction::ChangeSet::new(vec![PathBuf::from("/tmp/outside.rs")])
+                .expect_err("absolute path rejects"),
+            transaction::Error::ChangedPathOutsideWorkspace {
+                path: PathBuf::from("/tmp/outside.rs")
+            }
+        );
+    }
+
+    #[test]
     fn submitted_result_rejects_request_admission_binding_mismatch() {
         let fixture = Fixture::new();
         let published = fixture.bound_published_request();
@@ -579,5 +1008,35 @@ mod tests {
                     .to_string(),
             }],
         }
+    }
+
+    fn sample_transaction(
+        published: &PublishedBroadHarnessRequest,
+    ) -> transaction::Transaction<transaction::state::Admitted> {
+        transaction::Transaction::admit(
+            published.reference(),
+            transaction::Admission::new(published.admission_binding().clone()),
+            transaction::Workspace::new(
+                PathBuf::from("/tmp/ploke-workspace"),
+                published.workspace_path().to_path_buf(),
+                Some("git:base-head".to_string()),
+            ),
+            transaction::Derivation::new(
+                ArtifactId::new("artifact:broad-base"),
+                ArtifactId::new("artifact:broad-derived"),
+                ArtifactSurface::test("broad-transaction"),
+            ),
+            transaction::ChangeSet::new(vec![
+                PathBuf::from("src/first.rs"),
+                PathBuf::from("src/second.rs"),
+            ])
+            .expect("valid transaction change set"),
+            transaction::Submission::new(published.submitted_result_path().to_path_buf()),
+            Some(transaction::Executor::new(
+                Some("run-1".to_string()),
+                Some("attempt-1".to_string()),
+                Some(PathBuf::from("attempts/run-1.json")),
+            )),
+        )
     }
 }

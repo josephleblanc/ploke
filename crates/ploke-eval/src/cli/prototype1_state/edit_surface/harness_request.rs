@@ -533,6 +533,8 @@ pub(crate) mod child {
 
     use serde::{Deserialize, Serialize};
 
+    use crate::loop_graph::ArtifactId;
+
     use super::{ArtifactSurface, RequestAdmissionBinding, request};
 
     /// Request-bound evidence carried by a child plan minted from an admitted
@@ -549,6 +551,73 @@ pub(crate) mod child {
         pub(crate) submitted_result_path: PathBuf,
         pub(crate) changed_paths: Vec<PathBuf>,
         pub(crate) artifact_surface: ArtifactSurface,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) workspace: Option<WorkspaceEvidence>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) artifact: Option<ArtifactEvidence>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) executor: Option<ExecutorEvidence>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct WorkspaceEvidence {
+        pub(crate) source_root: PathBuf,
+        pub(crate) candidate_root: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) base_head: Option<String>,
+    }
+
+    impl WorkspaceEvidence {
+        pub(crate) fn new(
+            source_root: PathBuf,
+            candidate_root: PathBuf,
+            base_head: Option<String>,
+        ) -> Self {
+            Self {
+                source_root,
+                candidate_root,
+                base_head,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct ArtifactEvidence {
+        pub(crate) base_artifact_id: ArtifactId,
+        pub(crate) derived_artifact_id: ArtifactId,
+    }
+
+    impl ArtifactEvidence {
+        pub(crate) fn new(base_artifact_id: ArtifactId, derived_artifact_id: ArtifactId) -> Self {
+            Self {
+                base_artifact_id,
+                derived_artifact_id,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct ExecutorEvidence {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) run_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) attempt_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) record_path: Option<PathBuf>,
+    }
+
+    impl ExecutorEvidence {
+        pub(crate) fn new(
+            run_id: Option<String>,
+            attempt_id: Option<String>,
+            record_path: Option<PathBuf>,
+        ) -> Self {
+            Self {
+                run_id,
+                attempt_id,
+                record_path,
+            }
+        }
     }
 
     impl Evidence {
@@ -566,7 +635,25 @@ pub(crate) mod child {
                 submitted_result_path,
                 changed_paths,
                 artifact_surface,
+                workspace: None,
+                artifact: None,
+                executor: None,
             }
+        }
+
+        pub(crate) fn with_workspace(mut self, workspace: WorkspaceEvidence) -> Self {
+            self.workspace = Some(workspace);
+            self
+        }
+
+        pub(crate) fn with_artifact(mut self, artifact: ArtifactEvidence) -> Self {
+            self.artifact = Some(artifact);
+            self
+        }
+
+        pub(crate) fn with_executor(mut self, executor: Option<ExecutorEvidence>) -> Self {
+            self.executor = executor;
+            self
         }
 
         pub(crate) fn request(&self) -> &request::Reference<request::Broad, request::Published> {
@@ -587,6 +674,18 @@ pub(crate) mod child {
 
         pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
             &self.artifact_surface
+        }
+
+        pub(crate) fn workspace(&self) -> Option<&WorkspaceEvidence> {
+            self.workspace.as_ref()
+        }
+
+        pub(crate) fn artifact(&self) -> Option<&ArtifactEvidence> {
+            self.artifact.as_ref()
+        }
+
+        pub(crate) fn executor(&self) -> Option<&ExecutorEvidence> {
+            self.executor.as_ref()
         }
     }
 }

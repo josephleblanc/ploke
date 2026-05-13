@@ -405,6 +405,10 @@ impl HeadlessRun {
     pub(crate) fn terminal(&self) -> Option<&HeadlessTerminal> {
         self.terminal.as_ref()
     }
+
+    pub(crate) fn evidence(&self) -> evidence::Summary {
+        evidence::Summary::from(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,6 +462,132 @@ pub(crate) enum HeadlessTerminal {
     TimedOut {
         secs: u64,
     },
+}
+
+pub(crate) mod evidence {
+    use std::path::PathBuf;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::{HeadlessAttemptResult, HeadlessRun, HeadlessTerminal};
+
+    /// Compact executor observations. Backend admission must still validate the
+    /// workspace diff before any loop state advances.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Summary {
+        pub(crate) attempts: Vec<Attempt>,
+        pub(crate) terminal: Option<Terminal>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Attempt {
+        pub(crate) turn: u32,
+        pub(crate) proposal_id: Option<String>,
+        pub(crate) result: Result,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "result", rename_all = "snake_case")]
+    pub(crate) enum Result {
+        Applied { paths: Vec<PathBuf> },
+        Rejected { feedback: String },
+        NoEdit { summary: String },
+        ToolFailed { error: String },
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "terminal", rename_all = "snake_case")]
+    pub(crate) enum Terminal {
+        Applied {
+            proposal_id: String,
+            request_id: String,
+            changed_paths: Vec<PathBuf>,
+        },
+        Exhausted {
+            attempts: u32,
+            last_feedback: String,
+        },
+        CompletedWithoutEdit {
+            outcome: String,
+            summary: String,
+        },
+        ToolFailed {
+            error: String,
+        },
+        NoEdit,
+        TimedOut {
+            secs: u64,
+        },
+    }
+
+    impl From<&HeadlessRun> for Summary {
+        fn from(value: &HeadlessRun) -> Self {
+            Self {
+                attempts: value.attempts.iter().map(Attempt::from).collect(),
+                terminal: value.terminal.as_ref().map(Terminal::from),
+            }
+        }
+    }
+
+    impl From<&super::HeadlessAttempt> for Attempt {
+        fn from(value: &super::HeadlessAttempt) -> Self {
+            Self {
+                turn: value.turn,
+                proposal_id: value.proposal_id.map(|id| id.to_string()),
+                result: Result::from(&value.result),
+            }
+        }
+    }
+
+    impl From<&HeadlessAttemptResult> for Result {
+        fn from(value: &HeadlessAttemptResult) -> Self {
+            match value {
+                HeadlessAttemptResult::Applied { paths } => Self::Applied {
+                    paths: paths.clone(),
+                },
+                HeadlessAttemptResult::Rejected { reason } => Self::Rejected {
+                    feedback: reason.clone(),
+                },
+                HeadlessAttemptResult::NoEdit { summary } => Self::NoEdit {
+                    summary: summary.clone(),
+                },
+                HeadlessAttemptResult::ToolFailed { error } => Self::ToolFailed {
+                    error: error.clone(),
+                },
+            }
+        }
+    }
+
+    impl From<&HeadlessTerminal> for Terminal {
+        fn from(value: &HeadlessTerminal) -> Self {
+            match value {
+                HeadlessTerminal::Applied {
+                    proposal_id,
+                    request_id,
+                    changed_paths,
+                } => Self::Applied {
+                    proposal_id: proposal_id.to_string(),
+                    request_id: request_id.to_string(),
+                    changed_paths: changed_paths.clone(),
+                },
+                HeadlessTerminal::Exhausted { attempts, last } => Self::Exhausted {
+                    attempts: *attempts,
+                    last_feedback: last.clone(),
+                },
+                HeadlessTerminal::CompletedWithoutEdit { outcome, summary } => {
+                    Self::CompletedWithoutEdit {
+                        outcome: outcome.clone(),
+                        summary: summary.clone(),
+                    }
+                }
+                HeadlessTerminal::ToolFailed { error } => Self::ToolFailed {
+                    error: error.clone(),
+                },
+                HeadlessTerminal::NoEdit => Self::NoEdit,
+                HeadlessTerminal::TimedOut { secs } => Self::TimedOut { secs: *secs },
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1144,6 +1274,92 @@ mod tests {
         .expect("protected path should reject");
 
         assert!(matches!(rejection, Reject::Protected { .. }));
+    }
+
+    #[test]
+    fn evidence_applied_attempt_carries_changed_paths() {
+        let proposal_id = Uuid::from_u128(1);
+        let request_id = Uuid::from_u128(2);
+        let changed_paths = vec![
+            PathBuf::from("crates/ploke-tui/src/app.rs"),
+            PathBuf::from("crates/ploke-tui/src/lib.rs"),
+        ];
+        let run = HeadlessRun {
+            attempts: vec![HeadlessAttempt {
+                turn: 1,
+                proposal_id: Some(proposal_id),
+                result: HeadlessAttemptResult::Applied {
+                    paths: changed_paths.clone(),
+                },
+            }],
+            events: Vec::new(),
+            terminal: Some(HeadlessTerminal::Applied {
+                proposal_id,
+                request_id,
+                changed_paths: changed_paths.clone(),
+            }),
+        };
+
+        let summary = run.evidence();
+        let proposal_id = proposal_id.to_string();
+        let request_id = request_id.to_string();
+
+        assert_eq!(summary.attempts.len(), 1);
+        assert_eq!(summary.attempts[0].turn, 1);
+        assert_eq!(
+            summary.attempts[0].proposal_id.as_deref(),
+            Some(proposal_id.as_str())
+        );
+        assert!(matches!(
+            &summary.attempts[0].result,
+            evidence::Result::Applied { paths } if paths == &changed_paths
+        ));
+        assert!(matches!(
+            summary.terminal.as_ref(),
+            Some(evidence::Terminal::Applied {
+                proposal_id: observed_proposal,
+                request_id: observed_request,
+                changed_paths: observed_paths,
+            }) if observed_proposal == &proposal_id
+                && observed_request == &request_id
+                && observed_paths == &changed_paths
+        ));
+    }
+
+    #[test]
+    fn evidence_rejected_attempt_carries_feedback() {
+        let proposal_id = Uuid::from_u128(3);
+        let feedback = "Rejected protected paths: crates/ploke-eval/src/lib.rs".to_string();
+        let run = HeadlessRun {
+            attempts: vec![HeadlessAttempt {
+                turn: 2,
+                proposal_id: Some(proposal_id),
+                result: HeadlessAttemptResult::Rejected {
+                    reason: feedback.clone(),
+                },
+            }],
+            events: Vec::new(),
+            terminal: Some(HeadlessTerminal::Exhausted {
+                attempts: 2,
+                last: feedback.clone(),
+            }),
+        };
+
+        let summary = run.evidence();
+
+        assert_eq!(summary.attempts.len(), 1);
+        assert_eq!(summary.attempts[0].turn, 2);
+        assert!(matches!(
+            &summary.attempts[0].result,
+            evidence::Result::Rejected { feedback: observed } if observed == &feedback
+        ));
+        assert!(matches!(
+            summary.terminal.as_ref(),
+            Some(evidence::Terminal::Exhausted {
+                attempts: 2,
+                last_feedback,
+            }) if last_feedback == &feedback
+        ));
     }
 }
 

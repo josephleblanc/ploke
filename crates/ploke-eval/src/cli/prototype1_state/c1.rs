@@ -41,6 +41,7 @@ use crate::intervention::{
 use crate::spec::PrepareError;
 
 use super::backend::{BackendError, GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
+use super::edit_surface::harness_request;
 use super::event::{
     ContentHash, Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World,
 };
@@ -381,6 +382,49 @@ pub(crate) enum MaterializeBranchError {
         #[source]
         source: PrepareError,
     },
+    #[error("broad harness child '{node_id}' is missing admitted workspace evidence")]
+    MissingHarnessWorkspace { node_id: String },
+    #[error("broad harness child '{node_id}' is missing admitted artifact evidence")]
+    MissingHarnessArtifact { node_id: String },
+    #[error("broad harness child '{node_id}' has no admitted changed paths")]
+    EmptyHarnessChangeSet { node_id: String },
+    #[error(
+        "broad harness child '{node_id}' source root '{observed}' did not match parent root '{expected}'"
+    )]
+    HarnessSourceRootMismatch {
+        node_id: String,
+        expected: PathBuf,
+        observed: PathBuf,
+    },
+    #[error(
+        "broad harness child '{node_id}' {field} artifact '{observed}' did not match '{expected}'"
+    )]
+    HarnessArtifactMismatch {
+        node_id: String,
+        field: &'static str,
+        expected: String,
+        observed: String,
+    },
+    #[error("broad harness child '{node_id}' candidate workspace '{path}' is not a directory")]
+    HarnessWorkspaceMissing { node_id: String, path: PathBuf },
+    #[error(
+        "broad harness child '{node_id}' admitted changed path '{path}' is missing from candidate workspace"
+    )]
+    HarnessChangedPathMissing { node_id: String, path: PathBuf },
+    #[error("failed to measure broad harness child '{node_id}' candidate artifact")]
+    HarnessArtifactMeasurement {
+        node_id: String,
+        #[source]
+        source: BackendError,
+    },
+    #[error(
+        "broad harness child '{node_id}' candidate artifact surface changed after admission: expected tree {expected_tree}, observed tree {observed_tree}"
+    )]
+    HarnessArtifactSurfaceMismatch {
+        node_id: String,
+        expected_tree: String,
+        observed_tree: String,
+    },
 }
 
 impl Prototype<Parent, Parent, Absent, Unacknowledged> {
@@ -509,6 +553,223 @@ impl<B> MaterializeBranch<B> {
             transition_id: TransitionId::new(),
             backend,
         }
+    }
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, from, evidence, records),
+        fields(
+            phase = "materialize_child_artifact",
+            transition = "C1->C2",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+        )
+    )]
+    pub(crate) fn transition_with_harness(
+        &self,
+        from: Prototype<Parent, Parent, Absent, Unacknowledged>,
+        evidence: &harness_request::child::Evidence,
+        records: &mut PrototypeJournal,
+    ) -> Result<
+        Outcome<Prototype<Parent, Child, Absent, Unacknowledged>, std::convert::Infallible>,
+        CommitError<MaterializeBranchError, <PrototypeJournal as RecordStore>::Error>,
+    > {
+        let workspace = evidence
+            .workspace()
+            .ok_or_else(|| MaterializeBranchError::MissingHarnessWorkspace {
+                node_id: from.node.node_id.clone(),
+            })
+            .map_err(CommitError::Transition)?;
+        let artifact = evidence
+            .artifact()
+            .ok_or_else(|| MaterializeBranchError::MissingHarnessArtifact {
+                node_id: from.node.node_id.clone(),
+            })
+            .map_err(CommitError::Transition)?;
+        if evidence.changed_paths().is_empty() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::EmptyHarnessChangeSet {
+                    node_id: from.node.node_id.clone(),
+                },
+            ));
+        }
+        if workspace.source_root != from.artifact.repo_root {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessSourceRootMismatch {
+                    node_id: from.node.node_id.clone(),
+                    expected: from.artifact.repo_root.clone(),
+                    observed: workspace.source_root.clone(),
+                },
+            ));
+        }
+        let Some(node_base) = from.node.base_artifact_id.as_ref() else {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "base",
+                    expected: artifact.base_artifact_id.to_string(),
+                    observed: "<missing node base artifact>".to_string(),
+                },
+            ));
+        };
+        if node_base != &artifact.base_artifact_id {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "base",
+                    expected: node_base.to_string(),
+                    observed: artifact.base_artifact_id.to_string(),
+                },
+            ));
+        }
+        let Some(node_derived) = from.node.derived_artifact_id.as_ref() else {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "derived",
+                    expected: artifact.derived_artifact_id.to_string(),
+                    observed: "<missing node derived artifact>".to_string(),
+                },
+            ));
+        };
+        if node_derived != &artifact.derived_artifact_id {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "derived",
+                    expected: node_derived.to_string(),
+                    observed: artifact.derived_artifact_id.to_string(),
+                },
+            ));
+        }
+        if !workspace.candidate_root.is_dir() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessWorkspaceMissing {
+                    node_id: from.node.node_id.clone(),
+                    path: workspace.candidate_root.clone(),
+                },
+            ));
+        }
+        for relpath in evidence.changed_paths() {
+            let path = workspace.candidate_root.join(relpath);
+            if !path.is_file() {
+                return Err(CommitError::Transition(
+                    MaterializeBranchError::HarnessChangedPathMissing {
+                        node_id: from.node.node_id.clone(),
+                        path,
+                    },
+                ));
+            }
+        }
+        let observed_surface = GitWorktreeBackend
+            .artifact_surface(&workspace.candidate_root)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::HarnessArtifactMeasurement {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
+        if &observed_surface != evidence.artifact_surface() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactSurfaceMismatch {
+                    node_id: from.node.node_id.clone(),
+                    expected_tree: format!("{:?}", evidence.artifact_surface().tree_key()),
+                    observed_tree: format!("{:?}", observed_surface.tree_key()),
+                },
+            ));
+        }
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                from.entry(self.transition_id, CommitPhase::Before),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::Before,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            workspace_root = %workspace.candidate_root.display(),
+            "recorded broad harness materialize before entry"
+        );
+
+        if from.node.binary_path.exists() {
+            fs::remove_file(&from.node.binary_path).map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RemoveStaleChildBinary {
+                    path: from.node.binary_path.clone(),
+                    source,
+                })
+            })?;
+        }
+        let updated_node = project_node_workspace_root(
+            &project_node_status(&from.node, Prototype1NodeStatus::WorkspaceStaged),
+            workspace.candidate_root.clone(),
+        );
+        let mut updated_request = from.request.clone();
+        updated_request.workspace_root = workspace.candidate_root.clone();
+        write_node_projection(&updated_node).map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        write_runner_request_projection(&updated_request, &updated_node.runner_request_path)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
+
+        let next = Prototype {
+            campaign_id: from.campaign_id,
+            campaign_manifest_path: from.campaign_manifest_path,
+            node: updated_node,
+            request: updated_request,
+            resolved: from.resolved.clone(),
+            artifact: Artifact {
+                repo_root: workspace.candidate_root.clone(),
+                target_relpath: from.resolved.target_relpath.clone(),
+                source_content_hash: ContentHash(from.resolved.source_content_hash.clone()),
+                current_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                proposed_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                _lineage: PhantomData,
+            },
+            binary: Binary {
+                parent_running: true,
+                child_path: from.node.binary_path.clone(),
+                child_runtime: None,
+                _lineage: PhantomData,
+                _child: PhantomData,
+                _ack: PhantomData,
+            },
+        };
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                next.entry(self.transition_id, CommitPhase::After),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::After,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %next.node.node_id,
+            branch_id = %next.resolved.branch.branch_id,
+            workspace_root = %next.artifact.repo_root.display(),
+            "recorded broad harness materialize after entry"
+        );
+
+        Ok(Outcome::Advanced(next))
     }
 }
 
