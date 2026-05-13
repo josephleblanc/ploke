@@ -1,7 +1,7 @@
 //! Native diagnostic snapshots emitted by the running operator UI.
 //!
-//! This module persists observations made by the live egui view. It does not
-//! recompute layout or interpret run records.
+//! This module persists render-only observations made by the live egui view.
+//! It does not recompute layout or interpret run records.
 
 use std::fs;
 use std::io;
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::ui::view::GraphViewDiagnostics;
+use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
 
 const SNAPSHOT_VERSION: &str = "ploke-egui.graph-diagnostics.v1";
 const DEFAULT_MAX_SNAPSHOTS: u64 = 10;
@@ -36,12 +36,12 @@ impl SnapshotSink {
     }
 
     pub fn observe(&mut self, diagnostics: GraphViewDiagnostics) -> io::Result<bool> {
-        if self.last == Some(diagnostics) {
+        if self.last.as_ref() == Some(&diagnostics) {
             return Ok(false);
         }
 
         self.sequence = self.sequence.saturating_add(1);
-        self.last = Some(diagnostics);
+        self.last = Some(diagnostics.clone());
 
         let snapshot = Snapshot::from_diagnostics(self.sequence, diagnostics);
         self.write_snapshot(&snapshot)?;
@@ -67,7 +67,17 @@ impl SnapshotSink {
 pub struct Snapshot {
     pub schema_version: String,
     pub sequence: u64,
+    pub view_mode: String,
     pub node_count: usize,
+    pub edge_count: usize,
+    pub component_count_before_anchoring: usize,
+    pub component_roots_before_anchoring: Vec<String>,
+    pub hidden_record_count: usize,
+    pub hidden_edge_count: usize,
+    pub hidden_evidence_count: usize,
+    pub hidden_operation_count: usize,
+    pub hidden_unattached_component_count: usize,
+    pub synthetic_anchors_visible: bool,
     pub graph_size: Pair,
     pub viewport_size: Pair,
     pub aspect_ratio: f32,
@@ -81,6 +91,7 @@ pub struct Snapshot {
     pub edge_label_edge_collisions: usize,
     pub edge_edge_crossings: usize,
     pub edge_crossings_by_kind: CrossingKinds,
+    pub candidate_clutter_crossings: usize,
     pub long_edge_count: usize,
     pub backtracking_edge_count: usize,
     pub selected_path_crossings: usize,
@@ -94,7 +105,30 @@ impl Snapshot {
         Self {
             schema_version: SNAPSHOT_VERSION.to_owned(),
             sequence,
+            view_mode: diagnostics.mode.as_str().to_owned(),
             node_count: diagnostics.node_count,
+            edge_count: diagnostics.edge_count,
+            component_count_before_anchoring: diagnostics
+                .connectivity
+                .component_count_before_anchoring,
+            component_roots_before_anchoring: if diagnostics.mode == GraphViewMode::FullDebug {
+                diagnostics
+                    .connectivity
+                    .component_roots_before_anchoring
+                    .iter()
+                    .map(|root| format!("{} {}", root.kind, root.label))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            hidden_record_count: diagnostics.connectivity.hidden_record_count,
+            hidden_edge_count: diagnostics.connectivity.hidden_edge_count,
+            hidden_evidence_count: diagnostics.connectivity.hidden_evidence_count,
+            hidden_operation_count: diagnostics.connectivity.hidden_operation_count,
+            hidden_unattached_component_count: diagnostics
+                .connectivity
+                .hidden_unattached_component_count,
+            synthetic_anchors_visible: diagnostics.connectivity.synthetic_anchors_visible,
             graph_size: Pair::from(diagnostics.graph_size),
             viewport_size: Pair::from(diagnostics.viewport_size),
             aspect_ratio: diagnostics.aspect_ratio,
@@ -118,6 +152,10 @@ impl Snapshot {
                     .candidate_candidate,
                 mixed: diagnostics.readability.edge_crossings_by_kind.mixed,
             },
+            candidate_clutter_crossings: diagnostics
+                .readability
+                .edge_crossings_by_kind
+                .candidate_candidate,
             long_edge_count: diagnostics.readability.long_edge_count,
             backtracking_edge_count: diagnostics.readability.backtracking_edge_count,
             selected_path_crossings: diagnostics.readability.selected_path_crossings,
@@ -304,14 +342,20 @@ mod tests {
     use eframe::egui::Vec2;
 
     use super::*;
-    use crate::ui::view::{EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphReadabilityDiagnostics};
+    use crate::ui::view::{
+        EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
+        GraphReadabilityDiagnostics, GraphViewMode,
+    };
 
     #[test]
     fn snapshot_findings_are_ranked_by_severity() {
         let snapshot = Snapshot::from_diagnostics(
             1,
             GraphViewDiagnostics {
+                mode: GraphViewMode::ArtifactTree,
                 node_count: 4,
+                edge_count: 3,
+                connectivity: GraphConnectivityDiagnostics::default(),
                 graph_size: Vec2::new(400.0, 300.0),
                 viewport_size: Vec2::new(800.0, 600.0),
                 aspect_ratio: 1.33,
@@ -357,6 +401,7 @@ mod tests {
             snapshot.findings[0].title,
             "Edge labels compete with nearby graph geometry."
         );
+        assert_eq!(snapshot.candidate_clutter_crossings, 0);
     }
 
     #[test]
@@ -364,7 +409,10 @@ mod tests {
         let snapshot = Snapshot::from_diagnostics(
             1,
             GraphViewDiagnostics {
+                mode: GraphViewMode::ArtifactTree,
                 node_count: 1,
+                edge_count: 0,
+                connectivity: GraphConnectivityDiagnostics::default(),
                 graph_size: Vec2::new(100.0, 100.0),
                 viewport_size: Vec2::new(200.0, 200.0),
                 aspect_ratio: 1.0,
@@ -385,7 +433,10 @@ mod tests {
         let snapshot = Snapshot::from_diagnostics(
             1,
             GraphViewDiagnostics {
+                mode: GraphViewMode::ArtifactTree,
                 node_count: 31,
+                edge_count: 30,
+                connectivity: GraphConnectivityDiagnostics::default(),
                 graph_size: Vec2::new(7790.0, 282.0),
                 viewport_size: Vec2::new(674.0, 584.0),
                 aspect_ratio: 27.6,

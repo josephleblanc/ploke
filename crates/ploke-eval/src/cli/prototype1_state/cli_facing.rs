@@ -721,7 +721,7 @@ impl SelectionSealMaterial {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CandidateGenerationConfig {
     Legacy,
-    BroadHarness,
+    BroadHarnessRequest,
     DeterministicTuiTools,
 }
 
@@ -737,7 +737,7 @@ impl CandidateGenerationConfig {
     fn from_generator(generator: Prototype1CandidateGenerator) -> Self {
         match generator {
             Prototype1CandidateGenerator::Legacy => Self::Legacy,
-            Prototype1CandidateGenerator::BroadHarness => Self::BroadHarness,
+            Prototype1CandidateGenerator::BroadHarnessRequest => Self::BroadHarnessRequest,
             Prototype1CandidateGenerator::DeterministicTuiTools => Self::DeterministicTuiTools,
         }
     }
@@ -747,8 +747,8 @@ impl CandidateGenerationConfig {
             Self::Legacy => Err(PrepareError::InvalidBatchSelection {
                 detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
             }),
-            Self::BroadHarness => Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1 hard stop before child planning: broad-harness is a pending request path until a typed harness request-to-child-plan receipt is implemented".to_string(),
+            Self::BroadHarnessRequest => Err(PrepareError::InvalidBatchSelection {
+                detail: "prototype1 hard stop before child planning: broad-harness-request is a pending request path until a typed harness request-to-child-plan receipt is implemented".to_string(),
             }),
             Self::DeterministicTuiTools => Ok(()),
         }
@@ -757,8 +757,8 @@ impl CandidateGenerationConfig {
     fn validate_received_child_plan(self, children: &[ChildFiles]) -> Result<(), PrepareError> {
         match self {
             Self::Legacy => Ok(()),
-            Self::BroadHarness => Err(PrepareError::InvalidBatchSelection {
-                detail: "candidate-generator=broad-harness cannot consume an existing child plan without a typed BroadHarnessRequest receipt binding request identity, policy, objective, and surface evidence".to_string(),
+            Self::BroadHarnessRequest => Err(PrepareError::InvalidBatchSelection {
+                detail: "candidate-generator=broad-harness-request cannot consume an existing child plan without a typed BroadHarnessRequest receipt binding request identity, policy, objective, and surface evidence".to_string(),
             }),
             Self::DeterministicTuiTools => {
                 for child in children {
@@ -852,7 +852,7 @@ enum CandidateGenerationError {
     )]
     MissingDeterministicEvidence { node_id: String },
     #[error(
-        "candidate-generator=broad-harness published request '{}' (request_id='{}', request_hash='{}'), prompt '{}', and isolated candidate workspace '{}'; write a typed SubmittedBroadHarnessResult to request-bound submitted-result path '{}'",
+        "candidate-generator=broad-harness-request published request '{}' (request_id='{}', request_hash='{}'), prompt '{}', and isolated candidate workspace '{}'; write a typed SubmittedBroadHarnessResult to request-bound submitted-result path '{}'",
         request_path.display(),
         request_id,
         request_hash,
@@ -967,7 +967,7 @@ async fn run_parent_target_selection(
                 .await
                 .map(ParentTargetSelection::ChildPlan)
         }
-        CandidateGenerationConfig::BroadHarness => {
+        CandidateGenerationConfig::BroadHarnessRequest => {
             publish_broad_harness_child_plan_request(manifest_path, repo_root, parent, child_budget)
                 .map(ParentTargetSelection::AwaitingHarnessPlan)
         }
@@ -1099,11 +1099,13 @@ fn publish_broad_harness_child_plan_request(
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
+    let admission_binding = broad_harness_request_admission_binding(&parent)?;
     let publication = publish_broad_edit_harness_request(
         manifest_path,
         repo_root,
         &parent_identity,
         child_budget,
+        admission_binding,
     )?;
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
     debug_assert_eq!(
@@ -1238,6 +1240,7 @@ fn publish_broad_edit_harness_request(
     repo_root: &Path,
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
+    admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
@@ -1258,6 +1261,7 @@ fn publish_broad_edit_harness_request(
             request_path,
             prompt_path.clone(),
             submitted_result_path,
+            admission_binding,
         );
     let request_path = published.request_path().to_path_buf();
     if let Some(parent) = request_path.parent() {
@@ -1280,6 +1284,41 @@ fn publish_broad_edit_harness_request(
     Ok(BroadHarnessRequestPublication {
         request_path,
         published,
+    })
+}
+
+fn broad_harness_request_admission_binding(
+    parent: &Parent<Ready>,
+) -> Result<
+    crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
+    PrepareError,
+> {
+    let artifact_id = parent.node().derived_artifact_id.clone().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "parent '{}' is missing a derived artifact id required for broad-harness request publication",
+                parent.identity().node_id()
+            ),
+        }
+    })?;
+    let admission = EditSurfaceAdmission::new(
+        crate::loop_graph::Coordinate {
+            runtime_id: *parent.runtime_id(),
+            target: crate::loop_graph::OperationTarget::Artifact { artifact_id },
+        },
+        crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+            "workspace except ploke-eval",
+        ),
+    );
+    crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::from_admission(
+        &admission,
+    )
+    .map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not derive broad-harness request admission binding for parent '{}': {}",
+            parent.identity().node_id(),
+            format!("{source:?}")
+        ),
     })
 }
 
@@ -9603,6 +9642,11 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
+    use crate::cli::prototype1_state::edit_surface::harness_request::{
+        EvidenceRootKind, PublishedBroadHarnessRequest, RequestAdmissionBinding,
+    };
+    use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
     use crate::cli::prototype1_state::identity::ParentIdentityRecord;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
@@ -9616,6 +9660,7 @@ mod tests {
         PROTOTYPE1_SCHEDULER_SCHEMA_VERSION, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
         Prototype1BranchRegistry, TreatmentBranchNode, TreatmentBranchStatus,
     };
+    use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
     #[derive(Clone, Default)]
     struct TraceLines(Arc<Mutex<Vec<String>>>);
@@ -9740,7 +9785,7 @@ mod tests {
             successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
             successor_selection_seed: 0,
             successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-            candidate_generator: Prototype1CandidateGenerator::BroadHarness,
+            candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
             format: InspectOutputFormat::Table,
         }
     }
@@ -9750,7 +9795,7 @@ mod tests {
         let command = state_command_without_ids();
         let config = CandidateGenerationConfig::from_command(&command);
 
-        assert_eq!(config, CandidateGenerationConfig::BroadHarness);
+        assert_eq!(config, CandidateGenerationConfig::BroadHarnessRequest);
     }
 
     #[test]
@@ -9989,10 +10034,10 @@ mod tests {
     #[test]
     fn candidate_generation_config_dispatches_broad_harness_surface() {
         let mut command = state_command_without_ids();
-        command.candidate_generator = Prototype1CandidateGenerator::BroadHarness;
+        command.candidate_generator = Prototype1CandidateGenerator::BroadHarnessRequest;
         let config = CandidateGenerationConfig::from_command(&command);
 
-        assert_eq!(config, CandidateGenerationConfig::BroadHarness);
+        assert_eq!(config, CandidateGenerationConfig::BroadHarnessRequest);
     }
 
     #[test]
@@ -10022,7 +10067,7 @@ require_keep_for_continuation = false
 explore_from_rejected = true
 
 [generation]
-source = "broad-harness"
+source = "broad-harness-request"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -10048,7 +10093,7 @@ stop_after = "complete"
 
         assert_eq!(
             shape.candidate_generation,
-            CandidateGenerationConfig::BroadHarness
+            CandidateGenerationConfig::BroadHarnessRequest
         );
         assert_eq!(
             shape.successor_selection_metrics,
@@ -10391,6 +10436,19 @@ stop_after = "complete"
         checked.ready(startup).expect("ready parent")
     }
 
+    fn test_broad_request_admission_binding() -> RequestAdmissionBinding {
+        RequestAdmissionBinding::from_admission(&EditSurfaceAdmission::new(
+            Coordinate {
+                runtime_id: RuntimeId::new(),
+                target: OperationTarget::Artifact {
+                    artifact_id: ArtifactId::new("artifact:node-parent-base"),
+                },
+            },
+            SurfacePolicyId::new("workspace except ploke-eval"),
+        ))
+        .expect("construct request admission binding")
+    }
+
     #[test]
     fn tui_edit_surface_producer_creates_default_checked_candidates() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -10493,13 +10551,18 @@ stop_after = "complete"
         let manifest_path = tmp.path().join("campaign.json");
         let repo_root = tmp.path().join("repo");
         write_broad_surface_targets(&repo_root);
-        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let parent_identity = test_parent_identity();
         let budget = Prototype1ChildBudget { min: 2, max: 3 };
+        let admission_binding = test_broad_request_admission_binding();
 
-        let receipt =
-            publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-                .expect("broad surface should publish a typed harness request");
-        assert_eq!(receipt.parent.node().node_id, "node-parent");
+        let publication = publish_broad_edit_harness_request(
+            &manifest_path,
+            &repo_root,
+            &parent_identity,
+            budget,
+            admission_binding,
+        )
+        .expect("broad surface should publish a typed harness request");
 
         let request_path = prototype1_campaign_root(&manifest_path)
             .join("messages/edit-harness-request/node-parent.json");
@@ -10515,13 +10578,16 @@ stop_after = "complete"
                 "node-parent".to_string(),
             ));
 
-        assert_eq!(receipt.request_path, request_path);
-        assert_eq!(receipt.published.prompt_path(), prompt_path.as_path());
+        assert_eq!(publication.request_path, request_path);
+        assert_eq!(publication.published.prompt_path(), prompt_path.as_path());
         assert_eq!(
-            receipt.published.submitted_result_path(),
+            publication.published.submitted_result_path(),
             submitted_result_path.as_path()
         );
-        assert_eq!(receipt.published.workspace_path(), workspace_path.as_path());
+        assert_eq!(
+            publication.published.workspace_path(),
+            workspace_path.as_path()
+        );
         assert!(request_path.exists());
         assert!(prompt_path.exists());
         assert!(
@@ -10532,9 +10598,9 @@ stop_after = "complete"
             !submitted_result_path.exists(),
             "broad request must publish a submitted-result target without pre-writing result evidence"
         );
-        let published = serde_json::from_slice::<
-            crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
-        >(&fs::read(&request_path).expect("read request"))
+        let published = serde_json::from_slice::<PublishedBroadHarnessRequest>(
+            &fs::read(&request_path).expect("read request"),
+        )
         .expect("typed request");
         assert_eq!(published.request_id(), "broad-harness-request:node-parent");
         assert!(!published.request_hash().is_empty());
@@ -10552,8 +10618,7 @@ stop_after = "complete"
             request
                 .evidence_roots
                 .iter()
-                .any(|root| root.kind
-                    == crate::cli::prototype1_state::edit_surface::harness_request::EvidenceRootKind::HistoryBlocks)
+                .any(|root| root.kind == EvidenceRootKind::HistoryBlocks)
         );
         let prompt = fs::read_to_string(prompt_path).expect("read prompt");
         assert!(prompt.contains("protocol diagnoses"));
@@ -10570,8 +10635,8 @@ stop_after = "complete"
         let manifest_path = tmp.path().join("campaign.json");
         let repo_root = tmp.path().join("repo");
         write_broad_surface_targets(&repo_root);
-        let parent = ready_parent_for_test(&manifest_path, &repo_root);
-        let parent_identity = parent.identity().clone();
+        let parent_identity = test_parent_identity();
+        let admission_binding = test_broad_request_admission_binding();
         let budget = Prototype1ChildBudget { min: 2, max: 3 };
 
         let first = publish_broad_edit_harness_request(
@@ -10579,6 +10644,7 @@ stop_after = "complete"
             &repo_root,
             &parent_identity,
             budget,
+            admission_binding.clone(),
         )
         .expect("first publication");
         let second = publish_broad_edit_harness_request(
@@ -10586,6 +10652,7 @@ stop_after = "complete"
             &repo_root,
             &parent_identity,
             budget,
+            admission_binding,
         )
         .expect("second publication");
 
@@ -10635,8 +10702,30 @@ stop_after = "complete"
     }
 
     #[test]
+    fn broad_workspace_edit_surface_live_publication_requires_parent_derived_artifact_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let repo_root = tmp.path().join("repo");
+        write_broad_surface_targets(&repo_root);
+        let parent = ready_parent_for_test(&manifest_path, &repo_root);
+        let budget = Prototype1ChildBudget { min: 2, max: 3 };
+
+        let result =
+            publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget);
+        let err = match result {
+            Ok(_) => panic!("synthetic ready parent without artifact identity must reject"),
+            Err(err) => err,
+        };
+
+        let PrepareError::InvalidBatchSelection { detail } = err else {
+            panic!("unexpected error variant");
+        };
+        assert!(detail.contains("missing a derived artifact id"));
+    }
+
+    #[test]
     fn broad_harness_complete_run_requires_typed_request_receipt() {
-        let err = CandidateGenerationConfig::BroadHarness
+        let err = CandidateGenerationConfig::BroadHarnessRequest
             .ensure_live_complete_admitted()
             .expect_err("broad harness is pending until request receipt exists");
 
@@ -10663,7 +10752,7 @@ stop_after = "complete"
         )
         .expect("published deterministic child plan");
 
-        let err = CandidateGenerationConfig::BroadHarness
+        let err = CandidateGenerationConfig::BroadHarnessRequest
             .validate_received_child_plan(receipt.plan.body().children())
             .expect_err("broad harness must not consume unbound child plans");
 

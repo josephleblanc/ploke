@@ -28,8 +28,7 @@ pub(crate) struct SubmittedBroadHarnessRequestBinding {
     pub(crate) parent_node_id: ParentNodeRef,
     pub(crate) workspace_path: PathBuf,
     pub(crate) submitted_result_path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) admission_binding: Option<RequestAdmissionBinding>,
+    pub(crate) admission_binding: RequestAdmissionBinding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,6 +99,10 @@ pub(crate) enum SubmittedBroadHarnessResultError {
         expected: PathBuf,
         actual: PathBuf,
     },
+    RequestAdmissionBindingMismatch {
+        expected: RequestAdmissionBinding,
+        actual: RequestAdmissionBinding,
+    },
     ChangedFileOutsideWorkspace {
         workspace_relpath: PathBuf,
     },
@@ -161,14 +164,12 @@ impl SubmittedBroadHarnessResult {
             );
         }
         if self.request.admission_binding != expected.admission_binding {
-            return Err(SubmittedBroadHarnessResultError::RequestHashMismatch {
-                expected: expected.request_hash,
-                actual: format!(
-                    "request_admission_binding:{}",
-                    serde_json::to_string(&self.request.admission_binding)
-                        .expect("request admission binding should serialize")
-                ),
-            });
+            return Err(
+                SubmittedBroadHarnessResultError::RequestAdmissionBindingMismatch {
+                    expected: expected.admission_binding,
+                    actual: self.request.admission_binding.clone(),
+                },
+            );
         }
         if self.candidate.workspace_path != expected.workspace_path {
             return Err(SubmittedBroadHarnessResultError::WorkspacePathMismatch {
@@ -222,7 +223,7 @@ impl SubmittedBroadHarnessRequestBinding {
             parent_node_id: published.request().parent_node_id.clone(),
             workspace_path: published.workspace_path().to_path_buf(),
             submitted_result_path: published.submitted_result_path().to_path_buf(),
-            admission_binding: published.admission_binding().cloned(),
+            admission_binding: published.admission_binding().clone(),
         }
     }
 
@@ -234,8 +235,8 @@ impl SubmittedBroadHarnessRequestBinding {
         &self.submitted_result_path
     }
 
-    pub(crate) fn admission_binding(&self) -> Option<&RequestAdmissionBinding> {
-        self.admission_binding.as_ref()
+    pub(crate) fn admission_binding(&self) -> &RequestAdmissionBinding {
+        &self.admission_binding
     }
 }
 
@@ -252,6 +253,7 @@ impl SubmittedBroadHarnessCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
     use crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget;
     use std::fs;
     use tempfile::TempDir;
@@ -282,6 +284,10 @@ mod tests {
         }
 
         fn published_request(&self) -> PublishedBroadHarnessRequest {
+            let admission_binding = self.request_admission_binding(
+                "artifact:/tmp/ploke-workspace",
+                "workspace except ploke-eval",
+            );
             PublishedBroadHarnessRequest::prototype1_workspace(
                 "parent-node-7".to_string(),
                 PathBuf::from("/tmp/ploke-workspace"),
@@ -293,15 +299,36 @@ mod tests {
                 self.request_path.clone(),
                 self.prompt_path.clone(),
                 self.submitted_result_path.clone(),
+                admission_binding,
             )
         }
 
         fn bound_published_request(&self) -> PublishedBroadHarnessRequest {
-            self.published_request()
-                .with_admission_binding(RequestAdmissionBinding::new(
-                    crate::loop_graph::ArtifactId::new("artifact:broad-base"),
-                    "policy:broad-boundary",
-                ))
+            self.published_request().with_admission_binding(
+                self.request_admission_binding("artifact:broad-base", "policy:broad-boundary"),
+            )
+        }
+
+        fn request_admission_binding(
+            &self,
+            artifact_id: &str,
+            policy_id: &str,
+        ) -> RequestAdmissionBinding {
+            let _ = self;
+            let coordinate = crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId::new(),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: crate::loop_graph::ArtifactId::new(artifact_id),
+                },
+            };
+            let admission = EditSurfaceAdmission::new(
+                coordinate,
+                crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+                    policy_id,
+                ),
+            );
+            RequestAdmissionBinding::from_admission(&admission)
+                .expect("request admission binding should project from admission")
         }
     }
 
@@ -404,7 +431,6 @@ mod tests {
             decoded_submitted
                 .request()
                 .admission_binding()
-                .expect("admission binding present")
                 .target_artifact_id(),
             &crate::loop_graph::ArtifactId::new("artifact:broad-base")
         );
@@ -416,10 +442,21 @@ mod tests {
         let published = fixture.bound_published_request();
         let mut submitted = SubmittedBroadHarnessResult::bind(&published, sample_return_evidence())
             .expect("bind submitted broad harness result");
-        submitted.request.admission_binding = Some(RequestAdmissionBinding::new(
-            crate::loop_graph::ArtifactId::new("artifact:other-base"),
-            "policy:broad-boundary",
-        ));
+        let tampered_binding = {
+            let coordinate = crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId::new(),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: crate::loop_graph::ArtifactId::new("artifact:other-base"),
+                },
+            };
+            RequestAdmissionBinding::new(
+                coordinate,
+                crate::loop_graph::ArtifactId::new("artifact:other-base"),
+                "policy:broad-boundary",
+            )
+            .expect("tampered binding should still construct")
+        };
+        submitted.request.admission_binding = tampered_binding.clone();
 
         let err = submitted
             .verify_request(&published)
@@ -427,18 +464,31 @@ mod tests {
 
         assert!(matches!(
             err,
-            SubmittedBroadHarnessResultError::RequestHashMismatch { expected, actual }
-                if expected == published.request_hash()
-                    && actual
-                        == format!(
-                            "request_admission_binding:{}",
-                            serde_json::to_string(&Some(RequestAdmissionBinding::new(
-                                crate::loop_graph::ArtifactId::new("artifact:other-base"),
-                                "policy:broad-boundary"
-                            )))
-                            .expect("request admission binding should serialize")
-                        )
+            SubmittedBroadHarnessResultError::RequestAdmissionBindingMismatch { expected, actual }
+                if expected == *published.admission_binding()
+                    && actual == tampered_binding
         ));
+    }
+
+    #[test]
+    fn submitted_result_rejects_missing_request_admission_binding() {
+        let fixture = Fixture::new();
+        let published = fixture.published_request();
+        let submitted = SubmittedBroadHarnessResult::bind(&published, sample_return_evidence())
+            .expect("bind submitted broad harness result");
+        let mut json =
+            serde_json::to_value(&submitted).expect("serialize submitted broad harness result");
+
+        json.get_mut("request")
+            .expect("submitted result has a request object")
+            .as_object_mut()
+            .expect("submitted request is a JSON object")
+            .remove("admission_binding");
+
+        assert!(
+            serde_json::from_value::<SubmittedBroadHarnessResult>(json).is_err(),
+            "missing authority binding should not deserialize"
+        );
     }
 
     #[test]

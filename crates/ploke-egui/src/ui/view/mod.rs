@@ -31,6 +31,7 @@ pub struct GraphView {
     last_viewport: Option<egui::Vec2>,
     fit_next_frame: bool,
     diagnostics: Option<GraphViewDiagnostics>,
+    mode: GraphViewMode,
 }
 
 impl Default for GraphView {
@@ -49,6 +50,7 @@ impl Default for GraphView {
             last_viewport: None,
             fit_next_frame: true,
             diagnostics: None,
+            mode: GraphViewMode::ArtifactTree,
         }
     }
 }
@@ -67,7 +69,22 @@ impl GraphView {
     }
 
     pub fn diagnostics(&self) -> Option<GraphViewDiagnostics> {
-        self.diagnostics
+        self.diagnostics.clone()
+    }
+
+    pub fn selected_node_detail(&self) -> Option<GraphSelectionDetail> {
+        self.cache.selected_node_detail()
+    }
+
+    pub fn mode(&self) -> GraphViewMode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: GraphViewMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.fit_next_frame = true;
+        }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, graph: &DomainGraph) {
@@ -77,7 +94,7 @@ impl GraphView {
             self.last_viewport = Some(viewport);
         }
 
-        if self.cache.refresh(graph, self.view_style) {
+        if self.cache.refresh(graph, self.view_style, self.mode) {
             egui_graphs::set_layout_state(
                 ui,
                 layout::State {
@@ -113,9 +130,12 @@ impl GraphView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphViewDiagnostics {
+    pub mode: GraphViewMode,
     pub node_count: usize,
+    pub edge_count: usize,
+    pub connectivity: GraphConnectivityDiagnostics,
     pub graph_size: egui::Vec2,
     pub viewport_size: egui::Vec2,
     pub aspect_ratio: f32,
@@ -125,6 +145,47 @@ pub struct GraphViewDiagnostics {
     pub center_offset: egui::Vec2,
     pub edge_labels: EdgeLabelDiagnostics,
     pub readability: GraphReadabilityDiagnostics,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GraphViewMode {
+    #[default]
+    ArtifactTree,
+    FullDebug,
+}
+
+impl GraphViewMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactTree => "artifact-tree",
+            Self::FullDebug => "full-debug",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GraphConnectivityDiagnostics {
+    pub component_count_before_anchoring: usize,
+    pub component_roots_before_anchoring: Vec<ComponentRootDiagnostic>,
+    pub hidden_record_count: usize,
+    pub hidden_edge_count: usize,
+    pub hidden_evidence_count: usize,
+    pub hidden_operation_count: usize,
+    pub hidden_unattached_component_count: usize,
+    pub synthetic_anchors_visible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentRootDiagnostic {
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphSelectionDetail {
+    pub kind: String,
+    pub label: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

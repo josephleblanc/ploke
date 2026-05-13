@@ -574,7 +574,7 @@ pub enum Prototype1TraversalMetrics {
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1CandidateGenerator {
     Legacy,
-    BroadHarness,
+    BroadHarnessRequest,
     DeterministicTuiTools,
 }
 
@@ -632,7 +632,7 @@ pub struct Prototype1StateCommand {
     pub successor_selection_metrics: Prototype1TraversalMetrics,
 
     /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarness)]
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
     pub candidate_generator: Prototype1CandidateGenerator,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -12707,7 +12707,7 @@ mod tests {
             "--stop-after",
             "build",
             "--candidate-generator",
-            "broad-harness",
+            "broad-harness-request",
         ])
         .expect("loop prototype1-state should parse");
 
@@ -12724,7 +12724,7 @@ mod tests {
                 assert_eq!(cmd.stop_after, Prototype1StateStopAfter::Build);
                 assert_eq!(
                     cmd.candidate_generator,
-                    Prototype1CandidateGenerator::BroadHarness
+                    Prototype1CandidateGenerator::BroadHarnessRequest
                 );
             }
             other => panic!("unexpected command shape: {:?}", other),
@@ -12771,7 +12771,7 @@ mod tests {
             }) => {
                 assert_eq!(
                     cmd.candidate_generator,
-                    Prototype1CandidateGenerator::BroadHarness
+                    Prototype1CandidateGenerator::BroadHarnessRequest
                 );
             }
             other => panic!("unexpected command shape: {:?}", other),

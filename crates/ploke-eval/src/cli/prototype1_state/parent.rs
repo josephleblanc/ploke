@@ -1421,6 +1421,21 @@ mod tests {
 
     #[test]
     fn awaiting_harness_plan_accepts_published_request_identity() {
+        let admission_binding = {
+            let admission = crate::cli::prototype1_state::backend::EditSurfaceAdmission::new(
+                crate::loop_graph::Coordinate {
+                    runtime_id: crate::loop_graph::RuntimeId::new(),
+                    target: crate::loop_graph::OperationTarget::Artifact {
+                        artifact_id: crate::loop_graph::ArtifactId::new("/repo"),
+                    },
+                },
+                crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+                    "workspace except ploke-eval",
+                ),
+            );
+            crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::from_admission(&admission)
+                .expect("request admission binding should project from admission")
+        };
         let published = PublishedBroadHarnessRequest::prototype1_workspace(
             "parent-a".to_string(),
             PathBuf::from("/repo"),
@@ -1432,6 +1447,7 @@ mod tests {
             PathBuf::from("/tmp/prompts/broad-harness.json"),
             PathBuf::from("/tmp/prompts/broad-harness.md"),
             PathBuf::from("/tmp/plans/child-plan.json"),
+            admission_binding,
         );
 
         let awaiting = parent("parent-a", 0).awaiting_harness_plan_for_request((&published).into());

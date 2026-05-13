@@ -20,7 +20,7 @@ use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 
 use super::edit_surface::{
     self, graph,
-    harness_request::{BroadEditPolicy, PublishedBroadHarnessRequest},
+    harness_request::{BroadEditPolicy, PublishedBroadHarnessRequest, RequestAdmissionBinding},
     harness_result::{SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError},
     request_policy, surface, tui,
 };
@@ -1345,6 +1345,21 @@ impl GitWorktreeBackend {
             }
         })?;
 
+        let live_admission_binding =
+            RequestAdmissionBinding::from_admission(&admission).map_err(|err| {
+                BackendError::BroadHarnessRequestBinding {
+                    detail: format!("live admission binding projection failed: {err:?}"),
+                }
+            })?;
+        if published.admission_binding() != &live_admission_binding {
+            return Err(BackendError::BroadHarnessRequestBinding {
+                detail: format!(
+                    "published request admission binding mismatch: expected '{live_admission_binding:?}', got '{:?}'",
+                    published.admission_binding()
+                ),
+            });
+        }
+
         let expected_source_repository = published.request().workspace.source_repository_path();
         if expected_source_repository != repo_root {
             return Err(BackendError::BroadHarnessSourceRepositoryMismatch {
@@ -2505,6 +2520,9 @@ fn describe_submitted_broad_harness_result_error(
                 actual.display()
             )
         }
+        SubmittedBroadHarnessResultError::RequestAdmissionBindingMismatch { expected, actual } => {
+            format!("request_admission_binding mismatch: expected '{expected:?}', got '{actual:?}'")
+        }
         SubmittedBroadHarnessResultError::ChangedFileOutsideWorkspace { workspace_relpath } => {
             format!(
                 "changed file '{}' escaped the candidate workspace root",
@@ -2600,17 +2618,18 @@ mod tests {
     use super::edit_surface::graph::View as _;
     use super::edit_surface::harness_request::{
         EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget, PublishedBroadHarnessRequest,
-        SubmissionAuthorityBoundary,
+        RequestAdmissionBinding, SubmissionAuthorityBoundary,
     };
     use super::edit_surface::harness_result::{
-        SubmittedBroadHarnessResult, SubmittedChangeSummary, SubmittedCheckRecommendation,
-        SubmittedEvidenceCitation, SubmittedFileChange, SubmittedHarnessReturnEvidence,
-        SubmittedImprovementRationale,
+        SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError, SubmittedChangeSummary,
+        SubmittedCheckRecommendation, SubmittedEvidenceCitation, SubmittedFileChange,
+        SubmittedHarnessReturnEvidence, SubmittedImprovementRationale,
     };
     use super::edit_surface::{graph, request_policy, surface, tui};
     use super::{
         AdmittedBroadHarnessResult, BackendError, EditSurfaceAdmission, GitWorktreeBackend,
-        WorkspaceBackend, WorktreeEntry, parse_dirty_paths, parse_worktree_list,
+        WorkspaceBackend, WorktreeEntry, describe_submitted_broad_harness_result_error,
+        parse_dirty_paths, parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
@@ -2724,6 +2743,10 @@ mod tests {
         }
 
         fn published_request(&self) -> PublishedBroadHarnessRequest {
+            let admission_binding = RequestAdmissionBinding::from_admission(&admission_for(
+                crate::loop_graph::ArtifactId::new("artifact:broad-base"),
+            ))
+            .expect("construct published request admission binding");
             PublishedBroadHarnessRequest::prototype1_workspace(
                 "parent-node-7".to_string(),
                 self.source_root.clone(),
@@ -2735,6 +2758,7 @@ mod tests {
                 self.request_path.clone(),
                 self.prompt_path.clone(),
                 self.submitted_result_path.clone(),
+                admission_binding,
             )
         }
 
@@ -3714,6 +3738,83 @@ R  old.rs -> new.rs
                 if detail.contains("request_hash mismatch")
                     && detail.contains("tampered-request-hash")
         ));
+    }
+
+    #[test]
+    fn submitted_broad_harness_result_rejects_live_admission_binding_mismatch_before_repo_checks() {
+        let fixture = BroadHarnessFixture::new();
+        let mut published = fixture.published_request();
+        published.admission_binding = RequestAdmissionBinding::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: crate::loop_graph::ArtifactId::new("artifact:published"),
+                },
+            },
+            crate::loop_graph::ArtifactId::new("artifact:published"),
+            "policy:published-boundary",
+        )
+        .expect("construct mismatched published binding");
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("README.md");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "improved broad harness\n",
+        )
+        .expect("write candidate change");
+        let submitted = submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.prototype_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("published binding mismatch must reject before repo checks");
+
+        assert!(matches!(
+            err,
+            BackendError::BroadHarnessRequestBinding { detail }
+                if detail.contains("published request admission binding mismatch")
+                    && detail.contains("artifact:published")
+                    && detail.contains("policy:published-boundary")
+        ));
+    }
+
+    #[test]
+    fn describe_submitted_broad_harness_result_error_covers_request_admission_binding_mismatch() {
+        let expected = RequestAdmissionBinding::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: crate::loop_graph::ArtifactId::new("artifact:expected"),
+                },
+            },
+            crate::loop_graph::ArtifactId::new("artifact:expected"),
+            "policy:expected",
+        )
+        .expect("construct expected binding");
+        let actual = RequestAdmissionBinding::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: crate::loop_graph::ArtifactId::new("artifact:actual"),
+                },
+            },
+            crate::loop_graph::ArtifactId::new("artifact:actual"),
+            "policy:actual",
+        )
+        .expect("construct actual binding");
+
+        let detail = describe_submitted_broad_harness_result_error(
+            &SubmittedBroadHarnessResultError::RequestAdmissionBindingMismatch { expected, actual },
+        );
+
+        assert!(detail.contains("request_admission_binding mismatch"));
+        assert!(detail.contains("artifact:expected"));
+        assert!(detail.contains("artifact:actual"));
     }
 
     #[test]

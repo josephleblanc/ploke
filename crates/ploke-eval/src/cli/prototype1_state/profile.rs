@@ -144,7 +144,9 @@ impl Generation {
     pub(crate) fn candidate_generator(self) -> Prototype1CandidateGenerator {
         match self.source {
             GenerationSource::Legacy => Prototype1CandidateGenerator::Legacy,
-            GenerationSource::BroadHarness => Prototype1CandidateGenerator::BroadHarness,
+            GenerationSource::BroadHarnessRequest => {
+                Prototype1CandidateGenerator::BroadHarnessRequest
+            }
             GenerationSource::DeterministicTuiTools => {
                 Prototype1CandidateGenerator::DeterministicTuiTools
             }
@@ -155,7 +157,7 @@ impl Generation {
 impl Default for Generation {
     fn default() -> Self {
         Self {
-            source: GenerationSource::BroadHarness,
+            source: GenerationSource::BroadHarnessRequest,
         }
     }
 }
@@ -164,7 +166,7 @@ impl Default for Generation {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum GenerationSource {
     Legacy,
-    BroadHarness,
+    BroadHarnessRequest,
     DeterministicTuiTools,
 }
 
@@ -495,7 +497,7 @@ require_keep_for_continuation = false
 explore_from_rejected = true
 
 [generation]
-source = "broad-harness"
+source = "broad-harness-request"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -514,7 +516,7 @@ debug_tools = true
 
         assert_eq!(
             profile.generation.candidate_generator(),
-            Prototype1CandidateGenerator::BroadHarness
+            Prototype1CandidateGenerator::BroadHarnessRequest
         );
         assert_eq!(
             profile.selection.traversal_metrics(),
@@ -536,7 +538,7 @@ debug_tools = true
 
         assert_eq!(
             generation.candidate_generator(),
-            Prototype1CandidateGenerator::BroadHarness
+            Prototype1CandidateGenerator::BroadHarnessRequest
         );
     }
 

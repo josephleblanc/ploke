@@ -1,12 +1,13 @@
 use eframe::egui::{Context, Id, Pos2, Rect, Vec2};
 
 use super::EdgeLabelDiagnostics;
-use super::geometry::{cubic_point, cubic_tangent, curve_intersects_rect};
+use super::geometry::{cubic_point, cubic_tangent, curve_interferes_rect, curve_intersects_rect};
 
 const CANDIDATE_T: [f32; 7] = [0.50, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74];
 const CLEARANCE_SCALE: [f32; 4] = [1.0, 1.35, 1.7, 2.1];
 const EDGE_LABEL_FRAME_ID: &str = "ploke-egui.edge-label-frame";
 const COLLISION_SEGMENTS: usize = 16;
+const EDGE_INTERFERENCE_MARGIN: f32 = 4.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct EdgeLabelPlacement {
@@ -139,7 +140,12 @@ fn edge_intersection_count(frame: &EdgeLabelFrame) -> usize {
             if index == other.0 {
                 continue;
             }
-            if curve_intersects_rect(other.1.curve, placement.rect, COLLISION_SEGMENTS) {
+            if curve_interferes_rect(
+                other.1.curve,
+                placement.rect,
+                EDGE_INTERFERENCE_MARGIN,
+                COLLISION_SEGMENTS,
+            ) {
                 count += 1;
             }
         }
@@ -152,7 +158,12 @@ fn edge_collision_count(frame: &EdgeLabelFrame) -> usize {
         .placements
         .iter()
         .filter(|placement| {
-            curve_intersects_rect(placement.curve, placement.rect, COLLISION_SEGMENTS)
+            curve_interferes_rect(
+                placement.curve,
+                placement.rect,
+                EDGE_INTERFERENCE_MARGIN,
+                COLLISION_SEGMENTS,
+            )
         })
         .count()
 }
@@ -221,4 +232,50 @@ fn hits_endpoint(rect: Rect, input: EdgeLabelInput) -> bool {
     let radius = input.end_radius + input.gap;
     let end = Rect::from_center_size(input.end_node, Vec2::splat(radius * 2.0));
     rect.intersects(end)
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::{Pos2, Rect, Vec2};
+
+    use super::*;
+
+    #[test]
+    fn edge_collision_count_treats_near_miss_as_interference() {
+        let frame = EdgeLabelFrame {
+            placements: vec![EdgeLabelGeometry {
+                rect: Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(20.0, 10.0)),
+                curve: horizontal_curve(7.0),
+            }],
+        };
+
+        assert_eq!(edge_collision_count(&frame), 1);
+    }
+
+    #[test]
+    fn edge_intersection_count_includes_foreign_edge_near_miss() {
+        let frame = EdgeLabelFrame {
+            placements: vec![
+                EdgeLabelGeometry {
+                    rect: Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(20.0, 10.0)),
+                    curve: horizontal_curve(50.0),
+                },
+                EdgeLabelGeometry {
+                    rect: Rect::from_min_size(Pos2::new(10.0, 70.0), Vec2::new(20.0, 10.0)),
+                    curve: horizontal_curve(7.0),
+                },
+            ],
+        };
+
+        assert_eq!(edge_intersection_count(&frame), 1);
+    }
+
+    fn horizontal_curve(y: f32) -> [Pos2; 4] {
+        [
+            Pos2::new(0.0, y),
+            Pos2::new(10.0, y),
+            Pos2::new(30.0, y),
+            Pos2::new(40.0, y),
+        ]
+    }
 }

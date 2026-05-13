@@ -18,7 +18,8 @@
 //! ```
 
 use crate::commands::{
-    CommandContext, OutputFormat, XtaskError, db::Db, orchestrate::Orchestrate, parse::Parse,
+    CommandContext, OutputFormat, XtaskError, check::Check, db::Db, orchestrate::Orchestrate,
+    parse::Parse,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -82,6 +83,10 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Check(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
             Commands::Orchestrate(cmd) => {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
@@ -125,6 +130,12 @@ pub enum Commands {
     /// - bm25-rebuild: Build text index
     #[command(subcommand)]
     Db(Db),
+
+    /// Repository convention checks
+    ///
+    /// Commands for tripwires that guard structural naming and other repo rules.
+    #[command(subcommand)]
+    Check(Check),
 
     /// Coordinate sub-agent worker slots, task queues, blockers, and packets
     #[command(subcommand)]

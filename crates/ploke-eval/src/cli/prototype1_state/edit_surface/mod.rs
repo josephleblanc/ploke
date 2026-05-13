@@ -5,8 +5,8 @@
 //! This module intentionally stops before any live `ploke-tui` or `ploke-db`
 //! wiring. It defines the ploke-eval-owned carriers that bind a graph
 //! projection to one Artifact, grant a writable surface, publish a non-authority
-//! broad-harness request/result contract, check a proposal, and project an
-//! admitted patch-shaped result.
+//! broad-harness request/result contract with mandatory authority binding,
+//! check a proposal, and project an admitted patch-shaped result.
 
 pub(crate) mod diagnosis;
 pub(crate) mod graph;

@@ -5,7 +5,7 @@ use ploke_tree::Graph;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::SnapshotSink;
-use crate::ui::view::{GraphView, GraphViewDiagnostics};
+use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
 pub struct OperatorApp {
@@ -49,7 +49,14 @@ impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("run_navigation").show_inside(ui, |ui| {
             ui.heading("Run");
+            render_mode_picker(ui, &mut self.view);
             render_graph_facts(ui, &self.graph);
+            if let Some(selection) = self.view.selected_node_detail() {
+                ui.separator();
+                ui.heading("Selected");
+                ui.label(format!("{} {}", selection.kind, selection.label));
+                ui.monospace(selection.detail);
+            }
             if let Some(diagnostics) = self.view.diagnostics() {
                 ui.separator();
                 render_diagnostics(ui, diagnostics);
@@ -102,6 +109,23 @@ impl OperatorApp {
     }
 }
 
+fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(view.mode() == GraphViewMode::ArtifactTree, "Artifact tree")
+            .clicked()
+        {
+            view.set_mode(GraphViewMode::ArtifactTree);
+        }
+        if ui
+            .selectable_label(view.mode() == GraphViewMode::FullDebug, "Full debug")
+            .clicked()
+        {
+            view.set_mode(GraphViewMode::FullDebug);
+        }
+    });
+}
+
 fn render_graph_facts(ui: &mut egui::Ui, graph: &Graph) {
     ui.label(format!("History blocks: {}", graph.history.blocks.len()));
     ui.label(format!("Candidates: {}", graph.candidates.candidates.len()));
@@ -124,7 +148,34 @@ fn graph_has_content(graph: &Graph) -> bool {
 }
 
 fn render_diagnostics(ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
+    ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
     ui.label(format!("View nodes: {}", diagnostics.node_count));
+    ui.label(format!("View edges: {}", diagnostics.edge_count));
+    ui.label(format!(
+        "Components before anchors: {}",
+        diagnostics.connectivity.component_count_before_anchoring
+    ));
+    ui.label(format!(
+        "Hidden records: {}, hidden edges: {}, hidden evidence: {}, hidden operations: {}, unattached components: {}",
+        diagnostics.connectivity.hidden_record_count,
+        diagnostics.connectivity.hidden_edge_count,
+        diagnostics.connectivity.hidden_evidence_count,
+        diagnostics.connectivity.hidden_operation_count,
+        diagnostics.connectivity.hidden_unattached_component_count
+    ));
+    ui.label(format!(
+        "Synthetic anchors visible: {}",
+        diagnostics.connectivity.synthetic_anchors_visible
+    ));
+    if diagnostics.mode == GraphViewMode::FullDebug {
+        for root in diagnostics
+            .connectivity
+            .component_roots_before_anchoring
+            .iter()
+        {
+            ui.label(format!("Component root: {} {}", root.kind, root.label));
+        }
+    }
     ui.label(format!(
         "Graph: {:.0} x {:.0}",
         diagnostics.graph_size.x, diagnostics.graph_size.y
@@ -141,6 +192,13 @@ fn render_diagnostics(ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
         diagnostics.edge_labels.collision_count,
         diagnostics.edge_labels.edge_intersection_count,
         diagnostics.edge_labels.edge_collision_count
+    ));
+    ui.label(format!(
+        "Candidate clutter: {}",
+        diagnostics
+            .readability
+            .edge_crossings_by_kind
+            .candidate_candidate
     ));
     ui.label(format!(
         "Crossings: {}, artifact/artifact: {}, mixed: {}, long edges: {}, backtracking: {}, selected crossings: {}",

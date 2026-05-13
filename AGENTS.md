@@ -41,6 +41,14 @@
 - Prefer names that describe the domain result, not the inspection mechanism: `stop_reason`, `changed_paths`, `summary`, `snapshot`, `entry_kind`.
 - Do not preserve intent by adding prefixes. Preserve intent with structure: modules, types, enums, traits, and explicit state carriers.
 
+### Structural Naming Stop Rule
+
+When adding or renaming a Rust struct, enum, trait, module, or public helper in Prototype 1, History, surface, harness, parent/child, admission, evidence, or runtime code, stop before editing if the proposed name contains three or more semantic tokens such as `Published`, `Checked`, `Admitted`, `Selected`, `Hydrated`, `Pending`, `Awaiting`, `Request`, `Admission`, `Binding`, `Grant`, `Coordinate`, `Surface`, `Harness`, `Parent`, `Child`, `Evidence`, `History`, `Claim`, `Witness`, `Record`, or `Projection`.
+
+Before writing the code, produce the carrier map: axes being collapsed, structural carrier chosen, transition method that mints the advanced state, record/projection boundary if any, active-loop consumer, and compile-time constraint that would have made the related bug impossible. Cargo check passing does not satisfy this rule.
+
+Refusal script: "I will not encode subsystem + phase + authority + provenance into one identifier." If a compound name is only a durable external record shape, put it behind a `record` or projection boundary and keep active loop code on structural carriers.
+
 ### Structural Naming Bug Ledger
 
 Maintain this list when a bug is discovered that would have been prevented by preserving role/state or relation structure in names and types. These are not style complaints. They are type-system failures caused by collapsed names. Each entry must name the bug report, the affected files, the collapsed name/shape, the missing structure that should have been modeled, and the type constraint that would have made the invalid state unrepresentable.
@@ -131,6 +139,9 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 ## Prototype 1 Run Playback / Observability Plan
 
 - Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, start from the shared track index at `docs/active/plans/self-improvement-loop/handoffs.md`.
+- Before changing the default `ploke-egui` tree graph projection or graph view mode, read `docs/active/agents/ploke-ui-task-readability/artifact-tree-default/README.md`.
+- The default `ploke-egui` graph is an artifact-first tree/DAG: Artifact states are primary nodes, applied patch / derivation relations are primary edges, and History is reveal/dimming/highlight state rather than the canvas spine.
+- Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, or typed drilldown.
 - Treat `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md` as the typed playback contract, not necessarily the latest operational handoff.
 - Playback is a read/projection layer over persisted typed records. It must not become active loop authority, and it must not parse rendered CLI output.
 - Preserve granularity structurally with typestates such as `RunPlayback<Coarse>` and `RunPlayback<Fine>` rather than string modes or report flags.

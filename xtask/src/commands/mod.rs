@@ -1,6 +1,7 @@
 //! Command module for xtask utilities.
 //!
 //! This module provides command implementations organized by crate responsibility:
+//! - `check` - repository convention checks
 //! - `parse` - syn_parser integration (A.1)
 //! - `db` - ploke_db integration (A.4)
 //! - `transform` - ploke_transform integration (A.2) [M.4]
@@ -30,6 +31,7 @@ use serde_json::Value;
 use std::path::Path;
 
 // Re-export command modules
+pub mod check;
 pub mod db;
 pub mod orchestrate;
 pub mod parse;
@@ -79,6 +81,9 @@ impl OutputFormat {
 /// Format a value for human-readable output.
 fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskError> {
     let json = serde_json::to_value(value).map_err(|e| XtaskError::new(e.to_string()))?;
+    if let Some(rendered) = format_human_structural_naming(&json) {
+        return Ok(rendered);
+    }
     if let Some(rendered) = format_human_corpus_triage(&json) {
         return Ok(rendered);
     }
@@ -91,6 +96,77 @@ fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskErr
 
     // Fallback for commands without a custom human renderer yet.
     serde_json::to_string_pretty(&json).map_err(|e| XtaskError::new(e.to_string()))
+}
+
+fn format_human_structural_naming(value: &Value) -> Option<String> {
+    let obj = value.as_object()?;
+    if obj.get("kind")?.as_str()? != "structural_naming_check" {
+        return None;
+    }
+
+    let passed = obj.get("passed")?.as_bool()?;
+    let checked_files = obj
+        .get("checked_files")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let threshold = obj
+        .get("threshold")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let truncated = obj
+        .get("truncated_findings")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let findings = obj.get("findings")?.as_array()?;
+
+    let mut out = String::new();
+    if passed {
+        out.push_str(&format!(
+            "Structural naming check passed: {checked_files} Rust file(s), threshold {threshold}"
+        ));
+        return Some(out);
+    }
+
+    out.push_str(&format!(
+        "Structural naming check found {} compound identifier(s) in {checked_files} Rust file(s):",
+        findings.len() as u64 + truncated
+    ));
+    for finding in findings {
+        let path = finding
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let line = finding
+            .get("line")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let kind = finding
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("item");
+        let identifier = finding
+            .get("identifier")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let tokens = finding
+            .get("tokens")
+            .and_then(Value::as_array)
+            .map(|tokens| {
+                tokens
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "\n{path}:{line}: {kind} `{identifier}` contains {tokens}"
+        ));
+    }
+    if truncated > 0 {
+        out.push_str(&format!("\n... {truncated} additional finding(s) omitted"));
+    }
+    Some(out)
 }
 
 fn format_human_corpus_triage(value: &Value) -> Option<String> {

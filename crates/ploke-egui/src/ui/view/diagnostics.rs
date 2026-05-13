@@ -8,7 +8,8 @@ use super::geometry::{cubic_point, curve_points, segments_intersect};
 use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
 use super::{
-    EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphReadabilityDiagnostics, GraphViewDiagnostics,
+    EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
+    GraphReadabilityDiagnostics, GraphViewDiagnostics, GraphViewMode,
 };
 
 const LONG_EDGE_MEDIAN_MULTIPLE: f32 = 2.0;
@@ -19,6 +20,8 @@ pub(super) fn graph_diagnostics(
     viewport_size: Vec2,
     style: ViewStyle,
     edge_labels: EdgeLabelDiagnostics,
+    connectivity: GraphConnectivityDiagnostics,
+    mode: GraphViewMode,
 ) -> Option<GraphViewDiagnostics> {
     let bounds = node_bounds(graph)?;
     let graph_size = bounds.size();
@@ -34,7 +37,10 @@ pub(super) fn graph_diagnostics(
     );
 
     Some(GraphViewDiagnostics {
+        mode,
         node_count: graph.g().node_count(),
+        edge_count: graph.g().edge_count(),
+        connectivity,
         graph_size,
         viewport_size,
         aspect_ratio: graph_size.x / graph_size.y,
@@ -49,8 +55,9 @@ pub(super) fn graph_diagnostics(
 
 fn readability_diagnostics(graph: &WidgetGraph, style: ViewStyle) -> GraphReadabilityDiagnostics {
     let edges = edge_curves(graph, style);
+    let median_rank_gap = median_node_rank_gap(graph);
     let mut crossings = GraphReadabilityDiagnostics {
-        long_edge_count: long_edge_count(&edges),
+        long_edge_count: long_edge_count(&edges, median_rank_gap),
         backtracking_edge_count: backtracking_edge_count(&edges),
         ..GraphReadabilityDiagnostics::default()
     };
@@ -79,6 +86,7 @@ struct EdgeCurve {
     source: NodeIndex,
     target: NodeIndex,
     kind: ViewEdgeKind,
+    salient: bool,
     points: [Pos2; 4],
 }
 
@@ -91,7 +99,7 @@ impl EdgeCurve {
     }
 
     fn is_selected_path(self) -> bool {
-        self.kind == ViewEdgeKind::HistoryArtifact
+        self.salient
     }
 
     fn chord_length(self) -> f32 {
@@ -123,19 +131,21 @@ fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
                 source: edge.source(),
                 target: edge.target(),
                 kind: payload.kind,
+                salient: payload.color == style.edge.colors.selected,
                 points: curve_points(start, end, style.edge.curve),
             })
         })
         .collect()
 }
 
-fn long_edge_count(edges: &[EdgeCurve]) -> usize {
+fn long_edge_count(edges: &[EdgeCurve], median_rank_gap: Option<f32>) -> usize {
     let Some(edge_median) = median_edge_length(edges) else {
         return 0;
     };
-    let rank_median = median_rank_distance(edges);
     let edge_threshold = edge_median * LONG_EDGE_MEDIAN_MULTIPLE;
-    let rank_threshold = rank_median.map(|median| median * RANK_SPACING_MEDIAN_MULTIPLE);
+    let rank_threshold = median_rank_gap
+        .or_else(|| median_rank_distance(edges))
+        .map(|median| median * RANK_SPACING_MEDIAN_MULTIPLE);
     edges
         .iter()
         .filter(|edge| {
@@ -143,6 +153,32 @@ fn long_edge_count(edges: &[EdgeCurve]) -> usize {
                 || rank_threshold.is_some_and(|threshold| edge.rank_distance() > threshold)
         })
         .count()
+}
+
+fn median_node_rank_gap(graph: &WidgetGraph) -> Option<f32> {
+    let mut ranks = graph
+        .g()
+        .node_weights()
+        .map(|node| node.location().y)
+        .filter(|rank| rank.is_finite())
+        .collect::<Vec<_>>();
+    if ranks.len() < 2 {
+        return None;
+    }
+
+    ranks.sort_by(|left, right| left.total_cmp(right));
+    ranks.dedup_by(|left, right| (*left - *right).abs() <= 1.0);
+    let mut gaps = ranks
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .filter(|gap| *gap > 1.0)
+        .collect::<Vec<_>>();
+    if gaps.is_empty() {
+        return None;
+    }
+
+    gaps.sort_by(|left, right| left.total_cmp(right));
+    Some(gaps[gaps.len() / 2])
 }
 
 fn median_edge_length(edges: &[EdgeCurve]) -> Option<f32> {
@@ -233,6 +269,12 @@ impl EdgeCrossingsByKind {
             ) => {
                 self.artifact_artifact += 1;
             }
+            (ViewEdgeKind::Candidate, ViewEdgeKind::Candidate) => {
+                self.candidate_candidate += 1;
+            }
+            _ => {
+                self.mixed += 1;
+            }
         }
     }
 }
@@ -248,7 +290,11 @@ mod tests {
 
     #[test]
     fn selected_path_crossings_ignore_unselected_artifact_patch_edges() {
-        let graph = crossing_graph(ViewEdgeKind::ArtifactPatch, ViewEdgeKind::ArtifactPatch);
+        let style = ViewStyle::default();
+        let graph = crossing_graph(
+            edge("P1", ViewEdgeKind::ArtifactPatch, Color32::WHITE, style),
+            edge("P2", ViewEdgeKind::ArtifactPatch, Color32::WHITE, style),
+        );
 
         let diagnostics = readability_diagnostics(&graph, ViewStyle::default());
 
@@ -257,10 +303,38 @@ mod tests {
     }
 
     #[test]
-    fn selected_path_crossings_count_selected_edge_crossings() {
-        let graph = crossing_graph(ViewEdgeKind::HistoryArtifact, ViewEdgeKind::ArtifactPatch);
+    fn selected_path_crossings_follow_history_edge_render_emphasis() {
+        let style = ViewStyle::default();
+        let graph = crossing_graph(
+            edge(
+                "P1",
+                ViewEdgeKind::HistoryArtifact,
+                style.edge.colors.selected,
+                style,
+            ),
+            edge("P2", ViewEdgeKind::ArtifactPatch, Color32::WHITE, style),
+        );
 
-        let diagnostics = readability_diagnostics(&graph, ViewStyle::default());
+        let diagnostics = readability_diagnostics(&graph, style);
+
+        assert_eq!(diagnostics.edge_edge_crossings, 1);
+        assert_eq!(diagnostics.selected_path_crossings, 1);
+    }
+
+    #[test]
+    fn selected_path_crossings_follow_selected_patch_render_emphasis() {
+        let style = ViewStyle::default();
+        let graph = crossing_graph(
+            edge(
+                "P1",
+                ViewEdgeKind::ArtifactPatch,
+                style.edge.colors.selected,
+                style,
+            ),
+            edge("P2", ViewEdgeKind::ArtifactPatch, Color32::WHITE, style),
+        );
+
+        let diagnostics = readability_diagnostics(&graph, style);
 
         assert_eq!(diagnostics.edge_edge_crossings, 1);
         assert_eq!(diagnostics.selected_path_crossings, 1);
@@ -274,19 +348,18 @@ mod tests {
             test_edge(2, Pos2::new(0.0, 0.0), Pos2::new(0.0, 120.0)),
         ];
 
-        assert_eq!(long_edge_count(&edges), 1);
+        assert_eq!(long_edge_count(&edges, Some(50.0)), 1);
     }
 
-    fn crossing_graph(left_kind: ViewEdgeKind, right_kind: ViewEdgeKind) -> WidgetGraph {
-        let style = ViewStyle::default();
+    fn crossing_graph(left: GraphEdgePayload, right: GraphEdgePayload) -> WidgetGraph {
         let mut raw = StableGraph::<GraphNode, GraphEdgePayload, Directed>::default();
         let left_start = raw.add_node(node("left-start"));
         let left_end = raw.add_node(node("left-end"));
         let right_start = raw.add_node(node("right-start"));
         let right_end = raw.add_node(node("right-end"));
 
-        raw.add_edge(left_start, left_end, edge("P1", left_kind, style));
-        raw.add_edge(right_start, right_end, edge("P2", right_kind, style));
+        raw.add_edge(left_start, left_end, left);
+        raw.add_edge(right_start, right_end, right);
 
         let mut graph: WidgetGraph = egui_graphs::to_graph_custom(
             &raw,
@@ -305,15 +378,21 @@ mod tests {
     fn node(label: &'static str) -> GraphNode {
         GraphNode::Artifact {
             label: Arc::from(label),
+            detail: Arc::from(label),
             color: Color32::WHITE,
         }
     }
 
-    fn edge(label: &'static str, kind: ViewEdgeKind, style: ViewStyle) -> GraphEdgePayload {
+    fn edge(
+        label: &'static str,
+        kind: ViewEdgeKind,
+        color: Color32,
+        style: ViewStyle,
+    ) -> GraphEdgePayload {
         GraphEdgePayload {
             label: Arc::from(label),
             label_visible: true,
-            color: Color32::WHITE,
+            color,
             style: style.edge,
             kind,
         }
@@ -324,6 +403,7 @@ mod tests {
             source: NodeIndex::new(index * 2),
             target: NodeIndex::new(index * 2 + 1),
             kind: ViewEdgeKind::ArtifactPatch,
+            salient: false,
             points: [start, start, end, end],
         }
     }

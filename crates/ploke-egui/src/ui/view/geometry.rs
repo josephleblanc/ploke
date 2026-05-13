@@ -98,6 +98,15 @@ pub(super) fn curve_intersects_rect(points: [Pos2; 4], target: Rect, segments: u
     false
 }
 
+pub(super) fn curve_interferes_rect(
+    points: [Pos2; 4],
+    target: Rect,
+    margin: f32,
+    segments: usize,
+) -> bool {
+    curve_intersects_rect(points, target.expand(margin.max(0.0)), segments)
+}
+
 pub(super) fn segment_intersects_rect(start: Pos2, end: Pos2, target: Rect) -> bool {
     if target.contains(start) || target.contains(end) {
         return true;
