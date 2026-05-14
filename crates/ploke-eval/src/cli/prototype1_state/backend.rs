@@ -52,7 +52,7 @@ const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
     "dist",
 ];
 
-const WORKSPACE_EXCEPT_AUTHORITY_FILENAMES: &[&str] =
+const WORKSPACE_EXCEPT_ROOT_AUTHORITY_FILENAMES: &[&str] =
     &["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 
 /// Git branch name for one backend-managed child lineage.
@@ -2670,10 +2670,15 @@ fn is_workspace_except_forbidden_path(path: &Path) -> bool {
     WORKSPACE_EXCEPT_AUTHORITY_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
-        || path
+        || is_workspace_except_root_authority_file(path)
+}
+
+fn is_workspace_except_root_authority_file(path: &Path) -> bool {
+    path.components().count() == 1
+        && path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| WORKSPACE_EXCEPT_AUTHORITY_FILENAMES.contains(&name))
+            .is_some_and(|name| WORKSPACE_EXCEPT_ROOT_AUTHORITY_FILENAMES.contains(&name))
 }
 
 pub(crate) fn prototype_surface_for_broad_edit_policy(
@@ -3765,6 +3770,12 @@ R  old.rs -> new.rs
                 .iter()
                 .any(|path| *path == PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"))
         );
+        assert!(
+            paths
+                .iter()
+                .any(|path| *path == PathBuf::from("crates/ploke-tui/Cargo.toml")),
+            "crate manifests outside ploke-eval remain editable broad surface"
+        );
         for relpath in [
             ".ploke/prototype1/parent_identity.json",
             ".agents/operator.md",
@@ -3775,7 +3786,6 @@ R  old.rs -> new.rs
             ".cargo/config.toml",
             "docs/archive/agents/old-plan.md",
             "docs/active/bugs/alive-bug.md",
-            "crates/ploke-tui/Cargo.toml",
             "target/debug/build-note.md",
             "dist/bundle.md",
         ] {
