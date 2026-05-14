@@ -73,6 +73,7 @@ pub(crate) async fn run_headless(
     let mut run = HeadlessRun::new();
     let mut turn = 1_u32;
     let mut pending_retry = None::<String>;
+    let mut applied_terminal = None::<HeadlessTerminal>;
     submit_prompt(&runtime.app, prompt.to_string()).await?;
 
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
@@ -201,7 +202,8 @@ pub(crate) async fn run_headless(
                                         request_id,
                                         changed_paths: paths,
                                     };
-                                    return Ok::<HeadlessTerminal, Error>(terminal);
+                                    applied_terminal = Some(terminal);
+                                    break;
                                 }
                                 EditProposalStatus::Failed(reason)
                                 | EditProposalStatus::Stale(reason) => {
@@ -239,6 +241,9 @@ pub(crate) async fn run_headless(
                             error: error.clone(),
                         },
                     });
+                    if applied_terminal.is_some() {
+                        continue;
+                    }
                     run.attempts.push(HeadlessAttempt {
                         turn,
                         proposal_id: None,
@@ -261,6 +266,9 @@ pub(crate) async fn run_headless(
                         attempts,
                         summary: summary.clone(),
                     });
+                    if let Some(terminal) = applied_terminal.take() {
+                        return Ok::<HeadlessTerminal, Error>(terminal);
+                    }
                     if let Some(feedback) = pending_retry.take() {
                         if !retry_turn(&runtime.app, &budget, &mut turn, &feedback).await? {
                             return Ok::<HeadlessTerminal, Error>(HeadlessTerminal::Exhausted {
