@@ -1115,6 +1115,29 @@ impl GitWorktreeBackend {
         ))
     }
 
+    fn worktree_root(&self, repo_root: &Path) -> Result<PathBuf, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git rev-parse --show-toplevel".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git rev-parse --show-toplevel".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(PathBuf::from(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    }
+
     fn current_branch(&self, repo_root: &Path) -> Result<String, BackendError> {
         let output = Command::new("git")
             .current_dir(repo_root)
@@ -1583,42 +1606,43 @@ impl GitWorktreeBackend {
             });
         }
 
-        let candidate_root = published.workspace_path();
-        if candidate_root == repo_root
-            || candidate_root.starts_with(repo_root)
-            || repo_root.starts_with(candidate_root)
+        let source_root = self.worktree_root(repo_root)?;
+        let candidate_root = self.worktree_root(published.workspace_path())?;
+        if candidate_root == source_root
+            || candidate_root.starts_with(&source_root)
+            || source_root.starts_with(&candidate_root)
         {
             return Ok(TuiAttemptOutcome::rejected(
                 AttemptRejection::WorkspaceNotIsolated {
-                    source_repository: repo_root.to_path_buf(),
-                    workspace: candidate_root.to_path_buf(),
+                    source_repository: source_root,
+                    workspace: candidate_root,
                 },
             ));
         }
 
-        let source_dirty = dirty_paths(repo_root)?;
+        let source_dirty = dirty_paths(&source_root)?;
         if !source_dirty.is_empty() {
             return Ok(TuiAttemptOutcome::rejected(AttemptRejection::SourceDirty {
-                path: repo_root.to_path_buf(),
+                path: source_root,
                 dirty_paths: source_dirty,
             }));
         }
 
-        let expected_base_head = self.head_commit(repo_root)?;
-        let observed_candidate_head = self.head_commit(candidate_root)?;
+        let expected_base_head = self.head_commit(&source_root)?;
+        let observed_candidate_head = self.head_commit(&candidate_root)?;
         if observed_candidate_head != expected_base_head {
             return Ok(TuiAttemptOutcome::rejected(AttemptRejection::StaleBase {
-                path: candidate_root.to_path_buf(),
+                path: candidate_root,
                 expected_head: expected_base_head,
                 observed_head: observed_candidate_head,
             }));
         }
 
         let surface = prototype_surface_for_broad_edit_policy(published.request().edit_policy);
-        let changed_paths = changed_paths_between_roots(repo_root, candidate_root)?;
+        let changed_paths = changed_paths_between_roots(&source_root, &candidate_root)?;
         if changed_paths.is_empty() {
             return Ok(TuiAttemptOutcome::rejected(AttemptRejection::NoChange {
-                path: candidate_root.to_path_buf(),
+                path: candidate_root,
             }));
         }
 
@@ -1636,7 +1660,7 @@ impl GitWorktreeBackend {
             }
         }
 
-        let candidate_dirty = dirty_paths(candidate_root)?;
+        let candidate_dirty = dirty_paths(&candidate_root)?;
         let unexpected_dirty = candidate_dirty
             .into_iter()
             .filter(|dirty| !changed_paths.iter().any(|changed| changed == dirty))
@@ -1644,15 +1668,15 @@ impl GitWorktreeBackend {
         if !unexpected_dirty.is_empty() {
             return Ok(TuiAttemptOutcome::rejected(
                 AttemptRejection::UnexpectedDirty {
-                    path: candidate_root.to_path_buf(),
+                    path: candidate_root,
                     dirty_paths: unexpected_dirty,
                 },
             ));
         }
 
         Ok(TuiAttemptOutcome::Accepted(TuiAttemptDiff {
-            source_root: repo_root.to_path_buf(),
-            candidate_root: candidate_root.to_path_buf(),
+            source_root,
+            candidate_root,
             surface,
             base_head: expected_base_head,
             changed_paths,
@@ -3107,6 +3131,13 @@ mod tests {
             fs::create_dir_all(&protected).expect("create protected dir");
             fs::write(protected.join("lib.rs"), "pub fn protected() {}\n")
                 .expect("write protected file");
+            let agents = source_root.join(".agents");
+            fs::create_dir_all(&agents).expect("create agents dir");
+            fs::write(
+                agents.join("hyper-agents.txt"),
+                "protected operator context\n",
+            )
+            .expect("write protected agent context");
             let allowed = source_root.join("src");
             fs::create_dir_all(&allowed).expect("create allowed dir");
             fs::write(allowed.join("feature.rs"), "pub fn feature() {}\n")
@@ -3146,13 +3177,20 @@ mod tests {
         }
 
         fn published_request(&self) -> PublishedBroadHarnessRequest {
+            self.published_request_with_source(self.source_root.clone())
+        }
+
+        fn published_request_with_source(
+            &self,
+            source_repository: PathBuf,
+        ) -> PublishedBroadHarnessRequest {
             let admission_binding = RequestAdmissionBinding::from_admission(&admission_for(
                 crate::loop_graph::ArtifactId::new("artifact:broad-base"),
             ))
             .expect("construct published request admission binding");
             PublishedBroadHarnessRequest::prototype1_workspace(
                 "parent-node-7".to_string(),
-                self.source_root.clone(),
+                source_repository,
                 HarnessChildBudget {
                     min_children: 1,
                     max_children: 3,
@@ -4077,6 +4115,32 @@ R  old.rs -> new.rs
             super::dirty_paths(candidate_root.as_path()).expect("candidate dirty paths"),
             vec![changed]
         );
+    }
+
+    #[test]
+    fn validates_tui_attempt_resolves_nested_source_path_to_worktree_root() {
+        let fixture = BroadHarnessFixture::new();
+        let source_repository = fixture.source_root.join("crates/ploke-eval");
+        let published = fixture.published_request_with_source(source_repository.clone());
+        fixture.clone_candidate_workspace(&published);
+
+        let changed = PathBuf::from("src/feature.rs");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "pub fn feature() { println!(\"candidate\") }\n",
+        )
+        .expect("write candidate change");
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(source_repository.as_path(), &published)
+            .expect("validate attempt diff from nested source path");
+
+        let TuiAttemptOutcome::Accepted(diff) = outcome else {
+            panic!("nested source path should validate against the source worktree root");
+        };
+        assert_eq!(diff.source_root(), fixture.source_root.as_path());
+        assert_eq!(diff.candidate_root(), published.workspace_path());
+        assert_eq!(diff.changed_paths(), &[changed]);
     }
 
     #[test]
