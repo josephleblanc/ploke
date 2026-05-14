@@ -1049,6 +1049,31 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
         fixture_db: &Arc<ploke_db::Database>,
         processor: EmbeddingProcessor,
     ) -> Self {
+        Self::new_with_embedding_processor_and_rag_config(
+            fixture_db,
+            processor,
+            RagConfig::default(),
+        )
+    }
+
+    /// Create a lightweight runtime with a caller-supplied BM25 timeout.
+    pub fn new_with_embedding_processor_and_bm25_timeout(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        bm25_timeout_ms: u64,
+    ) -> Self {
+        let mut rag_config = RagConfig::default();
+        rag_config.bm25_timeout_ms = bm25_timeout_ms;
+        rag_config.strict_bm25_by_default = true;
+        Self::new_with_embedding_processor_and_rag_config(fixture_db, processor, rag_config)
+    }
+
+    /// Create a lightweight runtime with caller-supplied embedding and RAG settings.
+    fn new_with_embedding_processor_and_rag_config(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        rag_config: RagConfig,
+    ) -> Self {
         let config = UserConfig::default();
         let runtime_cfg: RuntimeConfig = config.clone().into();
         let tool_verbosity = runtime_cfg.tool_verbosity;
@@ -1084,7 +1109,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
             db_handle.clone(),
             Arc::clone(&embedding_runtime),
             io_handle.clone(),
-            RagConfig::default(),
+            rag_config,
         ) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(_e) => None,

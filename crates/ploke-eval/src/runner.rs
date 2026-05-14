@@ -91,6 +91,7 @@ const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
 const BM25_READY_TIMEOUT_SECS: u64 = 60;
+const HEADLESS_TUI_BM25_TIMEOUT_MS: u64 = 10_000;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 1;
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
@@ -3419,12 +3420,16 @@ pub(crate) async fn setup_workspace_tui_runtime(
     let config_guard = XdgConfigHomeGuard::set_to(config_home.path());
 
     let embedding_processor = eval_embedding_processor(&embedding_selection)?;
-    let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
-        .spawn_file_manager()
-        .spawn_state_manager()
-        .spawn_event_bus()
-        .spawn_llm_manager()
-        .spawn_observability();
+    let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
+        &runtime_db,
+        embedding_processor,
+        HEADLESS_TUI_BM25_TIMEOUT_MS,
+    )
+    .spawn_file_manager()
+    .spawn_state_manager()
+    .spawn_event_bus()
+    .spawn_llm_manager()
+    .spawn_observability();
     let events = runtime.events_builder().build_all();
     let realtime_rx = events.event_bus_events.realtime_tx_rx;
     let background_rx = events.event_bus_events.background_tx_rx;
@@ -3469,6 +3474,7 @@ async fn configure_sparse_strict_rag(state: &Arc<AppState>) {
     let mut cfg = state.config.write().await;
     cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
     cfg.rag.strict_bm25_by_default = true;
+    cfg.rag.bm25_timeout_ms = HEADLESS_TUI_BM25_TIMEOUT_MS;
 }
 
 async fn prepare_sparse_workspace(
