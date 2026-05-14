@@ -9,6 +9,7 @@ use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 use ploke_db::Database;
+use ploke_db::bm25_index::bm25_service::Bm25Status;
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
@@ -60,7 +61,7 @@ use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus, RuntimeConfig}
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
-use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy};
+use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser};
 use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,6 +90,7 @@ use crate::tracing_setup::current_full_response_log_path;
 const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
+const BM25_READY_TIMEOUT_SECS: u64 = 60;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 1;
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
@@ -3392,6 +3394,175 @@ pub(crate) async fn setup_replay_runtime(
         .await;
 
     Ok((app, state, config_guard))
+}
+
+pub(crate) struct WorkspaceTuiRuntime {
+    pub(crate) app: App,
+    pub(crate) state: Arc<AppState>,
+    pub(crate) debug_rx: mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
+    pub(crate) realtime_rx: broadcast::Receiver<AppEvent>,
+    pub(crate) background_rx: broadcast::Receiver<AppEvent>,
+    _config_home: tempfile::TempDir,
+    _config_guard: XdgConfigHomeGuard,
+}
+
+pub(crate) async fn setup_workspace_tui_runtime(
+    workspace_root: &Path,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    let runtime_db = init_runtime_db()?;
+    let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
+
+    let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
+        path: PathBuf::from("<temporary xdg config home>"),
+        source,
+    })?;
+    let config_guard = XdgConfigHomeGuard::set_to(config_home.path());
+
+    let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+    let runtime = TestRuntime::new_with_embedding_processor(&runtime_db, embedding_processor)
+        .spawn_file_manager()
+        .spawn_state_manager()
+        .spawn_event_bus()
+        .spawn_llm_manager()
+        .spawn_observability();
+    let events = runtime.events_builder().build_all();
+    let realtime_rx = events.event_bus_events.realtime_tx_rx;
+    let background_rx = events.event_bus_events.background_tx_rx;
+    let index_rx = Arc::try_unwrap(events.event_bus_events.index_tx_rx).map_err(|_| {
+        PrepareError::DatabaseSetup {
+            phase: "subscribe_index_status",
+            detail: "index receiver unexpectedly shared".to_string(),
+        }
+    })?;
+    drop(index_rx);
+    let debug_rx =
+        events
+            .app_actor_events
+            .debug_string_rx
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "subscribe_debug_string",
+                detail: "missing debug string receiver".to_string(),
+            })?;
+    let state = runtime.state_arc();
+
+    configure_sparse_strict_rag(&state).await;
+    prepare_sparse_workspace(&state, workspace_root).await?;
+
+    let mut app = runtime
+        .into_app_with_state_pwd(workspace_root.to_path_buf())
+        .await;
+    wait_for_bm25_ready(&mut app, Arc::clone(&state)).await?;
+    app.pump_pending_events().await;
+
+    Ok(WorkspaceTuiRuntime {
+        app,
+        state,
+        debug_rx,
+        realtime_rx,
+        background_rx,
+        _config_home: config_home,
+        _config_guard: config_guard,
+    })
+}
+
+async fn configure_sparse_strict_rag(state: &Arc<AppState>) {
+    let mut cfg = state.config.write().await;
+    cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+    cfg.rag.strict_bm25_by_default = true;
+}
+
+async fn prepare_sparse_workspace(
+    state: &Arc<AppState>,
+    workspace_root: &Path,
+) -> Result<(), PrepareError> {
+    let resolved = resolve_index_target(Some(workspace_root.to_path_buf()), workspace_root)
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "sparse_workspace_resolve_index_target",
+            detail: err.to_string(),
+        })?;
+
+    run_parse_resolved(Arc::clone(&state.db), &resolved).map_err(|err| {
+        PrepareError::DatabaseSetup {
+            phase: "sparse_workspace_run_parse_resolved",
+            detail: err.to_string(),
+        }
+    })?;
+
+    let outcome = state
+        .with_system_txn(|txn| {
+            txn.set_loaded_workspace(
+                resolved.workspace_root.clone(),
+                resolved.member_roots.clone(),
+                Some(resolved.focused_root.clone()),
+            );
+            txn.record_parse_success();
+            txn.derive_path_policy(&[])
+        })
+        .await;
+    if let Some(policy) = outcome.result {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
+    }
+
+    Ok(())
+}
+
+async fn wait_for_bm25_ready(app: &mut App, state: Arc<AppState>) -> Result<(), PrepareError> {
+    let Some(rag) = state.rag.as_ref().cloned() else {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "bm25_ready",
+            detail: "RAG service is unavailable".to_string(),
+        });
+    };
+
+    rag.bm25_rebuild()
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "bm25_rebuild",
+            detail: err.to_string(),
+        })?;
+
+    let deadline = Instant::now() + Duration::from_secs(BM25_READY_TIMEOUT_SECS);
+    loop {
+        app.pump_pending_events().await;
+        let status = rag
+            .bm25_status()
+            .await
+            .map_err(|err| PrepareError::DatabaseSetup {
+                phase: "bm25_status",
+                detail: err.to_string(),
+            })?;
+        match status {
+            Bm25Status::Ready { docs } => {
+                if docs > 0 {
+                    return Ok(());
+                }
+            }
+            Bm25Status::Error(detail) => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "bm25_ready",
+                    detail,
+                });
+            }
+            Bm25Status::Empty => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "bm25_ready",
+                    detail: "BM25 rebuild completed with no indexed documents".to_string(),
+                });
+            }
+            Bm25Status::Uninitialized | Bm25Status::Building => {}
+        }
+
+        if Instant::now() >= deadline {
+            return Err(PrepareError::Timeout {
+                phase: "bm25_ready",
+                secs: BM25_READY_TIMEOUT_SECS,
+            });
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn seed_loaded_workspace_from_repo(

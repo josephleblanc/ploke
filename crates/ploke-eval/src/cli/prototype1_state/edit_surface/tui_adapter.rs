@@ -13,8 +13,10 @@ use std::{
     time::Duration,
 };
 
+use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::{
@@ -22,6 +24,9 @@ use super::{
     harness_request::{BroadEditPolicy, EvidenceRoot, request},
     surface, tui,
 };
+
+const MAX_DEBUG_RELAY_EVENTS: usize = 128;
+const MAX_DEBUG_RELAY_EVENT_CHARS: usize = 2_000;
 
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +42,7 @@ pub(crate) mod state {
 /// Run one vanilla headless `ploke-tui` edit session for a broad request.
 ///
 /// This is intentionally an executor adapter, not a second edit engine. It uses
-/// `ploke-tui`'s test-harness app runtime, observes tool/proposal events, and
+/// a workspace-indexed `ploke-tui` runtime, observes tool/proposal events, and
 /// approves only proposals whose paths stay within the broad prototype surface.
 /// `ploke-eval` still validates the resulting workspace diff before admission.
 pub(crate) async fn run_headless(
@@ -47,53 +52,47 @@ pub(crate) async fn run_headless(
     edit_policy: BroadEditPolicy,
 ) -> Result<HeadlessRun, Error> {
     use ploke_tui::{
-        AppEvent, EventPriority,
+        AppEvent,
         app_state::{StateCommand, core::EditProposalStatus, events::SystemEvent},
-        test_utils::new_test_harness::AppHarness,
     };
 
-    let harness = AppHarness::spawn()
+    let mut runtime = crate::runner::setup_workspace_tui_runtime(workspace_path)
         .await
         .map_err(|source| Error::HeadlessStart(source.to_string()))?;
-    let mut events = harness.event_bus.subscribe(EventPriority::Realtime);
 
-    harness
-        .state
-        .system
-        .set_pwd_for_test(workspace_path.to_path_buf())
-        .await;
-    harness
-        .state
-        .with_system_raw(|system| {
-            system.set_loaded_workspace(
-                workspace_path.to_path_buf(),
-                vec![workspace_path.to_path_buf()],
-                Some(workspace_path.to_path_buf()),
-            );
-        })
-        .await;
-
-    harness
-        .cmd_tx
-        .send(StateCommand::SetEditingAutoConfirm { enabled: false })
-        .await
-        .map_err(|source| Error::HeadlessEvent(format!("state command send failed: {source}")))?;
+    let cmd_tx = runtime.app.state_cmd_tx();
+    send_state(
+        &cmd_tx,
+        StateCommand::SetEditingAutoConfirm { enabled: false },
+    )
+    .await?;
 
     let mut run = HeadlessRun::new();
     let mut turn = 1_u32;
     let mut pending_retry = None::<String>;
-    harness.add_user_msg(prompt.to_string()).await;
+    submit_prompt(&runtime.app, prompt.to_string()).await?;
 
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
         loop {
-            let event = match events.recv().await {
-                Ok(event) => event,
-                Err(source) => {
-                    return Err(Error::HeadlessEvent(source.to_string()));
-                }
-            };
+            runtime.app.pump_pending_events().await;
+            drain_debug(&mut runtime.debug_rx, &mut run);
+
+            let event = next_event(&mut runtime).await?;
 
             match event {
+                AppEvent::System(SystemEvent::ToolCallRequested {
+                    request_id,
+                    parent_id,
+                    tool_call,
+                }) => {
+                    run.events.push(Event::ToolRequest {
+                        request_id: request_id.to_string(),
+                        parent_id: parent_id.to_string(),
+                        call_id: tool_call.call_id.to_string(),
+                        tool: tool_call.function.name.as_str().to_string(),
+                        arguments: tool_call.function.arguments.clone(),
+                    });
+                }
                 AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id,
                     call_id,
@@ -108,7 +107,7 @@ pub(crate) async fn run_headless(
                         },
                     });
                     if let Some(proposal_id) = ui_payload.and_then(|payload| payload.proposal_id) {
-                        let Some(proposal) = harness.state.proposals.read().await.get(&proposal_id).cloned() else {
+                        let Some(proposal) = runtime.state.proposals.read().await.get(&proposal_id).cloned() else {
                             continue;
                         };
                         let paths = proposal_paths(&proposal);
@@ -139,15 +138,7 @@ pub(crate) async fn run_headless(
                         let rejection = classify_paths(workspace_path, edit_policy, &paths);
                         if let Some(rejection) = rejection {
                             let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
-                            harness
-                                .cmd_tx
-                                .send(StateCommand::DenyEdits { proposal_id })
-                                .await
-                                .map_err(|source| {
-                                    Error::HeadlessEvent(format!(
-                                        "state command send failed: {source}"
-                                    ))
-                                })?;
+                            send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
                             run.attempts.push(HeadlessAttempt {
                                 turn,
                                 proposal_id: Some(proposal_id),
@@ -159,18 +150,14 @@ pub(crate) async fn run_headless(
                             continue;
                         }
 
-                        harness
-                            .cmd_tx
-                            .send(StateCommand::ApproveEdits { proposal_id })
-                            .await
-                            .map_err(|source| {
-                                Error::HeadlessEvent(format!("state command send failed: {source}"))
-                            })?;
+                        send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
 
                         loop {
+                            runtime.app.pump_pending_events().await;
+                            drain_debug(&mut runtime.debug_rx, &mut run);
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             let Some(updated) =
-                                harness.state.proposals.read().await.get(&proposal_id).cloned()
+                                runtime.state.proposals.read().await.get(&proposal_id).cloned()
                             else {
                                 continue;
                             };
@@ -184,11 +171,12 @@ pub(crate) async fn run_headless(
                                             paths: paths.clone(),
                                         },
                                     });
-                                    return Ok(HeadlessTerminal::Applied {
+                                    let terminal = HeadlessTerminal::Applied {
                                         proposal_id,
                                         request_id,
                                         changed_paths: paths,
-                                    });
+                                    };
+                                    return Ok::<HeadlessTerminal, Error>(terminal);
                                 }
                                 EditProposalStatus::Failed(reason)
                                 | EditProposalStatus::Stale(reason) => {
@@ -249,8 +237,8 @@ pub(crate) async fn run_headless(
                         summary: summary.clone(),
                     });
                     if let Some(feedback) = pending_retry.take() {
-                        if !retry_turn(&harness, &budget, &mut turn, &feedback).await {
-                            return Ok(HeadlessTerminal::Exhausted {
+                        if !retry_turn(&runtime.app, &budget, &mut turn, &feedback).await? {
+                            return Ok::<HeadlessTerminal, Error>(HeadlessTerminal::Exhausted {
                                 attempts: turn,
                                 last: feedback,
                             });
@@ -258,7 +246,7 @@ pub(crate) async fn run_headless(
                         continue;
                     }
 
-                    let has_pending = harness
+                    let has_pending = runtime
                         .state
                         .proposals
                         .read()
@@ -283,11 +271,10 @@ pub(crate) async fn run_headless(
                                 summary: feedback.to_string(),
                             },
                         });
-                        if !retry_turn(&harness, &budget, &mut turn, feedback).await {
-                            return Ok(HeadlessTerminal::CompletedWithoutEdit {
-                                outcome,
-                                summary,
-                            });
+                        if !retry_turn(&runtime.app, &budget, &mut turn, feedback).await? {
+                            return Ok::<HeadlessTerminal, Error>(
+                                HeadlessTerminal::CompletedWithoutEdit { outcome, summary },
+                            );
                         }
                     }
                 }
@@ -303,26 +290,94 @@ pub(crate) async fn run_headless(
             secs: budget.timeout_secs(),
         },
     };
-    harness.shutdown().await;
     run.terminal = Some(terminal);
     Ok(run)
 }
 
 async fn retry_turn(
-    harness: &ploke_tui::test_utils::new_test_harness::AppHarness,
+    app: &ploke_tui::app::App,
     budget: &Budget,
     turn: &mut u32,
     feedback: &str,
-) -> bool {
+) -> Result<bool, Error> {
     if *turn >= budget.max_attempts() {
-        return false;
+        return Ok(false);
     }
     *turn += 1;
     let prompt = format!(
-        "The previous edit attempt was rejected by ploke-eval boundary checks:\n\n{feedback}\n\nTry again. Keep the edit inside the allowed workspace surface and outside protected core. Produce a concrete patch."
+        "The previous edit attempt could not be applied:\n\n{feedback}\n\nTry again. Keep the edit inside the allowed workspace surface and outside protected core. Use the available edit tools to stage a concrete change."
     );
-    harness.add_user_msg(prompt).await;
-    true
+    submit_prompt(app, prompt).await?;
+    Ok(true)
+}
+
+async fn submit_prompt(app: &ploke_tui::app::App, content: String) -> Result<Uuid, Error> {
+    let new_msg_id = Uuid::new_v4();
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let (scan_tx, scan_rx) = oneshot::channel();
+    let cmd_tx = app.state_cmd_tx();
+    send_state(
+        &cmd_tx,
+        ploke_tui::app_state::commands::StateCommand::AddUserMessage {
+            content,
+            new_user_msg_id: new_msg_id,
+            completion_tx,
+        },
+    )
+    .await?;
+    send_state(
+        &cmd_tx,
+        ploke_tui::app_state::commands::StateCommand::ScanForChange { scan_tx },
+    )
+    .await?;
+    send_state(
+        &cmd_tx,
+        ploke_tui::app_state::commands::StateCommand::EmbedMessage {
+            new_msg_id,
+            completion_rx,
+            scan_rx,
+        },
+    )
+    .await?;
+    Ok(new_msg_id)
+}
+
+async fn send_state(
+    cmd_tx: &tokio::sync::mpsc::Sender<ploke_tui::app_state::commands::StateCommand>,
+    cmd: ploke_tui::app_state::commands::StateCommand,
+) -> Result<(), Error> {
+    cmd_tx
+        .send(cmd)
+        .await
+        .map_err(|source| Error::HeadlessEvent(format!("state command send failed: {source}")))
+}
+
+async fn next_event(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+) -> Result<ploke_tui::AppEvent, Error> {
+    tokio::select! {
+        realtime = runtime.realtime_rx.recv() => {
+            realtime.map_err(|source| Error::HeadlessEvent(source.to_string()))
+        }
+        background = runtime.background_rx.recv() => {
+            background.map_err(|source| Error::HeadlessEvent(source.to_string()))
+        }
+    }
+}
+
+fn drain_debug(
+    debug_rx: &mut tokio::sync::mpsc::Receiver<
+        ploke_tui::app::commands::harness::DebugStateCommand,
+    >,
+    run: &mut HeadlessRun,
+) {
+    loop {
+        match debug_rx.try_recv() {
+            Ok(debug) => run.debug_relay.push(debug.as_str()),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+        }
+    }
 }
 
 fn proposal_paths(proposal: &ploke_tui::app_state::core::EditProposal) -> Vec<PathBuf> {
@@ -382,6 +437,7 @@ fn classify_paths(
 pub(crate) struct HeadlessRun {
     attempts: Vec<HeadlessAttempt>,
     events: Vec<Event>,
+    debug_relay: DebugRelay,
     terminal: Option<HeadlessTerminal>,
 }
 
@@ -390,6 +446,7 @@ impl HeadlessRun {
         Self {
             attempts: Vec::new(),
             events: Vec::new(),
+            debug_relay: DebugRelay::new(),
             terminal: None,
         }
     }
@@ -406,8 +463,58 @@ impl HeadlessRun {
         self.terminal.as_ref()
     }
 
+    pub(crate) fn debug_relay(&self) -> &DebugRelay {
+        &self.debug_relay
+    }
+
     pub(crate) fn evidence(&self) -> evidence::Summary {
         evidence::Summary::from(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DebugRelay {
+    retained: Vec<String>,
+    dropped: u64,
+    truncated: u64,
+}
+
+impl DebugRelay {
+    fn new() -> Self {
+        Self {
+            retained: Vec::new(),
+            dropped: 0,
+            truncated: 0,
+        }
+    }
+
+    fn push(&mut self, message: &str) {
+        let mut chars = message.chars();
+        let retained = chars
+            .by_ref()
+            .take(MAX_DEBUG_RELAY_EVENT_CHARS)
+            .collect::<String>();
+        if chars.next().is_some() {
+            self.truncated += 1;
+        }
+
+        if self.retained.len() == MAX_DEBUG_RELAY_EVENTS {
+            self.retained.remove(0);
+            self.dropped += 1;
+        }
+        self.retained.push(retained);
+    }
+
+    pub(crate) fn retained(&self) -> &[String] {
+        &self.retained
+    }
+
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub(crate) fn truncated(&self) -> u64 {
+        self.truncated
     }
 }
 
@@ -469,7 +576,7 @@ pub(crate) mod evidence {
 
     use serde::{Deserialize, Serialize};
 
-    use super::{HeadlessAttemptResult, HeadlessRun, HeadlessTerminal};
+    use super::{DebugRelay, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal};
 
     /// Compact executor observations. Backend admission must still validate the
     /// workspace diff before any loop state advances.
@@ -477,6 +584,15 @@ pub(crate) mod evidence {
     pub(crate) struct Summary {
         pub(crate) attempts: Vec<Attempt>,
         pub(crate) terminal: Option<Terminal>,
+        #[serde(default)]
+        pub(crate) debug_relay: DebugRelaySummary,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+    pub(crate) struct DebugRelaySummary {
+        pub(crate) retained: Vec<String>,
+        pub(crate) dropped: u64,
+        pub(crate) truncated: u64,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -525,6 +641,17 @@ pub(crate) mod evidence {
             Self {
                 attempts: value.attempts.iter().map(Attempt::from).collect(),
                 terminal: value.terminal.as_ref().map(Terminal::from),
+                debug_relay: DebugRelaySummary::from(&value.debug_relay),
+            }
+        }
+    }
+
+    impl From<&DebugRelay> for DebugRelaySummary {
+        fn from(value: &DebugRelay) -> Self {
+            Self {
+                retained: value.retained().to_vec(),
+                dropped: value.dropped(),
+                truncated: value.truncated(),
             }
         }
     }
@@ -967,6 +1094,13 @@ pub(crate) enum Event {
         edit_count: usize,
         paths: Vec<PathBuf>,
     },
+    ToolRequest {
+        request_id: String,
+        parent_id: String,
+        call_id: String,
+        tool: String,
+        arguments: String,
+    },
     Tool {
         call_id: String,
         result: Tool,
@@ -1236,7 +1370,11 @@ pub(crate) mod record {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+    };
 
     use super::*;
 
@@ -1293,6 +1431,7 @@ mod tests {
                 },
             }],
             events: Vec::new(),
+            debug_relay: DebugRelay::new(),
             terminal: Some(HeadlessTerminal::Applied {
                 proposal_id,
                 request_id,
@@ -1339,6 +1478,7 @@ mod tests {
                 },
             }],
             events: Vec::new(),
+            debug_relay: DebugRelay::new(),
             terminal: Some(HeadlessTerminal::Exhausted {
                 attempts: 2,
                 last: feedback.clone(),
@@ -1360,6 +1500,376 @@ mod tests {
                 last_feedback,
             }) if last_feedback == &feedback
         ));
+    }
+
+    #[test]
+    fn evidence_retains_bounded_debug_relay() {
+        let mut run = HeadlessRun::new();
+        run.debug_relay.push("first relay command");
+        run.debug_relay
+            .push(&"x".repeat(MAX_DEBUG_RELAY_EVENT_CHARS + 3));
+        for index in 0..MAX_DEBUG_RELAY_EVENTS {
+            run.debug_relay.push(&format!("relay command {index}"));
+        }
+
+        let summary = run.evidence();
+
+        assert_eq!(summary.debug_relay.retained.len(), MAX_DEBUG_RELAY_EVENTS);
+        assert_eq!(summary.debug_relay.dropped, 2);
+        assert_eq!(summary.debug_relay.truncated, 1);
+        let expected_last = format!("relay command {}", MAX_DEBUG_RELAY_EVENTS - 1);
+        assert_eq!(
+            summary.debug_relay.retained.last().map(String::as_str),
+            Some(expected_last.as_str())
+        );
+        assert!(
+            summary
+                .debug_relay
+                .retained
+                .iter()
+                .all(|message| message.chars().count() <= MAX_DEBUG_RELAY_EVENT_CHARS)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "live provider test for the ploke-eval/ploke-tui broad edit surface"]
+    async fn live_tui_adapter_canary_shows_inputs_outputs_and_applied_edit() {
+        let prompt = r#"Use the available edit tools to stage exactly one code edit in src/lib.rs.
+
+Change broad_surface_canary so it returns "after" instead of "before".
+Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping files.
+"#;
+        let fixture =
+            prepare_live_canary("live-tui-adapter-direct-file", prompt).expect("prepare canary");
+
+        let run = run_live_canary(&fixture).await;
+        let final_lib = write_live_canary_artifacts(&fixture, &run);
+        assert_live_canary_applied(&fixture, &run, &final_lib);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "live provider test for indexed ploke-tui retrieval plus broad edit application"]
+    async fn live_tui_adapter_canary_uses_indexed_context_before_applied_edit() {
+        let prompt = r#"Use request_code_context to locate the Rust function named broad_surface_canary, then use the available edit tools to stage exactly one code edit.
+
+Change broad_surface_canary so it returns "after" instead of "before".
+Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping files.
+"#;
+        let fixture = prepare_live_canary("live-tui-adapter-indexed-context", prompt)
+            .expect("prepare canary");
+
+        let run = run_live_canary(&fixture).await;
+        let final_lib = write_live_canary_artifacts(&fixture, &run);
+        let context_request = tool_request_position(&run, "request_code_context");
+        let edit_request = tool_request_position(&run, "apply_code_edit");
+        assert!(
+            matches!((context_request, edit_request), (Some(context), Some(edit)) if context < edit),
+            "expected request_code_context before edit; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert_live_canary_applied(&fixture, &run, &final_lib);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "runtime setup canary for child-local parse/transform DB plus BM25 readiness"]
+    async fn live_tui_runtime_setup_uses_sparse_child_db() {
+        let fixture = prepare_live_canary(
+            "live-tui-adapter-sparse-child-db",
+            "runtime setup only; no LLM prompt is submitted",
+        )
+        .expect("prepare canary");
+
+        let mut runtime = crate::runner::setup_workspace_tui_runtime(&fixture.workspace)
+            .await
+            .unwrap_or_else(|err| {
+                fs::write(
+                    fixture.artifact_root.join("setup-error.txt"),
+                    err.to_string(),
+                )
+                .expect("write setup error");
+                panic!(
+                    "runtime setup failed; artifacts at {}",
+                    fixture.artifact_root.display()
+                );
+            });
+        runtime.app.pump_pending_events().await;
+
+        let cfg = runtime.state.config.read().await;
+        assert!(
+            matches!(
+                cfg.rag.strategy,
+                ploke_tui::user_config::RetrievalStrategyUser::Sparse { strict: true }
+            ),
+            "expected sparse-strict retrieval; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert!(cfg.rag.strict_bm25_by_default);
+        drop(cfg);
+
+        let Some(rag) = runtime.state.rag.as_ref() else {
+            panic!(
+                "expected RAG service; artifacts at {}",
+                fixture.artifact_root.display()
+            );
+        };
+        let status = rag.bm25_status().await.expect("bm25 status");
+        assert!(
+            matches!(status, ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } if docs > 0),
+            "expected BM25 ready with documents, got {status:?}; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+
+        assert!(
+            runtime.state.indexing_state.read().await.is_none(),
+            "expected no dense indexing status from /index; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+    }
+
+    fn assert_live_canary_applied(fixture: &LiveCanaryFixture, run: &HeadlessRun, final_lib: &str) {
+        assert!(
+            matches!(run.terminal(), Some(HeadlessTerminal::Applied { .. })),
+            "expected applied terminal; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert!(
+            final_lib.contains("\"after\"") && !final_lib.contains("\"before\""),
+            "expected sentinel change in src/lib.rs; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert!(
+            run.events().iter().any(|event| matches!(
+                event,
+                Event::Proposal { paths, .. }
+                    if paths.iter().any(|path| path.ends_with("src/lib.rs"))
+            )),
+            "expected proposal evidence for src/lib.rs; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+    }
+
+    async fn run_live_canary(fixture: &LiveCanaryFixture) -> HeadlessRun {
+        let budget = Budget::new(2, 600).expect("valid live canary budget");
+        match run_headless(
+            &fixture.workspace,
+            &fixture.prompt,
+            budget,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+        )
+        .await
+        {
+            Ok(run) => run,
+            Err(err) => {
+                fs::write(fixture.artifact_root.join("run-error.txt"), err.to_string())
+                    .expect("write run error");
+                panic!(
+                    "live TUI adapter canary failed before returning HeadlessRun; artifacts at {}",
+                    fixture.artifact_root.display()
+                );
+            }
+        }
+    }
+
+    fn write_live_canary_artifacts(fixture: &LiveCanaryFixture, run: &HeadlessRun) -> String {
+        let final_lib = fs::read_to_string(&fixture.src_file).expect("read final lib");
+        fs::write(&fixture.final_file, &final_lib).expect("write final artifact");
+        fs::write(
+            &fixture.evidence_path,
+            serde_json::to_string_pretty(&run.evidence()).expect("serialize evidence"),
+        )
+        .expect("write evidence");
+        fs::write(
+            &fixture.events_path,
+            serde_json::to_string_pretty(run.events()).expect("serialize events"),
+        )
+        .expect("write events");
+        let diff = command_output(&fixture.workspace, "git", &["diff", "--", "src/lib.rs"]);
+        fs::write(&fixture.diff_path, &diff).expect("write diff");
+        fs::write(
+            &fixture.report_path,
+            serde_json::to_string_pretty(&LiveCanaryReport {
+                artifact_root: fixture.artifact_root.clone(),
+                workspace: fixture.workspace.clone(),
+                prompt_path: fixture.prompt_path.clone(),
+                initial_file: fixture.initial_file.clone(),
+                final_file: fixture.final_file.clone(),
+                evidence_path: fixture.evidence_path.clone(),
+                events_path: fixture.events_path.clone(),
+                diff_path: fixture.diff_path.clone(),
+                terminal: run.evidence().terminal,
+                requested_tools: requested_tools(run),
+                final_contains_after: final_lib.contains("\"after\""),
+                final_contains_before: final_lib.contains("\"before\""),
+            })
+            .expect("serialize report"),
+        )
+        .expect("write report");
+        print_live_canary_summary(fixture, run, &diff);
+        final_lib
+    }
+
+    fn prepare_live_canary(name: &str, prompt: &str) -> std::io::Result<LiveCanaryFixture> {
+        let base = std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!(
+                    "ploke-eval-live-tui-canary-{}",
+                    Uuid::new_v4().simple()
+                ))
+            });
+        let artifact_root = base.join(name);
+        fs::create_dir_all(&artifact_root)?;
+        println!(
+            "live TUI adapter canary artifacts: {}",
+            artifact_root.display()
+        );
+
+        let workspace = artifact_root.join("workspace");
+        let src_dir = workspace.join("src");
+        fs::create_dir_all(&src_dir)?;
+
+        let cargo_toml = r#"[package]
+name = "ploke-eval-live-tui-canary"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#;
+        let initial_lib = r#"pub fn broad_surface_canary() -> &'static str {
+    "before"
+}
+"#;
+        let src_file = src_dir.join("lib.rs");
+        let prompt_path = artifact_root.join("prompt.txt");
+        let initial_file = artifact_root.join("initial-src-lib.rs");
+        let final_file = artifact_root.join("final-src-lib.rs");
+        let evidence_path = artifact_root.join("headless-evidence.json");
+        let events_path = artifact_root.join("headless-events.json");
+        let diff_path = artifact_root.join("workspace.diff");
+        let report_path = artifact_root.join("report.json");
+
+        fs::write(workspace.join("Cargo.toml"), cargo_toml)?;
+        fs::write(&src_file, initial_lib)?;
+        fs::write(&prompt_path, prompt)?;
+        fs::write(&initial_file, initial_lib)?;
+
+        command_output(&workspace, "git", &["init"]);
+        command_output(&workspace, "git", &["add", "Cargo.toml", "src/lib.rs"]);
+        command_output(
+            &workspace,
+            "git",
+            &[
+                "-c",
+                "user.email=ploke-eval-live-canary@example.invalid",
+                "-c",
+                "user.name=ploke eval live canary",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "initial canary",
+            ],
+        );
+
+        Ok(LiveCanaryFixture {
+            artifact_root,
+            workspace,
+            src_file,
+            prompt: prompt.to_string(),
+            prompt_path,
+            initial_file,
+            final_file,
+            evidence_path,
+            events_path,
+            diff_path,
+            report_path,
+        })
+    }
+
+    fn tool_request_position(run: &HeadlessRun, tool: &str) -> Option<usize> {
+        run.events().iter().position(
+            |event| matches!(event, Event::ToolRequest { tool: observed, .. } if observed == tool),
+        )
+    }
+
+    fn requested_tools(run: &HeadlessRun) -> Vec<String> {
+        run.events()
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolRequest { tool, .. } => Some(tool.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn print_live_canary_summary(fixture: &LiveCanaryFixture, run: &HeadlessRun, diff: &str) {
+        println!(
+            "live TUI adapter canary report: {}",
+            fixture.report_path.display()
+        );
+        println!("terminal: {:?}", run.terminal());
+        println!("requested tools: {}", requested_tools(run).join(", "));
+        for event in run.events() {
+            if let Event::ToolRequest {
+                tool,
+                call_id,
+                arguments,
+                ..
+            } = event
+            {
+                println!("tool request {tool} {call_id}: {arguments}");
+            }
+        }
+        println!("workspace diff:\n{diff}");
+    }
+
+    #[derive(Debug)]
+    struct LiveCanaryFixture {
+        artifact_root: PathBuf,
+        workspace: PathBuf,
+        src_file: PathBuf,
+        prompt: String,
+        prompt_path: PathBuf,
+        initial_file: PathBuf,
+        final_file: PathBuf,
+        evidence_path: PathBuf,
+        events_path: PathBuf,
+        diff_path: PathBuf,
+        report_path: PathBuf,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct LiveCanaryReport {
+        artifact_root: PathBuf,
+        workspace: PathBuf,
+        prompt_path: PathBuf,
+        initial_file: PathBuf,
+        final_file: PathBuf,
+        evidence_path: PathBuf,
+        events_path: PathBuf,
+        diff_path: PathBuf,
+        terminal: Option<evidence::Terminal>,
+        requested_tools: Vec<String>,
+        final_contains_after: bool,
+        final_contains_before: bool,
+    }
+
+    fn command_output(cwd: &Path, program: &str, args: &[&str]) -> String {
+        let output = Command::new(program)
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run {program} {args:?}: {err}"));
+        let mut rendered = String::new();
+        rendered.push_str(&String::from_utf8_lossy(&output.stdout));
+        rendered.push_str(&String::from_utf8_lossy(&output.stderr));
+        if !output.status.success() {
+            panic!(
+                "{program} {args:?} failed with status {:?}: {rendered}",
+                output.status.code()
+            );
+        }
+        rendered
     }
 }
 
