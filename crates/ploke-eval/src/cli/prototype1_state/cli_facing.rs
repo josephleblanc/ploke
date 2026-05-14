@@ -47,9 +47,9 @@ use crate::{
         },
         prototype1_state::{
             backend::{
-                AdmittedBroadHarnessResult, CheckedSurfaceEdit, EVAL_CORE_SURFACE_ROOT,
-                EditProposal, EditSurfaceAdmission, GitWorktreeBackend, ProposedTouch,
-                WorkspaceBackend, edit_surface_paths,
+                AdmittedBroadHarnessResult, AttemptRejection, CheckedSurfaceEdit,
+                EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission, GitWorktreeBackend,
+                ProposedTouch, TuiAttemptOutcome, WorkspaceBackend, edit_surface_paths,
             },
             c1::{C1, MaterializeBranch},
             c2::BuildChild,
@@ -617,6 +617,7 @@ struct PlannedChildOutcome {
 
 const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
 const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
+const BROAD_TUI_STASH_TRANSFER_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_STASH_TRANSFER";
 
 struct DeterministicTuiToolsCandidates {
     checked: Vec<CheckedSurfaceEdit>,
@@ -1321,9 +1322,31 @@ async fn run_broad_headless_tui_attempt(
             detail: format!("invalid broad headless-tui attempt budget: {source}"),
         }
     })?;
+    let use_stash_transfer = stash_transfer_enabled();
+    if use_stash_transfer {
+        match backend
+            .validate_tui_attempt(repo_root, &slot.published)
+            .map_err(|source| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to preflight stash-transfer workspace: {source}"),
+            })? {
+            TuiAttemptOutcome::Rejected(AttemptRejection::NoChange { .. }) => {}
+            outcome => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "stash-transfer broad headless-tui preflight expected clean source and unchanged candidate, got {outcome:?}"
+                    ),
+                });
+            }
+        }
+    }
+    let tui_workspace = if use_stash_transfer {
+        repo_root
+    } else {
+        slot.published.workspace_path()
+    };
 
     let run = tui_adapter::run_headless(
-        slot.published.workspace_path(),
+        tui_workspace,
         &prompt,
         budget,
         slot.published.request().edit_policy,
@@ -1346,6 +1369,29 @@ async fn run_broad_headless_tui_attempt(
             request_id,
             changed_paths,
         } => {
+            let changed_paths = if use_stash_transfer {
+                let relpaths = backend
+                    .stash_to_workspace(
+                        repo_root,
+                        slot.published.workspace_path(),
+                        changed_paths,
+                        &format!(
+                            "prototype1 broad harness request {}",
+                            slot.published.request_id()
+                        ),
+                    )
+                    .map_err(|source| PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "failed to transfer headless TUI stash to candidate workspace: {source}"
+                        ),
+                    })?;
+                relpaths
+                    .into_iter()
+                    .map(|path| slot.published.workspace_path().join(path))
+                    .collect::<Vec<_>>()
+            } else {
+                changed_paths.clone()
+            };
             let changed_files = changed_paths
                 .iter()
                 .map(|path| SubmittedFileChange {
@@ -1457,6 +1503,16 @@ async fn run_broad_headless_tui_attempt(
             })
         }
     }
+}
+
+fn stash_transfer_enabled() -> bool {
+    std::env::var_os(BROAD_TUI_STASH_TRANSFER_ENV)
+        .and_then(|value| value.into_string().ok())
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            !matches!(value.as_str(), "" | "0" | "false" | "off" | "no")
+        })
+        .unwrap_or(false)
 }
 
 fn write_broad_headless_tui_diagnostics(

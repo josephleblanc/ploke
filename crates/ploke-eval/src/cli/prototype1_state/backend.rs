@@ -1659,6 +1659,59 @@ impl GitWorktreeBackend {
         }))
     }
 
+    pub(crate) fn stash_to_workspace(
+        &self,
+        source_root: &Path,
+        workspace_root: &Path,
+        changed_paths: &[PathBuf],
+        message: &str,
+    ) -> Result<Vec<PathBuf>, BackendError> {
+        let relpaths = repo_relpaths(source_root, changed_paths)?;
+        if relpaths.is_empty() {
+            return Ok(relpaths);
+        }
+
+        let mut push = Command::new("git");
+        push.current_dir(source_root)
+            .arg("stash")
+            .arg("push")
+            .arg("--include-untracked")
+            .arg("-m")
+            .arg(message)
+            .arg("--");
+        for relpath in &relpaths {
+            push.arg(relpath);
+        }
+        let output = push.output().map_err(|source| BackendError::GitCommand {
+            command: "git stash push --include-untracked -m <message> -- <paths>".to_string(),
+            source,
+        })?;
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git stash push --include-untracked -m <message> -- <paths>".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        let mut pop = Command::new("git");
+        pop.current_dir(workspace_root)
+            .args(["stash", "pop", "stash@{0}"]);
+        let output = pop.output().map_err(|source| BackendError::GitCommand {
+            command: "git stash pop stash@{0}".to_string(),
+            source,
+        })?;
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git stash pop stash@{0}".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(relpaths)
+    }
+
     pub(crate) fn prepare_broad_harness_workspace(
         &self,
         repo_root: &Path,
@@ -2488,6 +2541,23 @@ fn dirty_paths(worktree_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_dirty_paths(&stdout))
+}
+
+fn repo_relpaths(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, BackendError> {
+    let mut relpaths = Vec::with_capacity(paths.len());
+    for path in paths {
+        let relpath = if path.is_absolute() {
+            path.strip_prefix(root)
+                .map_err(|_| BackendError::InvalidEditSurfacePath { path: path.clone() })?
+        } else {
+            path.as_path()
+        };
+        validate_normal_repo_relpath(relpath)?;
+        relpaths.push(relpath.to_path_buf());
+    }
+    relpaths.sort();
+    relpaths.dedup();
+    Ok(relpaths)
 }
 
 fn tracked_paths(worktree_root: &Path, pathspec: &str) -> Result<Vec<PathBuf>, BackendError> {
@@ -3955,6 +4025,57 @@ R  old.rs -> new.rs
             &GitWorktreeBackend
                 .head_commit(fixture.source_root.as_path())
                 .expect("source head")
+        );
+    }
+
+    #[test]
+    fn stash_to_workspace_moves_source_change_to_linked_candidate() {
+        let fixture = BroadHarnessFixture::new();
+        let candidate_root = fixture._temp.path().join("linked-candidate");
+        run_git_test(
+            fixture.source_root.as_path(),
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                candidate_root.to_str().expect("candidate path utf-8"),
+                "HEAD",
+            ],
+        );
+
+        let changed = PathBuf::from("src/feature.rs");
+        fs::write(
+            fixture.source_root.join(&changed),
+            "pub fn feature() { println!(\"source proposal\") }\n",
+        )
+        .expect("write source proposal");
+
+        let relpaths = GitWorktreeBackend
+            .stash_to_workspace(
+                fixture.source_root.as_path(),
+                candidate_root.as_path(),
+                &[fixture.source_root.join(&changed)],
+                "test source proposal transfer",
+            )
+            .expect("stash source proposal into candidate");
+
+        assert_eq!(relpaths, vec![changed.clone()]);
+        assert_eq!(
+            fs::read_to_string(fixture.source_root.join(&changed)).expect("source feature"),
+            "pub fn feature() {}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(candidate_root.join(&changed)).expect("candidate feature"),
+            "pub fn feature() { println!(\"source proposal\") }\n"
+        );
+        assert!(
+            super::dirty_paths(fixture.source_root.as_path())
+                .expect("source dirty paths")
+                .is_empty()
+        );
+        assert_eq!(
+            super::dirty_paths(candidate_root.as_path()).expect("candidate dirty paths"),
+            vec![changed]
         );
     }
 
