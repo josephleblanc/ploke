@@ -616,6 +616,7 @@ struct PlannedChildOutcome {
 }
 
 const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
+const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
 
 struct DeterministicTuiToolsCandidates {
     checked: Vec<CheckedSurfaceEdit>,
@@ -1125,8 +1126,16 @@ fn publish_broad_harness_child_plan_request(
     write_node_projection(&running_parent)?;
     let admission_binding = broad_harness_request_admission_binding(&parent, repo_root)?;
     let slot_budget = Prototype1ChildBudget { min: 1, max: 1 };
-    let mut slots = Vec::with_capacity(child_budget.max as usize);
-    for _ in 0..child_budget.max {
+    let slot_count = (child_budget.max as usize)
+        .checked_mul(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD)
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness child budget max {} overflowed fresh attempt allocation",
+                child_budget.max
+            ),
+        })?;
+    let mut slots = Vec::with_capacity(slot_count);
+    for _ in 0..slot_count {
         let publication = publish_broad_edit_harness_request(
             manifest_path,
             repo_root,
@@ -6846,27 +6855,61 @@ async fn resolve_child_plan(
             ParentTargetSelection::AwaitingHarnessBatch(batch) => {
                 let mut admitted = Vec::with_capacity(batch.slots.len());
                 for slot in &batch.slots {
+                    if admitted.len() >= batch.child_budget.max as usize {
+                        break;
+                    }
                     let mut executor = None;
                     if !slot.published.submitted_result_path().exists() {
-                        executor = run_broad_headless_tui_attempt(slot).await?;
-                    }
-                    if let Some(transaction) =
-                        try_admit_request_result(repo_root, &batch.parent, slot, executor.as_ref())?
-                    {
-                        admitted.push(transaction);
-                    } else {
-                        return Err(CandidateGenerationError::PendingBroadHarnessRequest {
-                            request_id: slot.published.request_id().to_string(),
-                            request_hash: slot.published.request_hash().to_string(),
-                            request_path: slot.request_path.clone(),
-                            prompt_path: slot.published.prompt_path().to_path_buf(),
-                            submitted_result_path: slot
-                                .published
-                                .submitted_result_path()
-                                .to_path_buf(),
-                            workspace_path: slot.published.workspace_path().to_path_buf(),
+                        match run_broad_headless_tui_attempt(slot).await {
+                            Ok(value) => {
+                                executor = value;
+                            }
+                            Err(source) => {
+                                warn!(
+                                    target: EXECUTION_DEBUG_TARGET,
+                                    request_id = %slot.published.request_id(),
+                                    request_hash = %slot.published.request_hash(),
+                                    admitted = admitted.len(),
+                                    required_min = batch.child_budget.min,
+                                    configured_max = batch.child_budget.max,
+                                    error = %source,
+                                    "broad headless-tui slot attempt did not produce an admissible edit; trying next fresh slot"
+                                );
+                                continue;
+                            }
                         }
-                        .into_prepare());
+                    }
+                    match try_admit_request_result(
+                        repo_root,
+                        &batch.parent,
+                        slot,
+                        executor.as_ref(),
+                    ) {
+                        Ok(Some(transaction)) => admitted.push(transaction),
+                        Ok(None) => {
+                            warn!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                request_id = %slot.published.request_id(),
+                                request_hash = %slot.published.request_hash(),
+                                admitted = admitted.len(),
+                                required_min = batch.child_budget.min,
+                                configured_max = batch.child_budget.max,
+                                submitted_result_path = %slot.published.submitted_result_path().display(),
+                                "broad headless-tui slot had no submitted result; trying next fresh slot"
+                            );
+                        }
+                        Err(source) => {
+                            warn!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                request_id = %slot.published.request_id(),
+                                request_hash = %slot.published.request_hash(),
+                                admitted = admitted.len(),
+                                required_min = batch.child_budget.min,
+                                configured_max = batch.child_budget.max,
+                                error = %source,
+                                "broad headless-tui slot result failed admission; trying next fresh slot"
+                            );
+                        }
                     }
                 }
                 publish_broad_harness_child_plan_from_admitted_batch(
@@ -11451,7 +11494,7 @@ stop_after = "complete"
                 .expect("broad harness should allocate request slots from active artifact head");
 
         assert_eq!(batch.child_budget, budget);
-        assert_eq!(batch.slots.len(), 3);
+        assert_eq!(batch.slots.len(), 9);
         assert_eq!(
             batch.parent.harness_request().request_id(),
             batch.slots[0].published.request_id()
@@ -11475,6 +11518,10 @@ stop_after = "complete"
         assert_eq!(
             batch.slots[2].published.request_id(),
             "broad-harness-request:node-parent:r3"
+        );
+        assert_eq!(
+            batch.slots[8].published.request_id(),
+            "broad-harness-request:node-parent:r9"
         );
         for slot in &batch.slots {
             assert_eq!(slot.published.request().child_budget.min_children, 1);
@@ -11667,7 +11714,7 @@ stop_after = "complete"
         let admission_binding = test_broad_request_admission_binding();
         let budget = Prototype1ChildBudget { min: 3, max: 3 };
         let mut slots = Vec::new();
-        for _ in 0..budget.max {
+        for _ in 0..(budget.max as usize * BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD) {
             let publication = publish_broad_edit_harness_request(
                 &manifest_path,
                 &repo_root,
@@ -11688,11 +11735,12 @@ stop_after = "complete"
             slots,
             child_budget: budget,
         };
-        let admitted = batch
-            .slots
+        let replacement_indexes = [0_usize, 3, 8];
+        let admitted = replacement_indexes
             .iter()
             .enumerate()
-            .map(|(index, slot)| {
+            .map(|(index, slot_index)| {
+                let slot = &batch.slots[*slot_index];
                 let changed_paths = vec![allowed[index].clone(), allowed[index + 1].clone()];
                 admit_broad_slot_for_test(
                     &repo_root,
