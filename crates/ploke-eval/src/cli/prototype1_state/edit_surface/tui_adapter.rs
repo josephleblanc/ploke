@@ -1626,6 +1626,51 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "operator canary for an existing broad harness workspace"]
+    async fn live_tui_runtime_setup_existing_workspace_from_env() {
+        let Some(workspace) =
+            std::env::var_os("PLOKE_EVAL_EXISTING_TUI_WORKSPACE").map(PathBuf::from)
+        else {
+            println!("skipping: set PLOKE_EVAL_EXISTING_TUI_WORKSPACE to a workspace root");
+            return;
+        };
+
+        let mut runtime = crate::runner::setup_workspace_tui_runtime(&workspace)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "runtime setup failed for existing workspace '{}': {err}",
+                    workspace.display()
+                );
+            });
+        runtime.app.pump_pending_events().await;
+
+        let cfg = runtime.state.config.read().await;
+        assert!(
+            matches!(
+                cfg.rag.strategy,
+                ploke_tui::user_config::RetrievalStrategyUser::Sparse { strict: true }
+            ),
+            "expected sparse-strict retrieval for '{}'",
+            workspace.display()
+        );
+        drop(cfg);
+
+        let Some(rag) = runtime.state.rag.as_ref() else {
+            panic!("expected RAG service for '{}'", workspace.display());
+        };
+        let status = rag
+            .bm25_status_with_timeout(Duration::from_secs(5))
+            .await
+            .expect("bm25 status");
+        assert!(
+            matches!(status, ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } if docs > 0),
+            "expected BM25 ready with documents for '{}', got {status:?}",
+            workspace.display()
+        );
+    }
+
     fn assert_live_canary_applied(fixture: &LiveCanaryFixture, run: &HeadlessRun, final_lib: &str) {
         assert!(
             matches!(run.terminal(), Some(HeadlessTerminal::Applied { .. })),

@@ -3527,8 +3527,15 @@ async fn wait_for_bm25_ready(app: &mut App, state: Arc<AppState>) -> Result<(), 
     let deadline = Instant::now() + Duration::from_secs(BM25_READY_TIMEOUT_SECS);
     loop {
         app.pump_pending_events().await;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(PrepareError::Timeout {
+                phase: "bm25_ready",
+                secs: BM25_READY_TIMEOUT_SECS,
+            });
+        }
         let status = rag
-            .bm25_status()
+            .bm25_status_with_timeout(remaining)
             .await
             .map_err(|err| PrepareError::DatabaseSetup {
                 phase: "bm25_status",
