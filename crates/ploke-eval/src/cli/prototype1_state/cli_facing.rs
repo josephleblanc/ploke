@@ -10358,7 +10358,7 @@ fn prototype1_trace_path(campaign_manifest_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::prototype1_state::backend::EditSurfaceAdmission;
+    use crate::cli::prototype1_state::backend::{EditSurfaceAdmission, TuiAttemptOutcome};
     use crate::cli::prototype1_state::edit_surface::harness_request::{
         EvidenceRootKind, PublishedBroadHarnessRequest, RequestAdmissionBinding,
     };
@@ -11569,6 +11569,83 @@ stop_after = "complete"
                 "/tmp/prototype1/messages/edit-harness-result/node-parent-r2.headless-tui.json",
             )
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "operator splice test for one published broad headless-TUI request"]
+    async fn live_broad_headless_tui_attempt_from_published_request_env() {
+        let Some(request_path) =
+            std::env::var_os("PLOKE_EVAL_BROAD_HARNESS_REQUEST_PATH").map(PathBuf::from)
+        else {
+            println!(
+                "skipping: set PLOKE_EVAL_BROAD_HARNESS_REQUEST_PATH to a published broad harness request JSON"
+            );
+            return;
+        };
+
+        let request_bytes = fs::read(&request_path).unwrap_or_else(|err| {
+            panic!(
+                "could not read published broad harness request '{}': {err}",
+                request_path.display()
+            )
+        });
+        let published = serde_json::from_slice::<PublishedBroadHarnessRequest>(&request_bytes)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "could not decode published broad harness request '{}': {err}",
+                    request_path.display()
+                )
+            });
+        let slot = HarnessRequestSlot {
+            request_path: request_path.clone(),
+            published,
+        };
+
+        println!("broad splice request: {}", request_path.display());
+        println!("prompt: {}", slot.published.prompt_path().display());
+        println!("workspace: {}", slot.published.workspace_path().display());
+        println!(
+            "diagnostics: {}",
+            broad_headless_tui_diagnostics_path(slot.published.submitted_result_path()).display()
+        );
+
+        let executor = run_broad_headless_tui_attempt(&slot)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "published broad headless-TUI attempt failed for '{}': {err}",
+                    request_path.display()
+                )
+            });
+
+        let outcome = GitWorktreeBackend
+            .validate_tui_attempt(
+                slot.published.request().workspace.source_repository_path(),
+                &slot.published,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "broad headless-TUI workspace validation errored for '{}': {err}",
+                    slot.published.workspace_path().display()
+                )
+            });
+
+        let diff = match outcome {
+            TuiAttemptOutcome::Accepted(diff) => diff,
+            TuiAttemptOutcome::Rejected(rejection) => {
+                panic!(
+                    "broad headless-TUI workspace rejected after executor {:?}: {:?}",
+                    executor, rejection
+                )
+            }
+        };
+
+        println!("executor: {:?}", executor);
+        println!("base_head: {}", diff.base_head());
+        println!("changed_paths:");
+        for path in diff.changed_paths() {
+            println!("- {}", path.display());
+        }
     }
 
     #[test]
