@@ -597,7 +597,7 @@ fn attempt_prompt(
     );
     match edit_policy {
         BroadEditPolicy::WorkspaceExceptPlokeEval => prompt.push_str(
-            "- Protected surface: do not edit files under crates/ploke-eval; choose a candidate source edit elsewhere in the workspace.\n",
+            "- Protected surface: do not edit files under crates/ploke-eval, authority/runtime directories, or package/dependency capability files such as Cargo.toml, Cargo.lock, and rust-toolchain.toml.\n",
         ),
     }
     prompt.push_str(
