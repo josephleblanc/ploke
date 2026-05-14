@@ -51,7 +51,7 @@ use tokio::time::sleep;
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
-const MAX_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
+const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
@@ -317,17 +317,21 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
     }
 }
 
-fn repair_budget_exhausted(state: &ChatLoopState) -> bool {
+fn repair_budget_exhausted(state: &ChatLoopState, limit: u32) -> bool {
     // Keep repair bounded independently from generic request retries and from the broader
     // tool-call chain cap so repeated provider/model repair loops cannot dominate the turn.
-    state.repair_attempts >= MAX_REPAIR_ATTEMPTS_PER_SESSION
+    state.repair_attempts >= limit
 }
 
-fn consume_repair_budget(state: &mut ChatLoopState, loop_error: &mut LoopError) -> bool {
+fn consume_repair_budget(
+    state: &mut ChatLoopState,
+    loop_error: &mut LoopError,
+    limit: u32,
+) -> bool {
     if !matches!(loop_error.recovery, RecoveryDecision::Repair { .. }) {
         return true;
     }
-    if repair_budget_exhausted(state) {
+    if repair_budget_exhausted(state, limit) {
         mark_repair_budget_exhausted(loop_error);
         return false;
     }
@@ -661,6 +665,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     } = session;
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
+    let repair_attempt_limit = chat_policy.repair_attempt_limit.max(1);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
@@ -747,7 +752,11 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 {
                     let mut loop_error =
                         build_loop_error_from_semantic_spec(spec, commit_phase.clone());
-                    if !consume_repair_budget(&mut loop_state, &mut loop_error) {
+                    if !consume_repair_budget(
+                        &mut loop_state,
+                        &mut loop_error,
+                        repair_attempt_limit,
+                    ) {
                         emit_loop_error(
                             &state_cmd_tx,
                             assistant_message_id,
@@ -895,7 +904,11 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         );
                         let mut loop_error =
                             build_loop_error_from_semantic_spec(spec, commit_phase.clone());
-                        if !consume_repair_budget(&mut loop_state, &mut loop_error) {
+                        if !consume_repair_budget(
+                            &mut loop_state,
+                            &mut loop_error,
+                            repair_attempt_limit,
+                        ) {
                             emit_loop_error(
                                 &state_cmd_tx,
                                 assistant_message_id,
@@ -2733,18 +2746,24 @@ mod tests {
     #[test]
     fn repair_budget_is_bounded_locally() {
         let mut state = ChatLoopState::default();
-        for _ in 0..MAX_REPAIR_ATTEMPTS_PER_SESSION {
-            assert!(!repair_budget_exhausted(&state));
+        for _ in 0..DEFAULT_REPAIR_ATTEMPTS_PER_SESSION {
+            assert!(!repair_budget_exhausted(
+                &state,
+                DEFAULT_REPAIR_ATTEMPTS_PER_SESSION
+            ));
             state.repair_attempts = state.repair_attempts.saturating_add(1);
         }
-        assert!(repair_budget_exhausted(&state));
+        assert!(repair_budget_exhausted(
+            &state,
+            DEFAULT_REPAIR_ATTEMPTS_PER_SESSION
+        ));
     }
 
     #[test]
     fn consume_repair_budget_marks_error_exhausted_after_limit() {
         let mut state = ChatLoopState::default();
 
-        for _ in 0..MAX_REPAIR_ATTEMPTS_PER_SESSION {
+        for _ in 0..DEFAULT_REPAIR_ATTEMPTS_PER_SESSION {
             let preflight_error = ToolCallPreflightError {
                 call_id: ploke_core::ArcStr::from("call_preflight"),
                 tool_name: ToolName::NsRead,
@@ -2760,7 +2779,11 @@ mod tests {
                 semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
             let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
 
-            assert!(consume_repair_budget(&mut state, &mut loop_error));
+            assert!(consume_repair_budget(
+                &mut state,
+                &mut loop_error,
+                DEFAULT_REPAIR_ATTEMPTS_PER_SESSION,
+            ));
             assert_eq!(loop_error.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
         }
 
@@ -2777,7 +2800,11 @@ mod tests {
         let spec = semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
         let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
 
-        assert!(!consume_repair_budget(&mut state, &mut loop_error));
+        assert!(!consume_repair_budget(
+            &mut state,
+            &mut loop_error,
+            DEFAULT_REPAIR_ATTEMPTS_PER_SESSION,
+        ));
         assert_eq!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
     }
 

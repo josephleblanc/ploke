@@ -165,11 +165,35 @@ impl CozoBackend {
         }
     }
 
-    pub async fn compute_batch(&self, _snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+    pub async fn compute_batch(&self, snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+        if self.endpoint.starts_with("mock://") {
+            return Ok(snippets
+                .iter()
+                .map(|snippet| mock_embedding(snippet, self.dimensions))
+                .collect());
+        }
+
         Err(EmbedError::NotImplemented(
             "Cozo embeddings not implemented".to_string(),
         ))
     }
+}
+
+fn mock_embedding(text: &str, dimensions: usize) -> Vec<f32> {
+    let mut seed = 0xcbf29ce484222325_u64;
+    for byte in text.as_bytes() {
+        seed ^= u64::from(*byte);
+        seed = seed.wrapping_mul(0x100000001b3);
+    }
+
+    (0..dimensions)
+        .map(|idx| {
+            seed ^= idx as u64;
+            seed = seed.wrapping_mul(0x9e3779b97f4a7c15);
+            let scaled = ((seed >> 40) as u32) as f32 / ((1_u32 << 24) as f32);
+            (scaled * 2.0) - 1.0
+        })
+        .collect()
 }
 
 pub type IndexProgress = f64;
@@ -336,7 +360,21 @@ impl IndexerTask {
                                 IndexStatus::Failed(s)=>{
                                     tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",
                                         s,status.errors);
-                                        panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);
+                                    let _ = shutdown.send(());
+                                    let task_result = (&mut idx_handle)
+                                        .await
+                                        .map_err(|err| EmbedError::JoinFailed(err.to_string()))?;
+                                    if callback_handler.is_finished() {
+                                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        callback_handler.join().expect("Callback errror - not finished")?;
+                                    }
+                                    return Err(task_result
+                                        .err()
+                                        .unwrap_or_else(|| EmbedError::Embedding(format!(
+                                            "Indexing failed with message: {s}\nErrors: {:?}",
+                                            status.errors
+                                        )))
+                                        .into());
                                 }
                                 IndexStatus::Idle => {todo!()},
                                 IndexStatus::Running => {},

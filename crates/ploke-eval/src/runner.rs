@@ -92,6 +92,9 @@ const WAIT_HEARTBEAT_SECS: u64 = 10;
 const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
 const BM25_READY_TIMEOUT_SECS: u64 = 60;
 const HEADLESS_TUI_BM25_TIMEOUT_MS: u64 = 10_000;
+const HEADLESS_TUI_TOOL_CHAIN_LIMIT: usize = 500;
+const HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT: u32 = 128;
+const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 180;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 1;
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
@@ -3410,8 +3413,14 @@ pub(crate) struct WorkspaceTuiRuntime {
 pub(crate) async fn setup_workspace_tui_runtime(
     workspace_root: &Path,
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    setup_workspace_tui_runtime_with_read_roots(workspace_root, &[]).await
+}
+
+pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
+    workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
     let runtime_db = init_runtime_db()?;
-    let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
 
     let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
         path: PathBuf::from("<temporary xdg config home>"),
@@ -3419,7 +3428,7 @@ pub(crate) async fn setup_workspace_tui_runtime(
     })?;
     let config_guard = XdgConfigHomeGuard::set_to(config_home.path());
 
-    let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+    let embedding_processor = sparse_headless_embedding_processor();
     let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
         &runtime_db,
         embedding_processor,
@@ -3451,7 +3460,7 @@ pub(crate) async fn setup_workspace_tui_runtime(
     let state = runtime.state_arc();
 
     configure_sparse_strict_rag(&state).await;
-    prepare_sparse_workspace(&state, workspace_root).await?;
+    prepare_sparse_workspace(&state, workspace_root, extra_read_roots).await?;
 
     let mut app = runtime
         .into_app_with_state_pwd(workspace_root.to_path_buf())
@@ -3475,7 +3484,6 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
     workspace_root: &Path,
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {
     let runtime_db = init_runtime_db()?;
-    let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
 
     let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
         path: PathBuf::from("<temporary xdg config home>"),
@@ -3483,7 +3491,7 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
     })?;
     let config_guard = XdgConfigHomeGuard::set_to(config_home.path());
 
-    let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+    let embedding_processor = sparse_headless_embedding_processor();
     let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
         &runtime_db,
         embedding_processor,
@@ -3514,7 +3522,7 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
     let state = runtime.state_arc();
 
     configure_sparse_strict_rag(&state).await;
-    prepare_sparse_workspace(&state, workspace_root).await?;
+    prepare_sparse_workspace(&state, workspace_root, &[]).await?;
 
     let mut app = runtime
         .into_app_with_state_pwd(workspace_root.to_path_buf())
@@ -3538,11 +3546,27 @@ async fn configure_sparse_strict_rag(state: &Arc<AppState>) {
     cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
     cfg.rag.strict_bm25_by_default = true;
     cfg.rag.bm25_timeout_ms = HEADLESS_TUI_BM25_TIMEOUT_MS;
+    cfg.llm_timeout_secs = HEADLESS_TUI_LLM_TIMEOUT_SECS;
+    cfg.chat_policy.tool_call_timeout_secs = HEADLESS_TUI_LLM_TIMEOUT_SECS;
+    cfg.chat_policy.tool_call_chain_limit = HEADLESS_TUI_TOOL_CHAIN_LIMIT;
+    cfg.chat_policy.repair_attempt_limit = HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT;
+    cfg.chat_policy.error_retry_limit = 10;
+    cfg.chat_policy.length_retry_limit = 5;
+    cfg.chat_policy.timeout_base_secs = HEADLESS_TUI_LLM_TIMEOUT_SECS;
+    cfg.chat_policy.timeout_strategy = ChatTimeoutStrategy::Backoff { attempts: Some(10) };
+}
+
+fn sparse_headless_embedding_processor() -> EmbeddingProcessor {
+    // The Prototype 1 headless TUI adapter forces sparse-strict retrieval below.
+    // It still needs an EmbeddingProcessor to construct the TUI runtime, but it
+    // should not spend remote embedding quota before a sparse-only splice run.
+    EmbeddingProcessor::new_mock()
 }
 
 async fn prepare_sparse_workspace(
     state: &Arc<AppState>,
     workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
 ) -> Result<(), PrepareError> {
     let resolved = resolve_index_target(Some(workspace_root.to_path_buf()), workspace_root)
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -3564,6 +3588,7 @@ async fn prepare_sparse_workspace(
                 resolved.member_roots.clone(),
                 Some(resolved.focused_root.clone()),
             );
+            txn.set_extra_read_roots(extra_read_roots.to_vec());
             txn.record_parse_success();
             txn.derive_path_policy(&[])
         })

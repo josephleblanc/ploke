@@ -577,6 +577,8 @@ pub struct ChatPolicy {
     pub error_retry_limit: u32,
     #[serde(default = "default_length_retry_limit")]
     pub length_retry_limit: u32,
+    #[serde(default = "default_repair_attempt_limit")]
+    pub repair_attempt_limit: u32,
     #[serde(default = "default_length_continue_prompt")]
     pub length_continue_prompt: String,
     #[serde(default)]
@@ -593,6 +595,7 @@ impl Default for ChatPolicy {
             timeout_base_secs: default_timeout_base_secs(),
             error_retry_limit: default_error_retry_limit(),
             length_retry_limit: default_length_retry_limit(),
+            repair_attempt_limit: default_repair_attempt_limit(),
             length_continue_prompt: default_length_continue_prompt(),
             tool_replay: ToolReplayPolicy::default(),
         }
@@ -607,6 +610,7 @@ impl ChatPolicy {
         let timeout_base_secs = self.timeout_base_secs.clamp(5, 600);
         let error_retry_limit = self.error_retry_limit.min(10);
         let length_retry_limit = self.length_retry_limit.min(5);
+        let repair_attempt_limit = self.repair_attempt_limit.clamp(1, 500);
         let timeout_strategy = self.timeout_strategy.validated();
         Self {
             tool_call_timeout_secs,
@@ -616,6 +620,7 @@ impl ChatPolicy {
             timeout_base_secs,
             error_retry_limit,
             length_retry_limit,
+            repair_attempt_limit,
             length_continue_prompt: self.length_continue_prompt,
             tool_replay: self.tool_replay.validated(),
         }
@@ -898,6 +903,10 @@ fn default_error_retry_limit() -> u32 {
 
 fn default_length_retry_limit() -> u32 {
     1
+}
+
+fn default_repair_attempt_limit() -> u32 {
+    4
 }
 
 fn default_length_continue_prompt() -> String {

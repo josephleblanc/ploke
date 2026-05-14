@@ -21,15 +21,22 @@ use uuid::Uuid;
 
 use super::{
     ArtifactDelta,
-    harness_request::{BroadEditPolicy, EvidenceRoot, request},
+    harness_request::{
+        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, request,
+    },
     surface, tui,
 };
 
+#[cfg(test)]
+use super::harness_request::EvidenceRole;
+
 const MAX_DEBUG_RELAY_EVENTS: usize = 128;
 const MAX_DEBUG_RELAY_EVENT_CHARS: usize = 2_000;
+const MAX_EVIDENCE_EVENT_CHARS: usize = 1_000;
 const MAX_PROMPT_MESSAGE_PREVIEWS: usize = 8;
 const MAX_PROMPT_MESSAGE_PREVIEW_CHARS: usize = 500;
 const MAX_RAG_PART_PREVIEWS: usize = 8;
+const LIVE_TRACE_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_LIVE";
 
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,265 +60,97 @@ pub(crate) async fn run_headless(
     prompt: &str,
     budget: Budget,
     edit_policy: BroadEditPolicy,
+    evidence_roots: &[EvidenceRoot],
 ) -> Result<HeadlessRun, Error> {
-    use ploke_tui::{
-        AppEvent,
-        app_state::{StateCommand, core::EditProposalStatus, events::SystemEvent},
-    };
-
-    let mut runtime = crate::runner::setup_workspace_tui_runtime(workspace_path)
-        .await
-        .map_err(|source| Error::HeadlessStart(source.to_string()))?;
-
-    let cmd_tx = runtime.app.state_cmd_tx();
-    send_state(
-        &cmd_tx,
-        StateCommand::SetEditingAutoConfirm { enabled: false },
-    )
-    .await?;
-
     let mut run = HeadlessRun::new();
     let mut turn = 1_u32;
-    let mut pending_retry = None::<String>;
-    let mut applied_terminal = None::<HeadlessTerminal>;
-    submit_prompt(&runtime.app, prompt.to_string()).await?;
+    let extra_read_roots = evidence_read_roots(evidence_roots);
+    let mut next_prompt = attempt_prompt(workspace_path, edit_policy, evidence_roots, prompt, None);
+    let observer = LiveObserver::from_env();
+    observer.emit(format!(
+        "start workspace={} max_attempts={} timeout_secs={} evidence_read_roots={}",
+        workspace_path.display(),
+        budget.max_attempts(),
+        budget.timeout_secs(),
+        extra_read_roots.len()
+    ));
 
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
         loop {
+            observer.emit(format!("attempt {turn} start"));
+            let mut runtime =
+                start_attempt_runtime(workspace_path, &extra_read_roots, next_prompt.clone())
+                    .await?;
+            let end = run_attempt(
+                &mut runtime,
+                workspace_path,
+                edit_policy,
+                turn,
+                &mut run,
+                &observer,
+            )
+            .await?;
             runtime.app.pump_pending_events().await;
             drain_debug(&mut runtime.debug_rx, &mut run);
+            drop(runtime);
 
-            let event = next_event(&mut runtime).await?;
-
-            match event {
-                AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
-                    ploke_tui::llm::ChatEvt::PromptConstructed {
-                        parent_id,
-                        formatted_prompt,
-                        context_plan,
-                    },
-                )) => {
-                    let diagnostic = PromptDiagnostic::capture(
-                        &runtime.state,
-                        parent_id,
-                        &formatted_prompt,
-                        &context_plan,
-                    )
-                    .await;
-                    let context_unavailable = diagnostic.context_unavailable_reason();
-                    run.prompt_diagnostics.push(diagnostic);
-                    if let Some(reason) = context_unavailable {
+            match end {
+                AttemptEnd::Terminal(terminal) => {
+                    observer.emit(format!("terminal {}", terminal.live_summary()));
+                    return Ok::<HeadlessTerminal, Error>(terminal);
+                }
+                AttemptEnd::RetryFailure(feedback) => {
+                    let feedback = retry_feedback(&feedback);
+                    if !advance_turn(&budget, &mut turn) {
+                        observer.emit(format!(
+                            "terminal exhausted attempts={turn} last={}",
+                            truncate_chars(&feedback, 240)
+                        ));
+                        return Ok::<HeadlessTerminal, Error>(HeadlessTerminal::Exhausted {
+                            attempts: turn,
+                            last: feedback,
+                        });
+                    }
+                    observer.emit(format!(
+                        "retry attempt={turn} feedback={}",
+                        truncate_chars(&feedback, 240)
+                    ));
+                    next_prompt = attempt_prompt(
+                        workspace_path,
+                        edit_policy,
+                        evidence_roots,
+                        prompt,
+                        Some(&feedback),
+                    );
+                }
+                AttemptEnd::RetryNoEdit {
+                    feedback,
+                    outcome,
+                    summary,
+                } => {
+                    let feedback = retry_feedback(&feedback);
+                    if !advance_turn(&budget, &mut turn) {
+                        observer.emit(format!(
+                            "terminal completed_without_edit outcome={} summary={}",
+                            outcome,
+                            truncate_chars(&summary, 240)
+                        ));
                         return Ok::<HeadlessTerminal, Error>(
-                            HeadlessTerminal::ContextUnavailable { reason },
+                            HeadlessTerminal::CompletedWithoutEdit { outcome, summary },
                         );
                     }
+                    observer.emit(format!(
+                        "retry attempt={turn} no_edit_feedback={}",
+                        truncate_chars(&feedback, 240)
+                    ));
+                    next_prompt = attempt_prompt(
+                        workspace_path,
+                        edit_policy,
+                        evidence_roots,
+                        prompt,
+                        Some(&feedback),
+                    );
                 }
-                AppEvent::System(SystemEvent::ToolCallRequested {
-                    request_id,
-                    parent_id,
-                    tool_call,
-                }) => {
-                    run.events.push(Event::ToolRequest {
-                        request_id: request_id.to_string(),
-                        parent_id: parent_id.to_string(),
-                        call_id: tool_call.call_id.to_string(),
-                        tool: tool_call.function.name.as_str().to_string(),
-                        arguments: tool_call.function.arguments.clone(),
-                    });
-                }
-                AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id,
-                    call_id,
-                    content,
-                    ui_payload,
-                    ..
-                }) => {
-                    run.events.push(Event::Tool {
-                        call_id: call_id.to_string(),
-                        result: Tool::Completed {
-                            content: content.clone(),
-                        },
-                    });
-                    if let Some(proposal_id) = ui_payload.and_then(|payload| payload.proposal_id) {
-                        let Some(proposal) = runtime.state.proposals.read().await.get(&proposal_id).cloned() else {
-                            continue;
-                        };
-                        let paths = proposal_paths(&proposal);
-                        run.events.push(Event::Proposal {
-                            id: proposal_id.to_string(),
-                            edit_count: proposal.edits.len() + proposal.edits_ns.len(),
-                            paths: paths.clone(),
-                        });
-                        if paths.is_empty() {
-                            run.attempts.push(HeadlessAttempt {
-                                turn,
-                                proposal_id: Some(proposal_id),
-                                result: HeadlessAttemptResult::Rejected {
-                                    reason: Feedback::from_outcome(&Outcome::Rejected(
-                                        Reject::Empty,
-                                    ))
-                                    .message()
-                                    .to_string(),
-                                },
-                            });
-                            pending_retry = Some(
-                                "No material edit was staged; make a concrete bounded edit."
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-
-                        let rejection = classify_paths(workspace_path, edit_policy, &paths);
-                        if let Some(rejection) = rejection {
-                            let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
-                            send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
-                            run.attempts.push(HeadlessAttempt {
-                                turn,
-                                proposal_id: Some(proposal_id),
-                                result: HeadlessAttemptResult::Rejected {
-                                    reason: feedback.message().to_string(),
-                                },
-                            });
-                            pending_retry = Some(feedback.message().to_string());
-                            continue;
-                        }
-
-                        send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
-
-                        loop {
-                            runtime.app.pump_pending_events().await;
-                            drain_debug(&mut runtime.debug_rx, &mut run);
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            let Some(updated) =
-                                runtime.state.proposals.read().await.get(&proposal_id).cloned()
-                            else {
-                                continue;
-                            };
-                            match updated.status {
-                                EditProposalStatus::Applied => {
-                                    let paths = proposal_paths(&updated);
-                                    run.attempts.push(HeadlessAttempt {
-                                        turn,
-                                        proposal_id: Some(proposal_id),
-                                        result: HeadlessAttemptResult::Applied {
-                                            paths: paths.clone(),
-                                        },
-                                    });
-                                    let terminal = HeadlessTerminal::Applied {
-                                        proposal_id,
-                                        request_id,
-                                        changed_paths: paths,
-                                    };
-                                    applied_terminal = Some(terminal);
-                                    break;
-                                }
-                                EditProposalStatus::Failed(reason)
-                                | EditProposalStatus::Stale(reason) => {
-                                    run.attempts.push(HeadlessAttempt {
-                                        turn,
-                                        proposal_id: Some(proposal_id),
-                                        result: HeadlessAttemptResult::Rejected {
-                                            reason: reason.clone(),
-                                        },
-                                    });
-                                    pending_retry = Some(reason);
-                                    break;
-                                }
-                                EditProposalStatus::Denied => {
-                                    let reason = "proposal was denied before apply".to_string();
-                                    run.attempts.push(HeadlessAttempt {
-                                        turn,
-                                        proposal_id: Some(proposal_id),
-                                        result: HeadlessAttemptResult::Rejected {
-                                            reason: reason.clone(),
-                                        },
-                                    });
-                                    pending_retry = Some(reason);
-                                    break;
-                                }
-                                EditProposalStatus::Pending | EditProposalStatus::Approved => {}
-                            }
-                        }
-                    }
-                }
-                AppEvent::System(SystemEvent::ToolCallFailed { call_id, error, .. }) => {
-                    run.events.push(Event::Tool {
-                        call_id: call_id.to_string(),
-                        result: Tool::Failed {
-                            error: error.clone(),
-                        },
-                    });
-                    if applied_terminal.is_some() {
-                        continue;
-                    }
-                    run.attempts.push(HeadlessAttempt {
-                        turn,
-                        proposal_id: None,
-                        result: HeadlessAttemptResult::ToolFailed {
-                            error: error.clone(),
-                        },
-                    });
-                    pending_retry = Some(error);
-                }
-                AppEvent::System(SystemEvent::ChatTurnFinished {
-                    request_id,
-                    outcome,
-                    attempts,
-                    summary,
-                    ..
-                }) => {
-                    run.events.push(Event::Turn {
-                        request_id: request_id.to_string(),
-                        outcome: outcome.clone(),
-                        attempts,
-                        summary: summary.clone(),
-                    });
-                    if let Some(terminal) = applied_terminal.take() {
-                        return Ok::<HeadlessTerminal, Error>(terminal);
-                    }
-                    if let Some(feedback) = pending_retry.take() {
-                        if !retry_turn(&runtime.app, &budget, &mut turn, &feedback).await? {
-                            return Ok::<HeadlessTerminal, Error>(HeadlessTerminal::Exhausted {
-                                attempts: turn,
-                                last: feedback,
-                            });
-                        }
-                        continue;
-                    }
-
-                    let has_pending = runtime
-                        .state
-                        .proposals
-                        .read()
-                        .await
-                        .values()
-                        .any(|proposal| {
-                            matches!(
-                                proposal.status,
-                                EditProposalStatus::Pending | EditProposalStatus::Approved
-                            )
-                        });
-                    if !has_pending {
-                        let feedback = if summary.trim().is_empty() {
-                            "The model returned without staging an edit; make a concrete bounded edit."
-                        } else {
-                            summary.as_str()
-                        };
-                        run.attempts.push(HeadlessAttempt {
-                            turn,
-                            proposal_id: None,
-                            result: HeadlessAttemptResult::NoEdit {
-                                summary: feedback.to_string(),
-                            },
-                        });
-                        if !retry_turn(&runtime.app, &budget, &mut turn, feedback).await? {
-                            return Ok::<HeadlessTerminal, Error>(
-                                HeadlessTerminal::CompletedWithoutEdit { outcome, summary },
-                            );
-                        }
-                    }
-                }
-                _ => {}
             }
         }
     })
@@ -323,25 +162,593 @@ pub(crate) async fn run_headless(
             secs: budget.timeout_secs(),
         },
     };
+    observer.emit(format!("done {}", terminal.live_summary()));
     run.terminal = Some(terminal);
     Ok(run)
 }
 
-async fn retry_turn(
-    app: &ploke_tui::app::App,
-    budget: &Budget,
-    turn: &mut u32,
-    feedback: &str,
-) -> Result<bool, Error> {
+async fn start_attempt_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    prompt: String,
+) -> Result<crate::runner::WorkspaceTuiRuntime, Error> {
+    let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
+        workspace_path,
+        extra_read_roots,
+    )
+    .await
+    .map_err(|source| Error::HeadlessStart(source.to_string()))?;
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    send_state(
+        &cmd_tx,
+        ploke_tui::app_state::StateCommand::SetEditingAutoConfirm { enabled: false },
+    )
+    .await?;
+    submit_prompt(&runtime.app, prompt).await?;
+    Ok(runtime)
+}
+
+enum AttemptEnd {
+    Terminal(HeadlessTerminal),
+    RetryFailure(String),
+    RetryNoEdit {
+        feedback: String,
+        outcome: String,
+        summary: String,
+    },
+}
+
+async fn run_attempt(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    workspace_path: &Path,
+    edit_policy: BroadEditPolicy,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+) -> Result<AttemptEnd, Error> {
+    use ploke_tui::{
+        AppEvent,
+        app_state::{StateCommand, core::EditProposalStatus, events::SystemEvent},
+    };
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    let mut pending_retry = None::<String>;
+    let mut provider_failure = None::<String>;
+
+    loop {
+        runtime.app.pump_pending_events().await;
+        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
+
+        let event = next_event(runtime).await?;
+
+        match event {
+            AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
+                ploke_tui::llm::ChatEvt::PromptConstructed {
+                    parent_id,
+                    formatted_prompt,
+                    context_plan,
+                },
+            )) => {
+                let diagnostic = PromptDiagnostic::capture(
+                    &runtime.state,
+                    parent_id,
+                    &formatted_prompt,
+                    &context_plan,
+                )
+                .await;
+                let context_unavailable = diagnostic.context_unavailable_reason();
+                observer.emit(format!(
+                    "attempt {turn} prompt parent={} messages={} estimated_tokens={} rag_parts={} bm25={}",
+                    diagnostic.parent_id,
+                    diagnostic.message_count,
+                    diagnostic.estimated_total_tokens,
+                    diagnostic.included_rag_parts,
+                    diagnostic
+                        .bm25
+                        .as_ref()
+                        .map(|bm25| bm25.status.as_str())
+                        .unwrap_or("none")
+                ));
+                run.prompt_diagnostics.push(diagnostic);
+                if let Some(reason) = context_unavailable {
+                    observer.emit(format!(
+                        "attempt {turn} context_unavailable {}",
+                        truncate_chars(&reason, 240)
+                    ));
+                    return Ok(AttemptEnd::Terminal(HeadlessTerminal::ContextUnavailable {
+                        reason,
+                    }));
+                }
+            }
+            AppEvent::System(SystemEvent::ToolCallRequested {
+                request_id,
+                parent_id,
+                tool_call,
+            }) => {
+                run.events.push(Event::ToolRequest {
+                    request_id: request_id.to_string(),
+                    parent_id: parent_id.to_string(),
+                    call_id: tool_call.call_id.to_string(),
+                    tool: tool_call.function.name.as_str().to_string(),
+                    arguments: tool_call.function.arguments.clone(),
+                });
+                observer.emit(format!(
+                    "attempt {turn} tool_request call_id={} tool={} args={}",
+                    tool_call.call_id,
+                    tool_call.function.name.as_str(),
+                    truncate_chars(&tool_call.function.arguments, 240)
+                ));
+            }
+            AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id,
+                call_id,
+                content,
+                ui_payload,
+                ..
+            }) => {
+                run.events.push(Event::Tool {
+                    call_id: call_id.to_string(),
+                    result: Tool::Completed {
+                        content: content.clone(),
+                    },
+                });
+                observer.emit(format!(
+                    "attempt {turn} tool_completed call_id={} content={}",
+                    call_id,
+                    truncate_chars(&content, 240)
+                ));
+                if let Some(proposal_id) = ui_payload.and_then(|payload| payload.proposal_id) {
+                    let Some(proposal) = runtime
+                        .state
+                        .proposals
+                        .read()
+                        .await
+                        .get(&proposal_id)
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    let paths = proposal_paths(&proposal);
+                    run.events.push(Event::Proposal {
+                        id: proposal_id.to_string(),
+                        edit_count: proposal.edits.len() + proposal.edits_ns.len(),
+                        paths: paths.clone(),
+                    });
+                    observer.emit(format!(
+                        "attempt {turn} proposal id={} edit_count={} paths={}",
+                        proposal_id,
+                        proposal.edits.len() + proposal.edits_ns.len(),
+                        join_paths(&paths)
+                    ));
+                    if paths.is_empty() {
+                        run.attempts.push(HeadlessAttempt {
+                            turn,
+                            proposal_id: Some(proposal_id),
+                            result: HeadlessAttemptResult::Rejected {
+                                reason: Feedback::from_outcome(&Outcome::Rejected(Reject::Empty))
+                                    .message()
+                                    .to_string(),
+                            },
+                        });
+                        let feedback = "No material edit was staged; make a concrete bounded edit."
+                            .to_string();
+                        observer.emit(format!("attempt {turn} proposal_rejected empty"));
+                        return Ok(AttemptEnd::RetryFailure(feedback));
+                    }
+
+                    let rejection = classify_paths(workspace_path, edit_policy, &paths);
+                    if let Some(rejection) = rejection {
+                        let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
+                        send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
+                        run.attempts.push(HeadlessAttempt {
+                            turn,
+                            proposal_id: Some(proposal_id),
+                            result: HeadlessAttemptResult::Rejected {
+                                reason: feedback.message().to_string(),
+                            },
+                        });
+                        let retry = feedback.message().to_string();
+                        observer.emit(format!(
+                            "attempt {turn} proposal_rejected {}",
+                            truncate_chars(feedback.message(), 240)
+                        ));
+                        return Ok(AttemptEnd::RetryFailure(retry));
+                    }
+
+                    observer.emit(format!("attempt {turn} proposal_approve id={proposal_id}"));
+                    send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
+
+                    loop {
+                        runtime.app.pump_pending_events().await;
+                        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        let Some(updated) = runtime
+                            .state
+                            .proposals
+                            .read()
+                            .await
+                            .get(&proposal_id)
+                            .cloned()
+                        else {
+                            continue;
+                        };
+                        match updated.status {
+                            EditProposalStatus::Applied => {
+                                let paths = proposal_paths(&updated);
+                                run.attempts.push(HeadlessAttempt {
+                                    turn,
+                                    proposal_id: Some(proposal_id),
+                                    result: HeadlessAttemptResult::Applied {
+                                        paths: paths.clone(),
+                                    },
+                                });
+                                observer.emit(format!(
+                                    "attempt {turn} proposal_applied id={proposal_id}"
+                                ));
+                                return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
+                                    proposal_id,
+                                    request_id,
+                                    changed_paths: paths,
+                                }));
+                            }
+                            EditProposalStatus::Failed(reason)
+                            | EditProposalStatus::Stale(reason) => {
+                                run.attempts.push(HeadlessAttempt {
+                                    turn,
+                                    proposal_id: Some(proposal_id),
+                                    result: HeadlessAttemptResult::Rejected {
+                                        reason: reason.clone(),
+                                    },
+                                });
+                                pending_retry = Some(reason);
+                                observer.emit(format!(
+                                    "attempt {turn} proposal_apply_failed id={} reason={}",
+                                    proposal_id,
+                                    truncate_chars(&pending_retry.clone().unwrap_or_default(), 240)
+                                ));
+                                break;
+                            }
+                            EditProposalStatus::Denied => {
+                                let reason = "proposal was denied before apply".to_string();
+                                run.attempts.push(HeadlessAttempt {
+                                    turn,
+                                    proposal_id: Some(proposal_id),
+                                    result: HeadlessAttemptResult::Rejected {
+                                        reason: reason.clone(),
+                                    },
+                                });
+                                pending_retry = Some(reason);
+                                observer.emit(format!(
+                                    "attempt {turn} proposal_denied id={proposal_id}"
+                                ));
+                                break;
+                            }
+                            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
+                        }
+                    }
+                }
+            }
+            AppEvent::System(SystemEvent::ToolCallFailed { call_id, error, .. }) => {
+                run.events.push(Event::Tool {
+                    call_id: call_id.to_string(),
+                    result: Tool::Failed {
+                        error: error.clone(),
+                    },
+                });
+                observer.emit(format!(
+                    "attempt {turn} tool_failed call_id={} error={}",
+                    call_id,
+                    truncate_chars(&error, 240)
+                ));
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: None,
+                    result: HeadlessAttemptResult::ToolFailed {
+                        error: error.clone(),
+                    },
+                });
+                pending_retry = Some(error);
+            }
+            AppEvent::MessageUpdated(message) => {
+                let assistant_error = {
+                    let chat = runtime.state.chat.0.read().await;
+                    chat.messages.get(&message.0).and_then(|message| {
+                        if !matches!(
+                            message.kind,
+                            ploke_tui::chat_history::MessageKind::Assistant
+                        ) {
+                            return None;
+                        }
+                        if !matches!(
+                            message.status,
+                            ploke_tui::chat_history::MessageStatus::Error { .. }
+                        ) {
+                            return None;
+                        }
+                        Some((message.id, message.content.clone()))
+                    })
+                };
+                let Some((message_id, content)) = assistant_error else {
+                    continue;
+                };
+                run.events.push(Event::AssistantMessage {
+                    id: message_id.to_string(),
+                    status: "error".to_string(),
+                    content: content.clone(),
+                });
+                observer.emit(format!(
+                    "attempt {turn} assistant_error id={} content={}",
+                    message_id,
+                    truncate_chars(&content, 240)
+                ));
+                if provider_failure.is_none() {
+                    provider_failure = provider_unavailable_reason(&content);
+                }
+            }
+            AppEvent::System(SystemEvent::ChatTurnFinished {
+                request_id,
+                outcome,
+                attempts,
+                summary,
+                ..
+            }) => {
+                run.events.push(Event::Turn {
+                    request_id: request_id.to_string(),
+                    outcome: outcome.clone(),
+                    attempts,
+                    summary: summary.clone(),
+                });
+                observer.emit(format!(
+                    "attempt {turn} turn_finished outcome={} attempts={} summary={}",
+                    outcome,
+                    attempts,
+                    truncate_chars(&summary, 240)
+                ));
+                if let Some(reason) = provider_failure.take() {
+                    return Ok(AttemptEnd::Terminal(
+                        HeadlessTerminal::ProviderUnavailable { reason },
+                    ));
+                }
+                if let Some(feedback) = pending_retry.take() {
+                    return Ok(AttemptEnd::RetryFailure(feedback));
+                }
+
+                let has_pending = runtime
+                    .state
+                    .proposals
+                    .read()
+                    .await
+                    .values()
+                    .any(|proposal| {
+                        matches!(
+                            proposal.status,
+                            EditProposalStatus::Pending | EditProposalStatus::Approved
+                        )
+                    });
+                if !has_pending {
+                    let feedback = if summary.trim().is_empty() {
+                        "The model returned without staging an edit; make a concrete bounded edit."
+                            .to_string()
+                    } else {
+                        summary.clone()
+                    };
+                    run.attempts.push(HeadlessAttempt {
+                        turn,
+                        proposal_id: None,
+                        result: HeadlessAttemptResult::NoEdit {
+                            summary: feedback.clone(),
+                        },
+                    });
+                    return Ok(AttemptEnd::RetryNoEdit {
+                        feedback,
+                        outcome,
+                        summary,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn provider_unavailable_reason(content: &str) -> Option<String> {
+    let normalized = content.to_ascii_lowercase();
+    if normalized.contains("api error")
+        && (normalized.contains("status 401")
+            || normalized.contains("status 403")
+            || normalized.contains("status 429")
+            || normalized.contains("key limit exceeded")
+            || normalized.contains("rate limit"))
+    {
+        return Some(content.to_string());
+    }
+    None
+}
+
+fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
     if *turn >= budget.max_attempts() {
-        return Ok(false);
+        return false;
     }
     *turn += 1;
-    let prompt = format!(
-        "The previous edit attempt could not be applied:\n\n{feedback}\n\nTry again. Keep the edit inside the allowed workspace surface and outside protected core. Use the available edit tools to stage a concrete change."
+    true
+}
+
+fn attempt_prompt(
+    workspace_path: &Path,
+    edit_policy: BroadEditPolicy,
+    evidence_roots: &[EvidenceRoot],
+    request_prompt: &str,
+    feedback: Option<&str>,
+) -> String {
+    let mut prompt = String::new();
+    prompt.push_str("# Headless TUI harness boundary\n\n");
+    prompt.push_str("- The loaded workspace root is ");
+    prompt.push_str(&workspace_path.display().to_string());
+    prompt.push_str(".\n");
+    prompt.push_str(
+        "- Read tools may inspect the loaded workspace and any published evidence roots listed in the request.\n",
     );
-    submit_prompt(app, prompt).await?;
-    Ok(true)
+    prompt.push_str(
+        "- Edit, create, patch, and apply tools must target only files inside the loaded workspace; prefer repository-relative paths for source edits.\n",
+    );
+    prompt.push_str(
+        "- Stage one concrete source change with the available edit tools; do not create bookkeeping or result files.\n",
+    );
+    match edit_policy {
+        BroadEditPolicy::WorkspaceExceptPlokeEval => prompt.push_str(
+            "- Protected surface: do not edit files under crates/ploke-eval; choose a candidate source edit elsewhere in the workspace.\n",
+        ),
+    }
+    prompt.push_str(
+        "- Use validation tools only after a source edit has been staged; checking an unchanged workspace is not a candidate improvement.\n",
+    );
+    prompt.push_str(
+        "- Use exact code lookup only when you already know the canonical module path; otherwise use read_file, list_dir, or request_code_context and then stage an edit.\n",
+    );
+    let evidence = evidence_prompt_lines(evidence_roots);
+    if !evidence.is_empty() {
+        prompt.push_str("\n## Read-only evidence available to tools\n\n");
+        prompt.push_str(&evidence);
+    }
+    if let Some(feedback) = feedback {
+        prompt.push_str("\n## Previous isolated attempt feedback\n\n");
+        prompt.push_str(feedback);
+        prompt.push_str("\n\nStart a fresh attempt from the original request below.\n");
+    }
+    prompt.push_str("\n## Original broad request\n\n");
+    prompt.push_str(request_prompt);
+    prompt
+}
+
+fn evidence_prompt_lines(evidence_roots: &[EvidenceRoot]) -> String {
+    let mut lines = String::new();
+    for root in evidence_roots {
+        if root.kind == EvidenceRootKind::SubmittedResultOutput {
+            continue;
+        }
+        let Some(location) = evidence_prompt_location(&root.location) else {
+            continue;
+        };
+        lines.push_str("- ");
+        lines.push_str(evidence_role_label(root.role));
+        lines.push_str(" (");
+        lines.push_str(evidence_kind_label(root.kind));
+        lines.push_str("): ");
+        lines.push_str(&location);
+        lines.push('\n');
+    }
+    lines
+}
+
+fn evidence_prompt_location(location: &EvidenceRootLocation) -> Option<String> {
+    match location {
+        EvidenceRootLocation::Directory { path } => Some(path.display().to_string()),
+        EvidenceRootLocation::File { path } => Some(path.display().to_string()),
+        EvidenceRootLocation::NodeScopedDirectory {
+            nodes_root,
+            child_relpath,
+        } => Some(format!(
+            "{}/<node>/{}",
+            nodes_root.display(),
+            child_relpath.display()
+        )),
+        EvidenceRootLocation::AttachedReport { .. } => None,
+    }
+}
+
+fn evidence_kind_label(kind: EvidenceRootKind) -> &'static str {
+    match kind {
+        EvidenceRootKind::SubmittedResultOutput => "submitted result output",
+        EvidenceRootKind::HistoryBlocks => "history blocks",
+        EvidenceRootKind::Evaluations => "evaluations",
+        EvidenceRootKind::Nodes => "node records",
+        EvidenceRootKind::ProtocolArtifacts => "protocol artifacts",
+        EvidenceRootKind::Oracle => "oracle reports",
+    }
+}
+
+fn evidence_role_label(role: super::harness_request::EvidenceRole) -> &'static str {
+    match role {
+        super::harness_request::EvidenceRole::OutputBox => "write destination",
+        super::harness_request::EvidenceRole::SealedHistory => "sealed run history",
+        super::harness_request::EvidenceRole::EvaluationPayloads => "evaluation evidence",
+        super::harness_request::EvidenceRole::RuntimeEvidence => "runtime evidence",
+        super::harness_request::EvidenceRole::GuidanceOnly => "guidance only",
+        super::harness_request::EvidenceRole::OracleSummary => "oracle summary",
+    }
+}
+
+fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for root in evidence_roots {
+        if root.kind == EvidenceRootKind::SubmittedResultOutput {
+            continue;
+        }
+        match &root.location {
+            EvidenceRootLocation::Directory { path } => {
+                roots.push(path.clone());
+            }
+            EvidenceRootLocation::File { path } => {
+                if let Some(parent) = path.parent() {
+                    roots.push(parent.to_path_buf());
+                }
+            }
+            EvidenceRootLocation::NodeScopedDirectory { nodes_root, .. } => {
+                roots.push(nodes_root.clone());
+            }
+            EvidenceRootLocation::AttachedReport { .. } => {}
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn retry_feedback(feedback: &str) -> String {
+    #[derive(Deserialize)]
+    struct ToolFailure {
+        user: String,
+    }
+
+    if let Ok(failure) = serde_json::from_str::<ToolFailure>(feedback) {
+        return format!(
+            "Previous attempt failed at a tool boundary: {}. Start fresh, do not repeat the same failed exact lookup, use workspace-relative paths for source files, and stage one concrete edit before running checks.",
+            failure.user
+        );
+    }
+
+    if feedback.contains("[aborted]") {
+        return "Previous attempt aborted before staging an edit. Start fresh, avoid further repository survey, use the request evidence as context, and stage one small concrete source edit with the edit tools."
+            .to_string();
+    }
+
+    feedback.to_string()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiveObserver {
+    enabled: bool,
+}
+
+impl LiveObserver {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var_os(LIVE_TRACE_ENV)
+                .and_then(|value| value.into_string().ok())
+                .map(|value| {
+                    let value = value.trim().to_ascii_lowercase();
+                    !matches!(value.as_str(), "" | "0" | "false" | "off" | "no")
+                })
+                .unwrap_or(false),
+        }
+    }
+
+    fn emit(&self, message: impl AsRef<str>) {
+        if self.enabled {
+            eprintln!("[headless-tui] {}", message.as_ref());
+        }
+    }
 }
 
 async fn submit_prompt(app: &ploke_tui::app::App, content: String) -> Result<Uuid, Error> {
@@ -407,6 +814,34 @@ fn drain_debug(
     loop {
         match debug_rx.try_recv() {
             Ok(debug) => run.debug_relay.push(debug.as_str()),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+        }
+    }
+}
+
+fn drain_debug_observed(
+    debug_rx: &mut tokio::sync::mpsc::Receiver<
+        ploke_tui::app::commands::harness::DebugStateCommand,
+    >,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    turn: u32,
+) {
+    loop {
+        match debug_rx.try_recv() {
+            Ok(debug) => {
+                let text = debug.as_str();
+                if text.contains("Provider emitted invalid arguments")
+                    || text.contains("Repeated repair attempts")
+                {
+                    observer.emit(format!(
+                        "attempt {turn} repair_event {}",
+                        truncate_chars(text, 240)
+                    ));
+                }
+                run.debug_relay.push(text);
+            }
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
         }
@@ -824,9 +1259,52 @@ pub(crate) enum HeadlessTerminal {
     ContextUnavailable {
         reason: String,
     },
+    ProviderUnavailable {
+        reason: String,
+    },
     TimedOut {
         secs: u64,
     },
+}
+
+impl HeadlessTerminal {
+    fn live_summary(&self) -> String {
+        match self {
+            Self::Applied {
+                proposal_id,
+                changed_paths,
+                ..
+            } => format!(
+                "applied proposal_id={} changed_paths={}",
+                proposal_id,
+                join_paths(changed_paths)
+            ),
+            Self::Exhausted { attempts, last } => format!(
+                "exhausted attempts={} last={}",
+                attempts,
+                truncate_chars(last, 240)
+            ),
+            Self::CompletedWithoutEdit { outcome, summary } => format!(
+                "completed_without_edit outcome={} summary={}",
+                outcome,
+                truncate_chars(summary, 240)
+            ),
+            Self::ToolFailed { error } => {
+                format!("tool_failed error={}", truncate_chars(error, 240))
+            }
+            Self::NoEdit => "no_edit".to_string(),
+            Self::ContextUnavailable { reason } => {
+                format!("context_unavailable reason={}", truncate_chars(reason, 240))
+            }
+            Self::ProviderUnavailable { reason } => {
+                format!(
+                    "provider_unavailable reason={}",
+                    truncate_chars(reason, 240)
+                )
+            }
+            Self::TimedOut { secs } => format!("timed_out secs={secs}"),
+        }
+    }
 }
 
 pub(crate) mod evidence {
@@ -834,7 +1312,10 @@ pub(crate) mod evidence {
 
     use serde::{Deserialize, Serialize};
 
-    use super::{DebugRelay, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal};
+    use super::{
+        DebugRelay, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, MAX_EVIDENCE_EVENT_CHARS,
+        truncate_chars,
+    };
 
     /// Compact executor observations. Backend admission must still validate the
     /// workspace diff before any loop state advances.
@@ -842,6 +1323,8 @@ pub(crate) mod evidence {
     pub(crate) struct Summary {
         pub(crate) attempts: Vec<Attempt>,
         pub(crate) terminal: Option<Terminal>,
+        #[serde(default)]
+        pub(crate) events: Vec<Event>,
         #[serde(default)]
         pub(crate) debug_relay: DebugRelaySummary,
         #[serde(default)]
@@ -853,6 +1336,51 @@ pub(crate) mod evidence {
         pub(crate) retained: Vec<String>,
         pub(crate) dropped: u64,
         pub(crate) truncated: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Text {
+        pub(crate) chars: usize,
+        pub(crate) preview: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub(crate) enum Event {
+        Proposal {
+            id: String,
+            edit_count: usize,
+            paths: Vec<PathBuf>,
+        },
+        ToolRequest {
+            request_id: String,
+            parent_id: String,
+            call_id: String,
+            tool: String,
+            arguments: Text,
+        },
+        ToolCompleted {
+            call_id: String,
+            content: Text,
+        },
+        ToolFailed {
+            call_id: String,
+            error: Text,
+        },
+        AssistantMessage {
+            id: String,
+            status: String,
+            content: Text,
+        },
+        Turn {
+            request_id: String,
+            outcome: String,
+            attempts: u32,
+            summary: Text,
+        },
+        Outcome {
+            outcome: super::record::Outcome,
+        },
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -953,6 +1481,9 @@ pub(crate) mod evidence {
         ContextUnavailable {
             reason: String,
         },
+        ProviderUnavailable {
+            reason: String,
+        },
         TimedOut {
             secs: u64,
         },
@@ -963,8 +1494,80 @@ pub(crate) mod evidence {
             Self {
                 attempts: value.attempts.iter().map(Attempt::from).collect(),
                 terminal: value.terminal.as_ref().map(Terminal::from),
+                events: value.events.iter().map(Event::from).collect(),
                 debug_relay: DebugRelaySummary::from(&value.debug_relay),
                 prompt_diagnostics: value.prompt_diagnostics.iter().map(Prompt::from).collect(),
+            }
+        }
+    }
+
+    impl From<&super::Event> for Event {
+        fn from(value: &super::Event) -> Self {
+            match value {
+                super::Event::Proposal {
+                    id,
+                    edit_count,
+                    paths,
+                } => Self::Proposal {
+                    id: id.clone(),
+                    edit_count: *edit_count,
+                    paths: paths.clone(),
+                },
+                super::Event::ToolRequest {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    tool,
+                    arguments,
+                } => Self::ToolRequest {
+                    request_id: request_id.clone(),
+                    parent_id: parent_id.clone(),
+                    call_id: call_id.clone(),
+                    tool: tool.clone(),
+                    arguments: Text::from(arguments.as_str()),
+                },
+                super::Event::Tool { call_id, result } => match result {
+                    super::Tool::Completed { content } => Self::ToolCompleted {
+                        call_id: call_id.clone(),
+                        content: Text::from(content.as_str()),
+                    },
+                    super::Tool::Failed { error } => Self::ToolFailed {
+                        call_id: call_id.clone(),
+                        error: Text::from(error.as_str()),
+                    },
+                },
+                super::Event::AssistantMessage {
+                    id,
+                    status,
+                    content,
+                } => Self::AssistantMessage {
+                    id: id.clone(),
+                    status: status.clone(),
+                    content: Text::from(content.as_str()),
+                },
+                super::Event::Turn {
+                    request_id,
+                    outcome,
+                    attempts,
+                    summary,
+                } => Self::Turn {
+                    request_id: request_id.clone(),
+                    outcome: outcome.clone(),
+                    attempts: *attempts,
+                    summary: Text::from(summary.as_str()),
+                },
+                super::Event::Outcome(outcome) => Self::Outcome {
+                    outcome: outcome.clone(),
+                },
+            }
+        }
+    }
+
+    impl From<&str> for Text {
+        fn from(value: &str) -> Self {
+            Self {
+                chars: value.chars().count(),
+                preview: truncate_chars(value, MAX_EVIDENCE_EVENT_CHARS),
             }
         }
     }
@@ -1108,6 +1711,9 @@ pub(crate) mod evidence {
                 },
                 HeadlessTerminal::NoEdit => Self::NoEdit,
                 HeadlessTerminal::ContextUnavailable { reason } => Self::ContextUnavailable {
+                    reason: reason.clone(),
+                },
+                HeadlessTerminal::ProviderUnavailable { reason } => Self::ProviderUnavailable {
                     reason: reason.clone(),
                 },
                 HeadlessTerminal::TimedOut { secs } => Self::TimedOut { secs: *secs },
@@ -1504,6 +2110,11 @@ pub(crate) enum Event {
         call_id: String,
         result: Tool,
     },
+    AssistantMessage {
+        id: String,
+        status: String,
+        content: String,
+    },
     Turn {
         request_id: String,
         outcome: String,
@@ -1816,6 +2427,93 @@ mod tests {
     }
 
     #[test]
+    fn attempt_prompt_keeps_campaign_evidence_out_of_file_tool_scope() {
+        let prompt = attempt_prompt(
+            Path::new("/tmp/prototype1/workspace"),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            &[EvidenceRoot {
+                kind: EvidenceRootKind::Evaluations,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/prototype1/evaluations"),
+                },
+                role: EvidenceRole::EvaluationPayloads,
+            }],
+            "## Evidence\n- evaluations: /tmp/prototype1/evaluations\n",
+            Some("tool failed"),
+        );
+
+        assert!(prompt.contains("The loaded workspace root is /tmp/prototype1/workspace."));
+        assert!(
+            prompt.contains("Read tools may inspect the loaded workspace"),
+            "prompt should explain that evidence paths are read-only context"
+        );
+        assert!(prompt.contains("Edit, create, patch, and apply tools must target only files"));
+        assert!(prompt.contains("do not edit files under crates/ploke-eval"));
+        assert!(prompt.contains("Read-only evidence available to tools"));
+        assert!(prompt.contains("evaluation evidence (evaluations): /tmp/prototype1/evaluations"));
+        assert!(prompt.contains("Use validation tools only after a source edit has been staged"));
+        assert!(prompt.contains("Previous isolated attempt feedback"));
+        assert!(prompt.contains("tool failed"));
+        assert!(prompt.contains("## Original broad request"));
+        assert!(prompt.contains("/tmp/prototype1/evaluations"));
+    }
+
+    #[test]
+    fn evidence_read_roots_include_request_evidence_but_not_result_output() {
+        let roots = evidence_read_roots(&[
+            EvidenceRoot {
+                kind: EvidenceRootKind::Evaluations,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/prototype1/evaluations"),
+                },
+                role: EvidenceRole::EvaluationPayloads,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::Oracle,
+                location: EvidenceRootLocation::File {
+                    path: PathBuf::from("/tmp/prototype1/final_report.json"),
+                },
+                role: EvidenceRole::GuidanceOnly,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::SubmittedResultOutput,
+                location: EvidenceRootLocation::File {
+                    path: PathBuf::from("/tmp/prototype1/messages/result.json"),
+                },
+                role: EvidenceRole::OutputBox,
+            },
+        ]);
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/tmp/prototype1"),
+                PathBuf::from("/tmp/prototype1/evaluations")
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_feedback_summarizes_tool_json_without_replaying_payload() {
+        let feedback = retry_feedback(
+            r#"{"user":"read_file: read_file expects a file path, not a directory.","llm":{"ok":false}}"#,
+        );
+
+        assert!(feedback.contains("Previous attempt failed at a tool boundary"));
+        assert!(feedback.contains("read_file expects a file path"));
+        assert!(!feedback.contains("\"llm\""));
+    }
+
+    #[test]
+    fn retry_feedback_turns_aborted_summary_into_actionable_instruction() {
+        let feedback = retry_feedback("Request summary: [aborted] error_id=abc");
+
+        assert!(feedback.contains("Previous attempt aborted before staging an edit"));
+        assert!(feedback.contains("stage one small concrete source edit"));
+        assert!(!feedback.contains("error_id=abc"));
+    }
+
+    #[test]
     fn evidence_applied_attempt_carries_changed_paths() {
         let proposal_id = Uuid::from_u128(1);
         let request_id = Uuid::from_u128(2);
@@ -1932,6 +2630,48 @@ mod tests {
                 .iter()
                 .all(|message| message.chars().count() <= MAX_DEBUG_RELAY_EVENT_CHARS)
         );
+    }
+
+    #[test]
+    fn evidence_carries_bounded_tool_event_stream() {
+        let mut run = HeadlessRun::new();
+        let long_args = format!(
+            r#"{{"file_path":"src/lib.rs","payload":"{}"}}"#,
+            "x".repeat(MAX_EVIDENCE_EVENT_CHARS + 10)
+        );
+        run.events.push(Event::ToolRequest {
+            request_id: "request-1".to_string(),
+            parent_id: "parent-1".to_string(),
+            call_id: "call-1".to_string(),
+            tool: "apply_code_edit".to_string(),
+            arguments: long_args,
+        });
+        run.events.push(Event::Tool {
+            call_id: "call-1".to_string(),
+            result: Tool::Failed {
+                error: "tool rejected invalid path".to_string(),
+            },
+        });
+
+        let summary = run.evidence();
+
+        assert_eq!(summary.events.len(), 2);
+        assert!(matches!(
+            &summary.events[0],
+            evidence::Event::ToolRequest {
+                tool,
+                arguments,
+                ..
+            } if tool == "apply_code_edit"
+                && arguments.chars > MAX_EVIDENCE_EVENT_CHARS
+                && arguments.preview.chars().count() <= MAX_EVIDENCE_EVENT_CHARS + 3
+        ));
+        assert!(matches!(
+            &summary.events[1],
+            evidence::Event::ToolFailed { error, .. }
+                if error.preview.contains("tool rejected invalid path")
+        ));
+        serde_json::to_string_pretty(&summary).expect("event diagnostics serialize");
     }
 
     #[test]
@@ -2457,6 +3197,7 @@ Do not call tools. Do not propose edits. This canary only checks initial prompt 
             &fixture.prompt,
             budget,
             BroadEditPolicy::WorkspaceExceptPlokeEval,
+            &[],
         )
         .await
         {

@@ -1327,6 +1327,7 @@ async fn run_broad_headless_tui_attempt(
         &prompt,
         budget,
         slot.published.request().edit_policy,
+        &slot.published.request().evidence_roots,
     )
     .await
     .map_err(|source| PrepareError::InvalidBatchSelection {
@@ -1443,6 +1444,11 @@ async fn run_broad_headless_tui_attempt(
         tui_adapter::HeadlessTerminal::ContextUnavailable { reason } => {
             Err(PrepareError::InvalidBatchSelection {
                 detail: format!("headless ploke-tui prompt context unavailable: {reason}"),
+            })
+        }
+        tui_adapter::HeadlessTerminal::ProviderUnavailable { reason } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!("headless ploke-tui provider unavailable: {reason}"),
             })
         }
         tui_adapter::HeadlessTerminal::TimedOut { secs } => {

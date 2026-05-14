@@ -597,6 +597,7 @@ pub struct SystemStatus {
     pub(crate) last_parse_failure: Option<ParseFailure>,
     pub(crate) last_parse_success_ms: Option<i64>,
     pub(crate) pwd: PathBuf,
+    pub(crate) extra_read_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -733,6 +734,10 @@ impl SystemStatus {
 
         self.loaded_workspace = Some(loaded_workspace);
         focus_id
+    }
+
+    pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
+        self.extra_read_roots = roots;
     }
 
     /// Registers a crate root into loaded state. If the root is already a member
@@ -920,6 +925,7 @@ impl SystemStatus {
             roots.push(ws);
         }
         roots.extend(self.loaded_workspace_member_roots());
+        roots.extend(self.extra_read_roots.iter().cloned());
         roots.extend(extra_read_roots.iter().cloned());
         let mut seen = BTreeSet::new();
         roots.retain(|root| seen.insert(root.clone()));
@@ -1138,6 +1144,10 @@ impl<'a> SystemTxn<'a> {
             .set_loaded_workspace(workspace_root, member_roots, focused_root);
     }
 
+    pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
+        self.state.set_extra_read_roots(roots);
+    }
+
     /// Derive the path policy from the current workspace state.
     pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
         self.state.derive_path_policy(extra_read_roots)
@@ -1220,6 +1230,25 @@ mod tests {
             .expect("tool path context should be available");
         assert_eq!(primary, workspace_root);
         assert_eq!(tool_policy.roots, policy.roots);
+    }
+
+    #[test]
+    fn tool_path_context_preserves_extra_read_roots() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace_extra_roots");
+        let member = workspace_root.join("crate_a");
+        let evidence = std::env::temp_dir().join("ploke_test_evidence_root");
+
+        status.set_loaded_workspace(workspace_root.clone(), vec![member.clone()], Some(member));
+        status.set_extra_read_roots(vec![evidence.clone()]);
+
+        let (_primary, policy) = status
+            .tool_path_context()
+            .expect("tool path context should include extra read roots");
+        assert!(
+            policy.roots.contains(&evidence),
+            "extra read roots must be visible to workspace tools"
+        );
     }
 
     #[test]

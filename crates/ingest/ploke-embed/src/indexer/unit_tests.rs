@@ -51,6 +51,21 @@ fn should_run(test_name: &str) -> bool {
     }
 }
 
+#[tokio::test]
+async fn mock_embedder_returns_vectors_without_provider() -> Result<(), EmbedError> {
+    let processor = EmbeddingProcessor::new_mock();
+
+    let embeddings = processor
+        .generate_embeddings(vec!["alpha".to_string(), "beta".to_string()])
+        .await?;
+
+    assert_eq!(embeddings.len(), 2);
+    assert_eq!(embeddings[0].len(), processor.dimensions());
+    assert_eq!(embeddings[1].len(), processor.dimensions());
+    assert_ne!(embeddings[0], embeddings[1]);
+    Ok(())
+}
+
 pub fn init_test_tracing(
     level: impl Into<LevelFilter> + Into<Level> + Copy,
 ) -> tracing::subscriber::DefaultGuard {
