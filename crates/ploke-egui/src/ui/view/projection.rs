@@ -5,9 +5,10 @@ use std::{
 };
 
 use eframe::egui::{Color32, Vec2};
+#[cfg(test)]
+use petgraph::Direction::Incoming;
 use petgraph::{
     Directed,
-    Direction::{Incoming, Outgoing},
     stable_graph::{NodeIndex, StableGraph},
     visit::EdgeRef,
 };
@@ -17,7 +18,7 @@ use ploke_tree::Graph as DomainGraph;
 use ploke_tree::graph::SelectionNode;
 use ploke_tree::graph::{
     ArtifactIdentity, ArtifactNode, CandidateBranchNode, CandidateNode, EvidenceSubject,
-    LineageNode, OperationKey, OperationTargetKey,
+    OperationKey, OperationTargetKey,
 };
 
 use super::artifact_tree;
@@ -1053,88 +1054,60 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
     let mut raw = RawGraph::default();
     let mut artifact_nodes = BTreeMap::new();
     let mut artifact_lookup = HashMap::new();
-    let selected_ruler = selected_ruler_artifact_ref(graph);
+    let tree = graph.artifact_tree();
+    let selected_ruler = tree.marks.selected_ruler;
     let mut ruler_highlights = HashSet::new();
-    let mut lineage_refs = HashSet::new();
-    let mut lineage_edges = HashSet::new();
-    if let Some(lineage) = primary_lineage(graph) {
-        for block in lineage
-            .blocks
-            .iter()
-            .filter_map(|block_hash| graph.history.blocks.get(block_hash))
-        {
-            let Some(parent) = history_artifact_tree_key(block.active_artifact.value.as_str())
-                .or_else(|| history_artifact_tree_key(block.opened_from_artifact.value.as_str()))
-            else {
-                continue;
-            };
-            let Some(child) =
-                history_artifact_tree_key(block.selected_successor.artifact.value.as_str())
-            else {
-                continue;
-            };
-            lineage_refs.insert(parent);
-            lineage_refs.insert(child);
-            lineage_edges.insert((parent, child));
-        }
-    }
+    let lineage_refs = tree
+        .marks
+        .lineage_artifacts
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let lineage_edges = tree
+        .marks
+        .lineage_edges
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
 
-    for artifact in graph.artifacts.artifacts.values() {
-        let Some(key) = artifact_tree_key(artifact) else {
+    for tree_node in tree.nodes.values() {
+        let Some(artifact) = tree_node.sources.first().copied() else {
             continue;
         };
         let node = add_artifact_tree_node(
             &mut raw,
             &mut artifact_nodes,
-            key,
+            tree_node.key,
             artifact,
-            selected_ruler,
             style,
         );
-        if artifact_is_selected_ruler(artifact, selected_ruler) {
+        if selected_ruler == Some(tree_node.key) {
             set_artifact_tree_node_color(&mut raw, node, style.edge.colors.selected);
             ruler_highlights.insert(node);
         }
-        if lineage_refs.contains(&key) {
+        if lineage_refs.contains(&tree_node.key) {
             raw[node].add_layer(GraphLayerMask::LINEAGE);
         }
-        artifact_lookup.entry(key).or_insert(node);
-    }
-
-    for artifact in graph.artifacts.artifacts.values() {
-        let Some(key) = artifact_tree_key(artifact) else {
-            continue;
-        };
-        if let Some(node) = artifact_lookup.get(&key).copied() {
-            if artifact_is_selected_ruler(artifact, selected_ruler) {
-                set_artifact_tree_node_color(&mut raw, node, style.edge.colors.selected);
-                ruler_highlights.insert(node);
-            }
-        }
+        artifact_lookup.entry(tree_node.key).or_insert(node);
     }
 
     let mut patch_index = 1;
-    let mut history_patches = 0;
-    let mut blocks = graph.history.blocks.values().collect::<Vec<_>>();
-    blocks.sort_by_key(|block| block.block_height);
-    for block in blocks {
-        let Some(parent_key) = history_artifact_tree_key(block.active_artifact.value.as_str())
-            .or_else(|| history_artifact_tree_key(block.opened_from_artifact.value.as_str()))
-        else {
-            continue;
-        };
-        let Some(child_key) =
-            history_artifact_tree_key(block.selected_successor.artifact.value.as_str())
-        else {
-            continue;
-        };
+    let mut history_edges = tree.history_successors.iter().collect::<Vec<_>>();
+    history_edges.sort_by_key(|edge| {
+        edge.sources
+            .iter()
+            .map(|source| source.block_height)
+            .min()
+            .unwrap_or_default()
+    });
+    for edge in history_edges {
         let (Some(parent), Some(child)) = (
-            artifact_lookup.get(&parent_key).copied(),
-            artifact_lookup.get(&child_key).copied(),
+            artifact_lookup.get(&edge.from).copied(),
+            artifact_lookup.get(&edge.to).copied(),
         ) else {
             continue;
         };
-        let layers = if lineage_edges.contains(&(parent_key, child_key)) {
+        let layers = if lineage_edges.contains(&(edge.from, edge.to)) {
             GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE
         } else {
             GraphLayerMask::ARTIFACT
@@ -1149,39 +1122,31 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             style,
             layers,
         ) {
-            history_patches += 1;
             patch_index += 1;
         }
     }
 
-    let mut branch_derivations = 0;
-    let mut branches = graph.candidates.branches.iter().collect::<Vec<_>>();
+    let mut branches = tree.candidate_derivations.iter().collect::<Vec<_>>();
     branches.sort_by(|left, right| {
+        let left_source = left.sources.first();
+        let right_source = right.sources.first();
         (
-            &left.selection_entry_id.0,
-            left.payload_index,
-            &left.branch_id,
-            &left.derived_artifact_id,
+            left_source.map(|source| source.selection_entry_id.0.as_str()),
+            left_source.map(|source| source.payload_index),
+            left_source.map(|source| source.branch_id.as_str()),
+            left_source.and_then(|source| source.derived_artifact_id.as_ref()),
         )
             .cmp(&(
-                &right.selection_entry_id.0,
-                right.payload_index,
-                &right.branch_id,
-                &right.derived_artifact_id,
+                right_source.map(|source| source.selection_entry_id.0.as_str()),
+                right_source.map(|source| source.payload_index),
+                right_source.map(|source| source.branch_id.as_str()),
+                right_source.and_then(|source| source.derived_artifact_id.as_ref()),
             ))
     });
-    for branch in branches {
-        let (Some(base_id), Some(derived_id)) = (
-            branch.base_artifact_id.as_ref(),
-            branch.derived_artifact_id.as_ref(),
-        ) else {
-            continue;
-        };
-        let base_key = passive_artifact_tree_key(base_id);
-        let derived_key = passive_artifact_tree_key(derived_id);
+    for edge in branches {
         let (Some(base), Some(derived)) = (
-            artifact_lookup.get(&base_key).copied(),
-            artifact_lookup.get(&derived_key).copied(),
+            artifact_lookup.get(&edge.from).copied(),
+            artifact_lookup.get(&edge.to).copied(),
         ) else {
             continue;
         };
@@ -1195,29 +1160,32 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             style,
             GraphLayerMask::ARTIFACT,
         ) {
-            branch_derivations += 1;
             patch_index += 1;
         }
     }
 
-    let components = component_roots(&raw);
-    let roots = artifact_root_count(&raw);
-    let orphan_artifacts = orphan_artifact_count(&raw);
     let hidden_record_count = full_debug_record_count(graph).saturating_sub(raw.node_count());
     let hidden_edge_count = full_debug_edge_count(graph).saturating_sub(raw.edge_count());
     let connectivity = GraphConnectivityDiagnostics {
-        component_count_before_anchoring: components.len(),
+        component_count_before_anchoring: tree.diagnostics.weak_component_count,
         hidden_record_count,
         hidden_edge_count,
         hidden_evidence_count: graph.evidence.attachments.len(),
         hidden_operation_count: graph.operations.operations.len(),
-        hidden_unattached_component_count: components.len().saturating_sub(1),
+        hidden_unattached_component_count: tree.diagnostics.weak_component_count.saturating_sub(1),
         synthetic_anchors_visible: false,
     };
     let artifact_tree = artifact_tree::Shape::new(
-        artifact_tree::Nodes::new(raw.node_count()),
-        artifact_tree::Edges::new(history_patches, branch_derivations),
-        artifact_tree::Components::new(components.len(), roots, orphan_artifacts),
+        artifact_tree::Nodes::new(tree.nodes.len()),
+        artifact_tree::Edges::new(
+            tree.history_successors.len(),
+            tree.candidate_derivations.len(),
+        ),
+        artifact_tree::Components::new(
+            tree.diagnostics.weak_component_count,
+            tree.diagnostics.roots.len(),
+            tree.diagnostics.orphan_artifacts.len(),
+        ),
         artifact_tree::Marks::new(ruler_highlights.len()),
     );
 
@@ -1226,42 +1194,6 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         connectivity,
         artifact_tree,
     }
-}
-
-fn primary_lineage(graph: &DomainGraph) -> Option<&LineageNode> {
-    graph
-        .history
-        .lineages
-        .values()
-        .filter(|lineage| {
-            lineage
-                .blocks
-                .iter()
-                .any(|block_hash| graph.history.blocks.contains_key(block_hash))
-        })
-        .max_by_key(|lineage| {
-            let mut block_count = 0;
-            let mut max_height = 0;
-            for block in lineage
-                .blocks
-                .iter()
-                .filter_map(|block_hash| graph.history.blocks.get(block_hash))
-            {
-                block_count += 1;
-                max_height = max_height.max(block.block_height);
-            }
-            (block_count, max_height)
-        })
-}
-
-fn selected_ruler_artifact_ref(graph: &DomainGraph) -> Option<&str> {
-    let lineage = primary_lineage(graph)?;
-    lineage
-        .blocks
-        .iter()
-        .filter_map(|block_hash| graph.history.blocks.get(block_hash))
-        .max_by_key(|block| block.block_height)
-        .map(|block| block.selected_successor.artifact.value.as_str())
 }
 
 fn full_debug_record_count(graph: &DomainGraph) -> usize {
@@ -1495,45 +1427,24 @@ fn has_branch(graph: &DomainGraph, branch_id: &str) -> bool {
 
 fn add_artifact_tree_node<'a>(
     raw: &mut RawGraph,
-    artifact_nodes: &mut BTreeMap<&'a str, NodeIndex>,
-    key: &'a str,
+    artifact_nodes: &mut BTreeMap<ploke_tree::graph::artifact_tree::Key<'a>, NodeIndex>,
+    key: ploke_tree::graph::artifact_tree::Key<'a>,
     artifact: &'a ArtifactNode,
-    selected_ruler: Option<&str>,
     style: ViewStyle,
 ) -> NodeIndex {
-    if let Some(node) = artifact_nodes.get(key).copied() {
+    if let Some(node) = artifact_nodes.get(&key).copied() {
         return node;
     }
 
     let node = raw.add_node(GraphNode::Artifact {
         label: Arc::from(artifact.primary_label(style)),
         detail: Arc::from(artifact.detail_text()),
-        color: artifact_tree_color(artifact, selected_ruler, style),
+        color: style.edge.colors.synthesized,
         layers: GraphLayerMask::ARTIFACT,
         visible: true,
     });
     artifact_nodes.insert(key, node);
     node
-}
-
-fn artifact_tree_key(artifact: &ArtifactNode) -> Option<&str> {
-    match &artifact.identity {
-        ArtifactIdentity::HistoryRef(history_ref) => {
-            history_artifact_tree_key(history_ref.value.as_str())
-        }
-        ArtifactIdentity::PassiveId(artifact_id) => Some(passive_artifact_tree_key(artifact_id)),
-    }
-}
-
-fn history_artifact_tree_key(value: &str) -> Option<&str> {
-    value.strip_prefix("artifact:")
-}
-
-fn passive_artifact_tree_key(artifact_id: &ArtifactId) -> &str {
-    artifact_id
-        .0
-        .strip_prefix("artifact:")
-        .unwrap_or(artifact_id.0.as_str())
 }
 
 #[allow(irrefutable_let_patterns)]
@@ -1605,25 +1516,6 @@ fn artifact_color(graph: &DomainGraph, artifact: &ArtifactNode, style: ViewStyle
     } else {
         style.edge.colors.synthesized
     }
-}
-
-fn artifact_tree_color(
-    artifact: &ArtifactNode,
-    selected_ruler: Option<&str>,
-    style: ViewStyle,
-) -> Color32 {
-    if artifact_is_selected_ruler(artifact, selected_ruler) {
-        style.edge.colors.selected
-    } else {
-        style.edge.colors.synthesized
-    }
-}
-
-fn artifact_is_selected_ruler(artifact: &ArtifactNode, selected_ruler: Option<&str>) -> bool {
-    let Some(ruler_key) = selected_ruler.and_then(history_artifact_tree_key) else {
-        return false;
-    };
-    artifact_tree_key(artifact) == Some(ruler_key)
 }
 
 #[cfg(test)]
@@ -2042,11 +1934,13 @@ fn push_truncated(label: &mut String, value: &str, max_chars: usize) {
 }
 
 #[derive(Debug)]
+#[cfg(test)]
 struct ComponentRoot {
     #[cfg(test)]
     index: NodeIndex,
 }
 
+#[cfg(test)]
 fn component_roots(raw: &RawGraph) -> Vec<ComponentRoot> {
     let mut visited = std::collections::HashSet::new();
     let mut roots = Vec::new();
@@ -2086,21 +1980,6 @@ fn component_roots(raw: &RawGraph) -> Vec<ComponentRoot> {
     }
 
     roots
-}
-
-fn artifact_root_count(raw: &RawGraph) -> usize {
-    raw.node_indices()
-        .filter(|node| raw.neighbors_directed(*node, Incoming).next().is_none())
-        .count()
-}
-
-fn orphan_artifact_count(raw: &RawGraph) -> usize {
-    raw.node_indices()
-        .filter(|node| {
-            raw.neighbors_directed(*node, Incoming).next().is_none()
-                && raw.neighbors_directed(*node, Outgoing).next().is_none()
-        })
-        .count()
 }
 
 #[cfg(test)]

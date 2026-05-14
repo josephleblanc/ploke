@@ -72,15 +72,54 @@ D = H_G union R_G union O_G union C_G union EVID_G union WARN_G
 `A` is the product artifact node set. `D` is drilldown/debug material unless a
 specific non-default graph projection says otherwise.
 
-Current gap: `G.artifacts` stores `ArtifactKey::HistoryRef { value }` and
-`ArtifactKey::PassiveId { value }` as distinct keys. The UI needs artifact
-identity equivalence, but that equivalence should be exposed by `ploke-tree`,
-not rediscovered by `ploke-egui` string handling.
+`G.artifacts` may store `ArtifactKey::HistoryRef { value }` and
+`ArtifactKey::PassiveId { value }` as separate source keys. The graph-owned
+`ArtifactTree(G)` projection resolves the common Artifact identity case where a
+History ref stores `artifact:<id>` and a passive artifact id stores `<id>`.
 
-Current implementation note: `ploke-egui` resolves the common observed case
-where a History ref stores `artifact:<id>` and a passive artifact id stores
-`<id>`. That is a presentation-side repair until `ploke-tree` exposes the
-canonical artifact identity relation.
+## Node Vocabulary
+
+These are the graph node sets `ploke-egui` may draw. A product view chooses a
+subset of these sets; the default `ArtifactTree` chooses only `A`.
+
+| Set | Entity | Identity key | Contributing source records | Default ArtifactTree status |
+|---|---|---|---|---|
+| `A` | Artifact state | Canonical artifact id after wrapper normalization. `artifact:<id>` and `<id>` are the same key. | `ArtifactNode` from History artifact refs and passive `ArtifactId` observations; candidate, branch, scheduler, run-attempt, and History records may contribute evidence to the same node. | Rendered as the only default node set. Implemented by `ploke_tree::Graph::artifact_tree()`. |
+| `H` | History block / admitted History entry | `BlockHash`, `EntryId` | `SealedBlockRecord`, `SealedBlockHeaderRecord`, `AdmittedEntryRecord` | Not rendered as nodes. Used as source/provenance for `P_H`, lineage marks, and diagnostics. |
+| `C` | Candidate/branch participation context | `CandidateId`, branch id, membership id, selection entry id as appropriate | selection payloads, candidate sets, scheduler nodes, branch registry, evaluations | Not rendered as material nodes in default view. Used as provenance for artifact nodes, `P_B`, and candidate drilldown/debug views. |
+| `R` | Runtime / Parent role instance | `RuntimeId` | History selected successor runtime refs, parent identity, handoff/ready/completion evidence | Not rendered as nodes in default view. Candidate for runtime/artifact and handoff views. |
+| `O` | Operation target/action fact | `Coordinate` or `OperationTarget` when graph-owned | edit-surface, tool, operation, and evaluation records | Not rendered as nodes in default view. Candidate for operation/debug views. |
+| `EVID` | Evidence attachment | `EvidenceId` plus source locator | typed passive evidence, scheduler/run-attempt files, surface evidence, evaluation/protocol/agent-turn records | Not rendered as nodes in default view. Used for detail panels and diagnostics. |
+| `WARN` | Graph warning | graph warning identity/order | graph build warnings | Not rendered as nodes in default view. Used for diagnostics. |
+| `SYN` | Synthetic display connector/anchor | UI-generated key | none; no semantic source record | Not rendered in default view. Must not be used to make ArtifactTree appear connected. |
+
+Artifact node formation rule:
+
+```text
+A = quotient(A_G, artifact_key_equivalence)
+
+artifact_key_equivalence:
+  ArtifactRefRecord("artifact:<id>") == ArtifactId("<id>")
+```
+
+This rule only merges source references that denote the same artifact id. It
+does not connect distinct artifacts. Distinct artifact ids require explicit
+edges in one of the relation sets below.
+
+Candidate, branch, membership, and selection records do not create a second
+material entity when they carry an artifact id. They say that an existing
+artifact participates in a candidate/selection context.
+
+```text
+if candidate context c refers to artifact id a:
+  c contributes provenance to A(a)
+  c does not create a separate artifact-like node
+```
+
+This keeps artifact identity independent of where the artifact is observed:
+History, candidate evidence, branch records, scheduler records, runtime
+handoff evidence, and debug/provenance records all point back to the same
+`A(a)` when they refer to the same artifact id.
 
 ## Relation Vocabulary
 
@@ -119,6 +158,35 @@ The default artifact graph should not invent edges outside these relation
 families. If a visual edge has no graph-owned relation, it is a layout aid or a
 debug annotation, not a semantic edge.
 
+## Edge Vocabulary
+
+These are the relation sets that may become drawn edges. A relation can be
+loaded in `G` without being part of the default `ArtifactTree`.
+
+| Set | Edge | Endpoint keys | Source records / fields | Authority | Default ArtifactTree status |
+|---|---|---|---|---|---|
+| `P_H` | History successor | `A -> A` | `HistoryBlockNode.active_artifact -> HistoryBlockNode.selected_successor.artifact` | Sealed History block. | Rendered. Implemented. Self-loops are allowed but do not connect components. |
+| `P_B` | Candidate branch derivation | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Candidate/evidence relation, not History admission. | Rendered. Implemented. |
+| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context. | Not rendered by default. May support lineage/context views if explicitly admitted into that projection. |
+| `B_PARENT` | Branch ancestry | branch id -> branch id | `parent_branch_id`, `source_state_id`, branch registry/scheduler branch facts | Branch/process ancestry, not artifact derivation by itself. | Not rendered by default. Cannot connect artifacts unless a graph-owned projection maps branch ancestry to artifact endpoints. |
+| `N_PARENT` | Node/process ancestry | node id -> node id | `NodeRecord.parent_node_id -> NodeRecord.node_id` | Scheduler/process ancestry, not artifact derivation by itself. | Not rendered by default. |
+| `SELECTS` | Selection chooses candidate/successor | History/selection fact -> candidate/node/branch fact | selection decision payload, `output_refs`, selected candidate/member fields | Selection evidence/admission context. | Not rendered by default as artifact edge. May explain why a successor was chosen. |
+| `OP_TARGETS` | Operation targets artifact/runtime | `O -> A` or `R -> O` depending projection | `Coordinate`, `OperationTarget`, tool/operation records | Operation fact, not artifact derivation. | Not rendered by default. |
+| `HYDRATES` | Artifact hydrates runtime / runtime materializes artifact | `A <-> R` direction must be defined by projection | selected successor runtime refs and handoff evidence when graph-owned | Runtime/handoff relation. | Not rendered by default. |
+| `EVID_FOR` | Evidence supports entity/relation | `EVID -> A/H/C/R/O` | graph evidence attachments | Evidence/provenance. | Not rendered by default. |
+
+Default artifact edge set:
+
+```text
+E_artifact = P_H union P_B
+```
+
+Non-default relations such as `B_PARENT` can explain why two artifacts are in
+the same execution family, but they do not by themselves prove that one
+artifact derives from another. To use them in an artifact view, define a
+separate graph-owned relation that names the projection, its endpoints, and its
+authority class.
+
 ## Existing Browser Precedent
 
 `ploke_tree::browser` already has an owned serializable execution graph model
@@ -154,11 +222,7 @@ Properties:
 - Weak connectedness is not required for all future runs. It is a diagnostic
   property of the loaded relation set.
 
-Implementation gap: `ploke-egui` currently constructs the artifact projection
-from `G` directly. The canonical relation fold should live in `ploke-tree` and
-be borrowed by `ploke-egui`.
-
-Current egui-local computation:
+Current graph-owned computation:
 
 ```text
 A       = artifact nodes after display-key equivalence
@@ -168,7 +232,8 @@ lineage = loaded lineage maximizing (block_count, max_block_height)
 ruler   = selected_successor artifact from max-height block in lineage
 ```
 
-This describes the current implementation, not the desired ownership boundary.
+This fold lives in `ploke_tree::Graph::artifact_tree()` and is consumed by
+`ploke-egui`.
 
 ### RuntimeArtifactGraph
 
@@ -208,9 +273,9 @@ This is an explicit debug/drilldown family. It must not leak into
   rendering in the default view. This crosswalk names the allowed artifact-edge
   relation families.
 
-## Next Canonicalization Step
+## Canonical Projection Boundary
 
-Add a borrowed projection in `ploke-tree` that exposes:
+`ploke-tree` exposes a borrowed projection:
 
 ```text
 ArtifactTree(G) = (A, P_H, P_B, diagnostics)
@@ -219,6 +284,6 @@ ArtifactTree(G) = (A, P_H, P_B, diagnostics)
 where `A`, `P_H`, and `P_B` refer back to graph-owned records or indices. That
 projection is the object `ploke-egui` and CLI diagnostics should consume.
 
-The projection should define endpoint-missing diagnostics, artifact identity
-collision behavior, and relation authority classes without allocating semantic
-record mirrors into `ploke-egui`.
+The projection should remain the owner of endpoint-missing diagnostics,
+artifact identity collision behavior, and relation authority classes without
+allocating semantic record mirrors into `ploke-egui`.

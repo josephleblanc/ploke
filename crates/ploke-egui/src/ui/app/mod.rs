@@ -6,7 +6,7 @@ use eframe::egui;
 use ploke_tree::Graph;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::diagnostics::{SnapshotObservation, SnapshotSink};
+use crate::diagnostics::{RunSnapshot, SnapshotObservation, SnapshotSink, write_manual_snapshot};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::import::graph_from_run_root;
 #[cfg(not(target_arch = "wasm32"))]
@@ -83,25 +83,35 @@ impl eframe::App for OperatorApp {
             .default_size(layout::LEFT_SIDEBAR_WIDTH)
             .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
             .show_inside(ui, |ui| {
-                #[cfg(not(target_arch = "wasm32"))]
-                self.render_run_picker(ui);
-                render_mode_picker(ui, &mut self.view);
-                render_graph_facts(ui, &self.graph);
-                if let Some(selection) = self.view.selected_node_detail() {
-                    ui.separator();
-                    ui.heading("Selected");
-                    ui.label(format!("{} {}", selection.kind, selection.label));
-                    ui.monospace(selection.detail);
-                }
-                if let Some(diagnostics) = self.view.diagnostics() {
-                    ui.separator();
-                    render_diagnostics(ui, diagnostics);
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(error) = &self.diagnostics_error {
-                    ui.separator();
-                    ui.label(error.as_str());
-                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.render_run_picker(ui);
+                        render_mode_picker(ui, &mut self.view);
+                        render_graph_facts(ui, &self.graph);
+                        if let Some(selection) = self.view.selected_node_detail() {
+                            ui.separator();
+                            ui.heading("Selected");
+                            ui.label(format!("{} {}", selection.kind, selection.label));
+                            ui.monospace(selection.detail);
+                        }
+                        if let Some(diagnostics) = self.view.diagnostics() {
+                            ui.separator();
+                            #[cfg(not(target_arch = "wasm32"))]
+                            if let Some(run) = self.run_snapshot() {
+                                ui.label(format!("Run: {}", run.name));
+                            }
+                            render_diagnostics(ui, &diagnostics);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.render_diagnostics_export(ui, diagnostics);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if let Some(error) = &self.diagnostics_error {
+                            ui.separator();
+                            ui.label(error.as_str());
+                        }
+                    });
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -145,17 +155,19 @@ impl OperatorApp {
     }
 
     fn emit_diagnostics(&mut self, ctx: &egui::Context) {
-        let Some(sink) = &mut self.diagnostics_sink else {
-            return;
-        };
         let Some(diagnostics) = self.view.diagnostics() else {
             return;
         };
+        let run = self.run_snapshot();
         let observation = SnapshotObservation::new(diagnostics)
             .with_graph_has_content(graph_has_content(&self.graph))
             .with_run_error(self.run_error.clone())
+            .with_run(run)
             .with_selected(self.view.selected_node_detail());
 
+        let Some(sink) = &mut self.diagnostics_sink else {
+            return;
+        };
         match sink.observe(observation) {
             Ok(true) if self.close_after_snapshot => {
                 self.diagnostics_sink = None;
@@ -167,6 +179,32 @@ impl OperatorApp {
                 self.diagnostics_sink = None;
             }
         }
+    }
+
+    fn render_diagnostics_export(&mut self, ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
+        if ui.button("Write diagnostics").clicked() {
+            let observation = SnapshotObservation::new(diagnostics)
+                .with_graph_has_content(graph_has_content(&self.graph))
+                .with_run_error(self.run_error.clone())
+                .with_run(self.run_snapshot())
+                .with_selected(self.view.selected_node_detail());
+            match write_manual_snapshot(observation) {
+                Ok(path) => {
+                    self.diagnostics_error =
+                        Some(format!("Diagnostics written: {}", path.display()));
+                }
+                Err(error) => {
+                    self.diagnostics_error = Some(format!("Diagnostics write failed: {error}"));
+                }
+            }
+        }
+    }
+
+    fn run_snapshot(&self) -> Option<RunSnapshot> {
+        self.run_picker.selected_run().map(|run| RunSnapshot {
+            name: run.name,
+            path: run.path.display().to_string(),
+        })
     }
 }
 
@@ -220,7 +258,7 @@ fn graph_has_content(graph: &Graph) -> bool {
         > 0
 }
 
-fn render_diagnostics(ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
+fn render_diagnostics(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
     ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
     ui.label(format!("View nodes: {}", diagnostics.node_count));
     ui.label(format!("View edges: {}", diagnostics.edge_count));

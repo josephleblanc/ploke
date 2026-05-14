@@ -12,4 +12,7 @@
 mod build;
 mod types;
 
+pub mod artifact_tree;
+
+pub use artifact_tree::Tree as ArtifactTree;
 pub use types::*;

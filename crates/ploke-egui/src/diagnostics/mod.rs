@@ -75,11 +75,23 @@ impl SnapshotSink {
     }
 }
 
+pub fn write_manual_snapshot(observation: SnapshotObservation) -> io::Result<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/manual-diagnostics");
+    fs::create_dir_all(&root)?;
+
+    let snapshot = Snapshot::from_observation(1, observation);
+    let bytes = serde_json::to_vec_pretty(&snapshot).map_err(io::Error::other)?;
+    fs::write(root.join("latest.json"), bytes)?;
+    fs::write(root.join("latest.txt"), snapshot.render_text())?;
+    Ok(root.join("latest.txt"))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapshotObservation {
     pub diagnostics: GraphViewDiagnostics,
     pub graph_has_content: bool,
     pub run_error: Option<String>,
+    pub run: Option<RunSnapshot>,
     pub selected: Option<SelectionSnapshot>,
 }
 
@@ -89,6 +101,7 @@ impl SnapshotObservation {
             graph_has_content: diagnostics.node_count > 0,
             diagnostics,
             run_error: None,
+            run: None,
             selected: None,
         }
     }
@@ -103,10 +116,21 @@ impl SnapshotObservation {
         self
     }
 
+    pub fn with_run(mut self, run: Option<RunSnapshot>) -> Self {
+        self.run = run;
+        self
+    }
+
     pub fn with_selected(mut self, selected: Option<GraphSelectionDetail>) -> Self {
         self.selected = selected.map(SelectionSnapshot::from);
         self
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSnapshot {
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +154,7 @@ impl From<GraphSelectionDetail> for SelectionSnapshot {
 pub struct Snapshot {
     pub schema_version: String,
     pub sequence: u64,
+    pub run: Option<RunSnapshot>,
     pub view_mode: String,
     pub node_count: usize,
     pub edge_count: usize,
@@ -168,6 +193,7 @@ impl Snapshot {
             diagnostics,
             graph_has_content,
             run_error,
+            run,
             selected,
         } = observation;
         let default_view_contract = DefaultViewContractReport::from_parts(
@@ -176,7 +202,7 @@ impl Snapshot {
             run_error,
             selected,
         );
-        Self::from_diagnostics_and_contract(sequence, diagnostics, default_view_contract)
+        Self::from_diagnostics_and_contract(sequence, run, diagnostics, default_view_contract)
     }
 
     #[cfg(test)]
@@ -187,6 +213,7 @@ impl Snapshot {
 
     fn from_diagnostics_and_contract(
         sequence: u64,
+        run: Option<RunSnapshot>,
         diagnostics: GraphViewDiagnostics,
         default_view_contract: DefaultViewContractReport,
     ) -> Self {
@@ -195,6 +222,7 @@ impl Snapshot {
         Self {
             schema_version: SNAPSHOT_VERSION.to_owned(),
             sequence,
+            run,
             view_mode: diagnostics.mode.as_str().to_owned(),
             node_count: diagnostics.node_count,
             edge_count: diagnostics.edge_count,
@@ -252,6 +280,12 @@ impl Snapshot {
             "ploke-egui snapshot #{}, mode {}",
             self.sequence, self.view_mode
         );
+        if let Some(run) = &self.run {
+            let _ = writeln!(out, "run: {}", run.name);
+            let _ = writeln!(out, "run root: {}", run.path);
+        } else {
+            let _ = writeln!(out, "run: none");
+        }
         let _ = writeln!(
             out,
             "nodes: {}, edges: {}",
@@ -271,6 +305,8 @@ impl Snapshot {
             self.backtracking_edge_count
         );
         let _ = writeln!(out);
+        self.render_sidebar_section_text_into(&mut out);
+        let _ = writeln!(out);
         self.default_view_contract.render_text_into(&mut out);
         if self.findings.is_empty() {
             let _ = writeln!(out, "findings: none");
@@ -284,6 +320,73 @@ impl Snapshot {
             }
         }
         out
+    }
+
+    fn render_sidebar_section_text_into(&self, out: &mut String) {
+        let _ = writeln!(out, "sidebar diagnostics:");
+        if let Some(run) = &self.run {
+            let _ = writeln!(out, "Run: {}", run.name);
+            let _ = writeln!(out, "Run root: {}", run.path);
+        } else {
+            let _ = writeln!(out, "Run: none");
+        }
+        let _ = writeln!(out, "Mode: {}", self.view_mode);
+        let _ = writeln!(out, "View nodes: {}", self.node_count);
+        let _ = writeln!(out, "View edges: {}", self.edge_count);
+        let _ = writeln!(
+            out,
+            "Components before anchors: {}",
+            self.component_count_before_anchoring
+        );
+        let _ = writeln!(
+            out,
+            "Hidden records: {}, hidden edges: {}, hidden evidence: {}, hidden operations: {}, unattached components: {}",
+            self.hidden_record_count,
+            self.hidden_edge_count,
+            self.hidden_evidence_count,
+            self.hidden_operation_count,
+            self.hidden_unattached_component_count
+        );
+        let _ = writeln!(
+            out,
+            "Synthetic anchors visible: {}",
+            self.synthetic_anchors_visible
+        );
+        let _ = writeln!(
+            out,
+            "Graph: {:.0} x {:.0}",
+            self.graph_size.x, self.graph_size.y
+        );
+        let _ = writeln!(out, "Aspect: {:.2}", self.aspect_ratio);
+        let _ = writeln!(
+            out,
+            "Fit fill: {:.0}% x {:.0}%",
+            self.fitted_fill.x * 100.0,
+            self.fitted_fill.y * 100.0
+        );
+        let _ = writeln!(
+            out,
+            "Edge labels: {}, label collisions: {}, edge intersections: {}, edge collisions: {}",
+            self.edge_label_count,
+            self.edge_label_collisions,
+            self.edge_label_edge_intersections,
+            self.edge_label_edge_collisions
+        );
+        let _ = writeln!(
+            out,
+            "Candidate clutter: {}",
+            self.candidate_clutter_crossings
+        );
+        let _ = writeln!(
+            out,
+            "Crossings: {}, artifact/artifact: {}, mixed: {}, long edges: {}, backtracking: {}, selected crossings: {}",
+            self.edge_edge_crossings,
+            self.edge_crossings_by_kind.artifact_artifact,
+            self.edge_crossings_by_kind.mixed,
+            self.long_edge_count,
+            self.backtracking_edge_count,
+            self.selected_path_crossings
+        );
     }
 }
 

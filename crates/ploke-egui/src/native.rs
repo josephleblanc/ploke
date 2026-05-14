@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::cli::Run;
 use crate::demo::sample_graph;
 #[cfg(feature = "dev")]
-use crate::diagnostics::{Snapshot, SnapshotObservation, SnapshotSink};
+use crate::diagnostics::{RunSnapshot, Snapshot, SnapshotObservation, SnapshotSink};
 use crate::import::graph_from_run_root;
 use crate::run_picker::RunPicker;
 use crate::ui::app::{OperatorApp, layout};
@@ -38,10 +38,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         print!("{}", picker.artifact_connectivity_batch().render_text());
         return Ok(());
     }
-    let graph = initial_graph(initial_run_root)?;
+    let graph = initial_graph(initial_run_root.clone())?;
     #[cfg(feature = "dev")]
     if run.contract_report {
-        print_contract_report(&graph, run.mode)?;
+        print_contract_report(&graph, run.mode, initial_run_root.as_deref())?;
         return Ok(());
     }
     let app = app(graph, run.mode, run.snapshot, picker)?;
@@ -80,7 +80,11 @@ fn app(
 }
 
 #[cfg(feature = "dev")]
-fn print_contract_report(graph: &Graph, mode: GraphViewMode) -> Result<(), Box<dyn Error>> {
+fn print_contract_report(
+    graph: &Graph,
+    mode: GraphViewMode,
+    run_root: Option<&std::path::Path>,
+) -> Result<(), Box<dyn Error>> {
     let diagnostics = GraphView::contract_diagnostics(
         graph,
         mode,
@@ -95,19 +99,34 @@ fn print_contract_report(graph: &Graph, mode: GraphViewMode) -> Result<(), Box<d
             mode.as_str()
         )
     })?;
-    let observation = SnapshotObservation::new(diagnostics).with_graph_has_content(
-        graph.history.blocks.len()
-            + graph.candidates.candidates.len()
-            + graph.artifacts.artifacts.len()
-            + graph.selections.selections.len()
-            + graph.runtimes.runtimes.len()
-            + graph.operations.operations.len()
-            + graph.evidence.attachments.len()
-            > 0,
-    );
+    let observation = SnapshotObservation::new(diagnostics)
+        .with_graph_has_content(
+            graph.history.blocks.len()
+                + graph.candidates.candidates.len()
+                + graph.artifacts.artifacts.len()
+                + graph.selections.selections.len()
+                + graph.runtimes.runtimes.len()
+                + graph.operations.operations.len()
+                + graph.evidence.attachments.len()
+                > 0,
+        )
+        .with_run(run_root.map(run_snapshot));
     let snapshot = Snapshot::from_observation(1, observation);
     print!("{}", snapshot.render_text());
     Ok(())
+}
+
+#[cfg(feature = "dev")]
+fn run_snapshot(path: &std::path::Path) -> RunSnapshot {
+    RunSnapshot {
+        name: path
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .or_else(|| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string()),
+        path: path.display().to_string(),
+    }
 }
 
 #[cfg(feature = "dev")]

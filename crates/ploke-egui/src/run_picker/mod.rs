@@ -66,6 +66,13 @@ impl RunPicker {
             .position(|entry| same_path(entry.path.as_path(), path));
     }
 
+    pub fn selected_run(&self) -> Option<SelectedRun> {
+        self.selected_entry().map(|entry| SelectedRun {
+            name: entry.name.clone(),
+            path: entry.path.clone(),
+        })
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
         let mut selected_path = None;
 
@@ -151,6 +158,12 @@ impl Default for RunPicker {
     fn default() -> Self {
         Self::from_default_root()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedRun {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]

@@ -30,7 +30,7 @@ A      = resolved Artifact nodes observed in RunGraph
 H      = History records / blocks observed in RunGraph
 R      = Runtime records observed in RunGraph
 P_H    = admitted History transition edges:
-         active/opened Artifact -> selected successor Artifact
+         active Artifact -> selected successor Artifact
 P_B    = observed candidate derivation edges:
          candidate branch base Artifact -> derived Artifact
 P      = P_H union P_B
@@ -55,6 +55,10 @@ For `ArtifactTree`, node identity is the resolved Artifact id, not the source
 reference wrapper. A History `ArtifactRef("artifact:<id>")` and a passive
 `ArtifactId("<id>")` denote the same node in `A` for display.
 
+Candidate, branch, membership, and selection records that carry artifact ids
+contribute candidate/selection context to the same `A` node. They do not create
+separate material-state nodes in `ArtifactTree`.
+
 `P_H` and `P_B` are not equivalent authority classes. `P_H` is derived from
 sealed History and represents an admitted transition. `P_B` is an observed
 candidate derivation edge and must not imply `Admit(t)` or
@@ -63,7 +67,9 @@ candidate derivation edge and must not imply `Admit(t)` or
 ## Canonical Mapping
 
 Use [run-graph-crosswalk.md](run-graph-crosswalk.md) for the record and graph
-source of each set. In short:
+source of each set. Its node and edge vocabulary tables are the canonical
+place to check whether a recorded thing is a rendered node, an edge source, or
+debug/drilldown material. In short:
 
 ```text
 A   = resolved artifact identities from RunGraph.artifacts
@@ -71,16 +77,21 @@ P_H = HistoryBlockNode.active_artifact -> selected_successor.artifact
 P_B = CandidateBranchNode.base_artifact_id -> derived_artifact_id
 ```
 
-The current `ploke-egui` implementation also computes:
+Relations such as `opened_from_artifact`, `parent_branch_id`,
+`source_state_id`, `parent_node_id`, runtime hydration, operation targeting,
+and evidence attachments may exist in `RunGraph`, but they are not edges in
+the default `ArtifactTree` unless a graph-owned projection explicitly admits
+them into that view.
+
+The graph-owned `ArtifactTree(RunGraph)` projection also computes:
 
 ```text
 primary_lineage = loaded lineage maximizing (block_count, max_block_height)
 current_ruler   = selected_successor artifact from max-height primary-lineage block
 ```
 
-Those rules are implementation facts until `ploke-tree` exposes a borrowed
-`ArtifactTree(RunGraph)` projection. They should not be reimplemented in new UI
-surfaces.
+Those rules are part of the `ploke-tree` projection boundary. They should not
+be reimplemented in new UI surfaces.
 
 ## Product Views
 
