@@ -1338,6 +1338,7 @@ async fn run_broad_headless_tui_attempt(
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
             detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
         })?;
+    write_broad_headless_tui_diagnostics(slot, &run)?;
     match terminal {
         tui_adapter::HeadlessTerminal::Applied {
             proposal_id,
@@ -1439,12 +1440,35 @@ async fn run_broad_headless_tui_attempt(
         tui_adapter::HeadlessTerminal::NoEdit => Err(PrepareError::InvalidBatchSelection {
             detail: "headless ploke-tui produced no edit".to_string(),
         }),
+        tui_adapter::HeadlessTerminal::ContextUnavailable { reason } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!("headless ploke-tui prompt context unavailable: {reason}"),
+            })
+        }
         tui_adapter::HeadlessTerminal::TimedOut { secs } => {
             Err(PrepareError::InvalidBatchSelection {
                 detail: format!("headless ploke-tui timed out after {secs} seconds"),
             })
         }
     }
+}
+
+fn write_broad_headless_tui_diagnostics(
+    slot: &HarnessRequestSlot,
+    run: &tui_adapter::HeadlessRun,
+) -> Result<(), PrepareError> {
+    let path = broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_json_file_pretty(&path, &run.evidence())
+}
+
+fn broad_headless_tui_diagnostics_path(submitted_result_path: &Path) -> PathBuf {
+    submitted_result_path.with_extension("headless-tui.json")
 }
 
 fn broad_harness_child_from_admitted(
@@ -11530,6 +11554,21 @@ stop_after = "complete"
             assert!(slot.published.prompt_path().exists());
             assert!(!slot.published.submitted_result_path().exists());
         }
+    }
+
+    #[test]
+    fn broad_headless_tui_diagnostics_path_sits_beside_submitted_result() {
+        let submitted =
+            PathBuf::from("/tmp/prototype1/messages/edit-harness-result/node-parent-r2.json");
+
+        let diagnostics = broad_headless_tui_diagnostics_path(&submitted);
+
+        assert_eq!(
+            diagnostics,
+            PathBuf::from(
+                "/tmp/prototype1/messages/edit-harness-result/node-parent-r2.headless-tui.json",
+            )
+        );
     }
 
     #[test]

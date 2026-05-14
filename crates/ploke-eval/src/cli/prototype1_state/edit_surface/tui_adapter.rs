@@ -27,6 +27,9 @@ use super::{
 
 const MAX_DEBUG_RELAY_EVENTS: usize = 128;
 const MAX_DEBUG_RELAY_EVENT_CHARS: usize = 2_000;
+const MAX_PROMPT_MESSAGE_PREVIEWS: usize = 8;
+const MAX_PROMPT_MESSAGE_PREVIEW_CHARS: usize = 500;
+const MAX_RAG_PART_PREVIEWS: usize = 8;
 
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +83,28 @@ pub(crate) async fn run_headless(
             let event = next_event(&mut runtime).await?;
 
             match event {
+                AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
+                    ploke_tui::llm::ChatEvt::PromptConstructed {
+                        parent_id,
+                        formatted_prompt,
+                        context_plan,
+                    },
+                )) => {
+                    let diagnostic = PromptDiagnostic::capture(
+                        &runtime.state,
+                        parent_id,
+                        &formatted_prompt,
+                        &context_plan,
+                    )
+                    .await;
+                    let context_unavailable = diagnostic.context_unavailable_reason();
+                    run.prompt_diagnostics.push(diagnostic);
+                    if let Some(reason) = context_unavailable {
+                        return Ok::<HeadlessTerminal, Error>(
+                            HeadlessTerminal::ContextUnavailable { reason },
+                        );
+                    }
+                }
                 AppEvent::System(SystemEvent::ToolCallRequested {
                     request_id,
                     parent_id,
@@ -438,6 +463,7 @@ pub(crate) struct HeadlessRun {
     attempts: Vec<HeadlessAttempt>,
     events: Vec<Event>,
     debug_relay: DebugRelay,
+    prompt_diagnostics: Vec<PromptDiagnostic>,
     terminal: Option<HeadlessTerminal>,
 }
 
@@ -447,6 +473,7 @@ impl HeadlessRun {
             attempts: Vec::new(),
             events: Vec::new(),
             debug_relay: DebugRelay::new(),
+            prompt_diagnostics: Vec::new(),
             terminal: None,
         }
     }
@@ -467,9 +494,229 @@ impl HeadlessRun {
         &self.debug_relay
     }
 
+    pub(crate) fn prompt_diagnostics(&self) -> &[PromptDiagnostic] {
+        &self.prompt_diagnostics
+    }
+
     pub(crate) fn evidence(&self) -> evidence::Summary {
         evidence::Summary::from(self)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptDiagnostic {
+    parent_id: String,
+    workspace: WorkspaceDiagnostic,
+    bm25: Option<Bm25Diagnostic>,
+    context_mode: String,
+    max_leased_tokens: usize,
+    estimated_total_tokens: usize,
+    message_count: usize,
+    message_previews: Vec<MessagePreview>,
+    included_rag_parts: usize,
+    rag_part_previews: Vec<RagPartPreview>,
+    rag_stats: Option<ContextStatsDiagnostic>,
+    fallback_notice: Option<String>,
+}
+
+impl PromptDiagnostic {
+    async fn capture(
+        state: &std::sync::Arc<ploke_tui::app_state::AppState>,
+        parent_id: Uuid,
+        formatted_prompt: &[ploke_tui::llm::RequestMessage],
+        context_plan: &ploke_tui::llm::ContextPlan,
+    ) -> Self {
+        let (root, member_roots, focused_root) = state
+            .with_system_read(|sys| {
+                (
+                    sys.loaded_workspace_root(),
+                    sys.loaded_workspace_member_roots(),
+                    sys.focused_crate_root(),
+                )
+            })
+            .await;
+        let (context_mode, max_leased_tokens) = {
+            let cfg = state.config.read().await;
+            (
+                format!("{:?}", cfg.context_management.mode),
+                cfg.context_management.max_leased_tokens,
+            )
+        };
+        let bm25 = match state.rag.as_ref() {
+            Some(rag) => match rag.bm25_status().await {
+                Ok(status) => Some(Bm25Diagnostic::from(status)),
+                Err(err) => Some(Bm25Diagnostic {
+                    status: "status_error".to_string(),
+                    docs: None,
+                    error: Some(err.to_string()),
+                }),
+            },
+            None => None,
+        };
+        Self {
+            parent_id: parent_id.to_string(),
+            workspace: WorkspaceDiagnostic {
+                loaded: root.is_some(),
+                root,
+                member_count: member_roots.len(),
+                focused_root,
+            },
+            bm25,
+            context_mode,
+            max_leased_tokens,
+            estimated_total_tokens: context_plan.estimated_total_tokens,
+            message_count: formatted_prompt.len(),
+            message_previews: formatted_prompt
+                .iter()
+                .take(MAX_PROMPT_MESSAGE_PREVIEWS)
+                .map(MessagePreview::from)
+                .collect(),
+            included_rag_parts: context_plan.included_rag_parts.len(),
+            rag_part_previews: context_plan
+                .included_rag_parts
+                .iter()
+                .take(MAX_RAG_PART_PREVIEWS)
+                .map(RagPartPreview::from)
+                .collect(),
+            rag_stats: context_plan
+                .rag_stats
+                .as_ref()
+                .map(ContextStatsDiagnostic::from),
+            fallback_notice: fallback_notice(formatted_prompt),
+        }
+    }
+
+    fn context_unavailable_reason(&self) -> Option<String> {
+        self.fallback_notice
+            .as_ref()
+            .filter(|notice| notice.contains("without code context"))
+            .cloned()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspaceDiagnostic {
+    loaded: bool,
+    root: Option<PathBuf>,
+    member_count: usize,
+    focused_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Bm25Diagnostic {
+    status: String,
+    docs: Option<usize>,
+    error: Option<String>,
+}
+
+impl From<ploke_db::bm25_index::bm25_service::Bm25Status> for Bm25Diagnostic {
+    fn from(value: ploke_db::bm25_index::bm25_service::Bm25Status) -> Self {
+        match value {
+            ploke_db::bm25_index::bm25_service::Bm25Status::Uninitialized => Self {
+                status: "uninitialized".to_string(),
+                docs: None,
+                error: None,
+            },
+            ploke_db::bm25_index::bm25_service::Bm25Status::Building => Self {
+                status: "building".to_string(),
+                docs: None,
+                error: None,
+            },
+            ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } => Self {
+                status: "ready".to_string(),
+                docs: Some(docs),
+                error: None,
+            },
+            ploke_db::bm25_index::bm25_service::Bm25Status::Empty => Self {
+                status: "empty".to_string(),
+                docs: Some(0),
+                error: None,
+            },
+            ploke_db::bm25_index::bm25_service::Bm25Status::Error(error) => Self {
+                status: "error".to_string(),
+                docs: None,
+                error: Some(error),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessagePreview {
+    role: String,
+    chars: usize,
+    preview: String,
+}
+
+impl From<&ploke_tui::llm::RequestMessage> for MessagePreview {
+    fn from(value: &ploke_tui::llm::RequestMessage) -> Self {
+        Self {
+            role: format!("{:?}", value.role),
+            chars: value.content.chars().count(),
+            preview: truncate_chars(&value.content, MAX_PROMPT_MESSAGE_PREVIEW_CHARS),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RagPartPreview {
+    file_path: String,
+    kind: String,
+    estimated_tokens: usize,
+    score: f32,
+}
+
+impl Eq for RagPartPreview {}
+
+impl From<&ploke_tui::llm::ContextPlanRagPart> for RagPartPreview {
+    fn from(value: &ploke_tui::llm::ContextPlanRagPart) -> Self {
+        Self {
+            file_path: value.file_path.clone(),
+            kind: format!("{:?}", value.kind),
+            estimated_tokens: value.estimated_tokens,
+            score: value.score,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextStatsDiagnostic {
+    total_tokens: usize,
+    files: usize,
+    parts: usize,
+    truncated_parts: usize,
+    dedup_removed: usize,
+}
+
+impl From<&ploke_core::rag_types::ContextStats> for ContextStatsDiagnostic {
+    fn from(value: &ploke_core::rag_types::ContextStats) -> Self {
+        Self {
+            total_tokens: value.total_tokens,
+            files: value.files,
+            parts: value.parts,
+            truncated_parts: value.truncated_parts,
+            dedup_removed: value.dedup_removed,
+        }
+    }
+}
+
+fn fallback_notice(messages: &[ploke_tui::llm::RequestMessage]) -> Option<String> {
+    messages
+        .first()
+        .filter(|message| message.content.contains("proceeding without code context"))
+        .map(|message| message.content.clone())
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -566,6 +813,9 @@ pub(crate) enum HeadlessTerminal {
         error: String,
     },
     NoEdit,
+    ContextUnavailable {
+        reason: String,
+    },
     TimedOut {
         secs: u64,
     },
@@ -586,6 +836,8 @@ pub(crate) mod evidence {
         pub(crate) terminal: Option<Terminal>,
         #[serde(default)]
         pub(crate) debug_relay: DebugRelaySummary,
+        #[serde(default)]
+        pub(crate) prompt_diagnostics: Vec<Prompt>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -593,6 +845,65 @@ pub(crate) mod evidence {
         pub(crate) retained: Vec<String>,
         pub(crate) dropped: u64,
         pub(crate) truncated: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub(crate) struct Prompt {
+        pub(crate) parent_id: String,
+        pub(crate) workspace: Workspace,
+        pub(crate) bm25: Option<Bm25>,
+        pub(crate) context_mode: String,
+        pub(crate) max_leased_tokens: usize,
+        pub(crate) estimated_total_tokens: usize,
+        pub(crate) message_count: usize,
+        pub(crate) message_previews: Vec<Message>,
+        pub(crate) included_rag_parts: usize,
+        pub(crate) rag_part_previews: Vec<RagPart>,
+        pub(crate) rag_stats: Option<ContextStats>,
+        pub(crate) fallback_notice: Option<String>,
+    }
+
+    impl Eq for Prompt {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Workspace {
+        pub(crate) loaded: bool,
+        pub(crate) root: Option<PathBuf>,
+        pub(crate) member_count: usize,
+        pub(crate) focused_root: Option<PathBuf>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Bm25 {
+        pub(crate) status: String,
+        pub(crate) docs: Option<usize>,
+        pub(crate) error: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct Message {
+        pub(crate) role: String,
+        pub(crate) chars: usize,
+        pub(crate) preview: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub(crate) struct RagPart {
+        pub(crate) file_path: String,
+        pub(crate) kind: String,
+        pub(crate) estimated_tokens: usize,
+        pub(crate) score: f32,
+    }
+
+    impl Eq for RagPart {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct ContextStats {
+        pub(crate) total_tokens: usize,
+        pub(crate) files: usize,
+        pub(crate) parts: usize,
+        pub(crate) truncated_parts: usize,
+        pub(crate) dedup_removed: usize,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -631,6 +942,9 @@ pub(crate) mod evidence {
             error: String,
         },
         NoEdit,
+        ContextUnavailable {
+            reason: String,
+        },
         TimedOut {
             secs: u64,
         },
@@ -642,6 +956,80 @@ pub(crate) mod evidence {
                 attempts: value.attempts.iter().map(Attempt::from).collect(),
                 terminal: value.terminal.as_ref().map(Terminal::from),
                 debug_relay: DebugRelaySummary::from(&value.debug_relay),
+                prompt_diagnostics: value.prompt_diagnostics.iter().map(Prompt::from).collect(),
+            }
+        }
+    }
+
+    impl From<&super::PromptDiagnostic> for Prompt {
+        fn from(value: &super::PromptDiagnostic) -> Self {
+            Self {
+                parent_id: value.parent_id.clone(),
+                workspace: Workspace::from(&value.workspace),
+                bm25: value.bm25.as_ref().map(Bm25::from),
+                context_mode: value.context_mode.clone(),
+                max_leased_tokens: value.max_leased_tokens,
+                estimated_total_tokens: value.estimated_total_tokens,
+                message_count: value.message_count,
+                message_previews: value.message_previews.iter().map(Message::from).collect(),
+                included_rag_parts: value.included_rag_parts,
+                rag_part_previews: value.rag_part_previews.iter().map(RagPart::from).collect(),
+                rag_stats: value.rag_stats.as_ref().map(ContextStats::from),
+                fallback_notice: value.fallback_notice.clone(),
+            }
+        }
+    }
+
+    impl From<&super::WorkspaceDiagnostic> for Workspace {
+        fn from(value: &super::WorkspaceDiagnostic) -> Self {
+            Self {
+                loaded: value.loaded,
+                root: value.root.clone(),
+                member_count: value.member_count,
+                focused_root: value.focused_root.clone(),
+            }
+        }
+    }
+
+    impl From<&super::Bm25Diagnostic> for Bm25 {
+        fn from(value: &super::Bm25Diagnostic) -> Self {
+            Self {
+                status: value.status.clone(),
+                docs: value.docs,
+                error: value.error.clone(),
+            }
+        }
+    }
+
+    impl From<&super::MessagePreview> for Message {
+        fn from(value: &super::MessagePreview) -> Self {
+            Self {
+                role: value.role.clone(),
+                chars: value.chars,
+                preview: value.preview.clone(),
+            }
+        }
+    }
+
+    impl From<&super::RagPartPreview> for RagPart {
+        fn from(value: &super::RagPartPreview) -> Self {
+            Self {
+                file_path: value.file_path.clone(),
+                kind: value.kind.clone(),
+                estimated_tokens: value.estimated_tokens,
+                score: value.score,
+            }
+        }
+    }
+
+    impl From<&super::ContextStatsDiagnostic> for ContextStats {
+        fn from(value: &super::ContextStatsDiagnostic) -> Self {
+            Self {
+                total_tokens: value.total_tokens,
+                files: value.files,
+                parts: value.parts,
+                truncated_parts: value.truncated_parts,
+                dedup_removed: value.dedup_removed,
             }
         }
     }
@@ -711,6 +1099,9 @@ pub(crate) mod evidence {
                     error: error.clone(),
                 },
                 HeadlessTerminal::NoEdit => Self::NoEdit,
+                HeadlessTerminal::ContextUnavailable { reason } => Self::ContextUnavailable {
+                    reason: reason.clone(),
+                },
                 HeadlessTerminal::TimedOut { secs } => Self::TimedOut { secs: *secs },
             }
         }
@@ -1432,6 +1823,7 @@ mod tests {
             }],
             events: Vec::new(),
             debug_relay: DebugRelay::new(),
+            prompt_diagnostics: Vec::new(),
             terminal: Some(HeadlessTerminal::Applied {
                 proposal_id,
                 request_id,
@@ -1479,6 +1871,7 @@ mod tests {
             }],
             events: Vec::new(),
             debug_relay: DebugRelay::new(),
+            prompt_diagnostics: Vec::new(),
             terminal: Some(HeadlessTerminal::Exhausted {
                 attempts: 2,
                 last: feedback.clone(),
@@ -1531,6 +1924,114 @@ mod tests {
         );
     }
 
+    #[test]
+    fn evidence_carries_prompt_context_diagnostics() {
+        let mut run = HeadlessRun::new();
+        run.prompt_diagnostics.push(PromptDiagnostic {
+            parent_id: Uuid::from_u128(7).to_string(),
+            workspace: WorkspaceDiagnostic {
+                loaded: true,
+                root: Some(PathBuf::from("/tmp/candidate")),
+                member_count: 3,
+                focused_root: Some(PathBuf::from("/tmp/candidate/crates/ploke-eval")),
+            },
+            bm25: Some(Bm25Diagnostic {
+                status: "ready".to_string(),
+                docs: Some(42),
+                error: None,
+            }),
+            context_mode: "Light".to_string(),
+            max_leased_tokens: 2400,
+            estimated_total_tokens: 900,
+            message_count: 2,
+            message_previews: vec![MessagePreview {
+                role: "System".to_string(),
+                chars: 11,
+                preview: "RAG context".to_string(),
+            }],
+            included_rag_parts: 1,
+            rag_part_previews: vec![RagPartPreview {
+                file_path: "src/lib.rs".to_string(),
+                kind: "Code".to_string(),
+                estimated_tokens: 100,
+                score: 0.75,
+            }],
+            rag_stats: Some(ContextStatsDiagnostic {
+                total_tokens: 100,
+                files: 1,
+                parts: 1,
+                truncated_parts: 0,
+                dedup_removed: 0,
+            }),
+            fallback_notice: None,
+        });
+
+        let summary = run.evidence();
+
+        assert_eq!(summary.prompt_diagnostics.len(), 1);
+        let diagnostic = &summary.prompt_diagnostics[0];
+        assert!(diagnostic.workspace.loaded);
+        assert_eq!(diagnostic.workspace.member_count, 3);
+        assert!(matches!(
+            diagnostic.bm25.as_ref(),
+            Some(evidence::Bm25 { status, docs: Some(42), .. }) if status == "ready"
+        ));
+        assert_eq!(diagnostic.included_rag_parts, 1);
+        serde_json::to_string_pretty(&summary).expect("prompt diagnostics serialize");
+    }
+
+    #[test]
+    fn fallback_prompt_becomes_context_unavailable_terminal() {
+        let fallback = "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.";
+        let diagnostic = PromptDiagnostic {
+            parent_id: Uuid::from_u128(8).to_string(),
+            workspace: WorkspaceDiagnostic {
+                loaded: false,
+                root: None,
+                member_count: 0,
+                focused_root: None,
+            },
+            bm25: None,
+            context_mode: "Light".to_string(),
+            max_leased_tokens: 2400,
+            estimated_total_tokens: 26,
+            message_count: 1,
+            message_previews: vec![MessagePreview {
+                role: "System".to_string(),
+                chars: fallback.chars().count(),
+                preview: fallback.to_string(),
+            }],
+            included_rag_parts: 0,
+            rag_part_previews: Vec::new(),
+            rag_stats: None,
+            fallback_notice: Some(fallback.to_string()),
+        };
+
+        let reason = diagnostic
+            .context_unavailable_reason()
+            .expect("fallback should be hard failure");
+        let run = HeadlessRun {
+            attempts: Vec::new(),
+            events: Vec::new(),
+            debug_relay: DebugRelay::new(),
+            prompt_diagnostics: vec![diagnostic],
+            terminal: Some(HeadlessTerminal::ContextUnavailable {
+                reason: reason.clone(),
+            }),
+        };
+
+        let summary = run.evidence();
+
+        assert!(matches!(
+            summary.terminal.as_ref(),
+            Some(evidence::Terminal::ContextUnavailable { reason: observed }) if observed == &reason
+        ));
+        assert_eq!(
+            summary.prompt_diagnostics[0].fallback_notice.as_deref(),
+            Some(fallback)
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "live provider test for the ploke-eval/ploke-tui broad edit surface"]
     async fn live_tui_adapter_canary_shows_inputs_outputs_and_applied_edit() {
@@ -1545,6 +2046,7 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
         let run = run_live_canary(&fixture).await;
         let final_lib = write_live_canary_artifacts(&fixture, &run);
         assert_live_canary_applied(&fixture, &run, &final_lib);
+        assert_prompt_diagnostics_show_loaded_context(&fixture, &run);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1568,6 +2070,7 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
             fixture.artifact_root.display()
         );
         assert_live_canary_applied(&fixture, &run, &final_lib);
+        assert_prompt_diagnostics_show_loaded_context(&fixture, &run);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1689,6 +2192,40 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
                     if paths.iter().any(|path| path.ends_with("src/lib.rs"))
             )),
             "expected proposal evidence for src/lib.rs; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+    }
+
+    fn assert_prompt_diagnostics_show_loaded_context(
+        fixture: &LiveCanaryFixture,
+        run: &HeadlessRun,
+    ) {
+        let diagnostic = run.prompt_diagnostics().first().unwrap_or_else(|| {
+            panic!(
+                "expected prompt diagnostics; artifacts at {}",
+                fixture.artifact_root.display()
+            )
+        });
+        assert!(
+            diagnostic.workspace.loaded,
+            "expected loaded workspace in prompt diagnostics; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert!(
+            diagnostic.workspace.member_count > 0,
+            "expected loaded workspace members in prompt diagnostics; artifacts at {}",
+            fixture.artifact_root.display()
+        );
+        assert!(
+            matches!(diagnostic.bm25.as_ref(), Some(Bm25Diagnostic { status, docs: Some(docs), .. }) if status == "ready" && *docs > 0),
+            "expected ready BM25 in prompt diagnostics, got {:?}; artifacts at {}",
+            diagnostic.bm25,
+            fixture.artifact_root.display()
+        );
+        assert!(
+            diagnostic.fallback_notice.is_none(),
+            "prompt unexpectedly fell back without code context: {:?}; artifacts at {}",
+            diagnostic.fallback_notice,
             fixture.artifact_root.display()
         );
     }

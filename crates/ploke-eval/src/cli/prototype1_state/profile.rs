@@ -543,6 +543,20 @@ debug_tools = true
     }
 
     #[test]
+    fn runtime_generation_sources_parse_as_shared_run_profile_record() {
+        for source in ["legacy", "broad-harness-request", "deterministic-tui-tools"] {
+            let text = PROFILE.replace(
+                "source = \"broad-harness-request\"",
+                &format!("source = \"{source}\""),
+            );
+            parse_profile(Path::new("profile.toml"), &text)
+                .expect("runtime profile parser accepts source");
+            toml::from_str::<ploke_records::run_profile::RunProfileRecord>(&text)
+                .expect("shared passive profile record accepts runtime source");
+        }
+    }
+
+    #[test]
     fn admitted_run_profile_carries_digest() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");

@@ -106,6 +106,7 @@ pub enum GenerationSource {
     Legacy,
     EditSurface,
     BroadHarness,
+    BroadHarnessRequest,
     DeterministicTuiTools,
 }
 
@@ -312,6 +313,21 @@ source = "broad-harness"
         )
         .expect("broad-harness profile parses");
         assert_eq!(broad.generation.source, GenerationSource::BroadHarness);
+
+        let broad_request: RunProfileRecord = toml::from_str(
+            r#"
+schema_version = "prototype1-run-profile.v1"
+name = "broad-request"
+
+[generation]
+source = "broad-harness-request"
+"#,
+        )
+        .expect("broad-harness-request profile parses");
+        assert_eq!(
+            broad_request.generation.source,
+            GenerationSource::BroadHarnessRequest
+        );
 
         let deterministic: RunProfileRecord = toml::from_str(
             r#"
