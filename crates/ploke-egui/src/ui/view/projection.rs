@@ -1073,8 +1073,8 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             else {
                 continue;
             };
-            lineage_refs.insert(parent.clone());
-            lineage_refs.insert(child.clone());
+            lineage_refs.insert(parent);
+            lineage_refs.insert(child);
             lineage_edges.insert((parent, child));
         }
     }
@@ -1086,7 +1086,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         let node = add_artifact_tree_node(
             &mut raw,
             &mut artifact_nodes,
-            key.as_str(),
+            key,
             artifact,
             selected_ruler,
             style,
@@ -1495,8 +1495,8 @@ fn has_branch(graph: &DomainGraph, branch_id: &str) -> bool {
 
 fn add_artifact_tree_node<'a>(
     raw: &mut RawGraph,
-    artifact_nodes: &mut BTreeMap<String, NodeIndex>,
-    key: &str,
+    artifact_nodes: &mut BTreeMap<&'a str, NodeIndex>,
+    key: &'a str,
     artifact: &'a ArtifactNode,
     selected_ruler: Option<&str>,
     style: ViewStyle,
@@ -1512,11 +1512,11 @@ fn add_artifact_tree_node<'a>(
         layers: GraphLayerMask::ARTIFACT,
         visible: true,
     });
-    artifact_nodes.insert(key.to_owned(), node);
+    artifact_nodes.insert(key, node);
     node
 }
 
-fn artifact_tree_key(artifact: &ArtifactNode) -> Option<String> {
+fn artifact_tree_key(artifact: &ArtifactNode) -> Option<&str> {
     match &artifact.identity {
         ArtifactIdentity::HistoryRef(history_ref) => {
             history_artifact_tree_key(history_ref.value.as_str())
@@ -1525,18 +1525,15 @@ fn artifact_tree_key(artifact: &ArtifactNode) -> Option<String> {
     }
 }
 
-fn history_artifact_tree_key(value: &str) -> Option<String> {
-    value
-        .strip_prefix("artifact:")
-        .map(|artifact_id| artifact_id.to_owned())
+fn history_artifact_tree_key(value: &str) -> Option<&str> {
+    value.strip_prefix("artifact:")
 }
 
-fn passive_artifact_tree_key(artifact_id: &ArtifactId) -> String {
+fn passive_artifact_tree_key(artifact_id: &ArtifactId) -> &str {
     artifact_id
         .0
         .strip_prefix("artifact:")
         .unwrap_or(artifact_id.0.as_str())
-        .to_owned()
 }
 
 #[allow(irrefutable_let_patterns)]
@@ -1626,7 +1623,7 @@ fn artifact_is_selected_ruler(artifact: &ArtifactNode, selected_ruler: Option<&s
     let Some(ruler_key) = selected_ruler.and_then(history_artifact_tree_key) else {
         return false;
     };
-    artifact_tree_key(artifact).as_deref() == Some(ruler_key.as_str())
+    artifact_tree_key(artifact) == Some(ruler_key)
 }
 
 #[cfg(test)]

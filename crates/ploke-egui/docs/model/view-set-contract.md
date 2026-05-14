@@ -60,6 +60,28 @@ sealed History and represents an admitted transition. `P_B` is an observed
 candidate derivation edge and must not imply `Admit(t)` or
 `ArtifactTransition(q)` by itself.
 
+## Canonical Mapping
+
+Use [run-graph-crosswalk.md](run-graph-crosswalk.md) for the record and graph
+source of each set. In short:
+
+```text
+A   = resolved artifact identities from RunGraph.artifacts
+P_H = HistoryBlockNode.active_artifact -> selected_successor.artifact
+P_B = CandidateBranchNode.base_artifact_id -> derived_artifact_id
+```
+
+The current `ploke-egui` implementation also computes:
+
+```text
+primary_lineage = loaded lineage maximizing (block_count, max_block_height)
+current_ruler   = selected_successor artifact from max-height primary-lineage block
+```
+
+Those rules are implementation facts until `ploke-tree` exposes a borrowed
+`ArtifactTree(RunGraph)` projection. They should not be reimplemented in new UI
+surfaces.
+
 ## Product Views
 
 ### ArtifactTree
