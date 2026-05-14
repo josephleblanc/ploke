@@ -201,13 +201,15 @@ Status:
 - Implemented: central graph canvas exists.
 - Implemented: ArtifactTree hides synthetic anchors.
 - Implemented: diagnostics report whether synthetic anchors are visible.
-- Partial: artifact and patch/derivation membership are implemented in the
-  projection, but the snapshot output does not yet report node and edge sets by
-  semantic class.
-- Partial: current-ruler highlight exists as view styling, but no contract
-  snapshot reports the highlight count.
-- Missing: CLI-readable assertions for `primary_node_set`, `primary_edge_set`,
-  debug-node exclusion, and ruler-highlight count.
+- Implemented: diagnostics report `A`, `P_H`, `P_B`, total visible nodes, total
+  visible edges, weak components, roots, orphan artifacts, and ruler highlight
+  count.
+- Implemented: contract checks include artifact node-set reporting, artifact
+  edge-set reporting, ruler-highlight reporting, and component reporting.
+- Partial: these diagnostics are still computed from the current egui
+  projection. The canonical relation fold should move into `ploke-tree`.
+- Missing: CLI-readable assertion that debug-node exclusion is sourced from the
+  graph-owned projection rather than from egui-local membership inference.
 
 ### Right Inspector
 
@@ -318,11 +320,16 @@ Current status:
 
 - Implemented: default mode check is possible from existing diagnostics.
 - Implemented: synthetic anchor visibility is reported by existing diagnostics.
-- Partial: node/edge counts are reported, but not by semantic set.
-- Partial: selected item can be shown in the app, but not yet emitted in the
-  diagnostic snapshot.
-- Missing: layout-region presence is not emitted.
-- Missing: pass/fail contract report over this document's signals.
+- Implemented: node/edge counts are reported by semantic set for `A`, `P_H`,
+  and `P_B`.
+- Implemented: selected detail is represented in the default-view diagnostic
+  shape when selection exists.
+- Partial: layout-region presence is reported for major regions, but tests
+  still need specific real-run coverage.
+- Implemented: pass/fail contract report exists for the current diagnostic
+  shape.
+- Partial: the report still reflects egui-local artifact membership until the
+  graph-owned projection exists.
 - Missing: unavailable drilldown classification.
 
 ## CLI Feedback Direction

@@ -10,6 +10,7 @@ The current rendering path is:
 
 ```text
 ploke_tree::Graph
+  -> graph-owned named projection (missing for ArtifactTree)
   -> project_*()
   -> RawGraph
   -> to_widget_graph()
@@ -26,6 +27,11 @@ use ploke_tree::Graph as DomainGraph;
 
 `DomainGraph` owns typed collections such as artifacts, history blocks,
 candidates, selections, operations, evidence, and warnings.
+
+The missing layer is a graph-owned projection for semantic view membership. For
+the default canvas, that object should expose the artifact node set and the
+classified artifact edge sets before egui allocates labels, layout coordinates,
+or widget payloads.
 
 `RawGraph` is a local projection graph:
 

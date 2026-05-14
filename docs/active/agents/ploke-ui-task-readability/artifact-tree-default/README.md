@@ -48,15 +48,18 @@ readability metrics, or display labels. Wrapping semantic data in a new local
 type such as `Option<SomeReport>` is not derivation; it is a blocker unless the
 data remains reference-based.
 
-## Current Code Mismatch
+## Resolved Code Mismatch
 
 At the time this note was written, the code default was a `LineageOverview`
 mode routed through `project_lineage_overview`. That is a history-spined
-overview, not the intended artifact-tree default.
+overview, not the intended artifact-tree default. That mismatch has since been
+resolved: the default view is now `ArtifactTree`.
 
-Follow-up implementation should rename or replace that default with an
-artifact-tree projection before adding richer drilldown, styling, or
-all-record layout work.
+The remaining boundary issue is ownership. The current egui projection computes
+artifact membership and classified patch/derivation edges directly from
+`ploke_tree::Graph`. The canonical relation fold should move into `ploke-tree`
+as a borrowed projection before richer drilldown, styling, or all-record layout
+work relies on it.
 
 ## Evidence Links
 
@@ -72,7 +75,8 @@ all-record layout work.
 
 ## Follow-Up Tasks
 
-- Replace the default graph mode with an artifact-tree projection.
+- Move the artifact-tree relation fold into `ploke-tree` as a borrowed
+  projection consumed by egui.
 - Keep full composed/all-record graph rendering behind an explicit debug mode.
 - Add tests that default geometry contains Artifact nodes and patch/derivation
   edges, and does not contain HistoryBlock, tool, evidence, provider, or
