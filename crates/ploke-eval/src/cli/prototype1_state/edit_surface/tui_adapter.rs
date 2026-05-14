@@ -2141,7 +2141,7 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
             return;
         };
 
-        let mut runtime = crate::runner::setup_workspace_tui_runtime(&workspace)
+        let mut runtime = crate::runner::setup_workspace_tui_prompt_runtime(&workspace)
             .await
             .unwrap_or_else(|err| {
                 panic!(
@@ -2173,6 +2173,91 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
             matches!(status, ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } if docs > 0),
             "expected BM25 ready with documents for '{}', got {status:?}",
             workspace.display()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "operator canary for initial prompt RAG against the ploke workspace"]
+    async fn live_tui_initial_prompt_ploke_workspace_includes_rag_parts() {
+        let workspace = std::env::var_os("PLOKE_EVAL_EXISTING_TUI_WORKSPACE")
+            .map(PathBuf::from)
+            .unwrap_or_else(ploke_workspace_root_for_test);
+        let mut runtime = crate::runner::setup_workspace_tui_prompt_runtime(&workspace)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "runtime setup failed for initial prompt RAG canary '{}': {err}",
+                    workspace.display()
+                );
+            });
+        runtime.app.pump_pending_events().await;
+
+        let prompt = r#"Inspect the indexed workspace context for setup_workspace_tui_runtime and run_broad_headless_tui_attempt.
+Do not call tools. Do not propose edits. This canary only checks initial prompt context assembly."#;
+        let parent_id = submit_prompt(&runtime.app, prompt.to_string())
+            .await
+            .expect("submit canary prompt");
+
+        let diagnostic = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                runtime.app.pump_pending_events().await;
+                match next_event(&mut runtime).await.expect("next app event") {
+                    ploke_tui::AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
+                        ploke_tui::llm::ChatEvt::PromptConstructed {
+                            parent_id: observed,
+                            formatted_prompt,
+                            context_plan,
+                        },
+                    )) if observed == parent_id => {
+                        break PromptDiagnostic::capture(
+                            &runtime.state,
+                            observed,
+                            &formatted_prompt,
+                            &context_plan,
+                        )
+                        .await;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for initial PromptConstructed event in '{}'",
+                workspace.display()
+            )
+        });
+
+        println!(
+            "initial prompt RAG workspace={} bm25={:?} included_rag_parts={} fallback={:?}",
+            workspace.display(),
+            diagnostic.bm25,
+            diagnostic.included_rag_parts,
+            diagnostic.fallback_notice
+        );
+        assert!(
+            diagnostic.workspace.loaded,
+            "expected loaded workspace for '{}'",
+            workspace.display()
+        );
+        assert!(
+            matches!(diagnostic.bm25.as_ref(), Some(Bm25Diagnostic { status, docs: Some(docs), .. }) if status == "ready" && *docs > 0),
+            "expected ready BM25 with documents for '{}', got {:?}",
+            workspace.display(),
+            diagnostic.bm25
+        );
+        assert!(
+            diagnostic.fallback_notice.is_none(),
+            "initial prompt fell back without code context for '{}': {:?}",
+            workspace.display(),
+            diagnostic.fallback_notice
+        );
+        assert!(
+            diagnostic.included_rag_parts > 0,
+            "initial prompt included no RAG parts for '{}': {:?}",
+            workspace.display(),
+            diagnostic.rag_stats
         );
     }
 

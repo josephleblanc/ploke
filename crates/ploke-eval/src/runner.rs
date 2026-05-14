@@ -3470,6 +3470,69 @@ pub(crate) async fn setup_workspace_tui_runtime(
     })
 }
 
+#[cfg(test)]
+pub(crate) async fn setup_workspace_tui_prompt_runtime(
+    workspace_root: &Path,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    let runtime_db = init_runtime_db()?;
+    let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
+
+    let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
+        path: PathBuf::from("<temporary xdg config home>"),
+        source,
+    })?;
+    let config_guard = XdgConfigHomeGuard::set_to(config_home.path());
+
+    let embedding_processor = eval_embedding_processor(&embedding_selection)?;
+    let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
+        &runtime_db,
+        embedding_processor,
+        HEADLESS_TUI_BM25_TIMEOUT_MS,
+    )
+    .spawn_file_manager()
+    .spawn_state_manager()
+    .spawn_event_bus()
+    .spawn_observability();
+    let events = runtime.events_builder().build_all();
+    let realtime_rx = events.event_bus_events.realtime_tx_rx;
+    let background_rx = events.event_bus_events.background_tx_rx;
+    let index_rx = Arc::try_unwrap(events.event_bus_events.index_tx_rx).map_err(|_| {
+        PrepareError::DatabaseSetup {
+            phase: "subscribe_index_status",
+            detail: "index receiver unexpectedly shared".to_string(),
+        }
+    })?;
+    drop(index_rx);
+    let debug_rx =
+        events
+            .app_actor_events
+            .debug_string_rx
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "subscribe_debug_string",
+                detail: "missing debug string receiver".to_string(),
+            })?;
+    let state = runtime.state_arc();
+
+    configure_sparse_strict_rag(&state).await;
+    prepare_sparse_workspace(&state, workspace_root).await?;
+
+    let mut app = runtime
+        .into_app_with_state_pwd(workspace_root.to_path_buf())
+        .await;
+    wait_for_bm25_ready(&mut app, Arc::clone(&state)).await?;
+    app.pump_pending_events().await;
+
+    Ok(WorkspaceTuiRuntime {
+        app,
+        state,
+        debug_rx,
+        realtime_rx,
+        background_rx,
+        _config_home: config_home,
+        _config_guard: config_guard,
+    })
+}
+
 async fn configure_sparse_strict_rag(state: &Arc<AppState>) {
     let mut cfg = state.config.write().await;
     cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
