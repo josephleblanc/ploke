@@ -29,10 +29,10 @@ widget payload strings.
 
 | Family | Typed source | Graph treatment |
 |---|---|---|
-| History blocks | `SealedBlockRecord`, `SealedBlockHeaderRecord`, `AdmittedEntryRecord` | authority spine, block/entry facts, selected successor, artifact refs |
-| Selection payloads | `SelectionDecisionEntryRecord`, `EvaluationPayloadRecord`, `CandidateSetRecord` | candidate universe, selected candidate, memberships, candidate artifact evidence |
-| Edit-surface evidence | `SurfaceEvidenceRecord`, `CandidateArtifactRecord`, `SurfaceAttemptRecord` | candidate artifact derivation evidence, patch id, base/after artifact refs |
-| Branch registry | `Prototype1BranchRegistry`, `InterventionSourceNode`, `TreatmentBranchNode` | passive branch evidence and candidate derivation hints |
+| History blocks | `SealedBlockRecord`, `SealedBlockHeaderRecord`, `AdmittedEntryRecord` | admitted History facts, block/entry facts, selected successor, artifact refs |
+| Selection payloads | `SelectionDecisionEntryRecord`, `EvaluationPayloadRecord`, `CandidateSetRecord` | considered Artifact set, selected Artifact-bearing record, memberships, Artifact evidence |
+| Edit-surface evidence | `SurfaceEvidenceRecord`, `CandidateArtifactRecord`, `SurfaceAttemptRecord` | applied-patch evidence, patch id, base/after Artifact refs |
+| Branch registry | `Prototype1BranchRegistry`, `InterventionSourceNode`, `TreatmentBranchNode` | passive branch evidence and applied-patch Artifact edge hints |
 | Runtime/operation ids | `RuntimeId`, `Coordinate`, `OperationTarget` | runtime-target operation facts distinct from History admission |
 | Evaluation/protocol/agent-turn evidence | typed passive records in `ploke-records` | evidence attachments unless promoted by a graph-owned relation |
 
@@ -41,7 +41,7 @@ Projection/debug files are not graph sources. They may only be checked against
 
 Known typed-persistence gaps:
 
-- `CandidateArtifactRecord` does not carry every eval-side artifact surface
+- `CandidateArtifactRecord` does not carry every eval-side Artifact surface
   detail currently available during History construction.
 - `SurfaceEvidenceRecord` is the passive checked-surface evidence shape; live
   grant/check carriers remain in `ploke-eval`.
@@ -57,7 +57,8 @@ A_G = artifacts observed in G.artifacts
 H_G = sealed History blocks and admitted entries in G.history
 R_G = runtime identities in G.runtimes
 O_G = operations in G.operations
-C_G = candidates, branches, memberships, and selections in G.candidates/G.selections
+CTX_G = artifact context facts: branches, candidates, memberships, selections
+        in G.candidates/G.selections
 EVID_G = evidence attachments in G.evidence
 WARN_G = graph warnings in G.warnings
 ```
@@ -66,7 +67,7 @@ For UI product views:
 
 ```text
 A = resolved artifact identities derived from A_G
-D = H_G union R_G union O_G union C_G union EVID_G union WARN_G
+D = H_G union R_G union O_G union CTX_G union EVID_G union WARN_G
 ```
 
 `A` is the product artifact node set. `D` is drilldown/debug material unless a
@@ -77,23 +78,19 @@ specific non-default graph projection says otherwise.
 `ArtifactTree(G)` projection resolves the common Artifact identity case where a
 History ref stores `artifact:<id>` and a passive artifact id stores `<id>`.
 
-## Node Vocabulary
+## Artifact Node Contract
 
-These are the graph node sets `ploke-egui` may draw. A product view chooses a
-subset of these sets; the default `ArtifactTree` chooses only `A`.
+The default product graph has one material node kind:
 
-| Set | Entity | Identity key | Contributing source records | Default ArtifactTree status |
-|---|---|---|---|---|
-| `A` | Artifact state | Canonical artifact id after wrapper normalization. `artifact:<id>` and `<id>` are the same key. | `ArtifactNode` from History artifact refs and passive `ArtifactId` observations; candidate, branch, scheduler, run-attempt, and History records may contribute evidence to the same node. | Rendered as the only default node set. Implemented by `ploke_tree::Graph::artifact_tree()`. |
-| `H` | History block / admitted History entry | `BlockHash`, `EntryId` | `SealedBlockRecord`, `SealedBlockHeaderRecord`, `AdmittedEntryRecord` | Not rendered as nodes. Used as source/provenance for `P_H`, lineage marks, and diagnostics. |
-| `C` | Candidate/branch participation context | `CandidateId`, branch id, membership id, selection entry id as appropriate | selection payloads, candidate sets, scheduler nodes, branch registry, evaluations | Not rendered as material nodes in default view. Used as provenance for artifact nodes, `P_B`, and candidate drilldown/debug views. |
-| `R` | Runtime / Parent role instance | `RuntimeId` | History selected successor runtime refs, parent identity, handoff/ready/completion evidence | Not rendered as nodes in default view. Candidate for runtime/artifact and handoff views. |
-| `O` | Operation target/action fact | `Coordinate` or `OperationTarget` when graph-owned | edit-surface, tool, operation, and evaluation records | Not rendered as nodes in default view. Candidate for operation/debug views. |
-| `EVID` | Evidence attachment | `EvidenceId` plus source locator | typed passive evidence, scheduler/run-attempt files, surface evidence, evaluation/protocol/agent-turn records | Not rendered as nodes in default view. Used for detail panels and diagnostics. |
-| `WARN` | Graph warning | graph warning identity/order | graph build warnings | Not rendered as nodes in default view. Used for diagnostics. |
-| `SYN` | Synthetic display connector/anchor | UI-generated key | none; no semantic source record | Not rendered in default view. Must not be used to make ArtifactTree appear connected. |
+```text
+node(A(a)) = Artifact state identified by canonical artifact id a
+```
 
-Artifact node formation rule:
+Other loaded records can contribute context, filters, marks, edge provenance,
+or drilldown material for `A(a)`. They do not become separate material nodes in
+`ArtifactTree`.
+
+Artifact node identity:
 
 ```text
 A = quotient(A_G, artifact_key_equivalence)
@@ -106,20 +103,37 @@ This rule only merges source references that denote the same artifact id. It
 does not connect distinct artifacts. Distinct artifact ids require explicit
 edges in one of the relation sets below.
 
-Candidate, branch, membership, and selection records do not create a second
-material entity when they carry an artifact id. They say that an existing
-artifact participates in a candidate/selection context.
+Branch, candidate, membership, and selection records do not create a second
+material entity when they carry an artifact id. They say that an Artifact is
+being considered, evaluated, selected, or explained in a particular context.
+The Artifact remains the primary entity.
 
 ```text
-if candidate context c refers to artifact id a:
-  c contributes provenance to A(a)
-  c does not create a separate artifact-like node
+if artifact context fact k refers to artifact id a:
+  A(a) may be filtered as considered/evaluated/selected
+  k may contribute provenance to A(a) or to an edge incident on A(a)
+  k does not create a rendered ArtifactTree node
 ```
 
 This keeps artifact identity independent of where the artifact is observed:
-History, candidate evidence, branch records, scheduler records, runtime
-handoff evidence, and debug/provenance records all point back to the same
-`A(a)` when they refer to the same artifact id.
+History, branch/candidate evidence, scheduler records, runtime handoff
+evidence, and debug/provenance records all point back to the same `A(a)` when
+they refer to the same artifact id.
+
+## Artifact Context Vocabulary
+
+These record families can annotate, filter, explain, or connect artifact nodes.
+They are not additional default `ArtifactTree` material nodes.
+
+| Context | Identity key | Artifact effect | Default ArtifactTree use |
+|---|---|---|---|
+| History records | `BlockHash`, `EntryId` | Mark artifacts as History-admitted or lineage-associated; supply `P_H` evidence. | Source for `P_H`, lineage marks, ruler highlight, and diagnostics. |
+| Artifact context records | branch id, `CandidateId`, membership id, selection entry id | Mark Artifacts as considered, evaluated, selected, or branch-produced; may supply applied-patch edge evidence. | Source for `P_B` when base and derived Artifact ids are present; can support filters such as “considered Artifacts” or “selected Artifacts.” |
+| Runtime records | `RuntimeId` | Explain which runtime/Parent/Child/Successor evidence refers to an artifact. | Drilldown or non-default runtime/artifact views. |
+| Operation records | `Coordinate` or `OperationTarget` when graph-owned | Explain which operation targeted or produced evidence about an artifact. | Drilldown or non-default operation views. |
+| Evidence records | `EvidenceId` plus source locator | Support artifact facts and relation facts. | Detail panels and diagnostics. |
+| Warning records | graph warning identity/order | Flag graph-build or import concerns affecting artifact interpretation. | Diagnostics. |
+| Synthetic display context | UI-generated key | No source artifact fact. | Not part of `ArtifactTree`; must not be used to make artifacts appear connected. |
 
 ## Relation Vocabulary
 
@@ -130,50 +144,58 @@ that happens to render them.
 history_successor(h, a_parent, a_child)
   h in H_G, a_parent in A, a_child in A
   source: HistoryBlockNode.active_artifact -> selected_successor.artifact
-  authority: sealed History block
+  status: admitted History successor relation
 
 history_opened_from(h, a_opened, a_active)
   h in H_G, a_opened in A, a_active in A
   source: HistoryBlockNode.opened_from_artifact and active_artifact
-  authority: sealed History block
+  status: sealed History context relation
   use: lineage context/reveal, not automatically the same as successor edge
 
-candidate_derivation(c, a_base, a_child)
-  c in C_G, a_base in A, a_child in A
+applied_patch_edge(k, a_base, a_child)
+  k in CTX_G, a_base in A, a_child in A
   source: CandidateBranchNode.base_artifact_id -> derived_artifact_id
-  authority: candidate/evidence, not History admission
+  status: branch/candidate-sourced applied-patch relation; not by itself a
+          History successor relation
 
 operation_targets(o, r, a)
   o in O_G, r in R_G, a in A
   source: Coordinate { runtime_id, target: OperationTarget::Artifact { artifact_id } }
-  authority: operation fact, not artifact derivation
+  status: operation fact, not an artifact edge
 
 artifact_hydrates(a, r)
   a in A, r in R_G
   source: selected successor/runtime handoff evidence when graph-owned
-  authority: runtime/handoff relation, not patch derivation
+  status: runtime/handoff relation, not an artifact edge
 ```
 
 The default artifact graph should not invent edges outside these relation
 families. If a visual edge has no graph-owned relation, it is a layout aid or a
 debug annotation, not a semantic edge.
 
+A candidate Artifact can later be selected and admitted by History. In that
+case the same Artifact node may have both consideration context and History
+context, and the same artifact pair may be supported by both `P_B` and `P_H`.
+That overlap should be represented as multiple relation labels/evidence sources
+over Artifact nodes, not as separate Candidate nodes or as a claim that every
+branch/candidate edge is already History-admitted.
+
 ## Edge Vocabulary
 
 These are the relation sets that may become drawn edges. A relation can be
 loaded in `G` without being part of the default `ArtifactTree`.
 
-| Set | Edge | Endpoint keys | Source records / fields | Authority | Default ArtifactTree status |
+| Set | Edge | Endpoint keys | Source records / fields | Evidence / relation status | Default ArtifactTree status |
 |---|---|---|---|---|---|
-| `P_H` | History successor | `A -> A` | `HistoryBlockNode.active_artifact -> HistoryBlockNode.selected_successor.artifact` | Sealed History block. | Rendered. Implemented. Self-loops are allowed but do not connect components. |
-| `P_B` | Candidate branch derivation | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Candidate/evidence relation, not History admission. | Rendered. Implemented. |
-| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context. | Not rendered by default. May support lineage/context views if explicitly admitted into that projection. |
-| `B_PARENT` | Branch ancestry | branch id -> branch id | `parent_branch_id`, `source_state_id`, branch registry/scheduler branch facts | Branch/process ancestry, not artifact derivation by itself. | Not rendered by default. Cannot connect artifacts unless a graph-owned projection maps branch ancestry to artifact endpoints. |
-| `N_PARENT` | Node/process ancestry | node id -> node id | `NodeRecord.parent_node_id -> NodeRecord.node_id` | Scheduler/process ancestry, not artifact derivation by itself. | Not rendered by default. |
-| `SELECTS` | Selection chooses candidate/successor | History/selection fact -> candidate/node/branch fact | selection decision payload, `output_refs`, selected candidate/member fields | Selection evidence/admission context. | Not rendered by default as artifact edge. May explain why a successor was chosen. |
-| `OP_TARGETS` | Operation targets artifact/runtime | `O -> A` or `R -> O` depending projection | `Coordinate`, `OperationTarget`, tool/operation records | Operation fact, not artifact derivation. | Not rendered by default. |
-| `HYDRATES` | Artifact hydrates runtime / runtime materializes artifact | `A <-> R` direction must be defined by projection | selected successor runtime refs and handoff evidence when graph-owned | Runtime/handoff relation. | Not rendered by default. |
-| `EVID_FOR` | Evidence supports entity/relation | `EVID -> A/H/C/R/O` | graph evidence attachments | Evidence/provenance. | Not rendered by default. |
+| `P_H` | History successor | `A -> A` | `HistoryBlockNode.active_artifact -> HistoryBlockNode.selected_successor.artifact` | Admitted History successor relation. | Rendered. Implemented. Self-loops are allowed but do not connect components. |
+| `P_B` | Applied-patch edge observed through branch/candidate records | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Evidence that a derived Artifact was produced from a base Artifact. It may overlap a selected/admitted successor, but does not imply that by itself. | Rendered. Implemented. |
+| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context relation. | Not rendered by default. May support lineage/context views if explicitly admitted into that projection. |
+| `B_PARENT` | Branch ancestry | branch id -> branch id | `parent_branch_id`, `source_state_id`, branch registry/scheduler branch facts | Branch/process ancestry, not an artifact edge by itself. | Not rendered by default. Cannot connect artifacts unless a graph-owned projection maps branch ancestry to artifact endpoints. |
+| `N_PARENT` | Node/process ancestry | node id -> node id | `NodeRecord.parent_node_id -> NodeRecord.node_id` | Scheduler/process ancestry, not an artifact edge by itself. | Not rendered by default. |
+| `SELECTS` | Selection chooses an Artifact-bearing successor | History/selection fact -> artifact-consideration fact | selection decision payload, `output_refs`, selected candidate/member fields | Selection/admission context. | Not rendered by default as artifact edge. May explain why an Artifact was chosen. |
+| `OP_TARGETS` | Operation targets artifact/runtime | `O -> A` or `R -> O` depending projection | `Coordinate`, `OperationTarget`, tool/operation records | Operation fact, not an artifact edge. | Not rendered by default. |
+| `HYDRATES` | Artifact hydrates runtime / runtime materializes artifact | `A <-> R` direction must be defined by projection | selected successor runtime refs and handoff evidence when graph-owned | Runtime/handoff relation, not an artifact edge. | Not rendered by default. |
+| `EVID_FOR` | Evidence supports entity/relation | `EVID -> A/H/C/R/O` | graph evidence attachments | Evidence/provenance relation. | Not rendered by default. |
 
 Default artifact edge set:
 
@@ -185,7 +207,7 @@ Non-default relations such as `B_PARENT` can explain why two artifacts are in
 the same execution family, but they do not by themselves prove that one
 artifact derives from another. To use them in an artifact view, define a
 separate graph-owned relation that names the projection, its endpoints, and its
-authority class.
+evidence requirements.
 
 ## Existing Browser Precedent
 
@@ -208,16 +230,17 @@ N_artifact = A
 E_artifact = P_H union P_B
 
 P_H = { (a_parent, a_child) | exists h. history_successor(h, a_parent, a_child) }
-P_B = { (a_base, a_child) | exists c. candidate_derivation(c, a_base, a_child) }
+P_B = { (a_base, a_child) | exists k. applied_patch_edge(k, a_base, a_child) }
 ```
 
 Properties:
 
-- `P_H` and `P_B` both connect artifact nodes, but they have different
-  authority classes.
+- `P_H` and `P_B` both connect artifact nodes, but they come from different
+  relation sources.
 - `P_H` is History-admitted successor flow.
-- `P_B` is candidate/evidence derivation flow.
-- History blocks, entries, runtimes, candidates, selections, operations,
+- `P_B` is applied-patch Artifact flow observed through branch/candidate
+  records. It can overlap `P_H` for a selected/admitted candidate Artifact.
+- History blocks, entries, runtimes, artifact-consideration facts, operations,
   evidence, warnings, and synthetic anchors are not nodes in this projection.
 - Weak connectedness is not required for all future runs. It is a diagnostic
   property of the loaded relation set.
@@ -251,7 +274,7 @@ This graph answers runtime/operation questions. It is not the default canvas.
 ### DebugRecordGraph
 
 ```text
-N_debug = A_G union H_G union R_G union O_G union C_G union EVID_G union WARN_G
+N_debug = A_G union H_G union R_G union O_G union CTX_G union EVID_G union WARN_G
 E_debug = typed record references and graph-owned evidence attachments
 ```
 
@@ -285,5 +308,5 @@ where `A`, `P_H`, and `P_B` refer back to graph-owned records or indices. That
 projection is the object `ploke-egui` and CLI diagnostics should consume.
 
 The projection should remain the owner of endpoint-missing diagnostics,
-artifact identity collision behavior, and relation authority classes without
+artifact identity collision behavior, and relation evidence classes without
 allocating semantic record mirrors into `ploke-egui`.

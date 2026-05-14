@@ -1,4 +1,5 @@
 mod checks;
+mod components;
 mod layout;
 mod text;
 
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::SelectionSnapshot;
 use crate::ui::view::{GraphViewDiagnostics, artifact_tree as tree};
 
+pub use components::ComponentBreakdown;
 pub use layout::{Layout, WidthBudget};
 
 const VERSION: &str = "ploke-egui.default-view-contract.v1";
@@ -28,6 +30,7 @@ impl Report {
         graph_has_content: bool,
         run_error: Option<String>,
         selected: Option<SelectionSnapshot>,
+        component_breakdown: Vec<ComponentBreakdown>,
     ) -> Self {
         let layout = Layout::current();
         let controls = Controls {
@@ -37,7 +40,7 @@ impl Report {
             run_error,
             quick_filters_present: false,
         };
-        let center = ArtifactTree::from_diagnostics(diagnostics);
+        let center = ArtifactTree::from_diagnostics(diagnostics, component_breakdown);
         let inspector = Inspector {
             right_inspector_present: false,
             selected_detail: selected,
@@ -105,12 +108,16 @@ pub struct ArtifactTree {
     pub nodes: Nodes,
     pub edges: Edges,
     pub components: Components,
+    pub component_breakdown: Vec<ComponentBreakdown>,
     pub marks: Marks,
 }
 
 impl ArtifactTree {
-    fn from_diagnostics(diagnostics: &GraphViewDiagnostics) -> Self {
-        let shape = diagnostics.artifact_tree;
+    fn from_diagnostics(
+        diagnostics: &GraphViewDiagnostics,
+        component_breakdown: Vec<ComponentBreakdown>,
+    ) -> Self {
+        let shape = &diagnostics.artifact_tree;
         Self {
             mode: diagnostics.mode.as_str().to_owned(),
             canvas_present: true,
@@ -120,9 +127,21 @@ impl ArtifactTree {
             nodes: shape.nodes().into(),
             edges: shape.edges().into(),
             components: (shape.components(), shape.nodes()).into(),
+            component_breakdown,
             marks: shape.marks().into(),
         }
     }
+}
+
+pub(crate) fn component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBreakdown> {
+    graph
+        .artifact_tree()
+        .diagnostics
+        .components
+        .iter()
+        .enumerate()
+        .map(|(index, component)| ComponentBreakdown::from((index + 1, component)))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,7 +174,7 @@ impl From<tree::Edges> for Edges {
     fn from(value: tree::Edges) -> Self {
         Self {
             p_h: value.history_patches,
-            p_b: value.branch_derivations,
+            p_b: value.applied_patch_edges,
         }
     }
 }

@@ -6,7 +6,10 @@ use eframe::egui;
 use ploke_tree::Graph;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::diagnostics::{RunSnapshot, SnapshotObservation, SnapshotSink, write_manual_snapshot};
+use crate::diagnostics::{
+    RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
+    write_manual_snapshot,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::import::graph_from_run_root;
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,7 +166,8 @@ impl OperatorApp {
             .with_graph_has_content(graph_has_content(&self.graph))
             .with_run_error(self.run_error.clone())
             .with_run(run)
-            .with_selected(self.view.selected_node_detail());
+            .with_selected(self.view.selected_node_detail())
+            .with_artifact_components(artifact_component_breakdown(&self.graph));
 
         let Some(sink) = &mut self.diagnostics_sink else {
             return;
@@ -187,7 +191,8 @@ impl OperatorApp {
                 .with_graph_has_content(graph_has_content(&self.graph))
                 .with_run_error(self.run_error.clone())
                 .with_run(self.run_snapshot())
-                .with_selected(self.view.selected_node_detail());
+                .with_selected(self.view.selected_node_detail())
+                .with_artifact_components(artifact_component_breakdown(&self.graph));
             match write_manual_snapshot(observation) {
                 Ok(path) => {
                     self.diagnostics_error =

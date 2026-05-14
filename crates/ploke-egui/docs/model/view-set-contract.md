@@ -31,12 +31,12 @@ H      = History records / blocks observed in RunGraph
 R      = Runtime records observed in RunGraph
 P_H    = admitted History transition edges:
          active Artifact -> selected successor Artifact
-P_B    = observed candidate derivation edges:
-         candidate branch base Artifact -> derived Artifact
+P_B    = observed applied-patch Artifact edges:
+         base Artifact -> derived Artifact, sourced from branch/candidate records
 P      = P_H union P_B
 L      = primary-lineage subset of A and P_H
-D      = non-artifact debug records: H, R, candidates, selections,
-         operations, evidence, warnings
+D      = non-artifact context/debug records: H, R, artifact-consideration
+         records, selections, operations, evidence, warnings
 SYN    = synthetic connector or anchor nodes
 ```
 
@@ -55,26 +55,36 @@ For `ArtifactTree`, node identity is the resolved Artifact id, not the source
 reference wrapper. A History `ArtifactRef("artifact:<id>")` and a passive
 `ArtifactId("<id>")` denote the same node in `A` for display.
 
-Candidate, branch, membership, and selection records that carry artifact ids
-contribute candidate/selection context to the same `A` node. They do not create
-separate material-state nodes in `ArtifactTree`.
+Branch, candidate, membership, and selection records that carry artifact ids
+contribute consideration/evaluation/selection context to the same `A` node.
+They do not create separate material-state nodes in `ArtifactTree`.
 
-`P_H` and `P_B` are not equivalent authority classes. `P_H` is derived from
-sealed History and represents an admitted transition. `P_B` is an observed
-candidate derivation edge and must not imply `Admit(t)` or
-`ArtifactTransition(q)` by itself.
+ArtifactTree filters should be stated as predicates over `A`, not as new
+material node sets. For example:
+
+```text
+A_considered = { A(a) | exists branch/candidate context fact k referring to a }
+```
+
+`P_H` and `P_B` are not equivalent relation sources. `P_H` is derived from
+sealed History and represents an admitted successor transition. `P_B` is an
+observed applied-patch Artifact edge sourced from branch/candidate records. A
+selected candidate Artifact can be represented in both sets, but `P_B` alone
+must not imply History admission.
 
 ## Canonical Mapping
 
 Use [run-graph-crosswalk.md](run-graph-crosswalk.md) for the record and graph
-source of each set. Its node and edge vocabulary tables are the canonical
-place to check whether a recorded thing is a rendered node, an edge source, or
-debug/drilldown material. In short:
+source of each set. Its Artifact Node Contract and context/edge vocabulary are
+the canonical place to check whether a recorded thing is an artifact node,
+a filter/mark/provenance source, an edge source, or debug/drilldown material.
+In short:
 
 ```text
 A   = resolved artifact identities from RunGraph.artifacts
 P_H = HistoryBlockNode.active_artifact -> selected_successor.artifact
-P_B = CandidateBranchNode.base_artifact_id -> derived_artifact_id
+P_B = applied-patch Artifact edge observed through CandidateBranchNode.base_artifact_id
+      -> derived_artifact_id
 ```
 
 Relations such as `opened_from_artifact`, `parent_branch_id`,
@@ -115,8 +125,9 @@ Properties:
   History artifacts are loaded.
 - The full artifact graph may have multiple weak components. Extra components
   are diagnostics or secondary islands, not a reason to add synthetic anchors.
-- Candidate derivation edges should remain visually distinguishable from
-  admitted History transition edges once styling supports that distinction.
+- Applied-patch Artifact edges observed through branch/candidate evidence should
+  remain visually distinguishable from admitted History transition edges once
+  styling supports that distinction.
 
 ### Lineage
 
@@ -175,7 +186,7 @@ not change the default artifact-tree contract.
 Future edit-surface drilldowns may introduce explicit nodes or relations for
 surface grants, edit proposals, surface checks, and History admission. Those
 belong to debug or drilldown views unless they are reduced to admitted Artifact
-transition edges in `P_H` or observed candidate derivation edges in `P_B`.
+transition edges in `P_H` or observed applied-patch Artifact edges in `P_B`.
 
 ## Implementation Checks
 
@@ -186,7 +197,7 @@ For each view mode, tests should assert:
 - hidden nodes and edges do not draw, hit-test, lay out, or appear selected;
 - artifact edge direction is top-down parent to child;
 - `ArtifactTree` has no `D` or `SYN` nodes;
-- `P_B` edges do not get treated as admitted History transitions;
+- `P_B` applied-patch Artifact edges do not get treated as admitted History transitions;
 - current-ruler highlighting marks an Artifact associated with a selected
   successor Runtime/role transition, not an Artifact that owns role authority;
 - disconnected artifact components are reported as diagnostics, not connected

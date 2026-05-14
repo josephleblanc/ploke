@@ -15,7 +15,7 @@ use super::{
 pub struct Tree<'g> {
     pub nodes: BTreeMap<Key<'g>, Node<'g>>,
     pub history_successors: Vec<HistoryEdge<'g>>,
-    pub candidate_derivations: Vec<CandidateEdge<'g>>,
+    pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
     pub marks: Marks<'g>,
     pub diagnostics: Diagnostics<'g>,
 }
@@ -41,15 +41,15 @@ pub struct Node<'g> {
     pub sources: Vec<&'g ArtifactNode>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HistoryEdge<'g> {
     pub from: Key<'g>,
     pub to: Key<'g>,
     pub sources: Vec<&'g HistoryBlockNode>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct CandidateEdge<'g> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedPatchEdge<'g> {
     pub from: Key<'g>,
     pub to: Key<'g>,
     pub sources: Vec<&'g CandidateBranchNode>,
@@ -67,9 +67,18 @@ pub struct Marks<'g> {
 pub struct Diagnostics<'g> {
     pub weak_component_count: usize,
     pub weakly_connected: bool,
+    pub components: Vec<Component<'g>>,
     pub roots: Vec<Key<'g>>,
     pub orphan_artifacts: Vec<Key<'g>>,
     pub missing_endpoints: Vec<MissingEndpoint<'g>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Component<'g> {
+    pub artifacts: Vec<Key<'g>>,
+    pub roots: Vec<Key<'g>>,
+    pub history_successors: Vec<HistoryEdge<'g>>,
+    pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,7 +91,7 @@ pub struct MissingEndpoint<'g> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Relation<'g> {
     HistorySuccessor(&'g HistoryBlockNode),
-    CandidateDerivation(&'g CandidateBranchNode),
+    AppliedPatch(&'g CandidateBranchNode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +143,7 @@ impl<'g> Tree<'g> {
             }
         }
 
-        let mut candidate_derivations =
+        let mut applied_patch_edges =
             BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g CandidateBranchNode>>::new();
         for branch in &graph.candidates.branches {
             let (Some(base), Some(derived)) = (
@@ -147,12 +156,12 @@ impl<'g> Tree<'g> {
             let to = passive_id_key(&derived.0);
             if endpoints_present(
                 &nodes,
-                Relation::CandidateDerivation(branch),
+                Relation::AppliedPatch(branch),
                 from,
                 to,
                 &mut missing_endpoints,
             ) {
-                candidate_derivations
+                applied_patch_edges
                     .entry((from, to))
                     .or_default()
                     .push(branch);
@@ -163,23 +172,23 @@ impl<'g> Tree<'g> {
             .into_iter()
             .map(|((from, to), sources)| HistoryEdge { from, to, sources })
             .collect::<Vec<_>>();
-        let candidate_derivations = candidate_derivations
+        let applied_patch_edges = applied_patch_edges
             .into_iter()
-            .map(|((from, to), sources)| CandidateEdge { from, to, sources })
+            .map(|((from, to), sources)| AppliedPatchEdge { from, to, sources })
             .collect::<Vec<_>>();
 
         let marks = Marks::from_graph(graph, &history_successors);
         let diagnostics = Diagnostics::from_edges(
             &nodes,
             &history_successors,
-            &candidate_derivations,
+            &applied_patch_edges,
             missing_endpoints,
         );
 
         Self {
             nodes,
             history_successors,
-            candidate_derivations,
+            applied_patch_edges,
             marks,
             diagnostics,
         }
@@ -190,7 +199,7 @@ impl<'g> Diagnostics<'g> {
     fn from_edges(
         nodes: &BTreeMap<Key<'g>, Node<'g>>,
         history_successors: &[HistoryEdge<'g>],
-        candidate_derivations: &[CandidateEdge<'g>],
+        applied_patch_edges: &[AppliedPatchEdge<'g>],
         missing_endpoints: Vec<MissingEndpoint<'g>>,
     ) -> Self {
         let keys = nodes.keys().copied().collect::<Vec<_>>();
@@ -213,7 +222,7 @@ impl<'g> Diagnostics<'g> {
                 &mut incident,
             );
         }
-        for edge in candidate_derivations {
+        for edge in applied_patch_edges {
             join_edge(
                 edge.from,
                 edge.to,
@@ -242,10 +251,37 @@ impl<'g> Diagnostics<'g> {
             .filter_map(|(key, count)| (*count == 0).then_some(*key))
             .collect::<Vec<_>>();
         let weak_component_count = components.len();
+        let components = components
+            .into_values()
+            .map(|artifacts| {
+                let roots = artifacts
+                    .iter()
+                    .copied()
+                    .filter(|key| incoming.get(key).copied().unwrap_or_default() == 0)
+                    .collect();
+                let history_successors = history_successors
+                    .iter()
+                    .filter(|edge| artifacts.contains(&edge.from))
+                    .cloned()
+                    .collect();
+                let applied_patch_edges = applied_patch_edges
+                    .iter()
+                    .filter(|edge| artifacts.contains(&edge.from))
+                    .cloned()
+                    .collect();
+                Component {
+                    artifacts,
+                    roots,
+                    history_successors,
+                    applied_patch_edges,
+                }
+            })
+            .collect();
 
         Self {
             weak_component_count,
             weakly_connected: nodes.len() <= 1 || weak_component_count == 1,
+            components,
             roots,
             orphan_artifacts,
             missing_endpoints,
@@ -466,9 +502,9 @@ mod tests {
         assert_eq!(tree.history_successors.len(), 1);
         assert_eq!(tree.history_successors[0].from.as_str(), "base");
         assert_eq!(tree.history_successors[0].to.as_str(), "successor");
-        assert_eq!(tree.candidate_derivations.len(), 1);
-        assert_eq!(tree.candidate_derivations[0].from.as_str(), "successor");
-        assert_eq!(tree.candidate_derivations[0].to.as_str(), "derived");
+        assert_eq!(tree.applied_patch_edges.len(), 1);
+        assert_eq!(tree.applied_patch_edges[0].from.as_str(), "successor");
+        assert_eq!(tree.applied_patch_edges[0].to.as_str(), "derived");
         assert_eq!(tree.marks.selected_ruler.map(|key| key.as_str()), None);
         assert!(tree.diagnostics.weakly_connected);
         assert_eq!(tree.diagnostics.weak_component_count, 1);

@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use crate::cli::Run;
 use crate::demo::sample_graph;
 #[cfg(feature = "dev")]
-use crate::diagnostics::{RunSnapshot, Snapshot, SnapshotObservation, SnapshotSink};
+use crate::diagnostics::{
+    RunSnapshot, Snapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
+};
 use crate::import::graph_from_run_root;
 use crate::run_picker::RunPicker;
 use crate::ui::app::{OperatorApp, layout};
@@ -110,7 +112,8 @@ fn print_contract_report(
                 + graph.evidence.attachments.len()
                 > 0,
         )
-        .with_run(run_root.map(run_snapshot));
+        .with_run(run_root.map(run_snapshot))
+        .with_artifact_components(artifact_component_breakdown(graph));
     let snapshot = Snapshot::from_observation(1, observation);
     print!("{}", snapshot.render_text());
     Ok(())

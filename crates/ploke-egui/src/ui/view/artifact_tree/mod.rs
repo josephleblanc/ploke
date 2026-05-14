@@ -2,7 +2,7 @@
 //!
 //! This module carries the contract-level facts for the default graph view:
 //! artifacts (`A`), admitted History patch edges (`P_H`), observed branch
-//! derivation edges (`P_B`), weak components, roots, orphans, and ruler marks.
+//! applied-patch edges (`P_B`), weak components, roots, orphans, and ruler marks.
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape {
@@ -53,19 +53,19 @@ impl Nodes {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Edges {
     pub history_patches: usize,
-    pub branch_derivations: usize,
+    pub applied_patch_edges: usize,
 }
 
 impl Edges {
-    pub(crate) fn new(history_patches: usize, branch_derivations: usize) -> Self {
+    pub(crate) fn new(history_patches: usize, applied_patch_edges: usize) -> Self {
         Self {
             history_patches,
-            branch_derivations,
+            applied_patch_edges,
         }
     }
 
     pub fn total(self) -> usize {
-        self.history_patches + self.branch_derivations
+        self.history_patches + self.applied_patch_edges
     }
 }
 

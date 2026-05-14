@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics};
 pub use default_view::{
-    CheckStatus as ContractCheckStatus, Layout as DefaultViewLayout,
+    CheckStatus as ContractCheckStatus, ComponentBreakdown, Layout as DefaultViewLayout,
     Report as DefaultViewContractReport, WidthBudget as DefaultViewWidthBudget,
 };
 
@@ -89,6 +89,7 @@ pub fn write_manual_snapshot(observation: SnapshotObservation) -> io::Result<Pat
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapshotObservation {
     pub diagnostics: GraphViewDiagnostics,
+    pub artifact_components: Vec<ComponentBreakdown>,
     pub graph_has_content: bool,
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
@@ -100,6 +101,7 @@ impl SnapshotObservation {
         Self {
             graph_has_content: diagnostics.node_count > 0,
             diagnostics,
+            artifact_components: Vec::new(),
             run_error: None,
             run: None,
             selected: None,
@@ -125,6 +127,15 @@ impl SnapshotObservation {
         self.selected = selected.map(SelectionSnapshot::from);
         self
     }
+
+    pub fn with_artifact_components(mut self, components: Vec<ComponentBreakdown>) -> Self {
+        self.artifact_components = components;
+        self
+    }
+}
+
+pub fn artifact_component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBreakdown> {
+    default_view::component_breakdown(graph)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +202,7 @@ impl Snapshot {
     pub fn from_observation(sequence: u64, observation: SnapshotObservation) -> Self {
         let SnapshotObservation {
             diagnostics,
+            artifact_components,
             graph_has_content,
             run_error,
             run,
@@ -201,6 +213,7 @@ impl Snapshot {
             graph_has_content,
             run_error,
             selected,
+            artifact_components,
         );
         Self::from_diagnostics_and_contract(sequence, run, diagnostics, default_view_contract)
     }
@@ -218,6 +231,12 @@ impl Snapshot {
         default_view_contract: DefaultViewContractReport,
     ) -> Self {
         let findings = ranked_findings(&diagnostics);
+        let component_roots_before_anchoring = default_view_contract
+            .center
+            .component_breakdown
+            .iter()
+            .flat_map(|component| component.roots.iter().cloned())
+            .collect();
 
         Self {
             schema_version: SNAPSHOT_VERSION.to_owned(),
@@ -229,7 +248,7 @@ impl Snapshot {
             component_count_before_anchoring: diagnostics
                 .connectivity
                 .component_count_before_anchoring,
-            component_roots_before_anchoring: Vec::new(),
+            component_roots_before_anchoring,
             hidden_record_count: diagnostics.connectivity.hidden_record_count,
             hidden_edge_count: diagnostics.connectivity.hidden_edge_count,
             hidden_evidence_count: diagnostics.connectivity.hidden_evidence_count,

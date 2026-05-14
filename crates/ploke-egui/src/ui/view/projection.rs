@@ -1126,7 +1126,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         }
     }
 
-    let mut branches = tree.candidate_derivations.iter().collect::<Vec<_>>();
+    let mut branches = tree.applied_patch_edges.iter().collect::<Vec<_>>();
     branches.sort_by(|left, right| {
         let left_source = left.sources.first();
         let right_source = right.sources.first();
@@ -1179,7 +1179,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         artifact_tree::Nodes::new(tree.nodes.len()),
         artifact_tree::Edges::new(
             tree.history_successors.len(),
-            tree.candidate_derivations.len(),
+            tree.applied_patch_edges.len(),
         ),
         artifact_tree::Components::new(
             tree.diagnostics.weak_component_count,
@@ -2162,7 +2162,7 @@ mod tests {
         assert_eq!(projected.raw.edge_count(), 1);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 0);
-        assert_eq!(projected.artifact_tree.edges().branch_derivations, 1);
+        assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 1);
         assert_eq!(projected.artifact_tree.edges().total(), 1);
         assert_eq!(count_nodes(&projected, "candidate"), 0);
         assert_eq!(count_nodes(&projected, "selection"), 0);
@@ -2174,6 +2174,46 @@ mod tests {
     }
 
     #[test]
+    fn artifact_tree_reports_component_edge_sources() {
+        let graph = graph_with_artifact_branch_selection();
+        let tree = graph.artifact_tree();
+        let components = &tree.diagnostics.components;
+
+        assert_eq!(components.len(), 1);
+        assert_eq!(
+            components[0]
+                .roots
+                .iter()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["parent"]
+        );
+        assert_eq!(
+            components[0]
+                .artifacts
+                .iter()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child", "parent"]
+        );
+        assert!(components[0].history_successors.is_empty());
+        assert_eq!(components[0].applied_patch_edges.len(), 1);
+
+        let edge = &components[0].applied_patch_edges[0];
+        assert_eq!(edge.from.as_str(), "parent");
+        assert_eq!(edge.to.as_str(), "child");
+        assert_eq!(edge.sources[0].branch_id, "branch-1");
+        assert_eq!(edge.sources[0].selection_entry_id.0, "entry-1");
+        assert_eq!(
+            edge.sources[0]
+                .candidate_id
+                .as_ref()
+                .map(|id| id.0.as_str()),
+            Some("candidate-1")
+        );
+    }
+
+    #[test]
     fn artifact_tree_connects_history_artifacts_with_patch_edge() {
         let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
         let projected = project_artifact_tree(&graph, ViewStyle::default());
@@ -2182,7 +2222,7 @@ mod tests {
         assert_eq!(projected.raw.edge_count(), 1);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 1);
-        assert_eq!(projected.artifact_tree.edges().branch_derivations, 0);
+        assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 0);
         assert_eq!(projected.artifact_tree.components().weak, 1);
         assert_eq!(projected.artifact_tree.components().roots, 1);
         assert_eq!(projected.artifact_tree.components().orphan_artifacts, 0);
@@ -2246,7 +2286,7 @@ mod tests {
         assert_eq!(projected.raw.edge_count(), 2);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 1);
-        assert_eq!(projected.artifact_tree.edges().branch_derivations, 1);
+        assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 1);
         assert_eq!(projected.artifact_tree.components().weak, 1);
         assert!(projected.artifact_tree.components().weakly_connected(2));
     }
