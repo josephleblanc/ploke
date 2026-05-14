@@ -609,6 +609,9 @@ fn attempt_prompt(
     let evidence = evidence_prompt_lines(evidence_roots);
     if !evidence.is_empty() {
         prompt.push_str("\n## Read-only evidence available to tools\n\n");
+        prompt.push_str(
+            "Evidence roots marked missing were published by the request but are not present in this campaign; do not spend tool calls trying to inspect missing roots.\n",
+        );
         prompt.push_str(&evidence);
     }
     if let Some(feedback) = feedback {
@@ -636,9 +639,22 @@ fn evidence_prompt_lines(evidence_roots: &[EvidenceRoot]) -> String {
         lines.push_str(evidence_kind_label(root.kind));
         lines.push_str("): ");
         lines.push_str(&location);
+        if !evidence_location_exists(&root.location) {
+            lines.push_str(" [missing]");
+        }
         lines.push('\n');
     }
     lines
+}
+
+fn evidence_location_exists(location: &EvidenceRootLocation) -> bool {
+    match location {
+        EvidenceRootLocation::Directory { path } | EvidenceRootLocation::File { path } => {
+            path.exists()
+        }
+        EvidenceRootLocation::NodeScopedDirectory { nodes_root, .. } => nodes_root.exists(),
+        EvidenceRootLocation::AttachedReport { .. } => true,
+    }
 }
 
 fn evidence_prompt_location(location: &EvidenceRootLocation) -> Option<String> {
@@ -2428,17 +2444,31 @@ mod tests {
 
     #[test]
     fn attempt_prompt_keeps_campaign_evidence_out_of_file_tool_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let existing_evidence = tmp.path().join("evaluations");
+        let missing_evidence = tmp.path().join("missing-evaluations");
+        fs::create_dir_all(&existing_evidence).expect("existing evidence dir");
+
         let prompt = attempt_prompt(
             Path::new("/tmp/prototype1/workspace"),
             BroadEditPolicy::WorkspaceExceptPlokeEval,
-            &[EvidenceRoot {
-                kind: EvidenceRootKind::Evaluations,
-                location: EvidenceRootLocation::Directory {
-                    path: PathBuf::from("/tmp/prototype1/evaluations"),
+            &[
+                EvidenceRoot {
+                    kind: EvidenceRootKind::Evaluations,
+                    location: EvidenceRootLocation::Directory {
+                        path: existing_evidence.clone(),
+                    },
+                    role: EvidenceRole::EvaluationPayloads,
                 },
-                role: EvidenceRole::EvaluationPayloads,
-            }],
-            "## Evidence\n- evaluations: /tmp/prototype1/evaluations\n",
+                EvidenceRoot {
+                    kind: EvidenceRootKind::Evaluations,
+                    location: EvidenceRootLocation::Directory {
+                        path: missing_evidence.clone(),
+                    },
+                    role: EvidenceRole::EvaluationPayloads,
+                },
+            ],
+            "## Evidence\n- evaluations are listed in the request\n",
             Some("tool failed"),
         );
 
@@ -2449,13 +2479,25 @@ mod tests {
         );
         assert!(prompt.contains("Edit, create, patch, and apply tools must target only files"));
         assert!(prompt.contains("do not edit files under crates/ploke-eval"));
+        assert!(prompt.contains("Cargo.toml"));
         assert!(prompt.contains("Read-only evidence available to tools"));
-        assert!(prompt.contains("evaluation evidence (evaluations): /tmp/prototype1/evaluations"));
+        assert!(prompt.contains(&format!(
+            "evaluation evidence (evaluations): {}",
+            existing_evidence.display()
+        )));
+        assert!(prompt.contains(&format!(
+            "evaluation evidence (evaluations): {} [missing]",
+            missing_evidence.display()
+        )));
+        assert!(
+            prompt.contains("do not spend tool calls trying to inspect missing roots"),
+            "prompt should steer away from unavailable published evidence"
+        );
         assert!(prompt.contains("Use validation tools only after a source edit has been staged"));
         assert!(prompt.contains("Previous isolated attempt feedback"));
         assert!(prompt.contains("tool failed"));
         assert!(prompt.contains("## Original broad request"));
-        assert!(prompt.contains("/tmp/prototype1/evaluations"));
+        assert!(prompt.contains("evaluations are listed in the request"));
     }
 
     #[test]
