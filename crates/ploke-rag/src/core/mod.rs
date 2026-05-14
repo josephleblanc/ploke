@@ -623,7 +623,7 @@ impl RagService {
             let ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
             let nodes = self
                 .db
-                .get_nodes_ordered(ids.clone())
+                .get_snippet_nodes_ordered(ids.clone())
                 .map_err(|e| RagError::Embed(e.to_string()))?;
             let texts = io.get_snippets_batch(nodes).await.map_err(|e| {
                 RagError::Search(format!("get_snippets_batch failed for rerank: {:?}", e))

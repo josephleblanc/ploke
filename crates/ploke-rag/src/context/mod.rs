@@ -20,10 +20,7 @@ use ploke_core::{
         NodeFilepath,
     },
 };
-use ploke_db::{
-    Database, NodeType,
-    get_by_id::{GetNodeInfo, NodePaths},
-};
+use ploke_db::{Database, NodeType, get_by_id::NodePaths};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -181,16 +178,14 @@ pub async fn assemble_context(
     // Dedup by UUID while preserving order.
     let (dedup_ids, dedup_removed) = stable_dedup_ids_ordered(&ordered_ids);
 
-    // Fetch embedding metadata in the requested order.
-    let nodes: Vec<EmbeddingData> = db
-        .get_nodes_ordered(dedup_ids.clone())
+    // Fetch file/span metadata in the requested order. This intentionally does not require
+    // embedding-set membership because sparse retrieval can return valid node ids before dense
+    // embedding rows exist.
+    let context_nodes = db
+        .get_snippet_context_nodes_ordered(dedup_ids.clone())
         .map_err(|e| RagError::Embed(e.to_string()))?;
-
-    let node_paths: Vec<Result<NodePaths, ploke_db::DbError>> = nodes
-        .iter()
-        .map(|p| db.paths_from_id(p.id))
-        .map(|db_row| db_row.and_then(|r| r.try_into()))
-        .collect();
+    let (nodes, node_paths): (Vec<EmbeddingData>, Vec<NodePaths>) =
+        context_nodes.into_iter().unzip();
 
     let file_paths = nodes
         .iter()
@@ -210,7 +205,7 @@ pub async fn assemble_context(
             .get(i)
             .copied()
             .ok_or_else(|| RagError::Search(format!("mismatched batch index {}", i)))?;
-        let NodePaths { file, canon } = node_paths.map_err(RagError::Db)?;
+        let NodePaths { file, canon } = node_paths;
 
         match res {
             Ok(text) => {

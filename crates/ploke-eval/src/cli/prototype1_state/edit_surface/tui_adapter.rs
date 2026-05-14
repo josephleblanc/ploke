@@ -1762,9 +1762,11 @@ pub(crate) mod record {
 #[cfg(test)]
 mod tests {
     use std::{
+        borrow::Cow,
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::Arc,
     };
 
     use super::*;
@@ -2172,6 +2174,131 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
             "expected BM25 ready with documents for '{}', got {status:?}",
             workspace.display()
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "operator canary for request_code_context against the ploke workspace"]
+    async fn live_tui_request_code_context_ploke_workspace_returns_results() {
+        let workspace = std::env::var_os("PLOKE_EVAL_EXISTING_TUI_WORKSPACE")
+            .map(PathBuf::from)
+            .unwrap_or_else(ploke_workspace_root_for_test);
+        let terms = std::env::var("PLOKE_EVAL_TUI_SEARCH_TERMS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|term| !term.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|terms| !terms.is_empty())
+            .unwrap_or_else(|| {
+                vec![
+                    "setup_workspace_tui_runtime".to_string(),
+                    "RequestCodeContextGat".to_string(),
+                    "run_broad_headless_tui_attempt".to_string(),
+                ]
+            });
+
+        let mut runtime = crate::runner::setup_workspace_tui_runtime(&workspace)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "runtime setup failed for request_code_context canary '{}': {err}",
+                    workspace.display()
+                );
+            });
+        runtime.app.pump_pending_events().await;
+
+        let ctx = ploke_tui::tools::Ctx {
+            state: Arc::clone(&runtime.state),
+            event_bus: Arc::new(ploke_tui::EventBus::new(ploke_tui::EventBusCaps::default())),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: ploke_core::ArcStr::from("ploke-workspace-context-canary"),
+        };
+        let rag = runtime
+            .state
+            .rag
+            .as_ref()
+            .expect("RAG service must be configured")
+            .clone();
+
+        let mut misses = Vec::new();
+        for term in terms {
+            let raw_hits = rag
+                .search_bm25_strict(&term, 6, ploke_core::RetrievalScope::LoadedWorkspace)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "raw BM25 search failed for term '{term}' in '{}': {err}",
+                        workspace.display()
+                    )
+                });
+            let raw_ids = raw_hits.iter().map(|(id, _score)| *id).collect::<Vec<_>>();
+            let raw_nodes = runtime
+                .state
+                .db
+                .get_snippet_nodes_ordered(raw_ids)
+                .unwrap_or_else(|err| panic!("failed to resolve raw BM25 nodes: {err}"));
+            let snippet_checks = runtime
+                .state
+                .io_handle
+                .get_snippets_batch(raw_nodes.clone())
+                .await
+                .unwrap_or_else(|err| panic!("snippet batch request failed: {err}"));
+            let snippet_ok = snippet_checks.iter().filter(|res| res.is_ok()).count();
+            let result = <ploke_tui::tools::request_code_context::RequestCodeContextGat as ploke_tui::tools::Tool>::execute(
+                ploke_tui::tools::request_code_context::RequestCodeContextParams {
+                    token_budget: Some(1_200),
+                    search_term: Some(Cow::Owned(term.clone())),
+                },
+                ctx.clone(),
+            )
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "request_code_context failed for term '{term}' in '{}': {err}",
+                    workspace.display()
+                );
+            });
+
+            let payload: ploke_core::rag_types::RequestCodeContextResult =
+                serde_json::from_str(&result.content).unwrap_or_else(|err| {
+                    panic!("request_code_context returned invalid JSON for term '{term}': {err}")
+                });
+            println!(
+                "request_code_context term={term:?} raw_bm25_hits={} snippet_ok={} first_node_path={:?} top_k={} returned={} first_path={:?}",
+                raw_hits.len(),
+                snippet_ok,
+                raw_nodes
+                    .first()
+                    .map(|node| node.file_path.to_string_lossy().into_owned()),
+                payload.top_k,
+                payload.context.len(),
+                payload
+                    .context
+                    .first()
+                    .map(|context| context.file_path.0.as_str())
+            );
+            if payload.context.is_empty() {
+                misses.push(format!("{term}: {:?}", payload.note));
+            }
+        }
+        assert!(
+            misses.is_empty(),
+            "expected request_code_context to return snippets for all terms in '{}'; misses: {}",
+            workspace.display(),
+            misses.join("; ")
+        );
+    }
+
+    fn ploke_workspace_root_for_test() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("ploke-eval crate lives under <workspace>/crates/ploke-eval")
+            .to_path_buf()
     }
 
     fn assert_live_canary_applied(fixture: &LiveCanaryFixture, run: &HeadlessRun, final_lib: &str) {

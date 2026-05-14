@@ -388,6 +388,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sparse_context_assembly_does_not_require_embedding_rows() -> Result<(), Error> {
+        use ploke_test_utils::fixture_dbs::FIXTURE_NODES_CANONICAL;
+
+        init_tracing_once();
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag_with_io(Arc::clone(&db));
+        let search_term = "use_all_const_static";
+        let budget = TokenBudget {
+            max_total: 2_000,
+            per_file_max: 2_000,
+            per_part_max: 500,
+        };
+        let strategy = RetrievalStrategy::Sparse { strict: Some(true) };
+
+        rag.bm25_rebuild().await?;
+
+        for _ in 0..10 {
+            match rag.bm25_status().await? {
+                ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } if docs > 0 => {
+                    break;
+                }
+                ploke_db::bm25_index::bm25_service::Bm25Status::Error(detail) => {
+                    panic!("BM25 rebuild entered error state: {detail}");
+                }
+                _ => sleep(Duration::from_millis(50)).await,
+            }
+        }
+
+        let mut assembled = None;
+        for _ in 0..10 {
+            match rag
+                .get_context(search_term, 5, &budget, &strategy, LOADED_WORKSPACE_SCOPE)
+                .await
+            {
+                Ok(ctx) if !ctx.parts.is_empty() => {
+                    assembled = Some(ctx);
+                    break;
+                }
+                Ok(_) => sleep(Duration::from_millis(50)).await,
+                Err(RagError::Search(message)) if message.contains("bm25 index not ready") => {
+                    sleep(Duration::from_millis(50)).await;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        let ctx = match assembled {
+            Some(ctx) => ctx,
+            None => {
+                panic!("sparse context assembly should return snippets");
+            }
+        };
+        assert!(
+            ctx.parts.iter().any(|part| part.text.contains(search_term)),
+            "expected sparse context to include snippet text containing {search_term:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
 

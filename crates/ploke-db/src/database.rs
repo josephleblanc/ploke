@@ -6,10 +6,12 @@ use crate::NodeType;
 use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-use crate::multi_embedding::db_ext::EmbeddingExt;
+use crate::get_by_id::NodePaths;
+use crate::multi_embedding::db_ext::{EmbeddingExt, METHOD_NODE_ANCESTOR_RULE};
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
-use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper, Vector};
+use crate::result::{get_byte_offsets, get_pos};
+use cozo::{DataValue, Db, MemStorage, NamedRows, ScriptMutability, UuidWrapper, Vector};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
@@ -42,6 +44,62 @@ lazy_static! {
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 pub const ACTIVE_EMBEDDING_SET_REL: &str = "active_embedding_set";
+
+fn snippet_context_nodes(
+    query_result: QueryResult,
+) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
+    let span_index = get_pos(&query_result.headers, "span").map_err(PlokeError::from)?;
+    let canon_index = get_pos(&query_result.headers, "canon_path").map_err(PlokeError::from)?;
+
+    query_result
+        .row_refs()
+        .map(|row| {
+            let id = row.get::<Uuid>("id").map_err(PlokeError::from)?;
+            let name = row.get::<String>("name").map_err(PlokeError::from)?;
+            let file_path_str = row.get::<String>("file_path").map_err(PlokeError::from)?;
+            let node_tracking_hash =
+                TrackingHash(row.get::<Uuid>("hash").map_err(PlokeError::from)?);
+            let file_tracking_hash =
+                TrackingHash(row.get::<Uuid>("file_hash").map_err(PlokeError::from)?);
+            let namespace = row.get::<Uuid>("namespace").map_err(PlokeError::from)?;
+            let span_value = row.data_value(span_index).map_err(PlokeError::from)?;
+            let span_slice = span_value.get_slice().ok_or_else(|| {
+                PlokeError::from(DbError::Cozo(format!(
+                    "Expected span to be a list, found {span_value:?}"
+                )))
+            })?;
+            let (start_byte, end_byte) = get_byte_offsets(&span_slice);
+
+            let canon_value = row.data_value(canon_index).map_err(PlokeError::from)?;
+            let canon_slice = canon_value.get_slice().ok_or_else(|| {
+                PlokeError::from(DbError::Cozo(format!(
+                    "Expected canon_path to be a list, found {canon_value:?}"
+                )))
+            })?;
+            let mut canon = canon_slice.iter().filter_map(|p| p.get_str()).join("::");
+            canon.push_str("::");
+            canon.push_str(&name);
+
+            let file_path = std::path::PathBuf::from(&file_path_str);
+            Ok((
+                EmbeddingData {
+                    id,
+                    name,
+                    file_path,
+                    start_byte,
+                    end_byte,
+                    node_tracking_hash,
+                    file_tracking_hash,
+                    namespace,
+                },
+                NodePaths {
+                    file: file_path_str,
+                    canon,
+                },
+            ))
+        })
+        .collect()
+}
 
 /// Reason an embedding set was chosen during restore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2975,6 +3033,93 @@ desc[id] := parent_of[id, parent], desc[parent]
         let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
             .get_nodes_ordered_for_set(nodes, &active_embedding_set)
+    }
+
+    /// Retrieves ordered node metadata suitable for snippet reads without requiring embeddings.
+    ///
+    /// Search backends already return node ids. Dense search proves those ids through the active
+    /// embedding index, but sparse BM25 can produce valid ids before any embedding relation has
+    /// been populated. Snippet assembly needs file paths and spans for those ids regardless of
+    /// which retrieval backend found them.
+    pub fn get_snippet_nodes_ordered(
+        &self,
+        nodes: Vec<Uuid>,
+    ) -> Result<Vec<EmbeddingData>, PlokeError> {
+        self.get_snippet_context_nodes_ordered(nodes)
+            .map(|nodes| nodes.into_iter().map(|(node, _paths)| node).collect())
+    }
+
+    /// Retrieves ordered snippet metadata and path projection in one strict batch query.
+    pub fn get_snippet_context_nodes_ordered(
+        &self,
+        nodes: Vec<Uuid>,
+    ) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
+        if nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let has_node_rule = NodeType::primary_and_assoc_nodes()
+            .iter()
+            .map(|ty| {
+                format!(
+                    r#"
+snippet_node[id, name, hash, span] :=
+    *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}}
+"#,
+                    rel = ty.relation_str()
+                )
+            })
+            .join("\n");
+
+        let script = format!(
+            r#"
+target_ids[id, ordering] <- $data
+
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+{method_ancestor_rule}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+{has_node_rule}
+
+batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
+    snippet_node[id, name, hash, span],
+    ancestor[id, mod_id],
+    *module{{id: mod_id, path: canon_path, tracking_hash: file_hash @ 'NOW'}},
+    *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}},
+    target_ids[id, ordering]
+
+?[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
+    batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering]
+:sort ordering
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
+            has_node_rule = has_node_rule
+        );
+
+        let ids_data: Vec<DataValue> = nodes
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| {
+                DataValue::List(vec![
+                    DataValue::Uuid(UuidWrapper(id)),
+                    DataValue::from(i as i64),
+                ])
+            })
+            .collect();
+
+        let mut params = BTreeMap::new();
+        params.insert("data".into(), DataValue::List(ids_data));
+
+        let query_result = self
+            .run_script(&script, params, ScriptMutability::Immutable)
+            .map(QueryResult::from)
+            .map_err(DbError::from)
+            .map_err(PlokeError::from)?;
+
+        snippet_context_nodes(query_result)
     }
 
     // TODO:migrate-multi-embed-full
