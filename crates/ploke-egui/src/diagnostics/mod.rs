@@ -3,6 +3,9 @@
 //! This module persists render-only observations made by the live egui view.
 //! It does not recompute layout or interpret run records.
 
+mod default_view;
+
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,7 +13,11 @@ use std::path::{Path, PathBuf};
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::ui::view::GraphViewDiagnostics;
+use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics};
+pub use default_view::{
+    CheckStatus as ContractCheckStatus, Layout as DefaultViewLayout,
+    Report as DefaultViewContractReport, WidthBudget as DefaultViewWidthBudget,
+};
 
 const SNAPSHOT_VERSION: &str = "ploke-egui.graph-diagnostics.v1";
 const DEFAULT_MAX_SNAPSHOTS: u64 = 10;
@@ -20,7 +27,7 @@ pub struct SnapshotSink {
     root: PathBuf,
     max_snapshots: u64,
     sequence: u64,
-    last: Option<GraphViewDiagnostics>,
+    last: Option<SnapshotObservation>,
 }
 
 impl SnapshotSink {
@@ -35,15 +42,15 @@ impl SnapshotSink {
         })
     }
 
-    pub fn observe(&mut self, diagnostics: GraphViewDiagnostics) -> io::Result<bool> {
-        if self.last.as_ref() == Some(&diagnostics) {
+    pub fn observe(&mut self, observation: SnapshotObservation) -> io::Result<bool> {
+        if self.last.as_ref() == Some(&observation) {
             return Ok(false);
         }
 
         self.sequence = self.sequence.saturating_add(1);
-        self.last = Some(diagnostics.clone());
+        self.last = Some(observation.clone());
 
-        let snapshot = Snapshot::from_diagnostics(self.sequence, diagnostics);
+        let snapshot = Snapshot::from_observation(self.sequence, observation);
         self.write_snapshot(&snapshot)?;
         Ok(true)
     }
@@ -55,11 +62,67 @@ impl SnapshotSink {
     fn write_snapshot(&self, snapshot: &Snapshot) -> io::Result<()> {
         let bytes = serde_json::to_vec_pretty(snapshot).map_err(io::Error::other)?;
         fs::write(self.root.join("latest.json"), &bytes)?;
+        fs::write(self.root.join("latest.txt"), snapshot.render_text())?;
         let slot = ((snapshot.sequence - 1) % self.max_snapshots) + 1;
         fs::write(
             self.root.join("snapshots").join(format!("{slot:02}.json")),
             bytes,
+        )?;
+        fs::write(
+            self.root.join("snapshots").join(format!("{slot:02}.txt")),
+            snapshot.render_text(),
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnapshotObservation {
+    pub diagnostics: GraphViewDiagnostics,
+    pub graph_has_content: bool,
+    pub run_error: Option<String>,
+    pub selected: Option<SelectionSnapshot>,
+}
+
+impl SnapshotObservation {
+    pub fn new(diagnostics: GraphViewDiagnostics) -> Self {
+        Self {
+            graph_has_content: diagnostics.node_count > 0,
+            diagnostics,
+            run_error: None,
+            selected: None,
+        }
+    }
+
+    pub fn with_graph_has_content(mut self, graph_has_content: bool) -> Self {
+        self.graph_has_content = graph_has_content;
+        self
+    }
+
+    pub fn with_run_error(mut self, run_error: Option<String>) -> Self {
+        self.run_error = run_error;
+        self
+    }
+
+    pub fn with_selected(mut self, selected: Option<GraphSelectionDetail>) -> Self {
+        self.selected = selected.map(SelectionSnapshot::from);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionSnapshot {
+    pub kind: String,
+    pub label: String,
+    pub detail: String,
+}
+
+impl From<GraphSelectionDetail> for SelectionSnapshot {
+    fn from(value: GraphSelectionDetail) -> Self {
+        Self {
+            kind: value.kind,
+            label: value.label,
+            detail: value.detail,
+        }
     }
 }
 
@@ -95,11 +158,38 @@ pub struct Snapshot {
     pub long_edge_count: usize,
     pub backtracking_edge_count: usize,
     pub selected_path_crossings: usize,
+    pub default_view_contract: DefaultViewContractReport,
     pub findings: Vec<SnapshotFinding>,
 }
 
 impl Snapshot {
+    pub fn from_observation(sequence: u64, observation: SnapshotObservation) -> Self {
+        let SnapshotObservation {
+            diagnostics,
+            graph_has_content,
+            run_error,
+            selected,
+        } = observation;
+        let default_view_contract = DefaultViewContractReport::from_parts(
+            &diagnostics,
+            graph_has_content,
+            run_error,
+            selected,
+        );
+        Self::from_diagnostics_and_contract(sequence, diagnostics, default_view_contract)
+    }
+
+    #[cfg(test)]
     fn from_diagnostics(sequence: u64, diagnostics: GraphViewDiagnostics) -> Self {
+        let observation = SnapshotObservation::new(diagnostics);
+        Self::from_observation(sequence, observation)
+    }
+
+    fn from_diagnostics_and_contract(
+        sequence: u64,
+        diagnostics: GraphViewDiagnostics,
+        default_view_contract: DefaultViewContractReport,
+    ) -> Self {
         let findings = ranked_findings(&diagnostics);
 
         Self {
@@ -150,8 +240,50 @@ impl Snapshot {
             long_edge_count: diagnostics.readability.long_edge_count,
             backtracking_edge_count: diagnostics.readability.backtracking_edge_count,
             selected_path_crossings: diagnostics.readability.selected_path_crossings,
+            default_view_contract,
             findings,
         }
+    }
+
+    pub fn render_text(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "ploke-egui snapshot #{}, mode {}",
+            self.sequence, self.view_mode
+        );
+        let _ = writeln!(
+            out,
+            "nodes: {}, edges: {}",
+            self.node_count, self.edge_count
+        );
+        let _ = writeln!(
+            out,
+            "components: {}, synthetic anchors visible: {}",
+            self.component_count_before_anchoring, self.synthetic_anchors_visible
+        );
+        let _ = writeln!(
+            out,
+            "readability: crossings={}, selected_path_crossings={}, long_edges={}, backtracking={}",
+            self.edge_edge_crossings,
+            self.selected_path_crossings,
+            self.long_edge_count,
+            self.backtracking_edge_count
+        );
+        let _ = writeln!(out);
+        self.default_view_contract.render_text_into(&mut out);
+        if self.findings.is_empty() {
+            let _ = writeln!(out, "findings: none");
+        } else {
+            let _ = writeln!(out, "findings:");
+            for finding in &self.findings {
+                let _ = writeln!(out, "- {:?}: {}", finding.severity, finding.title);
+                for evidence in &finding.evidence {
+                    let _ = writeln!(out, "  - {evidence}");
+                }
+            }
+        }
+        out
     }
 }
 
@@ -336,43 +468,57 @@ mod tests {
     use crate::ui::view::{
         EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
         GraphReadabilityDiagnostics, GraphViewMode,
+        artifact_tree::{Components, Edges, Marks, Nodes, Shape},
     };
+
+    fn diagnostics() -> GraphViewDiagnostics {
+        GraphViewDiagnostics {
+            mode: GraphViewMode::ArtifactTree,
+            node_count: 1,
+            edge_count: 0,
+            connectivity: GraphConnectivityDiagnostics::default(),
+            artifact_tree: Shape::default(),
+            graph_size: Vec2::new(100.0, 100.0),
+            viewport_size: Vec2::new(200.0, 200.0),
+            aspect_ratio: 1.0,
+            viewport_aspect_ratio: 1.0,
+            fitted_size: Vec2::new(100.0, 100.0),
+            fitted_fill: Vec2::new(0.5, 0.5),
+            center_offset: Vec2::ZERO,
+            edge_labels: EdgeLabelDiagnostics::default(),
+            readability: GraphReadabilityDiagnostics::default(),
+        }
+    }
 
     #[test]
     fn snapshot_findings_are_ranked_by_severity() {
-        let snapshot = Snapshot::from_diagnostics(
-            1,
-            GraphViewDiagnostics {
-                mode: GraphViewMode::ArtifactTree,
-                node_count: 4,
-                edge_count: 3,
-                connectivity: GraphConnectivityDiagnostics::default(),
-                graph_size: Vec2::new(400.0, 300.0),
-                viewport_size: Vec2::new(800.0, 600.0),
-                aspect_ratio: 1.33,
-                viewport_aspect_ratio: 1.33,
-                fitted_size: Vec2::new(600.0, 450.0),
-                fitted_fill: Vec2::new(0.75, 0.75),
-                center_offset: Vec2::ZERO,
-                edge_labels: EdgeLabelDiagnostics {
-                    label_count: 6,
-                    collision_count: 5,
-                    edge_intersection_count: 1,
-                    edge_collision_count: 0,
-                },
-                readability: GraphReadabilityDiagnostics {
-                    edge_edge_crossings: 3,
-                    edge_crossings_by_kind: EdgeCrossingsByKind {
-                        artifact_artifact: 1,
-                        candidate_candidate: 0,
-                        mixed: 2,
-                    },
-                    long_edge_count: 1,
-                    backtracking_edge_count: 0,
-                    selected_path_crossings: 5,
-                },
+        let mut diagnostics = diagnostics();
+        diagnostics.node_count = 4;
+        diagnostics.edge_count = 3;
+        diagnostics.graph_size = Vec2::new(400.0, 300.0);
+        diagnostics.viewport_size = Vec2::new(800.0, 600.0);
+        diagnostics.aspect_ratio = 1.33;
+        diagnostics.viewport_aspect_ratio = 1.33;
+        diagnostics.fitted_size = Vec2::new(600.0, 450.0);
+        diagnostics.fitted_fill = Vec2::new(0.75, 0.75);
+        diagnostics.edge_labels = EdgeLabelDiagnostics {
+            label_count: 6,
+            collision_count: 5,
+            edge_intersection_count: 1,
+            edge_collision_count: 0,
+        };
+        diagnostics.readability = GraphReadabilityDiagnostics {
+            edge_edge_crossings: 3,
+            edge_crossings_by_kind: EdgeCrossingsByKind {
+                artifact_artifact: 1,
+                candidate_candidate: 0,
+                mixed: 2,
             },
-        );
+            long_edge_count: 1,
+            backtracking_edge_count: 0,
+            selected_path_crossings: 5,
+        };
+        let snapshot = Snapshot::from_diagnostics(1, diagnostics);
 
         let severities: Vec<_> = snapshot
             .findings
@@ -397,53 +543,162 @@ mod tests {
 
     #[test]
     fn clean_snapshot_has_no_findings() {
-        let snapshot = Snapshot::from_diagnostics(
-            1,
-            GraphViewDiagnostics {
-                mode: GraphViewMode::ArtifactTree,
-                node_count: 1,
-                edge_count: 0,
-                connectivity: GraphConnectivityDiagnostics::default(),
-                graph_size: Vec2::new(100.0, 100.0),
-                viewport_size: Vec2::new(200.0, 200.0),
-                aspect_ratio: 1.0,
-                viewport_aspect_ratio: 1.0,
-                fitted_size: Vec2::new(100.0, 100.0),
-                fitted_fill: Vec2::new(0.5, 0.5),
-                center_offset: Vec2::ZERO,
-                edge_labels: EdgeLabelDiagnostics::default(),
-                readability: GraphReadabilityDiagnostics::default(),
-            },
-        );
+        let snapshot = Snapshot::from_diagnostics(1, diagnostics());
 
         assert!(snapshot.findings.is_empty());
     }
 
     #[test]
     fn thin_horizontal_composition_is_high_severity() {
-        let snapshot = Snapshot::from_diagnostics(
-            1,
-            GraphViewDiagnostics {
-                mode: GraphViewMode::ArtifactTree,
-                node_count: 31,
-                edge_count: 30,
-                connectivity: GraphConnectivityDiagnostics::default(),
-                graph_size: Vec2::new(7790.0, 282.0),
-                viewport_size: Vec2::new(674.0, 584.0),
-                aspect_ratio: 27.6,
-                viewport_aspect_ratio: 1.15,
-                fitted_size: Vec2::new(552.0, 20.0),
-                fitted_fill: Vec2::new(0.82, 0.034),
-                center_offset: Vec2::ZERO,
-                edge_labels: EdgeLabelDiagnostics::default(),
-                readability: GraphReadabilityDiagnostics::default(),
-            },
-        );
+        let mut diagnostics = diagnostics();
+        diagnostics.node_count = 31;
+        diagnostics.edge_count = 30;
+        diagnostics.graph_size = Vec2::new(7790.0, 282.0);
+        diagnostics.viewport_size = Vec2::new(674.0, 584.0);
+        diagnostics.aspect_ratio = 27.6;
+        diagnostics.viewport_aspect_ratio = 1.15;
+        diagnostics.fitted_size = Vec2::new(552.0, 20.0);
+        diagnostics.fitted_fill = Vec2::new(0.82, 0.034);
+
+        let snapshot = Snapshot::from_diagnostics(1, diagnostics);
 
         assert_eq!(snapshot.findings[0].severity, FindingSeverity::High);
         assert_eq!(
             snapshot.findings[0].title,
             "Graph composition collapses into a thin horizontal strip."
         );
+    }
+
+    #[test]
+    fn default_view_contract_reports_current_layout_gaps() {
+        let mut diagnostics = diagnostics();
+        diagnostics.node_count = 3;
+        diagnostics.edge_count = 2;
+        diagnostics.artifact_tree = Shape::new(
+            Nodes::new(3),
+            Edges::new(1, 1),
+            Components::new(2, 2, 1),
+            Marks::new(1),
+        );
+        diagnostics.graph_size = Vec2::new(300.0, 200.0);
+        diagnostics.viewport_size = Vec2::new(600.0, 400.0);
+        diagnostics.aspect_ratio = 1.5;
+        diagnostics.viewport_aspect_ratio = 1.5;
+        diagnostics.fitted_size = Vec2::new(300.0, 200.0);
+
+        let snapshot = Snapshot::from_diagnostics(1, diagnostics);
+
+        let report = &snapshot.default_view_contract;
+        assert!(report.layout.left_sidebar_present);
+        assert!(report.layout.center_canvas_present);
+        assert!(!report.layout.top_strip_present);
+        assert!(!report.layout.right_inspector_present);
+        assert!(!report.layout.bottom_timeline_present);
+        assert_eq!(
+            report.layout.width_budget.default_window_width_logical_px,
+            800
+        );
+        assert_eq!(
+            report.layout.width_budget.left_sidebar_width_logical_px,
+            200
+        );
+        assert_eq!(
+            report.layout.width_budget.left_sidebar_max_width_logical_px,
+            240
+        );
+        assert_eq!(
+            report.layout.width_budget.center_canvas_width_logical_px,
+            600
+        );
+        assert_eq!(
+            report
+                .layout
+                .width_budget
+                .min_center_canvas_width_logical_px,
+            560
+        );
+        assert_eq!(report.layout.width_budget.center_canvas_width_percent, 75);
+        assert_eq!(
+            report.layout.width_budget.min_center_canvas_width_percent,
+            70
+        );
+        assert!(report.layout.width_budget.center_canvas_satisfies_minimum());
+        assert_eq!(report.center.nodes.a, 3);
+        assert_eq!(report.center.edges.p_h, 1);
+        assert_eq!(report.center.edges.p_b, 1);
+        assert_eq!(report.center.edges.p(), 2);
+        assert_eq!(report.center.components.weak, 2);
+        assert_eq!(report.center.components.roots, 2);
+        assert_eq!(report.center.components.orphan_artifacts, 1);
+        assert!(!report.center.components.weakly_connected);
+        assert_eq!(report.center.marks.ruler_highlights, 1);
+
+        let statuses = report
+            .checks
+            .iter()
+            .map(|check| (check.id.as_str(), check.status))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            statuses["default-mode-artifact-tree"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["synthetic-anchors-hidden"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["artifact-node-set-reported"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["artifact-edge-sets-reported"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["artifact-components-reported"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["ruler-highlight-count-reported"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(
+            statuses["center-canvas-width-budget"],
+            ContractCheckStatus::Passed
+        );
+        assert_eq!(statuses["top-strip-present"], ContractCheckStatus::Missing);
+        assert_eq!(
+            statuses["right-inspector-present"],
+            ContractCheckStatus::Missing
+        );
+        assert_eq!(
+            statuses["bottom-timeline-present"],
+            ContractCheckStatus::Missing
+        );
+    }
+
+    #[test]
+    fn default_view_contract_text_names_failed_checks() {
+        let mut diagnostics = diagnostics();
+        diagnostics.mode = GraphViewMode::Lineage;
+        diagnostics.node_count = 0;
+        diagnostics.connectivity.synthetic_anchors_visible = true;
+        diagnostics.viewport_size = Vec2::new(100.0, 100.0);
+        diagnostics.fitted_fill = Vec2::new(1.0, 1.0);
+
+        let snapshot = Snapshot::from_observation(
+            1,
+            SnapshotObservation::new(diagnostics).with_graph_has_content(true),
+        );
+
+        let text = snapshot.render_text();
+        assert!(text.contains("default-view contract:"));
+        assert!(text.contains(
+            "layout widths: default_window=800px, left_sidebar=200px, left_sidebar_max=240px, center_canvas=600px"
+        ));
+        assert!(text.contains("Failed: default-mode-artifact-tree"));
+        assert!(text.contains("Failed: non-empty-artifact-run-renders-nodes"));
+        assert!(text.contains("Failed: synthetic-anchors-hidden"));
+        assert!(text.contains("Missing: right-inspector-present"));
     }
 }

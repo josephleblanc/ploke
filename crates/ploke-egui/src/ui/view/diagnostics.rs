@@ -9,7 +9,7 @@ use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
 use super::{
     EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
-    GraphReadabilityDiagnostics, GraphViewDiagnostics, GraphViewMode,
+    GraphReadabilityDiagnostics, GraphViewDiagnostics, GraphViewMode, artifact_tree,
 };
 
 const LONG_EDGE_MEDIAN_MULTIPLE: f32 = 2.0;
@@ -21,6 +21,7 @@ pub(super) fn graph_diagnostics(
     style: ViewStyle,
     edge_labels: EdgeLabelDiagnostics,
     connectivity: GraphConnectivityDiagnostics,
+    artifact_tree: artifact_tree::Shape,
     mode: GraphViewMode,
 ) -> Option<GraphViewDiagnostics> {
     let bounds = node_bounds(graph)?;
@@ -49,6 +50,7 @@ pub(super) fn graph_diagnostics(
             .filter(|edge| edge.payload().visible())
             .count(),
         connectivity,
+        artifact_tree,
         graph_size,
         viewport_size,
         aspect_ratio: graph_size.x / graph_size.y,

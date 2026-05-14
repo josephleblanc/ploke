@@ -1,5 +1,6 @@
 //! 2D graph widget and interaction state.
 
+pub mod artifact_tree;
 mod diagnostics;
 mod edge;
 mod geometry;
@@ -10,6 +11,7 @@ mod projection;
 mod style;
 
 use eframe::egui;
+use eframe::egui::Vec2;
 use ploke_tree::Graph as DomainGraph;
 
 pub use style::{
@@ -88,6 +90,17 @@ impl GraphView {
         }
     }
 
+    pub fn contract_diagnostics(
+        graph: &DomainGraph,
+        mode: GraphViewMode,
+        viewport_size: Vec2,
+    ) -> Option<GraphViewDiagnostics> {
+        let view_style = ViewStyle::default();
+        let mut cache = GraphViewCache::default();
+        cache.refresh(graph, view_style, mode);
+        cache.diagnostics(viewport_size, view_style, EdgeLabelDiagnostics::default())
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, graph: &DomainGraph) {
         let viewport = ui.available_size();
         if viewport_resized(self.last_viewport, viewport) {
@@ -131,6 +144,7 @@ pub struct GraphViewDiagnostics {
     pub node_count: usize,
     pub edge_count: usize,
     pub connectivity: GraphConnectivityDiagnostics,
+    pub artifact_tree: artifact_tree::Shape,
     pub graph_size: egui::Vec2,
     pub viewport_size: egui::Vec2,
     pub aspect_ratio: f32,
@@ -162,22 +176,15 @@ impl GraphViewMode {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GraphConnectivityDiagnostics {
     pub component_count_before_anchoring: usize,
-    pub component_roots_before_anchoring: Vec<ComponentRootDiagnostic>,
     pub hidden_record_count: usize,
     pub hidden_edge_count: usize,
     pub hidden_evidence_count: usize,
     pub hidden_operation_count: usize,
     pub hidden_unattached_component_count: usize,
     pub synthetic_anchors_visible: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentRootDiagnostic {
-    pub kind: String,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

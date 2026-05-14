@@ -23,10 +23,14 @@
 //! needed by that surface. Runtime authority and active loop behavior stay out
 //! of this crate.
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cli;
 pub mod demo;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod diagnostics;
 pub mod import;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod run_picker;
 pub mod ui;
 
 #[cfg(not(target_arch = "wasm32"))]

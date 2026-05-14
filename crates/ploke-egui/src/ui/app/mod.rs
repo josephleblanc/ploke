@@ -1,16 +1,26 @@
 //! eframe application shell for the operator graph UI.
 
+pub(crate) mod layout;
+
 use eframe::egui;
 use ploke_tree::Graph;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::diagnostics::SnapshotSink;
+use crate::diagnostics::{SnapshotObservation, SnapshotSink};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::import::graph_from_run_root;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::run_picker::RunPicker;
 use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
 pub struct OperatorApp {
     graph: Graph,
     view: GraphView,
+    #[cfg(not(target_arch = "wasm32"))]
+    run_picker: RunPicker,
+    #[cfg(not(target_arch = "wasm32"))]
+    run_error: Option<String>,
     #[cfg(not(target_arch = "wasm32"))]
     diagnostics_sink: Option<SnapshotSink>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -25,10 +35,27 @@ impl OperatorApp {
             graph,
             view: GraphView::default(),
             #[cfg(not(target_arch = "wasm32"))]
+            run_picker: RunPicker::from_default_root(),
+            #[cfg(not(target_arch = "wasm32"))]
+            run_error: None,
+            #[cfg(not(target_arch = "wasm32"))]
             diagnostics_sink: None,
             #[cfg(not(target_arch = "wasm32"))]
             close_after_snapshot: false,
             #[cfg(not(target_arch = "wasm32"))]
+            diagnostics_error: None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_with_run_picker(graph: Graph, run_picker: RunPicker) -> Self {
+        Self {
+            graph,
+            view: GraphView::default(),
+            run_picker,
+            run_error: None,
+            diagnostics_sink: None,
+            close_after_snapshot: false,
             diagnostics_error: None,
         }
     }
@@ -52,26 +79,30 @@ impl OperatorApp {
 
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::left("run_navigation").show_inside(ui, |ui| {
-            ui.heading("Run");
-            render_mode_picker(ui, &mut self.view);
-            render_graph_facts(ui, &self.graph);
-            if let Some(selection) = self.view.selected_node_detail() {
-                ui.separator();
-                ui.heading("Selected");
-                ui.label(format!("{} {}", selection.kind, selection.label));
-                ui.monospace(selection.detail);
-            }
-            if let Some(diagnostics) = self.view.diagnostics() {
-                ui.separator();
-                render_diagnostics(ui, diagnostics);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(error) = &self.diagnostics_error {
-                ui.separator();
-                ui.label(error.as_str());
-            }
-        });
+        egui::Panel::left("run_navigation")
+            .default_size(layout::LEFT_SIDEBAR_WIDTH)
+            .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
+            .show_inside(ui, |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.render_run_picker(ui);
+                render_mode_picker(ui, &mut self.view);
+                render_graph_facts(ui, &self.graph);
+                if let Some(selection) = self.view.selected_node_detail() {
+                    ui.separator();
+                    ui.heading("Selected");
+                    ui.label(format!("{} {}", selection.kind, selection.label));
+                    ui.monospace(selection.detail);
+                }
+                if let Some(diagnostics) = self.view.diagnostics() {
+                    ui.separator();
+                    render_diagnostics(ui, diagnostics);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(error) = &self.diagnostics_error {
+                    ui.separator();
+                    ui.label(error.as_str());
+                }
+            });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if graph_has_content(&self.graph) {
@@ -92,6 +123,27 @@ impl eframe::App for OperatorApp {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl OperatorApp {
+    fn render_run_picker(&mut self, ui: &mut egui::Ui) {
+        if let Some(path) = self.run_picker.show(ui) {
+            match graph_from_run_root(&path) {
+                Ok(graph) => {
+                    let mode = self.view.mode();
+                    self.graph = graph;
+                    self.view = GraphView::default();
+                    self.view.set_mode(mode);
+                    self.run_error = None;
+                }
+                Err(error) => {
+                    self.run_error = Some(format!("Run import failed: {error}"));
+                }
+            }
+        }
+
+        if let Some(error) = &self.run_error {
+            ui.label(error);
+        }
+    }
+
     fn emit_diagnostics(&mut self, ctx: &egui::Context) {
         let Some(sink) = &mut self.diagnostics_sink else {
             return;
@@ -99,8 +151,12 @@ impl OperatorApp {
         let Some(diagnostics) = self.view.diagnostics() else {
             return;
         };
+        let observation = SnapshotObservation::new(diagnostics)
+            .with_graph_has_content(graph_has_content(&self.graph))
+            .with_run_error(self.run_error.clone())
+            .with_selected(self.view.selected_node_detail());
 
-        match sink.observe(diagnostics) {
+        match sink.observe(observation) {
             Ok(true) if self.close_after_snapshot => {
                 self.diagnostics_sink = None;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);

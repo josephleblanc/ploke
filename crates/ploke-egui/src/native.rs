@@ -3,22 +3,48 @@
 use std::error::Error;
 use std::path::PathBuf;
 
-#[cfg(feature = "dev")]
-use clap::Parser;
-
+use crate::cli::Run;
 use crate::demo::sample_graph;
 #[cfg(feature = "dev")]
-use crate::diagnostics::SnapshotSink;
+use crate::diagnostics::{Snapshot, SnapshotObservation, SnapshotSink};
 use crate::import::graph_from_run_root;
-use crate::ui::app::OperatorApp;
-use crate::ui::view::GraphViewMode;
+use crate::run_picker::RunPicker;
+use crate::ui::app::{OperatorApp, layout};
+use crate::ui::view::{GraphView, GraphViewMode};
+use eframe::egui::{Vec2, ViewportBuilder};
 use ploke_tree::Graph;
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let run = Run::from_env();
-    let options = eframe::NativeOptions::default();
-    let graph = initial_graph(run.run_root)?;
-    let app = app(graph, run.mode, run.snapshot)?;
+    let options = eframe::NativeOptions {
+        viewport: ViewportBuilder::default()
+            .with_inner_size([layout::DEFAULT_WINDOW_WIDTH, layout::DEFAULT_WINDOW_HEIGHT]),
+        ..Default::default()
+    };
+    let mut picker = RunPicker::from_default_root();
+    let initial_run_root = run
+        .run_root
+        .or_else(|| picker.first_loadable_path().map(PathBuf::from));
+    if let Some(path) = initial_run_root.as_deref() {
+        picker.select_path(path);
+    }
+    #[cfg(feature = "dev")]
+    if run.run_picker_report {
+        print!("{}", picker.diagnostics().render_text());
+        return Ok(());
+    }
+    #[cfg(feature = "dev")]
+    if run.artifact_connectivity_report {
+        print!("{}", picker.artifact_connectivity_batch().render_text());
+        return Ok(());
+    }
+    let graph = initial_graph(initial_run_root)?;
+    #[cfg(feature = "dev")]
+    if run.contract_report {
+        print_contract_report(&graph, run.mode)?;
+        return Ok(());
+    }
+    let app = app(graph, run.mode, run.snapshot, picker)?;
     eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
     Ok(())
 }
@@ -31,8 +57,13 @@ fn initial_graph(run_root: Option<PathBuf>) -> Result<Graph, Box<dyn Error>> {
     Ok(graph_from_run_root(run_root)?)
 }
 
-fn app(graph: Graph, mode: GraphViewMode, snapshot: bool) -> Result<OperatorApp, Box<dyn Error>> {
-    let app = OperatorApp::new(graph).with_mode(mode);
+fn app(
+    graph: Graph,
+    mode: GraphViewMode,
+    snapshot: bool,
+    picker: RunPicker,
+) -> Result<OperatorApp, Box<dyn Error>> {
+    let app = OperatorApp::new_with_run_picker(graph, picker).with_mode(mode);
     #[cfg(feature = "dev")]
     {
         if !snapshot {
@@ -48,69 +79,35 @@ fn app(graph: Graph, mode: GraphViewMode, snapshot: bool) -> Result<OperatorApp,
     }
 }
 
-#[derive(Debug)]
-struct Run {
-    run_root: Option<PathBuf>,
-    mode: GraphViewMode,
-    snapshot: bool,
-}
-
-impl Run {
-    fn from_env() -> Self {
-        #[cfg(feature = "dev")]
-        {
-            let args = Args::parse();
-            return Self {
-                run_root: args.run_root.or(args.positional_run_root),
-                mode: args.mode.unwrap_or_default(),
-                snapshot: args.snapshot,
-            };
-        }
-
-        #[cfg(not(feature = "dev"))]
-        {
-            Self {
-                run_root: std::env::args_os().nth(1).map(PathBuf::from),
-                mode: GraphViewMode::ArtifactTree,
-                snapshot: false,
-            }
-        }
-    }
-}
-
 #[cfg(feature = "dev")]
-#[derive(Debug, Parser)]
-#[command(about = "Run the ploke operator graph UI")]
-struct Args {
-    #[arg(value_name = "RUN_ROOT")]
-    positional_run_root: Option<PathBuf>,
-
-    #[arg(long, value_name = "RUN_ROOT")]
-    run_root: Option<PathBuf>,
-
-    #[arg(long)]
-    snapshot: bool,
-
-    #[arg(
-        long,
-        value_name = "MODE",
-        value_parser = parse_mode,
-        help = "Initial graph mode: artifact-tree, lineage, both, or none"
-    )]
-    mode: Option<GraphViewMode>,
-}
-
-#[cfg(feature = "dev")]
-fn parse_mode(value: &str) -> Result<GraphViewMode, String> {
-    match value {
-        "artifact-tree" | "artifact" => Ok(GraphViewMode::ArtifactTree),
-        "lineage" => Ok(GraphViewMode::Lineage),
-        "artifact-and-lineage" | "both" => Ok(GraphViewMode::ArtifactAndLineage),
-        "empty" | "none" => Ok(GraphViewMode::Empty),
-        other => Err(format!(
-            "unknown graph mode '{other}' (expected artifact-tree, lineage, both, or none)"
-        )),
-    }
+fn print_contract_report(graph: &Graph, mode: GraphViewMode) -> Result<(), Box<dyn Error>> {
+    let diagnostics = GraphView::contract_diagnostics(
+        graph,
+        mode,
+        Vec2::new(
+            layout::DEFAULT_CENTER_CANVAS_WIDTH,
+            layout::DEFAULT_WINDOW_HEIGHT,
+        ),
+    )
+    .ok_or_else(|| {
+        format!(
+            "could not produce contract diagnostics for mode {}",
+            mode.as_str()
+        )
+    })?;
+    let observation = SnapshotObservation::new(diagnostics).with_graph_has_content(
+        graph.history.blocks.len()
+            + graph.candidates.candidates.len()
+            + graph.artifacts.artifacts.len()
+            + graph.selections.selections.len()
+            + graph.runtimes.runtimes.len()
+            + graph.operations.operations.len()
+            + graph.evidence.attachments.len()
+            > 0,
+    );
+    let snapshot = Snapshot::from_observation(1, observation);
+    print!("{}", snapshot.render_text());
+    Ok(())
 }
 
 #[cfg(feature = "dev")]
