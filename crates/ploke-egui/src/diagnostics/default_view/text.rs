@@ -33,6 +33,32 @@ impl Report {
             self.layout.width_budget.min_center_canvas_width_percent,
             self.layout.width_budget.center_canvas_satisfies_minimum()
         );
+        if let Some(identity) = &self.graph_identity {
+            let _ = writeln!(
+                out,
+                "graph identity: F_nodes={}, F_roots={}, visible_nodes={}, visible_edges={}, A_nodes={}, P_H={}, P_B={}, visible_fingerprint={}",
+                identity.forest_nodes,
+                identity.forest_roots,
+                identity.default_visible_nodes,
+                identity.default_visible_edges,
+                identity.artifact_tree_nodes,
+                identity.artifact_tree_p_h,
+                identity.artifact_tree_p_b,
+                identity.visible_node_fingerprint
+            );
+            let _ = writeln!(
+                out,
+                "graph identity keys: [{}]{}",
+                summarize_items(&identity.visible_node_keys_preview),
+                if identity.visible_node_keys_truncated == 0 {
+                    String::new()
+                } else {
+                    format!(" +{}", identity.visible_node_keys_truncated)
+                }
+            );
+        } else {
+            let _ = writeln!(out, "graph identity: not_recorded");
+        }
         let _ = writeln!(
             out,
             "controls: run_selector={}, mode_selector={}, load_state={:?}, quick_filters={}",

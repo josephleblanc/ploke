@@ -8,7 +8,7 @@ use ploke_tree::Graph;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
-    RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
+    GraphIdentity, RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
     write_manual_snapshot,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -212,10 +212,12 @@ impl OperatorApp {
             return;
         };
         let run = self.run_snapshot();
+        let graph_identity = GraphIdentity::from_graph(&self.graph, &diagnostics);
         let observation = SnapshotObservation::new(diagnostics)
             .with_graph_has_content(graph_has_content(&self.graph))
             .with_run_error(self.run_error.clone())
             .with_run(run)
+            .with_graph_identity(graph_identity)
             .with_selected(self.view.selected_node_detail())
             .with_selected_inspector(self.selected_inspector())
             .with_artifact_components(artifact_component_breakdown(&self.graph));
@@ -238,10 +240,13 @@ impl OperatorApp {
 
     fn render_diagnostics_export(&mut self, ui: &mut egui::Ui, diagnostics: GraphViewDiagnostics) {
         if ui.button("Write diagnostics").clicked() {
+            let run = self.run_snapshot();
+            let graph_identity = GraphIdentity::from_graph(&self.graph, &diagnostics);
             let observation = SnapshotObservation::new(diagnostics)
                 .with_graph_has_content(graph_has_content(&self.graph))
                 .with_run_error(self.run_error.clone())
-                .with_run(self.run_snapshot())
+                .with_run(run)
+                .with_graph_identity(graph_identity)
                 .with_selected(self.view.selected_node_detail())
                 .with_selected_inspector(self.selected_inspector())
                 .with_artifact_components(artifact_component_breakdown(&self.graph));

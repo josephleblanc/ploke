@@ -228,6 +228,14 @@ Testable signals:
 
 - `view.mode = "artifact-tree"` by default.
 - `canvas.present = true`
+- `graph_identity.forest_nodes` reports the loaded `Graph.forest` node count.
+- `graph_identity.default_visible_nodes` reports the rendered default
+  projection node count.
+- `graph_identity.artifact_tree_nodes`, `graph_identity.artifact_tree_P_H`,
+  and `graph_identity.artifact_tree_P_B` report the borrowed artifact-tree
+  relation counts even when the default canvas is using `F`.
+- `graph_identity.visible_node_fingerprint` is stable for the visible default
+  node key set, so CLI and app-written diagnostics can be compared directly.
 - `canvas.primary_node_set = F` when `F` is non-empty.
 - `canvas.primary_edge_set = E_F` when `F` is non-empty.
 - `canvas.primary_node_set = A` only for fallback graphs without `F`.

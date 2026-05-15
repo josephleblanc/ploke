@@ -4,6 +4,7 @@
 //! It does not recompute layout or interpret run records.
 
 mod default_view;
+mod graph_identity;
 
 use std::fmt::Write as _;
 use std::fs;
@@ -19,6 +20,7 @@ pub use default_view::{
     CheckStatus as ContractCheckStatus, ComponentBreakdown, Layout as DefaultViewLayout,
     Report as DefaultViewContractReport, WidthBudget as DefaultViewWidthBudget,
 };
+pub use graph_identity::GraphIdentity;
 
 const SNAPSHOT_VERSION: &str = "ploke-egui.graph-diagnostics.v1";
 const DEFAULT_MAX_SNAPSHOTS: u64 = 10;
@@ -94,6 +96,7 @@ pub struct SnapshotObservation {
     pub graph_has_content: bool,
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
+    pub graph_identity: Option<GraphIdentity>,
     pub selected: Option<SelectionSnapshot>,
     pub selected_inspector: Option<SelectionInspectorSnapshot>,
 }
@@ -106,6 +109,7 @@ impl SnapshotObservation {
             artifact_components: Vec::new(),
             run_error: None,
             run: None,
+            graph_identity: None,
             selected: None,
             selected_inspector: None,
         }
@@ -123,6 +127,11 @@ impl SnapshotObservation {
 
     pub fn with_run(mut self, run: Option<RunSnapshot>) -> Self {
         self.run = run;
+        self
+    }
+
+    pub fn with_graph_identity(mut self, graph_identity: GraphIdentity) -> Self {
+        self.graph_identity = Some(graph_identity);
         self
     }
 
@@ -217,6 +226,7 @@ impl Snapshot {
             graph_has_content,
             run_error,
             run,
+            graph_identity,
             selected,
             selected_inspector,
         } = observation;
@@ -224,6 +234,7 @@ impl Snapshot {
             &diagnostics,
             graph_has_content,
             run_error,
+            graph_identity,
             selected,
             selected_inspector,
             artifact_components,

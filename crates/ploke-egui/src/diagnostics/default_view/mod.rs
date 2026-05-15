@@ -5,7 +5,7 @@ mod text;
 
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostics::SelectionSnapshot;
+use crate::diagnostics::{GraphIdentity, SelectionSnapshot};
 use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphViewDiagnostics, artifact_tree as tree};
 
@@ -18,6 +18,7 @@ const VERSION: &str = "ploke-egui.default-view-contract.v1";
 pub struct Report {
     pub schema_version: String,
     pub layout: Layout,
+    pub graph_identity: Option<GraphIdentity>,
     pub controls: Controls,
     pub center: ArtifactTree,
     pub inspector: Inspector,
@@ -30,6 +31,7 @@ impl Report {
         diagnostics: &GraphViewDiagnostics,
         graph_has_content: bool,
         run_error: Option<String>,
+        graph_identity: Option<GraphIdentity>,
         selected: Option<SelectionSnapshot>,
         selected_inspector: Option<SelectionInspectorSnapshot>,
         component_breakdown: Vec<ComponentBreakdown>,
@@ -67,6 +69,7 @@ impl Report {
         Self {
             schema_version: VERSION.to_owned(),
             layout,
+            graph_identity,
             controls,
             center,
             inspector,
