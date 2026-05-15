@@ -203,6 +203,20 @@ enum AttemptEnd {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Staged {
+    Edit(Uuid),
+    Create(Uuid),
+}
+
+impl Staged {
+    fn id(self) -> Uuid {
+        match self {
+            Self::Edit(id) | Self::Create(id) => id,
+        }
+    }
+}
+
 async fn run_attempt(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     workspace_path: &Path,
@@ -213,12 +227,13 @@ async fn run_attempt(
 ) -> Result<AttemptEnd, Error> {
     use ploke_tui::{
         AppEvent,
-        app_state::{StateCommand, core::EditProposalStatus, events::SystemEvent},
+        app_state::{StateCommand, events::SystemEvent},
     };
 
     let cmd_tx = runtime.app.state_cmd_tx();
     let mut pending_retry = None::<String>;
     let mut provider_failure = None::<String>;
+    let mut staged = Vec::<Staged>::new();
 
     loop {
         runtime.app.pump_pending_events().await;
@@ -302,7 +317,17 @@ async fn run_attempt(
                     call_id,
                     truncate_chars(&content, 240)
                 ));
-                if let Some(proposal_id) = ui_payload.and_then(|payload| payload.proposal_id) {
+                let Some(payload) = ui_payload else {
+                    continue;
+                };
+                if let Some(proposal_id) = payload.proposal_id {
+                    let staged_item = Staged::Edit(proposal_id);
+                    if staged.contains(&staged_item) {
+                        observer.emit(format!(
+                            "attempt {turn} proposal_already_staged id={proposal_id}"
+                        ));
+                        continue;
+                    }
                     let Some(proposal) = runtime
                         .state
                         .proposals
@@ -360,77 +385,76 @@ async fn run_attempt(
                         return Ok(AttemptEnd::RetryFailure(retry));
                     }
 
-                    observer.emit(format!("attempt {turn} proposal_approve id={proposal_id}"));
-                    send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
-
-                    loop {
-                        runtime.app.pump_pending_events().await;
-                        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        let Some(updated) = runtime
-                            .state
-                            .proposals
-                            .read()
-                            .await
-                            .get(&proposal_id)
-                            .cloned()
-                        else {
-                            continue;
-                        };
-                        match updated.status {
-                            EditProposalStatus::Applied => {
-                                let paths = proposal_paths(&updated);
-                                run.attempts.push(HeadlessAttempt {
-                                    turn,
-                                    proposal_id: Some(proposal_id),
-                                    result: HeadlessAttemptResult::Applied {
-                                        paths: paths.clone(),
-                                    },
-                                });
-                                observer.emit(format!(
-                                    "attempt {turn} proposal_applied id={proposal_id}"
-                                ));
-                                return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
-                                    proposal_id,
-                                    request_id,
-                                    changed_paths: paths,
-                                }));
-                            }
-                            EditProposalStatus::Failed(reason)
-                            | EditProposalStatus::Stale(reason) => {
-                                run.attempts.push(HeadlessAttempt {
-                                    turn,
-                                    proposal_id: Some(proposal_id),
-                                    result: HeadlessAttemptResult::Rejected {
-                                        reason: reason.clone(),
-                                    },
-                                });
-                                pending_retry = Some(reason);
-                                observer.emit(format!(
-                                    "attempt {turn} proposal_apply_failed id={} reason={}",
-                                    proposal_id,
-                                    truncate_chars(&pending_retry.clone().unwrap_or_default(), 240)
-                                ));
-                                break;
-                            }
-                            EditProposalStatus::Denied => {
-                                let reason = "proposal was denied before apply".to_string();
-                                run.attempts.push(HeadlessAttempt {
-                                    turn,
-                                    proposal_id: Some(proposal_id),
-                                    result: HeadlessAttemptResult::Rejected {
-                                        reason: reason.clone(),
-                                    },
-                                });
-                                pending_retry = Some(reason);
-                                observer.emit(format!(
-                                    "attempt {turn} proposal_denied id={proposal_id}"
-                                ));
-                                break;
-                            }
-                            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
-                        }
+                    staged.push(staged_item);
+                    observer.emit(format!("attempt {turn} proposal_staged id={proposal_id}"));
+                } else if payload.tool == ploke_tui::tools::ToolName::CreateFile {
+                    let staged_item = Staged::Create(request_id);
+                    if staged.contains(&staged_item) {
+                        observer.emit(format!(
+                            "attempt {turn} creation_already_staged id={request_id}"
+                        ));
+                        continue;
                     }
+                    let Some(proposal) = runtime
+                        .state
+                        .create_proposals
+                        .read()
+                        .await
+                        .get(&request_id)
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    let paths = proposal.files.clone();
+                    run.events.push(Event::Proposal {
+                        id: request_id.to_string(),
+                        edit_count: proposal.creates.len(),
+                        paths: paths.clone(),
+                    });
+                    observer.emit(format!(
+                        "attempt {turn} creation id={} edit_count={} paths={}",
+                        request_id,
+                        proposal.creates.len(),
+                        join_paths(&paths)
+                    ));
+                    if paths.is_empty() {
+                        run.attempts.push(HeadlessAttempt {
+                            turn,
+                            proposal_id: Some(request_id),
+                            result: HeadlessAttemptResult::Rejected {
+                                reason: Feedback::from_outcome(&Outcome::Rejected(Reject::Empty))
+                                    .message()
+                                    .to_string(),
+                            },
+                        });
+                        let feedback =
+                            "No material file creation was staged; make a concrete bounded edit."
+                                .to_string();
+                        observer.emit(format!("attempt {turn} creation_rejected empty"));
+                        return Ok(AttemptEnd::RetryFailure(feedback));
+                    }
+
+                    let rejection = classify_paths(workspace_path, edit_policy, &paths);
+                    if let Some(rejection) = rejection {
+                        let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
+                        send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await?;
+                        run.attempts.push(HeadlessAttempt {
+                            turn,
+                            proposal_id: Some(request_id),
+                            result: HeadlessAttemptResult::Rejected {
+                                reason: feedback.message().to_string(),
+                            },
+                        });
+                        let retry = feedback.message().to_string();
+                        observer.emit(format!(
+                            "attempt {turn} creation_rejected {}",
+                            truncate_chars(feedback.message(), 240)
+                        ));
+                        return Ok(AttemptEnd::RetryFailure(retry));
+                    }
+
+                    staged.push(staged_item);
+                    observer.emit(format!("attempt {turn} creation_staged id={request_id}"));
                 }
             }
             AppEvent::System(SystemEvent::ToolCallFailed { call_id, error, .. }) => {
@@ -514,24 +538,25 @@ async fn run_attempt(
                         HeadlessTerminal::ProviderUnavailable { reason },
                     ));
                 }
-                if let Some(feedback) = pending_retry.take() {
+                let repaired_failure = pending_retry.take();
+
+                if outcome != "completed" {
+                    let feedback = if let Some(feedback) = repaired_failure {
+                        feedback
+                    } else if summary.trim().is_empty() {
+                        format!(
+                            "The model turn ended with outcome `{outcome}` before completing the candidate."
+                        )
+                    } else {
+                        summary.clone()
+                    };
                     return Ok(AttemptEnd::RetryFailure(feedback));
                 }
 
-                let has_pending = runtime
-                    .state
-                    .proposals
-                    .read()
-                    .await
-                    .values()
-                    .any(|proposal| {
-                        matches!(
-                            proposal.status,
-                            EditProposalStatus::Pending | EditProposalStatus::Approved
-                        )
-                    });
-                if !has_pending {
-                    let feedback = if summary.trim().is_empty() {
+                if staged.is_empty() {
+                    let feedback = if let Some(feedback) = repaired_failure {
+                        feedback
+                    } else if summary.trim().is_empty() {
                         "The model returned without staging an edit; make a concrete bounded edit."
                             .to_string()
                     } else {
@@ -550,8 +575,208 @@ async fn run_attempt(
                         summary,
                     });
                 }
+
+                if let Some(feedback) = repaired_failure {
+                    observer.emit(format!(
+                        "attempt {turn} recovered_tool_failure_before_apply {}",
+                        truncate_chars(&feedback, 240)
+                    ));
+                }
+
+                let terminal_id = staged
+                    .first()
+                    .map(|item| item.id())
+                    .expect("staged is not empty");
+                let mut changed_paths = Vec::new();
+                for item in staged.clone() {
+                    let paths = match item {
+                        Staged::Edit(proposal_id) => {
+                            match apply_edit(runtime, proposal_id, turn, run, observer).await? {
+                                Ok(paths) => paths,
+                                Err(feedback) => return Ok(AttemptEnd::RetryFailure(feedback)),
+                            }
+                        }
+                        Staged::Create(request_id) => {
+                            match apply_create(runtime, request_id, turn, run, observer).await? {
+                                Ok(paths) => paths,
+                                Err(feedback) => return Ok(AttemptEnd::RetryFailure(feedback)),
+                            }
+                        }
+                    };
+                    for path in paths {
+                        if !changed_paths.contains(&path) {
+                            changed_paths.push(path);
+                        }
+                    }
+                }
+
+                return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
+                    proposal_id: terminal_id,
+                    request_id,
+                    changed_paths,
+                }));
             }
             _ => {}
+        }
+    }
+}
+
+async fn apply_edit(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    proposal_id: Uuid,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+) -> Result<Result<Vec<PathBuf>, String>, Error> {
+    use ploke_tui::app_state::{StateCommand, core::EditProposalStatus};
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    observer.emit(format!("attempt {turn} proposal_approve id={proposal_id}"));
+    send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
+
+    loop {
+        runtime.app.pump_pending_events().await;
+        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let Some(updated) = runtime
+            .state
+            .proposals
+            .read()
+            .await
+            .get(&proposal_id)
+            .cloned()
+        else {
+            let reason = format!("staged proposal {proposal_id} disappeared before apply");
+            run.attempts.push(HeadlessAttempt {
+                turn,
+                proposal_id: Some(proposal_id),
+                result: HeadlessAttemptResult::Rejected {
+                    reason: reason.clone(),
+                },
+            });
+            return Ok(Err(reason));
+        };
+        match updated.status {
+            EditProposalStatus::Applied => {
+                let paths = proposal_paths(&updated);
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(proposal_id),
+                    result: HeadlessAttemptResult::Applied {
+                        paths: paths.clone(),
+                    },
+                });
+                observer.emit(format!("attempt {turn} proposal_applied id={proposal_id}"));
+                return Ok(Ok(paths));
+            }
+            EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(proposal_id),
+                    result: HeadlessAttemptResult::Rejected {
+                        reason: reason.clone(),
+                    },
+                });
+                observer.emit(format!(
+                    "attempt {turn} proposal_apply_failed id={} reason={}",
+                    proposal_id,
+                    truncate_chars(&reason, 240)
+                ));
+                return Ok(Err(reason));
+            }
+            EditProposalStatus::Denied => {
+                let reason = "proposal was denied before apply".to_string();
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(proposal_id),
+                    result: HeadlessAttemptResult::Rejected {
+                        reason: reason.clone(),
+                    },
+                });
+                observer.emit(format!("attempt {turn} proposal_denied id={proposal_id}"));
+                return Ok(Err(reason));
+            }
+            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
+        }
+    }
+}
+
+async fn apply_create(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    request_id: Uuid,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+) -> Result<Result<Vec<PathBuf>, String>, Error> {
+    use ploke_tui::app_state::{StateCommand, core::EditProposalStatus};
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    observer.emit(format!("attempt {turn} creation_approve id={request_id}"));
+    send_state(&cmd_tx, StateCommand::ApproveCreations { request_id }).await?;
+
+    loop {
+        runtime.app.pump_pending_events().await;
+        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let Some(updated) = runtime
+            .state
+            .create_proposals
+            .read()
+            .await
+            .get(&request_id)
+            .cloned()
+        else {
+            let reason = format!("staged file creation {request_id} disappeared before apply");
+            run.attempts.push(HeadlessAttempt {
+                turn,
+                proposal_id: Some(request_id),
+                result: HeadlessAttemptResult::Rejected {
+                    reason: reason.clone(),
+                },
+            });
+            return Ok(Err(reason));
+        };
+        match updated.status {
+            EditProposalStatus::Applied => {
+                let paths = updated.files.clone();
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(request_id),
+                    result: HeadlessAttemptResult::Applied {
+                        paths: paths.clone(),
+                    },
+                });
+                observer.emit(format!("attempt {turn} creation_applied id={request_id}"));
+                return Ok(Ok(paths));
+            }
+            EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(request_id),
+                    result: HeadlessAttemptResult::Rejected {
+                        reason: reason.clone(),
+                    },
+                });
+                observer.emit(format!(
+                    "attempt {turn} creation_apply_failed id={} reason={}",
+                    request_id,
+                    truncate_chars(&reason, 240)
+                ));
+                return Ok(Err(reason));
+            }
+            EditProposalStatus::Denied => {
+                let reason = "file creation was denied before apply".to_string();
+                run.attempts.push(HeadlessAttempt {
+                    turn,
+                    proposal_id: Some(request_id),
+                    result: HeadlessAttemptResult::Rejected {
+                        reason: reason.clone(),
+                    },
+                });
+                observer.emit(format!("attempt {turn} creation_denied id={request_id}"));
+                return Ok(Err(reason));
+            }
+            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
         }
     }
 }
@@ -597,7 +822,7 @@ fn attempt_prompt(
         "- Edit, create, patch, and apply tools must target only files inside the loaded workspace; prefer repository-relative paths for source edits.\n",
     );
     prompt.push_str(
-        "- Stage one concrete source change with the available edit tools; do not create bookkeeping or result files.\n",
+        "- Stage one complete candidate source change with the available edit tools; if the candidate needs multiple files or tool calls, stage all required source edits before ending the turn. Do not create bookkeeping or result files.\n",
     );
     match edit_policy {
         BroadEditPolicy::WorkspaceExceptPlokeEval => prompt.push_str(
