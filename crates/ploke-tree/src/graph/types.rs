@@ -1,4 +1,5 @@
 mod artifact;
+mod child_plan;
 mod evidence;
 mod history;
 mod operation;
@@ -7,6 +8,7 @@ mod selection;
 mod warning;
 
 pub use artifact::*;
+pub use child_plan::*;
 pub use evidence::*;
 pub use history::*;
 pub use operation::*;
@@ -35,6 +37,8 @@ pub struct Graph {
     /// Selection candidate universes and their set-scoped memberships.
     pub candidates: CandidateIndex,
     pub selections: SelectionIndex,
+    /// Parent-published child plans that carry patch/surface details.
+    pub child_plans: ChildPlanIndex,
     /// Typed attachments that explain graph objects without replacing History.
     pub evidence: EvidenceIndex,
     pub warnings: Vec<GraphWarning>,
@@ -51,6 +55,7 @@ impl Default for Graph {
             operations: OperationIndex::default(),
             candidates: CandidateIndex::default(),
             selections: SelectionIndex::default(),
+            child_plans: ChildPlanIndex::default(),
             evidence: EvidenceIndex::default(),
             warnings: Vec::new(),
         }

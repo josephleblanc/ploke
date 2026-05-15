@@ -5,5 +5,6 @@
 //! application shell.
 
 pub mod app;
+pub(crate) mod diff;
 pub mod inspector;
 pub mod view;

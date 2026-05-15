@@ -47,6 +47,7 @@ pub struct RunForestNodeInspection<'g> {
     pub node: &'g ploke_tree::TreeNode,
     pub parent: Option<&'g ploke_tree::TreeNode>,
     pub children: &'g [ploke_tree::NodeKey],
+    pub patch: Option<PatchInspection<'g>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,16 +56,23 @@ pub struct ArtifactInspection<'g> {
     pub sources: Vec<&'g ploke_tree::graph::ArtifactNode>,
     pub incoming: Vec<ArtifactRelation<'g>>,
     pub outgoing: Vec<ArtifactRelation<'g>>,
+    pub patches: Vec<PatchInspection<'g>>,
     pub selected_ruler: bool,
     pub primary_lineage: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactRelation<'g> {
     pub kind: ArtifactRelationKind,
     pub from: &'g str,
     pub to: &'g str,
     pub source_count: usize,
+    pub patch_ids: Vec<&'g ploke_records::ids::PatchId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatchInspection<'g> {
+    pub child: &'g ploke_records::child_plan::ChildPlanChildRecord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +117,7 @@ pub struct SelectionInspectorSnapshot {
     pub outgoing: Vec<InspectorEdge>,
     pub artifact_incoming: Vec<InspectorEdge>,
     pub artifact_outgoing: Vec<InspectorEdge>,
+    pub patches: Vec<PatchSnapshot>,
     pub source_refs: Vec<String>,
     pub unavailable: Vec<InspectorRow>,
 }
@@ -130,6 +139,7 @@ impl SelectionInspectorSnapshot {
                 outgoing: Vec::new(),
                 artifact_incoming: Vec::new(),
                 artifact_outgoing: Vec::new(),
+                patches: Vec::new(),
                 source_refs: Vec::new(),
                 unavailable: vec![reason.row()],
             },
@@ -156,6 +166,7 @@ impl SelectionInspectorSnapshot {
         render_edges(&mut out, "outgoing", &self.outgoing);
         render_edges(&mut out, "artifact_incoming", &self.artifact_incoming);
         render_edges(&mut out, "artifact_outgoing", &self.artifact_outgoing);
+        render_patches(&mut out, &self.patches);
         if self.source_refs.is_empty() {
             out.push_str("source_refs: none\n");
         } else {
@@ -206,6 +217,15 @@ impl InspectorEdge {
             source_count,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchSnapshot {
+    pub patch_id: String,
+    pub summary: Vec<InspectorRow>,
+    pub touches: Vec<InspectorRow>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unified_diff: String,
 }
 
 pub fn default_selections(graph: &ploke_tree::Graph) -> Vec<GraphSelectionDetail> {
@@ -276,6 +296,10 @@ fn run_forest_node_inspection<'g>(
         node,
         parent,
         children: &node.children,
+        patch: graph
+            .child_plans
+            .child_for_node_id(node.key.as_str())
+            .map(|child| PatchInspection { child }),
     })
 }
 
@@ -285,7 +309,7 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         return SelectionInspector::Unresolved(UnavailableReason::ArtifactNotFound);
     };
 
-    let incoming = tree
+    let incoming: Vec<_> = tree
         .history_successors
         .iter()
         .filter(|edge| edge.to == node.key)
@@ -294,6 +318,7 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             from: edge.from.as_str(),
             to: edge.to.as_str(),
             source_count: edge.sources.len(),
+            patch_ids: Vec::new(),
         })
         .chain(
             tree.applied_patch_edges
@@ -304,10 +329,15 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
                     from: edge.from.as_str(),
                     to: edge.to.as_str(),
                     source_count: edge.sources.len(),
+                    patch_ids: edge
+                        .sources
+                        .iter()
+                        .filter_map(|source| source.patch_id.as_ref())
+                        .collect(),
                 }),
         )
         .collect();
-    let outgoing = tree
+    let outgoing: Vec<_> = tree
         .history_successors
         .iter()
         .filter(|edge| edge.from == node.key)
@@ -316,6 +346,7 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             from: edge.from.as_str(),
             to: edge.to.as_str(),
             source_count: edge.sources.len(),
+            patch_ids: Vec::new(),
         })
         .chain(
             tree.applied_patch_edges
@@ -326,6 +357,11 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
                     from: edge.from.as_str(),
                     to: edge.to.as_str(),
                     source_count: edge.sources.len(),
+                    patch_ids: edge
+                        .sources
+                        .iter()
+                        .filter_map(|source| source.patch_id.as_ref())
+                        .collect(),
                 }),
         )
         .collect();
@@ -339,12 +375,24 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
                 .is_some_and(|artifact_key| artifact_key == node.key.as_str())
         })
         .collect();
+    let patches = incoming
+        .iter()
+        .chain(outgoing.iter())
+        .flat_map(|relation| relation.patch_ids.iter().copied())
+        .filter_map(|patch_id| {
+            graph
+                .child_plans
+                .child_for_patch_id(patch_id)
+                .map(|child| PatchInspection { child })
+        })
+        .collect();
 
     SelectionInspector::Artifact(ArtifactInspection {
         key: node.key.as_str(),
         sources,
         incoming,
         outgoing,
+        patches,
         selected_ruler: tree.marks.selected_ruler == Some(node.key),
         primary_lineage: tree.marks.lineage_artifacts.contains(&node.key),
     })
@@ -428,6 +476,11 @@ fn snapshot_run_forest(
         outgoing,
         artifact_incoming: Vec::new(),
         artifact_outgoing,
+        patches: inspector
+            .patch
+            .iter()
+            .map(|patch| patch_snapshot(patch))
+            .collect(),
         source_refs,
         unavailable: Vec::new(),
     }
@@ -477,8 +530,95 @@ fn snapshot_artifact(
         outgoing: artifact_edges(&inspector.outgoing),
         artifact_incoming: artifact_edges(&inspector.incoming),
         artifact_outgoing: artifact_edges(&inspector.outgoing),
+        patches: inspector
+            .patches
+            .iter()
+            .map(|patch| patch_snapshot(patch))
+            .collect(),
         source_refs,
         unavailable: Vec::new(),
+    }
+}
+
+fn patch_snapshot(patch: &PatchInspection<'_>) -> PatchSnapshot {
+    let child = patch.child;
+    let patch_id = child
+        .surface
+        .as_ref()
+        .map(|surface| surface.patch_id.0.clone())
+        .or_else(|| {
+            child
+                .node
+                .patch_id
+                .as_ref()
+                .map(|patch_id| patch_id.0.clone())
+        })
+        .unwrap_or_else(|| "not_recorded".to_owned());
+    let mut summary = vec![
+        InspectorRow::new(
+            "target",
+            child.resolved.target_relpath.display().to_string(),
+        ),
+        InspectorRow::new("branch", child.resolved.branch.branch_id.as_str()),
+        InspectorRow::new("candidate", child.resolved.branch.candidate_id.as_str()),
+        InspectorRow::new("source hash", child.resolved.source_content_hash.as_str()),
+        InspectorRow::new(
+            "proposed hash",
+            child.resolved.branch.proposed_content_hash.as_str(),
+        ),
+    ];
+    if let Some(surface) = child.surface.as_ref() {
+        summary.push(InspectorRow::new(
+            "base artifact",
+            surface.base.artifact_id.0.as_str(),
+        ));
+        summary.push(InspectorRow::new(
+            "derived artifact",
+            surface.after.artifact_id.0.as_str(),
+        ));
+        summary.push(InspectorRow::new(
+            "check",
+            format!("{:?}", surface.check_status),
+        ));
+        summary.push(InspectorRow::new(
+            "apply",
+            format!("{:?}", surface.apply_status),
+        ));
+    }
+
+    let touches = child
+        .surface
+        .as_ref()
+        .map(|surface| {
+            surface
+                .touches
+                .iter()
+                .enumerate()
+                .map(|(index, touch)| {
+                    InspectorRow::new(
+                        format!(
+                            "{} {}:{}-{}",
+                            index + 1,
+                            touch.span_relpath.display(),
+                            touch.start,
+                            touch.end
+                        ),
+                        touch.replacement.as_str(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    PatchSnapshot {
+        patch_id,
+        summary,
+        touches,
+        unified_diff: crate::ui::diff::unified_rust_diff(
+            child.resolved.target_relpath.to_string_lossy().as_ref(),
+            child.resolved.source_content.as_str(),
+            child.resolved.branch.proposed_content.as_str(),
+        ),
     }
 }
 
@@ -555,6 +695,57 @@ fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge]) {
             edge.relation, edge.from, edge.to, edge.source_count
         ));
     }
+}
+
+fn render_patches(out: &mut String, patches: &[PatchSnapshot]) {
+    if patches.is_empty() {
+        out.push_str("patches: none\n");
+        return;
+    }
+    out.push_str("patches:\n");
+    for patch in patches {
+        out.push_str(&format!("- patch_id: {}\n", patch.patch_id));
+        for row in &patch.summary {
+            out.push_str(&format!("  - {}: {}\n", row.label, row.value));
+        }
+        if patch.touches.is_empty() {
+            out.push_str("  - touches: none\n");
+        } else {
+            for touch in &patch.touches {
+                out.push_str(&format!("  - touch {}: {}\n", touch.label, touch.value));
+            }
+        }
+        render_diff_preview(out, &patch.unified_diff);
+    }
+}
+
+fn render_diff_preview(out: &mut String, diff: &str) {
+    if diff.is_empty() {
+        out.push_str("  - diff: not_available\n");
+        return;
+    }
+
+    let line_count = diff.lines().count();
+    out.push_str(&format!("  - diff: available lines={line_count}\n"));
+    for line in diff.lines().take(40) {
+        out.push_str("    ");
+        out.push_str(truncate_chars(line, 240));
+        out.push('\n');
+    }
+    if line_count > 40 {
+        out.push_str(&format!("    ... truncated {} lines\n", line_count - 40));
+    }
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> &str {
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+
+    text.char_indices()
+        .nth(max_chars)
+        .map(|(index, _)| &text[..index])
+        .unwrap_or(text)
 }
 
 #[cfg(test)]

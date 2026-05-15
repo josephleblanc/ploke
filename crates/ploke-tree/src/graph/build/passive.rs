@@ -69,6 +69,11 @@ impl Builder {
     }
 
     fn ingest_child_plan_summary(&mut self, evidence: &ChildPlanEvidence) {
+        self.graph.child_plans.plans = evidence
+            .index
+            .values()
+            .map(|plan| (plan.parent_node_id.clone(), plan.clone()))
+            .collect();
         self.attach_located_evidence(
             EvidenceSubject::ChildPlanSummary {
                 file_count: evidence.summary.file_count,
@@ -303,7 +308,7 @@ mod tests {
     use super::{Builder, agent_turn_metadata};
 
     #[test]
-    fn passive_child_plans_attach_summary_only_evidence() {
+    fn passive_child_plans_attach_summary_evidence_and_source_records() {
         let mut builder = Builder::default();
         let mut passive = PassiveEvidence::default();
         passive.child_plans = Some(ChildPlanEvidence {
@@ -322,6 +327,7 @@ mod tests {
 
         assert_eq!(graph.runtimes.runtimes.len(), 0);
         assert!(graph.candidates.branches.is_empty());
+        assert!(graph.child_plans.plans.is_empty());
         assert!(graph.evidence.attachments.values().any(|evidence| {
             evidence.kind == EvidenceKind::ChildPlanSummary
                 && evidence.subject

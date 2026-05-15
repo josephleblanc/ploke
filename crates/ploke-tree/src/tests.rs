@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,6 +27,117 @@ use ploke_records::scheduler::{RunnerRequestRecord, RunnerResultRecord, Schedule
 use ploke_records::selection::{Decision, Outcome};
 
 use super::*;
+
+#[test]
+#[ignore = "real-run diagnostic; reads ~/.ploke-eval campaign records"]
+fn real_run_run_forest_node_ids_are_not_artifact_tree_ids() {
+    let run_root =
+        Path::new("/home/brasides/.ploke-eval/campaigns/p1-broad-smoke-3x4-20260515-1/prototype1");
+    let parent_root =
+        Path::new("/home/brasides/.ploke-eval/worktrees/p1-broad-smoke-3x4-20260515-1");
+    assert!(
+        run_root.join("scheduler.json").is_file(),
+        "missing real run scheduler at {}",
+        run_root.display()
+    );
+
+    let store = FsRunStore::new(run_root).with_parent_root(parent_root);
+    let records = store
+        .load_record_set()
+        .expect("load typed real-run records");
+    let graph = Graph::from_records(&records);
+    let forest = graph.forest.as_ref().expect("graph carries RunForest");
+    let artifact_tree = graph.artifact_tree();
+
+    let artifact_keys = artifact_tree
+        .nodes
+        .keys()
+        .copied()
+        .map(|key| key.as_str())
+        .collect::<BTreeSet<_>>();
+
+    let direct_matches = forest
+        .nodes
+        .iter()
+        .map(|node| normalize_artifact_key(node.key.as_str()))
+        .filter(|node_key| artifact_keys.contains(node_key))
+        .collect::<Vec<_>>();
+
+    let mut carried_artifact_refs = Vec::new();
+    for node in &forest.nodes {
+        if let Some(id) = node.base_artifact_id.as_deref() {
+            carried_artifact_refs.push((
+                node.key.as_str(),
+                "base_artifact_id",
+                normalize_artifact_key(id),
+            ));
+        }
+        if let Some(id) = node.derived_artifact_id.as_deref() {
+            carried_artifact_refs.push((
+                node.key.as_str(),
+                "derived_artifact_id",
+                normalize_artifact_key(id),
+            ));
+        }
+    }
+
+    let carried_matches = carried_artifact_refs
+        .iter()
+        .copied()
+        .filter(|(_, _, artifact_id)| artifact_keys.contains(artifact_id))
+        .collect::<Vec<_>>();
+
+    eprintln!("run={}", run_root.display());
+    eprintln!(
+        "run_forest_nodes={} artifact_tree_nodes={} direct_node_id_matches={}",
+        forest.nodes.len(),
+        artifact_tree.nodes.len(),
+        direct_matches.len()
+    );
+    eprintln!(
+        "run_forest_carried_artifact_refs={} carried_refs_present_in_artifact_tree={}",
+        carried_artifact_refs.len(),
+        carried_matches.len()
+    );
+    eprintln!(
+        "sample_run_forest_node_ids={:?}",
+        forest
+            .nodes
+            .iter()
+            .map(|node| node.key.as_str())
+            .take(8)
+            .collect::<Vec<_>>()
+    );
+    eprintln!(
+        "sample_artifact_tree_ids={:?}",
+        artifact_keys.iter().copied().take(8).collect::<Vec<_>>()
+    );
+    eprintln!(
+        "sample_carried_artifact_refs={:?}",
+        carried_matches.iter().copied().take(12).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !forest.nodes.is_empty(),
+        "real run should contain run forest nodes"
+    );
+    assert!(
+        !artifact_tree.nodes.is_empty(),
+        "real run should contain artifact tree nodes"
+    );
+    assert!(
+        direct_matches.is_empty(),
+        "RunForest node ids unexpectedly matched ArtifactTree artifact ids: {direct_matches:?}"
+    );
+    assert!(
+        !carried_matches.is_empty(),
+        "RunForest nodes should carry artifact ids that resolve into the ArtifactTree"
+    );
+}
+
+fn normalize_artifact_key(value: &str) -> &str {
+    value.strip_prefix("artifact:").unwrap_or(value)
+}
 
 #[test]
 fn scheduler_nodes_become_mutable_projection_tree_nodes() {

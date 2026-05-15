@@ -2,7 +2,10 @@
 
 use eframe::egui;
 
-use crate::ui::inspector::{InspectorEdge, InspectorRow, SelectionInspectorSnapshot};
+use crate::ui::diff;
+use crate::ui::inspector::{
+    InspectorEdge, InspectorRow, PatchSnapshot, SelectionInspectorSnapshot,
+};
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics, GraphViewMode};
 
 pub(crate) fn render_top_strip(
@@ -80,6 +83,14 @@ pub(crate) fn render_right_inspector(
             }
 
             ui.separator();
+            ui.label("Patch");
+            if let Some(inspector) = inspector {
+                render_patches(ui, &inspector.patches);
+            } else {
+                kv(ui, "patch", "not_applicable");
+            }
+
+            ui.separator();
             ui.label("Source refs");
             if let Some(inspector) = inspector {
                 render_source_refs(ui, &inspector.source_refs);
@@ -92,7 +103,7 @@ pub(crate) fn render_right_inspector(
             ui.label("Drill next");
             kv(ui, "lineage", selection_status(selection));
             kv(ui, "candidate set", "blocked");
-            kv(ui, "patch diff", "blocked");
+            kv(ui, "patch diff", patch_status(inspector));
             kv(ui, "evidence refs", "blocked");
         });
 }
@@ -175,10 +186,61 @@ fn render_source_refs(ui: &mut egui::Ui, source_refs: &[String]) {
     }
 }
 
+fn render_patches(ui: &mut egui::Ui, patches: &[PatchSnapshot]) {
+    if patches.is_empty() {
+        kv(ui, "patch", "not_available");
+        return;
+    }
+    for patch in patches {
+        ui.monospace(format!("patch {}", patch.patch_id));
+        render_fields(ui, &patch.summary);
+        if patch.touches.is_empty() {
+            kv(ui, "touches", "none");
+        } else {
+            for touch in &patch.touches {
+                ui.label(touch.label.as_str());
+                ui.add(
+                    egui::Label::new(egui::RichText::new(touch.value.as_str()).monospace()).wrap(),
+                );
+            }
+        }
+        if patch.unified_diff.is_empty() {
+            kv(ui, "diff", "not_available");
+        } else {
+            ui.label("diff");
+            render_diff(ui, patch.unified_diff.as_str());
+        }
+    }
+}
+
+fn render_diff(ui: &mut egui::Ui, diff: &str) {
+    let width = ui.available_width().max(240.0);
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    let job = diff::highlighted_diff_job(ui, diff, f32::INFINITY);
+                    ui.set_min_width(width);
+                    ui.add(egui::Label::new(job).selectable(true));
+                });
+        });
+}
+
 fn selection_status(selection: Option<&GraphSelectionDetail>) -> &'static str {
     if selection.is_some() {
         "available"
     } else {
         "not_applicable"
+    }
+}
+
+fn patch_status(inspector: Option<&SelectionInspectorSnapshot>) -> &'static str {
+    match inspector {
+        Some(inspector) if !inspector.patches.is_empty() => "available",
+        Some(_) => "not_available",
+        None => "not_applicable",
     }
 }
