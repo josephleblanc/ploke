@@ -78,11 +78,12 @@ pub(crate) async fn run_headless(
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
         loop {
             observer.emit(format!("attempt {turn} start"));
-            let mut runtime =
+            let (mut runtime, parent_id) =
                 start_attempt_runtime(workspace_path, &extra_read_roots, next_prompt.clone())
                     .await?;
             let end = run_attempt(
                 &mut runtime,
+                parent_id,
                 workspace_path,
                 edit_policy,
                 turn,
@@ -171,7 +172,7 @@ async fn start_attempt_runtime(
     workspace_path: &Path,
     extra_read_roots: &[PathBuf],
     prompt: String,
-) -> Result<crate::runner::WorkspaceTuiRuntime, Error> {
+) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
     let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
         workspace_path,
         extra_read_roots,
@@ -189,8 +190,8 @@ async fn start_attempt_runtime(
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
     }
-    submit_prompt(&runtime.app, prompt).await?;
-    Ok(runtime)
+    let parent_id = submit_prompt(&runtime.app, prompt).await?;
+    Ok((runtime, parent_id))
 }
 
 enum AttemptEnd {
@@ -203,13 +204,15 @@ enum AttemptEnd {
     },
 }
 
+const MAX_POLICY_REPAIR_TURNS: u32 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Staged {
+enum AppliedItem {
     Edit(Uuid),
     Create(Uuid),
 }
 
-impl Staged {
+impl AppliedItem {
     fn id(self) -> Uuid {
         match self {
             Self::Edit(id) | Self::Create(id) => id,
@@ -219,6 +222,7 @@ impl Staged {
 
 async fn run_attempt(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    mut active_parent_id: Uuid,
     workspace_path: &Path,
     edit_policy: BroadEditPolicy,
     turn: u32,
@@ -233,7 +237,10 @@ async fn run_attempt(
     let cmd_tx = runtime.app.state_cmd_tx();
     let mut pending_retry = None::<String>;
     let mut provider_failure = None::<String>;
-    let mut staged = Vec::<Staged>::new();
+    let mut applied = Vec::<AppliedItem>::new();
+    let mut changed_paths = Vec::<PathBuf>::new();
+    let mut policy_feedbacks = Vec::<String>::new();
+    let mut policy_repair_turns = 0_u32;
 
     loop {
         runtime.app.pump_pending_events().await;
@@ -248,7 +255,7 @@ async fn run_attempt(
                     formatted_prompt,
                     context_plan,
                 },
-            )) => {
+            )) if parent_id == active_parent_id => {
                 let diagnostic = PromptDiagnostic::capture(
                     &runtime.state,
                     parent_id,
@@ -284,7 +291,7 @@ async fn run_attempt(
                 request_id,
                 parent_id,
                 tool_call,
-            }) => {
+            }) if parent_id == active_parent_id => {
                 run.events.push(Event::ToolRequest {
                     request_id: request_id.to_string(),
                     parent_id: parent_id.to_string(),
@@ -301,11 +308,12 @@ async fn run_attempt(
             }
             AppEvent::System(SystemEvent::ToolCallCompleted {
                 request_id,
+                parent_id,
                 call_id,
                 content,
                 ui_payload,
                 ..
-            }) => {
+            }) if parent_id == active_parent_id => {
                 run.events.push(Event::Tool {
                     call_id: call_id.to_string(),
                     result: Tool::Completed {
@@ -321,10 +329,10 @@ async fn run_attempt(
                     continue;
                 };
                 if let Some(proposal_id) = payload.proposal_id {
-                    let staged_item = Staged::Edit(proposal_id);
-                    if staged.contains(&staged_item) {
+                    let applied_item = AppliedItem::Edit(proposal_id);
+                    if applied.contains(&applied_item) {
                         observer.emit(format!(
-                            "attempt {turn} proposal_already_staged id={proposal_id}"
+                            "attempt {turn} proposal_already_applied id={proposal_id}"
                         ));
                         continue;
                     }
@@ -351,6 +359,7 @@ async fn run_attempt(
                         join_paths(&paths)
                     ));
                     if paths.is_empty() {
+                        send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
                         run.attempts.push(HeadlessAttempt {
                             turn,
                             proposal_id: Some(proposal_id),
@@ -362,8 +371,9 @@ async fn run_attempt(
                         });
                         let feedback = "No material edit was staged; make a concrete bounded edit."
                             .to_string();
+                        policy_feedbacks.push(repair_prompt_feedback(&feedback));
                         observer.emit(format!("attempt {turn} proposal_rejected empty"));
-                        return Ok(AttemptEnd::RetryFailure(feedback));
+                        continue;
                     }
 
                     let rejection = classify_paths(workspace_path, edit_policy, &paths);
@@ -378,20 +388,28 @@ async fn run_attempt(
                             },
                         });
                         let retry = feedback.message().to_string();
+                        policy_feedbacks.push(repair_prompt_feedback(&retry));
                         observer.emit(format!(
                             "attempt {turn} proposal_rejected {}",
                             truncate_chars(feedback.message(), 240)
                         ));
-                        return Ok(AttemptEnd::RetryFailure(retry));
+                        continue;
                     }
 
-                    staged.push(staged_item);
-                    observer.emit(format!("attempt {turn} proposal_staged id={proposal_id}"));
+                    match apply_edit(runtime, proposal_id, turn, run, observer).await? {
+                        Ok(paths) => {
+                            applied.push(applied_item);
+                            push_changed_paths(&mut changed_paths, paths);
+                        }
+                        Err(feedback) => {
+                            pending_retry = Some(feedback);
+                        }
+                    }
                 } else if payload.tool == ploke_tui::tools::ToolName::CreateFile {
-                    let staged_item = Staged::Create(request_id);
-                    if staged.contains(&staged_item) {
+                    let applied_item = AppliedItem::Create(request_id);
+                    if applied.contains(&applied_item) {
                         observer.emit(format!(
-                            "attempt {turn} creation_already_staged id={request_id}"
+                            "attempt {turn} creation_already_applied id={request_id}"
                         ));
                         continue;
                     }
@@ -418,6 +436,7 @@ async fn run_attempt(
                         join_paths(&paths)
                     ));
                     if paths.is_empty() {
+                        send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await?;
                         run.attempts.push(HeadlessAttempt {
                             turn,
                             proposal_id: Some(request_id),
@@ -430,8 +449,9 @@ async fn run_attempt(
                         let feedback =
                             "No material file creation was staged; make a concrete bounded edit."
                                 .to_string();
+                        policy_feedbacks.push(repair_prompt_feedback(&feedback));
                         observer.emit(format!("attempt {turn} creation_rejected empty"));
-                        return Ok(AttemptEnd::RetryFailure(feedback));
+                        continue;
                     }
 
                     let rejection = classify_paths(workspace_path, edit_policy, &paths);
@@ -446,18 +466,31 @@ async fn run_attempt(
                             },
                         });
                         let retry = feedback.message().to_string();
+                        policy_feedbacks.push(repair_prompt_feedback(&retry));
                         observer.emit(format!(
                             "attempt {turn} creation_rejected {}",
                             truncate_chars(feedback.message(), 240)
                         ));
-                        return Ok(AttemptEnd::RetryFailure(retry));
+                        continue;
                     }
 
-                    staged.push(staged_item);
-                    observer.emit(format!("attempt {turn} creation_staged id={request_id}"));
+                    match apply_create(runtime, request_id, turn, run, observer).await? {
+                        Ok(paths) => {
+                            applied.push(applied_item);
+                            push_changed_paths(&mut changed_paths, paths);
+                        }
+                        Err(feedback) => {
+                            pending_retry = Some(feedback);
+                        }
+                    }
                 }
             }
-            AppEvent::System(SystemEvent::ToolCallFailed { call_id, error, .. }) => {
+            AppEvent::System(SystemEvent::ToolCallFailed {
+                parent_id,
+                call_id,
+                error,
+                ..
+            }) if parent_id == active_parent_id => {
                 run.events.push(Event::Tool {
                     call_id: call_id.to_string(),
                     result: Tool::Failed {
@@ -516,11 +549,12 @@ async fn run_attempt(
             }
             AppEvent::System(SystemEvent::ChatTurnFinished {
                 request_id,
+                parent_id,
                 outcome,
                 attempts,
                 summary,
                 ..
-            }) => {
+            }) if parent_id == active_parent_id => {
                 run.events.push(Event::Turn {
                     request_id: request_id.to_string(),
                     outcome: outcome.clone(),
@@ -540,6 +574,21 @@ async fn run_attempt(
                 }
                 let repaired_failure = pending_retry.take();
 
+                if !policy_feedbacks.is_empty() && policy_repair_turns < MAX_POLICY_REPAIR_TURNS {
+                    let feedback = policy_feedbacks.join("\n");
+                    policy_feedbacks.clear();
+                    policy_repair_turns += 1;
+                    let prompt = policy_repair_prompt(&feedback, !applied.is_empty());
+                    active_parent_id = submit_prompt(&runtime.app, prompt).await?;
+                    observer.emit(format!(
+                        "attempt {turn} policy_repair_prompt parent={} count={} feedback={}",
+                        active_parent_id,
+                        policy_repair_turns,
+                        truncate_chars(&feedback, 240)
+                    ));
+                    continue;
+                }
+
                 if outcome != "completed" {
                     let feedback = if let Some(feedback) = repaired_failure {
                         feedback
@@ -553,9 +602,11 @@ async fn run_attempt(
                     return Ok(AttemptEnd::RetryFailure(feedback));
                 }
 
-                if staged.is_empty() {
+                if applied.is_empty() {
                     let feedback = if let Some(feedback) = repaired_failure {
                         feedback
+                    } else if !policy_feedbacks.is_empty() {
+                        policy_feedbacks.join("\n")
                     } else if summary.trim().is_empty() {
                         "The model returned without staging an edit; make a concrete bounded edit."
                             .to_string()
@@ -578,42 +629,20 @@ async fn run_attempt(
 
                 if let Some(feedback) = repaired_failure {
                     observer.emit(format!(
-                        "attempt {turn} recovered_tool_failure_before_apply {}",
+                        "attempt {turn} recovered_tool_failure_after_apply {}",
                         truncate_chars(&feedback, 240)
                     ));
                 }
 
-                let terminal_id = staged
+                let terminal_id = applied
                     .first()
                     .map(|item| item.id())
-                    .expect("staged is not empty");
-                let mut changed_paths = Vec::new();
-                for item in staged.clone() {
-                    let paths = match item {
-                        Staged::Edit(proposal_id) => {
-                            match apply_edit(runtime, proposal_id, turn, run, observer).await? {
-                                Ok(paths) => paths,
-                                Err(feedback) => return Ok(AttemptEnd::RetryFailure(feedback)),
-                            }
-                        }
-                        Staged::Create(request_id) => {
-                            match apply_create(runtime, request_id, turn, run, observer).await? {
-                                Ok(paths) => paths,
-                                Err(feedback) => return Ok(AttemptEnd::RetryFailure(feedback)),
-                            }
-                        }
-                    };
-                    for path in paths {
-                        if !changed_paths.contains(&path) {
-                            changed_paths.push(path);
-                        }
-                    }
-                }
+                    .expect("applied is not empty");
 
                 return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
                     proposal_id: terminal_id,
                     request_id,
-                    changed_paths,
+                    changed_paths: changed_paths.clone(),
                 }));
             }
             _ => {}
@@ -822,7 +851,7 @@ fn attempt_prompt(
         "- Edit, create, patch, and apply tools must target only files inside the loaded workspace; prefer repository-relative paths for source edits.\n",
     );
     prompt.push_str(
-        "- Stage one complete candidate source change with the available edit tools; if the candidate needs multiple files or tool calls, stage all required source edits before ending the turn. Do not create bookkeeping or result files.\n",
+        "- Propose one complete candidate source change with the available edit tools; the harness applies allowed proposals to the scratch workspace during the turn so validation tools can inspect them. Do not create bookkeeping or result files.\n",
     );
     match edit_policy {
         BroadEditPolicy::WorkspaceExceptPlokeEval => prompt.push_str(
@@ -830,7 +859,7 @@ fn attempt_prompt(
         ),
     }
     prompt.push_str(
-        "- Use validation tools only after a source edit has been staged; checking an unchanged workspace is not a candidate improvement.\n",
+        "- Use validation tools only after a source edit proposal has been staged and allowed by the harness; checking an unchanged workspace is not a candidate improvement.\n",
     );
     prompt.push_str(
         "- Use exact code lookup only when you already know the canonical module path; otherwise use read_file, list_dir, or request_code_context and then stage an edit.\n",
@@ -1144,6 +1173,37 @@ fn classify_paths(
     } else {
         None
     }
+}
+
+fn push_changed_paths(changed_paths: &mut Vec<PathBuf>, paths: Vec<PathBuf>) {
+    for path in paths {
+        if !changed_paths.contains(&path) {
+            changed_paths.push(path);
+        }
+    }
+}
+
+fn repair_prompt_feedback(feedback: &str) -> String {
+    format!(
+        "The headless harness rejected a staged edit before applying it: {feedback}. Continue from the current workspace and propose a revised candidate using only allowed source files."
+    )
+}
+
+fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
+    let mut prompt = String::new();
+    prompt.push_str("# Headless harness policy feedback\n\n");
+    prompt.push_str(feedback);
+    prompt.push_str("\n\nPolicy reminder: do not edit Cargo.toml, Cargo.lock, rust-toolchain.toml, crates/ploke-eval, or authority/runtime directories.\n");
+    if has_applied_edits {
+        prompt.push_str(
+            "Allowed edits from your earlier tool calls have already been applied to the scratch workspace. Continue from the current workspace, inspect or validate as needed, and stage only allowed follow-up source edits.\n",
+        );
+    } else {
+        prompt.push_str(
+            "No allowed source edit has been applied yet. Continue from the original request and stage a concrete candidate using only allowed source files.\n",
+        );
+    }
+    prompt
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2725,7 +2785,10 @@ mod tests {
             prompt.contains("do not spend tool calls trying to inspect missing roots"),
             "prompt should steer away from unavailable published evidence"
         );
-        assert!(prompt.contains("Use validation tools only after a source edit has been staged"));
+        assert!(
+            prompt
+                .contains("Use validation tools only after a source edit proposal has been staged")
+        );
         assert!(prompt.contains("Previous isolated attempt feedback"));
         assert!(prompt.contains("tool failed"));
         assert!(prompt.contains("## Original broad request"));
@@ -2785,6 +2848,26 @@ mod tests {
         assert!(feedback.contains("Previous attempt aborted before staging an edit"));
         assert!(feedback.contains("stage one small concrete source edit"));
         assert!(!feedback.contains("error_id=abc"));
+    }
+
+    #[test]
+    fn policy_repair_prompt_preserves_applied_workspace_state() {
+        let prompt =
+            policy_repair_prompt("Rejected protected paths: crates/example/Cargo.toml", true);
+
+        assert!(prompt.contains("Policy reminder"));
+        assert!(prompt.contains("Cargo.toml"));
+        assert!(prompt.contains("already been applied to the scratch workspace"));
+        assert!(prompt.contains("stage only allowed follow-up source edits"));
+    }
+
+    #[test]
+    fn policy_repair_prompt_handles_no_applied_edits() {
+        let prompt =
+            policy_repair_prompt("Rejected protected paths: crates/example/Cargo.toml", false);
+
+        assert!(prompt.contains("No allowed source edit has been applied yet"));
+        assert!(prompt.contains("stage a concrete candidate"));
     }
 
     #[test]
