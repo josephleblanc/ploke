@@ -14,8 +14,9 @@ pub use fixture_dbs::{
     FIXTURE_NODES_LOCAL_EMBEDDINGS, FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation,
     FixtureCreationStrategy, FixtureDb, FixtureEmbeddingExpectation, FixtureImportMode,
     FixtureManualRecreation, FixtureStatus, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
-    WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE, backup_db_fixture,
-    fresh_backup_fixture_db, shared_backup_fixture_db, validate_backup_fixture_contract,
+    PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
+    backup_db_fixture, backup_db_snapshot_fixture_dir, fresh_backup_fixture_db,
+    shared_backup_fixture_db, validate_backup_fixture_contract,
 };
 
 use std::path::{Path, PathBuf};

@@ -54,20 +54,62 @@ cargo xtask recreate-backup-db --fixture <id>
 
 The command has two modes:
 
-- automated: writes a new dated backup under `tests/backup_dbs/`
+- automated: writes a new dated backup under the shared DB snapshot fixture
+  directory
 - manual: prints exact fixture-specific steps when the fixture is not
   hermetically reproducible yet
 
 New outputs use dated names like:
 
 ```text
-tests/backup_dbs/<stem>_2026-03-20.sqlite
+$XDG_CONFIG_HOME/ploke/db_snapshot_fixtures/<stem>_2026-03-20.sqlite
 ```
 
-After generating a new dated backup, update:
+If `XDG_CONFIG_HOME` is unset, the shared directory is
+`~/.config/ploke/db_snapshot_fixtures`. Set `PLOKE_DB_SNAPSHOT_FIXTURE_DIR` to
+override the path for tests or unusual local setups.
+
+To ensure current active and typed graph snapshots exist in the shared runtime
+directory:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+```
+
+This command runs active fixture validation in the normal profile and then
+invokes a typed-only xtask pass for typed graph fixtures.
+
+To regenerate every automated registered fixture into the shared runtime
+directory using the currently registered filenames:
+
+```bash
+cargo xtask fixtures regenerate --all
+```
+
+Use `--active` or `--typed` instead of `--all` to regenerate only that subset.
+The command skips manual legacy/orphaned snapshots. `--all` runs active
+fixtures in the normal profile and then invokes a typed-only xtask pass for the
+typed graph fixtures.
+
+GitHub corpus fixtures prepare their source checkouts through the shared
+fixture cache before generating the DB. Set `PLOKE_FIXTURE_HOME` to override
+the source cache location; otherwise xtask stores corpus mirrors and checkouts
+under `<db_snapshot_fixtures>/_source_cache`.
+
+To prepare registered typed corpus sources without generating new backup DBs:
+
+```bash
+cargo xtask fixtures ensure --typed
+```
+
+After generating a new dated backup that should become the registered fixture,
+update:
 
 - [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
 - [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+
+Copy the reviewed snapshot into `tests/backup_dbs/` only when you want to
+commit it as a seed artifact for other machines or CI.
 
 ## Repair a stale legacy backup in place
 

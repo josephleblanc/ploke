@@ -1,12 +1,19 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-06
-Last updated: 2026-05-10
+Last reviewed: 2026-05-15
+Last updated: 2026-05-15
 
 This document is the current inventory for backup database fixtures under
-`tests/backup_dbs/`. It records which source targets produced each fixture,
-which tests consume it, whether those tests expect mutable or immutable access,
-and the DB-level assumptions that make those tests valid.
+the shared DB snapshot fixture directory. It records which source targets
+produced each fixture, which tests consume it, whether those tests expect
+mutable or immutable access, and the DB-level assumptions that make those tests
+valid.
+
+Runtime fixture loading uses `$XDG_CONFIG_HOME/ploke/db_snapshot_fixtures`, or
+`~/.config/ploke/db_snapshot_fixtures` when `XDG_CONFIG_HOME` is unset. Set
+`PLOKE_DB_SNAPSHOT_FIXTURE_DIR` to override this location for tests or unusual
+local setups. The files under `tests/backup_dbs/` are committed seed artifacts;
+they are not the normal runtime load location.
 
 ## Review cadence
 
@@ -26,9 +33,30 @@ recreation guidance:
 - `cargo xtask verify-backup-dbs --fixture <id>`
   - scopes validation to one fixture
 - `cargo xtask recreate-backup-db --fixture <id>`
-  - recreates automated fixtures to a new dated filename under
-    `tests/backup_dbs/`
+  - recreates automated fixtures to a new dated filename under the shared DB
+    snapshot fixture directory
   - prints exact manual recreation steps for fixtures that are not hermetic yet
+- `cargo xtask fixtures ensure --snapshots`
+  - ensures current active and typed graph snapshots exist in the shared DB
+    snapshot fixture directory
+  - runs active fixture validation in the normal profile, then invokes a
+    typed-only xtask pass for typed graph fixtures
+  - stages committed seed artifacts from `tests/backup_dbs/` when a shared
+    snapshot is missing
+  - refuses to overwrite differing shared snapshots
+  - validates staged snapshots strictly, so stale schema seeds fail loudly
+- `cargo xtask fixtures ensure --typed`
+  - prepares typed GitHub corpus source checkouts under
+    `<db_snapshot_fixtures>/_source_cache` unless `PLOKE_FIXTURE_HOME` is set
+  - stages typed graph seed snapshots into the shared DB snapshot fixture
+    directory
+- `cargo xtask fixtures regenerate --all`
+  - regenerates every automated active and typed graph fixture directly into
+    the shared DB snapshot fixture directory using the registered filenames
+  - skips manual legacy/orphaned snapshots
+  - runs active fixtures in the normal profile, then invokes a typed-only xtask
+    pass for typed graph fixtures
+  - use `--active` or `--typed` instead of `--all` for narrower regeneration
 - `cargo xtask repair-backup-db-schema --fixture <id>`
   - repairs a stale legacy backup in place when it is missing the current
     `workspace_metadata` relation
@@ -45,14 +73,16 @@ helpers in
 [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs):
 
 - `shared_backup_fixture_db(&FIXTURE_...)`
-  - loads, validates, and caches an immutable `Arc<Database>` for reuse
+  - loads from the shared DB snapshot fixture directory, validates, and caches
+    an immutable `Arc<Database>` for reuse
 - `fresh_backup_fixture_db(&FIXTURE_...)`
-  - creates a fresh in-memory `Database` from a registered fixture while still
-    enforcing the registry’s import mode, embedding expectations, and index
-    setup
+  - creates a fresh in-memory `Database` from the shared DB snapshot fixture
+    directory while still enforcing the registry’s import mode, embedding
+    expectations, and index setup
 
-The registry file is the source of truth for fixture metadata. Test code should
-reference fixture constants there instead of hard-coding backup paths.
+The registry file is the source of truth for fixture metadata and filenames.
+Test code should reference fixture constants there instead of hard-coding backup
+paths.
 
 Registry status note:
 

@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -15,6 +16,8 @@ use once_cell::sync::Lazy;
 
 static SHARED_FIXTURE_DBS: Lazy<Mutex<HashMap<&'static str, Arc<Database>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub const PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV: &str = "PLOKE_DB_SNAPSHOT_FIXTURE_DIR";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixtureAccess {
@@ -117,6 +120,10 @@ pub struct FixtureDb {
 
 impl FixtureDb {
     pub fn path(&self) -> PathBuf {
+        backup_db_snapshot_fixture_dir().join(self.filename())
+    }
+
+    pub fn repo_path(&self) -> PathBuf {
         workspace_root().join(self.rel_path)
     }
 
@@ -162,6 +169,27 @@ impl FixtureDb {
             }
         }
     }
+}
+
+pub fn backup_db_snapshot_fixture_dir() -> PathBuf {
+    if let Some(path) = env::var_os(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV) {
+        return PathBuf::from(path);
+    }
+    user_config_local_dir()
+        .join("ploke")
+        .join("db_snapshot_fixtures")
+}
+
+fn user_config_local_dir() -> PathBuf {
+    if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(path);
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".config");
+    }
+    panic!(
+        "could not determine config dir; set {PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV}, XDG_CONFIG_HOME, or HOME"
+    )
 }
 
 impl FixtureEmbeddingExpectation {
@@ -443,9 +471,11 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
     let fixture_path = fixture.path();
     if !fixture_path.exists() {
         return Err(Error::from(DbError::Cozo(format!(
-            "Backup fixture {} is missing at {}",
+            "Backup fixture {} is missing at {}. Stage shared fixtures with `cargo xtask fixtures ensure --snapshots` or set {}. Committed seed path: {}",
             fixture.id,
-            fixture_path.display()
+            fixture_path.display(),
+            PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV,
+            fixture.repo_path().display()
         ))));
     }
 

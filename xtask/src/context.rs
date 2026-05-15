@@ -246,7 +246,7 @@ impl DatabasePool {
                         e
                     ))
                     .with_recovery(
-                        "Ensure the backup file exists (copy a registered fixture from tests/backup_dbs/ if needed). Use an absolute path or a path relative to the current working directory.",
+                        "Ensure the backup file exists. For registered test fixtures, run `cargo xtask fixtures ensure --snapshots` to stage committed seeds into the shared snapshot directory.",
                     )
                 })?;
 

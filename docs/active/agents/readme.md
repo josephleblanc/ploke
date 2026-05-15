@@ -41,3 +41,4 @@ be immediately addressed. To be reviewed by user periodically.
 - [`2026-05-02_tt-expr-core_type-resolution-test-review`](2026-05-02_tt-expr-core_type-resolution-test-review) - Independent reviews of type-use resolution tests.
 - [`2026-05-05_tt-expr-core_type-resolution-perf`](2026-05-05_tt-expr-core_type-resolution-perf) - Legacy and typed v2 type-resolution performance notes.
 - [`2026-05-10_tt-expr-core_type-resolution-handoff`](2026-05-10_tt-expr-core_type-resolution-handoff) - Handoff index and restart context for typed type-resolution work.
+- [`2026-05-15_tt-expr-core_fixture-cache`](2026-05-15_tt-expr-core_fixture-cache) - Shared fixture cache handoff for corpus source setup and future backup artifact caching.
