@@ -149,9 +149,9 @@ impl eframe::App for OperatorApp {
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
-                let selected_inspector = selected_detail.as_ref().map(|selection| {
-                    SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
-                });
+                let selected_inspector = selected_detail
+                    .as_ref()
+                    .map(|selection| SelectionInspector::from_graph(&self.graph, selection));
                 shell::render_right_inspector(
                     ui,
                     selected_detail.as_ref(),

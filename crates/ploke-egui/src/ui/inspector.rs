@@ -59,13 +59,43 @@ pub struct RunForestNodeInspection<'g> {
 
 #[derive(Debug, Clone)]
 pub struct ArtifactInspection<'g> {
-    pub key: &'g str,
     pub sources: Vec<&'g ploke_tree::graph::ArtifactNode>,
     pub incoming: Vec<ArtifactRelation<'g>>,
     pub outgoing: Vec<ArtifactRelation<'g>>,
     pub patches: Vec<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
     pub role_badges: Vec<Badge<'g>>,
+}
+
+impl<'g> ArtifactInspection<'g> {
+    pub(crate) fn identity(&self) -> ArtifactIdentityWitness<'_, 'g> {
+        ArtifactIdentityWitness {
+            sources: self.sources.as_slice(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArtifactIdentityWitness<'a, 'g> {
+    pub sources: &'a [&'g ploke_tree::graph::ArtifactNode],
+}
+
+impl<'a, 'g> ArtifactIdentityWitness<'a, 'g> {
+    pub(crate) fn artifact(self) -> &'g str {
+        let Some(label) = self
+            .sources
+            .first()
+            .map(|source| artifact_identity_label(&source.identity))
+        else {
+            return "missing_artifact_identity";
+        };
+        debug_assert!(
+            self.sources
+                .iter()
+                .all(|source| artifact_identity_label(&source.identity) == label)
+        );
+        label
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +112,107 @@ pub struct PatchInspection<'g> {
     pub child: &'g ploke_records::child_plan::ChildPlanChildRecord,
 }
 
+impl<'g> PatchInspection<'g> {
+    pub(crate) fn patch_id(self) -> &'g str {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| surface.patch_id.0.as_str())
+            .or_else(|| {
+                self.child
+                    .node
+                    .patch_id
+                    .as_ref()
+                    .map(|patch_id| patch_id.0.as_str())
+            })
+            .unwrap_or("not_recorded")
+    }
+
+    pub(crate) fn target_relpath(self) -> &'g str {
+        self.child
+            .resolved
+            .target_relpath
+            .to_str()
+            .unwrap_or("non_utf8_path")
+    }
+
+    pub(crate) fn branch_id(self) -> &'g str {
+        self.child.resolved.branch.branch_id.as_str()
+    }
+
+    pub(crate) fn candidate_id(self) -> &'g str {
+        self.child.resolved.branch.candidate_id.as_str()
+    }
+
+    pub(crate) fn source_content_hash(self) -> &'g str {
+        self.child.resolved.source_content_hash.as_str()
+    }
+
+    pub(crate) fn proposed_content_hash(self) -> &'g str {
+        self.child.resolved.branch.proposed_content_hash.as_str()
+    }
+
+    pub(crate) fn base_artifact(self) -> Option<&'g str> {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| surface.base.artifact_id.0.as_str())
+    }
+
+    pub(crate) fn derived_artifact(self) -> Option<&'g str> {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| surface.after.artifact_id.0.as_str())
+    }
+
+    pub(crate) fn check_status(self) -> Option<ploke_records::history::SurfaceCheckStatusRecord> {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| surface.check_status)
+    }
+
+    pub(crate) fn apply_status(self) -> Option<ploke_records::history::SurfaceApplyStatusRecord> {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| surface.apply_status)
+    }
+
+    pub(crate) fn source_content(self) -> &'g str {
+        self.child.resolved.source_content.as_str()
+    }
+
+    pub(crate) fn proposed_content(self) -> &'g str {
+        self.child.resolved.branch.proposed_content.as_str()
+    }
+
+    pub(crate) fn touches(self) -> impl Iterator<Item = PatchTouch<'g>> + 'g {
+        self.child.surface.iter().flat_map(|surface| {
+            surface
+                .touches
+                .iter()
+                .enumerate()
+                .map(|(index, touch)| PatchTouch {
+                    index: index + 1,
+                    relpath: touch.span_relpath.to_str().unwrap_or("non_utf8_path"),
+                    start: touch.start,
+                    end: touch.end,
+                    replacement: touch.replacement.as_str(),
+                })
+        })
+    }
+
+    pub(crate) fn unified_diff(self) -> String {
+        crate::ui::diff::unified_rust_diff(
+            self.target_relpath(),
+            self.source_content(),
+            self.proposed_content(),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactRelationKind {
     HistoryPatch,
@@ -89,15 +220,16 @@ pub enum ArtifactRelationKind {
 }
 
 impl ArtifactRelationKind {
-    fn as_str(self) -> &'static str {
+    fn edge_relation(self) -> EdgeRelation {
         match self {
-            Self::HistoryPatch => "P_H",
-            Self::AppliedPatch => "P_B",
+            Self::HistoryPatch => EdgeRelation::HistoryPatch,
+            Self::AppliedPatch => EdgeRelation::AppliedPatch,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UnavailableReason {
     RunForestNotPresent,
     RunForestNodeNotFound,
@@ -105,11 +237,18 @@ pub enum UnavailableReason {
 }
 
 impl UnavailableReason {
-    fn row(self) -> InspectorRow<'static> {
+    pub(crate) fn subject(self) -> &'static str {
         match self {
-            Self::RunForestNotPresent => InspectorRow::new("run forest", "not_present"),
-            Self::RunForestNodeNotFound => InspectorRow::new("run forest node", "not_found"),
-            Self::ArtifactNotFound => InspectorRow::new("artifact", "not_found"),
+            Self::RunForestNotPresent => "run forest",
+            Self::RunForestNodeNotFound => "run forest node",
+            Self::ArtifactNotFound => "artifact",
+        }
+    }
+
+    pub(crate) fn state(self) -> &'static str {
+        match self {
+            Self::RunForestNotPresent => "not_present",
+            Self::RunForestNodeNotFound | Self::ArtifactNotFound => "not_found",
         }
     }
 }
@@ -118,17 +257,17 @@ impl UnavailableReason {
 pub struct SelectionInspectorSnapshot<'a> {
     pub kind: &'a str,
     pub label: &'a str,
-    pub identity: Vec<InspectorRow<'a>>,
+    pub identity: Option<SelectionIdentity<'a>>,
     pub roles: Vec<Badge<'a>>,
-    pub metrics: Vec<InspectorMetric>,
+    pub metrics: Option<SelectionMetrics>,
     pub parent_create: Option<ParentCreateSnapshot<'a>>,
-    pub incoming: Vec<InspectorEdge<'a>>,
-    pub outgoing: Vec<InspectorEdge<'a>>,
-    pub artifact_incoming: Vec<InspectorEdge<'a>>,
-    pub artifact_outgoing: Vec<InspectorEdge<'a>>,
+    pub incoming: Vec<SelectionEdge<'a>>,
+    pub outgoing: Vec<SelectionEdge<'a>>,
+    pub artifact_incoming: Vec<SelectionEdge<'a>>,
+    pub artifact_outgoing: Vec<SelectionEdge<'a>>,
     pub patches: Vec<PatchSnapshot<'a>>,
     pub source_refs: Vec<SourceRef<'a>>,
-    pub unavailable: Vec<InspectorRow<'a>>,
+    pub unavailable: Option<UnavailableReason>,
 }
 
 impl<'a> SelectionInspectorSnapshot<'a> {
@@ -145,9 +284,9 @@ impl<'a> SelectionInspectorSnapshot<'a> {
             SelectionInspector::Unresolved(reason) => Self {
                 kind: selection.kind.as_str(),
                 label: selection.label.as_str(),
-                identity: Vec::new(),
+                identity: None,
                 roles: Vec::new(),
-                metrics: Vec::new(),
+                metrics: None,
                 parent_create: None,
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
@@ -155,7 +294,7 @@ impl<'a> SelectionInspectorSnapshot<'a> {
                 artifact_outgoing: Vec::new(),
                 patches: Vec::new(),
                 source_refs: Vec::new(),
-                unavailable: vec![reason.row()],
+                unavailable: Some(reason),
             },
         }
     }
@@ -173,9 +312,9 @@ impl<'a> SelectionInspectorSnapshot<'a> {
     pub fn render_text(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("selection: {} {}\n", self.kind, self.label));
-        render_rows(&mut out, "identity", &self.identity);
+        render_identity(&mut out, self.identity.as_ref());
         render_badges(&mut out, "roles", &self.roles);
-        render_metrics(&mut out, "metrics", &self.metrics);
+        render_metrics(&mut out, self.metrics.as_ref());
         render_parent_create(&mut out, self.parent_create.as_ref());
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
@@ -190,9 +329,55 @@ impl<'a> SelectionInspectorSnapshot<'a> {
                 render_source_ref(&mut out, source_ref);
             }
         }
-        render_rows(&mut out, "unavailable", &self.unavailable);
+        render_unavailable(&mut out, self.unavailable);
         out
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionIdentity<'a> {
+    RunForestNode(RunForestNodeIdentity<'a>),
+    Artifact(ArtifactSelectionIdentity<'a>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunForestNodeIdentity<'a> {
+    pub node_key: &'a str,
+    pub candidate_id: &'a str,
+    pub source_artifact: &'a str,
+    pub parent_node: Option<&'a str>,
+    pub base_artifact: Option<&'a str>,
+    pub derived_artifact: Option<&'a str>,
+    pub patch: Option<&'a str>,
+    pub branch_id: &'a str,
+    pub target_relpath: &'a str,
+    pub phase: ploke_tree::Phase,
+    pub result: ploke_tree::ResultClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ArtifactSelectionIdentity<'a> {
+    pub artifact: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionMetrics {
+    RunForestNode(RunForestMetrics),
+    Artifact(ArtifactMetrics),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunForestMetrics {
+    pub generation: u32,
+    pub child_run_forest_nodes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ArtifactMetrics {
+    pub source_records: usize,
+    pub evidence_refs: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -257,39 +442,15 @@ pub struct AgentTurnSnapshot<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct InspectorRow<'a> {
-    pub label: &'static str,
-    pub value: &'a str,
-}
-
-impl<'a> InspectorRow<'a> {
-    fn new(label: &'static str, value: &'a str) -> Self {
-        Self { label, value }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct InspectorMetric {
-    pub label: &'static str,
-    pub value: usize,
-}
-
-impl InspectorMetric {
-    fn new(label: &'static str, value: usize) -> Self {
-        Self { label, value }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct InspectorEdge<'a> {
-    pub relation: &'static str,
+pub struct SelectionEdge<'a> {
+    pub relation: EdgeRelation,
     pub from: &'a str,
     pub to: &'a str,
     pub source_count: usize,
 }
 
-impl<'a> InspectorEdge<'a> {
-    fn new(relation: &'static str, from: &'a str, to: &'a str, source_count: usize) -> Self {
+impl<'a> SelectionEdge<'a> {
+    fn new(relation: EdgeRelation, from: &'a str, to: &'a str, source_count: usize) -> Self {
         Self {
             relation,
             from,
@@ -299,14 +460,41 @@ impl<'a> InspectorEdge<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum EdgeRelation {
+    #[serde(rename = "E_F")]
+    RunForest,
+    #[serde(rename = "P_H")]
+    HistoryPatch,
+    #[serde(rename = "P_B")]
+    AppliedPatch,
+}
+
+impl EdgeRelation {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::RunForest => "E_F",
+            Self::HistoryPatch => "P_H",
+            Self::AppliedPatch => "P_B",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PatchSnapshot<'a> {
     pub patch_id: &'a str,
-    pub summary: Vec<InspectorRow<'a>>,
+    pub target_relpath: &'a str,
+    pub branch_id: &'a str,
+    pub candidate_id: &'a str,
+    pub source_content_hash: &'a str,
+    pub proposed_content_hash: &'a str,
+    pub base_artifact: Option<&'a str>,
+    pub derived_artifact: Option<&'a str>,
+    pub check_status: Option<ploke_records::history::SurfaceCheckStatusRecord>,
+    pub apply_status: Option<ploke_records::history::SurfaceApplyStatusRecord>,
     pub touches: Vec<PatchTouch<'a>>,
     pub source_content: &'a str,
     pub proposed_content: &'a str,
-    pub target_relpath: &'a str,
 }
 
 impl<'a> PatchSnapshot<'a> {
@@ -345,9 +533,6 @@ pub enum SourceRef<'a> {
     ArtifactId {
         artifact: &'a str,
     },
-    ArtifactEvidenceCount {
-        count: usize,
-    },
 }
 
 impl std::fmt::Display for SourceRef<'_> {
@@ -367,7 +552,6 @@ impl std::fmt::Display for SourceRef<'_> {
             Self::Diagnostic { severity, code } => write!(f, "diagnostic:{severity}:{code}"),
             Self::ArtifactHistoryRef { artifact } => write!(f, "artifact_history_ref:{artifact}"),
             Self::ArtifactId { artifact } => write!(f, "artifact_id:{artifact}"),
-            Self::ArtifactEvidenceCount { count } => write!(f, "artifact_evidence_count:{count}"),
         }
     }
 }
@@ -512,15 +696,7 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         )
         .collect();
 
-    let sources = graph
-        .artifacts
-        .artifacts
-        .values()
-        .filter(|artifact| {
-            artifact_node_key(artifact)
-                .is_some_and(|artifact_key| artifact_key == node.key.as_str())
-        })
-        .collect();
+    let sources = node.sources.clone();
     let patches = incoming
         .iter()
         .chain(outgoing.iter())
@@ -534,7 +710,6 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         .collect();
 
     SelectionInspector::Artifact(ArtifactInspection {
-        key: node.key.as_str(),
         sources,
         incoming,
         outgoing,
@@ -551,51 +726,48 @@ fn snapshot_run_forest<'a, 'g>(
 where
     'g: 'a,
 {
-    let node = inspector.node;
-    let mut identity = vec![
-        InspectorRow::new("run forest node", node.key.as_str()),
-        InspectorRow::new("candidate", node.candidate_id.as_str()),
-        InspectorRow::new("source artifact", node.source_state_id.as_str()),
-    ];
-    maybe_row(
-        &mut identity,
-        "parent run forest node",
-        node.parent.as_ref().map(|parent| parent.as_str()),
-    );
-    maybe_row(
-        &mut identity,
-        "base artifact",
-        node.base_artifact_id.as_deref(),
-    );
-    maybe_row(
-        &mut identity,
-        "derived artifact",
-        node.derived_artifact_id.as_deref(),
-    );
-    maybe_row(&mut identity, "patch", node.patch_id.as_deref());
-
-    let details = vec![
-        InspectorRow::new("branch", node.branch_id.as_str()),
-        InspectorRow::new("target", node.target_relpath.as_str()),
-        InspectorRow::new("phase", phase_label(node.progress.phase)),
-        InspectorRow::new("result", result_class_label(node.progress.result_class)),
-    ];
-    identity.extend(details);
-    let metrics = vec![
-        InspectorMetric::new("generation", node.generation as usize),
-        InspectorMetric::new("child run forest nodes", inspector.children.len()),
-    ];
-    let incoming = inspector
-        .parent
-        .map(|parent| InspectorEdge::new("E_F", parent.key.as_str(), node.key.as_str(), 1))
+    let RunForestNodeInspection {
+        node,
+        parent,
+        children,
+        patch,
+        parent_create,
+        role_badges,
+    } = inspector;
+    let identity = SelectionIdentity::RunForestNode(run_forest_node_identity(node));
+    let metrics = SelectionMetrics::RunForestNode(RunForestMetrics {
+        generation: node.generation,
+        child_run_forest_nodes: children.len(),
+    });
+    let incoming = parent
         .into_iter()
+        .map(|parent| {
+            SelectionEdge::new(
+                EdgeRelation::RunForest,
+                parent.key.as_str(),
+                node.key.as_str(),
+                1,
+            )
+        })
         .collect();
-    let outgoing = inspector
-        .children
+    let outgoing = children
         .iter()
-        .map(|child| InspectorEdge::new("E_F", node.key.as_str(), child.as_str(), 1))
+        .map(|child| {
+            SelectionEdge::new(
+                EdgeRelation::RunForest,
+                node.key.as_str(),
+                child.as_str(),
+                1,
+            )
+        })
         .collect();
-    let artifact_outgoing = run_forest_artifact_edges(node);
+    let artifact_outgoing = node
+        .base_artifact_id
+        .as_deref()
+        .zip(node.derived_artifact_id.as_deref())
+        .into_iter()
+        .map(|(from, to)| SelectionEdge::new(EdgeRelation::AppliedPatch, from, to, 1))
+        .collect();
     let source_refs = node
         .evidence
         .iter()
@@ -617,17 +789,17 @@ where
     SelectionInspectorSnapshot {
         kind: selection.kind.as_str(),
         label: selection.label.as_str(),
-        identity,
-        roles: inspector.role_badges,
-        metrics,
-        parent_create: Some(parent_create_snapshot(inspector.parent_create)),
+        identity: Some(identity),
+        roles: role_badges,
+        metrics: Some(metrics),
+        parent_create: Some(parent_create_snapshot(parent_create)),
         incoming,
         outgoing,
         artifact_incoming: Vec::new(),
         artifact_outgoing,
-        patches: inspector.patch.into_iter().map(patch_snapshot).collect(),
+        patches: patch.into_iter().map(patch_snapshot).collect(),
         source_refs,
-        unavailable: Vec::new(),
+        unavailable: None,
     }
 }
 
@@ -638,50 +810,93 @@ fn snapshot_artifact<'a, 'g>(
 where
     'g: 'a,
 {
-    let source_refs = inspector
-        .sources
+    let ArtifactInspection {
+        sources,
+        incoming,
+        outgoing,
+        patches,
+        parent_create,
+        role_badges,
+    } = inspector;
+    let source_refs = sources
         .iter()
-        .flat_map(|source| match &source.identity {
-            ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => vec![
+        .map(|source| match &source.identity {
+            ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
                 SourceRef::ArtifactHistoryRef {
                     artifact: artifact.value.as_str(),
-                },
-                SourceRef::ArtifactEvidenceCount {
-                    count: source.evidence.len(),
-                },
-            ],
-            ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => vec![
-                SourceRef::ArtifactId {
-                    artifact: artifact.0.as_str(),
-                },
-                SourceRef::ArtifactEvidenceCount {
-                    count: source.evidence.len(),
-                },
-            ],
+                }
+            }
+            ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => SourceRef::ArtifactId {
+                artifact: artifact.0.as_str(),
+            },
         })
         .collect();
+    let identity = ArtifactIdentityWitness {
+        sources: sources.as_slice(),
+    };
 
     SelectionInspectorSnapshot {
         kind: selection.kind.as_str(),
         label: selection.label.as_str(),
-        identity: vec![InspectorRow::new("artifact", inspector.key)],
-        roles: inspector.role_badges,
-        metrics: vec![InspectorMetric::new(
-            "source records",
-            inspector.sources.len(),
-        )],
-        parent_create: Some(parent_create_snapshot(inspector.parent_create)),
-        incoming: artifact_edges(&inspector.incoming),
-        outgoing: artifact_edges(&inspector.outgoing),
-        artifact_incoming: artifact_edges(&inspector.incoming),
-        artifact_outgoing: artifact_edges(&inspector.outgoing),
-        patches: inspector.patches.into_iter().map(patch_snapshot).collect(),
+        identity: Some(SelectionIdentity::Artifact(ArtifactSelectionIdentity {
+            artifact: identity.artifact(),
+        })),
+        roles: role_badges,
+        metrics: Some(SelectionMetrics::Artifact(artifact_metrics(&sources))),
+        parent_create: Some(parent_create_snapshot(parent_create)),
+        incoming: incoming
+            .iter()
+            .map(|edge| {
+                SelectionEdge::new(
+                    edge.kind.edge_relation(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count,
+                )
+            })
+            .collect(),
+        outgoing: outgoing
+            .iter()
+            .map(|edge| {
+                SelectionEdge::new(
+                    edge.kind.edge_relation(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count,
+                )
+            })
+            .collect(),
+        artifact_incoming: incoming
+            .into_iter()
+            .map(|edge| {
+                SelectionEdge::new(
+                    edge.kind.edge_relation(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count,
+                )
+            })
+            .collect(),
+        artifact_outgoing: outgoing
+            .into_iter()
+            .map(|edge| {
+                SelectionEdge::new(
+                    edge.kind.edge_relation(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count,
+                )
+            })
+            .collect(),
+        patches: patches.into_iter().map(patch_snapshot).collect(),
         source_refs,
-        unavailable: Vec::new(),
+        unavailable: None,
     }
 }
 
-fn parent_create_snapshot<'a>(lookup: ParentCreateLookup<'a, 'a>) -> ParentCreateSnapshot<'a> {
+pub(crate) fn parent_create_snapshot<'a>(
+    lookup: ParentCreateLookup<'a, 'a>,
+) -> ParentCreateSnapshot<'a> {
     match lookup {
         ParentCreateLookup::Attempt(attempt) => parent_create_attempt_snapshot(attempt),
         ParentCreateLookup::Unavailable(reason) => ParentCreateSnapshot {
@@ -836,115 +1051,143 @@ fn parent_create_unavailable_snapshot<'a>(
 }
 
 fn patch_snapshot<'a>(patch: PatchInspection<'a>) -> PatchSnapshot<'a> {
-    let child = patch.child;
-    let patch_id = child
-        .surface
-        .as_ref()
-        .map(|surface| surface.patch_id.0.as_str())
-        .or_else(|| {
-            child
-                .node
-                .patch_id
-                .as_ref()
-                .map(|patch_id| patch_id.0.as_str())
-        })
-        .unwrap_or("not_recorded");
-    let mut summary = vec![
-        InspectorRow::new(
-            "target",
-            child
-                .resolved
-                .target_relpath
-                .to_str()
-                .unwrap_or("non_utf8_path"),
-        ),
-        InspectorRow::new("branch", child.resolved.branch.branch_id.as_str()),
-        InspectorRow::new("candidate", child.resolved.branch.candidate_id.as_str()),
-        InspectorRow::new("source hash", child.resolved.source_content_hash.as_str()),
-        InspectorRow::new(
-            "proposed hash",
-            child.resolved.branch.proposed_content_hash.as_str(),
-        ),
-    ];
-    if let Some(surface) = child.surface.as_ref() {
-        summary.push(InspectorRow::new(
-            "base artifact",
-            surface.base.artifact_id.0.as_str(),
-        ));
-        summary.push(InspectorRow::new(
-            "derived artifact",
-            surface.after.artifact_id.0.as_str(),
-        ));
-        summary.push(InspectorRow::new(
-            "check",
-            surface_check_status_label(surface.check_status),
-        ));
-        summary.push(InspectorRow::new(
-            "apply",
-            surface_apply_status_label(surface.apply_status),
-        ));
-    }
-
-    let touches = child
-        .surface
-        .as_ref()
-        .map(|surface| {
-            surface
-                .touches
-                .iter()
-                .enumerate()
-                .map(|(index, touch)| PatchTouch {
-                    index: index + 1,
-                    relpath: touch.span_relpath.to_str().unwrap_or("non_utf8_path"),
-                    start: touch.start,
-                    end: touch.end,
-                    replacement: touch.replacement.as_str(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
     PatchSnapshot {
-        patch_id,
-        summary,
-        touches,
-        source_content: child.resolved.source_content.as_str(),
-        proposed_content: child.resolved.branch.proposed_content.as_str(),
-        target_relpath: child
-            .resolved
-            .target_relpath
-            .to_str()
-            .unwrap_or("non_utf8_path"),
+        patch_id: patch.patch_id(),
+        target_relpath: patch.target_relpath(),
+        branch_id: patch.branch_id(),
+        candidate_id: patch.candidate_id(),
+        source_content_hash: patch.source_content_hash(),
+        proposed_content_hash: patch.proposed_content_hash(),
+        base_artifact: patch.base_artifact(),
+        derived_artifact: patch.derived_artifact(),
+        check_status: patch.check_status(),
+        apply_status: patch.apply_status(),
+        touches: patch.touches().collect(),
+        source_content: patch.source_content(),
+        proposed_content: patch.proposed_content(),
     }
 }
 
-fn run_forest_artifact_edges(node: &ploke_tree::TreeNode) -> Vec<InspectorEdge<'_>> {
-    let Some(from) = node.base_artifact_id.as_deref() else {
-        return Vec::new();
-    };
-    let Some(to) = node.derived_artifact_id.as_deref() else {
-        return Vec::new();
-    };
-    vec![InspectorEdge::new(
-        ArtifactRelationKind::AppliedPatch.as_str(),
-        from,
-        to,
-        1,
-    )]
-}
-
-fn artifact_node_key(artifact: &ploke_tree::graph::ArtifactNode) -> Option<&str> {
-    match &artifact.identity {
-        ploke_tree::graph::ArtifactIdentity::HistoryRef(record) => Some(record.value.as_str()),
-        ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => Some(artifact.0.as_str()),
+pub(crate) fn run_forest_node_identity(node: &ploke_tree::TreeNode) -> RunForestNodeIdentity<'_> {
+    RunForestNodeIdentity {
+        node_key: node.key.as_str(),
+        candidate_id: node.candidate_id.as_str(),
+        source_artifact: node.source_state_id.as_str(),
+        parent_node: node.parent.as_ref().map(|parent| parent.as_str()),
+        base_artifact: node.base_artifact_id.as_deref(),
+        derived_artifact: node.derived_artifact_id.as_deref(),
+        patch: node.patch_id.as_deref(),
+        branch_id: node.branch_id.as_str(),
+        target_relpath: node.target_relpath.as_str(),
+        phase: node.progress.phase,
+        result: node.progress.result_class,
     }
 }
 
-fn artifact_edges<'a>(edges: &[ArtifactRelation<'a>]) -> Vec<InspectorEdge<'a>> {
-    edges
+pub(crate) fn artifact_metrics(sources: &[&ploke_tree::graph::ArtifactNode]) -> ArtifactMetrics {
+    ArtifactMetrics {
+        source_records: sources.len(),
+        evidence_refs: sources.iter().map(|source| source.evidence.len()).sum(),
+    }
+}
+
+pub(crate) fn run_forest_incoming_edges<'a>(
+    inspector: &'a RunForestNodeInspection<'a>,
+) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
+    inspector
+        .parent
+        .map(|parent| {
+            SelectionEdge::new(
+                EdgeRelation::RunForest,
+                parent.key.as_str(),
+                inspector.node.key.as_str(),
+                1,
+            )
+        })
+        .into_iter()
+}
+
+pub(crate) fn run_forest_outgoing_edges<'a>(
+    inspector: &'a RunForestNodeInspection<'a>,
+) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
+    inspector.children.iter().map(|child| {
+        SelectionEdge::new(
+            EdgeRelation::RunForest,
+            inspector.node.key.as_str(),
+            child.as_str(),
+            1,
+        )
+    })
+}
+
+pub(crate) fn run_forest_source_refs(
+    node: &ploke_tree::TreeNode,
+) -> impl Iterator<Item = SourceRef<'_>> + '_ {
+    node.evidence
         .iter()
-        .map(|edge| InspectorEdge::new(edge.kind.as_str(), edge.from, edge.to, edge.source_count))
-        .collect()
+        .map(|evidence| SourceRef::Evidence {
+            kind: evidence_kind_label(evidence.kind),
+            authority: authority_label(evidence.authority),
+            recorded_at: evidence.recorded_at.as_deref(),
+        })
+        .chain(
+            node.diagnostics
+                .iter()
+                .map(|diagnostic| SourceRef::Diagnostic {
+                    severity: diagnostic_severity_label(diagnostic.severity),
+                    code: diagnostic.code.as_str(),
+                }),
+        )
+}
+
+pub(crate) fn artifact_source_refs<'a>(
+    sources: &'a [&'a ploke_tree::graph::ArtifactNode],
+) -> impl Iterator<Item = SourceRef<'a>> + 'a {
+    sources.iter().map(|source| match &source.identity {
+        ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
+            SourceRef::ArtifactHistoryRef {
+                artifact: artifact.value.as_str(),
+            }
+        }
+        ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => SourceRef::ArtifactId {
+            artifact: artifact.0.as_str(),
+        },
+    })
+}
+
+fn artifact_identity_label(identity: &ploke_tree::graph::ArtifactIdentity) -> &str {
+    match identity {
+        ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => artifact
+            .value
+            .strip_prefix("artifact:")
+            .unwrap_or(&artifact.value),
+        ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => {
+            artifact.0.strip_prefix("artifact:").unwrap_or(&artifact.0)
+        }
+    }
+}
+
+pub(crate) fn run_forest_artifact_edges(
+    node: &ploke_tree::TreeNode,
+) -> impl Iterator<Item = SelectionEdge<'_>> + '_ {
+    node.base_artifact_id
+        .as_deref()
+        .zip(node.derived_artifact_id.as_deref())
+        .into_iter()
+        .map(|(from, to)| SelectionEdge::new(EdgeRelation::AppliedPatch, from, to, 1))
+}
+
+pub(crate) fn artifact_edges<'a>(
+    edges: &'a [ArtifactRelation<'a>],
+) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
+    edges.iter().map(|edge| {
+        SelectionEdge::new(
+            edge.kind.edge_relation(),
+            edge.from,
+            edge.to,
+            edge.source_count,
+        )
+    })
 }
 
 fn role_badges_for_run_forest_node<'g>(
@@ -991,17 +1234,11 @@ fn unique_role_badges<'g>(
     parent.into_iter().chain(child).collect()
 }
 
-fn maybe_row<'a>(rows: &mut Vec<InspectorRow<'a>>, label: &'static str, value: Option<&'a str>) {
-    if let Some(value) = value {
-        rows.push(InspectorRow::new(label, value));
-    }
-}
-
 fn artifact_handle_label(index: usize) -> String {
     format!("A{index}")
 }
 
-fn phase_label(phase: ploke_tree::Phase) -> &'static str {
+pub(crate) fn phase_label(phase: ploke_tree::Phase) -> &'static str {
     match phase {
         ploke_tree::Phase::Planned => "planned",
         ploke_tree::Phase::WorkspaceStaged => "workspace_staged",
@@ -1013,7 +1250,7 @@ fn phase_label(phase: ploke_tree::Phase) -> &'static str {
     }
 }
 
-fn result_class_label(result_class: ploke_tree::ResultClass) -> &'static str {
+pub(crate) fn result_class_label(result_class: ploke_tree::ResultClass) -> &'static str {
     match result_class {
         ploke_tree::ResultClass::Success => "success",
         ploke_tree::ResultClass::Failure => "failure",
@@ -1048,7 +1285,7 @@ fn diagnostic_severity_label(severity: ploke_tree::DiagnosticSeverity) -> &'stat
     }
 }
 
-fn surface_check_status_label(
+pub(crate) fn surface_check_status_label(
     status: ploke_records::history::SurfaceCheckStatusRecord,
 ) -> &'static str {
     match status {
@@ -1056,22 +1293,11 @@ fn surface_check_status_label(
     }
 }
 
-fn surface_apply_status_label(
+pub(crate) fn surface_apply_status_label(
     status: ploke_records::history::SurfaceApplyStatusRecord,
 ) -> &'static str {
     match status {
         ploke_records::history::SurfaceApplyStatusRecord::Applied => "applied",
-    }
-}
-
-fn render_rows(out: &mut String, heading: &str, rows: &[InspectorRow]) {
-    if rows.is_empty() {
-        out.push_str(&format!("{heading}: none\n"));
-        return;
-    }
-    out.push_str(&format!("{heading}:\n"));
-    for row in rows {
-        out.push_str(&format!("- {}: {}\n", row.label, row.value));
     }
 }
 
@@ -1087,14 +1313,65 @@ fn render_badges(out: &mut String, heading: &str, badges: &[Badge]) {
     }
 }
 
-fn render_metrics(out: &mut String, heading: &str, metrics: &[InspectorMetric]) {
-    if metrics.is_empty() {
-        out.push_str(&format!("{heading}: none\n"));
+fn render_identity(out: &mut String, identity: Option<&SelectionIdentity<'_>>) {
+    let Some(identity) = identity else {
+        out.push_str("identity: none\n");
+        return;
+    };
+
+    out.push_str("identity:\n");
+    match identity {
+        SelectionIdentity::RunForestNode(identity) => {
+            out.push_str(&format!("- run_forest_node: {}\n", identity.node_key));
+            out.push_str(&format!("- candidate: {}\n", identity.candidate_id));
+            out.push_str(&format!(
+                "- source_artifact: {}\n",
+                identity.source_artifact
+            ));
+            if let Some(parent) = identity.parent_node {
+                out.push_str(&format!("- parent_run_forest_node: {parent}\n"));
+            }
+            if let Some(base) = identity.base_artifact {
+                out.push_str(&format!("- base_artifact: {base}\n"));
+            }
+            if let Some(derived) = identity.derived_artifact {
+                out.push_str(&format!("- derived_artifact: {derived}\n"));
+            }
+            if let Some(patch) = identity.patch {
+                out.push_str(&format!("- patch: {patch}\n"));
+            }
+            out.push_str(&format!("- branch: {}\n", identity.branch_id));
+            out.push_str(&format!("- target: {}\n", identity.target_relpath));
+            out.push_str(&format!("- phase: {}\n", phase_label(identity.phase)));
+            out.push_str(&format!(
+                "- result: {}\n",
+                result_class_label(identity.result)
+            ));
+        }
+        SelectionIdentity::Artifact(identity) => {
+            out.push_str(&format!("- artifact: {}\n", identity.artifact));
+        }
+    }
+}
+
+fn render_metrics(out: &mut String, metrics: Option<&SelectionMetrics>) {
+    if metrics.is_none() {
+        out.push_str("metrics: none\n");
         return;
     }
-    out.push_str(&format!("{heading}:\n"));
-    for metric in metrics {
-        out.push_str(&format!("- {}: {}\n", metric.label, metric.value));
+    out.push_str("metrics:\n");
+    match metrics.expect("checked above") {
+        SelectionMetrics::RunForestNode(metrics) => {
+            out.push_str(&format!("- generation: {}\n", metrics.generation));
+            out.push_str(&format!(
+                "- child_run_forest_nodes: {}\n",
+                metrics.child_run_forest_nodes
+            ));
+        }
+        SelectionMetrics::Artifact(metrics) => {
+            out.push_str(&format!("- source_records: {}\n", metrics.source_records));
+            out.push_str(&format!("- evidence_refs: {}\n", metrics.evidence_refs));
+        }
     }
 }
 
@@ -1188,13 +1465,10 @@ fn render_source_ref(out: &mut String, source_ref: &SourceRef<'_>) {
         SourceRef::ArtifactId { artifact } => {
             out.push_str(&format!("- artifact_id:{artifact}\n"));
         }
-        SourceRef::ArtifactEvidenceCount { count } => {
-            out.push_str(&format!("- artifact_evidence_count:{count}\n"));
-        }
     }
 }
 
-fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge<'_>]) {
+fn render_edges(out: &mut String, heading: &str, edges: &[SelectionEdge<'_>]) {
     if edges.is_empty() {
         out.push_str(&format!("{heading}: none\n"));
         return;
@@ -1203,7 +1477,10 @@ fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge<'_>]) {
     for edge in edges {
         out.push_str(&format!(
             "- {}: {} -> {} ({})\n",
-            edge.relation, edge.from, edge.to, edge.source_count
+            edge.relation.label(),
+            edge.from,
+            edge.to,
+            edge.source_count
         ));
     }
 }
@@ -1217,10 +1494,39 @@ fn render_patches(out: &mut String, patches: &[PatchSnapshot]) {
     out.push_str(&format!("patch_debug: count={}\n", patches.len()));
     for patch in patches.iter().take(4) {
         out.push_str(&format!("- patch_id: {}\n", patch.patch_id));
+        out.push_str(&format!("  target: {}\n", patch.target_relpath));
+        out.push_str(&format!("  branch: {}\n", patch.branch_id));
+        out.push_str(&format!("  candidate: {}\n", patch.candidate_id));
+        out.push_str(&format!("  source_hash: {}\n", patch.source_content_hash));
+        out.push_str(&format!(
+            "  proposed_hash: {}\n",
+            patch.proposed_content_hash
+        ));
+        if let Some(base) = patch.base_artifact {
+            out.push_str(&format!("  base_artifact: {base}\n"));
+        }
+        if let Some(derived) = patch.derived_artifact {
+            out.push_str(&format!("  derived_artifact: {derived}\n"));
+        }
+        if let Some(check) = patch.check_status {
+            out.push_str(&format!("  check: {}\n", surface_check_status_label(check)));
+        }
+        if let Some(apply) = patch.apply_status {
+            out.push_str(&format!("  apply: {}\n", surface_apply_status_label(apply)));
+        }
     }
     if patches.len() > 4 {
         out.push_str(&format!("... {} more patch records\n", patches.len() - 4));
     }
+}
+
+fn render_unavailable(out: &mut String, unavailable: Option<UnavailableReason>) {
+    let Some(reason) = unavailable else {
+        out.push_str("unavailable: none\n");
+        return;
+    };
+    out.push_str("unavailable:\n");
+    out.push_str(&format!("- {}: {}\n", reason.subject(), reason.state()));
 }
 
 #[cfg(test)]
@@ -1228,11 +1534,21 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
+    use ploke_records::branch::{
+        ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus,
+    };
+    use ploke_records::child_plan::ChildPlanChildRecord;
+    use ploke_records::history::{
+        SurfaceApplyStatusRecord, SurfaceArtifactRefRecord, SurfaceCheckStatusRecord,
+        SurfaceEvidenceRecord, SurfaceTouchRecord,
+    };
     use ploke_records::ids::{
-        ArtifactId, BranchId, CampaignId, InstanceId, RuntimeId, SchedulerNodeId, SourceStateId,
+        ArtifactId, BranchId, CampaignId, CandidateId, EntryId, HistoryHash, InstanceId, PatchId,
+        RuntimeId, SchedulerNodeId, SourceStateId,
     };
     use ploke_records::invocation::{InvocationRecord, Role};
-    use ploke_records::scheduler::RunnerRequestRecord;
+    use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, RunnerRequestRecord};
     use ploke_tree::{
         AuthorityLabel, CampaignRef, EvidenceKind, EvidenceRef, Lanes, NodeKey, NodeKind,
         PassiveEvidence, Phase, Progress, ResultClass, RunAttemptEvidence, RunAttemptSummary,
@@ -1293,38 +1609,27 @@ mod tests {
         assert_eq!(snapshot.label, "A2");
         assert!(snapshot.has_record_refs());
         assert_eq!(snapshot.incoming.len(), 1);
-        assert_eq!(snapshot.incoming[0].relation, "E_F");
+        assert_eq!(snapshot.incoming[0].relation, EdgeRelation::RunForest);
         assert_eq!(snapshot.incoming[0].from, "parent");
         assert_eq!(snapshot.incoming[0].to, "child");
         assert!(snapshot.outgoing.is_empty());
         assert_eq!(snapshot.artifact_outgoing.len(), 1);
-        assert_eq!(snapshot.artifact_outgoing[0].relation, "P_B");
+        assert_eq!(
+            snapshot.artifact_outgoing[0].relation,
+            EdgeRelation::AppliedPatch
+        );
         assert_eq!(snapshot.artifact_outgoing[0].from, "artifact:child:base");
         assert_eq!(snapshot.artifact_outgoing[0].to, "artifact:child:after");
-        assert!(
-            snapshot
-                .identity
-                .iter()
-                .any(|row| row.label == "run forest node" && row.value == "child")
-        );
-        assert!(
-            snapshot
-                .identity
-                .iter()
-                .any(|row| row.label == "parent run forest node" && row.value == "parent")
-        );
-        assert!(
-            snapshot
-                .metrics
-                .iter()
-                .any(|metric| metric.label == "child run forest nodes" && metric.value == 0)
-        );
-        assert!(
-            snapshot
-                .identity
-                .iter()
-                .any(|row| row.label == "source artifact" && row.value == "artifact:child")
-        );
+        let Some(SelectionIdentity::RunForestNode(identity)) = snapshot.identity else {
+            panic!("expected run-forest identity");
+        };
+        assert_eq!(identity.node_key, "child");
+        assert_eq!(identity.parent_node, Some("parent"));
+        assert_eq!(identity.source_artifact, "artifact:child");
+        let Some(SelectionMetrics::RunForestNode(metrics)) = snapshot.metrics else {
+            panic!("expected run-forest metrics");
+        };
+        assert_eq!(metrics.child_run_forest_nodes, 0);
         assert!(
             snapshot
                 .roles
@@ -1339,8 +1644,305 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selected_artifact_reports_typed_identity_metrics_and_patch_edge() {
+        let graph = artifact_graph_with_applied_patch_edge();
+        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let snapshot = inspector.snapshot(&selection);
+
+        let Some(SelectionIdentity::Artifact(identity)) = snapshot.identity else {
+            panic!("expected artifact identity");
+        };
+        assert_eq!(identity.artifact, "after");
+        let Some(SelectionMetrics::Artifact(metrics)) = snapshot.metrics else {
+            panic!("expected artifact metrics");
+        };
+        assert_eq!(metrics.source_records, 1);
+        assert_eq!(metrics.evidence_refs, 0);
+        assert_eq!(snapshot.incoming.len(), 1);
+        assert_eq!(snapshot.incoming[0].relation, EdgeRelation::AppliedPatch);
+        assert_eq!(snapshot.incoming[0].from, "base");
+        assert_eq!(snapshot.incoming[0].to, "after");
+        assert_eq!(
+            snapshot.source_refs,
+            vec![SourceRef::ArtifactId {
+                artifact: "artifact:after"
+            }]
+        );
+    }
+
+    #[test]
+    fn selected_artifact_exposes_borrowed_identity_witness_for_live_inspector() {
+        let graph = artifact_graph_with_mixed_identity_sources();
+        let (_, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let history_node = graph
+            .artifacts
+            .artifacts
+            .get(&ploke_tree::graph::ArtifactKey::HistoryRef {
+                value: "artifact:after".to_owned(),
+            })
+            .expect("history artifact source exists");
+        let passive_node = graph
+            .artifacts
+            .artifacts
+            .get(&ploke_tree::graph::ArtifactKey::PassiveId {
+                value: "artifact:after".to_owned(),
+            })
+            .expect("passive artifact source exists");
+
+        let SelectionInspector::Artifact(artifact) = inspector else {
+            panic!("expected artifact inspection");
+        };
+        let identity = artifact.identity();
+
+        assert_eq!(identity.artifact(), "after");
+
+        let mut saw_history_ref = false;
+        let mut saw_passive_id = false;
+        for source in identity.sources {
+            match &source.identity {
+                ploke_tree::graph::ArtifactIdentity::HistoryRef(record) => {
+                    assert_eq!(record.value, "artifact:after");
+                    let ploke_tree::graph::ArtifactIdentity::HistoryRef(expected) =
+                        &history_node.identity
+                    else {
+                        panic!("expected history artifact identity");
+                    };
+                    assert!(std::ptr::eq(record, expected));
+                    saw_history_ref = true;
+                }
+                ploke_tree::graph::ArtifactIdentity::PassiveId(record) => {
+                    assert_eq!(record.0, "artifact:after");
+                    let ploke_tree::graph::ArtifactIdentity::PassiveId(expected) =
+                        &passive_node.identity
+                    else {
+                        panic!("expected passive artifact identity");
+                    };
+                    assert!(std::ptr::eq(record, expected));
+                    saw_passive_id = true;
+                }
+            }
+        }
+
+        assert!(saw_history_ref);
+        assert!(saw_passive_id);
+    }
+
+    #[test]
+    fn unresolved_selection_carries_typed_unavailable_reason() {
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "missing".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::Artifact {
+                key: "artifact:missing".to_owned(),
+            },
+        };
+        let graph = ploke_tree::Graph::default();
+        let inspector = SelectionInspector::from_graph(&graph, &selection);
+        let snapshot = inspector.snapshot(&selection);
+
+        assert_eq!(snapshot.identity, None);
+        assert_eq!(snapshot.metrics, None);
+        assert_eq!(
+            snapshot.unavailable,
+            Some(UnavailableReason::ArtifactNotFound)
+        );
+    }
+
+    #[test]
+    fn patch_debug_snapshot_uses_named_child_plan_fields() {
+        let child = child_plan_child_record();
+        let snapshot = patch_snapshot(PatchInspection { child: &child });
+
+        assert_eq!(snapshot.patch_id, "patch:attempt-1");
+        assert_eq!(snapshot.target_relpath, "src/lib.rs");
+        assert_eq!(snapshot.branch_id, "branch-child");
+        assert_eq!(snapshot.candidate_id, "candidate-1");
+        assert_eq!(snapshot.source_content_hash, "sha256:source");
+        assert_eq!(snapshot.proposed_content_hash, "sha256:proposed");
+        assert_eq!(snapshot.base_artifact, Some("artifact:base"));
+        assert_eq!(snapshot.derived_artifact, Some("artifact:after"));
+        assert_eq!(
+            snapshot.check_status,
+            Some(SurfaceCheckStatusRecord::Checked)
+        );
+        assert_eq!(
+            snapshot.apply_status,
+            Some(SurfaceApplyStatusRecord::Applied)
+        );
+        assert_eq!(snapshot.touches.len(), 1);
+        assert_eq!(snapshot.touches[0].replacement, "println!(\"hi\");");
+
+        let json = serde_json::to_value(&snapshot).expect("serialize patch snapshot");
+        assert!(json.get("summary").is_none());
+        assert_eq!(json["branch_id"], "branch-child");
+        assert_eq!(json["check_status"], "checked");
+    }
+
+    #[test]
+    fn typed_edge_relation_classification_covers_all_visible_relations() {
+        let graph = graph_with_parent_child();
+        let (_, inspector) = SelectionInspector::from_default_selector(&graph, "A2")
+            .expect("child selection resolves");
+        let SelectionInspector::RunForestNode(run) = inspector else {
+            panic!("expected run-forest node inspection");
+        };
+        let incoming = run_forest_incoming_edges(&run).collect::<Vec<_>>();
+        assert_eq!(incoming[0].relation, EdgeRelation::RunForest);
+
+        let relations = vec![
+            ArtifactRelation {
+                kind: ArtifactRelationKind::HistoryPatch,
+                from: "artifact:old",
+                to: "artifact:new",
+                source_count: 1,
+                patch_ids: Vec::new(),
+            },
+            ArtifactRelation {
+                kind: ArtifactRelationKind::AppliedPatch,
+                from: "artifact:base",
+                to: "artifact:after",
+                source_count: 1,
+                patch_ids: Vec::new(),
+            },
+        ];
+        let edges = artifact_edges(&relations).collect::<Vec<_>>();
+        assert_eq!(edges[0].relation, EdgeRelation::HistoryPatch);
+        assert_eq!(edges[1].relation, EdgeRelation::AppliedPatch);
+    }
+
+    #[test]
+    fn selection_snapshot_serializes_typed_schema() {
+        let graph = artifact_graph_with_applied_patch_edge();
+        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let snapshot = inspector.snapshot(&selection);
+        let json = serde_json::to_value(&snapshot).expect("serialize selection snapshot");
+
+        assert_eq!(json["identity"]["artifact"]["artifact"], "after");
+        assert_eq!(json["metrics"]["artifact"]["source_records"], 1);
+        assert_eq!(json["incoming"][0]["relation"], "P_B");
+        assert_eq!(json["unavailable"], serde_json::Value::Null);
+    }
+
     fn key(value: &str) -> NodeKey {
         NodeKey::from(value)
+    }
+
+    fn graph_with_parent_child() -> ploke_tree::Graph {
+        let parent = key("parent");
+        let child = key("child");
+        ploke_tree::Graph {
+            forest: Some(RunForest {
+                campaign: CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: vec![parent.clone()],
+                nodes: vec![
+                    node(parent.clone(), None, vec![child.clone()], 0),
+                    node(child, Some(parent), Vec::new(), 1),
+                ],
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence: PassiveEvidence::default(),
+                diagnostics: Vec::new(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn artifact_graph_with_applied_patch_edge() -> ploke_tree::Graph {
+        let base = ArtifactId("artifact:base".to_owned());
+        let after = ArtifactId("artifact:after".to_owned());
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            ploke_tree::graph::ArtifactKey::PassiveId {
+                value: base.0.clone(),
+            },
+            ploke_tree::graph::ArtifactNode {
+                key: ploke_tree::graph::ArtifactKey::PassiveId {
+                    value: base.0.clone(),
+                },
+                identity: ploke_tree::graph::ArtifactIdentity::PassiveId(base.clone()),
+                evidence: Vec::new(),
+            },
+        );
+        artifacts.insert(
+            ploke_tree::graph::ArtifactKey::PassiveId {
+                value: after.0.clone(),
+            },
+            ploke_tree::graph::ArtifactNode {
+                key: ploke_tree::graph::ArtifactKey::PassiveId {
+                    value: after.0.clone(),
+                },
+                identity: ploke_tree::graph::ArtifactIdentity::PassiveId(after.clone()),
+                evidence: Vec::new(),
+            },
+        );
+
+        ploke_tree::Graph {
+            artifacts: ploke_tree::graph::ArtifactIndex { artifacts },
+            candidates: ploke_tree::graph::CandidateIndex {
+                branches: vec![ploke_tree::graph::CandidateBranchNode {
+                    selection_entry_id: EntryId("entry:1".to_owned()),
+                    payload_index: 0,
+                    branch_id: "branch-child".to_owned(),
+                    candidate_id: Some(CandidateId("candidate-1".to_owned())),
+                    source_state_id: Some("artifact:base".to_owned()),
+                    parent_branch_id: None,
+                    base_artifact_id: Some(base),
+                    derived_artifact_id: Some(after),
+                    patch_id: Some(PatchId("patch:attempt-1".to_owned())),
+                    evidence: Vec::new(),
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn artifact_graph_with_mixed_identity_sources() -> ploke_tree::Graph {
+        let history_after = ploke_records::history::ArtifactRefRecord {
+            value: "artifact:after".to_owned(),
+        };
+        let passive_after = ArtifactId("artifact:after".to_owned());
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            ploke_tree::graph::ArtifactKey::HistoryRef {
+                value: history_after.value.clone(),
+            },
+            ploke_tree::graph::ArtifactNode {
+                key: ploke_tree::graph::ArtifactKey::HistoryRef {
+                    value: history_after.value.clone(),
+                },
+                identity: ploke_tree::graph::ArtifactIdentity::HistoryRef(history_after),
+                evidence: Vec::new(),
+            },
+        );
+        artifacts.insert(
+            ploke_tree::graph::ArtifactKey::PassiveId {
+                value: passive_after.0.clone(),
+            },
+            ploke_tree::graph::ArtifactNode {
+                key: ploke_tree::graph::ArtifactKey::PassiveId {
+                    value: passive_after.0.clone(),
+                },
+                identity: ploke_tree::graph::ArtifactIdentity::PassiveId(passive_after),
+                evidence: Vec::new(),
+            },
+        );
+
+        ploke_tree::Graph {
+            artifacts: ploke_tree::graph::ArtifactIndex { artifacts },
+            ..Default::default()
+        }
     }
 
     fn node(
@@ -1459,6 +2061,123 @@ mod tests {
             resolved: None,
             active_parent_root: None,
             created_at: "created".to_owned(),
+        }
+    }
+
+    fn child_plan_child_record() -> ChildPlanChildRecord {
+        let patch_id = PatchId("patch:attempt-1".to_owned());
+        let base = ArtifactId("artifact:base".to_owned());
+        let after = ArtifactId("artifact:after".to_owned());
+        let branch = BranchId("branch-child".to_owned());
+        let candidate = CandidateId("candidate-1".to_owned());
+        let instance = InstanceId("instance-1".to_owned());
+        let source = SourceStateId("source-1".to_owned());
+        let node_id = SchedulerNodeId("child-1".to_owned());
+
+        ChildPlanChildRecord {
+            node: NodeRecord {
+                schema_version: "prototype1-treatment-node.v1".to_owned(),
+                node_id: node_id.clone(),
+                parent_node_id: Some(SchedulerNodeId("parent-1".to_owned())),
+                generation: 1,
+                instance_id: instance.clone(),
+                source_state_id: source.clone(),
+                operation_target: None,
+                base_artifact_id: Some(base.clone()),
+                patch_id: Some(patch_id.clone()),
+                derived_artifact_id: Some(after.clone()),
+                parent_branch_id: None,
+                branch_id: branch.clone(),
+                candidate_id: candidate.clone(),
+                target_relpath: PathBuf::from("src/lib.rs"),
+                node_dir: PathBuf::from("nodes/child-1"),
+                workspace_root: PathBuf::from("worktrees/child-1"),
+                binary_path: PathBuf::from("target/debug/ploke-eval"),
+                runner_request_path: PathBuf::from("nodes/child-1/runner-request.json"),
+                runner_result_path: PathBuf::from("nodes/child-1/runner-result.json"),
+                status: NodeStatusRecord::Planned,
+                created_at: "created".to_owned(),
+                updated_at: "updated".to_owned(),
+            },
+            request: RunnerRequestRecord {
+                schema_version: "prototype1-runner-request.v1".to_owned(),
+                campaign_id: CampaignId("campaign".to_owned()),
+                node_id,
+                generation: 1,
+                instance_id: instance.clone(),
+                source_state_id: source.clone(),
+                operation_target: None,
+                base_artifact_id: Some(base.clone()),
+                patch_id: Some(patch_id.clone()),
+                derived_artifact_id: Some(after.clone()),
+                branch_id: branch.clone(),
+                target_relpath: PathBuf::from("src/lib.rs"),
+                workspace_root: PathBuf::from("worktrees/child-1"),
+                binary_path: PathBuf::from("target/debug/ploke-eval"),
+                stop_on_error: false,
+                runner_args: Vec::new(),
+            },
+            resolved: ResolvedTreatmentBranch {
+                instance_id: instance.0.clone(),
+                source_state_id: source.0.clone(),
+                parent_branch_id: None,
+                target_relpath: PathBuf::from("src/lib.rs"),
+                source_content: "fn main() {}\n".to_owned(),
+                source_content_hash: "sha256:source".to_owned(),
+                selected_branch_id: Some(branch.0.clone()),
+                branch: TreatmentBranchNode {
+                    branch_id: branch.0.clone(),
+                    candidate_id: candidate.0.clone(),
+                    patch_id: Some(patch_id.clone()),
+                    branch_label: "candidate-1".to_owned(),
+                    synthesized_spec_id: "spec-1".to_owned(),
+                    proposed_content: "fn main() { println!(\"hi\"); }\n".to_owned(),
+                    proposed_content_hash: "sha256:proposed".to_owned(),
+                    generation_target: None,
+                    generation_coordinate: None,
+                    status: TreatmentBranchStatus::Synthesized,
+                    apply_id: None,
+                    applied_content_hash: None,
+                    derived_artifact_id: Some(after.clone()),
+                    latest_evaluation: None,
+                },
+            },
+            surface: Some(SurfaceEvidenceRecord {
+                schema_version: 2,
+                producer_id: "prototype1:tui-edit-surface:deterministic-v1".to_owned(),
+                proposal_id: "proposal-accepted".to_owned(),
+                run_id: "run-accepted".to_owned(),
+                policy: "workspace_except_ploke_eval".to_owned(),
+                target_relpath: PathBuf::from("src/lib.rs"),
+                base: SurfaceArtifactRefRecord {
+                    artifact_id: base,
+                    hash: "sha256:source".to_owned(),
+                },
+                after: SurfaceArtifactRefRecord {
+                    artifact_id: after,
+                    hash: "sha256:applied".to_owned(),
+                },
+                patch_id,
+                source_content_hash: "sha256:source".to_owned(),
+                proposed_content_hash: "sha256:proposed".to_owned(),
+                proposal_producer: None,
+                generator_surface: None,
+                touches: vec![SurfaceTouchRecord {
+                    target_relpath: PathBuf::from("src/lib.rs"),
+                    target_name: "direct-splice:eof-comment".to_owned(),
+                    span_relpath: PathBuf::from("src/lib.rs"),
+                    start: 12,
+                    end: 12,
+                    base_hash: "sha256:source".to_owned(),
+                    replacement: "println!(\"hi\");".to_owned(),
+                    replacement_hash: "sha256:replacement".to_owned(),
+                }],
+                touches_digest: HistoryHash("sha256:touches".to_owned()),
+                delta_id: "surface-delta:sha256:delta".to_owned(),
+                delta_digest: HistoryHash("sha256:delta".to_owned()),
+                check_status: SurfaceCheckStatusRecord::Checked,
+                apply_status: SurfaceApplyStatusRecord::Applied,
+            }),
         }
     }
 }

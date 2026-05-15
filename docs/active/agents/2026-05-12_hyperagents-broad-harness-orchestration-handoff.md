@@ -14,6 +14,16 @@ request-bound workspace diffs, and materializes a child plan from admitted
 transactions. Statements below that say the broad path only publishes a request
 and fails closed are pre-implementation context.
 
+2026-05-15 update: campaign `p1-broad-harness-grok4fast-20260515-1` ran the
+broad headless-TUI path with `xai/grok-4-fast`. The current blocker is not prompt
+shape or missing request fanout; it is `ploke-tui` filesystem path-root drift
+after focused-crate reindex. A model-supplied workspace-relative path,
+`crates/ploke-protocol/src/performance.rs`, became
+`crates/ploke-protocol/crates/ploke-protocol/src/performance.rs`. See
+[`../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md`](../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md).
+Resolve file-tool path semantics before treating another broad campaign as a
+clean evaluation signal.
+
 The older transition plan should no longer be ignored wholesale. Its early
 status section is historical, but its long-term `SurfaceGrant` /
 `CheckedProposal` direction still names the proof boundary that remains after

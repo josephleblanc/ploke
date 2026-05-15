@@ -43,3 +43,5 @@ for near-term implementation planning.
   Prototype 1 live edit-surface generation still uses a deterministic mock target picker; archive/core target selection was mitigated by `5f92eb6e`, and MBE validation needs rerun.
 - [`2026-05-12-prototype1-broad-harness-request-plan-erasure.md`](./2026-05-12-prototype1-broad-harness-request-plan-erasure.md)
   Prototype 1 `BroadHarness` erases pending request state and request-bound child-plan provenance into flat generator/validation paths.
+- [`2026-05-15-ploke-tui-create-file-focused-root-path-drift.md`](./2026-05-15-ploke-tui-create-file-focused-root-path-drift.md)
+  `ploke-tui` can resolve workspace-relative file-tool paths against the focused crate after reindex, producing doubled member paths in broad harness slots.

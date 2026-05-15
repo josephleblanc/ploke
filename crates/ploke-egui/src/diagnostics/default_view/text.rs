@@ -169,51 +169,102 @@ impl Report<'_> {
             let _ = writeln!(out, "selection: none");
         }
         if let Some(inspector) = &self.inspector.selected_inspector {
+            let identity_count = usize::from(inspector.identity.is_some());
+            let metric_count = usize::from(inspector.metrics.is_some());
+            let unavailable_count = usize::from(inspector.unavailable.is_some());
             let _ = writeln!(
                 out,
-                "selection inspector: identity={}, roles={}, incoming={}, outgoing={}, artifact_incoming={}, artifact_outgoing={}, source_refs={}, unavailable={}",
-                inspector.identity.len(),
+                "selection inspector: identity={}, roles={}, metrics={}, incoming={}, outgoing={}, artifact_incoming={}, artifact_outgoing={}, source_refs={}, unavailable={}",
+                identity_count,
                 inspector.roles.len(),
+                metric_count,
                 inspector.incoming.len(),
                 inspector.outgoing.len(),
                 inspector.artifact_incoming.len(),
                 inspector.artifact_outgoing.len(),
                 inspector.source_refs.len(),
-                inspector.unavailable.len()
+                unavailable_count
             );
-            for field in inspector.identity.iter().take(6) {
-                let _ = writeln!(out, "- identity.{}={}", field.label, field.value);
+            if let Some(identity) = &inspector.identity {
+                match identity {
+                    crate::ui::inspector::SelectionIdentity::RunForestNode(identity) => {
+                        let _ = writeln!(out, "- identity.run_forest_node={}", identity.node_key);
+                        let _ = writeln!(out, "- identity.candidate={}", identity.candidate_id);
+                        let _ = writeln!(
+                            out,
+                            "- identity.source_artifact={}",
+                            identity.source_artifact
+                        );
+                        if let Some(parent) = identity.parent_node {
+                            let _ = writeln!(out, "- identity.parent_run_forest_node={parent}");
+                        }
+                    }
+                    crate::ui::inspector::SelectionIdentity::Artifact(identity) => {
+                        let _ = writeln!(out, "- identity.artifact={}", identity.artifact);
+                    }
+                }
+            }
+            if let Some(metrics) = &inspector.metrics {
+                match metrics {
+                    crate::ui::inspector::SelectionMetrics::RunForestNode(metrics) => {
+                        let _ = writeln!(out, "- metric.generation={}", metrics.generation);
+                        let _ = writeln!(
+                            out,
+                            "- metric.child_run_forest_nodes={}",
+                            metrics.child_run_forest_nodes
+                        );
+                    }
+                    crate::ui::inspector::SelectionMetrics::Artifact(metrics) => {
+                        let _ = writeln!(out, "- metric.source_records={}", metrics.source_records);
+                        let _ = writeln!(out, "- metric.evidence_refs={}", metrics.evidence_refs);
+                    }
+                }
             }
             for edge in inspector.incoming.iter().take(4) {
                 let _ = writeln!(
                     out,
                     "- incoming.{}: {} -> {} ({})",
-                    edge.relation, edge.from, edge.to, edge.source_count
+                    edge.relation.label(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count
                 );
             }
             for edge in inspector.outgoing.iter().take(4) {
                 let _ = writeln!(
                     out,
                     "- outgoing.{}: {} -> {} ({})",
-                    edge.relation, edge.from, edge.to, edge.source_count
+                    edge.relation.label(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count
                 );
             }
             for edge in inspector.artifact_incoming.iter().take(4) {
                 let _ = writeln!(
                     out,
                     "- artifact_incoming.{}: {} -> {} ({})",
-                    edge.relation, edge.from, edge.to, edge.source_count
+                    edge.relation.label(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count
                 );
             }
             for edge in inspector.artifact_outgoing.iter().take(4) {
                 let _ = writeln!(
                     out,
                     "- artifact_outgoing.{}: {} -> {} ({})",
-                    edge.relation, edge.from, edge.to, edge.source_count
+                    edge.relation.label(),
+                    edge.from,
+                    edge.to,
+                    edge.source_count
                 );
             }
             for source_ref in inspector.source_refs.iter().take(4) {
                 let _ = writeln!(out, "- source_ref={source_ref}");
+            }
+            if let Some(reason) = inspector.unavailable {
+                let _ = writeln!(out, "- unavailable.{}={}", reason.subject(), reason.state());
             }
         }
         let _ = writeln!(

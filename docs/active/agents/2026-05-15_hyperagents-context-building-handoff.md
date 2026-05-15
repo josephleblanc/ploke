@@ -8,6 +8,29 @@ Related planning files:
 - [`.agents/hyper-agents.txt`](../../../.agents/hyper-agents.txt)
 - [`2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`](2026-05-12_hyperagents-broad-harness-orchestration-handoff.md)
 
+## 2026-05-15 Current Blocker
+
+The immediate blocker is no longer the initial automatic RAG posture alone. In
+campaign `p1-broad-harness-grok4fast-20260515-1`, broad headless-TUI slots ran
+with `xai/grok-4-fast` and exposed a file-tool path-root bug after an applied
+edit.
+
+The clearest case is `node-8ca60d9fab09f48e-r2`: the model supplied
+`crates/ploke-protocol/src/performance.rs`, but `create_file` resolved it as
+`crates/ploke-protocol/crates/ploke-protocol/src/performance.rs` after the slot
+had already edited the focused crate. See
+[`../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md`](../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md).
+
+Current policy: model-facing filesystem paths should be workspace-root-relative
+whenever a workspace is loaded. Focused crate state can bias semantic search or
+future visibility-aware lookup, but it must not become the implicit base for
+file-tool path joining or display.
+
+There is a second live adapter boundary from the same run: when a slot applies a
+useful edit and then keeps tool-calling until timeout, the headless adapter may
+fail to write the submitted broad-harness result, so the dirty workspace is not
+admitted. Treat that as a separate admission/finalization issue.
+
 ## Current Evidence
 
 The clean live splice succeeded from a separate clean source checkout:

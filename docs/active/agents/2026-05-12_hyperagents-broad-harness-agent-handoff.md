@@ -19,6 +19,25 @@ Active orchestration doc:
 
 - `docs/active/agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`
 
+## 2026-05-15 Current Focus
+
+The broad harness has advanced past the original request/admission authority
+gap described below. The current live blocker is in `ploke-tui` path semantics:
+after an edit and reindex in a focused crate, model-supplied
+workspace-relative file-tool paths can be resolved against the focused crate,
+creating doubled paths such as
+`crates/ploke-protocol/crates/ploke-protocol/src/performance.rs`.
+
+Start from
+[`../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md`](../bugs/2026-05-15-ploke-tui-create-file-focused-root-path-drift.md)
+and ADR-023 before changing the next broad-harness run. The working policy is
+that file tools always resolve and display paths relative to the loaded
+workspace root; focused crate state is analysis context, not a filesystem base.
+
+Also preserve the separate adapter observation from
+`p1-broad-harness-grok4fast-20260515-1`: an applied edit followed by timeout can
+leave a dirty workspace without an admitted child result.
+
 Ignore:
 
 - `docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md`
@@ -158,4 +177,3 @@ Stop and ask if:
   and admission carriers;
 - History work is proposed before backend admission is reviewed;
 - two workers need the same file family.
-
