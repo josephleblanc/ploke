@@ -6,7 +6,7 @@ pub(super) fn build(
     layout: &Layout,
     controls: &Controls,
     center: &ArtifactTree,
-    inspector: &Inspector,
+    inspector: &Inspector<'_>,
     timeline: &Timeline,
 ) -> Vec<Check> {
     vec![
@@ -186,7 +186,7 @@ pub(super) fn build(
             ],
         ),
         check(
-            "selected-item-text-detail",
+            "selected-item-text",
             if inspector.selected_detail.is_some() {
                 CheckStatus::Passed
             } else {

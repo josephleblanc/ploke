@@ -185,5 +185,6 @@ render/build pass:
   rejoin UI state with &DomainGraph and keep copied text render-only
 ```
 
-Owned `String`s are unavoidable at the final `egui_graphs` label boundary, but
-they should be treated as disposable render artifacts.
+If a renderer requires owned text, that ownership is limited to the renderer
+call or widget payload. Inspector and graph projection rows must stay borrowed
+or typed; do not introduce generic owned string rows as a convenience layer.

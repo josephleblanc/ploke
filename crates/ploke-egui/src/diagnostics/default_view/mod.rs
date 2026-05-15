@@ -14,33 +14,33 @@ pub use layout::{Layout, WidthBudget};
 
 const VERSION: &str = "ploke-egui.default-view-contract.v1";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Report {
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Report<'a> {
     pub schema_version: String,
     pub layout: Layout,
     pub graph_identity: Option<GraphIdentity>,
     pub controls: Controls,
     pub center: ArtifactTree,
-    pub inspector: Inspector,
+    pub inspector: Inspector<'a>,
     pub timeline: Timeline,
     pub checks: Vec<Check>,
 }
 
-impl Report {
+impl<'a> Report<'a> {
     pub(crate) fn from_parts(
         diagnostics: &GraphViewDiagnostics,
         graph_has_content: bool,
         run_error: Option<String>,
         graph_identity: Option<GraphIdentity>,
-        selected: Option<SelectionSnapshot>,
-        selected_inspector: Option<SelectionInspectorSnapshot>,
+        selected: Option<SelectionSnapshot<'a>>,
+        selected_inspector: Option<SelectionInspectorSnapshot<'a>>,
         component_breakdown: Vec<ComponentBreakdown>,
     ) -> Self {
         let layout = Layout::current();
         let controls = Controls {
             run_selector_present: true,
             mode_selector_present: true,
-            load_state: LoadState::from_app_state(graph_has_content, run_error.as_ref()),
+            load_state: LoadState::from_app_state(graph_has_content, run_error.as_deref()),
             run_error,
             quick_filters_present: false,
         };
@@ -97,7 +97,7 @@ pub enum LoadState {
 }
 
 impl LoadState {
-    fn from_app_state(graph_has_content: bool, run_error: Option<&String>) -> Self {
+    fn from_app_state(graph_has_content: bool, run_error: Option<&str>) -> Self {
         if run_error.is_some() {
             Self::Failed
         } else if graph_has_content {
@@ -237,11 +237,11 @@ impl From<tree::Marks> for Marks {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Inspector {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Inspector<'a> {
     pub right_inspector_present: bool,
-    pub selected_detail: Option<SelectionSnapshot>,
-    pub selected_inspector: Option<SelectionInspectorSnapshot>,
+    pub selected_detail: Option<SelectionSnapshot<'a>>,
+    pub selected_inspector: Option<SelectionInspectorSnapshot<'a>>,
     pub record_refs_present: bool,
     pub drilldown_candidates_present: bool,
     pub unavailable_reason_classified: bool,

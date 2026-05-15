@@ -1,6 +1,6 @@
 //! Graph-resolved selection inspector projections.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
 
@@ -22,7 +22,10 @@ impl<'g> SelectionInspector<'g> {
         }
     }
 
-    pub fn snapshot(&self, selection: &GraphSelectionDetail) -> SelectionInspectorSnapshot {
+    pub fn snapshot<'s>(self, selection: &'s GraphSelectionDetail) -> SelectionInspectorSnapshot<'s>
+    where
+        'g: 's,
+    {
         SelectionInspectorSnapshot::from_inspection(selection, self)
     }
 
@@ -98,7 +101,7 @@ pub enum UnavailableReason {
 }
 
 impl UnavailableReason {
-    fn row(self) -> InspectorRow {
+    fn row(self) -> InspectorRow<'static> {
         match self {
             Self::RunForestNotPresent => InspectorRow::new("run forest", "not_present"),
             Self::RunForestNodeNotFound => InspectorRow::new("run forest node", "not_found"),
@@ -107,34 +110,39 @@ impl UnavailableReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SelectionInspectorSnapshot {
-    pub kind: String,
-    pub label: String,
-    pub identity: Vec<InspectorRow>,
-    pub roles: Vec<InspectorRow>,
-    pub incoming: Vec<InspectorEdge>,
-    pub outgoing: Vec<InspectorEdge>,
-    pub artifact_incoming: Vec<InspectorEdge>,
-    pub artifact_outgoing: Vec<InspectorEdge>,
-    pub patches: Vec<PatchSnapshot>,
-    pub source_refs: Vec<String>,
-    pub unavailable: Vec<InspectorRow>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SelectionInspectorSnapshot<'a> {
+    pub kind: &'a str,
+    pub label: &'a str,
+    pub identity: Vec<InspectorRow<'a>>,
+    pub roles: Vec<InspectorRow<'a>>,
+    pub metrics: Vec<InspectorMetric>,
+    pub incoming: Vec<InspectorEdge<'a>>,
+    pub outgoing: Vec<InspectorEdge<'a>>,
+    pub artifact_incoming: Vec<InspectorEdge<'a>>,
+    pub artifact_outgoing: Vec<InspectorEdge<'a>>,
+    pub patches: Vec<PatchSnapshot<'a>>,
+    pub source_refs: Vec<SourceRef<'a>>,
+    pub unavailable: Vec<InspectorRow<'a>>,
 }
 
-impl SelectionInspectorSnapshot {
-    fn from_inspection(
-        selection: &GraphSelectionDetail,
-        inspector: &SelectionInspector<'_>,
-    ) -> Self {
+impl<'a> SelectionInspectorSnapshot<'a> {
+    fn from_inspection<'g>(
+        selection: &'a GraphSelectionDetail,
+        inspector: SelectionInspector<'g>,
+    ) -> Self
+    where
+        'g: 'a,
+    {
         match inspector {
             SelectionInspector::RunForestNode(run) => snapshot_run_forest(selection, run),
             SelectionInspector::Artifact(artifact) => snapshot_artifact(selection, artifact),
             SelectionInspector::Unresolved(reason) => Self {
-                kind: selection.kind.clone(),
-                label: selection.label.clone(),
+                kind: selection.kind.as_str(),
+                label: selection.label.as_str(),
                 identity: Vec::new(),
                 roles: Vec::new(),
+                metrics: Vec::new(),
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
                 artifact_incoming: Vec::new(),
@@ -162,6 +170,7 @@ impl SelectionInspectorSnapshot {
         out.push_str(&format!("selection: {} {}\n", self.kind, self.label));
         render_rows(&mut out, "identity", &self.identity);
         render_rows(&mut out, "roles", &self.roles);
+        render_metrics(&mut out, "metrics", &self.metrics);
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
         render_edges(&mut out, "artifact_incoming", &self.artifact_incoming);
@@ -172,7 +181,7 @@ impl SelectionInspectorSnapshot {
         } else {
             out.push_str("source_refs:\n");
             for source_ref in &self.source_refs {
-                out.push_str(&format!("- {source_ref}\n"));
+                render_source_ref(&mut out, source_ref);
             }
         }
         render_rows(&mut out, "unavailable", &self.unavailable);
@@ -180,52 +189,120 @@ impl SelectionInspectorSnapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InspectorRow {
-    pub label: String,
-    pub value: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InspectorRow<'a> {
+    pub label: &'static str,
+    pub value: &'a str,
 }
 
-impl InspectorRow {
-    fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            value: value.into(),
-        }
+impl<'a> InspectorRow<'a> {
+    fn new(label: &'static str, value: &'a str) -> Self {
+        Self { label, value }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InspectorEdge {
-    pub relation: String,
-    pub from: String,
-    pub to: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InspectorMetric {
+    pub label: &'static str,
+    pub value: usize,
+}
+
+impl InspectorMetric {
+    fn new(label: &'static str, value: usize) -> Self {
+        Self { label, value }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InspectorEdge<'a> {
+    pub relation: &'static str,
+    pub from: &'a str,
+    pub to: &'a str,
     pub source_count: usize,
 }
 
-impl InspectorEdge {
-    fn new(
-        relation: impl Into<String>,
-        from: impl Into<String>,
-        to: impl Into<String>,
-        source_count: usize,
-    ) -> Self {
+impl<'a> InspectorEdge<'a> {
+    fn new(relation: &'static str, from: &'a str, to: &'a str, source_count: usize) -> Self {
         Self {
-            relation: relation.into(),
-            from: from.into(),
-            to: to.into(),
+            relation,
+            from,
+            to,
             source_count,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchSnapshot {
-    pub patch_id: String,
-    pub summary: Vec<InspectorRow>,
-    pub touches: Vec<InspectorRow>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub unified_diff: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PatchSnapshot<'a> {
+    pub patch_id: &'a str,
+    pub summary: Vec<InspectorRow<'a>>,
+    pub touches: Vec<PatchTouch<'a>>,
+    pub source_content: &'a str,
+    pub proposed_content: &'a str,
+    pub target_relpath: &'a str,
+}
+
+impl<'a> PatchSnapshot<'a> {
+    pub fn unified_diff(&self) -> String {
+        crate::ui::diff::unified_rust_diff(
+            self.target_relpath,
+            self.source_content,
+            self.proposed_content,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PatchTouch<'a> {
+    pub index: usize,
+    pub relpath: &'a str,
+    pub start: usize,
+    pub end: usize,
+    pub replacement: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SourceRef<'a> {
+    Evidence {
+        kind: &'static str,
+        authority: &'static str,
+        recorded_at: Option<&'a str>,
+    },
+    Diagnostic {
+        severity: &'static str,
+        code: &'a str,
+    },
+    ArtifactHistoryRef {
+        artifact: &'a str,
+    },
+    ArtifactId {
+        artifact: &'a str,
+    },
+    ArtifactEvidenceCount {
+        count: usize,
+    },
+}
+
+impl std::fmt::Display for SourceRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Evidence {
+                kind,
+                authority,
+                recorded_at,
+            } => {
+                write!(f, "{kind}:{authority}")?;
+                if let Some(recorded_at) = recorded_at {
+                    write!(f, " @{recorded_at}")?;
+                }
+                Ok(())
+            }
+            Self::Diagnostic { severity, code } => write!(f, "diagnostic:{severity}:{code}"),
+            Self::ArtifactHistoryRef { artifact } => write!(f, "artifact_history_ref:{artifact}"),
+            Self::ArtifactId { artifact } => write!(f, "artifact_id:{artifact}"),
+            Self::ArtifactEvidenceCount { count } => write!(f, "artifact_evidence_count:{count}"),
+        }
+    }
 }
 
 pub fn default_selections(graph: &ploke_tree::Graph) -> Vec<GraphSelectionDetail> {
@@ -398,10 +475,13 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
     })
 }
 
-fn snapshot_run_forest(
-    selection: &GraphSelectionDetail,
-    inspector: &RunForestNodeInspection<'_>,
-) -> SelectionInspectorSnapshot {
+fn snapshot_run_forest<'a, 'g>(
+    selection: &'a GraphSelectionDetail,
+    inspector: RunForestNodeInspection<'g>,
+) -> SelectionInspectorSnapshot<'a>
+where
+    'g: 'a,
+{
     let node = inspector.node;
     let mut identity = vec![
         InspectorRow::new("run forest node", node.key.as_str()),
@@ -413,10 +493,6 @@ fn snapshot_run_forest(
         "parent run forest node",
         node.parent.as_ref().map(|parent| parent.as_str()),
     );
-    identity.push(InspectorRow::new(
-        "child run forest nodes",
-        child_node_list(inspector.children),
-    ));
     maybe_row(
         &mut identity,
         "base artifact",
@@ -430,11 +506,14 @@ fn snapshot_run_forest(
     maybe_row(&mut identity, "patch", node.patch_id.as_deref());
 
     let roles = vec![
-        InspectorRow::new("generation", node.generation.to_string()),
         InspectorRow::new("branch", node.branch_id.as_str()),
         InspectorRow::new("target", node.target_relpath.as_str()),
-        InspectorRow::new("phase", format!("{:?}", node.progress.phase)),
-        InspectorRow::new("result", format!("{:?}", node.progress.result_class)),
+        InspectorRow::new("phase", phase_label(node.progress.phase)),
+        InspectorRow::new("result", result_class_label(node.progress.result_class)),
+    ];
+    let metrics = vec![
+        InspectorMetric::new("generation", node.generation as usize),
+        InspectorMetric::new("child run forest nodes", inspector.children.len()),
     ];
     let incoming = inspector
         .parent
@@ -447,53 +526,48 @@ fn snapshot_run_forest(
         .map(|child| InspectorEdge::new("E_F", node.key.as_str(), child.as_str(), 1))
         .collect();
     let artifact_outgoing = run_forest_artifact_edges(node);
-    let source_refs =
-        node.evidence
-            .iter()
-            .map(|evidence| {
-                format!(
-                    "{:?}:{:?}{}",
-                    evidence.kind,
-                    evidence.authority,
-                    evidence
-                        .recorded_at
-                        .as_ref()
-                        .map(|recorded_at| format!(" @{recorded_at}"))
-                        .unwrap_or_default()
-                )
-            })
-            .chain(node.diagnostics.iter().map(|diagnostic| {
-                format!("diagnostic:{:?}:{}", diagnostic.severity, diagnostic.code)
-            }))
-            .collect();
+    let source_refs = node
+        .evidence
+        .iter()
+        .map(|evidence| SourceRef::Evidence {
+            kind: evidence_kind_label(evidence.kind),
+            authority: authority_label(evidence.authority),
+            recorded_at: evidence.recorded_at.as_deref(),
+        })
+        .chain(
+            node.diagnostics
+                .iter()
+                .map(|diagnostic| SourceRef::Diagnostic {
+                    severity: diagnostic_severity_label(diagnostic.severity),
+                    code: diagnostic.code.as_str(),
+                }),
+        )
+        .collect();
 
     SelectionInspectorSnapshot {
-        kind: selection.kind.clone(),
-        label: selection.label.clone(),
+        kind: selection.kind.as_str(),
+        label: selection.label.as_str(),
         identity,
         roles,
+        metrics,
         incoming,
         outgoing,
         artifact_incoming: Vec::new(),
         artifact_outgoing,
-        patches: inspector
-            .patch
-            .iter()
-            .map(|patch| patch_snapshot(patch))
-            .collect(),
+        patches: inspector.patch.into_iter().map(patch_snapshot).collect(),
         source_refs,
         unavailable: Vec::new(),
     }
 }
 
-fn snapshot_artifact(
-    selection: &GraphSelectionDetail,
-    inspector: &ArtifactInspection<'_>,
-) -> SelectionInspectorSnapshot {
-    let mut roles = vec![InspectorRow::new(
-        "source records",
-        inspector.sources.len().to_string(),
-    )];
+fn snapshot_artifact<'a, 'g>(
+    selection: &'a GraphSelectionDetail,
+    inspector: ArtifactInspection<'g>,
+) -> SelectionInspectorSnapshot<'a>
+where
+    'g: 'a,
+{
+    let mut roles = Vec::new();
     if inspector.selected_ruler {
         roles.push(InspectorRow::new("selected ruler", "true"));
     }
@@ -504,60 +578,67 @@ fn snapshot_artifact(
     let source_refs = inspector
         .sources
         .iter()
-        .flat_map(|source| {
-            let mut refs = Vec::new();
-            match &source.identity {
-                ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
-                    refs.push(format!("artifact_history_ref:{}", artifact.value));
-                }
-                ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => {
-                    refs.push(format!("artifact_id:{}", artifact.0));
-                }
-            }
-            if !source.evidence.is_empty() {
-                refs.push(format!("artifact_evidence_count:{}", source.evidence.len()));
-            }
-            refs
+        .flat_map(|source| match &source.identity {
+            ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => vec![
+                SourceRef::ArtifactHistoryRef {
+                    artifact: artifact.value.as_str(),
+                },
+                SourceRef::ArtifactEvidenceCount {
+                    count: source.evidence.len(),
+                },
+            ],
+            ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => vec![
+                SourceRef::ArtifactId {
+                    artifact: artifact.0.as_str(),
+                },
+                SourceRef::ArtifactEvidenceCount {
+                    count: source.evidence.len(),
+                },
+            ],
         })
         .collect();
 
     SelectionInspectorSnapshot {
-        kind: selection.kind.clone(),
-        label: selection.label.clone(),
+        kind: selection.kind.as_str(),
+        label: selection.label.as_str(),
         identity: vec![InspectorRow::new("artifact", inspector.key)],
         roles,
+        metrics: vec![InspectorMetric::new(
+            "source records",
+            inspector.sources.len(),
+        )],
         incoming: artifact_edges(&inspector.incoming),
         outgoing: artifact_edges(&inspector.outgoing),
         artifact_incoming: artifact_edges(&inspector.incoming),
         artifact_outgoing: artifact_edges(&inspector.outgoing),
-        patches: inspector
-            .patches
-            .iter()
-            .map(|patch| patch_snapshot(patch))
-            .collect(),
+        patches: inspector.patches.into_iter().map(patch_snapshot).collect(),
         source_refs,
         unavailable: Vec::new(),
     }
 }
 
-fn patch_snapshot(patch: &PatchInspection<'_>) -> PatchSnapshot {
+fn patch_snapshot<'a>(patch: PatchInspection<'a>) -> PatchSnapshot<'a> {
     let child = patch.child;
     let patch_id = child
         .surface
         .as_ref()
-        .map(|surface| surface.patch_id.0.clone())
+        .map(|surface| surface.patch_id.0.as_str())
         .or_else(|| {
             child
                 .node
                 .patch_id
                 .as_ref()
-                .map(|patch_id| patch_id.0.clone())
+                .map(|patch_id| patch_id.0.as_str())
         })
-        .unwrap_or_else(|| "not_recorded".to_owned());
+        .unwrap_or("not_recorded");
     let mut summary = vec![
         InspectorRow::new(
             "target",
-            child.resolved.target_relpath.display().to_string(),
+            child
+                .resolved
+                .target_relpath
+                .to_str()
+                .unwrap_or("non_utf8_path"),
         ),
         InspectorRow::new("branch", child.resolved.branch.branch_id.as_str()),
         InspectorRow::new("candidate", child.resolved.branch.candidate_id.as_str()),
@@ -578,11 +659,11 @@ fn patch_snapshot(patch: &PatchInspection<'_>) -> PatchSnapshot {
         ));
         summary.push(InspectorRow::new(
             "check",
-            format!("{:?}", surface.check_status),
+            surface_check_status_label(surface.check_status),
         ));
         summary.push(InspectorRow::new(
             "apply",
-            format!("{:?}", surface.apply_status),
+            surface_apply_status_label(surface.apply_status),
         ));
     }
 
@@ -594,17 +675,12 @@ fn patch_snapshot(patch: &PatchInspection<'_>) -> PatchSnapshot {
                 .touches
                 .iter()
                 .enumerate()
-                .map(|(index, touch)| {
-                    InspectorRow::new(
-                        format!(
-                            "{} {}:{}-{}",
-                            index + 1,
-                            touch.span_relpath.display(),
-                            touch.start,
-                            touch.end
-                        ),
-                        touch.replacement.as_str(),
-                    )
+                .map(|(index, touch)| PatchTouch {
+                    index: index + 1,
+                    relpath: touch.span_relpath.to_str().unwrap_or("non_utf8_path"),
+                    start: touch.start,
+                    end: touch.end,
+                    replacement: touch.replacement.as_str(),
                 })
                 .collect()
         })
@@ -614,15 +690,17 @@ fn patch_snapshot(patch: &PatchInspection<'_>) -> PatchSnapshot {
         patch_id,
         summary,
         touches,
-        unified_diff: crate::ui::diff::unified_rust_diff(
-            child.resolved.target_relpath.to_string_lossy().as_ref(),
-            child.resolved.source_content.as_str(),
-            child.resolved.branch.proposed_content.as_str(),
-        ),
+        source_content: child.resolved.source_content.as_str(),
+        proposed_content: child.resolved.branch.proposed_content.as_str(),
+        target_relpath: child
+            .resolved
+            .target_relpath
+            .to_str()
+            .unwrap_or("non_utf8_path"),
     }
 }
 
-fn run_forest_artifact_edges(node: &ploke_tree::TreeNode) -> Vec<InspectorEdge> {
+fn run_forest_artifact_edges(node: &ploke_tree::TreeNode) -> Vec<InspectorEdge<'_>> {
     let Some(from) = node.base_artifact_id.as_deref() else {
         return Vec::new();
     };
@@ -644,25 +722,14 @@ fn artifact_node_key(artifact: &ploke_tree::graph::ArtifactNode) -> Option<&str>
     }
 }
 
-fn child_node_list(children: &[ploke_tree::NodeKey]) -> String {
-    if children.is_empty() {
-        return "none".to_owned();
-    }
-    children
-        .iter()
-        .map(|child| child.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn artifact_edges(edges: &[ArtifactRelation<'_>]) -> Vec<InspectorEdge> {
+fn artifact_edges<'a>(edges: &[ArtifactRelation<'a>]) -> Vec<InspectorEdge<'a>> {
     edges
         .iter()
         .map(|edge| InspectorEdge::new(edge.kind.as_str(), edge.from, edge.to, edge.source_count))
         .collect()
 }
 
-fn maybe_row(rows: &mut Vec<InspectorRow>, label: &str, value: Option<&str>) {
+fn maybe_row<'a>(rows: &mut Vec<InspectorRow<'a>>, label: &'static str, value: Option<&'a str>) {
     if let Some(value) = value {
         rows.push(InspectorRow::new(label, value));
     }
@@ -670,6 +737,69 @@ fn maybe_row(rows: &mut Vec<InspectorRow>, label: &str, value: Option<&str>) {
 
 fn artifact_handle_label(index: usize) -> String {
     format!("A{index}")
+}
+
+fn phase_label(phase: ploke_tree::Phase) -> &'static str {
+    match phase {
+        ploke_tree::Phase::Planned => "planned",
+        ploke_tree::Phase::WorkspaceStaged => "workspace_staged",
+        ploke_tree::Phase::BinaryBuilt => "binary_built",
+        ploke_tree::Phase::Running => "running",
+        ploke_tree::Phase::Completed => "completed",
+        ploke_tree::Phase::Failed => "failed",
+        ploke_tree::Phase::Unknown => "unknown",
+    }
+}
+
+fn result_class_label(result_class: ploke_tree::ResultClass) -> &'static str {
+    match result_class {
+        ploke_tree::ResultClass::Success => "success",
+        ploke_tree::ResultClass::Failure => "failure",
+        ploke_tree::ResultClass::Unknown => "unknown",
+    }
+}
+
+fn evidence_kind_label(kind: ploke_tree::EvidenceKind) -> &'static str {
+    match kind {
+        ploke_tree::EvidenceKind::SchedulerNode => "scheduler_node",
+        ploke_tree::EvidenceKind::ParentIdentity => "parent_identity",
+        ploke_tree::EvidenceKind::SuccessorReady => "successor_ready",
+        ploke_tree::EvidenceKind::SuccessorCompletion => "successor_completion",
+    }
+}
+
+fn authority_label(authority: ploke_tree::AuthorityLabel) -> &'static str {
+    match authority {
+        ploke_tree::AuthorityLabel::MutableProjection => "mutable_projection",
+        ploke_tree::AuthorityLabel::TypedRecordEvidence => "typed_record_evidence",
+        ploke_tree::AuthorityLabel::LiveTransport => "live_transport",
+        ploke_tree::AuthorityLabel::SealedVerifiedHistory => "sealed_verified_history",
+        ploke_tree::AuthorityLabel::DegradedObservation => "degraded_observation",
+    }
+}
+
+fn diagnostic_severity_label(severity: ploke_tree::DiagnosticSeverity) -> &'static str {
+    match severity {
+        ploke_tree::DiagnosticSeverity::Info => "info",
+        ploke_tree::DiagnosticSeverity::Warning => "warning",
+        ploke_tree::DiagnosticSeverity::Error => "error",
+    }
+}
+
+fn surface_check_status_label(
+    status: ploke_records::history::SurfaceCheckStatusRecord,
+) -> &'static str {
+    match status {
+        ploke_records::history::SurfaceCheckStatusRecord::Checked => "checked",
+    }
+}
+
+fn surface_apply_status_label(
+    status: ploke_records::history::SurfaceApplyStatusRecord,
+) -> &'static str {
+    match status {
+        ploke_records::history::SurfaceApplyStatusRecord::Applied => "applied",
+    }
 }
 
 fn render_rows(out: &mut String, heading: &str, rows: &[InspectorRow]) {
@@ -683,7 +813,46 @@ fn render_rows(out: &mut String, heading: &str, rows: &[InspectorRow]) {
     }
 }
 
-fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge]) {
+fn render_metrics(out: &mut String, heading: &str, metrics: &[InspectorMetric]) {
+    if metrics.is_empty() {
+        out.push_str(&format!("{heading}: none\n"));
+        return;
+    }
+    out.push_str(&format!("{heading}:\n"));
+    for metric in metrics {
+        out.push_str(&format!("- {}: {}\n", metric.label, metric.value));
+    }
+}
+
+fn render_source_ref(out: &mut String, source_ref: &SourceRef<'_>) {
+    match source_ref {
+        SourceRef::Evidence {
+            kind,
+            authority,
+            recorded_at,
+        } => {
+            out.push_str(&format!("- {kind}:{authority}"));
+            if let Some(recorded_at) = recorded_at {
+                out.push_str(&format!(" @{recorded_at}"));
+            }
+            out.push('\n');
+        }
+        SourceRef::Diagnostic { severity, code } => {
+            out.push_str(&format!("- diagnostic:{severity}:{code}\n"));
+        }
+        SourceRef::ArtifactHistoryRef { artifact } => {
+            out.push_str(&format!("- artifact_history_ref:{artifact}\n"));
+        }
+        SourceRef::ArtifactId { artifact } => {
+            out.push_str(&format!("- artifact_id:{artifact}\n"));
+        }
+        SourceRef::ArtifactEvidenceCount { count } => {
+            out.push_str(&format!("- artifact_evidence_count:{count}\n"));
+        }
+    }
+}
+
+fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge<'_>]) {
     if edges.is_empty() {
         out.push_str(&format!("{heading}: none\n"));
         return;
@@ -712,10 +881,13 @@ fn render_patches(out: &mut String, patches: &[PatchSnapshot]) {
             out.push_str("  - touches: none\n");
         } else {
             for touch in &patch.touches {
-                out.push_str(&format!("  - touch {}: {}\n", touch.label, touch.value));
+                out.push_str(&format!(
+                    "  - touch {} {}:{}-{}: {}\n",
+                    touch.index, touch.relpath, touch.start, touch.end, touch.replacement
+                ));
             }
         }
-        render_diff_preview(out, &patch.unified_diff);
+        render_diff_preview(out, &patch.unified_diff());
     }
 }
 
@@ -784,15 +956,15 @@ mod tests {
         };
         let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "A2")
             .expect("A2 resolves from default visible selection order");
-        let snapshot = inspector.snapshot(&selection);
 
-        match inspector {
+        match &inspector {
             SelectionInspector::RunForestNode(run) => {
                 assert_eq!(run.node.key.as_str(), "child");
                 assert_eq!(run.parent.unwrap().key.as_str(), "parent");
             }
             _ => panic!("expected run-forest node inspection"),
         }
+        let snapshot = inspector.snapshot(&selection);
         assert_eq!(snapshot.label, "A2");
         assert!(snapshot.has_record_refs());
         assert_eq!(snapshot.incoming.len(), 1);
@@ -818,9 +990,9 @@ mod tests {
         );
         assert!(
             snapshot
-                .identity
+                .metrics
                 .iter()
-                .any(|row| row.label == "child run forest nodes" && row.value == "none")
+                .any(|metric| metric.label == "child run forest nodes" && metric.value == 0)
         );
         assert!(
             snapshot

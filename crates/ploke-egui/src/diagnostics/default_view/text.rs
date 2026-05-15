@@ -5,7 +5,7 @@ use super::Report;
 const COMPONENT_TEXT_LIMIT: usize = 20;
 const ITEM_TEXT_LIMIT: usize = 6;
 
-impl Report {
+impl Report<'_> {
     pub(crate) fn render_text_into(&self, out: &mut String) {
         let _ = writeln!(out, "default-view contract:");
         let _ = writeln!(

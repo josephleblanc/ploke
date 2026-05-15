@@ -315,7 +315,7 @@ Questions supported:
 Testable signals:
 
 - `layout.right_inspector.present = true`
-- `selection.detail.present = true when selected`
+- `selection.summary.present = true when selected`
 - `--inspect-node A1` prints the same graph-resolved inspector projection
   without opening the GUI.
 - `selection.record_refs.present = true when available`
@@ -329,8 +329,10 @@ Status:
 - Implemented: selected-node inspection resolves to a typed borrowed
   `SelectionInspector<'_>` over `Graph` facts before any render strings are
   produced.
-- Implemented: egui/text/JSON use a downstream `SelectionInspectorSnapshot`;
-  this snapshot is not a semantic carrier.
+- Implemented: egui/text/JSON use a borrowed `SelectionInspectorSnapshot<'_>`;
+  inspector rows borrow string-like values from `Graph`/selection records and
+  keep numeric/status values typed instead of flattening everything into owned
+  strings.
 - Implemented: run-forest selections expose explicit parent/child node rows and
   keep graph topology edges separate from artifact-id edge rows.
 - Partial: typed record refs are present for run-forest source refs and artifact
@@ -344,13 +346,16 @@ Implementation rule:
 selected widget payload
   -> GraphSelectionRef
   -> borrowed typed Graph inspector answer
-  -> render-only snapshot / rows
+  -> borrowed inspector projection
+  -> renderer or JSON writer
 ```
 
-The inspector may allocate labels for display, but it must not store copied
-semantic ids, records, or partial records as UI state. If a row cannot be
-resolved by a typed graph relation or graph-loaded source ref, show `missing`,
-`blocked`, or `not_applicable` with the relevant answer-contract id.
+The inspector must not store copied semantic ids, records, partial records, or
+generic owned display rows as UI state. Serialization may write a borrowed
+projection immediately, but the borrowed projection is still downstream of
+typed graph facts. If a row cannot be resolved by a typed graph relation or
+graph-loaded source ref, show `missing`, `blocked`, or `not_applicable` with
+the relevant answer-contract id.
 
 ### Bottom Timeline
 
@@ -468,7 +473,7 @@ Current status:
 - Implemented: synthetic anchor visibility is reported by existing diagnostics.
 - Implemented: node/edge counts are reported by semantic set for `F`, `A`,
   `E_F`, `P_H`, and `P_B`.
-- Implemented: selected detail is represented in the default-view diagnostic
+- Implemented: selected summary is represented in the default-view diagnostic
   shape when selection exists.
 - Implemented: layout-region presence is reported for the top, left, center,
   right, and bottom frames.

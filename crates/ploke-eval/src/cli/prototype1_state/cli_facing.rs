@@ -6,7 +6,7 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use chrono::{DateTime, Utc};
@@ -584,6 +584,86 @@ struct HarnessRequestBatch {
     parent: Parent<AwaitingHarnessPlan>,
     slots: Vec<HarnessRequestSlot>,
     child_budget: Prototype1ChildBudget,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BroadTuiAttemptOptions {
+    model: Option<tui_adapter::ModelSelection>,
+    max_attempts: Option<u32>,
+    timeout_secs: Option<u64>,
+}
+
+impl BroadTuiAttemptOptions {
+    pub(crate) fn from_cli(
+        model_id: Option<String>,
+        provider: Option<String>,
+        max_attempts: Option<u32>,
+        timeout_secs: Option<u64>,
+    ) -> Result<Self, PrepareError> {
+        let model = match (model_id, provider) {
+            (Some(model_id), provider) => {
+                let model_id =
+                    ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
+                        phase: "broad_tui_attempt_model_id",
+                        detail: format!("invalid model id '{model_id}': {err}"),
+                    })?;
+                let provider = provider
+                    .map(|provider| {
+                        ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
+                            phase: "broad_tui_attempt_provider",
+                            detail: format!("invalid provider slug '{provider}': {err}"),
+                        })
+                    })
+                    .transpose()?;
+                Some(tui_adapter::ModelSelection::new(model_id, provider))
+            }
+            (None, Some(provider)) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!("broad TUI attempt provider '{provider}' requires --model-id"),
+                });
+            }
+            (None, None) => None,
+        };
+        Ok(Self {
+            model,
+            max_attempts,
+            timeout_secs,
+        })
+    }
+
+    fn model(&self) -> Option<&tui_adapter::ModelSelection> {
+        self.model.as_ref()
+    }
+
+    fn model_label(&self) -> Option<String> {
+        self.model().map(|model| model.model_id().to_string())
+    }
+
+    fn provider_label(&self) -> Option<String> {
+        self.model()
+            .and_then(|model| model.provider())
+            .map(|provider| provider.slug.as_str().to_string())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct BroadHarnessAttemptProjection {
+    pub(crate) request_path: PathBuf,
+    pub(crate) request_id: String,
+    pub(crate) workspace_path: PathBuf,
+    pub(crate) submitted_result_path: PathBuf,
+    pub(crate) diagnostics_path: PathBuf,
+    pub(crate) model_id: Option<String>,
+    pub(crate) provider: Option<String>,
+    pub(crate) max_attempts: u32,
+    pub(crate) timeout_secs: u64,
+    pub(crate) elapsed_ms: u128,
+    pub(crate) status: String,
+    pub(crate) executor_run_id: Option<String>,
+    pub(crate) executor_attempt_id: Option<String>,
+    pub(crate) changed_paths: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 enum ParentTargetSelection {
@@ -1291,6 +1371,38 @@ fn try_admit_request_result(
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
+    run_broad_headless_tui_attempt_with_options(slot, &BroadTuiAttemptOptions::default()).await
+}
+
+fn effective_broad_tui_max_attempts(
+    contract: &crate::cli::prototype1_state::edit_surface::harness_request::contract::Bundle,
+    options: &BroadTuiAttemptOptions,
+) -> u32 {
+    options.max_attempts.unwrap_or_else(|| {
+        contract
+            .attempt
+            .max_attempts
+            .max(BROAD_TUI_ATTEMPT_LIMIT as u32)
+    })
+}
+
+fn effective_broad_tui_timeout_secs(
+    contract: &crate::cli::prototype1_state::edit_surface::harness_request::contract::Bundle,
+    options: &BroadTuiAttemptOptions,
+) -> u64 {
+    options.timeout_secs.unwrap_or_else(|| {
+        contract
+            .attempt
+            .timeout
+            .turn_seconds
+            .max(Duration::from_secs(60).as_secs())
+    })
+}
+
+async fn run_broad_headless_tui_attempt_with_options(
+    slot: &HarnessRequestSlot,
+    options: &BroadTuiAttemptOptions,
+) -> Result<Option<transaction::Executor>, PrepareError> {
     let backend = GitWorktreeBackend;
     let repo_root = slot.published.request().workspace.source_repository_path();
     backend
@@ -1308,15 +1420,8 @@ async fn run_broad_headless_tui_attempt(
         }
     })?;
     let contract = &slot.published.request().contract;
-    let max_attempts = contract
-        .attempt
-        .max_attempts
-        .max(BROAD_TUI_ATTEMPT_LIMIT as u32);
-    let timeout_secs = contract
-        .attempt
-        .timeout
-        .turn_seconds
-        .max(Duration::from_secs(60).as_secs());
+    let max_attempts = effective_broad_tui_max_attempts(contract, options);
+    let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
     let budget = tui_adapter::Budget::new(max_attempts, timeout_secs).map_err(|source| {
         PrepareError::InvalidBatchSelection {
             detail: format!("invalid broad headless-tui attempt budget: {source}"),
@@ -1345,12 +1450,13 @@ async fn run_broad_headless_tui_attempt(
         slot.published.workspace_path()
     };
 
-    let run = tui_adapter::run_headless(
+    let run = tui_adapter::run_headless_with_model(
         tui_workspace,
         &prompt,
         budget,
         slot.published.request().edit_policy,
         &slot.published.request().evidence_roots,
+        options.model().cloned(),
     )
     .await
     .map_err(|source| PrepareError::InvalidBatchSelection {
@@ -1503,6 +1609,175 @@ async fn run_broad_headless_tui_attempt(
             })
         }
     }
+}
+
+pub(crate) async fn run_broad_harness_attempt_from_request_path(
+    request_path: PathBuf,
+    options: BroadTuiAttemptOptions,
+) -> Result<BroadHarnessAttemptProjection, PrepareError> {
+    let request_bytes =
+        fs::read(&request_path).map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read published broad harness request '{}': {source}",
+                request_path.display()
+            ),
+        })?;
+    let published = serde_json::from_slice::<
+        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
+    >(&request_bytes)
+    .map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not decode published broad harness request '{}': {source}",
+            request_path.display()
+        ),
+    })?;
+    let slot = HarnessRequestSlot {
+        request_path: request_path.clone(),
+        published,
+    };
+    run_broad_harness_attempt_slot(&slot, &options).await
+}
+
+async fn run_broad_harness_attempt_slot(
+    slot: &HarnessRequestSlot,
+    options: &BroadTuiAttemptOptions,
+) -> Result<BroadHarnessAttemptProjection, PrepareError> {
+    let contract = &slot.published.request().contract;
+    let max_attempts = effective_broad_tui_max_attempts(contract, options);
+    let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
+    let started = Instant::now();
+    let executor = run_broad_headless_tui_attempt_with_options(slot, options).await?;
+    let elapsed_ms = started.elapsed().as_millis();
+    let outcome = GitWorktreeBackend
+        .validate_tui_attempt(
+            slot.published.request().workspace.source_repository_path(),
+            &slot.published,
+        )
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad headless-TUI workspace validation errored for '{}': {source}",
+                slot.published.workspace_path().display()
+            ),
+        })?;
+    let changed_paths = match outcome {
+        TuiAttemptOutcome::Accepted(diff) => diff.changed_paths().to_vec(),
+        TuiAttemptOutcome::Rejected(rejection) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "broad headless-TUI workspace rejected after executor {:?}: {:?}",
+                    executor, rejection
+                ),
+            });
+        }
+    };
+    Ok(BroadHarnessAttemptProjection {
+        request_path: slot.request_path.clone(),
+        request_id: slot.published.request_id().to_string(),
+        workspace_path: slot.published.workspace_path().to_path_buf(),
+        submitted_result_path: slot.published.submitted_result_path().to_path_buf(),
+        diagnostics_path: broad_headless_tui_diagnostics_path(
+            slot.published.submitted_result_path(),
+        ),
+        model_id: options.model_label(),
+        provider: options.provider_label(),
+        max_attempts,
+        timeout_secs,
+        elapsed_ms,
+        status: "applied".to_string(),
+        executor_run_id: executor
+            .as_ref()
+            .and_then(|executor| executor.run_id().map(std::string::ToString::to_string)),
+        executor_attempt_id: executor
+            .as_ref()
+            .and_then(|executor| executor.attempt_id().map(std::string::ToString::to_string)),
+        changed_paths,
+        error: None,
+    })
+}
+
+pub(crate) async fn run_broad_harness_attempt_sweep(
+    lanes: Vec<(PathBuf, BroadTuiAttemptOptions)>,
+    parallel: usize,
+) -> Result<Vec<BroadHarnessAttemptProjection>, PrepareError> {
+    if parallel == 0 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "broad harness sweep --parallel must be greater than zero".to_string(),
+        });
+    }
+
+    let mut pending = lanes.into_iter();
+    let mut running = tokio::task::JoinSet::new();
+    let mut finished = Vec::new();
+
+    loop {
+        while running.len() < parallel {
+            let Some((request_path, options)) = pending.next() else {
+                break;
+            };
+            running.spawn(async move {
+                let model_id = options.model_label();
+                let provider = options.provider_label();
+                let max_attempts = options.max_attempts.unwrap_or(0);
+                let timeout_secs = options.timeout_secs.unwrap_or(0);
+                let started = Instant::now();
+                match run_broad_harness_attempt_from_request_path(request_path.clone(), options)
+                    .await
+                {
+                    Ok(row) => row,
+                    Err(source) => BroadHarnessAttemptProjection {
+                        request_id: request_path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string()),
+                        workspace_path: PathBuf::new(),
+                        submitted_result_path: PathBuf::new(),
+                        diagnostics_path: PathBuf::new(),
+                        request_path,
+                        model_id,
+                        provider,
+                        max_attempts,
+                        timeout_secs,
+                        elapsed_ms: started.elapsed().as_millis(),
+                        status: "failed".to_string(),
+                        executor_run_id: None,
+                        executor_attempt_id: None,
+                        changed_paths: Vec::new(),
+                        error: Some(source.to_string()),
+                    },
+                }
+            });
+        }
+
+        if running.is_empty() {
+            break;
+        }
+
+        match running.join_next().await {
+            Some(Ok(row)) => finished.push(row),
+            Some(Err(source)) => {
+                finished.push(BroadHarnessAttemptProjection {
+                    request_path: PathBuf::new(),
+                    request_id: "<join-error>".to_string(),
+                    workspace_path: PathBuf::new(),
+                    submitted_result_path: PathBuf::new(),
+                    diagnostics_path: PathBuf::new(),
+                    model_id: None,
+                    provider: None,
+                    max_attempts: 0,
+                    timeout_secs: 0,
+                    elapsed_ms: 0,
+                    status: "failed".to_string(),
+                    executor_run_id: None,
+                    executor_attempt_id: None,
+                    changed_paths: Vec::new(),
+                    error: Some(source.to_string()),
+                });
+            }
+            None => break,
+        }
+    }
+
+    Ok(finished)
 }
 
 fn stash_transfer_enabled() -> bool {
@@ -11668,6 +11943,33 @@ stop_after = "complete"
                 "/tmp/prototype1/messages/edit-harness-result/node-parent-r2.headless-tui.json",
             )
         );
+    }
+
+    #[test]
+    fn broad_tui_attempt_options_can_lower_published_live_budget() {
+        let contract =
+            crate::cli::prototype1_state::edit_surface::harness_request::contract::Bundle::prototype1(
+                Path::new("/tmp/prototype1"),
+            );
+        let options =
+            BroadTuiAttemptOptions::from_cli(None, None, Some(1), Some(180)).expect("options");
+
+        assert_eq!(effective_broad_tui_max_attempts(&contract, &options), 1);
+        assert_eq!(effective_broad_tui_timeout_secs(&contract, &options), 180);
+    }
+
+    #[test]
+    fn broad_tui_attempt_provider_requires_model_override() {
+        let err =
+            BroadTuiAttemptOptions::from_cli(None, Some("anthropic".to_string()), Some(1), None)
+                .expect_err("provider without model should fail");
+
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("requires --model-id"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

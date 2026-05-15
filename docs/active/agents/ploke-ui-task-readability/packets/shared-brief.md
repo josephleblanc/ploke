@@ -19,7 +19,9 @@ mirror, copied id set, copied record, or ad hoc report/status/info payload.
 - Mirror-type workarounds are also blockers. Renaming a copied semantic carrier
   to `Report`, `Status`, `Info`, `Summary`, or `Payload` does not make it
   derived.
-- Layout, diagnostics, and render-only strings may be owned by the UI.
+- Layout geometry and purely graphical widget state may be owned by the UI.
+  Inspector rows, graph ids, source refs, and drilldown facts must stay borrowed
+  or typed; do not use generic owned strings as a convenience projection.
 - Drilldown paths must line up with the typed answer-contract direction, even if
   the current slice is only readability.
 - If a fact is missing, classify the blocker instead of guessing.

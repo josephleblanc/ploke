@@ -544,6 +544,9 @@ pub enum LoopSubcommand {
     /// Inspect or execute one staged Prototype 1 runner invocation.
     #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
+    /// Replay published broad headless-TUI harness requests outside the full parent loop.
+    #[command(hide = true)]
+    Prototype1Harness(Prototype1HarnessCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -658,6 +661,81 @@ pub struct Prototype1RunnerCommand {
 
     #[arg(long, action = ArgAction::Set, default_value_t = false)]
     pub stop_on_error: bool,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Run published Prototype 1 broad harness request slots")]
+pub struct Prototype1HarnessCommand {
+    #[command(subcommand)]
+    pub command: Prototype1HarnessSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Prototype1HarnessSubcommand {
+    /// Run one published broad harness request slot.
+    Attempt(Prototype1HarnessAttemptCommand),
+    /// Run multiple distinct published broad harness request slots concurrently.
+    Sweep(Prototype1HarnessSweepCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1HarnessAttemptCommand {
+    /// Path to one published broad harness request JSON.
+    #[arg(long, value_name = "PATH")]
+    pub request: PathBuf,
+
+    /// Model id for this attempt. Defaults to the headless TUI harness default.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug to pin for the selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Override the published attempt count for fast live probes.
+    #[arg(long)]
+    pub max_attempts: Option<u32>,
+
+    /// Override the published turn timeout for fast live probes.
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1HarnessSweepCommand {
+    /// Published broad harness request JSON. Repeat for multiple lanes.
+    #[arg(long = "request", value_name = "PATH", action = ArgAction::Append)]
+    pub requests: Vec<PathBuf>,
+
+    /// Directory containing published broad harness request JSON files.
+    #[arg(long, value_name = "DIR")]
+    pub requests_dir: Option<PathBuf>,
+
+    /// Model id for lanes. Pass one model for all requests, or one per request.
+    #[arg(long = "model-id", value_name = "MODEL", action = ArgAction::Append)]
+    pub model_ids: Vec<String>,
+
+    /// Provider slug to pin for every selected model.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Override the published attempt count for fast live probes.
+    #[arg(long)]
+    pub max_attempts: Option<u32>,
+
+    /// Override the published turn timeout for fast live probes.
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
+
+    /// Maximum concurrent lanes.
+    #[arg(long, default_value_t = 2)]
+    pub parallel: usize,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -1306,6 +1384,7 @@ impl LoopCommand {
             LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1Harness(cmd) => cmd.run().await,
         }
     }
 }
@@ -1330,6 +1409,197 @@ impl Prototype1RunnerCommand {
             .await
             .map(|_| ())
     }
+}
+
+impl Prototype1HarnessCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            Prototype1HarnessSubcommand::Attempt(cmd) => cmd.run().await,
+            Prototype1HarnessSubcommand::Sweep(cmd) => cmd.run().await,
+        }
+    }
+}
+
+impl Prototype1HarnessAttemptCommand {
+    async fn run(self) -> Result<(), PrepareError> {
+        let options = prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
+            self.model_id,
+            self.provider,
+            self.max_attempts,
+            self.timeout_secs,
+        )?;
+        let row = prototype1_state::cli_facing::run_broad_harness_attempt_from_request_path(
+            self.request,
+            options,
+        )
+        .await?;
+        print_broad_harness_attempt_rows(std::slice::from_ref(&row), self.format)
+    }
+}
+
+impl Prototype1HarnessSweepCommand {
+    async fn run(self) -> Result<(), PrepareError> {
+        let requests = collect_broad_harness_request_paths(self.requests, self.requests_dir)?;
+        let lanes = broad_harness_sweep_lanes(
+            requests,
+            self.model_ids,
+            self.provider,
+            self.max_attempts,
+            self.timeout_secs,
+        )?;
+        let rows =
+            prototype1_state::cli_facing::run_broad_harness_attempt_sweep(lanes, self.parallel)
+                .await?;
+        print_broad_harness_attempt_rows(&rows, self.format)
+    }
+}
+
+fn collect_broad_harness_request_paths(
+    mut requests: Vec<PathBuf>,
+    requests_dir: Option<PathBuf>,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    if let Some(dir) = requests_dir {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(&dir).map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read requests directory '{}': {source}",
+                dir.display()
+            ),
+        })? {
+            let entry = entry.map_err(|source| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "could not read entry in requests directory '{}': {source}",
+                    dir.display()
+                ),
+            })?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                entries.push(path);
+            }
+        }
+        entries.sort();
+        requests.extend(entries);
+    }
+
+    if requests.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-harness sweep requires --request or --requests-dir".to_string(),
+        });
+    }
+
+    let mut seen = BTreeSet::new();
+    for path in &requests {
+        if !seen.insert(path.clone()) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "prototype1-harness sweep received duplicate request path '{}'",
+                    path.display()
+                ),
+            });
+        }
+    }
+
+    Ok(requests)
+}
+
+fn broad_harness_sweep_lanes(
+    requests: Vec<PathBuf>,
+    model_ids: Vec<String>,
+    provider: Option<String>,
+    max_attempts: Option<u32>,
+    timeout_secs: Option<u64>,
+) -> Result<
+    Vec<(
+        PathBuf,
+        prototype1_state::cli_facing::BroadTuiAttemptOptions,
+    )>,
+    PrepareError,
+> {
+    let mut lanes = Vec::with_capacity(requests.len());
+    if model_ids.is_empty() {
+        for request in requests {
+            lanes.push((
+                request,
+                prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
+                    None,
+                    provider.clone(),
+                    max_attempts,
+                    timeout_secs,
+                )?,
+            ));
+        }
+        return Ok(lanes);
+    }
+
+    if model_ids.len() != 1 && model_ids.len() != requests.len() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1-harness sweep requires one --model-id for all requests or one per request; got {} model(s) for {} request(s)",
+                model_ids.len(),
+                requests.len()
+            ),
+        });
+    }
+
+    for (index, request) in requests.into_iter().enumerate() {
+        let model_id = if model_ids.len() == 1 {
+            model_ids[0].clone()
+        } else {
+            model_ids[index].clone()
+        };
+        lanes.push((
+            request,
+            prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
+                Some(model_id),
+                provider.clone(),
+                max_attempts,
+                timeout_secs,
+            )?,
+        ));
+    }
+    Ok(lanes)
+}
+
+fn print_broad_harness_attempt_rows(
+    rows: &[prototype1_state::cli_facing::BroadHarnessAttemptProjection],
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(rows).map_err(|source| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: format!("could not serialize broad harness attempt rows: {source}"),
+                    }
+                })?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!(
+                "{:<8} {:<42} {:<28} {:>8} {:>8} {:>7} {}",
+                "status", "request_id", "model", "timeout", "elapsed", "paths", "request"
+            );
+            for row in rows {
+                let model = row.model_id.as_deref().unwrap_or("default");
+                let changed = row.changed_paths.len();
+                println!(
+                    "{:<8} {:<42} {:<28} {:>8} {:>8} {:>7} {}",
+                    row.status,
+                    row.request_id,
+                    model,
+                    row.timeout_secs,
+                    row.elapsed_ms,
+                    changed,
+                    row.request_path.display()
+                );
+                if let Some(error) = row.error.as_deref() {
+                    println!("  error: {error}");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 struct TimingTrace;
@@ -12335,6 +12605,81 @@ mod tests {
     fn tool_call_next_step_index_uses_first_real_index() {
         assert_eq!(tool_call_next_step_index(0), None);
         assert_eq!(tool_call_next_step_index(3), Some(0));
+    }
+
+    #[test]
+    fn prototype1_harness_attempt_parses_model_budget_overrides() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-harness",
+            "attempt",
+            "--request",
+            "/tmp/request-r1.json",
+            "--model-id",
+            "anthropic/claude-sonnet-4",
+            "--provider",
+            "anthropic",
+            "--max-attempts",
+            "1",
+            "--timeout-secs",
+            "180",
+            "--format",
+            "json",
+        ])
+        .expect("prototype1 harness attempt should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Harness(Prototype1HarnessCommand {
+                        command: Prototype1HarnessSubcommand::Attempt(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.request, PathBuf::from("/tmp/request-r1.json"));
+                assert_eq!(cmd.model_id.as_deref(), Some("anthropic/claude-sonnet-4"));
+                assert_eq!(cmd.provider.as_deref(), Some("anthropic"));
+                assert_eq!(cmd.max_attempts, Some(1));
+                assert_eq!(cmd.timeout_secs, Some(180));
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn prototype1_harness_sweep_parses_parallel_lanes() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-harness",
+            "sweep",
+            "--request",
+            "/tmp/request-r1.json",
+            "--request",
+            "/tmp/request-r2.json",
+            "--model-id",
+            "anthropic/claude-sonnet-4",
+            "--model-id",
+            "openai/gpt-4.1",
+            "--parallel",
+            "2",
+        ])
+        .expect("prototype1 harness sweep should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command:
+                    LoopSubcommand::Prototype1Harness(Prototype1HarnessCommand {
+                        command: Prototype1HarnessSubcommand::Sweep(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.requests.len(), 2);
+                assert_eq!(cmd.model_ids.len(), 2);
+                assert_eq!(cmd.parallel, 2);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
     }
 
     #[test]

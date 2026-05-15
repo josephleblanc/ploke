@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
     sync::Arc,
 };
 
@@ -256,6 +257,9 @@ impl GraphViewCache {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GraphSignature {
+    fingerprint: u64,
+    forest_nodes: usize,
+    forest_roots: usize,
     lineages: usize,
     blocks: usize,
     entries: usize,
@@ -266,6 +270,7 @@ struct GraphSignature {
     selections: usize,
     runtimes: usize,
     operations: usize,
+    child_plans: usize,
     evidence: usize,
     warnings: usize,
 }
@@ -273,6 +278,9 @@ struct GraphSignature {
 impl From<&DomainGraph> for GraphSignature {
     fn from(graph: &DomainGraph) -> Self {
         Self {
+            fingerprint: graph_projection_fingerprint(graph),
+            forest_nodes: graph.forest.as_ref().map_or(0, |forest| forest.nodes.len()),
+            forest_roots: graph.forest.as_ref().map_or(0, |forest| forest.roots.len()),
             lineages: graph.history.lineages.len(),
             blocks: graph.history.blocks.len(),
             entries: graph.history.entries.len(),
@@ -283,9 +291,200 @@ impl From<&DomainGraph> for GraphSignature {
             selections: graph.selections.selections.len(),
             runtimes: graph.runtimes.runtimes.len(),
             operations: graph.operations.operations.len(),
+            child_plans: graph.child_plans.plans.len(),
             evidence: graph.evidence.attachments.len(),
             warnings: graph.warnings.len(),
         }
+    }
+}
+
+fn graph_projection_fingerprint(graph: &DomainGraph) -> u64 {
+    let mut state = DefaultHasher::new();
+
+    if let Some(forest) = graph
+        .forest
+        .as_ref()
+        .filter(|forest| !forest.nodes.is_empty())
+    {
+        "run-forest".hash(&mut state);
+        let mut nodes = forest.nodes.iter().collect::<Vec<_>>();
+        nodes.sort_by(|left, right| {
+            (left.generation, left.key.as_str()).cmp(&(right.generation, right.key.as_str()))
+        });
+        for node in nodes {
+            hash_run_forest_node(node, &mut state);
+        }
+        let mut roots = forest
+            .roots
+            .iter()
+            .map(|root| root.as_str())
+            .collect::<Vec<_>>();
+        roots.sort_unstable();
+        roots.hash(&mut state);
+    } else {
+        "artifact-tree".hash(&mut state);
+        for artifact in graph.artifacts.artifacts.values() {
+            hash_artifact_node(artifact, &mut state);
+        }
+        for lineage in graph.history.lineages.values() {
+            lineage.lineage_id.hash(&mut state);
+            lineage.blocks.hash(&mut state);
+        }
+        for block in graph.history.blocks.values() {
+            block.block_hash.hash(&mut state);
+            block.lineage_id.hash(&mut state);
+            block.block_height.hash(&mut state);
+            block.active_artifact.value.hash(&mut state);
+            block.selected_successor.artifact.value.hash(&mut state);
+        }
+        for branch in &graph.candidates.branches {
+            branch.selection_entry_id.hash(&mut state);
+            branch.payload_index.hash(&mut state);
+            branch.branch_id.hash(&mut state);
+            branch.base_artifact_id.hash(&mut state);
+            branch.derived_artifact_id.hash(&mut state);
+            branch.patch_id.hash(&mut state);
+        }
+    }
+
+    for warning in &graph.warnings {
+        graph_warning_kind_id(warning.kind).hash(&mut state);
+        warning.detail.hash(&mut state);
+    }
+
+    state.finish()
+}
+
+fn hash_run_forest_node(node: &ploke_tree::TreeNode, state: &mut DefaultHasher) {
+    node.key.as_str().hash(state);
+    node.parent
+        .as_ref()
+        .map(|parent| parent.as_str())
+        .hash(state);
+    node.children.len().hash(state);
+    for child in &node.children {
+        child.as_str().hash(state);
+    }
+    node.generation.hash(state);
+    node.branch_id.hash(state);
+    node.parent_branch_id.hash(state);
+    node.candidate_id.hash(state);
+    node.instance_id.hash(state);
+    node.source_state_id.hash(state);
+    node.target_relpath.hash(state);
+    node.base_artifact_id.hash(state);
+    node.patch_id.hash(state);
+    node.derived_artifact_id.hash(state);
+    progress_id(node.progress.phase).hash(state);
+    terminality_id(node.progress.terminality).hash(state);
+    result_class_id(node.progress.result_class).hash(state);
+    node.created_at.hash(state);
+    node.updated_at.hash(state);
+    for evidence in &node.evidence {
+        evidence_kind_id(evidence.kind).hash(state);
+        authority_id(evidence.authority).hash(state);
+        evidence
+            .node_key
+            .as_ref()
+            .map(|key| key.as_str())
+            .hash(state);
+        evidence.runtime_id.hash(state);
+        evidence.recorded_at.hash(state);
+        evidence.detail.hash(state);
+    }
+    for diagnostic in &node.diagnostics {
+        diagnostic_severity_id(diagnostic.severity).hash(state);
+        diagnostic.code.hash(state);
+        diagnostic.message.hash(state);
+        diagnostic
+            .node_key
+            .as_ref()
+            .map(|key| key.as_str())
+            .hash(state);
+    }
+}
+
+fn hash_artifact_node(node: &ArtifactNode, state: &mut DefaultHasher) {
+    node.key.hash(state);
+    match &node.identity {
+        ArtifactIdentity::HistoryRef(history_ref) => {
+            "history-ref".hash(state);
+            history_ref.value.hash(state);
+        }
+        ArtifactIdentity::PassiveId(artifact_id) => {
+            "passive-id".hash(state);
+            artifact_id.hash(state);
+        }
+    }
+    node.evidence.hash(state);
+}
+
+fn progress_id(phase: ploke_tree::Phase) -> u8 {
+    match phase {
+        ploke_tree::Phase::Planned => 0,
+        ploke_tree::Phase::WorkspaceStaged => 1,
+        ploke_tree::Phase::BinaryBuilt => 2,
+        ploke_tree::Phase::Running => 3,
+        ploke_tree::Phase::Completed => 4,
+        ploke_tree::Phase::Failed => 5,
+        ploke_tree::Phase::Unknown => 6,
+    }
+}
+
+fn terminality_id(terminality: ploke_tree::Terminality) -> u8 {
+    match terminality {
+        ploke_tree::Terminality::NonTerminal => 0,
+        ploke_tree::Terminality::Terminal => 1,
+        ploke_tree::Terminality::Unknown => 2,
+    }
+}
+
+fn result_class_id(result_class: ploke_tree::ResultClass) -> u8 {
+    match result_class {
+        ploke_tree::ResultClass::Success => 0,
+        ploke_tree::ResultClass::Failure => 1,
+        ploke_tree::ResultClass::Unknown => 2,
+    }
+}
+
+fn evidence_kind_id(kind: ploke_tree::EvidenceKind) -> u8 {
+    match kind {
+        ploke_tree::EvidenceKind::SchedulerNode => 0,
+        ploke_tree::EvidenceKind::ParentIdentity => 1,
+        ploke_tree::EvidenceKind::SuccessorReady => 2,
+        ploke_tree::EvidenceKind::SuccessorCompletion => 3,
+    }
+}
+
+fn authority_id(authority: ploke_tree::AuthorityLabel) -> u8 {
+    match authority {
+        ploke_tree::AuthorityLabel::MutableProjection => 0,
+        ploke_tree::AuthorityLabel::TypedRecordEvidence => 1,
+        ploke_tree::AuthorityLabel::LiveTransport => 2,
+        ploke_tree::AuthorityLabel::SealedVerifiedHistory => 3,
+        ploke_tree::AuthorityLabel::DegradedObservation => 4,
+    }
+}
+
+fn diagnostic_severity_id(severity: ploke_tree::DiagnosticSeverity) -> u8 {
+    match severity {
+        ploke_tree::DiagnosticSeverity::Info => 0,
+        ploke_tree::DiagnosticSeverity::Warning => 1,
+        ploke_tree::DiagnosticSeverity::Error => 2,
+    }
+}
+
+fn graph_warning_kind_id(kind: ploke_tree::graph::GraphWarningKind) -> u8 {
+    match kind {
+        ploke_tree::graph::GraphWarningKind::DuplicateBlockHash => 0,
+        ploke_tree::graph::GraphWarningKind::DuplicateEntryId => 1,
+        ploke_tree::graph::GraphWarningKind::DuplicateLineageBlockHeight => 2,
+        ploke_tree::graph::GraphWarningKind::BlockEntryCountMismatch => 3,
+        ploke_tree::graph::GraphWarningKind::DuplicateCandidateMembershipId => 4,
+        ploke_tree::graph::GraphWarningKind::CandidateSetMembershipCountMismatch => 5,
+        ploke_tree::graph::GraphWarningKind::CandidateSetMembershipMissingForPayload => 6,
+        ploke_tree::graph::GraphWarningKind::CandidateSetMembershipAmbiguousForPayload => 7,
+        ploke_tree::graph::GraphWarningKind::SelectedMembershipMissing => 8,
     }
 }
 
@@ -1127,8 +1326,8 @@ mod tests {
     use ploke_tree::graph::{CandidateBranchNode, CandidateSource};
     use ploke_tree::{PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal};
 
-    use super::{GraphNode, project_artifact_tree};
-    use crate::ui::view::ViewStyle;
+    use super::{GraphNode, GraphViewCache, project_artifact_tree};
+    use crate::ui::view::{GraphViewMode, ViewStyle};
 
     #[test]
     fn artifact_tree_does_not_render_unattached_anchor_by_default() {
@@ -1404,6 +1603,39 @@ mod tests {
             node.detail().contains("node: node-child-a")
                 && node.detail().contains("derived artifact: artifact:child-a")
         }));
+    }
+
+    #[test]
+    fn cache_rebuilds_when_projection_identity_changes_without_count_change() {
+        let style = ViewStyle::default();
+        let mut cache = GraphViewCache::default();
+        let first = graph_with_selected_successor("artifact:old-parent", "artifact:old-child", 3);
+        let second = graph_with_selected_successor("artifact:new-parent", "artifact:new-child", 3);
+
+        assert!(cache.refresh(&first, style, GraphViewMode::ArtifactTree));
+        assert!(
+            cache
+                .graph
+                .g()
+                .node_weights()
+                .any(|node| { node.payload().detail().contains("artifact:old-child") })
+        );
+
+        assert!(cache.refresh(&second, style, GraphViewMode::ArtifactTree));
+        assert!(
+            cache
+                .graph
+                .g()
+                .node_weights()
+                .any(|node| { node.payload().detail().contains("artifact:new-child") })
+        );
+        assert!(
+            !cache
+                .graph
+                .g()
+                .node_weights()
+                .any(|node| { node.payload().detail().contains("artifact:old-child") })
+        );
     }
 
     fn count_nodes(projected: &super::ProjectedGraph, kind: &str) -> usize {

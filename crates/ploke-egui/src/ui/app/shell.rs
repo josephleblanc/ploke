@@ -5,7 +5,8 @@ use eframe::egui;
 use crate::ui::diff;
 use crate::ui::id_display;
 use crate::ui::inspector::{
-    InspectorEdge, InspectorRow, PatchSnapshot, SelectionInspectorSnapshot,
+    InspectorEdge, InspectorMetric, InspectorRow, PatchSnapshot, SelectionInspectorSnapshot,
+    SourceRef,
 };
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics, GraphViewMode};
 
@@ -33,7 +34,7 @@ pub(crate) fn render_top_strip(
 pub(crate) fn render_right_inspector(
     ui: &mut egui::Ui,
     selection: Option<&GraphSelectionDetail>,
-    inspector: Option<&SelectionInspectorSnapshot>,
+    inspector: Option<&SelectionInspectorSnapshot<'_>>,
 ) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -61,6 +62,7 @@ pub(crate) fn render_right_inspector(
             ui.label("Roles");
             if let Some(inspector) = inspector {
                 render_fields(ui, &inspector.roles);
+                render_metrics(ui, &inspector.metrics);
             } else {
                 kv(ui, "roles", "not_applicable");
             }
@@ -152,11 +154,20 @@ fn render_fields(ui: &mut egui::Ui, fields: &[InspectorRow]) {
         return;
     }
     for field in fields {
-        kv(ui, field.label.as_str(), field.value.as_str());
+        kv(ui, field.label, field.value);
     }
 }
 
-fn render_edges(ui: &mut egui::Ui, direction: &str, edges: &[InspectorEdge]) {
+fn render_metrics(ui: &mut egui::Ui, metrics: &[InspectorMetric]) {
+    for metric in metrics {
+        ui.horizontal(|ui| {
+            ui.label(metric.label);
+            ui.monospace(metric.value.to_string());
+        });
+    }
+}
+
+fn render_edges(ui: &mut egui::Ui, direction: &str, edges: &[InspectorEdge<'_>]) {
     if edges.is_empty() {
         kv(ui, direction, "none");
         return;
@@ -164,33 +175,76 @@ fn render_edges(ui: &mut egui::Ui, direction: &str, edges: &[InspectorEdge]) {
     for edge in edges {
         ui.horizontal(|ui| {
             ui.label(direction);
-            ui.monospace(edge.relation.as_str());
+            ui.monospace(edge.relation);
             id_display::expandable_id(
                 ui,
-                ("edge-from", direction, &edge.relation, &edge.from),
-                &edge.from,
+                ("edge-from", direction, edge.relation, edge.from),
+                edge.from,
             );
             ui.label("->");
-            id_display::expandable_id(
-                ui,
-                ("edge-to", direction, &edge.relation, &edge.to),
-                &edge.to,
-            );
+            id_display::expandable_id(ui, ("edge-to", direction, edge.relation, edge.to), edge.to);
             ui.monospace(format!("({})", edge.source_count));
         });
     }
 }
 
-fn render_source_refs(ui: &mut egui::Ui, source_refs: &[String]) {
+fn render_source_refs(ui: &mut egui::Ui, source_refs: &[SourceRef<'_>]) {
     if source_refs.is_empty() {
         kv(ui, "record refs", "none");
         return;
     }
     for source_ref in source_refs.iter().take(8) {
-        id_display::expandable_id(ui, ("source-ref", source_ref), source_ref.as_str());
+        render_source_ref(ui, source_ref);
     }
     if source_refs.len() > 8 {
         kv(ui, "more", &format!("{}", source_refs.len() - 8));
+    }
+}
+
+fn render_source_ref(ui: &mut egui::Ui, source_ref: &SourceRef<'_>) {
+    match source_ref {
+        SourceRef::Evidence {
+            kind,
+            authority,
+            recorded_at,
+        } => {
+            ui.horizontal(|ui| {
+                ui.monospace(*kind);
+                ui.monospace(*authority);
+                if let Some(recorded_at) = recorded_at {
+                    id_display::expandable_id(
+                        ui,
+                        ("source-ref", kind, authority, recorded_at),
+                        recorded_at,
+                    );
+                }
+            });
+        }
+        SourceRef::Diagnostic { severity, code } => {
+            ui.horizontal(|ui| {
+                ui.monospace("diagnostic");
+                ui.monospace(*severity);
+                id_display::expandable_id(ui, ("source-ref", severity, code), code);
+            });
+        }
+        SourceRef::ArtifactHistoryRef { artifact } => {
+            ui.horizontal(|ui| {
+                ui.monospace("artifact_history_ref");
+                id_display::expandable_id(ui, ("source-ref", artifact), artifact);
+            });
+        }
+        SourceRef::ArtifactId { artifact } => {
+            ui.horizontal(|ui| {
+                ui.monospace("artifact_id");
+                id_display::expandable_id(ui, ("source-ref", artifact), artifact);
+            });
+        }
+        SourceRef::ArtifactEvidenceCount { count } => {
+            ui.horizontal(|ui| {
+                ui.monospace("artifact_evidence_count");
+                ui.monospace(count.to_string());
+            });
+        }
     }
 }
 
@@ -202,24 +256,26 @@ fn render_patches(ui: &mut egui::Ui, patches: &[PatchSnapshot]) {
     for patch in patches {
         ui.horizontal(|ui| {
             ui.label("patch");
-            id_display::expandable_id(ui, ("patch", &patch.patch_id), patch.patch_id.as_str());
+            id_display::expandable_id(ui, ("patch", patch.patch_id), patch.patch_id);
         });
         render_fields(ui, &patch.summary);
         if patch.touches.is_empty() {
             kv(ui, "touches", "none");
         } else {
             for touch in &patch.touches {
-                ui.label(touch.label.as_str());
-                ui.add(
-                    egui::Label::new(egui::RichText::new(touch.value.as_str()).monospace()).wrap(),
-                );
+                ui.label(format!(
+                    "touch {} {}:{}-{}",
+                    touch.index, touch.relpath, touch.start, touch.end
+                ));
+                ui.add(egui::Label::new(egui::RichText::new(touch.replacement).monospace()).wrap());
             }
         }
-        if patch.unified_diff.is_empty() {
+        let diff = patch.unified_diff();
+        if diff.is_empty() {
             kv(ui, "diff", "not_available");
         } else {
             ui.label("diff");
-            render_diff(ui, patch.unified_diff.as_str());
+            render_diff(ui, diff.as_str());
         }
     }
 }
@@ -248,7 +304,7 @@ fn selection_status(selection: Option<&GraphSelectionDetail>) -> &'static str {
     }
 }
 
-fn patch_status(inspector: Option<&SelectionInspectorSnapshot>) -> &'static str {
+fn patch_status(inspector: Option<&SelectionInspectorSnapshot<'_>>) -> &'static str {
     match inspector {
         Some(inspector) if !inspector.patches.is_empty() => "available",
         Some(_) => "not_available",

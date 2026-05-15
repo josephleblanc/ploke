@@ -15,7 +15,7 @@ use crate::diagnostics::{
 use crate::import::graph_from_run_root;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
-use crate::ui::inspector::{SelectionInspector, SelectionInspectorSnapshot};
+use crate::ui::inspector::SelectionInspector;
 use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
@@ -100,11 +100,7 @@ impl OperatorApp {
 
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let graph_has_content = graph_has_content(&self.graph);
-        let selected_detail = self.view.selected_node_detail();
-        let selected_inspector = selected_detail.as_ref().map(|selection| {
-            SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
-        });
+        let top_graph_has_content = graph_has_content(&self.graph);
 
         egui::Panel::top("top_strip")
             .default_size(layout::TOP_STRIP_HEIGHT)
@@ -113,7 +109,7 @@ impl eframe::App for OperatorApp {
                     ui,
                     self.view.mode(),
                     self.current_run_name().as_deref(),
-                    graph_has_content,
+                    top_graph_has_content,
                 );
             });
 
@@ -146,10 +142,16 @@ impl eframe::App for OperatorApp {
                     });
             });
 
+        let graph_has_content = graph_has_content(&self.graph);
+        let selected_detail = self.view.selected_node_detail(&self.graph);
+
         egui::Panel::right("selection_inspector")
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
+                let selected_inspector = selected_detail.as_ref().map(|selection| {
+                    SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
+                });
                 shell::render_right_inspector(
                     ui,
                     selected_detail.as_ref(),
@@ -213,13 +215,17 @@ impl OperatorApp {
         };
         let run = self.run_snapshot();
         let graph_identity = GraphIdentity::from_graph(&self.graph, &diagnostics);
+        let selected = self.view.selected_node_detail(&self.graph);
+        let selected_inspector = selected.as_ref().map(|selection| {
+            SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
+        });
         let observation = SnapshotObservation::new(diagnostics)
             .with_graph_has_content(graph_has_content(&self.graph))
             .with_run_error(self.run_error.clone())
             .with_run(run)
             .with_graph_identity(graph_identity)
-            .with_selected(self.view.selected_node_detail())
-            .with_selected_inspector(self.selected_inspector())
+            .with_selected(selected.as_ref())
+            .with_selected_inspector(selected_inspector)
             .with_artifact_components(artifact_component_breakdown(&self.graph));
 
         let Some(sink) = &mut self.diagnostics_sink else {
@@ -242,13 +248,17 @@ impl OperatorApp {
         if ui.button("Write diagnostics").clicked() {
             let run = self.run_snapshot();
             let graph_identity = GraphIdentity::from_graph(&self.graph, &diagnostics);
+            let selected = self.view.selected_node_detail(&self.graph);
+            let selected_inspector = selected.as_ref().map(|selection| {
+                SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
+            });
             let observation = SnapshotObservation::new(diagnostics)
                 .with_graph_has_content(graph_has_content(&self.graph))
                 .with_run_error(self.run_error.clone())
                 .with_run(run)
                 .with_graph_identity(graph_identity)
-                .with_selected(self.view.selected_node_detail())
-                .with_selected_inspector(self.selected_inspector())
+                .with_selected(selected.as_ref())
+                .with_selected_inspector(selected_inspector)
                 .with_artifact_components(artifact_component_breakdown(&self.graph));
             match write_manual_snapshot(observation) {
                 Ok(path) => {
@@ -266,12 +276,6 @@ impl OperatorApp {
         self.run_picker.selected_run().map(|run| RunSnapshot {
             name: run.name,
             path: run.path.display().to_string(),
-        })
-    }
-
-    fn selected_inspector(&self) -> Option<SelectionInspectorSnapshot> {
-        self.view.selected_node_detail().as_ref().map(|selection| {
-            SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
         })
     }
 }

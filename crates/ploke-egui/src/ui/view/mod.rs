@@ -33,6 +33,7 @@ pub struct GraphView {
     view_style: ViewStyle,
     last_viewport: Option<egui::Vec2>,
     fit_next_frame: bool,
+    layout_state_pending: bool,
     diagnostics: Option<GraphViewDiagnostics>,
     mode: GraphViewMode,
 }
@@ -52,6 +53,7 @@ impl Default for GraphView {
             view_style,
             last_viewport: None,
             fit_next_frame: true,
+            layout_state_pending: false,
             diagnostics: None,
             mode: GraphViewMode::ArtifactTree,
         }
@@ -75,7 +77,8 @@ impl GraphView {
         self.diagnostics.clone()
     }
 
-    pub fn selected_node_detail(&self) -> Option<GraphSelectionDetail> {
+    pub fn selected_node_detail(&mut self, graph: &DomainGraph) -> Option<GraphSelectionDetail> {
+        self.sync_projection(graph);
         self.cache.selected_node_detail()
     }
 
@@ -108,13 +111,13 @@ impl GraphView {
             self.last_viewport = Some(viewport);
         }
 
-        if self.cache.refresh(graph, self.view_style, self.mode) {
+        self.sync_projection(graph);
+        if std::mem::take(&mut self.layout_state_pending) {
             egui_graphs::set_layout_state(
                 ui,
                 self.cache.layout_state(self.view_style),
                 Some(self.id.clone()),
             );
-            self.fit_next_frame = true;
         }
 
         let fit_now = std::mem::take(&mut self.fit_next_frame);
@@ -135,6 +138,13 @@ impl GraphView {
         self.diagnostics =
             self.cache
                 .diagnostics(response.rect.size(), self.view_style, edge_labels);
+    }
+
+    fn sync_projection(&mut self, graph: &DomainGraph) {
+        if self.cache.refresh(graph, self.view_style, self.mode) {
+            self.layout_state_pending = true;
+            self.fit_next_frame = true;
+        }
     }
 }
 

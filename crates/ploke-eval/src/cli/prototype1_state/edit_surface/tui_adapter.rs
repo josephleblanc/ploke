@@ -13,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+use ploke_llm::{ModelId, ProviderKey};
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -49,6 +50,26 @@ pub(crate) mod state {
     pub(crate) enum Done {}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModelSelection {
+    model_id: ModelId,
+    provider: Option<ProviderKey>,
+}
+
+impl ModelSelection {
+    pub(crate) fn new(model_id: ModelId, provider: Option<ProviderKey>) -> Self {
+        Self { model_id, provider }
+    }
+
+    pub(crate) fn model_id(&self) -> &ModelId {
+        &self.model_id
+    }
+
+    pub(crate) fn provider(&self) -> Option<&ProviderKey> {
+        self.provider.as_ref()
+    }
+}
+
 /// Run one vanilla headless `ploke-tui` edit session for a broad request.
 ///
 /// This is intentionally an executor adapter, not a second edit engine. It uses
@@ -61,6 +82,25 @@ pub(crate) async fn run_headless(
     budget: Budget,
     edit_policy: BroadEditPolicy,
     evidence_roots: &[EvidenceRoot],
+) -> Result<HeadlessRun, Error> {
+    run_headless_with_model(
+        workspace_path,
+        prompt,
+        budget,
+        edit_policy,
+        evidence_roots,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn run_headless_with_model(
+    workspace_path: &Path,
+    prompt: &str,
+    budget: Budget,
+    edit_policy: BroadEditPolicy,
+    evidence_roots: &[EvidenceRoot],
+    model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
     let mut run = HeadlessRun::new();
     let mut turn = 1_u32;
@@ -78,9 +118,13 @@ pub(crate) async fn run_headless(
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
         loop {
             observer.emit(format!("attempt {turn} start"));
-            let (mut runtime, parent_id) =
-                start_attempt_runtime(workspace_path, &extra_read_roots, next_prompt.clone())
-                    .await?;
+            let (mut runtime, parent_id) = start_attempt_runtime(
+                workspace_path,
+                &extra_read_roots,
+                next_prompt.clone(),
+                model.as_ref(),
+            )
+            .await?;
             let end = run_attempt(
                 &mut runtime,
                 parent_id,
@@ -172,6 +216,7 @@ async fn start_attempt_runtime(
     workspace_path: &Path,
     extra_read_roots: &[PathBuf],
     prompt: String,
+    model: Option<&ModelSelection>,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
     let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
         workspace_path,
@@ -189,6 +234,11 @@ async fn start_attempt_runtime(
     {
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
+        if let Some(model) = model {
+            cfg.active_model = model.model_id.clone();
+            cfg.model_registry
+                .select_model_provider(&model.model_id, model.provider.as_ref());
+        }
     }
     let parent_id = submit_prompt(&runtime.app, prompt).await?;
     Ok((runtime, parent_id))
