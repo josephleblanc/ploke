@@ -2,9 +2,11 @@
 
 use serde::Serialize;
 
+use crate::ui::text::decor::Badge;
 use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
+use ploke_tree::graph::{ParentCreateAttempt, ParentCreateLookup, ParentCreateUnavailable};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum SelectionInspector<'g> {
     RunForestNode(RunForestNodeInspection<'g>),
     Artifact(ArtifactInspection<'g>),
@@ -45,23 +47,25 @@ impl<'g> SelectionInspector<'g> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RunForestNodeInspection<'g> {
     pub node: &'g ploke_tree::TreeNode,
     pub parent: Option<&'g ploke_tree::TreeNode>,
     pub children: &'g [ploke_tree::NodeKey],
     pub patch: Option<PatchInspection<'g>>,
+    pub parent_create: ParentCreateLookup<'g, 'g>,
+    pub role_badges: Vec<Badge<'g>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ArtifactInspection<'g> {
     pub key: &'g str,
     pub sources: Vec<&'g ploke_tree::graph::ArtifactNode>,
     pub incoming: Vec<ArtifactRelation<'g>>,
     pub outgoing: Vec<ArtifactRelation<'g>>,
     pub patches: Vec<PatchInspection<'g>>,
-    pub selected_ruler: bool,
-    pub primary_lineage: bool,
+    pub parent_create: ParentCreateLookup<'g, 'g>,
+    pub role_badges: Vec<Badge<'g>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,8 +119,9 @@ pub struct SelectionInspectorSnapshot<'a> {
     pub kind: &'a str,
     pub label: &'a str,
     pub identity: Vec<InspectorRow<'a>>,
-    pub roles: Vec<InspectorRow<'a>>,
+    pub roles: Vec<Badge<'a>>,
     pub metrics: Vec<InspectorMetric>,
+    pub parent_create: Option<ParentCreateSnapshot<'a>>,
     pub incoming: Vec<InspectorEdge<'a>>,
     pub outgoing: Vec<InspectorEdge<'a>>,
     pub artifact_incoming: Vec<InspectorEdge<'a>>,
@@ -143,6 +148,7 @@ impl<'a> SelectionInspectorSnapshot<'a> {
                 identity: Vec::new(),
                 roles: Vec::new(),
                 metrics: Vec::new(),
+                parent_create: None,
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
                 artifact_incoming: Vec::new(),
@@ -158,19 +164,19 @@ impl<'a> SelectionInspectorSnapshot<'a> {
         !self.source_refs.is_empty()
     }
 
-    pub(crate) fn has_edges(&self) -> bool {
-        !self.incoming.is_empty()
-            || !self.outgoing.is_empty()
-            || !self.artifact_incoming.is_empty()
-            || !self.artifact_outgoing.is_empty()
+    pub(crate) fn has_drilldown_candidates(&self) -> bool {
+        self.parent_create
+            .as_ref()
+            .is_some_and(|parent_create| parent_create.state == ParentCreateState::Available)
     }
 
     pub fn render_text(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("selection: {} {}\n", self.kind, self.label));
         render_rows(&mut out, "identity", &self.identity);
-        render_rows(&mut out, "roles", &self.roles);
+        render_badges(&mut out, "roles", &self.roles);
         render_metrics(&mut out, "metrics", &self.metrics);
+        render_parent_create(&mut out, self.parent_create.as_ref());
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
         render_edges(&mut out, "artifact_incoming", &self.artifact_incoming);
@@ -187,6 +193,67 @@ impl<'a> SelectionInspectorSnapshot<'a> {
         render_rows(&mut out, "unavailable", &self.unavailable);
         out
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParentCreateSnapshot<'a> {
+    pub state: ParentCreateState,
+    pub ambiguous_count: Option<usize>,
+    pub unavailable: Option<ParentCreateUnavailableSnapshot<'a>>,
+    pub child_node_id: Option<&'a str>,
+    pub target_relpath: Option<&'a str>,
+    pub branch_id: Option<&'a str>,
+    pub candidate_id: Option<&'a str>,
+    pub stop_on_error: Option<bool>,
+    pub surface_target_relpath: Option<&'a str>,
+    pub surface_producer: Option<&'static str>,
+    pub surface_check: Option<&'static str>,
+    pub surface_apply: Option<&'static str>,
+    pub touched_files: Option<usize>,
+    pub router: Option<&'a str>,
+    pub router_model: Option<&'a str>,
+    pub agent_turns: Vec<AgentTurnSnapshot<'a>>,
+    pub tool_requested: usize,
+    pub tool_completed: usize,
+    pub tool_failed: usize,
+    pub edit_proposals: usize,
+    pub create_proposals: usize,
+    pub expected_file_changes: usize,
+    pub candidate_evaluation_count: usize,
+    pub source_ref_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentCreateState {
+    Available,
+    Missing,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ParentCreateUnavailableSnapshot<'a> {
+    pub record: &'static str,
+    pub key: &'static str,
+    pub value: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AgentTurnSnapshot<'a> {
+    pub task_id: &'a str,
+    pub selected_model: &'a str,
+    pub event_count: usize,
+    pub terminal_outcome: Option<&'a str>,
+    pub has_llm_response: bool,
+    pub patch_applied: bool,
+    pub all_proposals_applied: bool,
+    pub llm_prompt_message_count: usize,
+    pub tool_requested: usize,
+    pub tool_completed: usize,
+    pub tool_failed: usize,
+    pub edit_proposals: usize,
+    pub create_proposals: usize,
+    pub expected_file_changes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -377,6 +444,8 @@ fn run_forest_node_inspection<'g>(
             .child_plans
             .child_for_node_id(node.key.as_str())
             .map(|child| PatchInspection { child }),
+        parent_create: graph.parent_create_for_node_id(node.key.as_str()),
+        role_badges: role_badges_for_run_forest_node(graph, node),
     })
 }
 
@@ -470,8 +539,8 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         incoming,
         outgoing,
         patches,
-        selected_ruler: tree.marks.selected_ruler == Some(node.key),
-        primary_lineage: tree.marks.lineage_artifacts.contains(&node.key),
+        parent_create: graph.parent_create_for_artifact_key(node.key.as_str()),
+        role_badges: role_badges_for_artifact_key(graph, node.key.as_str()),
     })
 }
 
@@ -505,12 +574,13 @@ where
     );
     maybe_row(&mut identity, "patch", node.patch_id.as_deref());
 
-    let roles = vec![
+    let details = vec![
         InspectorRow::new("branch", node.branch_id.as_str()),
         InspectorRow::new("target", node.target_relpath.as_str()),
         InspectorRow::new("phase", phase_label(node.progress.phase)),
         InspectorRow::new("result", result_class_label(node.progress.result_class)),
     ];
+    identity.extend(details);
     let metrics = vec![
         InspectorMetric::new("generation", node.generation as usize),
         InspectorMetric::new("child run forest nodes", inspector.children.len()),
@@ -548,8 +618,9 @@ where
         kind: selection.kind.as_str(),
         label: selection.label.as_str(),
         identity,
-        roles,
+        roles: inspector.role_badges,
         metrics,
+        parent_create: Some(parent_create_snapshot(inspector.parent_create)),
         incoming,
         outgoing,
         artifact_incoming: Vec::new(),
@@ -567,14 +638,6 @@ fn snapshot_artifact<'a, 'g>(
 where
     'g: 'a,
 {
-    let mut roles = Vec::new();
-    if inspector.selected_ruler {
-        roles.push(InspectorRow::new("selected ruler", "true"));
-    }
-    if inspector.primary_lineage {
-        roles.push(InspectorRow::new("lineage", "primary"));
-    }
-
     let source_refs = inspector
         .sources
         .iter()
@@ -602,11 +665,12 @@ where
         kind: selection.kind.as_str(),
         label: selection.label.as_str(),
         identity: vec![InspectorRow::new("artifact", inspector.key)],
-        roles,
+        roles: inspector.role_badges,
         metrics: vec![InspectorMetric::new(
             "source records",
             inspector.sources.len(),
         )],
+        parent_create: Some(parent_create_snapshot(inspector.parent_create)),
         incoming: artifact_edges(&inspector.incoming),
         outgoing: artifact_edges(&inspector.outgoing),
         artifact_incoming: artifact_edges(&inspector.incoming),
@@ -614,6 +678,160 @@ where
         patches: inspector.patches.into_iter().map(patch_snapshot).collect(),
         source_refs,
         unavailable: Vec::new(),
+    }
+}
+
+fn parent_create_snapshot<'a>(lookup: ParentCreateLookup<'a, 'a>) -> ParentCreateSnapshot<'a> {
+    match lookup {
+        ParentCreateLookup::Attempt(attempt) => parent_create_attempt_snapshot(attempt),
+        ParentCreateLookup::Unavailable(reason) => ParentCreateSnapshot {
+            state: ParentCreateState::Missing,
+            ambiguous_count: None,
+            unavailable: Some(parent_create_unavailable_snapshot(reason)),
+            child_node_id: None,
+            target_relpath: None,
+            branch_id: None,
+            candidate_id: None,
+            stop_on_error: None,
+            surface_target_relpath: None,
+            surface_producer: None,
+            surface_check: None,
+            surface_apply: None,
+            touched_files: None,
+            router: None,
+            router_model: None,
+            agent_turns: Vec::new(),
+            tool_requested: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+            edit_proposals: 0,
+            create_proposals: 0,
+            expected_file_changes: 0,
+            candidate_evaluation_count: 0,
+            source_ref_count: 0,
+        },
+        ParentCreateLookup::Ambiguous { count, reason } => ParentCreateSnapshot {
+            state: ParentCreateState::Ambiguous,
+            ambiguous_count: Some(count),
+            unavailable: Some(parent_create_unavailable_snapshot(reason)),
+            child_node_id: None,
+            target_relpath: None,
+            branch_id: None,
+            candidate_id: None,
+            stop_on_error: None,
+            surface_target_relpath: None,
+            surface_producer: None,
+            surface_check: None,
+            surface_apply: None,
+            touched_files: None,
+            router: None,
+            router_model: None,
+            agent_turns: Vec::new(),
+            tool_requested: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+            edit_proposals: 0,
+            create_proposals: 0,
+            expected_file_changes: 0,
+            candidate_evaluation_count: 0,
+            source_ref_count: 0,
+        },
+    }
+}
+
+fn parent_create_attempt_snapshot<'a>(
+    attempt: ParentCreateAttempt<'a>,
+) -> ParentCreateSnapshot<'a> {
+    let child = attempt.child();
+    let surface = attempt.surface();
+    let mut agent_turns = Vec::new();
+    let mut tool_requested = 0;
+    let mut tool_completed = 0;
+    let mut tool_failed = 0;
+    let mut edit_proposals = 0;
+    let mut create_proposals = 0;
+    let mut expected_file_changes = 0;
+
+    for turn in attempt.agent_turns() {
+        tool_requested += turn.tool_request_event_count;
+        tool_completed += turn.tool_completed_event_count;
+        tool_failed += turn.tool_failed_event_count;
+        edit_proposals += turn.edit_proposal_count;
+        create_proposals += turn.create_proposal_count;
+        expected_file_changes += turn.expected_file_change_count;
+        agent_turns.push(AgentTurnSnapshot {
+            task_id: turn.task_id.as_str(),
+            selected_model: turn.selected_model.as_str(),
+            event_count: turn.event_count,
+            terminal_outcome: turn.terminal_outcome.as_deref(),
+            has_llm_response: turn.has_llm_response,
+            patch_applied: turn.patch_applied,
+            all_proposals_applied: turn.all_proposals_applied,
+            llm_prompt_message_count: turn.llm_prompt_message_count,
+            tool_requested: turn.tool_request_event_count,
+            tool_completed: turn.tool_completed_event_count,
+            tool_failed: turn.tool_failed_event_count,
+            edit_proposals: turn.edit_proposal_count,
+            create_proposals: turn.create_proposal_count,
+            expected_file_changes: turn.expected_file_change_count,
+        });
+    }
+
+    let (surface_producer, router, router_model) = match attempt.surface_producer() {
+        Some(ploke_records::history::SurfaceProposalProducerRecord::NonRouter) => {
+            (Some("non_router"), None, None)
+        }
+        Some(ploke_records::history::SurfaceProposalProducerRecord::Router { request_policy }) => (
+            Some("router"),
+            Some(request_policy.router.as_str()),
+            Some(request_policy.model.value.as_str()),
+        ),
+        None => (None, None, None),
+    };
+
+    ParentCreateSnapshot {
+        state: ParentCreateState::Available,
+        ambiguous_count: None,
+        unavailable: None,
+        child_node_id: Some(child.node.node_id.as_str()),
+        target_relpath: Some(
+            child
+                .request
+                .target_relpath
+                .to_str()
+                .unwrap_or("non_utf8_path"),
+        ),
+        branch_id: Some(child.resolved.branch.branch_id.as_str()),
+        candidate_id: Some(child.resolved.branch.candidate_id.as_str()),
+        stop_on_error: Some(child.request.stop_on_error),
+        surface_target_relpath: surface
+            .map(|surface| surface.target_relpath.to_str().unwrap_or("non_utf8_path")),
+        surface_producer,
+        surface_check: surface.map(|surface| surface_check_status_label(surface.check_status)),
+        surface_apply: surface.map(|surface| surface_apply_status_label(surface.apply_status)),
+        touched_files: surface.map(|surface| surface.touches.len()),
+        router,
+        router_model,
+        agent_turns,
+        tool_requested,
+        tool_completed,
+        tool_failed,
+        edit_proposals,
+        create_proposals,
+        expected_file_changes,
+        candidate_evaluation_count: attempt.candidate_evaluation_count(),
+        source_ref_count: attempt.source_ref_count(),
+    }
+}
+
+fn parent_create_unavailable_snapshot<'a>(
+    reason: ParentCreateUnavailable<'a>,
+) -> ParentCreateUnavailableSnapshot<'a> {
+    match reason {
+        ParentCreateUnavailable::MissingJoin { record, key, value }
+        | ParentCreateUnavailable::AmbiguousJoin { record, key, value } => {
+            ParentCreateUnavailableSnapshot { record, key, value }
+        }
     }
 }
 
@@ -729,6 +947,50 @@ fn artifact_edges<'a>(edges: &[ArtifactRelation<'a>]) -> Vec<InspectorEdge<'a>> 
         .collect()
 }
 
+fn role_badges_for_run_forest_node<'g>(
+    graph: &'g ploke_tree::Graph,
+    node: &ploke_tree::TreeNode,
+) -> Vec<Badge<'g>> {
+    let node_key = node.key.as_str();
+    let derived_artifact_id = node.derived_artifact_id.as_deref();
+    unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
+        let badge = Badge::from_invocation(invocation)?;
+        let artifact_matches = derived_artifact_id
+            .is_some_and(|artifact_id| badge.artifact_id().0.as_str() == artifact_id);
+        (invocation.node_id.as_str() == node_key || artifact_matches).then_some(invocation)
+    }))
+}
+
+fn role_badges_for_artifact_key<'g>(
+    graph: &'g ploke_tree::Graph,
+    artifact_key: &str,
+) -> Vec<Badge<'g>> {
+    unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
+        let badge = Badge::from_invocation(invocation)?;
+        (badge.artifact_id().0.as_str() == artifact_key).then_some(invocation)
+    }))
+}
+
+fn unique_role_badges<'g>(
+    invocations: impl IntoIterator<Item = &'g ploke_records::invocation::InvocationRecord>,
+) -> Vec<Badge<'g>> {
+    let mut parent = None;
+    let mut child = None;
+    for invocation in invocations {
+        match Badge::from_invocation(invocation) {
+            Some(Badge::Parent(artifact_id)) if parent.is_none() => {
+                parent = Some(Badge::Parent(artifact_id));
+            }
+            Some(Badge::Child(artifact_id)) if child.is_none() => {
+                child = Some(Badge::Child(artifact_id));
+            }
+            _ => {}
+        }
+    }
+
+    parent.into_iter().chain(child).collect()
+}
+
 fn maybe_row<'a>(rows: &mut Vec<InspectorRow<'a>>, label: &'static str, value: Option<&'a str>) {
     if let Some(value) = value {
         rows.push(InspectorRow::new(label, value));
@@ -813,6 +1075,18 @@ fn render_rows(out: &mut String, heading: &str, rows: &[InspectorRow]) {
     }
 }
 
+fn render_badges(out: &mut String, heading: &str, badges: &[Badge]) {
+    if badges.is_empty() {
+        out.push_str(&format!("{heading}: none\n"));
+        return;
+    }
+    out.push_str(&format!("{heading}:\n"));
+    for badge in badges {
+        let role: &'static str = badge.into();
+        out.push_str(&format!("- {role}: {}\n", badge.artifact_id().0));
+    }
+}
+
 fn render_metrics(out: &mut String, heading: &str, metrics: &[InspectorMetric]) {
     if metrics.is_empty() {
         out.push_str(&format!("{heading}: none\n"));
@@ -821,6 +1095,74 @@ fn render_metrics(out: &mut String, heading: &str, metrics: &[InspectorMetric]) 
     out.push_str(&format!("{heading}:\n"));
     for metric in metrics {
         out.push_str(&format!("- {}: {}\n", metric.label, metric.value));
+    }
+}
+
+fn render_parent_create(out: &mut String, parent_create: Option<&ParentCreateSnapshot<'_>>) {
+    let Some(parent_create) = parent_create else {
+        out.push_str("parent_create: none\n");
+        return;
+    };
+
+    out.push_str("parent_create:\n");
+    match parent_create.state {
+        ParentCreateState::Available => {
+            out.push_str("- state: available\n");
+            if let Some(target) = parent_create.target_relpath {
+                out.push_str(&format!("- target: {target}\n"));
+            }
+            if let Some(producer) = parent_create.surface_producer {
+                out.push_str(&format!("- surface: {producer}\n"));
+            }
+            if let Some(touched_files) = parent_create.touched_files {
+                out.push_str(&format!("- surface_touches: {touched_files}\n"));
+            }
+            if let Some(model) = parent_create.router_model {
+                out.push_str(&format!("- model: {model}\n"));
+            }
+            out.push_str(&format!(
+                "- tools: requested={} completed={} failed={}\n",
+                parent_create.tool_requested,
+                parent_create.tool_completed,
+                parent_create.tool_failed
+            ));
+            out.push_str(&format!(
+                "- llm_proposals: edits={} creates={} expected_files={}\n",
+                parent_create.edit_proposals,
+                parent_create.create_proposals,
+                parent_create.expected_file_changes
+            ));
+            if let (Some(check), Some(apply)) =
+                (parent_create.surface_check, parent_create.surface_apply)
+            {
+                out.push_str(&format!("- check_apply: {check}/{apply}\n"));
+            }
+            out.push_str(&format!(
+                "- child_eval_evidence: {}\n",
+                parent_create.candidate_evaluation_count
+            ));
+        }
+        ParentCreateState::Missing => {
+            out.push_str("- state: missing\n");
+            if let Some(reason) = parent_create.unavailable {
+                out.push_str(&format!(
+                    "- missing_join: {}.{}={}\n",
+                    reason.record, reason.key, reason.value
+                ));
+            }
+        }
+        ParentCreateState::Ambiguous => {
+            out.push_str("- state: ambiguous\n");
+            if let Some(count) = parent_create.ambiguous_count {
+                out.push_str(&format!("- matches: {count}\n"));
+            }
+            if let Some(reason) = parent_create.unavailable {
+                out.push_str(&format!(
+                    "- ambiguous_join: {}.{}={}\n",
+                    reason.record, reason.key, reason.value
+                ));
+            }
+        }
     }
 }
 
@@ -868,63 +1210,33 @@ fn render_edges(out: &mut String, heading: &str, edges: &[InspectorEdge<'_>]) {
 
 fn render_patches(out: &mut String, patches: &[PatchSnapshot]) {
     if patches.is_empty() {
-        out.push_str("patches: none\n");
+        out.push_str("patch_debug: none\n");
         return;
     }
-    out.push_str("patches:\n");
-    for patch in patches {
+
+    out.push_str(&format!("patch_debug: count={}\n", patches.len()));
+    for patch in patches.iter().take(4) {
         out.push_str(&format!("- patch_id: {}\n", patch.patch_id));
-        for row in &patch.summary {
-            out.push_str(&format!("  - {}: {}\n", row.label, row.value));
-        }
-        if patch.touches.is_empty() {
-            out.push_str("  - touches: none\n");
-        } else {
-            for touch in &patch.touches {
-                out.push_str(&format!(
-                    "  - touch {} {}:{}-{}: {}\n",
-                    touch.index, touch.relpath, touch.start, touch.end, touch.replacement
-                ));
-            }
-        }
-        render_diff_preview(out, &patch.unified_diff());
     }
-}
-
-fn render_diff_preview(out: &mut String, diff: &str) {
-    if diff.is_empty() {
-        out.push_str("  - diff: not_available\n");
-        return;
+    if patches.len() > 4 {
+        out.push_str(&format!("... {} more patch records\n", patches.len() - 4));
     }
-
-    let line_count = diff.lines().count();
-    out.push_str(&format!("  - diff: available lines={line_count}\n"));
-    for line in diff.lines().take(40) {
-        out.push_str("    ");
-        out.push_str(truncate_chars(line, 240));
-        out.push('\n');
-    }
-    if line_count > 40 {
-        out.push_str(&format!("    ... truncated {} lines\n", line_count - 40));
-    }
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> &str {
-    if text.chars().count() <= max_chars {
-        return text;
-    }
-
-    text.char_indices()
-        .nth(max_chars)
-        .map(|(index, _)| &text[..index])
-        .unwrap_or(text)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use ploke_records::ids::{
+        ArtifactId, BranchId, CampaignId, InstanceId, RuntimeId, SchedulerNodeId, SourceStateId,
+    };
+    use ploke_records::invocation::{InvocationRecord, Role};
+    use ploke_records::scheduler::RunnerRequestRecord;
     use ploke_tree::{
-        AuthorityLabel, CampaignRef, EvidenceKind, EvidenceRef, Lanes, NodeKey, NodeKind, Phase,
-        Progress, ResultClass, RunForest, Terminality, TreeNode,
+        AuthorityLabel, CampaignRef, EvidenceKind, EvidenceRef, Lanes, NodeKey, NodeKind,
+        PassiveEvidence, Phase, Progress, ResultClass, RunAttemptEvidence, RunAttemptSummary,
+        RunForest, Terminality, TreeNode,
     };
 
     use super::*;
@@ -949,7 +1261,20 @@ mod tests {
                     completed: Vec::new(),
                     failed: Vec::new(),
                 },
-                passive_evidence: Default::default(),
+                passive_evidence: passive_invocations(vec![
+                    invocation(
+                        "child",
+                        "runtime-child",
+                        Role::Child,
+                        "artifact:child:after",
+                    ),
+                    invocation(
+                        "child",
+                        "runtime-parent",
+                        Role::Successor,
+                        "artifact:child:after",
+                    ),
+                ]),
                 diagnostics: Vec::new(),
             }),
             ..Default::default()
@@ -1000,6 +1325,18 @@ mod tests {
                 .iter()
                 .any(|row| row.label == "source artifact" && row.value == "artifact:child")
         );
+        assert!(
+            snapshot
+                .roles
+                .iter()
+                .any(|badge| matches!(badge, Badge::Child(artifact_id) if artifact_id.0 == "artifact:child:after"))
+        );
+        assert!(
+            snapshot
+                .roles
+                .iter()
+                .any(|badge| matches!(badge, Badge::Parent(artifact_id) if artifact_id.0 == "artifact:child:after"))
+        );
     }
 
     fn key(value: &str) -> NodeKey {
@@ -1044,6 +1381,84 @@ mod tests {
                 detail: None,
             }],
             diagnostics: Vec::new(),
+        }
+    }
+
+    fn passive_invocations(invocations: Vec<InvocationRecord>) -> PassiveEvidence {
+        let child_invocation_count = invocations
+            .iter()
+            .filter(|invocation| invocation.role == Role::Child)
+            .count();
+        let successor_invocation_count = invocations
+            .iter()
+            .filter(|invocation| invocation.role == Role::Successor)
+            .count();
+        let invocation_file_count = invocations.len();
+        let invocations = invocations
+            .into_iter()
+            .map(|invocation| {
+                (
+                    format!(
+                        "nodes/{}/invocations/{}.json",
+                        invocation.node_id, invocation.runtime_id.0
+                    ),
+                    invocation,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        PassiveEvidence {
+            run_attempts: Some(RunAttemptEvidence {
+                summary: RunAttemptSummary {
+                    invocation_file_count,
+                    invocation_parsed_count: invocation_file_count,
+                    child_invocation_count,
+                    successor_invocation_count,
+                    ..Default::default()
+                },
+                invocations,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn invocation(
+        node_id: &str,
+        runtime_id: &str,
+        role: Role,
+        derived_artifact_id: &str,
+    ) -> InvocationRecord {
+        InvocationRecord {
+            schema_version: "prototype1-invocation.v1".to_owned(),
+            role,
+            campaign_id: "campaign".to_owned(),
+            node_id: node_id.to_owned(),
+            runtime_id: RuntimeId(runtime_id.to_owned()),
+            journal_path: PathBuf::from("transition-journal.jsonl"),
+            channel_root: None,
+            node: None,
+            request: Some(RunnerRequestRecord {
+                schema_version: "prototype1-runner-request.v1".to_owned(),
+                campaign_id: CampaignId("campaign".to_owned()),
+                node_id: SchedulerNodeId(node_id.to_owned()),
+                generation: 1,
+                instance_id: InstanceId(format!("instance:{node_id}")),
+                source_state_id: SourceStateId(format!("artifact:{node_id}")),
+                operation_target: None,
+                base_artifact_id: Some(ArtifactId(format!("artifact:{node_id}:base"))),
+                patch_id: None,
+                derived_artifact_id: Some(ArtifactId(derived_artifact_id.to_owned())),
+                branch_id: BranchId(format!("branch:{node_id}")),
+                target_relpath: PathBuf::from("target.rs"),
+                workspace_root: PathBuf::from("."),
+                binary_path: PathBuf::from("target/debug/ploke-eval"),
+                stop_on_error: false,
+                runner_args: Vec::new(),
+            }),
+            resolved: None,
+            active_parent_root: None,
+            created_at: "created".to_owned(),
         }
     }
 }

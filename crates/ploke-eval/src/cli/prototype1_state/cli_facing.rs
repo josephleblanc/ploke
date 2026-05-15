@@ -11795,11 +11795,16 @@ stop_after = "complete"
                 .any(|root| root.kind == EvidenceRootKind::HistoryBlocks)
         );
         let prompt = fs::read_to_string(prompt_path).expect("read prompt");
-        assert!(prompt.contains("Use diagnoses as context"));
-        assert!(prompt.contains("not as hard file targets"));
-        assert!(prompt.contains("crates/ploke-eval/src/cli/prototype1_state/backend.rs"));
-        assert!(prompt.contains("Use the available edit tools to stage one candidate change"));
-        assert!(prompt.contains("Use unified-diff patch tools"));
+        assert!(prompt.contains("Modify any part of the codebase"));
+        assert!(prompt.contains("Prototype 1 descendant performance"));
+        assert!(prompt.contains("Do not edit files under:"));
+        assert!(prompt.contains("`crates/ploke-eval/`"));
+        assert!(prompt.contains("Do not edit files named:"));
+        assert!(prompt.contains("`Cargo.toml`"));
+        assert!(prompt.contains("Past benchmark scores, failures, and metrics"));
+        assert!(!prompt.contains("Use diagnoses as context"));
+        assert!(!prompt.contains("Use the available edit tools to stage one candidate change"));
+        assert!(!prompt.contains("Use unified-diff patch tools"));
         assert!(!prompt.contains("Write the typed submitted-result evidence"));
         assert!(!prompt.contains(submitted_result_path.to_string_lossy().as_ref()));
         assert!(prompt.contains(workspace_path.to_string_lossy().as_ref()));

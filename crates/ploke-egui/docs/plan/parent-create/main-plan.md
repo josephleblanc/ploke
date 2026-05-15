@@ -31,7 +31,7 @@ In the right Inspector, selecting a child node or patch edge should show a top-l
 - **LLM Run:** model/provider, wall time, provider attempts, tokens, finish/error status.
 - **Tools:** count, success/failure count, total latency, key retrieved context.
 - **Child Eval:** whether the derived child ran, evaluated, and contributed evidence.
-- **Source Status:** which rows are authority, typed evidence, projection, telemetry, or missing.
+- **Source Status:** which typed facts are authority, typed evidence, projection, telemetry, or missing.
 
 The first view should be compact. No giant hashes. No full prompt dumps. No raw provider envelopes. Full IDs and raw-ish payloads belong behind explicit expand/debug affordances.
 
@@ -42,12 +42,12 @@ The ladder I would use:
    On the canvas: small visual status for “LLM-backed”, “placeholder patch”, “checked”, “failed check”, “selected”, “rejected”, or “missing evidence”.
 
 2. **Inspector Summary**
-   Human-readable rows answering: what was attempted, did it produce a real artifact delta, was it accepted, and what evidence supports that.
+   Typed answer facts rendered for humans: what was attempted, did it produce a real artifact delta, was it accepted, and what evidence supports that.
 
 3. **Attempt Timeline**
    A compact sequence:
    `surface chosen -> LLM request -> tool calls -> proposal -> check -> apply -> child plan -> child eval`.
-   Hovering a segment highlights related inspector rows and graph node/edge.
+   Hovering a segment highlights related inspector facts and graph node/edge.
 
 4. **LLM Conversation Outline**
    Not raw chat by default. Show message roles, short summaries, tool-call anchors, response status, token usage, and duration. Expand a turn to show message text with truncation and “show full” only for debug.

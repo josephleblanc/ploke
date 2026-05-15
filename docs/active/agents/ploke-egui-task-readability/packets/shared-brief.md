@@ -34,6 +34,8 @@ Forbidden in `ploke-egui`:
 - egui-owned authoritative artifact/runtime/patch/candidate/history types,
 - allocated semantic values cloned out of `ploke_tree::Graph`,
 - copied ids, refs, records, or partial records used for later semantic work,
+- row-shaped semantic carriers such as `InspectorRow` for Artifact, Runtime,
+  role, History, candidate, evidence, or source-status facts,
 - wrapper report/status/info types that merely repackage graph facts,
 - mirror types that reconstruct graph meaning to avoid references,
 - direct parsing of run records or JSON,

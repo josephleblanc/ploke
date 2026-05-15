@@ -36,7 +36,7 @@ Related context:
   Stale-but-useful source-family tracker to refresh before relying on coverage
   claims.
 - [`../../plans/self-improvement-loop/typed-persistence-spine/ui-drilldown-contract.md`](../../plans/self-improvement-loop/typed-persistence-spine/ui-drilldown-contract.md)
-  Typed UI drilldown contract and longer-horizon answer rows.
+  Typed UI drilldown contract and longer-horizon answer facts.
 - [`../../plans/self-improvement-loop/frontend-questions.md`](../../plans/self-improvement-loop/frontend-questions.md)
   Front-facing questions the observability UI should eventually answer.
 

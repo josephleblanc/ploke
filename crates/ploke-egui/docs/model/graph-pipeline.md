@@ -182,9 +182,10 @@ DomainGraph:
   semantic ids, labels, details, records
 
 render/build pass:
-  rejoin UI state with &DomainGraph and keep copied text render-only
+  rejoin UI state with &DomainGraph and keep copied text at the final render boundary
 ```
 
 If a renderer requires owned text, that ownership is limited to the renderer
-call or widget payload. Inspector and graph projection rows must stay borrowed
-or typed; do not introduce generic owned string rows as a convenience layer.
+call or widget payload. Inspector and graph projections must expose typed facts
+or borrowed values, not row-shaped semantic carriers. Visual row layout may
+exist only inside the renderer; it is not the intermediate model.

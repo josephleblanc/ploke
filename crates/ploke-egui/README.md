@@ -100,7 +100,7 @@ Yes that is basically what I'm thinking of, but the thing is that the Artifact i
   the score of nodes in an ancestry, or a lineage, or the second order changes in time, or things
   like that. Or we could be adding new data from elsewhere that can be cloned when eneded, maybe,
   but the graph can be immutable and the views cana use references, and everything else can use
-  references later as well like tables or rows of data or something. that also helps us stay
+  references later as well like tables or typed fact views. that also helps us stay
   performant, which is nice, but again, the main idea is to keep us constrained to always
   referering to the same set of underlying objects in the graph here.
 

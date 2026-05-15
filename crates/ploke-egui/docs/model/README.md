@@ -22,6 +22,9 @@ operator drilldown questions without becoming a second graph model.
 - [default-view-contract.md](default-view-contract.md) defines the intended
   default app layout, current implementation status, and CLI-testable signals
   for the artifact-first graph view.
+- [debugger-claim-workflow.md](debugger-claim-workflow.md) defines the
+  evidence-first workflow for turning a developer-visible debugger claim into a
+  typed graph-derived UI witness.
 - [animation-hooks.md](animation-hooks.md) records how `DisplayNode`,
   `DisplayEdge`, and custom layout implementations can support transitions
   without making display state semantic authority.

@@ -883,124 +883,19 @@ fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
 }
 
 fn attempt_prompt(
-    workspace_path: &Path,
-    edit_policy: BroadEditPolicy,
-    evidence_roots: &[EvidenceRoot],
+    _workspace_path: &Path,
+    _edit_policy: BroadEditPolicy,
+    _evidence_roots: &[EvidenceRoot],
     request_prompt: &str,
     feedback: Option<&str>,
 ) -> String {
-    let mut prompt = String::new();
-    prompt.push_str("# Headless TUI harness boundary\n\n");
-    prompt.push_str("- The loaded workspace root is ");
-    prompt.push_str(&workspace_path.display().to_string());
-    prompt.push_str(".\n");
-    prompt.push_str(
-        "- Read tools may inspect the loaded workspace and any published evidence roots listed in the request.\n",
-    );
-    prompt.push_str(
-        "- Edit, create, patch, and apply tools must target only files inside the loaded workspace; prefer repository-relative paths for source edits.\n",
-    );
-    prompt.push_str(
-        "- Propose one complete candidate source change with the available edit tools; the harness applies allowed proposals to the scratch workspace during the turn so validation tools can inspect them. Do not create bookkeeping or result files.\n",
-    );
-    match edit_policy {
-        BroadEditPolicy::WorkspaceExceptPlokeEval => prompt.push_str(
-            "- Protected surface: do not edit files under crates/ploke-eval, authority/runtime directories, or package/dependency capability files such as Cargo.toml, Cargo.lock, and rust-toolchain.toml.\n",
-        ),
-    }
-    prompt.push_str(
-        "- Use validation tools only after a source edit proposal has been staged and allowed by the harness; checking an unchanged workspace is not a candidate improvement.\n",
-    );
-    prompt.push_str(
-        "- Use exact code lookup only when you already know the canonical module path; otherwise use read_file, list_dir, or request_code_context and then stage an edit.\n",
-    );
-    let evidence = evidence_prompt_lines(evidence_roots);
-    if !evidence.is_empty() {
-        prompt.push_str("\n## Read-only evidence available to tools\n\n");
-        prompt.push_str(
-            "Evidence roots marked missing were published by the request but are not present in this campaign; do not spend tool calls trying to inspect missing roots.\n",
-        );
-        prompt.push_str(&evidence);
-    }
+    let mut prompt = request_prompt.trim_end().to_string();
     if let Some(feedback) = feedback {
-        prompt.push_str("\n## Previous isolated attempt feedback\n\n");
+        prompt.push_str("\n\nPrevious attempt result:\n");
         prompt.push_str(feedback);
-        prompt.push_str("\n\nStart a fresh attempt from the original request below.\n");
+        prompt.push('\n');
     }
-    prompt.push_str("\n## Original broad request\n\n");
-    prompt.push_str(request_prompt);
     prompt
-}
-
-fn evidence_prompt_lines(evidence_roots: &[EvidenceRoot]) -> String {
-    let mut lines = String::new();
-    for root in evidence_roots {
-        if root.kind == EvidenceRootKind::SubmittedResultOutput {
-            continue;
-        }
-        let Some(location) = evidence_prompt_location(&root.location) else {
-            continue;
-        };
-        lines.push_str("- ");
-        lines.push_str(evidence_role_label(root.role));
-        lines.push_str(" (");
-        lines.push_str(evidence_kind_label(root.kind));
-        lines.push_str("): ");
-        lines.push_str(&location);
-        if !evidence_location_exists(&root.location) {
-            lines.push_str(" [missing]");
-        }
-        lines.push('\n');
-    }
-    lines
-}
-
-fn evidence_location_exists(location: &EvidenceRootLocation) -> bool {
-    match location {
-        EvidenceRootLocation::Directory { path } | EvidenceRootLocation::File { path } => {
-            path.exists()
-        }
-        EvidenceRootLocation::NodeScopedDirectory { nodes_root, .. } => nodes_root.exists(),
-        EvidenceRootLocation::AttachedReport { .. } => true,
-    }
-}
-
-fn evidence_prompt_location(location: &EvidenceRootLocation) -> Option<String> {
-    match location {
-        EvidenceRootLocation::Directory { path } => Some(path.display().to_string()),
-        EvidenceRootLocation::File { path } => Some(path.display().to_string()),
-        EvidenceRootLocation::NodeScopedDirectory {
-            nodes_root,
-            child_relpath,
-        } => Some(format!(
-            "{}/<node>/{}",
-            nodes_root.display(),
-            child_relpath.display()
-        )),
-        EvidenceRootLocation::AttachedReport { .. } => None,
-    }
-}
-
-fn evidence_kind_label(kind: EvidenceRootKind) -> &'static str {
-    match kind {
-        EvidenceRootKind::SubmittedResultOutput => "submitted result output",
-        EvidenceRootKind::HistoryBlocks => "history blocks",
-        EvidenceRootKind::Evaluations => "evaluations",
-        EvidenceRootKind::Nodes => "node records",
-        EvidenceRootKind::ProtocolArtifacts => "protocol artifacts",
-        EvidenceRootKind::Oracle => "oracle reports",
-    }
-}
-
-fn evidence_role_label(role: super::harness_request::EvidenceRole) -> &'static str {
-    match role {
-        super::harness_request::EvidenceRole::OutputBox => "write destination",
-        super::harness_request::EvidenceRole::SealedHistory => "sealed run history",
-        super::harness_request::EvidenceRole::EvaluationPayloads => "evaluation evidence",
-        super::harness_request::EvidenceRole::RuntimeEvidence => "runtime evidence",
-        super::harness_request::EvidenceRole::GuidanceOnly => "guidance only",
-        super::harness_request::EvidenceRole::OracleSummary => "oracle summary",
-    }
 }
 
 fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
@@ -1036,15 +931,11 @@ fn retry_feedback(feedback: &str) -> String {
     }
 
     if let Ok(failure) = serde_json::from_str::<ToolFailure>(feedback) {
-        return format!(
-            "Previous attempt failed at a tool boundary: {}. Start fresh, do not repeat the same failed exact lookup, use workspace-relative paths for source files, and stage one concrete edit before running checks.",
-            failure.user
-        );
+        return format!("Previous attempt failed: {}", failure.user);
     }
 
     if feedback.contains("[aborted]") {
-        return "Previous attempt aborted before staging an edit. Start fresh, avoid further repository survey, use the request evidence as context, and stage one small concrete source edit with the edit tools."
-            .to_string();
+        return "Previous attempt aborted before staging an edit.".to_string();
     }
 
     feedback.to_string()
@@ -1234,26 +1125,38 @@ fn push_changed_paths(changed_paths: &mut Vec<PathBuf>, paths: Vec<PathBuf>) {
 }
 
 fn repair_prompt_feedback(feedback: &str) -> String {
-    format!(
-        "The headless harness rejected a staged edit before applying it: {feedback}. Continue from the current workspace and propose a revised candidate using only allowed source files."
-    )
+    format!("The headless harness rejected a staged edit before applying it: {feedback}.")
 }
 
 fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
     let mut prompt = String::new();
-    prompt.push_str("# Headless harness policy feedback\n\n");
+    prompt.push_str("Previous attempt result:\n");
     prompt.push_str(feedback);
-    prompt.push_str("\n\nPolicy reminder: do not edit Cargo.toml, Cargo.lock, rust-toolchain.toml, crates/ploke-eval, or authority/runtime directories.\n");
+    prompt.push_str("\n\n");
+    push_blocked_paths(&mut prompt);
     if has_applied_edits {
-        prompt.push_str(
-            "Allowed edits from your earlier tool calls have already been applied to the scratch workspace. Continue from the current workspace, inspect or validate as needed, and stage only allowed follow-up source edits.\n",
-        );
+        prompt
+            .push_str("\nThe workspace already contains allowed edits from earlier tool calls.\n");
     } else {
-        prompt.push_str(
-            "No allowed source edit has been applied yet. Continue from the original request and stage a concrete candidate using only allowed source files.\n",
-        );
+        prompt.push_str("\nNo allowed source edit has been applied yet.\n");
     }
     prompt
+}
+
+fn push_blocked_paths(prompt: &mut String) {
+    use crate::cli::prototype1_state::backend::{
+        WORKSPACE_EXCEPT_AUTHORITY_FILENAMES, WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
+    };
+
+    prompt.push_str("Do not edit files under:\n");
+    for prefix in WORKSPACE_EXCEPT_AUTHORITY_PREFIXES {
+        prompt.push_str(&format!("- `{}/`\n", prefix.trim_end_matches('/')));
+    }
+
+    prompt.push_str("\nDo not edit files named:\n");
+    for filename in WORKSPACE_EXCEPT_AUTHORITY_FILENAMES {
+        prompt.push_str(&format!("- `{}`\n", filename));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2785,7 +2688,7 @@ mod tests {
     }
 
     #[test]
-    fn attempt_prompt_keeps_campaign_evidence_out_of_file_tool_scope() {
+    fn attempt_prompt_preserves_minimal_request_text() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let existing_evidence = tmp.path().join("evaluations");
         let missing_evidence = tmp.path().join("missing-evaluations");
@@ -2810,39 +2713,18 @@ mod tests {
                     role: EvidenceRole::EvaluationPayloads,
                 },
             ],
-            "## Evidence\n- evaluations are listed in the request\n",
+            "Modify any part of the codebase at `/tmp/prototype1/workspace`.\n\nPast benchmark scores, failures, and metrics can be found here:\n- `/tmp/prototype1/evaluations`\n",
             Some("tool failed"),
         );
 
-        assert!(prompt.contains("The loaded workspace root is /tmp/prototype1/workspace."));
-        assert!(
-            prompt.contains("Read tools may inspect the loaded workspace"),
-            "prompt should explain that evidence paths are read-only context"
-        );
-        assert!(prompt.contains("Edit, create, patch, and apply tools must target only files"));
-        assert!(prompt.contains("do not edit files under crates/ploke-eval"));
-        assert!(prompt.contains("Cargo.toml"));
-        assert!(prompt.contains("Read-only evidence available to tools"));
-        assert!(prompt.contains(&format!(
-            "evaluation evidence (evaluations): {}",
-            existing_evidence.display()
-        )));
-        assert!(prompt.contains(&format!(
-            "evaluation evidence (evaluations): {} [missing]",
-            missing_evidence.display()
-        )));
-        assert!(
-            prompt.contains("do not spend tool calls trying to inspect missing roots"),
-            "prompt should steer away from unavailable published evidence"
-        );
-        assert!(
-            prompt
-                .contains("Use validation tools only after a source edit proposal has been staged")
-        );
-        assert!(prompt.contains("Previous isolated attempt feedback"));
+        assert!(prompt.starts_with("Modify any part of the codebase at"));
+        assert!(prompt.contains("Past benchmark scores, failures, and metrics"));
+        assert!(prompt.contains("Previous attempt result:"));
         assert!(prompt.contains("tool failed"));
-        assert!(prompt.contains("## Original broad request"));
-        assert!(prompt.contains("evaluations are listed in the request"));
+        assert!(!prompt.contains("Headless TUI harness boundary"));
+        assert!(!prompt.contains("Read-only evidence available to tools"));
+        assert!(!prompt.contains("Original broad request"));
+        assert!(!prompt.contains("stage one"));
     }
 
     #[test]
@@ -2886,17 +2768,18 @@ mod tests {
             r#"{"user":"read_file: read_file expects a file path, not a directory.","llm":{"ok":false}}"#,
         );
 
-        assert!(feedback.contains("Previous attempt failed at a tool boundary"));
+        assert!(feedback.contains("Previous attempt failed"));
         assert!(feedback.contains("read_file expects a file path"));
+        assert!(!feedback.contains("stage one"));
         assert!(!feedback.contains("\"llm\""));
     }
 
     #[test]
-    fn retry_feedback_turns_aborted_summary_into_actionable_instruction() {
+    fn retry_feedback_turns_aborted_summary_into_terse_result() {
         let feedback = retry_feedback("Request summary: [aborted] error_id=abc");
 
         assert!(feedback.contains("Previous attempt aborted before staging an edit"));
-        assert!(feedback.contains("stage one small concrete source edit"));
+        assert!(!feedback.contains("stage one small concrete source edit"));
         assert!(!feedback.contains("error_id=abc"));
     }
 
@@ -2905,10 +2788,12 @@ mod tests {
         let prompt =
             policy_repair_prompt("Rejected protected paths: crates/example/Cargo.toml", true);
 
-        assert!(prompt.contains("Policy reminder"));
+        assert!(prompt.contains("Previous attempt result"));
+        assert!(prompt.contains("Do not edit files under:"));
         assert!(prompt.contains("Cargo.toml"));
-        assert!(prompt.contains("already been applied to the scratch workspace"));
-        assert!(prompt.contains("stage only allowed follow-up source edits"));
+        assert!(prompt.contains("The workspace already contains allowed edits"));
+        assert!(!prompt.contains("authority/runtime directories"));
+        assert!(!prompt.contains("stage only allowed follow-up source edits"));
     }
 
     #[test]
@@ -2917,7 +2802,7 @@ mod tests {
             policy_repair_prompt("Rejected protected paths: crates/example/Cargo.toml", false);
 
         assert!(prompt.contains("No allowed source edit has been applied yet"));
-        assert!(prompt.contains("stage a concrete candidate"));
+        assert!(!prompt.contains("stage a concrete candidate"));
     }
 
     #[test]

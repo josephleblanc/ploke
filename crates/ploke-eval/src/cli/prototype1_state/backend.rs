@@ -37,7 +37,7 @@ pub(crate) const EVAL_CORE_SURFACE_ROOT: &str = "crates/ploke-eval";
 // WorkspaceExceptPlokeEval. Ordinary child edits that touch these surfaces are
 // expected to be rejected before admission or to prevent the child process from
 // becoming a valid descendant.
-const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
+pub(crate) const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
     EVAL_CORE_SURFACE_ROOT,
     ".ploke",
     ".agents",
@@ -52,7 +52,7 @@ const WORKSPACE_EXCEPT_AUTHORITY_PREFIXES: &[&str] = &[
     "dist",
 ];
 
-const WORKSPACE_EXCEPT_AUTHORITY_FILENAMES: &[&str] =
+pub(crate) const WORKSPACE_EXCEPT_AUTHORITY_FILENAMES: &[&str] =
     &["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 
 /// Git branch name for one backend-managed child lineage.

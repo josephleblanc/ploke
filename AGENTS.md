@@ -101,6 +101,17 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - If names, files, or helper clusters keep growing while solving a local failure, stop and identify the missing semantic object or module boundary before continuing.
 - Prefer deleting or isolating stale prototype clutter when it conflicts with the current model. Do not adapt new code around legacy scaffolding merely to preserve it.
 
+## Typed UI Projection Style
+
+- Requirement: `ploke-egui` is a typed projection of `ploke-tree::Graph`, not a string-rendering layer. Preserve semantic graph facts as typed borrowed values until the egui render boundary.
+- Requirement: do not collapse Artifact, Runtime, role, History, candidate, or evidence facts into `InspectorRow`, string labels, or row-shaped carriers. If the UI fact means `Parent`, `Child`, selected Artifact, Runtime role, or evidence relation, carry that meaning in the type.
+- Requirement: visual row layout may exist only inside the renderer. Rows are not semantic objects, cache entries, inspector facts, or projection carriers. Text-only rendering belongs at the egui/text boundary after typed facts have already been selected.
+- Requirement: prefer graph-derived typed witnesses such as `Badge::Child(&ArtifactId)` or `Badge::Parent(&ArtifactId)` over labels like `"child"` or `"parent"`. The carried id is a binding: it proves the rendered item is attached to an underlying semantic object and should make detached role labels hard to construct.
+- Use lifetimes intentionally. UI projections may borrow from `Graph` during the app render pass instead of cloning ids or inventing owned DTOs. Only introduce owned cached forms at an explicit cache boundary with graph invalidation/keying.
+- Render objects such as `egui::RichText` are boundary projections. They may be cached for performance, but they must not replace the typed semantic source.
+- Traits are appropriate when they preserve this pattern ergonomically across semantic objects such as Artifact and Runtime. Do not add a trait just to hide uncertainty about the source fact.
+- Keep styling centralized when practical. Role colors and badge styling should come from a shared theme/profile surface rather than scattered per-call literals.
+
 ## Prototype 1 Caution
 
 - Recent Prototype 1 code may contain agent-introduced scaffolding, duplicated records, overlong helpers, and weak abstractions created while chasing local failures. Do not treat nearby Prototype 1 patterns as authoritative just because they exist.

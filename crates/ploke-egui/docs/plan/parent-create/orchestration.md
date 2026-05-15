@@ -66,7 +66,7 @@ a text report rendered from that projection, but it must not become a
 | `state` | `present`, `missing`, `not_applicable`, `failed`, `blocked`, or `telemetry_only`. |
 | `evidence` | Typed record or graph evidence class that supports the answer. |
 | `detail` | Expand/debug target for full ids, paths, hashes, payload snippets, or source refs. |
-| `negative_case` | A concrete thing the UI must not imply for this row. |
+| `negative_case` | A concrete thing the UI must not imply for this typed answer. |
 
 For a normal completed attempt, the matrix must answer:
 
@@ -108,7 +108,7 @@ not a second application:
   node or parent-to-child patch edge.
 - Projection: borrowed inspector/timeline projections over `&Graph`, plus a
   borrowed answer matrix for tests and contract reports.
-- Renderer: egui rows, `--inspect-node`, `--contract-report`, or a future
+- Renderer: egui sections/widgets, `--inspect-node`, `--contract-report`, or a future
   narrow `--inspect-edge` report.
 
 The useful verification shape is:
@@ -152,7 +152,7 @@ Acceptance artifacts:
   update or become unavailable rather than reusing stale widget payloads.
 
 The tests should assert the answer matrix values, not just that graph loading
-succeeds. They should include at least these expected rows:
+succeeds. They should include at least these expected typed answers:
 
 ```text
 objective -> present/blocked with source record class
@@ -176,7 +176,7 @@ cargo test -p ploke-tree fs_run_store_loads_record_set 2>&1 | tail -n 80
 
 `ploke-egui` must resolve selected graph objects into a borrowed inspector
 projection over `&Graph`. The projection may contain typed small values and
-references; it must not store owned semantic rows as UI state.
+references; it must not store row-shaped semantic carriers as UI state.
 
 Expected shape:
 
@@ -194,14 +194,14 @@ Acceptance artifacts:
 - A placeholder-fixture test proving the inspector displays both "LLM/harness
   request happened" and "patch source: placeholder" without merging them.
 - A missing-join test proving the inspector renders explicit `missing` or
-  `blocked` rows instead of omitting the field or synthesizing text from a
-  label/path.
+  `blocked` typed answers instead of omitting the field or synthesizing text
+  from a label/path.
 - A stale-selection test that loads graph A, selects a child, replaces the graph
   with graph B, and proves the inspector re-resolves against B or clears the
   selection. It must not resolve graph A's owned label/detail against graph B.
 - A diagnostics/export test proving the serialized snapshot contains source
   status and compact answers rendered from borrowed projections, not owned
-  semantic copies of chat/tool/provider/proposal rows.
+  semantic copies of chat/tool/provider/proposal facts.
 
 Minimum verification commands after implementation:
 
@@ -245,7 +245,7 @@ The default inspector must be compact and question-led:
 - Abbreviate or hide long ids and hashes by default.
 - Put full ids, hashes, raw response refs, paths, and raw-ish payloads behind a
   debug/detail affordance.
-- Render clickable or expandable rows with hover/active styling.
+- Render clickable or expandable typed facts with hover/active styling.
 - Use `missing`, `not_applicable`, `failed`, `blocked`, or `telemetry_only`
   explicitly instead of omitting expected facts.
 
@@ -254,16 +254,16 @@ Acceptance artifacts:
 - A contract-render test for the default/compact inspector output. It must
   assert that the first-level `Patch Generation` section contains the required
   field names and enough compact values to answer the matrix questions.
-- A hash/id suppression test. Default rows must not contain full SHA-like
+- A hash/id suppression test. Default-visible facts must not contain full SHA-like
   strings such as `[a-f0-9]{40,64}` except inside an expanded/debug/evidence
   section.
-- An affordance test at the projection level: every row with hidden detail must
-  carry an expand/debug action, and rows that navigate or highlight graph
-  objects must carry an interaction class that the egui renderer maps to hover
-  and active styling.
-- A usefulness test: every default-visible row must map to one matrix question
-  and one source-status class. Rows that cannot name an operator question should
-  be removed, moved behind debug, or renamed.
+- An affordance test at the projection level: every typed fact with hidden
+  detail must carry an expand/debug action, and facts that navigate or highlight
+  graph objects must carry an interaction class that the egui renderer maps to
+  hover and active styling.
+- A usefulness test: every default-visible fact must map to one matrix question
+  and one source-status class. Facts that cannot name an operator question
+  should be removed, moved behind debug, or renamed.
 - A missing-state test: if proposal, check/apply, provider timing, or tool
   retrieval evidence is absent, the field remains visible with an explicit
   state rather than disappearing.
@@ -291,7 +291,7 @@ The bottom lane should either render parent-create spans or explicitly report
 that typed span projection is not yet available. If spans render, they must
 separate sealed History order from telemetry or timestamp-only timing.
 
-Minimum expected rows:
+Minimum expected typed spans:
 
 ```text
 surface/objective -> LLM/provider attempt -> tool calls -> proposal/check/apply
@@ -299,7 +299,7 @@ surface/objective -> LLM/provider attempt -> tool calls -> proposal/check/apply
 ```
 
 If `timeline.concurrency` is still queued, this gate may pass with explicit
-`blocked_by_missing_projection` timeline rows, but the UI must not fake causal
+`blocked_by_missing_projection` timeline facts, but the UI must not fake causal
 nesting from timestamps alone.
 
 ### Gate 5: Fixture Answer Check
@@ -380,10 +380,10 @@ Use task ids like these so reports and packets stay searchable:
 
 | Task | Lane | Acceptance |
 |---|---|---|
-| `pc-discovery-map` | `retainer` | Report exact current code paths for RunRecordSet, graph evidence, inspector rows, diagnostics, and fixture availability. |
+| `pc-discovery-map` | `retainer` | Report exact current code paths for RunRecordSet, graph evidence, inspector facts, diagnostics, and fixture availability. |
 | `pc-tree-evidence-landing` | `tree-graph` | Selected child/edge graph objects can expose typed tool/provider/run-attempt evidence or typed unavailable reasons. |
-| `pc-inspector-projection` | `egui-inspector` | Borrowed parent-create inspector projection answers the done-definition questions without owned semantic rows. |
-| `pc-render-ladder` | `egui-render` | Right panel renders compact progressive sections, hides long hashes by default, and shows affordances for expandable rows. |
+| `pc-inspector-projection` | `egui-inspector` | Borrowed parent-create inspector projection answers the done-definition questions without row-shaped semantic carriers. |
+| `pc-render-ladder` | `egui-render` | Right panel renders compact progressive sections, hides long hashes by default, and shows affordances for expandable typed facts. |
 | `pc-diagnostics-parity` | `egui-diagnostics` | CLI/default-view diagnostics serialize from borrowed projections and expose parent-create contract signals. |
 | `pc-fixture-smoke` | `tree-store` or `tree-graph` | Synthetic and optional real fixture checks prove placeholder-vs-LLM evidence is distinguishable. |
 | `pc-review` | `review` | Reviewer signs off on typed boundary, stale-selection safety, UX ladder, and tests. |

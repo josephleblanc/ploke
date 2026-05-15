@@ -53,7 +53,7 @@ impl<'a> Report<'a> {
                 .is_some_and(SelectionInspectorSnapshot::has_record_refs),
             drilldown_candidates_present: selected_inspector
                 .as_ref()
-                .is_some_and(SelectionInspectorSnapshot::has_edges),
+                .is_some_and(SelectionInspectorSnapshot::has_drilldown_candidates),
             unavailable_reason_classified: true,
             selected_inspector,
         };

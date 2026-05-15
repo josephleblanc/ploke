@@ -50,7 +50,7 @@ files:
 - Missing: not currently implemented.
 - Blocked: the UI frame is known, but the needed graph-owned answer object,
   typed loader, or relation is not available yet.
-- Not applicable: the frame or row is valid, but the currently loaded run or
+- Not applicable: the frame or typed answer is valid, but the currently loaded run or
   selected item has no source facts for it.
 
 ## Layout Regions
@@ -102,24 +102,24 @@ Default width budget:
 
 The frame layout is not only visual. Each region owns a class of operator
 questions from the source docs, and missing answers should appear as explicit
-status rows instead of empty space or inferred facts.
+typed status facts instead of empty space or inferred facts.
 
 | Question family | Primary frame | First visible answer | Source facts | Current status |
 |---|---|---|---|---|
 | Run load/progress | Top strip, left sidebar | loaded/empty/failed, generation/node counts | `&Graph`, run picker state, `RunForest` when present | Partial: counts exist in the left panel and top strip; richer generation summary is missing. |
-| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas and inspector shell exist; structured lineage rows are incomplete. |
+| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas and inspector shell exist; typed lineage facts are incomplete. |
 | Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | scheduler nodes, candidate/branch graph indices | Partial: visible siblings exist for run-forest topology; candidate drilldown is missing. |
 | Successor selection | Right inspector | selected candidate/member, considered count, candidate-set root | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries selection facts; no inspector answer path yet. |
-| Source/projection status | Right inspector | typed source refs, graph-build warnings, missing/not-applicable/failed | graph refs, warnings, History/report-derived records | Missing: diagnostic shape exists; inspector rows do not. |
-| Patch/surface detail | Right inspector, later drilldown | target path, patch id, base/derived artifact, source state | scheduler node facts, branch/candidate surface evidence | Partial: run-forest detail text has fields; structured inspector rows are missing. |
-| Evaluation/tool/provider diagnosis | Right inspector, bottom timeline | evaluation status, tool-call/provider availability rows | evaluation records, agent-turn/tool/provider projections | Blocked/partial by row: some records load as graph sources, but graph-owned answer objects are incomplete. |
+| Source/projection status | Right inspector | typed source refs, graph-build warnings, missing/not-applicable/failed | graph refs, warnings, History/report-derived records | Missing: diagnostic shape exists; typed inspector facts do not. |
+| Patch/surface detail | Right inspector, later drilldown | target path, patch id, base/derived artifact, source state | scheduler node facts, branch/candidate surface evidence | Partial: run-forest detail text exists, but typed inspector facts are incomplete. |
+| Evaluation/tool/provider diagnosis | Right inspector, bottom timeline | evaluation status, tool-call/provider availability facts | evaluation records, agent-turn/tool/provider projections | Blocked/partial: some records load as graph sources, but graph-owned answer objects are incomplete. |
 | Causal order and concurrency | Bottom timeline | compact sealed order, runtime/selection/evaluation spans | History, scheduler/runtime/evaluation/tool span refs | Missing: timeline frame and span projection are not implemented. |
-| Drill next | Right inspector | available/blocked/missing drilldown list | typed drilldown contract rows | Missing: no drilldown availability table in the app yet. |
+| Drill next | Right inspector | available/blocked/missing drilldown list | typed drilldown contract facts | Missing: no typed drilldown availability projection in the app yet. |
 
 The older `ploke-tree-egui` / browser view is precedent for presentation shape:
-scrollable detail rows, grouped sections, evaluation / surface / protocol
-summaries, and compact step ordering. `ploke-egui` should reuse those row
-priorities where they still answer the same question, but the source is
+scrollable detail presentation, grouped sections, evaluation / surface /
+protocol summaries, and compact step ordering. `ploke-egui` should reuse those
+question priorities where they still answer the same question, but the source is
 `&ploke_tree::Graph` plus a selected graph reference, not copied
 `PlaybackBrowserModel` snapshots.
 
@@ -299,11 +299,11 @@ First-frame content contract:
 | Identity | Which generation, parent, child, artifact, and candidate does this belong to? | run-forest node id, parent node, child nodes, candidate id, source/base/derived artifact ids, patch id when present | `Graph.forest` / `TreeNode` refs; fallback `Graph.artifact_tree()` refs | Implemented for run-forest nodes and artifact fallback nodes. |
 | Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
 | Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
-| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing artifact edge rows, distinct from run-forest `E_F` rows | `Graph.artifact_tree()` and run-forest base/derived artifact refs | Partial: fallback artifact selections show `P_H`/`P_B`; run-forest selections show `P_B` only when base and derived artifact ids are both present. |
+| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing typed artifact-edge facts, distinct from run-forest `E_F` facts | `Graph.artifact_tree()` and run-forest base/derived artifact refs | Partial: fallback artifact selections show `P_H`/`P_B`; run-forest selections show `P_B` only when base and derived artifact ids are both present. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
-| Source refs | Which typed records or report-derived facts support this displayed answer? | source record refs, graph warnings, and source counts | `TreeNode` refs, artifact source refs, graph warnings | Partial: record-ref rows exist where the graph projection exposes them; source/projection classification is deferred. |
-| Drill next | What can I inspect next? | availability rows for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract row status | Partial: static rows exist; typed availability is deferred. |
+| Source refs | Which typed records or report-derived facts support this displayed answer? | source record refs, graph warnings, and source counts | `TreeNode` refs, artifact source refs, graph warnings | Partial: record-ref facts exist where the graph projection exposes them; source/projection classification is deferred. |
+| Drill next | What can I inspect next? | typed availability facts for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract status | Partial: static shell text exists; typed availability is deferred. |
 
 Questions supported:
 
@@ -329,16 +329,16 @@ Status:
 - Implemented: selected-node inspection resolves to a typed borrowed
   `SelectionInspector<'_>` over `Graph` facts before any render strings are
   produced.
-- Implemented: egui/text/JSON use a borrowed `SelectionInspectorSnapshot<'_>`;
-  inspector rows borrow string-like values from `Graph`/selection records and
-  keep numeric/status values typed instead of flattening everything into owned
-  strings.
-- Implemented: run-forest selections expose explicit parent/child node rows and
-  keep graph topology edges separate from artifact-id edge rows.
+- Needs repair: egui/text/JSON currently pass through a borrowed
+  `SelectionInspectorSnapshot<'_>`, but `InspectorRow` is not an acceptable
+  semantic carrier. Runtime roles, artifact relations, source refs, and
+  availability must remain typed facts until the renderer arranges them.
+- Implemented: run-forest selections expose explicit parent/child topology facts
+  and keep graph topology edges separate from artifact-id edge facts.
 - Partial: typed record refs are present for run-forest source refs and artifact
-  source counts; full source/projection locator rows are deferred.
-- Partial: drilldown-candidate shell rows exist; typed availability is deferred.
-- Partial: unavailable-reason classification is visible for first shell rows.
+  source counts; full source/projection locator facts are deferred.
+- Partial: drilldown-candidate shell text exists; typed availability is deferred.
+- Partial: unavailable-reason classification is visible for first shell text.
 
 Implementation rule:
 
@@ -351,11 +351,11 @@ selected widget payload
 ```
 
 The inspector must not store copied semantic ids, records, partial records, or
-generic owned display rows as UI state. Serialization may write a borrowed
+row-shaped semantic carriers as UI state. Serialization may write a borrowed
 projection immediately, but the borrowed projection is still downstream of
-typed graph facts. If a row cannot be resolved by a typed graph relation or
-graph-loaded source ref, show `missing`, `blocked`, or `not_applicable` with
-the relevant answer-contract id.
+typed graph facts. If a typed answer cannot be resolved by a typed graph
+relation or graph-loaded source ref, show `missing`, `blocked`, or
+`not_applicable` with the relevant answer-contract id.
 
 ### Bottom Timeline
 
@@ -379,7 +379,7 @@ First-frame content contract:
 |---|---|---|---|---|
 | Sealed order | What is the admitted History order? | compact block/entry order and selected step marker | `Graph.history` | Missing frame; graph has History facts. |
 | Run forest order | Which parent produced which children? | generation bands and selected node highlight | `Graph.forest` | Missing frame; canvas uses these facts. |
-| Runtime/selection joins | Where do runtime-local events join admitted History? | join availability rows for selection, handoff, evaluation | History, scheduler, runtime, selection indices | Missing/partial depending row. |
+| Runtime/selection joins | Where do runtime-local events join admitted History? | typed join-availability facts for selection, handoff, evaluation | History, scheduler, runtime, selection indices | Missing/partial depending on typed fact coverage. |
 | Evaluation/tool spans | Where did the child spend time, and what failed? | evaluation/tool/provider span availability status | evaluation, agent-turn, provider attempt projections | Blocked/partial: typed facts exist in places, but no graph-owned span projection is wired to egui. |
 | Source/projection status | Which order is causal vs timestamp/projection? | span badge: sealed, causal, timestamp, or projection | typed span refs and source refs | Missing. |
 
@@ -413,7 +413,7 @@ spans, but they must not be the only source of causality or nesting.
 
 ## Frame-First Implementation Slices
 
-The UI shell should be built before every row is fully backed, so future
+The UI shell should be built before every typed answer is fully backed, so future
 drilldowns land in stable frames instead of accumulating in whichever panel
 currently exists.
 
@@ -421,15 +421,16 @@ currently exists.
 |---|---|---|---|
 | `shell.frames` | Top strip, left sidebar, center canvas, right inspector, bottom timeline frames exist with stable sizes. | Diagnostics report each frame's presence and the graph remains the visual center. | No semantic drilldown joins beyond existing selected detail. |
 | `inspector.selection-shell` | Selected detail moves from left sidebar to right inspector. | Selecting a graph node shows Summary, Identity, and Drill Next sections. | No candidate comparison, tool-call viewer, or patch diff body. |
-| `inspector.run-forest-node` | Run-forest node rows are resolved from `&Graph.forest`. | Node id, generation, parent node, branch, candidate, base/patch/derived artifacts render as structured rows. | No copied browser step model. |
-| `inspector.selection-replay-status` | Selection/candidate rows show available/blocked/missing status. | `ui.successor.selection` and `ui.selection.candidate.set` rows say what can and cannot be proven from graph-owned facts. | No source-set/decision-set flattening. |
+| `inspector.run-forest-node` | Run-forest node facts are resolved from `&Graph.forest`. | Node id, generation, parent node, branch, candidate, base/patch/derived artifacts render from typed facts. | No copied browser step model. |
+| `inspector.selection-replay-status` | Selection/candidate facts show available/blocked/missing status. | `ui.successor.selection` and `ui.selection.candidate.set` typed answers say what can and cannot be proven from graph-owned facts. | No source-set/decision-set flattening. |
 | `timeline.shell` | Bottom lane exists and can show empty/not-applicable/blocked status. | Contract report exposes timeline frame presence and span counts. | No timestamp-only causal reconstruction. |
-| `timeline.first-spans` | Compact spans for History/run-forest order. | Selecting a graph node can highlight a corresponding timeline row/span. | No provider/tool span detail until typed span refs exist. |
+| `timeline.first-spans` | Compact spans for History/run-forest order. | Selecting a graph node can highlight a corresponding timeline span. | No provider/tool span detail until typed span refs exist. |
 
 The earlier `ploke-tree-egui` work is the reference for presentation density
-and row grouping. Its browser snapshots are not the source model for these
-slices. When a browser-field idea is useful, port the row shape and field
-priority, then bind it to `&Graph` or a graph-owned answer object.
+and grouping. Its browser snapshots are not the source model for these slices.
+When a browser-field idea is useful, port the question priority and presentation
+density, then bind it to `&Graph` or a graph-owned answer object. Do not port
+row-shaped semantic carriers.
 
 ## Default View Invariants
 

@@ -16,7 +16,7 @@ use ploke_records::history::{
 };
 use ploke_records::identity::ParentIdentityRecord;
 use ploke_records::ids::{
-    BlockHash, BlockId, BranchId, CampaignId, CandidateId, CandidateMembershipId,
+    ArtifactId, BlockHash, BlockId, BranchId, CampaignId, CandidateId, CandidateMembershipId,
     CandidateOccurrenceId, EntryId, HistoryHash, HistoryStateRoot, InstanceId, LineageId,
     RecordedAt, RuntimeId, SchedulerNodeId, SourceStateId,
 };
@@ -861,7 +861,8 @@ fn fs_run_store_loads_record_set() {
 fn fs_run_store_loads_run_attempt_evidence() {
     let root = temp_run_root("run-attempts");
     let root_node = node("root", None, NodeStatusRecord::Succeeded);
-    let child_node = node("child", Some("root"), NodeStatusRecord::Succeeded);
+    let mut child_node = node("child", Some("root"), NodeStatusRecord::Succeeded);
+    child_node.derived_artifact_id = Some(ArtifactId("artifact-child".to_owned()));
     let child_dir = root.join("nodes").join("child");
     fs::create_dir_all(child_dir.join("invocations")).expect("create invocation dir");
     fs::create_dir_all(child_dir.join("results")).expect("create results dir");
@@ -957,6 +958,19 @@ fn fs_run_store_loads_run_attempt_evidence() {
             .0
             .as_str(),
         "runtime-1"
+    );
+    let graph = Graph::from_records(&records);
+    let child_invocations = graph.child_invocations().collect::<Vec<_>>();
+    assert_eq!(child_invocations.len(), 1);
+    assert_eq!(child_invocations[0].1.node_id.as_str(), "child");
+    let artifact_id = ArtifactId("artifact-child".to_owned());
+    let artifact_child_invocations = graph
+        .child_invocations_for_artifact(&artifact_id)
+        .collect::<Vec<_>>();
+    assert_eq!(artifact_child_invocations.len(), 1);
+    assert_eq!(
+        artifact_child_invocations[0].0,
+        "nodes/child/invocations/runtime-1.json"
     );
 
     fs::remove_dir_all(root).expect("remove temp run");

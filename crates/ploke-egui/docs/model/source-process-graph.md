@@ -109,7 +109,7 @@ indexes:
 
 This fold is the semantic boundary for the UI. `ploke-egui` should borrow from
 `&Graph` or a named borrowed projection over it, not reconstruct semantics from
-raw JSON, copied labels, or widget-local strings.
+raw JSON, copied labels, widget-local strings, or row-shaped inspector carriers.
 
 ## Current Default Projection
 
@@ -172,7 +172,7 @@ projection should instead start from:
 ```text
 visible nodes = A = artifact identities
 visible edges = P_H union P_B or another named artifact relation set
-process facts = annotations, filters, marks, timeline spans, or inspector rows
+process facts = annotations, filters, marks, timeline spans, or typed inspector facts
 ```
 
 In that target, scheduler/run nodes explain how artifacts were produced or
@@ -193,9 +193,9 @@ For a selected default node, the inspector should answer:
 | What evaluation or report data exists? | `Graph.evidence`, evaluation artifacts, sealed candidate evidence |
 | What source records mention it? | evidence locators and source/projection attachments |
 
-If a row cannot answer from `&Graph`, the UI should show `missing`,
-`not_applicable`, or `blocked_by_missing_projection` rather than inventing a
-local interpretation.
+If a typed inspector fact cannot answer from `&Graph`, the UI should show
+`missing`, `not_applicable`, or `blocked_by_missing_projection` rather than
+inventing a local interpretation.
 
 ## What An Edge Should Explain
 
@@ -223,6 +223,6 @@ The graph becomes meaningful when it answers questions in this order:
 7. Which source records support each displayed fact?
 8. Which expected facts are missing from the loaded graph?
 
-These questions should drive future right-panel rows, edge inspection, timeline
+These questions should drive future right-panel typed facts, edge inspection, timeline
 spans, and CLI diagnostics. The graph canvas should stay simple enough to show
 shape at a glance; the inspector should carry the explanation.

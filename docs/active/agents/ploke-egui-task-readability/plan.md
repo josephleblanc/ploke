@@ -48,6 +48,8 @@ Not allowed in `ploke-egui`:
 - allocated values cloned out of `ploke_tree::Graph` for later semantic use,
 - copied semantic facts, ids, refs, records, or wrapper reports that drift from
   `ploke-tree::Graph`,
+- row-shaped semantic carriers such as `InspectorRow` for Artifact, Runtime,
+  role, History, candidate, evidence, or source-status facts,
 - mirror types that reconstruct graph meaning to avoid borrowing from
   `ploke-tree::Graph`,
 - screenshot-first heuristics as the primary diagnostic source.
@@ -214,7 +216,8 @@ be used as active loop authority.
 ### Phase 1: Measurement Before Tuning
 
 - Add only borrowed projection structure needed for diagnostics. Do not add
-  owned semantic join handles, copied ids, or wrapper report types.
+  owned semantic join handles, copied ids, wrapper report types, or row-shaped
+  semantic carriers.
 - Extend geometry diagnostics for ranks, selected path, and subtree spans.
 - Persist snapshot fields and ranked findings.
 - Add focused unit tests over synthetic artifact trees.

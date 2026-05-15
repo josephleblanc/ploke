@@ -13,6 +13,8 @@ Use this after each vertical slice.
 - No allocated semantic value is cloned out of `ploke_tree::Graph`.
 - No copied id, ref, record, partial record, report, info, status, summary, or
   payload type is used as a semantic stand-in for a graph reference.
+- No Artifact, Runtime, role, History, candidate, evidence, or source-status
+  fact is carried through `InspectorRow` or any other row-shaped semantic type.
 - No mirror type reconstructs graph meaning to avoid borrowing from
   `ploke_tree::Graph`.
 - Any new semantic relation was added to `ploke-tree::graph::Graph`, not mirrored

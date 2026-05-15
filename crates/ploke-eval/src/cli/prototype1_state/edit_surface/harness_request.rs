@@ -7,7 +7,13 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::cli::prototype1_state::{backend::EditSurfaceAdmission, history::ArtifactSurface};
+use crate::cli::prototype1_state::{
+    backend::{
+        EditSurfaceAdmission, WORKSPACE_EXCEPT_AUTHORITY_FILENAMES,
+        WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
+    },
+    history::ArtifactSurface,
+};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::surface;
@@ -148,67 +154,6 @@ pub(crate) mod contract {
                 },
             }
         }
-
-        pub(crate) fn render(&self) -> String {
-            let mut rendered = String::new();
-
-            rendered.push_str("## Latest Evidence Digest\n\n");
-            if self.digest.paths.is_empty() && self.digest.facts.is_empty() {
-                rendered.push_str(
-                    "- No compact digest was attached; inspect the evidence roots directly.\n",
-                );
-            }
-            for path in &self.digest.paths {
-                rendered.push_str(&format!(
-                    "- {}: {} ({})\n",
-                    path.label,
-                    path.path.display(),
-                    path.role.label()
-                ));
-            }
-            for fact in &self.digest.facts {
-                match &fact.source {
-                    Some(source) => rendered.push_str(&format!(
-                        "- {}: {} [{}]\n",
-                        fact.label,
-                        fact.value,
-                        source.display()
-                    )),
-                    None => rendered.push_str(&format!("- {}: {}\n", fact.label, fact.value)),
-                }
-            }
-            rendered.push('\n');
-
-            rendered.push_str("## Validation Contract\n\n");
-            if self.validation.commands.is_empty() {
-                rendered.push_str("- No required validation commands were attached.\n");
-            }
-            for command in &self.validation.commands {
-                rendered.push_str(&format!(
-                    "- {}: `{}` from {}; success signal: {}\n",
-                    command.label,
-                    command.render(),
-                    command.workdir.label(),
-                    command.success
-                ));
-            }
-            rendered.push('\n');
-
-            rendered.push_str("## Attempt Policy\n\n");
-            rendered.push_str(&format!(
-                "- Maximum attempts: {}\n- Turn timeout: {} seconds\n- Tool timeout: {} seconds\n",
-                self.attempt.max_attempts,
-                self.attempt.timeout.turn_seconds,
-                self.attempt.timeout.tool_seconds
-            ));
-            rendered.push_str(&format!(
-                "- Retry on rejected surface: {}\n- Retry on no edit: {}\n- Retry on tool failure: {}\n",
-                self.attempt.retry.on_rejected_surface,
-                self.attempt.retry.on_no_edit,
-                self.attempt.retry.on_tool_failure
-            ));
-            rendered
-        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -232,16 +177,6 @@ pub(crate) mod contract {
         HistoryBlocks,
     }
 
-    impl PathRole {
-        fn label(self) -> &'static str {
-            match self {
-                Self::LatestEvaluations => "latest evaluations",
-                Self::ProtocolArtifacts => "protocol artifacts",
-                Self::HistoryBlocks => "sealed history",
-            }
-        }
-    }
-
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub(crate) struct Fact {
         pub(crate) label: String,
@@ -263,27 +198,10 @@ pub(crate) mod contract {
         pub(crate) success: String,
     }
 
-    impl Command {
-        fn render(&self) -> String {
-            std::iter::once(self.program.as_str())
-                .chain(self.args.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    }
-
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Workdir {
         CandidateWorkspace,
-    }
-
-    impl Workdir {
-        fn label(self) -> &'static str {
-            match self {
-                Self::CandidateWorkspace => "candidate workspace",
-            }
-        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -977,42 +895,16 @@ pub(crate) enum ProtectedCoreSymbol {
     EvalCoreSurfaceRoot,
 }
 
-impl ProtectedCoreSymbol {
-    fn label(self) -> &'static str {
-        match self {
-            Self::EvalCoreSurfaceRoot => "EVAL_CORE_SURFACE_ROOT",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProtectedCorePolicy {
     WorkspaceExceptPlokeEvalAuthoritySet,
 }
 
-impl ProtectedCorePolicy {
-    fn label(self) -> &'static str {
-        match self {
-            Self::WorkspaceExceptPlokeEvalAuthoritySet => "protected core prefixes and filenames",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProtectedCoreConsequence {
     RejectBeforeAdmissionOrInvalidDescendant,
-}
-
-impl ProtectedCoreConsequence {
-    fn label(self) -> &'static str {
-        match self {
-            Self::RejectBeforeAdmissionOrInvalidDescendant => {
-                "edits to protected core paths are rejected or produce an invalid candidate"
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1029,7 +921,7 @@ pub(crate) enum EvaluationScope {
 }
 
 impl EvaluationScope {
-    fn label(self) -> &'static str {
+    fn benchmark_name(self) -> &'static str {
         match self {
             Self::Prototype1DescendantPerformance => "Prototype 1 descendant performance",
         }
@@ -1042,28 +934,10 @@ pub(crate) enum SelectionAuthority {
     HistoryBackedSuccessorSelection,
 }
 
-impl SelectionAuthority {
-    fn label(self) -> &'static str {
-        match self {
-            Self::HistoryBackedSuccessorSelection => {
-                "future selection compares candidate descendants"
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum GuidancePolicy {
     ProtocolDiagnosticsAreContext,
-}
-
-impl GuidancePolicy {
-    fn label(self) -> &'static str {
-        match self {
-            Self::ProtocolDiagnosticsAreContext => "diagnoses are guidance, not hard file targets",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1085,15 +959,11 @@ pub(crate) enum EvidenceRootKind {
 }
 
 impl EvidenceRootKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::SubmittedResultOutput => "submitted result output",
-            Self::HistoryBlocks => "History blocks",
-            Self::Evaluations => "evaluations",
-            Self::Nodes => "node records",
-            Self::ProtocolArtifacts => "protocol artifacts",
-            Self::Oracle => "oracle reports",
-        }
+    fn is_benchmark_result_location(self) -> bool {
+        matches!(
+            self,
+            Self::Evaluations | Self::Nodes | Self::ProtocolArtifacts | Self::Oracle
+        )
     }
 }
 
@@ -1158,19 +1028,6 @@ pub(crate) enum EvidenceRole {
     OracleSummary,
 }
 
-impl EvidenceRole {
-    fn label(self) -> &'static str {
-        match self {
-            Self::OutputBox => "write destination",
-            Self::SealedHistory => "sealed run history",
-            Self::EvaluationPayloads => "evaluation evidence",
-            Self::RuntimeEvidence => "runtime evidence",
-            Self::GuidanceOnly => "guidance only",
-            Self::OracleSummary => "oracle summary",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum HarnessInstruction {
@@ -1180,28 +1037,6 @@ pub(crate) enum HarnessInstruction {
     ChooseLikelyDescendantImprovement,
     #[serde(alias = "write_submitted_result")]
     StageCandidateChange,
-}
-
-impl HarnessInstruction {
-    fn render(self) -> String {
-        match self {
-            Self::InspectRepositoryAndEvidence => {
-                "Inspect the repository and the listed evidence before choosing edits.".to_string()
-            }
-            Self::TreatProtocolDiagnosticsAsGuidance => {
-                "Use diagnoses as context about possible tool or workflow issues, not as hard file targets.".to_string()
-            }
-            Self::EditBroadSurfaceOutsideProtectedCore => {
-                "You may edit any useful part of the allowed workspace surface outside the protected core.".to_string()
-            }
-            Self::ChooseLikelyDescendantImprovement => {
-                "Choose edits that you judge most likely to improve descendant performance under the evaluation and successor-selection loop.".to_string()
-            }
-            Self::StageCandidateChange => {
-                "Use the available edit tools to stage one candidate change. Prefer semantic edit tools for Rust item replacements. Use unified-diff patch tools for docs, configs, tests, non-Rust files, or edits that do not map cleanly to a semantic item. Do not create extra report, result, bookkeeping, or control files unless they are part of the source change you are proposing.".to_string()
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1217,17 +1052,6 @@ pub(crate) enum ReturnEvidenceField {
     GuidingEvidence,
     ImprovementRationale,
     SuggestedChecks,
-}
-
-impl ReturnEvidenceField {
-    fn label(self) -> &'static str {
-        match self {
-            Self::ChangeSummary => "what files you changed",
-            Self::GuidingEvidence => "what evidence guided the choice",
-            Self::ImprovementRationale => "why the change should help future evaluations",
-            Self::SuggestedChecks => "how the change should be checked",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1350,78 +1174,37 @@ impl BroadHarnessRequest {
 
     pub(crate) fn render_prompt(&self) -> String {
         let mut prompt = String::new();
-        prompt.push_str("# Broad code edit request\n\n");
-        prompt.push_str(&format!("Parent node: {}\n", self.parent_node_id.as_str()));
         prompt.push_str(&format!(
-            "Source repository snapshot: {}\n",
-            self.workspace.display_source_repository()
-        ));
-        prompt.push_str(&format!(
-            "Mutable candidate workspace: {}\n",
-            self.workspace.display_candidate_workspace()
-        ));
-        prompt.push_str(&format!("Edit policy: {}\n", self.edit_policy.label()));
-        prompt.push_str(&format!(
-            "Child budget: {} to {}\n\n",
-            self.child_budget.min_children, self.child_budget.max_children
+            "Modify any part of the codebase at `{}` to improve performance on the `{}` benchmark.\n\n",
+            self.workspace.display_candidate_workspace(),
+            self.evaluation.scope.benchmark_name()
         ));
 
-        prompt.push_str("## Evaluation\n\n");
-        prompt.push_str(&format!("- Scope: {}\n", self.evaluation.scope.label()));
-        prompt.push_str(&format!(
-            "- Selection: {}\n",
-            self.evaluation.selection.label()
-        ));
-        prompt.push_str(&format!(
-            "- Guidance: {}\n\n",
-            self.evaluation.guidance.label()
-        ));
-
-        prompt.push_str("## Protected Core\n\n");
-        prompt.push_str(&self.render_protected_core());
+        push_blocked_paths(&mut prompt);
         prompt.push('\n');
 
-        prompt.push_str(&self.contract.render());
-        prompt.push('\n');
-
-        prompt.push_str("## Evidence\n\n");
+        prompt.push_str(
+            "Past benchmark scores, failures, and metrics can be found here when available:\n",
+        );
         for root in &self.evidence_roots {
-            if root.kind == EvidenceRootKind::SubmittedResultOutput {
+            if !root.kind.is_benchmark_result_location() {
                 continue;
             }
-            prompt.push_str(&format!(
-                "- {}: {} ({})\n",
-                root.kind.label(),
-                root.location.render(),
-                root.role.label()
-            ));
-        }
-        prompt.push('\n');
-
-        prompt.push_str("## After Staging\n\n");
-        prompt.push_str("- Briefly explain the staged edit after the tool call succeeds.\n");
-        for field in &self.return_evidence.fields {
-            prompt.push_str(&format!("- {}\n", field.label()));
-        }
-        prompt.push('\n');
-
-        prompt.push_str("## Instructions\n\n");
-        for instruction in &self.instructions {
-            prompt.push_str(&format!("- {}\n", instruction.render()));
+            prompt.push_str(&format!("- `{}`\n", root.location.render()));
         }
         prompt
     }
+}
 
-    fn render_protected_core(&self) -> String {
-        match &self.protected_core.anchor {
-            ProtectedCoreAnchor::AuthorityConstant { code_path, symbol } => format!(
-                "- Anchor: {}:{}\n- Policy: {}\n- Consequence: {}\n",
-                code_path.display(),
-                symbol.label(),
-                self.protected_core.policy.label(),
-                self.protected_core.consequence.label()
-            ),
-        }
+fn push_blocked_paths(prompt: &mut String) {
+    prompt.push_str("Do not edit files under:\n");
+    for prefix in WORKSPACE_EXCEPT_AUTHORITY_PREFIXES {
+        prompt.push_str(&format!("- `{}/`\n", prefix.trim_end_matches('/')));
+    }
+
+    prompt.push_str("\nDo not edit files named:\n");
+    for filename in WORKSPACE_EXCEPT_AUTHORITY_FILENAMES {
+        prompt.push_str(&format!("- `{}`\n", filename));
     }
 }
 
@@ -1686,33 +1469,37 @@ mod tests {
     }
 
     #[test]
-    fn prompt_instructs_tui_model_to_stage_edit_with_tools() {
+    fn prompt_gives_minimal_edit_request_with_paths_and_metrics() {
         let fixture = Fixture::new();
         let published = fixture.published_request();
 
         let prompt = published.request().render_prompt();
 
-        let workspace_line = format!(
-            "Mutable candidate workspace: {}",
+        let opening = format!(
+            "Modify any part of the codebase at `{}` to improve performance on the `Prototype 1 descendant performance` benchmark.",
             fixture
                 .prototype_root
                 .join("workspaces/edit-harness/parent-node-7")
                 .display()
         );
-        assert!(prompt.contains(&workspace_line));
-        assert!(prompt.contains("## Latest Evidence Digest"));
-        assert!(prompt.contains("## Validation Contract"));
-        assert!(prompt.contains("cargo check -p ploke-eval"));
-        assert!(prompt.contains("## Attempt Policy"));
-        assert!(prompt.contains("Maximum attempts: 4"));
-        assert!(prompt.contains("Use the available edit tools to stage one candidate change."));
-        assert!(prompt.contains("Prefer semantic edit tools for Rust item replacements."));
-        assert!(prompt.contains("Use unified-diff patch tools"));
-        assert!(
-            prompt.contains("Do not create extra report, result, bookkeeping, or control files")
-        );
-        assert!(prompt.contains("## After Staging"));
-        assert!(prompt.contains("what files you changed"));
+        assert!(prompt.contains(&opening));
+        assert!(prompt.contains("Do not edit files under:"));
+        assert!(prompt.contains("`crates/ploke-eval/`"));
+        assert!(prompt.contains("`docs/archive/`"));
+        assert!(prompt.contains("Do not edit files named:"));
+        assert!(prompt.contains("`Cargo.toml`"));
+        assert!(prompt.contains("Past benchmark scores, failures, and metrics"));
+        assert!(prompt.contains("/evaluations`"));
+        assert!(prompt.contains("/nodes`"));
+        assert!(prompt.contains("/nodes/<node>/protocol-artifacts`"));
+        assert!(prompt.contains("`final_report.json when present`"));
+        assert!(!prompt.contains("## Latest Evidence Digest"));
+        assert!(!prompt.contains("## Validation Contract"));
+        assert!(!prompt.contains("## Attempt Policy"));
+        assert!(!prompt.contains("## After Staging"));
+        assert!(!prompt.contains("Use the available edit tools"));
+        assert!(!prompt.contains("Prefer semantic edit tools"));
+        assert!(!prompt.contains("Use unified-diff patch tools"));
         assert!(
             !prompt.contains(fixture.submitted_result_path.to_str().unwrap()),
             "model-facing prompt must not name the eval-owned submitted result path"
@@ -1722,6 +1509,8 @@ mod tests {
         assert!(!prompt.contains("Authority boundary"));
         assert!(!prompt.contains("ChildPlan"));
         assert!(!prompt.contains("admission"));
+        assert!(!prompt.contains("Parent node"));
+        assert!(!prompt.contains("Guidance"));
         assert!(!prompt.contains("Write the resulting child plan"));
     }
 
