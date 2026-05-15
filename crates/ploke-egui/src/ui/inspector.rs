@@ -107,6 +107,8 @@ pub struct SelectionInspectorSnapshot {
     pub roles: Vec<InspectorRow>,
     pub incoming: Vec<InspectorEdge>,
     pub outgoing: Vec<InspectorEdge>,
+    pub artifact_incoming: Vec<InspectorEdge>,
+    pub artifact_outgoing: Vec<InspectorEdge>,
     pub source_refs: Vec<String>,
     pub unavailable: Vec<InspectorRow>,
 }
@@ -126,6 +128,8 @@ impl SelectionInspectorSnapshot {
                 roles: Vec::new(),
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
+                artifact_incoming: Vec::new(),
+                artifact_outgoing: Vec::new(),
                 source_refs: Vec::new(),
                 unavailable: vec![reason.row()],
             },
@@ -137,7 +141,10 @@ impl SelectionInspectorSnapshot {
     }
 
     pub(crate) fn has_edges(&self) -> bool {
-        !self.incoming.is_empty() || !self.outgoing.is_empty()
+        !self.incoming.is_empty()
+            || !self.outgoing.is_empty()
+            || !self.artifact_incoming.is_empty()
+            || !self.artifact_outgoing.is_empty()
     }
 
     pub fn render_text(&self) -> String {
@@ -147,6 +154,8 @@ impl SelectionInspectorSnapshot {
         render_rows(&mut out, "roles", &self.roles);
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
+        render_edges(&mut out, "artifact_incoming", &self.artifact_incoming);
+        render_edges(&mut out, "artifact_outgoing", &self.artifact_outgoing);
         if self.source_refs.is_empty() {
             out.push_str("source_refs: none\n");
         } else {
@@ -321,9 +330,19 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         )
         .collect();
 
+    let sources = graph
+        .artifacts
+        .artifacts
+        .values()
+        .filter(|artifact| {
+            artifact_node_key(artifact)
+                .is_some_and(|artifact_key| artifact_key == node.key.as_str())
+        })
+        .collect();
+
     SelectionInspector::Artifact(ArtifactInspection {
         key: node.key.as_str(),
-        sources: node.sources.clone(),
+        sources,
         incoming,
         outgoing,
         selected_ruler: tree.marks.selected_ruler == Some(node.key),
@@ -337,10 +356,19 @@ fn snapshot_run_forest(
 ) -> SelectionInspectorSnapshot {
     let node = inspector.node;
     let mut identity = vec![
-        InspectorRow::new("node", node.key.as_str()),
+        InspectorRow::new("run forest node", node.key.as_str()),
         InspectorRow::new("candidate", node.candidate_id.as_str()),
         InspectorRow::new("source artifact", node.source_state_id.as_str()),
     ];
+    maybe_row(
+        &mut identity,
+        "parent run forest node",
+        node.parent.as_ref().map(|parent| parent.as_str()),
+    );
+    identity.push(InspectorRow::new(
+        "child run forest nodes",
+        child_node_list(inspector.children),
+    ));
     maybe_row(
         &mut identity,
         "base artifact",
@@ -370,6 +398,7 @@ fn snapshot_run_forest(
         .iter()
         .map(|child| InspectorEdge::new("E_F", node.key.as_str(), child.as_str(), 1))
         .collect();
+    let artifact_outgoing = run_forest_artifact_edges(node);
     let source_refs =
         node.evidence
             .iter()
@@ -397,6 +426,8 @@ fn snapshot_run_forest(
         roles,
         incoming,
         outgoing,
+        artifact_incoming: Vec::new(),
+        artifact_outgoing,
         source_refs,
         unavailable: Vec::new(),
     }
@@ -444,9 +475,44 @@ fn snapshot_artifact(
         roles,
         incoming: artifact_edges(&inspector.incoming),
         outgoing: artifact_edges(&inspector.outgoing),
+        artifact_incoming: artifact_edges(&inspector.incoming),
+        artifact_outgoing: artifact_edges(&inspector.outgoing),
         source_refs,
         unavailable: Vec::new(),
     }
+}
+
+fn run_forest_artifact_edges(node: &ploke_tree::TreeNode) -> Vec<InspectorEdge> {
+    let Some(from) = node.base_artifact_id.as_deref() else {
+        return Vec::new();
+    };
+    let Some(to) = node.derived_artifact_id.as_deref() else {
+        return Vec::new();
+    };
+    vec![InspectorEdge::new(
+        ArtifactRelationKind::AppliedPatch.as_str(),
+        from,
+        to,
+        1,
+    )]
+}
+
+fn artifact_node_key(artifact: &ploke_tree::graph::ArtifactNode) -> Option<&str> {
+    match &artifact.identity {
+        ploke_tree::graph::ArtifactIdentity::HistoryRef(record) => Some(record.value.as_str()),
+        ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => Some(artifact.0.as_str()),
+    }
+}
+
+fn child_node_list(children: &[ploke_tree::NodeKey]) -> String {
+    if children.is_empty() {
+        return "none".to_owned();
+    }
+    children
+        .iter()
+        .map(|child| child.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn artifact_edges(edges: &[ArtifactRelation<'_>]) -> Vec<InspectorEdge> {
@@ -543,6 +609,28 @@ mod tests {
         assert_eq!(snapshot.incoming[0].from, "parent");
         assert_eq!(snapshot.incoming[0].to, "child");
         assert!(snapshot.outgoing.is_empty());
+        assert_eq!(snapshot.artifact_outgoing.len(), 1);
+        assert_eq!(snapshot.artifact_outgoing[0].relation, "P_B");
+        assert_eq!(snapshot.artifact_outgoing[0].from, "artifact:child:base");
+        assert_eq!(snapshot.artifact_outgoing[0].to, "artifact:child:after");
+        assert!(
+            snapshot
+                .identity
+                .iter()
+                .any(|row| row.label == "run forest node" && row.value == "child")
+        );
+        assert!(
+            snapshot
+                .identity
+                .iter()
+                .any(|row| row.label == "parent run forest node" && row.value == "parent")
+        );
+        assert!(
+            snapshot
+                .identity
+                .iter()
+                .any(|row| row.label == "child run forest nodes" && row.value == "none")
+        );
         assert!(
             snapshot
                 .identity
@@ -574,7 +662,7 @@ mod tests {
             instance_id: format!("instance:{}", key.as_str()),
             source_state_id: format!("artifact:{}", key.as_str()),
             target_relpath: "target.rs".to_owned(),
-            base_artifact_id: None,
+            base_artifact_id: Some(format!("artifact:{}:base", key.as_str())),
             patch_id: None,
             derived_artifact_id: Some(format!("artifact:{}:after", key.as_str())),
             progress: Progress {

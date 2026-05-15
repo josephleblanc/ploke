@@ -280,9 +280,10 @@ First-frame content contract:
 | Section | Question answered | First slice content | Source | Status |
 |---|---|---|---|---|
 | Summary | What exactly did I select? | display label and selected graph kind | selected widget payload plus borrowed `Graph` lookup | Implemented for selected nodes. |
-| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | node id, candidate id, source/base/derived artifact ids, patch id when present | `Graph.forest` / `TreeNode` refs; fallback `Graph.artifact_tree()` refs | Partial: structured rows exist for run-forest nodes and artifact fallback nodes. |
+| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | run-forest node id, parent node, child nodes, candidate id, source/base/derived artifact ids, patch id when present | `Graph.forest` / `TreeNode` refs; fallback `Graph.artifact_tree()` refs | Implemented for run-forest nodes and artifact fallback nodes. |
 | Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
-| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Partial: immediate incoming/outgoing edge rows exist; full ancestry path is deferred. |
+| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
+| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing artifact edge rows, distinct from run-forest `E_F` rows | `Graph.artifact_tree()` and run-forest base/derived artifact refs | Partial: fallback artifact selections show `P_H`/`P_B`; run-forest selections show `P_B` only when base and derived artifact ids are both present. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
 | Evidence | Which typed records support this answer? | source record refs and evidence counts | `TreeNode.evidence`, artifact source evidence counts | Partial: record-ref rows exist where the graph projection exposes them; evidence-strength classification is deferred. |
@@ -314,6 +315,8 @@ Status:
   produced.
 - Implemented: egui/text/JSON use a downstream `SelectionInspectorSnapshot`;
   this snapshot is not a semantic carrier.
+- Implemented: run-forest selections expose explicit parent/child node rows and
+  keep graph topology edges separate from artifact-id edge rows.
 - Partial: typed record refs are present for run-forest evidence and artifact
   source counts; full `Graph.evidence` locator rows are deferred.
 - Partial: drilldown-candidate shell rows exist; typed availability is deferred.

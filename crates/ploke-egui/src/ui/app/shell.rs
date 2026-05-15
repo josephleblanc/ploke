@@ -62,12 +62,21 @@ pub(crate) fn render_right_inspector(
             }
 
             ui.separator();
-            ui.label("Edges");
+            ui.label("Graph edges");
             if let Some(inspector) = inspector {
                 render_edges(ui, "in", &inspector.incoming);
                 render_edges(ui, "out", &inspector.outgoing);
             } else {
                 kv(ui, "edges", "not_applicable");
+            }
+
+            ui.separator();
+            ui.label("Artifact edges");
+            if let Some(inspector) = inspector {
+                render_edges(ui, "in", &inspector.artifact_incoming);
+                render_edges(ui, "out", &inspector.artifact_outgoing);
+            } else {
+                kv(ui, "artifact edges", "not_applicable");
             }
 
             ui.separator();

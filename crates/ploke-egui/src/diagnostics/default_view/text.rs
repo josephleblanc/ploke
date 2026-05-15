@@ -145,11 +145,13 @@ impl Report {
         if let Some(inspector) = &self.inspector.selected_inspector {
             let _ = writeln!(
                 out,
-                "selection inspector: identity={}, roles={}, incoming={}, outgoing={}, source_refs={}, unavailable={}",
+                "selection inspector: identity={}, roles={}, incoming={}, outgoing={}, artifact_incoming={}, artifact_outgoing={}, source_refs={}, unavailable={}",
                 inspector.identity.len(),
                 inspector.roles.len(),
                 inspector.incoming.len(),
                 inspector.outgoing.len(),
+                inspector.artifact_incoming.len(),
+                inspector.artifact_outgoing.len(),
                 inspector.source_refs.len(),
                 inspector.unavailable.len()
             );
@@ -167,6 +169,20 @@ impl Report {
                 let _ = writeln!(
                     out,
                     "- outgoing.{}: {} -> {} ({})",
+                    edge.relation, edge.from, edge.to, edge.source_count
+                );
+            }
+            for edge in inspector.artifact_incoming.iter().take(4) {
+                let _ = writeln!(
+                    out,
+                    "- artifact_incoming.{}: {} -> {} ({})",
+                    edge.relation, edge.from, edge.to, edge.source_count
+                );
+            }
+            for edge in inspector.artifact_outgoing.iter().take(4) {
+                let _ = writeln!(
+                    out,
+                    "- artifact_outgoing.{}: {} -> {} ({})",
                     edge.relation, edge.from, edge.to, edge.source_count
                 );
             }
