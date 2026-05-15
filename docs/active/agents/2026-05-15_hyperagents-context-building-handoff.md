@@ -111,9 +111,10 @@ The context-posture fix now uses existing `ploke-tui` configuration rather than 
 2. `PromptDiagnostic::context_unavailable_reason()` no longer treats the intentional Off-mode fallback notice as a fatal missing-context condition.
 3. The RAG/BM25 service remains configured and ready, so explicit tools such as `request_code_context` still work.
 4. Existing live canaries now assert the split facts: workspace/BM25 ready, automatic prompt RAG off, and zero initial RAG parts.
-5. The headless adapter no longer approves/applies the first staged edit proposal immediately. Tool completions now record staged edit/create proposals; apply happens only after `SystemEvent::ChatTurnFinished { outcome: "completed", .. }`, so a live model can stage a multi-tool candidate before the workspace is mutated.
-6. The broad harness prompt now says to stage one complete candidate source change and, when needed, stage all required files/tool calls before ending the turn.
-7. A repaired tool error inside a completed turn does not block apply when the same turn later stages a proposal. Earlier tool failures still drive retry when the turn ends without a staged proposal or does not complete.
+5. The headless adapter now applies allowed staged edit/create proposals during the model turn, so later read/validation tools can inspect the mutated scratch workspace. It still waits for `SystemEvent::ChatTurnFinished` before returning terminal candidate evidence to Prototype 1.
+6. Protected or empty proposals are denied by the eval adapter and converted into a bounded same-conversation repair prompt after the current turn boundary, rather than immediately ending the harness attempt.
+7. The broad harness prompt now says to propose one complete candidate source change and explains that the harness applies allowed proposals to the scratch workspace during the turn.
+8. A repaired tool error inside a completed turn does not block terminal candidate evidence when the same turn has already applied an allowed proposal. Earlier tool failures still drive retry when the turn ends without an applied proposal or does not complete.
 
 Verification already run in the active checkout:
 
@@ -132,22 +133,23 @@ Verification already run in the active checkout:
 - `cargo test -p ploke-eval tui_adapter --lib 2>&1 | tail -n 120`
 - `cargo test -p ploke-eval edit_surface --lib 2>&1 | tail -n 140`
 - `PLOKE_EVAL_HEADLESS_TUI_LIVE=1 cargo test -p ploke-eval live_tui_adapter_canary_shows_inputs_outputs_and_applied_edit -- --ignored --nocapture 2>&1 | tail -n 180`
-  - live provider canary observed `proposal_staged` before `turn_finished outcome=completed`;
-  - observed `proposal_approve` and `proposal_applied` only after the turn-finished event.
+  - live provider canary observed `proposal_approve` and `proposal_applied` immediately after the edit tool staged the proposal;
+  - observed terminal `Applied` only after `turn_finished outcome=completed`.
 
-At this handoff, the adapter patch is still a local source change unless it has been committed after this note. Commit it before setting up the next campaign so the Runtime/Artifact identity includes both the prompt-posture fix and the `ChatTurnFinished` apply boundary.
+The current adapter implementation is committed in `a6264381` (`prototype1: apply allowed harness edits during turn`). Set up future campaigns from that commit or later so the Runtime/Artifact identity includes both the prompt-posture fix and the during-turn apply/final-turn admission boundary.
 
 ## Next Useful Work
 
 The next implementation/run slice is multi-generation continuity for broad surface edits, not more prompt tuning:
 
-1. Commit the context-mode Off plus `ChatTurnFinished` apply-boundary adapter patch.
+1. Use commit `a6264381` or later for the next campaign setup.
 2. Run one clean live broad-harness splice against an existing published request and confirm diagnostics show:
    - `context_mode = Off`;
    - `included_rag_parts = 0`;
    - ready BM25;
    - explicit source/evidence inspection through tools before editing;
-   - no `proposal_approve` / `creation_approve` observer event until after the turn-finished event.
+   - allowed `proposal_approve` / `creation_approve` events occur during the model turn;
+   - terminal child evidence is emitted only after the turn-finished event.
 3. Set up the next smoke campaign from a fresh, separate worktree under `~/.ploke-eval/worktrees`; do not run it from the active development checkout.
 4. Use `~/.ploke-eval/profiles/prototype1/smoke-3x4-edit-surface.toml` first. The goal is three generations with four children each, proving:
    - broad harness requests publish child slots;
