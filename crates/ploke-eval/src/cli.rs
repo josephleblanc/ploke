@@ -1010,7 +1010,7 @@ pub struct Prototype1LoopCommand {
     pub explore_from_rejected: bool,
 
     /// Stop the wrapper after the selected implemented stage.
-    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::Compare)]
+    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::InterventionApply)]
     pub stop_after: Prototype1LoopStopAfter,
 
     /// Synthesize/select the intervention candidate, but do not overwrite the target file.
@@ -12957,6 +12957,7 @@ mod tests {
                 assert!(cmd.stop_on_first_keep);
                 assert!(!cmd.require_keep_for_continuation);
                 assert!(!cmd.explore_from_rejected);
+                assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::InterventionApply);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

@@ -2817,6 +2817,13 @@ struct Prototype1LoopControllerInput {
 
 impl Prototype1LoopControllerInput {
     fn from_command(command: &Prototype1LoopCommand) -> Result<Self, PrepareError> {
+        if command.stop_after >= Prototype1LoopStopAfter::Compare && !command.dry_run {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail:
+                    "loop prototype1 --stop-after compare was removed from active execution; run typed child evaluation through `loop prototype1-state` instead, or stop the legacy wrapper at --stop-after intervention-apply"
+                        .to_string(),
+            });
+        }
         let operator_profile = command
             .profile
             .as_deref()
