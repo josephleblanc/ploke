@@ -4,7 +4,7 @@
 
 **Active planning surfaces:**
 
-- Prototype 1 live broad-harness/evaluation wave: [`agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](agents/2026-05-08_bounded-edit-surface-implementation-orientation.md) and [`agents/2026-05-12_loop-readiness-review-wave/readiness.md`](agents/2026-05-12_loop-readiness-review-wave/readiness.md) — current focus is replacing deterministic scaffold edit candidates with live broad headless-TUI evidence, then making evaluation distinguish real improvement from operational no-op noise.
+- Prototype 1 live broad-harness/context-building wave: [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md), with background from [`agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](agents/2026-05-08_bounded-edit-surface-implementation-orientation.md) and [`agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`](agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md) — current focus is preserving broad HyperAgents-style edit posture while preventing automatic source-code RAG from silently steering the first edit.
 - Self-improvement loop track index: [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md) — current routing table for Prototype 1 records/playback, egui observability, and MBE/oracle calibration.
 - Frontend observability: [`agents/ploke-ui-task-readability/README.md`](agents/ploke-ui-task-readability/README.md), especially [`artifact-tree-default/`](agents/ploke-ui-task-readability/artifact-tree-default/README.md) — current `ploke-egui` artifact-tree default-view source of truth and follow-up task area.
 - MBE/oracle calibration: [`agents/2026-05-11_mbe-oracle-calibration-handoff.md`](agents/2026-05-11_mbe-oracle-calibration-handoff.md) — current questions around compile-failed loop candidates, gold/empty MBE controls, and benchmark-base patch export.
@@ -15,12 +15,12 @@
 
 ## What we're doing now
 
-The primary active thread is **Prototype 1 live broad-harness evaluation**:
+The primary active thread is **Prototype 1 broad-harness context posture**:
 
-1. Keep deterministic `tui-tools` generation visibly scaffold-only; do not treat EOF comment candidates as code improvement evidence.
-2. Use the `BroadHarnessRequest -> headless ploke-tui -> admitted result -> ChildPlan` path for live proposal generation.
-3. Tighten branch evaluation so operational regressions like failed tool calls and aborted runs are not silently marked as improvements.
-4. Prove the change with focused splice tests first, then one live OpenRouter-backed headless-TUI request before a mini loop handoff.
+1. Keep broad HyperAgents-style edit permission; do not regress to deterministic target-file routing.
+2. Treat the clean r7 live splice as a transport/admission proof, not as evidence that the fixture-cache candidate was useful.
+3. Stop or constrain automatic source-code context injection for broad-harness edit requests; expose evidence roots and let the agent request code context intentionally.
+4. Persist prompt-context provenance so later analysis can distinguish harness-injected context from agent-chosen evidence.
 
 Two secondary threads remain relevant but are not the current implementation focus:
 
@@ -33,9 +33,9 @@ They are related through the self-improvement-loop track, but the implementation
 
 ## Immediate next step
 
-1. Run the same live broad headless-TUI splice from a clean source checkout so requests with `source_repository_path = "."` can pass final source cleanliness validation.
-2. If admitted, feed the submitted broad-harness result through the request-bound child-plan minting path and compare the resulting child metrics against the tightened branch evaluation gates.
-3. Use that evidence to replace deterministic scaffold candidates in the next mini loop handoff.
+1. Read [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md).
+2. Patch the headless-TUI broad-harness adapter so generic request-level source RAG can be disabled or restricted for broad edit requests without changing normal user-chat RAG.
+3. Persist retrieval/query/context provenance for broad-harness prompts, then re-run one live request and verify the model inspects evidence/source through explicit tools before editing.
 
 ---
 
