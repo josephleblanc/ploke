@@ -134,6 +134,14 @@ impl ArtifactTree {
 }
 
 pub(crate) fn component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBreakdown> {
+    if graph
+        .forest
+        .as_ref()
+        .is_some_and(|forest| !forest.nodes.is_empty())
+    {
+        return Vec::new();
+    }
+
     graph
         .artifact_tree()
         .diagnostics
@@ -146,18 +154,25 @@ pub(crate) fn component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBre
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nodes {
+    #[serde(rename = "F")]
+    pub f: usize,
     #[serde(rename = "A")]
     pub a: usize,
 }
 
 impl From<tree::Nodes> for Nodes {
     fn from(value: tree::Nodes) -> Self {
-        Self { a: value.artifacts }
+        Self {
+            f: value.run_forest,
+            a: value.artifacts,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edges {
+    #[serde(rename = "E_F")]
+    pub e_f: usize,
     #[serde(rename = "P_H")]
     pub p_h: usize,
     #[serde(rename = "P_B")]
@@ -165,14 +180,15 @@ pub struct Edges {
 }
 
 impl Edges {
-    pub fn p(&self) -> usize {
-        self.p_h + self.p_b
+    pub fn total(&self) -> usize {
+        self.e_f + self.p_h + self.p_b
     }
 }
 
 impl From<tree::Edges> for Edges {
     fn from(value: tree::Edges) -> Self {
         Self {
+            e_f: value.run_forest,
             p_h: value.history_patches,
             p_b: value.applied_patch_edges,
         }
@@ -193,7 +209,7 @@ impl From<(tree::Components, tree::Nodes)> for Components {
             weak: components.weak,
             roots: components.roots,
             orphan_artifacts: components.orphan_artifacts,
-            weakly_connected: components.weakly_connected(nodes.artifacts),
+            weakly_connected: components.weakly_connected(nodes.total()),
         }
     }
 }

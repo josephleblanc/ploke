@@ -66,11 +66,16 @@ WARN_G = graph warnings in G.warnings
 For UI product views:
 
 ```text
+F = typed run-forest nodes from RunGraph.forest, when present
+E_F = parent_node_id -> node_id over F
 A = resolved artifact identities derived from A_G
 D = H_G union R_G union O_G union CTX_G union EVID_G union WARN_G
 ```
 
-`A` is the product artifact node set. `D` is drilldown/debug material unless a
+For real Prototype 1 runs, `F` is the default canvas node set and `E_F` is the
+default canvas edge set. `A` remains the artifact identity set available for
+node details, filters, drilldown, and fallback rendering when no typed
+run-forest records are available. `D` is drilldown/debug material unless a
 specific non-default graph projection says otherwise.
 
 `G.artifacts` may store `ArtifactKey::HistoryRef { value }` and
@@ -80,7 +85,17 @@ History ref stores `artifact:<id>` and a passive artifact id stores `<id>`.
 
 ## Artifact Node Contract
 
-The default product graph has one material node kind:
+The default product graph has one primary visible node kind when a typed
+run forest is present:
+
+```text
+node(F(n)) = Prototype 1 scheduler/run node n
+```
+
+Those nodes carry artifact facts such as base/derived artifact ids. Those facts
+do not become separate canvas nodes in the default view.
+
+The fallback artifact-id graph has one material node kind:
 
 ```text
 node(A(a)) = Artifact state identified by canonical artifact id a

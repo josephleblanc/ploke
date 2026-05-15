@@ -34,7 +34,9 @@ impl Graph {
         builder.ingest_scheduler_records(&records.forest_input);
         builder.ingest_transition_journal(&records.transition_journal);
         builder.ingest_passive_evidence(&records.forest_input.passive_evidence);
-        builder.finish()
+        let mut graph = builder.finish();
+        graph.forest = Some(crate::RunForest::from_records(records.forest_input.clone()));
+        graph
     }
 }
 

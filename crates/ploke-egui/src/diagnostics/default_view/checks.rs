@@ -109,17 +109,21 @@ pub(super) fn build(
             )],
         ),
         check(
-            "artifact-node-set-reported",
-            CheckStatus::Passed,
-            vec![format!("A={}", center.nodes.a)],
-        ),
-        check(
-            "artifact-edge-sets-reported",
+            "center-node-set-reported",
             CheckStatus::Passed,
             vec![
+                format!("F={}", center.nodes.f),
+                format!("A={}", center.nodes.a),
+            ],
+        ),
+        check(
+            "center-edge-sets-reported",
+            CheckStatus::Passed,
+            vec![
+                format!("E_F={}", center.edges.e_f),
                 format!("P_H={}", center.edges.p_h),
                 format!("P_B={}", center.edges.p_b),
-                format!("P={}", center.edges.p()),
+                format!("total={}", center.edges.total()),
             ],
         ),
         check(

@@ -298,12 +298,6 @@ impl EdgeCrossingsByKind {
             ) => {
                 self.artifact_artifact += 1;
             }
-            (ViewEdgeKind::Candidate, ViewEdgeKind::Candidate) => {
-                self.candidate_candidate += 1;
-            }
-            _ => {
-                self.mixed += 1;
-            }
         }
     }
 }

@@ -748,7 +748,7 @@ mod tests {
         assert_eq!(report.center.nodes.a, 3);
         assert_eq!(report.center.edges.p_h, 1);
         assert_eq!(report.center.edges.p_b, 1);
-        assert_eq!(report.center.edges.p(), 2);
+        assert_eq!(report.center.edges.total(), 2);
         assert_eq!(report.center.components.weak, 2);
         assert_eq!(report.center.components.roots, 2);
         assert_eq!(report.center.components.orphan_artifacts, 1);
@@ -769,11 +769,11 @@ mod tests {
             ContractCheckStatus::Passed
         );
         assert_eq!(
-            statuses["artifact-node-set-reported"],
+            statuses["center-node-set-reported"],
             ContractCheckStatus::Passed
         );
         assert_eq!(
-            statuses["artifact-edge-sets-reported"],
+            statuses["center-edge-sets-reported"],
             ContractCheckStatus::Passed
         );
         assert_eq!(

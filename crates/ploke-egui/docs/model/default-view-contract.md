@@ -42,6 +42,10 @@ files:
 - Partial: present, but not in the intended location or not yet complete enough
   to satisfy the contract.
 - Missing: not currently implemented.
+- Blocked: the UI frame is known, but the needed graph-owned answer object,
+  typed loader, or relation is not available yet.
+- Not applicable: the frame or row is valid, but the currently loaded run or
+  selected item has no source facts for it.
 
 ## Layout Regions
 
@@ -81,6 +85,30 @@ Default width budget:
 - Therefore the graph canvas starts at `75%` of the initial window width.
 - Contract: the graph canvas keeps at least `70%` of the initial window width
   even when the left sidebar is at its maximum width.
+
+## Question To Frame Map
+
+The frame layout is not only visual. Each region owns a class of operator
+questions from the source docs, and missing answers should appear as explicit
+status rows instead of empty space or inferred facts.
+
+| Question family | Primary frame | First visible answer | Source facts | Current status |
+|---|---|---|---|---|
+| Run load/progress | Top strip, left sidebar | loaded/empty/failed, generation/node counts | `&Graph`, run picker state, `RunForest` when present | Partial: counts exist in the left panel; top strip is missing. |
+| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas exists; inspector is missing. |
+| Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | scheduler nodes, candidate/branch graph indices | Partial: visible siblings exist for run-forest topology; candidate drilldown is missing. |
+| Successor selection | Right inspector | selected candidate/member, considered count, candidate-set root | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries selection facts; no inspector answer path yet. |
+| Evidence and authority | Right inspector | typed record refs, evidence strength, missing/not-applicable/failed | `Graph.evidence`, warnings, History records | Missing: diagnostic shape exists; inspector rows do not. |
+| Patch/surface detail | Right inspector, later drilldown | target path, patch id, base/derived artifact, source state | scheduler node facts, branch/candidate surface evidence | Partial: run-forest detail text has fields; structured inspector rows are missing. |
+| Evaluation/tool/provider diagnosis | Right inspector, bottom timeline | evaluation status, tool-call/provider availability rows | evaluation records, agent-turn/tool/provider projections | Blocked/partial by row: some records load as evidence, but graph-owned answer objects are incomplete. |
+| Causal order and concurrency | Bottom timeline | compact sealed order, runtime/selection/evaluation spans | History, scheduler/runtime/evaluation/tool span refs | Missing: timeline frame and span projection are not implemented. |
+| Drill next | Right inspector | available/blocked/missing drilldown list | typed drilldown contract rows | Missing: no drilldown availability table in the app yet. |
+
+The `ploke-tree-egui` browser view is the precedent for the right-frame and
+timeline presentation: scrollable detail rows, grouped sections, evaluation /
+surface / protocol summaries, and compact step ordering. `ploke-egui` should
+reuse that presentation shape, but the source is `&ploke_tree::Graph` plus a
+selected graph reference, not copied `PlaybackBrowserModel` snapshots.
 
 ## Region Contracts
 

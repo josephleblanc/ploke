@@ -1,8 +1,9 @@
 //! ArtifactTree projection shape.
 //!
 //! This module carries the contract-level facts for the default graph view:
-//! artifacts (`A`), admitted History patch edges (`P_H`), observed branch
-//! applied-patch edges (`P_B`), weak components, roots, orphans, and ruler marks.
+//! run-forest nodes (`F`) when available, fallback artifacts (`A`), admitted
+//! History patch edges (`P_H`), observed branch applied-patch edges (`P_B`),
+//! weak components, roots, orphans, and ruler marks.
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape {
@@ -41,17 +42,33 @@ impl Shape {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Nodes {
+    pub run_forest: usize,
     pub artifacts: usize,
 }
 
 impl Nodes {
     pub(crate) fn new(artifacts: usize) -> Self {
-        Self { artifacts }
+        Self {
+            run_forest: 0,
+            artifacts,
+        }
+    }
+
+    pub(crate) fn run_forest(run_forest: usize) -> Self {
+        Self {
+            run_forest,
+            artifacts: 0,
+        }
+    }
+
+    pub fn total(self) -> usize {
+        self.run_forest + self.artifacts
     }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Edges {
+    pub run_forest: usize,
     pub history_patches: usize,
     pub applied_patch_edges: usize,
 }
@@ -59,13 +76,22 @@ pub struct Edges {
 impl Edges {
     pub(crate) fn new(history_patches: usize, applied_patch_edges: usize) -> Self {
         Self {
+            run_forest: 0,
             history_patches,
             applied_patch_edges,
         }
     }
 
+    pub(crate) fn run_forest(run_forest: usize) -> Self {
+        Self {
+            run_forest,
+            history_patches: 0,
+            applied_patch_edges: 0,
+        }
+    }
+
     pub fn total(self) -> usize {
-        self.history_patches + self.applied_patch_edges
+        self.run_forest + self.history_patches + self.applied_patch_edges
     }
 }
 

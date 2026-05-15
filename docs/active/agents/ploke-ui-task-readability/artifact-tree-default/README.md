@@ -10,14 +10,18 @@ history timeline, or debug projection.
 The default tree graph view is an artifact-first tree/DAG projection over
 `ploke_tree::graph::Graph`.
 
-Primary default geometry:
+Primary default geometry when a typed run forest is available:
 
-- nodes are Artifact states;
-- edges are applied patch / derivation edges from parent Artifact to child
-  Artifact;
+- nodes are Prototype 1 run-forest nodes: one visible node per scheduler
+  node / materialized child candidate state;
+- edges are scheduler `parent_node_id -> node_id` relations;
+- lower-granularity artifact ids such as bounded text-file before/after ids
+  appear in node detail, filters, or drilldown, not as the primary canvas
+  topology;
 - the initial parent appears uppermost and children appear below;
 - edge labels are short patch handles such as `P1`, `P2`, `P3`;
-- primary node labels are short stable display handles, never raw full ids.
+- primary node labels are short stable display handles such as `A1`, `A2`,
+  `A3`, never raw full ids.
 
 History remains crucial, but it is not the canvas spine in the default view.
 Use History for reveal order, dimming/stepping state, and highlighting the
@@ -60,6 +64,12 @@ artifact membership and classified patch/derivation edges directly from
 `ploke_tree::Graph`. The canonical relation fold should move into `ploke-tree`
 as a borrowed projection before richer drilldown, styling, or all-record layout
 work relies on it.
+
+Current correction: `ploke_tree::Graph` now carries the existing
+`RunForest` projection when built from a run record set. The default
+`ArtifactTree` renderer uses that run forest as the primary topology when it is
+present, and falls back to the lower-granularity artifact-id relation fold only
+for graphs without run-forest records.
 
 ## Evidence Links
 

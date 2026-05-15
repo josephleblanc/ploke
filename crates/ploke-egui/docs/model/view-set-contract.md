@@ -26,6 +26,9 @@ state. `Mark_m` must not add semantic facts.
 Base sets:
 
 ```text
+F      = typed run-forest nodes observed in RunGraph.forest
+E_F    = run-forest parent edges:
+         parent_node_id -> node_id
 A      = resolved Artifact nodes observed in RunGraph
 H      = History records / blocks observed in RunGraph
 R      = Runtime records observed in RunGraph
@@ -48,8 +51,24 @@ A disjoint SYN
 D disjoint SYN
 ```
 
-`P` may only connect nodes in `A`. If an edge endpoint is missing from `A`, the
+`E_F` may only connect nodes in `F`. `P` may only connect nodes in `A`. If an edge endpoint is missing from `A`, the
 edge is absent from the rendered view and may be counted as hidden diagnostics.
+
+Current default rule:
+
+```text
+if F is non-empty:
+  N_ArtifactTree = F
+  E_ArtifactTree = E_F
+else:
+  N_ArtifactTree = A
+  E_ArtifactTree = P
+```
+
+The run-forest path is the product default for real Prototype 1 runs because it
+answers the operator question "which run node produced which child node?".
+Lower-granularity artifact ids remain node detail/filter/drilldown facts unless
+a different view explicitly makes them the primary topology.
 
 For `ArtifactTree`, node identity is the resolved Artifact id, not the source
 reference wrapper. A History `ArtifactRef("artifact:<id>")` and a passive
@@ -120,7 +139,8 @@ Properties:
 
 - Edge direction is parent Artifact -> child Artifact.
 - `D` and `SYN` are not rendered.
-- Labels are compact display handles; raw ids belong in detail/debug text.
+- Labels are compact display handles such as `A1`, `A2`, `P1`, and `P2`;
+  raw ids belong in detail/debug text.
 - The primary lineage subgraph should be weakly connected when all required
   History artifacts are loaded.
 - The full artifact graph may have multiple weak components. Extra components

@@ -572,6 +572,12 @@ pub struct TreeNode {
     pub instance_id: String,
     pub source_state_id: String,
     pub target_relpath: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_artifact_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_artifact_id: Option<String>,
     pub progress: Progress,
     pub created_at: String,
     pub updated_at: String,
@@ -600,6 +606,9 @@ impl TreeNode {
             instance_id: record.instance_id.as_str().to_owned(),
             source_state_id: record.source_state_id.as_str().to_owned(),
             target_relpath: record.target_relpath.to_string_lossy().into_owned(),
+            base_artifact_id: record.base_artifact_id.as_ref().map(|id| id.0.clone()),
+            patch_id: record.patch_id.as_ref().map(|id| id.0.clone()),
+            derived_artifact_id: record.derived_artifact_id.as_ref().map(|id| id.0.clone()),
             progress: progress_from_status(record.status),
             created_at: record.created_at.clone(),
             updated_at: record.updated_at.clone(),

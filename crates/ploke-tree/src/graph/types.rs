@@ -17,6 +17,11 @@ pub use warning::*;
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Graph {
+    /// Scheduler/prototype node forest assembled from typed run records.
+    ///
+    /// This is the default UI topology when present. Lower-granularity artifact
+    /// ids remain attached facts rather than the default canvas spine.
+    pub forest: Option<crate::RunForest>,
     /// Sealed History is the primary ordering and authority spine.
     pub history: HistoryIndex,
     pub authority: AuthorityIndex,
@@ -38,6 +43,7 @@ pub struct Graph {
 impl Default for Graph {
     fn default() -> Self {
         Self {
+            forest: None,
             history: HistoryIndex::default(),
             authority: AuthorityIndex::default(),
             artifacts: ArtifactIndex::default(),

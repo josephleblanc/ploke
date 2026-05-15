@@ -45,14 +45,30 @@ impl Report {
             self.center.visible_edge_count,
             self.center.synthetic_anchors_visible
         );
-        let _ = writeln!(out, "center node sets: A={}", self.center.nodes.a);
-        let _ = writeln!(
-            out,
-            "center edge sets: P_H={}, P_B={}, P={}",
-            self.center.edges.p_h,
-            self.center.edges.p_b,
-            self.center.edges.p()
-        );
+        if self.center.nodes.f > 0 {
+            let _ = writeln!(
+                out,
+                "center node sets: F={}, A={}",
+                self.center.nodes.f, self.center.nodes.a
+            );
+            let _ = writeln!(
+                out,
+                "center edge sets: E_F={}, P_H={}, P_B={}, total={}",
+                self.center.edges.e_f,
+                self.center.edges.p_h,
+                self.center.edges.p_b,
+                self.center.edges.total()
+            );
+        } else {
+            let _ = writeln!(out, "center node sets: A={}", self.center.nodes.a);
+            let _ = writeln!(
+                out,
+                "center edge sets: P_H={}, P_B={}, P={}",
+                self.center.edges.p_h,
+                self.center.edges.p_b,
+                self.center.edges.total()
+            );
+        }
         let _ = writeln!(
             out,
             "center components: weak={}, roots={}, orphan_artifacts={}, weakly_connected={}",
