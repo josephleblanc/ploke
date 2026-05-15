@@ -31,6 +31,13 @@ pub fn evaluate_branch(input: &BranchEvaluationInput) -> BranchEvaluationResult 
     compare_lower_is_better(
         &mut regressions,
         &mut improvements,
+        "tool_calls_failed",
+        baseline.tool_calls_failed,
+        treatment.tool_calls_failed,
+    );
+    compare_lower_is_better(
+        &mut regressions,
+        &mut improvements,
         "partial_patch_failures",
         baseline.partial_patch_failures,
         treatment.partial_patch_failures,
@@ -52,9 +59,23 @@ pub fn evaluate_branch(input: &BranchEvaluationInput) -> BranchEvaluationResult 
     compare_bool_prefer_false(
         &mut regressions,
         &mut improvements,
+        "aborted",
+        baseline.aborted,
+        treatment.aborted,
+    );
+    compare_bool_prefer_false(
+        &mut regressions,
+        &mut improvements,
         "aborted_repair_loop",
         baseline.aborted_repair_loop,
         treatment.aborted_repair_loop,
+    );
+    compare_bool_prefer_true(
+        &mut regressions,
+        &mut improvements,
+        "nonempty_valid_patch",
+        baseline.nonempty_valid_patch,
+        treatment.nonempty_valid_patch,
     );
     compare_bool_prefer_true(
         &mut regressions,
@@ -190,6 +211,86 @@ mod tests {
                 .reasons
                 .iter()
                 .any(|reason| reason.contains("partial_patch_failures improved"))
+        );
+    }
+
+    #[test]
+    fn evaluate_branch_rejects_tool_call_failure_regression() {
+        let baseline = metrics();
+        let mut treatment = metrics();
+        treatment.tool_calls_failed = baseline.tool_calls_failed + 1;
+
+        let result = evaluate_branch(&BranchEvaluationInput {
+            baseline_metrics: baseline,
+            treatment_metrics: treatment,
+        });
+
+        assert_eq!(result.disposition, BranchDisposition::Reject);
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("tool_calls_failed regressed"))
+        );
+    }
+
+    #[test]
+    fn evaluate_branch_rejects_aborted_regression() {
+        let baseline = metrics();
+        let mut treatment = metrics();
+        treatment.aborted = true;
+
+        let result = evaluate_branch(&BranchEvaluationInput {
+            baseline_metrics: baseline,
+            treatment_metrics: treatment,
+        });
+
+        assert_eq!(result.disposition, BranchDisposition::Reject);
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason == "aborted regressed: false -> true")
+        );
+    }
+
+    #[test]
+    fn evaluate_branch_keeps_new_nonempty_valid_patch() {
+        let mut baseline = metrics();
+        baseline.nonempty_valid_patch = false;
+        let treatment = metrics();
+
+        let result = evaluate_branch(&BranchEvaluationInput {
+            baseline_metrics: baseline,
+            treatment_metrics: treatment,
+        });
+
+        assert_eq!(result.disposition, BranchDisposition::Keep);
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("nonempty_valid_patch improved"))
+        );
+    }
+
+    #[test]
+    fn evaluate_branch_rejects_lost_nonempty_valid_patch() {
+        let baseline = metrics();
+        let mut treatment = metrics();
+        treatment.nonempty_valid_patch = false;
+
+        let result = evaluate_branch(&BranchEvaluationInput {
+            baseline_metrics: baseline,
+            treatment_metrics: treatment,
+        });
+
+        assert_eq!(result.disposition, BranchDisposition::Reject);
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("nonempty_valid_patch regressed"))
         );
     }
 }

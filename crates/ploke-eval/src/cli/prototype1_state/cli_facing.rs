@@ -2381,7 +2381,11 @@ fn produce_deterministic_tui_tools_candidates(
     );
     let replacements = (0..max).map(|index| {
         format!(
-            "\n// prototype1 edit-surface candidate {}:{}; next: replace deterministic direct-splice generation with LLM proposal production.\n",
+            concat!(
+                "\n// prototype1 deterministic scaffold/no-op candidate {}:{}; ",
+                "not semantic improvement evidence; next: replace deterministic direct-splice ",
+                "generation with live proposal production.\n"
+            ),
             seed,
             index + 1
         )
@@ -11350,6 +11354,32 @@ stop_after = "complete"
                     .target_relpath()
                     .starts_with(EVAL_CORE_SURFACE_ROOT)
         }));
+    }
+
+    #[test]
+    fn deterministic_tui_surface_producer_labels_scaffold_noop_candidates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_broad_surface_targets(tmp.path());
+        let manifest = test_manifest_path(tmp.path());
+        let parent = ready_parent_for_test(&manifest, tmp.path());
+
+        let generated = produce_deterministic_tui_tools_candidates(
+            tmp.path(),
+            &parent,
+            Prototype1ChildBudget { min: 1, max: 1 },
+        )
+        .expect("checked deterministic scaffold candidate");
+        let candidate = generated.checked.first().expect("checked candidate");
+        let proposed = candidate.proposed_content();
+
+        assert!(
+            proposed.contains("prototype1 deterministic scaffold/no-op candidate"),
+            "proposal content did not label deterministic scaffold/no-op candidate: {proposed}"
+        );
+        assert!(
+            proposed.contains("not semantic improvement evidence"),
+            "proposal content did not reject semantic improvement evidence: {proposed}"
+        );
     }
 
     #[test]
