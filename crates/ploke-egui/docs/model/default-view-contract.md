@@ -192,13 +192,18 @@ Status:
 Purpose:
 
 - Make the `ArtifactTree` the primary default surface.
-- Show artifacts and patch/derivation relations, with History acting as
-  reveal/highlight state rather than as the canvas spine.
+- Show the run-forest parent/child topology when available, with artifact,
+  patch, branch, candidate, and History facts available as detail, filter,
+  mark, or drilldown material.
 
 Should contain:
 
-- Artifact nodes as the primary visible nodes;
-- patch/derivation edges as the primary visible edges;
+- `F` run-forest nodes as the primary visible nodes when `Graph.forest` is
+  present and non-empty;
+- `E_F` run-forest parent edges as primary visible edges when `Graph.forest`
+  is present and non-empty;
+- fallback `A` Artifact nodes and `P_H union P_B` patch/derivation edges only
+  when run-forest records are absent;
 - current ruler or latest selected successor highlight;
 - nearby alternatives visible as artifact branches;
 - pan, zoom, drag, hover, and selection behavior.
@@ -215,12 +220,19 @@ Testable signals:
 
 - `view.mode = "artifact-tree"` by default.
 - `canvas.present = true`
-- `canvas.primary_node_set = A`
-- `canvas.primary_edge_set = P_H union P_B`
+- `canvas.primary_node_set = F` when `F` is non-empty.
+- `canvas.primary_edge_set = E_F` when `F` is non-empty.
+- `canvas.primary_node_set = A` only for fallback graphs without `F`.
+- `canvas.primary_edge_set = P_H union P_B` only for fallback graphs without
+  `F`.
 - `canvas.synthetic_anchors_visible = false`
 - `canvas.debug_nodes_visible = false`
-- `canvas.artifact_nodes.count > 0` for non-empty artifact runs.
-- `canvas.patch_edges.count > 0` when patch/derivation relations exist.
+- `canvas.run_forest_nodes.count > 0` for non-empty real Prototype 1 runs
+  loaded through `RunRecordSet`.
+- `canvas.artifact_nodes.count > 0` for fallback graphs without run-forest
+  records.
+- `canvas.patch_edges.count > 0` when fallback patch/derivation relations
+  exist.
 - `canvas.ruler_highlight.count <= 1` until multi-ruler semantics are defined.
 
 Status:
@@ -229,13 +241,14 @@ Status:
 - Implemented: central graph canvas exists.
 - Implemented: ArtifactTree hides synthetic anchors.
 - Implemented: diagnostics report whether synthetic anchors are visible.
-- Implemented: diagnostics report `A`, `P_H`, `P_B`, total visible nodes, total
-  visible edges, weak components, roots, orphan artifacts, and ruler highlight
-  count.
+- Implemented: diagnostics report `F`, `A`, `E_F`, `P_H`, `P_B`, total visible
+  nodes, total visible edges, weak components, roots, orphan artifacts, and
+  ruler highlight count.
 - Implemented: contract checks include artifact node-set reporting, artifact
   edge-set reporting, ruler-highlight reporting, and component reporting.
-- Partial: these diagnostics are still computed from the current egui
-  projection. The canonical relation fold should move into `ploke-tree`.
+- Partial: run-forest topology is graph-owned through `Graph.forest`; fallback
+  artifact relation diagnostics are still computed from the current graph
+  projection path.
 - Missing: CLI-readable assertion that debug-node exclusion is sourced from the
   graph-owned projection rather than from egui-local membership inference.
 
@@ -253,6 +266,19 @@ Should contain:
 - candidate set or successor-selection summary when available;
 - evidence refs and typed record ids;
 - missing/not-applicable/failed diagnostics for unavailable drilldowns.
+
+First-frame content contract:
+
+| Section | Question answered | First slice content | Source | Status |
+|---|---|---|---|---|
+| Summary | What exactly did I select? | display label, selected graph kind, status/result class when available | selected widget payload plus borrowed `Graph` lookup | Partial: selected text exists, but in the left panel and mostly as copied detail text. |
+| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | node id, generation, parent node id, branch id, candidate id, base/derived artifact ids | `Graph.forest` / `TreeNode` refs | Missing as structured right-panel rows; available today only as detail text. |
+| Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
+| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Missing as inspector section; visible in canvas topology. |
+| Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
+| Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
+| Evidence | Which typed records support this answer? | evidence ids/record refs, source family, evidence strength/projection status | `Graph.evidence`, History/evaluation/passive evidence records | Missing as UI rows; must not be inferred from rendered strings. |
+| Drill next | What can I inspect next? | availability rows for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract row status | Missing. |
 
 Questions supported:
 
@@ -277,6 +303,20 @@ Status:
 - Missing: drilldown-candidate list.
 - Missing: unavailable-reason classification.
 
+Implementation rule:
+
+```text
+selected widget payload
+  -> GraphSelectionRef
+  -> borrowed Graph inspector answer
+  -> render-only rows
+```
+
+The inspector may allocate labels for display, but it must not store copied
+semantic ids, records, or partial records as UI state. If a row cannot be
+resolved by a typed graph relation or evidence attachment, show `missing`,
+`blocked`, or `not_applicable` with the relevant answer-contract id.
+
 ### Bottom Timeline
 
 Purpose:
@@ -292,6 +332,16 @@ Should contain:
   typed projections when available;
 - hover/selection sync with the center canvas;
 - explicit evidence strength for timestamp-only ordering.
+
+First-frame content contract:
+
+| Section | Question answered | First slice content | Source | Status |
+|---|---|---|---|---|
+| Sealed order | What is the admitted History order? | compact block/entry order and selected step marker | `Graph.history` | Missing frame; graph has History facts. |
+| Run forest order | Which parent produced which children? | generation bands and selected node highlight | `Graph.forest` | Missing frame; canvas uses these facts. |
+| Runtime/selection joins | Where do runtime-local events join admitted History? | join availability rows for selection, handoff, evaluation | History, scheduler, runtime, selection indices | Missing/partial depending row. |
+| Evaluation/tool spans | Where did the child spend time, and what failed? | evaluation/tool/provider span availability status | evaluation, agent-turn, provider attempt projections | Blocked/partial: typed facts exist in places, but no graph-owned span projection is wired to egui. |
+| Evidence strength | Which order is causal vs timestamp/projection? | span badge: sealed, causal, timestamp, or projection | typed span refs and source evidence | Missing. |
 
 Questions supported:
 
@@ -313,6 +363,32 @@ Status:
 - Missing: timeline span projection in `ploke-egui`.
 - Missing: selection sync between timeline and graph.
 
+Implementation rule:
+
+The bottom lane is not a log dump. It is a compact span projection reachable
+from graph nodes, edges, inspector refs, or timeline span refs. Timestamps may
+help draw spans, but they must not be the only source of causality or nesting.
+
+## Frame-First Implementation Slices
+
+The UI shell should be built before every row is fully backed, so future
+drilldowns land in stable frames instead of accumulating in whichever panel
+currently exists.
+
+| Slice | Scope | Done when | Explicit non-goals |
+|---|---|---|---|
+| `shell.frames` | Top strip, left sidebar, center canvas, right inspector, bottom timeline frames exist with stable sizes. | Diagnostics report each frame's presence and the graph remains the visual center. | No semantic drilldown joins beyond existing selected detail. |
+| `inspector.selection-shell` | Selected detail moves from left sidebar to right inspector. | Selecting a graph node shows Summary, Identity, and Drill Next sections. | No candidate comparison, tool-call viewer, or patch diff body. |
+| `inspector.run-forest-node` | Run-forest node rows are resolved from `&Graph.forest`. | Node id, generation, parent node, branch, candidate, base/patch/derived artifacts render as structured rows. | No copied browser step model. |
+| `inspector.selection-replay-status` | Selection/candidate rows show available/blocked/missing status. | `ui.successor.selection` and `ui.selection.candidate.set` rows say what can and cannot be proven from graph-owned facts. | No source-set/decision-set flattening. |
+| `timeline.shell` | Bottom lane exists and can show empty/not-applicable/blocked status. | Contract report exposes timeline frame presence and span counts. | No timestamp-only causal reconstruction. |
+| `timeline.first-spans` | Compact spans for History/run-forest order. | Selecting a graph node can highlight a corresponding timeline row/span. | No provider/tool span detail until typed span refs exist. |
+
+`ploke-tree-egui` is the reference for presentation density and row grouping.
+Its browser snapshots are not the source model for these slices. When a
+browser-field idea is useful, port the row shape and field priority, then bind
+it to `&Graph` or a graph-owned answer object.
+
 ## Default View Invariants
 
 These are the minimum invariants a CLI or snapshot test should be able to check
@@ -322,8 +398,12 @@ without a human opening the UI:
 DefaultView :=
   Layout(top?, left, center, right?, bottom?)
   + Center.mode = ArtifactTree
-  + Center.nodes = A
-  + Center.edges = P_H union P_B
+  + if F non-empty:
+      Center.nodes = F
+      Center.edges = E_F
+    else:
+      Center.nodes = A
+      Center.edges = P_H union P_B
   + Center.nodes disjoint D
   + Center.nodes disjoint SYN
   + History is highlight/reveal state, not the default canvas spine
@@ -334,7 +414,8 @@ Required pass/fail checks:
 - The default mode is `ArtifactTree`.
 - The default center canvas receives at least `70%` of the initial native window
   width.
-- A non-empty artifact run renders artifact nodes in the center canvas.
+- A non-empty real Prototype 1 run renders run-forest nodes in the center
+  canvas; fallback artifact-only graphs render artifact nodes.
 - The default canvas does not render synthetic anchor nodes.
 - The default canvas does not render runtime/tool/provider/debug records as
   primary nodes.
@@ -348,16 +429,17 @@ Current status:
 
 - Implemented: default mode check is possible from existing diagnostics.
 - Implemented: synthetic anchor visibility is reported by existing diagnostics.
-- Implemented: node/edge counts are reported by semantic set for `A`, `P_H`,
-  and `P_B`.
+- Implemented: node/edge counts are reported by semantic set for `F`, `A`,
+  `E_F`, `P_H`, and `P_B`.
 - Implemented: selected detail is represented in the default-view diagnostic
   shape when selection exists.
 - Partial: layout-region presence is reported for major regions, but tests
   still need specific real-run coverage.
 - Implemented: pass/fail contract report exists for the current diagnostic
   shape.
-- Partial: the report still reflects egui-local artifact membership until the
-  graph-owned projection exists.
+- Partial: the run-forest path reports graph-owned topology; fallback
+  artifact-only membership and relation diagnostics still depend on the current
+  projection path.
 - Missing: unavailable drilldown classification.
 
 ## CLI Feedback Direction
