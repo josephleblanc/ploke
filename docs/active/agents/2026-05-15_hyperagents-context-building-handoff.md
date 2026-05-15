@@ -1,6 +1,6 @@
 # 2026-05-15 HyperAgents Context-Building Handoff
 
-Short description: restart note for the Prototype 1 broad-harness prompt/RAG issue discovered after the first clean live headless-TUI splice.
+Short description: restart note for the Prototype 1 broad-harness prompt/RAG issue discovered after the first clean live headless-TUI splice, now updated for the context-mode Off adapter patch and the next multi-generation smoke campaign.
 
 Related planning files:
 - [`docs/design/drafts/edit-surface/hyperagents-prompt-posture.md`](../../design/drafts/edit-surface/hyperagents-prompt-posture.md)
@@ -103,16 +103,59 @@ The richer object is not a prompt that returns a file edit. It is a broad self-m
 
 The current implementation collapses request contract and initial code context. That collapse is what made `fixture_dbs.rs` feel like instruction rather than incidental context.
 
+## 2026-05-15 Adapter Patch State
+
+The context-posture fix now uses existing `ploke-tui` configuration rather than a new broad-harness prompt mechanism:
+
+1. `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` sets `runtime.state.config.write().await.context_management.mode = ploke_tui::user_config::CtxMode::Off` before submitting broad headless TUI prompts.
+2. `PromptDiagnostic::context_unavailable_reason()` no longer treats the intentional Off-mode fallback notice as a fatal missing-context condition.
+3. The RAG/BM25 service remains configured and ready, so explicit tools such as `request_code_context` still work.
+4. Existing live canaries now assert the split facts: workspace/BM25 ready, automatic prompt RAG off, and zero initial RAG parts.
+
+Verification already run in the active checkout:
+
+- `cargo fmt --all`
+- `cargo test -p ploke-eval context_unavailable 2>&1 | tail -n 80`
+- `cargo test -p ploke-eval live_tui_initial_prompt_off_skips_rag_parts -- --ignored --nocapture 2>&1 | tail -n 120`
+  - observed BM25 ready with `5792` docs;
+  - observed `included_rag_parts=0`;
+  - observed fallback `Context mode is Off; proceeding without code context.`
+- `cargo test -p ploke-eval live_tui_request_code_context_ploke_workspace_returns_results -- --ignored --nocapture 2>&1 | tail -n 140`
+  - explicit `request_code_context` returned snippets.
+- `cargo test -p ploke-eval live_tui_adapter_canary_uses_indexed_context_before_applied_edit -- --ignored --nocapture 2>&1 | tail -n 180`
+  - provider-backed canary requested `request_code_context` before `apply_code_edit`;
+  - staged the expected `src/lib.rs` change.
+
+At this handoff, the adapter patch is still a local source change unless it has been committed after this note. Commit it before setting up the next campaign so the Runtime/Artifact identity includes the prompt-posture fix.
+
 ## Next Useful Work
 
-The next implementation slice should be in the headless-TUI broad-harness adapter, not branch scoring:
+The next implementation/run slice is multi-generation continuity for broad surface edits, not more prompt tuning:
 
-1. Add a `BroadHarnessContextPolicy` or equivalent existing-structure carrier that can disable generic source RAG for broad edit requests while leaving normal user-chat RAG untouched.
-2. Persist enough prompt-context provenance to explain later why a snippet was shown.
-3. Make the submitted return evidence distinguish:
-   - agent-requested evidence;
-   - harness-injected contract context;
-   - harness-injected source snippets, if any remain.
-4. Re-run one live request and verify the model must inspect evidence/source through explicit tools before editing.
+1. Commit the context-mode Off adapter patch.
+2. Run one clean live broad-harness splice against an existing published request and confirm diagnostics show:
+   - `context_mode = Off`;
+   - `included_rag_parts = 0`;
+   - ready BM25;
+   - explicit source/evidence inspection through tools before editing.
+3. Set up the next smoke campaign from a fresh, separate worktree under `~/.ploke-eval/worktrees`; do not run it from the active development checkout.
+4. Use `~/.ploke-eval/profiles/prototype1/smoke-3x4-edit-surface.toml` first. The goal is three generations with four children each, proving:
+   - broad harness requests publish child slots;
+   - children run and produce applied/rejected/failed evidence;
+   - successor selection picks one child;
+   - successor hydration creates the next parent with correct Artifact/Runtime identity;
+   - generation N+1 runs from that successor parent.
+5. If `smoke-3x4` completes, move to `five-gen-3-child-edit-surface.toml`. Only after that should a 10-generation profile be used, preferably `10x3` before `10x6`.
+
+Observation should stay metadata-first during smoke runs:
+
+- admitted node count;
+- generation range;
+- status counts for attempted/applied/rejected/failed children;
+- prompt diagnostics count by `context_mode` and initial RAG part count;
+- tool counts for `request_code_context`, `read_file`, edit tools, and failed tools;
+- terminal reason if the run stops.
+
+Fix only generation-blocking failures first: checkout/source-dirty contamination, provider/tool timeout handling, context-unavailable misclassification, missing child evidence, successor-selection failure, or successor hydration/parent identity mismatch.
 
 Do not "fix" this by hard-coding benchmark target files into the prompt. That would violate the HyperAgents prompt posture and regress broad edit support into a brittle route table.

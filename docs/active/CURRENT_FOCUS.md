@@ -4,7 +4,7 @@
 
 **Active planning surfaces:**
 
-- Prototype 1 live broad-harness/context-building wave: [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md), with background from [`agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](agents/2026-05-08_bounded-edit-surface-implementation-orientation.md) and [`agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`](agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md) — current focus is preserving broad HyperAgents-style edit posture while preventing automatic source-code RAG from silently steering the first edit.
+- Prototype 1 live broad-harness/context-building wave: [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md), with background from [`agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](agents/2026-05-08_bounded-edit-surface-implementation-orientation.md) and [`agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`](agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md) — current focus is landing a multi-generation broad-harness smoke campaign after disabling automatic initial source-code RAG for broad headless TUI attempts.
 - Self-improvement loop track index: [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md) — current routing table for Prototype 1 records/playback, egui observability, and MBE/oracle calibration.
 - Frontend observability: [`agents/ploke-ui-task-readability/README.md`](agents/ploke-ui-task-readability/README.md), especially [`artifact-tree-default/`](agents/ploke-ui-task-readability/artifact-tree-default/README.md) — current `ploke-egui` artifact-tree default-view source of truth and follow-up task area.
 - MBE/oracle calibration: [`agents/2026-05-11_mbe-oracle-calibration-handoff.md`](agents/2026-05-11_mbe-oracle-calibration-handoff.md) — current questions around compile-failed loop candidates, gold/empty MBE controls, and benchmark-base patch export.
@@ -15,12 +15,12 @@
 
 ## What we're doing now
 
-The primary active thread is **Prototype 1 broad-harness context posture**:
+The primary active thread is **Prototype 1 broad-harness multi-generation proof**:
 
 1. Keep broad HyperAgents-style edit permission; do not regress to deterministic target-file routing.
-2. Treat the clean r7 live splice as a transport/admission proof, not as evidence that the fixture-cache candidate was useful.
-3. Stop or constrain automatic source-code context injection for broad-harness edit requests; expose evidence roots and let the agent request code context intentionally.
-4. Persist prompt-context provenance so later analysis can distinguish harness-injected context from agent-chosen evidence.
+2. Use `ploke-tui`'s existing `context_management.mode = Off` for broad headless TUI attempts so the initial prompt has no automatic source-code RAG snippets.
+3. Keep BM25/RAG services available so agents can request code intentionally through tools such as `request_code_context`.
+4. Prove the loop can repeatedly publish children, apply/reject edits, select a successor, hydrate the next parent, and continue across generations.
 
 Two secondary threads remain relevant but are not the current implementation focus:
 
@@ -34,8 +34,9 @@ They are related through the self-improvement-loop track, but the implementation
 ## Immediate next step
 
 1. Read [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md).
-2. Patch the headless-TUI broad-harness adapter so generic request-level source RAG can be disabled or restricted for broad edit requests without changing normal user-chat RAG.
-3. Persist retrieval/query/context provenance for broad-harness prompts, then re-run one live request and verify the model inspects evidence/source through explicit tools before editing.
+2. Commit the current broad headless TUI context-posture patch so the next Runtime/Artifact identity includes it.
+3. Run one clean live splice to confirm prompt diagnostics show `context_mode = Off`, `included_rag_parts = 0`, ready BM25, and explicit source inspection through tools.
+4. Set up the next smoke campaign from a fresh worktree under `~/.ploke-eval/worktrees`, using `smoke-3x4-edit-surface.toml` before attempting a 5-generation or 10-generation run.
 
 ---
 
