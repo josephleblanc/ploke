@@ -14,6 +14,9 @@ operator drilldown questions without becoming a second graph model.
 - [run-graph-crosswalk.md](run-graph-crosswalk.md) collects the typed record,
   `ploke-tree`, and UI graph vocabulary so entity and edge meanings stay
   canonical across docs and implementation.
+- [source-process-graph.md](source-process-graph.md) explains what Prototype 1
+  process the graph represents, which typed records feed it, and what nodes and
+  edges should explain in the UI.
 - [view-set-contract.md](view-set-contract.md) defines the intended graph view
   modes as node and edge set projections over `ploke_tree::Graph`.
 - [default-view-contract.md](default-view-contract.md) defines the intended
