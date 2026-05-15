@@ -9,9 +9,11 @@ Let `RunGraph = ploke_tree::Graph`.
 
 This note follows the edit-surface model vocabulary: `Artifact` is the
 material/tree state, `Runtime` carries role authority, `History` is the sealed
-authority/evidence substrate, and a projection is not authority. To avoid
-cross-doc collisions, this note does not use `G` for the loaded graph because
-the edit-surface model uses `G` for surface grants.
+authority substrate, and a projection is not authority. `ploke-egui` only
+inspects graph facts produced elsewhere; it does not participate in selecting,
+admitting, or advancing successors. To avoid cross-doc collisions, this note
+does not use `G` for the loaded graph because the edit-surface model uses `G`
+for surface grants.
 
 Every rendered view is a projection:
 
@@ -39,7 +41,8 @@ P_B    = observed applied-patch Artifact edges:
 P      = P_H union P_B
 L      = primary-lineage subset of A and P_H
 D      = non-artifact context/debug records: H, R, artifact-consideration
-         records, selections, operations, evidence, warnings
+         records, selections, operations, source/projection attachments,
+         warnings
 SYN    = synthetic connector or anchor nodes
 ```
 
@@ -108,9 +111,9 @@ P_B = applied-patch Artifact edge observed through CandidateBranchNode.base_arti
 
 Relations such as `opened_from_artifact`, `parent_branch_id`,
 `source_state_id`, `parent_node_id`, runtime hydration, operation targeting,
-and evidence attachments may exist in `RunGraph`, but they are not edges in
-the default `ArtifactTree` unless a graph-owned projection explicitly admits
-them into that view.
+and source/projection attachments may exist in `RunGraph`, but they are not
+edges in the default `ArtifactTree` unless a graph-owned projection explicitly
+admits them into that view.
 
 The graph-owned `ArtifactTree(RunGraph)` projection also computes:
 
@@ -129,15 +132,22 @@ be reimplemented in new UI surfaces.
 Default product surface.
 
 ```text
-N_artifact = A
-E_artifact = P
+if F is non-empty:
+  N_artifact = F
+  E_artifact = E_F
+else:
+  N_artifact = A
+  E_artifact = P
 Mark_artifact includes current-ruler highlight from latest primary-lineage
 selected successor.
 ```
 
 Properties:
 
-- Edge direction is parent Artifact -> child Artifact.
+- In the run-forest path, edge direction is parent run-forest node -> child
+  run-forest node.
+- In the fallback artifact-id path, edge direction is parent Artifact -> child
+  Artifact.
 - `D` and `SYN` are not rendered.
 - Labels are compact display handles such as `A1`, `A2`, `P1`, and `P2`;
   raw ids belong in detail/debug text.
@@ -145,7 +155,7 @@ Properties:
   History artifacts are loaded.
 - The full artifact graph may have multiple weak components. Extra components
   are diagnostics or secondary islands, not a reason to add synthetic anchors.
-- Applied-patch Artifact edges observed through branch/candidate evidence should
+- Applied-patch Artifact edges observed through branch/candidate sources should
   remain visually distinguishable from admitted History transition edges once
   styling supports that distinction.
 
@@ -196,7 +206,7 @@ Any all-record or drilldown graph is separate from the product views:
 
 ```text
 N_debug subset A union D union SYN
-E_debug may include record and evidence relations
+E_debug may include record and source/projection relations
 View_debug not subset View_artifact
 ```
 

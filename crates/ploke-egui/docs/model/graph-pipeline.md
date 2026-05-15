@@ -1,8 +1,10 @@
 # Graph Pipeline
 
-`ploke_tree::Graph` is the semantic source of truth. `ploke-egui` should treat
-it as the owner of graph meaning and should not turn copied labels, raw ids, or
-details into a second semantic model.
+`ploke_tree::Graph` is the semantic source available to `ploke-egui`.
+`ploke-egui` should treat it as the owner of graph meaning for inspection and
+should not turn copied labels, raw ids, or details into a second semantic
+model. Upstream logs, records, and reports from `ploke-eval` must be loaded or
+folded into typed graph material before the UI uses them.
 
 ## Current Layers
 
@@ -10,7 +12,7 @@ The current rendering path is:
 
 ```text
 ploke_tree::Graph
-  -> graph-owned named projection (missing for ArtifactTree)
+  -> graph-owned named projection
   -> project_*()
   -> RawGraph
   -> to_widget_graph()
@@ -26,12 +28,13 @@ use ploke_tree::Graph as DomainGraph;
 ```
 
 `DomainGraph` owns typed collections such as artifacts, history blocks,
-candidates, selections, operations, evidence, and warnings.
+candidates, selections, operations, source/projection attachments, and
+warnings.
 
-The missing layer is a graph-owned projection for semantic view membership. For
-the default canvas, that object should expose the artifact node set and the
-classified artifact edge sets before egui allocates labels, layout coordinates,
-or widget payloads.
+The required layer is a graph-owned projection for semantic view membership.
+For the default canvas, that object should expose the run-forest topology when
+available, or the fallback artifact node set and classified artifact edge sets,
+before egui allocates labels, layout coordinates, or widget payloads.
 
 `RawGraph` is a local projection graph:
 

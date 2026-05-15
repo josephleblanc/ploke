@@ -1,7 +1,10 @@
 # ploke-egui Graph Model Notes
 
 This directory records the working model for how `ploke-egui` turns a
-`ploke_tree::Graph` into an interactive graph UI.
+`ploke_tree::Graph` into an interactive inspection UI. Upstream run logs,
+records, reports, and report-like projections belong to the graph/import side;
+these docs start from the loaded `Graph` and specify how the UI answers
+operator drilldown questions without becoming a second graph model.
 
 ## Documents
 

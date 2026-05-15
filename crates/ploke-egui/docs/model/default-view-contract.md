@@ -1,8 +1,12 @@
 # Default View Contract
 
 This document defines the intended default `ploke-egui` view as a testable UI
-contract. It is a rendering contract over `ploke_tree::Graph`, not a new source
-of graph meaning.
+contract. It is a read-only inspection contract over `ploke_tree::Graph`, not a
+new source of graph meaning and not a participant in successor selection.
+
+`ploke-eval` runs, logs, typed records, reports, and report-like projections are
+the upstream material. They may be loaded or folded by other crates before
+`ploke-egui` sees them, but the UI contract begins at `&ploke_tree::Graph`.
 
 The default view should answer the first operator question:
 
@@ -19,8 +23,8 @@ files:
 
 - `docs/active/plans/self-improvement-loop/frontend-questions.md`
   Broad observability questions: loop progress, benchmark trajectory, causal
-  order, evidence/authority, runtime diagnosis, benchmark direction, and
-  interaction model.
+  order, source/projection confidence, runtime diagnosis, benchmark direction,
+  and interaction model.
 - `docs/active/plans/self-improvement-loop/typed-persistence-spine/ui-drilldown-contract.md`
   Precise answer contracts for lineage, candidate frontier, successor
   selection, patch diff, tool calls, provider attempts, timeline concurrency,
@@ -29,12 +33,14 @@ files:
   Current readability-wave objective: answer which artifact lineage is selected
   or promoted, what nearby alternatives exist, and where to drill next.
 - `docs/active/agents/2026-05-09_egui-wasm-observability-plan.md`
-  Older egui/wasm observability plan with the operator-question table for live
-  state, loop health, exit state, generation count, metrics, active ruler,
-  improvement, patch rationale and impact, and failure/log location.
+  Older egui/wasm observability plan from the `ploke-tree-egui` /
+  browser-model iteration. It is useful for question inventory and presentation
+  density, but not as the current source model.
 - `docs/workflow/evalnomicon/drafts/observability/run-tree-browser-design.md`
   Earlier run-tree browser layout sketch: left run/filter pane, central run
-  tree, right detail pane, and bottom timeline lane.
+  tree, right detail pane, and bottom timeline lane. Treat it as prior art for
+  frames and drilldown questions, not as an instruction to copy browser-owned
+  snapshots into `ploke-egui`.
 
 ## Status Legend
 
@@ -104,17 +110,18 @@ status rows instead of empty space or inferred facts.
 | Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas and inspector shell exist; structured lineage rows are incomplete. |
 | Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | scheduler nodes, candidate/branch graph indices | Partial: visible siblings exist for run-forest topology; candidate drilldown is missing. |
 | Successor selection | Right inspector | selected candidate/member, considered count, candidate-set root | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries selection facts; no inspector answer path yet. |
-| Evidence and authority | Right inspector | typed record refs, evidence strength, missing/not-applicable/failed | `Graph.evidence`, warnings, History records | Missing: diagnostic shape exists; inspector rows do not. |
+| Source/projection status | Right inspector | typed source refs, graph-build warnings, missing/not-applicable/failed | graph refs, warnings, History/report-derived records | Missing: diagnostic shape exists; inspector rows do not. |
 | Patch/surface detail | Right inspector, later drilldown | target path, patch id, base/derived artifact, source state | scheduler node facts, branch/candidate surface evidence | Partial: run-forest detail text has fields; structured inspector rows are missing. |
-| Evaluation/tool/provider diagnosis | Right inspector, bottom timeline | evaluation status, tool-call/provider availability rows | evaluation records, agent-turn/tool/provider projections | Blocked/partial by row: some records load as evidence, but graph-owned answer objects are incomplete. |
+| Evaluation/tool/provider diagnosis | Right inspector, bottom timeline | evaluation status, tool-call/provider availability rows | evaluation records, agent-turn/tool/provider projections | Blocked/partial by row: some records load as graph sources, but graph-owned answer objects are incomplete. |
 | Causal order and concurrency | Bottom timeline | compact sealed order, runtime/selection/evaluation spans | History, scheduler/runtime/evaluation/tool span refs | Missing: timeline frame and span projection are not implemented. |
 | Drill next | Right inspector | available/blocked/missing drilldown list | typed drilldown contract rows | Missing: no drilldown availability table in the app yet. |
 
-The `ploke-tree-egui` browser view is the precedent for the right-frame and
-timeline presentation: scrollable detail rows, grouped sections, evaluation /
-surface / protocol summaries, and compact step ordering. `ploke-egui` should
-reuse that presentation shape, but the source is `&ploke_tree::Graph` plus a
-selected graph reference, not copied `PlaybackBrowserModel` snapshots.
+The older `ploke-tree-egui` / browser view is precedent for presentation shape:
+scrollable detail rows, grouped sections, evaluation / surface / protocol
+summaries, and compact step ordering. `ploke-egui` should reuse those row
+priorities where they still answer the same question, but the source is
+`&ploke_tree::Graph` plus a selected graph reference, not copied
+`PlaybackBrowserModel` snapshots.
 
 ## Region Contracts
 
@@ -130,7 +137,8 @@ Should contain:
 - run selector;
 - graph mode selector;
 - load/schema status;
-- quick filters for evidence strength, transition kind, and failure class.
+- quick filters for source/projection status, transition kind, and failure
+  class.
 
 Questions supported:
 
@@ -157,7 +165,7 @@ Status:
 Purpose:
 
 - Provide navigation and coarse filtering while leaving the graph central.
-- Summarize run contents without becoming a semantic authority.
+- Summarize run contents without becoming a semantic source.
 
 Should contain:
 
@@ -280,7 +288,7 @@ Should contain:
 - selected artifact or edge summary;
 - lineage path summary;
 - candidate set or successor-selection summary when available;
-- evidence refs and typed record ids;
+- typed source refs and record ids;
 - missing/not-applicable/failed diagnostics for unavailable drilldowns.
 
 First-frame content contract:
@@ -294,14 +302,14 @@ First-frame content contract:
 | Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing artifact edge rows, distinct from run-forest `E_F` rows | `Graph.artifact_tree()` and run-forest base/derived artifact refs | Partial: fallback artifact selections show `P_H`/`P_B`; run-forest selections show `P_B` only when base and derived artifact ids are both present. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
-| Evidence | Which typed records support this answer? | source record refs and evidence counts | `TreeNode.evidence`, artifact source evidence counts | Partial: record-ref rows exist where the graph projection exposes them; evidence-strength classification is deferred. |
+| Source refs | Which typed records or report-derived facts support this displayed answer? | source record refs, graph warnings, and source counts | `TreeNode` refs, artifact source refs, graph warnings | Partial: record-ref rows exist where the graph projection exposes them; source/projection classification is deferred. |
 | Drill next | What can I inspect next? | availability rows for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract row status | Partial: static rows exist; typed availability is deferred. |
 
 Questions supported:
 
 - What exactly did I select?
 - Why was this successor selected over nearby candidates?
-- Which typed record supports this answer?
+- Which typed record or report-derived fact supports this displayed answer?
 - Which drilldown is still missing, malformed, or not applicable?
 
 Testable signals:
@@ -325,8 +333,8 @@ Status:
   this snapshot is not a semantic carrier.
 - Implemented: run-forest selections expose explicit parent/child node rows and
   keep graph topology edges separate from artifact-id edge rows.
-- Partial: typed record refs are present for run-forest evidence and artifact
-  source counts; full `Graph.evidence` locator rows are deferred.
+- Partial: typed record refs are present for run-forest source refs and artifact
+  source counts; full source/projection locator rows are deferred.
 - Partial: drilldown-candidate shell rows exist; typed availability is deferred.
 - Partial: unavailable-reason classification is visible for first shell rows.
 
@@ -341,7 +349,7 @@ selected widget payload
 
 The inspector may allocate labels for display, but it must not store copied
 semantic ids, records, or partial records as UI state. If a row cannot be
-resolved by a typed graph relation or evidence attachment, show `missing`,
+resolved by a typed graph relation or graph-loaded source ref, show `missing`,
 `blocked`, or `not_applicable` with the relevant answer-contract id.
 
 ### Bottom Timeline
@@ -358,7 +366,7 @@ Should contain:
 - parent, child, successor, selection, evaluation, tool, and provider spans as
   typed projections when available;
 - hover/selection sync with the center canvas;
-- explicit evidence strength for timestamp-only ordering.
+- explicit source/projection status for timestamp-only ordering.
 
 First-frame content contract:
 
@@ -368,7 +376,7 @@ First-frame content contract:
 | Run forest order | Which parent produced which children? | generation bands and selected node highlight | `Graph.forest` | Missing frame; canvas uses these facts. |
 | Runtime/selection joins | Where do runtime-local events join admitted History? | join availability rows for selection, handoff, evaluation | History, scheduler, runtime, selection indices | Missing/partial depending row. |
 | Evaluation/tool spans | Where did the child spend time, and what failed? | evaluation/tool/provider span availability status | evaluation, agent-turn, provider attempt projections | Blocked/partial: typed facts exist in places, but no graph-owned span projection is wired to egui. |
-| Evidence strength | Which order is causal vs timestamp/projection? | span badge: sealed, causal, timestamp, or projection | typed span refs and source evidence | Missing. |
+| Source/projection status | Which order is causal vs timestamp/projection? | span badge: sealed, causal, timestamp, or projection | typed span refs and source refs | Missing. |
 
 Questions supported:
 
@@ -393,9 +401,10 @@ Status:
 
 Implementation rule:
 
-The bottom lane is not a log dump. It is a compact span projection reachable
-from graph nodes, edges, inspector refs, or timeline span refs. Timestamps may
-help draw spans, but they must not be the only source of causality or nesting.
+The bottom lane is not a log dump. Live or completed runs may produce logs,
+reports, and typed records upstream, but `ploke-egui` should see them through
+`ploke_tree::Graph` or a graph-owned span projection. Timestamps may help draw
+spans, but they must not be the only source of causality or nesting.
 
 ## Frame-First Implementation Slices
 
@@ -412,10 +421,10 @@ currently exists.
 | `timeline.shell` | Bottom lane exists and can show empty/not-applicable/blocked status. | Contract report exposes timeline frame presence and span counts. | No timestamp-only causal reconstruction. |
 | `timeline.first-spans` | Compact spans for History/run-forest order. | Selecting a graph node can highlight a corresponding timeline row/span. | No provider/tool span detail until typed span refs exist. |
 
-`ploke-tree-egui` is the reference for presentation density and row grouping.
-Its browser snapshots are not the source model for these slices. When a
-browser-field idea is useful, port the row shape and field priority, then bind
-it to `&Graph` or a graph-owned answer object.
+The earlier `ploke-tree-egui` work is the reference for presentation density
+and row grouping. Its browser snapshots are not the source model for these
+slices. When a browser-field idea is useful, port the row shape and field
+priority, then bind it to `&Graph` or a graph-owned answer object.
 
 ## Default View Invariants
 
