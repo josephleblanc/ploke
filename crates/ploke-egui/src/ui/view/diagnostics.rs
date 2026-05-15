@@ -309,6 +309,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::ui::view::GraphSelectionRef;
     use crate::ui::view::projection::{GraphLayerMask, GraphNode};
 
     #[test]
@@ -402,6 +403,9 @@ mod tests {
         GraphNode::Artifact {
             label: Arc::from(label),
             detail: Arc::from(label),
+            reference: GraphSelectionRef::Artifact {
+                key: label.to_owned(),
+            },
             color: Color32::WHITE,
             layers: GraphLayerMask::ARTIFACT,
             visible: true,

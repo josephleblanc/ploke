@@ -192,6 +192,13 @@ pub struct GraphSelectionDetail {
     pub kind: String,
     pub label: String,
     pub detail: String,
+    pub reference: GraphSelectionRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphSelectionRef {
+    Artifact { key: String },
+    RunForestNode { key: String },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

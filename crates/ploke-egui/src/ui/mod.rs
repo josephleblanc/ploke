@@ -5,4 +5,5 @@
 //! application shell.
 
 pub mod app;
+pub mod inspector;
 pub mod view;

@@ -15,6 +15,7 @@ use crate::diagnostics::{
 use crate::import::graph_from_run_root;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
+use crate::ui::inspector::{SelectionInspector, SelectionInspectorSnapshot};
 use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
@@ -101,6 +102,9 @@ impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let graph_has_content = graph_has_content(&self.graph);
         let selected_detail = self.view.selected_node_detail();
+        let selected_inspector = selected_detail.as_ref().map(|selection| {
+            SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
+        });
 
         egui::Panel::top("top_strip")
             .default_size(layout::TOP_STRIP_HEIGHT)
@@ -146,7 +150,11 @@ impl eframe::App for OperatorApp {
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
-                shell::render_right_inspector(ui, selected_detail.as_ref());
+                shell::render_right_inspector(
+                    ui,
+                    selected_detail.as_ref(),
+                    selected_inspector.as_ref(),
+                );
             });
 
         egui::Panel::bottom("timeline")
@@ -209,6 +217,7 @@ impl OperatorApp {
             .with_run_error(self.run_error.clone())
             .with_run(run)
             .with_selected(self.view.selected_node_detail())
+            .with_selected_inspector(self.selected_inspector())
             .with_artifact_components(artifact_component_breakdown(&self.graph));
 
         let Some(sink) = &mut self.diagnostics_sink else {
@@ -234,6 +243,7 @@ impl OperatorApp {
                 .with_run_error(self.run_error.clone())
                 .with_run(self.run_snapshot())
                 .with_selected(self.view.selected_node_detail())
+                .with_selected_inspector(self.selected_inspector())
                 .with_artifact_components(artifact_component_breakdown(&self.graph));
             match write_manual_snapshot(observation) {
                 Ok(path) => {
@@ -251,6 +261,12 @@ impl OperatorApp {
         self.run_picker.selected_run().map(|run| RunSnapshot {
             name: run.name,
             path: run.path.display().to_string(),
+        })
+    }
+
+    fn selected_inspector(&self) -> Option<SelectionInspectorSnapshot> {
+        self.view.selected_node_detail().as_ref().map(|selection| {
+            SelectionInspector::from_graph(&self.graph, selection).snapshot(selection)
         })
     }
 }

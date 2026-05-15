@@ -18,6 +18,8 @@ pub struct Run {
     pub contract_report: bool,
     pub run_picker_report: bool,
     pub artifact_connectivity_report: bool,
+    #[cfg(feature = "dev")]
+    pub inspect_node: Option<String>,
 }
 
 impl Run {
@@ -32,6 +34,7 @@ impl Run {
                 contract_report: args.contract_report,
                 run_picker_report: args.run_picker_report,
                 artifact_connectivity_report: args.artifact_connectivity_report,
+                inspect_node: args.inspect_node,
             };
         }
 
@@ -79,6 +82,13 @@ struct Args {
         help = "Print artifact-tree connectivity for all discovered runs without opening the native UI"
     )]
     artifact_connectivity_report: bool,
+
+    #[arg(
+        long,
+        value_name = "NODE",
+        help = "Print the graph-resolved inspector for a visible node label like A1 or a graph key"
+    )]
+    inspect_node: Option<String>,
 
     #[arg(
         long,

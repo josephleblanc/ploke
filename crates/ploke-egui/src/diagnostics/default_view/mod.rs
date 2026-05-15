@@ -6,6 +6,7 @@ mod text;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::SelectionSnapshot;
+use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphViewDiagnostics, artifact_tree as tree};
 
 pub use components::ComponentBreakdown;
@@ -30,6 +31,7 @@ impl Report {
         graph_has_content: bool,
         run_error: Option<String>,
         selected: Option<SelectionSnapshot>,
+        selected_inspector: Option<SelectionInspectorSnapshot>,
         component_breakdown: Vec<ComponentBreakdown>,
     ) -> Self {
         let layout = Layout::current();
@@ -44,9 +46,14 @@ impl Report {
         let inspector = Inspector {
             right_inspector_present: true,
             selected_detail: selected,
-            record_refs_present: false,
-            drilldown_candidates_present: true,
+            record_refs_present: selected_inspector
+                .as_ref()
+                .is_some_and(SelectionInspectorSnapshot::has_record_refs),
+            drilldown_candidates_present: selected_inspector
+                .as_ref()
+                .is_some_and(SelectionInspectorSnapshot::has_edges),
             unavailable_reason_classified: true,
+            selected_inspector,
         };
         let timeline = Timeline {
             bottom_timeline_present: true,
@@ -231,6 +238,7 @@ impl From<tree::Marks> for Marks {
 pub struct Inspector {
     pub right_inspector_present: bool,
     pub selected_detail: Option<SelectionSnapshot>,
+    pub selected_inspector: Option<SelectionInspectorSnapshot>,
     pub record_refs_present: bool,
     pub drilldown_candidates_present: bool,
     pub unavailable_reason_classified: bool,

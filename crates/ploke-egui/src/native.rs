@@ -12,6 +12,8 @@ use crate::diagnostics::{
 use crate::import::graph_from_run_root;
 use crate::run_picker::RunPicker;
 use crate::ui::app::{OperatorApp, layout};
+#[cfg(feature = "dev")]
+use crate::ui::inspector::SelectionInspector;
 use crate::ui::view::{GraphView, GraphViewMode};
 use eframe::egui::{Vec2, ViewportBuilder};
 use ploke_tree::Graph;
@@ -44,6 +46,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "dev")]
     if run.contract_report {
         print_contract_report(&graph, run.mode, initial_run_root.as_deref())?;
+        return Ok(());
+    }
+    #[cfg(feature = "dev")]
+    if let Some(selector) = run.inspect_node.as_deref() {
+        print_node_inspector(&graph, selector)?;
         return Ok(());
     }
     let app = app(graph, run.mode, run.snapshot, picker)?;
@@ -116,6 +123,14 @@ fn print_contract_report(
         .with_artifact_components(artifact_component_breakdown(graph));
     let snapshot = Snapshot::from_observation(1, observation);
     print!("{}", snapshot.render_text());
+    Ok(())
+}
+
+#[cfg(feature = "dev")]
+fn print_node_inspector(graph: &Graph, selector: &str) -> Result<(), Box<dyn Error>> {
+    let (selection, inspector) = SelectionInspector::from_default_selector(graph, selector)
+        .ok_or_else(|| format!("no visible default graph node matches '{selector}'"))?;
+    print!("{}", inspector.snapshot(&selection).render_text());
     Ok(())
 }
 

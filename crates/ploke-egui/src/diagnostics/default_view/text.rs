@@ -142,6 +142,38 @@ impl Report {
         } else {
             let _ = writeln!(out, "selection: none");
         }
+        if let Some(inspector) = &self.inspector.selected_inspector {
+            let _ = writeln!(
+                out,
+                "selection inspector: identity={}, roles={}, incoming={}, outgoing={}, source_refs={}, unavailable={}",
+                inspector.identity.len(),
+                inspector.roles.len(),
+                inspector.incoming.len(),
+                inspector.outgoing.len(),
+                inspector.source_refs.len(),
+                inspector.unavailable.len()
+            );
+            for field in inspector.identity.iter().take(6) {
+                let _ = writeln!(out, "- identity.{}={}", field.label, field.value);
+            }
+            for edge in inspector.incoming.iter().take(4) {
+                let _ = writeln!(
+                    out,
+                    "- incoming.{}: {} -> {} ({})",
+                    edge.relation, edge.from, edge.to, edge.source_count
+                );
+            }
+            for edge in inspector.outgoing.iter().take(4) {
+                let _ = writeln!(
+                    out,
+                    "- outgoing.{}: {} -> {} ({})",
+                    edge.relation, edge.from, edge.to, edge.source_count
+                );
+            }
+            for source_ref in inspector.source_refs.iter().take(4) {
+                let _ = writeln!(out, "- source_ref={source_ref}");
+            }
+        }
         let _ = writeln!(
             out,
             "inspector: present={}, record_refs={}, drilldowns={}, unavailable_reasons={}",

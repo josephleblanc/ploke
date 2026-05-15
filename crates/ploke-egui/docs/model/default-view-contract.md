@@ -279,14 +279,14 @@ First-frame content contract:
 
 | Section | Question answered | First slice content | Source | Status |
 |---|---|---|---|---|
-| Summary | What exactly did I select? | display label, selected graph kind, status/result class when available | selected widget payload plus borrowed `Graph` lookup | Partial: selected text exists in the right inspector, mostly as copied detail text. |
-| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | node id, generation, parent node id, branch id, candidate id, base/derived artifact ids | `Graph.forest` / `TreeNode` refs | Missing as structured right-panel rows; available today only as detail text. |
+| Summary | What exactly did I select? | display label and selected graph kind | selected widget payload plus borrowed `Graph` lookup | Implemented for selected nodes. |
+| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | node id, candidate id, source/base/derived artifact ids, patch id when present | `Graph.forest` / `TreeNode` refs; fallback `Graph.artifact_tree()` refs | Partial: structured rows exist for run-forest nodes and artifact fallback nodes. |
 | Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
-| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Missing as inspector section; visible in canvas topology. |
+| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Partial: immediate incoming/outgoing edge rows exist; full ancestry path is deferred. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
-| Evidence | Which typed records support this answer? | evidence ids/record refs, source family, evidence strength/projection status | `Graph.evidence`, History/evaluation/passive evidence records | Missing as UI rows; must not be inferred from rendered strings. |
-| Drill next | What can I inspect next? | availability rows for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract row status | Missing. |
+| Evidence | Which typed records support this answer? | source record refs and evidence counts | `TreeNode.evidence`, artifact source evidence counts | Partial: record-ref rows exist where the graph projection exposes them; evidence-strength classification is deferred. |
+| Drill next | What can I inspect next? | availability rows for lineage, candidate set, patch diff, eval actions, tool calls, provider attempts | typed drilldown contract row status | Partial: static rows exist; typed availability is deferred. |
 
 Questions supported:
 
@@ -299,6 +299,8 @@ Testable signals:
 
 - `layout.right_inspector.present = true`
 - `selection.detail.present = true when selected`
+- `--inspect-node A1` prints the same graph-resolved inspector projection
+  without opening the GUI.
 - `selection.record_refs.present = true when available`
 - `selection.drilldown_candidates.present = true`
 - `selection.unavailable_reason in {missing, not_applicable, failed}`
@@ -306,9 +308,15 @@ Testable signals:
 Status:
 
 - Implemented: separate right inspector frame exists.
-- Partial: selected-node detail exists in the right inspector.
-- Missing: typed record refs in the inspector.
-- Missing: drilldown-candidate list.
+- Implemented: selected widget payload carries a `GraphSelectionRef`.
+- Implemented: selected-node inspection resolves to a typed borrowed
+  `SelectionInspector<'_>` over `Graph` facts before any render strings are
+  produced.
+- Implemented: egui/text/JSON use a downstream `SelectionInspectorSnapshot`;
+  this snapshot is not a semantic carrier.
+- Partial: typed record refs are present for run-forest evidence and artifact
+  source counts; full `Graph.evidence` locator rows are deferred.
+- Partial: drilldown-candidate shell rows exist; typed availability is deferred.
 - Partial: unavailable-reason classification is visible for first shell rows.
 
 Implementation rule:
@@ -316,8 +324,8 @@ Implementation rule:
 ```text
 selected widget payload
   -> GraphSelectionRef
-  -> borrowed Graph inspector answer
-  -> render-only rows
+  -> borrowed typed Graph inspector answer
+  -> render-only snapshot / rows
 ```
 
 The inspector may allocate labels for display, but it must not store copied

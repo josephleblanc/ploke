@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
+use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics};
 pub use default_view::{
     CheckStatus as ContractCheckStatus, ComponentBreakdown, Layout as DefaultViewLayout,
@@ -94,6 +95,7 @@ pub struct SnapshotObservation {
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
     pub selected: Option<SelectionSnapshot>,
+    pub selected_inspector: Option<SelectionInspectorSnapshot>,
 }
 
 impl SnapshotObservation {
@@ -105,6 +107,7 @@ impl SnapshotObservation {
             run_error: None,
             run: None,
             selected: None,
+            selected_inspector: None,
         }
     }
 
@@ -125,6 +128,14 @@ impl SnapshotObservation {
 
     pub fn with_selected(mut self, selected: Option<GraphSelectionDetail>) -> Self {
         self.selected = selected.map(SelectionSnapshot::from);
+        self
+    }
+
+    pub(crate) fn with_selected_inspector(
+        mut self,
+        inspector: Option<SelectionInspectorSnapshot>,
+    ) -> Self {
+        self.selected_inspector = inspector;
         self
     }
 
@@ -207,12 +218,14 @@ impl Snapshot {
             run_error,
             run,
             selected,
+            selected_inspector,
         } = observation;
         let default_view_contract = DefaultViewContractReport::from_parts(
             &diagnostics,
             graph_has_content,
             run_error,
             selected,
+            selected_inspector,
             artifact_components,
         );
         Self::from_diagnostics_and_contract(sequence, run, diagnostics, default_view_contract)

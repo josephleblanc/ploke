@@ -21,8 +21,8 @@ use super::edge::GraphEdgeShape;
 use super::node::GraphNodeShape;
 use super::style::{EdgeStyle, ViewStyle};
 use super::{
-    EdgeLabelDiagnostics, GraphConnectivityDiagnostics, GraphSelectionDetail, GraphViewDiagnostics,
-    GraphViewMode,
+    EdgeLabelDiagnostics, GraphConnectivityDiagnostics, GraphSelectionDetail, GraphSelectionRef,
+    GraphViewDiagnostics, GraphViewMode,
 };
 
 pub(super) type WidgetGraph = egui_graphs::Graph<
@@ -138,6 +138,7 @@ impl GraphViewCache {
             kind: payload.kind_name().to_owned(),
             label: payload.label().to_owned(),
             detail: payload.detail().to_owned(),
+            reference: payload.reference().clone(),
         })
     }
 
@@ -331,6 +332,7 @@ pub(super) enum GraphNode {
     Artifact {
         label: Arc<str>,
         detail: Arc<str>,
+        reference: GraphSelectionRef,
         color: Color32,
         layers: GraphLayerMask,
         visible: bool,
@@ -353,6 +355,12 @@ impl GraphNode {
     fn detail(&self) -> &str {
         match self {
             Self::Artifact { detail, .. } => detail,
+        }
+    }
+
+    fn reference(&self) -> &GraphSelectionRef {
+        match self {
+            Self::Artifact { reference, .. } => reference,
         }
     }
 
@@ -600,6 +608,9 @@ fn project_run_forest_artifact_tree(
         let graph_node = raw.add_node(GraphNode::Artifact {
             label: Arc::from(artifact_handle_label(node_lookup.len() + 1)),
             detail: Arc::from(run_forest_node_detail(node)),
+            reference: GraphSelectionRef::RunForestNode {
+                key: node.key.as_str().to_owned(),
+            },
             color: run_forest_node_color(node, style),
             layers: GraphLayerMask::ARTIFACT,
             visible: true,
@@ -953,6 +964,9 @@ fn add_artifact_tree_node<'a>(
     let node = raw.add_node(GraphNode::Artifact {
         label: Arc::from(artifact_handle_label(artifact_nodes.len() + 1)),
         detail: Arc::from(artifact.detail_text()),
+        reference: GraphSelectionRef::Artifact {
+            key: key.as_str().to_owned(),
+        },
         color: style.edge.colors.synthesized,
         layers: GraphLayerMask::ARTIFACT,
         visible: true,
