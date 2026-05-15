@@ -3076,7 +3076,7 @@ mod tests {
 
     #[test]
     fn off_context_prompt_is_not_context_unavailable() {
-        let fallback = "Context mode is Off; proceeding without code context.";
+        let fallback = "Context mode is Off; workspace loaded at /tmp/candidate. Proceeding without code context.";
         let diagnostic = PromptDiagnostic {
             parent_id: Uuid::from_u128(9).to_string(),
             workspace: WorkspaceDiagnostic {
@@ -3422,7 +3422,9 @@ Do not call tools. Do not propose edits. This canary only checks context mode Of
         assert!(
             matches!(
                 diagnostic.fallback_notice.as_deref(),
-                Some("Context mode is Off; proceeding without code context.")
+                Some(notice)
+                    if notice.starts_with("Context mode is Off; workspace loaded at ")
+                        && notice.contains("Proceeding without code context.")
             ),
             "expected Off fallback notice, got {:?}",
             diagnostic.fallback_notice
@@ -3627,7 +3629,9 @@ Do not call tools. Do not propose edits. This canary only checks context mode Of
         assert!(
             matches!(
                 diagnostic.fallback_notice.as_deref(),
-                Some("Context mode is Off; proceeding without code context.")
+                Some(notice)
+                    if notice.starts_with("Context mode is Off; workspace loaded at ")
+                        && notice.contains("Proceeding without code context.")
             ),
             "expected intentional Off fallback notice, got {:?}; artifacts at {}",
             diagnostic.fallback_notice,

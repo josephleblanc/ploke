@@ -6,7 +6,7 @@ use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 use super::*;
 use ploke_core::RetrievalScope;
 
-// Canonical schema: RequestCodeContextArgs { token_budget, hint }
+// Canonical schema: RequestCodeContextArgs { token_budget, search_term }
 pub struct RequestCodeContext {
     rag: Arc<RagService>,
 }
@@ -24,12 +24,12 @@ lazy_static::lazy_static! {
             "properties": {
                 "search_term": {
                     "type": "string",
-                    "description": "A likely identifier, module, file, error, or other narrowing term for broad code retrieval. Prefer exact symbols or nearby file/module names over long natural-language guesses."
+                    "description": "Search query for code graph retrieval. Good values include identifiers, module names, file names, error names, type names, or concise code terms."
                 },
                 "token_budget": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Optional maximum tokens of code context to return, sane defaults"
+                    "description": "Optional maximum token budget for returned code context."
                 }
             }
         }
@@ -258,18 +258,18 @@ mod gat_tests {
             "type": "function",
             "function": {
                 "name": "request_code_context",
-                "description": "Request broad code context from the indexed workspace up to a token budget. Best for exploratory retrieval when you have likely identifiers, module names, file names, or error/type names. If it returns 0 snippets or broad irrelevant snippets, narrow the query with exact symbols or switch to code_item_lookup for exact definitions, or use list_dir/read_file once you know the area.",
+                "description": "Search the indexed workspace code graph and return ranked code snippets up to a token budget. Use this as the default broad code search when you have identifiers, module or file names, error names, type names, or other code terms but do not yet know an exact path. It currently uses sparse vector search with BM25 over the loaded workspace.\n",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "search_term": {
                             "type": "string",
-                            "description": "A likely identifier, module, file, error, or other narrowing term for broad code retrieval. Prefer exact symbols or nearby file/module names over long natural-language guesses."
+                            "description": "Search query for code graph retrieval. Good values include identifiers, module names, file names, error names, type names, or concise code terms."
                         },
                         "token_budget": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Optional maximum tokens of code context to return, sane defaults"
+                            "description": "Optional maximum token budget for returned code context."
                         }
                     }
                 }

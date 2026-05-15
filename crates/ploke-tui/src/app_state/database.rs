@@ -157,9 +157,18 @@ impl IndexTarget {
                 Some(IndexTargetDir::new(path.clone()))
             }
             Self::LoadedWorkspace => status.loaded_workspace_root().map(IndexTargetDir::new),
-            Self::LoadedCrate(crate_id) => status
-                .loaded_crate(crate_id)
-                .map(|loaded| IndexTargetDir::new(loaded.context.root_path.clone())),
+            Self::LoadedCrate(crate_id) => status.loaded_crate(crate_id).map(|loaded| {
+                let loaded_root = &loaded.context.root_path;
+                let member_roots = status.loaded_workspace_member_roots();
+                let is_workspace_member = member_roots.iter().any(|root| root == loaded_root);
+
+                if is_workspace_member && let Some(workspace_root) = status.loaded_workspace_root()
+                {
+                    IndexTargetDir::new(workspace_root)
+                } else {
+                    IndexTargetDir::new(loaded_root.clone())
+                }
+            }),
         }
     }
 
@@ -2066,6 +2075,27 @@ mod tests {
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
     use crate::test_support::config_home_lock;
+
+    #[test]
+    fn loaded_crate_index_target_preserves_workspace_root_for_member() {
+        let workspace_root = PathBuf::from("/repo/workspace");
+        let member_a = workspace_root.join("crates/ploke-protocol");
+        let member_b = workspace_root.join("crates/ploke-tui");
+        let member_a_id = CrateId::from_root_path(&member_a);
+
+        let mut status = SystemStatus::default();
+        status.set_loaded_workspace(
+            workspace_root.clone(),
+            vec![member_a.clone(), member_b],
+            Some(member_a),
+        );
+
+        let resolved = IndexTarget::LoadedCrate(member_a_id)
+            .resolve_against_loaded_state(&status)
+            .expect("loaded crate target should resolve");
+
+        assert_eq!(resolved.as_path(), workspace_root.as_path());
+    }
 
     struct XdgConfigHomeGuard {
         old_xdg: Option<String>,

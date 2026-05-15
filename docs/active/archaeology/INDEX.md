@@ -1,0 +1,5 @@
+# Archaeology Index
+
+| archaeology id | domain claim | chosen primary carrier | status | UI fields | `ploke-records` | `ploke-tree` | `ploke-eval` | `ploke-tui` | `ploke-llm` | report |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `artifact-identity` | identify an Artifact in inspector surfaces without collapsing identity, handle, and provenance | `ArtifactId` as primary UI handle; `ArtifactRef` as alias; `TreeKeyHash` as stronger checkout identity when/if exposed to `Graph` | `draft` | `render_artifact_identity`, run-forest `base artifact` / `derived artifact` rows, planned `Artifact Ids` drilldown | `ids::ArtifactId`, `history::ArtifactRefRecord` | `graph::ArtifactIdentity`, `graph::ArtifactNode`, artifact-tree grouping sources | `loop_graph::ArtifactId`, `Prototype1NodeRecord.base_artifact_id`, `Prototype1NodeRecord.derived_artifact_id`, `selection::artifact_ref`, `history::ArtifactSurface.tree_key` | none yet | none | [`ploke-tree-graph/artifact-identity.md`](ploke-tree-graph/artifact-identity.md) |

@@ -1084,6 +1084,11 @@ impl<'a> SystemTxn<'a> {
         self.state.has_loaded_crates()
     }
 
+    /// Returns the loaded workspace root, when one is available.
+    pub fn loaded_workspace_root(&self) -> Option<PathBuf> {
+        self.state.loaded_workspace_root()
+    }
+
     /// Returns a vector of all loaded crate IDs.
     pub fn loaded_crate_ids(&self) -> Vec<CrateId> {
         self.state.loaded_crates.keys().copied().collect()

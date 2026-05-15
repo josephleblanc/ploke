@@ -197,6 +197,12 @@ fn render_run_forest_identity(ui: &mut egui::Ui, run: &RunForestNodeInspection<'
     if let Some(parent) = identity.parent_node {
         kv(ui, "parent run forest node", parent);
     }
+    // Artifact ids are still rendered as plain expandable ids here. The intended
+    // UI is a progressive-discovery "Artifact Ids" drilldown that shows compact
+    // prefix + short-hash forms first, expands to the full value on click, and
+    // keeps copy affordances available for debugging. See
+    // docs/active/archaeology/ploke-tree-graph/artifact-identity.md before
+    // refactoring this into shared interaction behavior.
     if let Some(base) = identity.base_artifact {
         kv(ui, "base artifact", base);
     }
@@ -212,8 +218,14 @@ fn render_run_forest_identity(ui: &mut egui::Ui, run: &RunForestNodeInspection<'
     kv(ui, "result", result_class_label(identity.result));
 }
 
+/// archaeology:artifact-identity
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
 fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
     let identity = artifact.identity();
+    // This is still a flat identity row. The next intended shape is a collapsed
+    // "Artifact Ids" inspector section near the bottom of the panel, with typed
+    // artifact identity slots rendered as compact prefix + short-hash values and
+    // expanding to full ids on click/right-click.
     kv(ui, "artifact", identity.artifact());
 }
 
