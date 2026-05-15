@@ -66,25 +66,31 @@ The default native layout should be:
 Current implementation:
 
 ```text
-+----------------+----------------------------------------------+
-| Left panel     |                                              |
-| run picker     |              graph canvas                    |
-| mode picker    |                                              |
-| counts         |                                              |
-| selected node  |                                              |
-| diagnostics    |                                              |
-+----------------+----------------------------------------------+
++-----------------------------------------------------------------------+
+| top strip: run + mode                                                 |
++----------------+----------------------------------+-------------------+
+| left controls  |                                  | right inspector   |
+| run picker     |          graph canvas            | selected summary  |
+| mode picker    |                                  | identity/details  |
+| counts         |                                  | drill next        |
+| diagnostics    |                                  |                   |
++----------------+----------------------------------+-------------------+
+| bottom timeline shell: order/status/selection sync                    |
++-----------------------------------------------------------------------+
 ```
 
 Default width budget:
 
-- The initial native window is `800px` wide.
+- The initial native window is `1280px` wide.
 - The left sidebar default width is `200px`.
 - The left sidebar maximum width is `240px`.
-- The center graph canvas default width is `600px`.
-- Therefore the graph canvas starts at `75%` of the initial window width.
-- Contract: the graph canvas keeps at least `70%` of the initial window width
-  even when the left sidebar is at its maximum width.
+- The right inspector default width is `300px`.
+- The right inspector maximum width is `360px`.
+- The center graph canvas default width is `780px`.
+- Therefore the graph canvas starts at about `61%` of the initial window width.
+- Contract: with both side panels visible, the graph canvas remains the largest
+  region and keeps at least `50%` of the initial window width even when both
+  side panels are at their maximum width.
 
 ## Question To Frame Map
 
@@ -94,8 +100,8 @@ status rows instead of empty space or inferred facts.
 
 | Question family | Primary frame | First visible answer | Source facts | Current status |
 |---|---|---|---|---|
-| Run load/progress | Top strip, left sidebar | loaded/empty/failed, generation/node counts | `&Graph`, run picker state, `RunForest` when present | Partial: counts exist in the left panel; top strip is missing. |
-| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas exists; inspector is missing. |
+| Run load/progress | Top strip, left sidebar | loaded/empty/failed, generation/node counts | `&Graph`, run picker state, `RunForest` when present | Partial: counts exist in the left panel and top strip; richer generation summary is missing. |
+| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas and inspector shell exist; structured lineage rows are incomplete. |
 | Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | scheduler nodes, candidate/branch graph indices | Partial: visible siblings exist for run-forest topology; candidate drilldown is missing. |
 | Successor selection | Right inspector | selected candidate/member, considered count, candidate-set root | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries selection facts; no inspector answer path yet. |
 | Evidence and authority | Right inspector | typed record refs, evidence strength, missing/not-applicable/failed | `Graph.evidence`, warnings, History records | Missing: diagnostic shape exists; inspector rows do not. |
@@ -171,7 +177,9 @@ Testable signals:
 - `layout.left_sidebar.present = true`
 - `layout.width_budget.left_sidebar_width_logical_px > 0`
 - `layout.width_budget.left_sidebar_max_width_logical_px <= 240`
-- `layout.width_budget.center_canvas_width_percent >= 70`
+- `layout.width_budget.right_inspector_width_logical_px > 0`
+- `layout.width_budget.right_inspector_max_width_logical_px <= 360`
+- `layout.width_budget.center_canvas_width_percent >= 50`
 - `facts.history_blocks.count >= 0`
 - `facts.artifacts.count >= 0`
 - `facts.candidates.count >= 0`
@@ -271,7 +279,7 @@ First-frame content contract:
 
 | Section | Question answered | First slice content | Source | Status |
 |---|---|---|---|---|
-| Summary | What exactly did I select? | display label, selected graph kind, status/result class when available | selected widget payload plus borrowed `Graph` lookup | Partial: selected text exists, but in the left panel and mostly as copied detail text. |
+| Summary | What exactly did I select? | display label, selected graph kind, status/result class when available | selected widget payload plus borrowed `Graph` lookup | Partial: selected text exists in the right inspector, mostly as copied detail text. |
 | Identity | Which generation, parent, child, artifact, and candidate does this belong to? | node id, generation, parent node id, branch id, candidate id, base/derived artifact ids | `Graph.forest` / `TreeNode` refs | Missing as structured right-panel rows; available today only as detail text. |
 | Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
 | Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Missing as inspector section; visible in canvas topology. |
@@ -297,11 +305,11 @@ Testable signals:
 
 Status:
 
-- Partial: selected-node detail exists in the left panel.
-- Missing: separate right inspector.
+- Implemented: separate right inspector frame exists.
+- Partial: selected-node detail exists in the right inspector.
 - Missing: typed record refs in the inspector.
 - Missing: drilldown-candidate list.
-- Missing: unavailable-reason classification.
+- Partial: unavailable-reason classification is visible for first shell rows.
 
 Implementation rule:
 
@@ -359,9 +367,10 @@ Testable signals:
 
 Status:
 
-- Missing: bottom timeline.
+- Implemented: bottom timeline frame exists.
 - Missing: timeline span projection in `ploke-egui`.
-- Missing: selection sync between timeline and graph.
+- Partial: selection status is reflected in the timeline shell; visual span
+  highlighting is missing.
 
 Implementation rule:
 
@@ -412,8 +421,8 @@ DefaultView :=
 Required pass/fail checks:
 
 - The default mode is `ArtifactTree`.
-- The default center canvas receives at least `70%` of the initial native window
-  width.
+- The default center canvas is the largest horizontal region and receives at
+  least `50%` of the initial native window width with both side panels visible.
 - A non-empty real Prototype 1 run renders run-forest nodes in the center
   canvas; fallback artifact-only graphs render artifact nodes.
 - The default canvas does not render synthetic anchor nodes.
@@ -433,8 +442,8 @@ Current status:
   `E_F`, `P_H`, and `P_B`.
 - Implemented: selected detail is represented in the default-view diagnostic
   shape when selection exists.
-- Partial: layout-region presence is reported for major regions, but tests
-  still need specific real-run coverage.
+- Implemented: layout-region presence is reported for the top, left, center,
+  right, and bottom frames.
 - Implemented: pass/fail contract report exists for the current diagnostic
   shape.
 - Partial: the run-forest path reports graph-owned topology; fallback

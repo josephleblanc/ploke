@@ -19,10 +19,14 @@ impl Report {
         );
         let _ = writeln!(
             out,
-            "layout widths: default_window={}px, left_sidebar={}px, left_sidebar_max={}px, center_canvas={}px, min_center_canvas={}px, center_canvas={}%, min_center_canvas={}%, passes={}",
+            "layout widths: default_window={}px, left_sidebar={}px, left_sidebar_max={}px, right_inspector={}px, right_inspector_max={}px, center_canvas={}px, min_center_canvas={}px, center_canvas={}%, min_center_canvas={}%, passes={}",
             self.layout.width_budget.default_window_width_logical_px,
             self.layout.width_budget.left_sidebar_width_logical_px,
             self.layout.width_budget.left_sidebar_max_width_logical_px,
+            self.layout.width_budget.right_inspector_width_logical_px,
+            self.layout
+                .width_budget
+                .right_inspector_max_width_logical_px,
             self.layout.width_budget.center_canvas_width_logical_px,
             self.layout.width_budget.min_center_canvas_width_logical_px,
             self.layout.width_budget.center_canvas_width_percent,
@@ -138,6 +142,23 @@ impl Report {
         } else {
             let _ = writeln!(out, "selection: none");
         }
+        let _ = writeln!(
+            out,
+            "inspector: present={}, record_refs={}, drilldowns={}, unavailable_reasons={}",
+            self.inspector.right_inspector_present,
+            self.inspector.record_refs_present,
+            self.inspector.drilldown_candidates_present,
+            self.inspector.unavailable_reason_classified
+        );
+        let _ = writeln!(
+            out,
+            "timeline: present={}, compact={}, synced_selection={}, spans_reported={}, order_strength_reported={}",
+            self.timeline.bottom_timeline_present,
+            self.timeline.compact,
+            self.timeline.synced_selection,
+            self.timeline.spans_reported,
+            self.timeline.order_strength_reported
+        );
         let _ = writeln!(out, "checks:");
         for check in &self.checks {
             let _ = writeln!(out, "- {:?}: {}", check.status, check.id);

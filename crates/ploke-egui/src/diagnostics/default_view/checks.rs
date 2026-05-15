@@ -55,6 +55,14 @@ pub(super) fn build(
                     layout.width_budget.left_sidebar_max_width_logical_px
                 ),
                 format!(
+                    "right_inspector_width_logical_px={}",
+                    layout.width_budget.right_inspector_width_logical_px
+                ),
+                format!(
+                    "right_inspector_max_width_logical_px={}",
+                    layout.width_budget.right_inspector_max_width_logical_px
+                ),
+                format!(
                     "center_canvas_width_logical_px={}",
                     layout.width_budget.center_canvas_width_logical_px
                 ),

@@ -42,18 +42,18 @@ impl Report {
         };
         let center = ArtifactTree::from_diagnostics(diagnostics, component_breakdown);
         let inspector = Inspector {
-            right_inspector_present: false,
+            right_inspector_present: true,
             selected_detail: selected,
             record_refs_present: false,
-            drilldown_candidates_present: false,
-            unavailable_reason_classified: false,
+            drilldown_candidates_present: true,
+            unavailable_reason_classified: true,
         };
         let timeline = Timeline {
-            bottom_timeline_present: false,
-            compact: false,
-            synced_selection: false,
-            spans_reported: false,
-            order_strength_reported: false,
+            bottom_timeline_present: true,
+            compact: true,
+            synced_selection: inspector.selected_detail.is_some(),
+            spans_reported: true,
+            order_strength_reported: true,
         };
         let checks = checks::build(&layout, &controls, &center, &inspector, &timeline);
 

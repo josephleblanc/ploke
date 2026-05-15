@@ -692,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn default_view_contract_reports_current_layout_gaps() {
+    fn default_view_contract_reports_current_layout_shell() {
         let mut diagnostics = diagnostics();
         diagnostics.node_count = 3;
         diagnostics.edge_count = 2;
@@ -713,12 +713,12 @@ mod tests {
         let report = &snapshot.default_view_contract;
         assert!(report.layout.left_sidebar_present);
         assert!(report.layout.center_canvas_present);
-        assert!(!report.layout.top_strip_present);
-        assert!(!report.layout.right_inspector_present);
-        assert!(!report.layout.bottom_timeline_present);
+        assert!(report.layout.top_strip_present);
+        assert!(report.layout.right_inspector_present);
+        assert!(report.layout.bottom_timeline_present);
         assert_eq!(
             report.layout.width_budget.default_window_width_logical_px,
-            800
+            1280
         );
         assert_eq!(
             report.layout.width_budget.left_sidebar_width_logical_px,
@@ -729,20 +729,31 @@ mod tests {
             240
         );
         assert_eq!(
+            report.layout.width_budget.right_inspector_width_logical_px,
+            300
+        );
+        assert_eq!(
+            report
+                .layout
+                .width_budget
+                .right_inspector_max_width_logical_px,
+            360
+        );
+        assert_eq!(
             report.layout.width_budget.center_canvas_width_logical_px,
-            600
+            780
         );
         assert_eq!(
             report
                 .layout
                 .width_budget
                 .min_center_canvas_width_logical_px,
-            560
+            680
         );
-        assert_eq!(report.layout.width_budget.center_canvas_width_percent, 75);
+        assert_eq!(report.layout.width_budget.center_canvas_width_percent, 61);
         assert_eq!(
             report.layout.width_budget.min_center_canvas_width_percent,
-            70
+            50
         );
         assert!(report.layout.width_budget.center_canvas_satisfies_minimum());
         assert_eq!(report.center.nodes.a, 3);
@@ -788,14 +799,14 @@ mod tests {
             statuses["center-canvas-width-budget"],
             ContractCheckStatus::Passed
         );
-        assert_eq!(statuses["top-strip-present"], ContractCheckStatus::Missing);
+        assert_eq!(statuses["top-strip-present"], ContractCheckStatus::Passed);
         assert_eq!(
             statuses["right-inspector-present"],
-            ContractCheckStatus::Missing
+            ContractCheckStatus::Passed
         );
         assert_eq!(
             statuses["bottom-timeline-present"],
-            ContractCheckStatus::Missing
+            ContractCheckStatus::Passed
         );
     }
 
@@ -816,11 +827,11 @@ mod tests {
         let text = snapshot.render_text();
         assert!(text.contains("default-view contract:"));
         assert!(text.contains(
-            "layout widths: default_window=800px, left_sidebar=200px, left_sidebar_max=240px, center_canvas=600px"
+            "layout widths: default_window=1280px, left_sidebar=200px, left_sidebar_max=240px, right_inspector=300px, right_inspector_max=360px, center_canvas=780px"
         ));
         assert!(text.contains("Failed: default-mode-artifact-tree"));
         assert!(text.contains("Failed: non-empty-artifact-run-renders-nodes"));
         assert!(text.contains("Failed: synthetic-anchors-hidden"));
-        assert!(text.contains("Missing: right-inspector-present"));
+        assert!(text.contains("Passed: right-inspector-present"));
     }
 }

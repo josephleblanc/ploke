@@ -1,6 +1,7 @@
 //! eframe application shell for the operator graph UI.
 
 pub(crate) mod layout;
+mod shell;
 
 use eframe::egui;
 use ploke_tree::Graph;
@@ -78,10 +79,40 @@ impl OperatorApp {
         self.close_after_snapshot = true;
         self
     }
+
+    fn current_run_name(&self) -> Option<String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            return self
+                .run_picker
+                .selected_run()
+                .map(|run| run.name)
+                .filter(|name| !name.is_empty());
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    }
 }
 
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let graph_has_content = graph_has_content(&self.graph);
+        let selected_detail = self.view.selected_node_detail();
+
+        egui::Panel::top("top_strip")
+            .default_size(layout::TOP_STRIP_HEIGHT)
+            .show_inside(ui, |ui| {
+                shell::render_top_strip(
+                    ui,
+                    self.view.mode(),
+                    self.current_run_name().as_deref(),
+                    graph_has_content,
+                );
+            });
+
         egui::Panel::left("run_navigation")
             .default_size(layout::LEFT_SIDEBAR_WIDTH)
             .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
@@ -93,12 +124,6 @@ impl eframe::App for OperatorApp {
                         self.render_run_picker(ui);
                         render_mode_picker(ui, &mut self.view);
                         render_graph_facts(ui, &self.graph);
-                        if let Some(selection) = self.view.selected_node_detail() {
-                            ui.separator();
-                            ui.heading("Selected");
-                            ui.label(format!("{} {}", selection.kind, selection.label));
-                            ui.monospace(selection.detail);
-                        }
                         if let Some(diagnostics) = self.view.diagnostics() {
                             ui.separator();
                             #[cfg(not(target_arch = "wasm32"))]
@@ -117,8 +142,25 @@ impl eframe::App for OperatorApp {
                     });
             });
 
+        egui::Panel::right("selection_inspector")
+            .default_size(layout::RIGHT_INSPECTOR_WIDTH)
+            .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
+            .show_inside(ui, |ui| {
+                shell::render_right_inspector(ui, selected_detail.as_ref());
+            });
+
+        egui::Panel::bottom("timeline")
+            .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
+            .show_inside(ui, |ui| {
+                shell::render_bottom_timeline(
+                    ui,
+                    self.view.diagnostics().as_ref(),
+                    selected_detail.as_ref(),
+                );
+            });
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            if graph_has_content(&self.graph) {
+            if graph_has_content {
                 self.view.show(ui, &self.graph);
             } else {
                 ui.centered_and_justified(|ui| {

@@ -92,7 +92,7 @@ fn print_contract_report(
         mode,
         Vec2::new(
             layout::DEFAULT_CENTER_CANVAS_WIDTH,
-            layout::DEFAULT_WINDOW_HEIGHT,
+            layout::DEFAULT_CENTER_CANVAS_HEIGHT,
         ),
     )
     .ok_or_else(|| {
