@@ -6,5 +6,6 @@
 
 pub mod app;
 pub(crate) mod diff;
+pub(crate) mod id_display;
 pub mod inspector;
 pub mod view;

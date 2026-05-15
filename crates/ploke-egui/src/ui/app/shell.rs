@@ -3,6 +3,7 @@
 use eframe::egui;
 
 use crate::ui::diff;
+use crate::ui::id_display;
 use crate::ui::inspector::{
     InspectorEdge, InspectorRow, PatchSnapshot, SelectionInspectorSnapshot,
 };
@@ -141,7 +142,7 @@ pub(crate) fn render_bottom_timeline(
 fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal(|ui| {
         ui.label(key);
-        ui.monospace(value);
+        id_display::expandable_id(ui, ("kv", key, value), value);
     });
 }
 
@@ -161,15 +162,22 @@ fn render_edges(ui: &mut egui::Ui, direction: &str, edges: &[InspectorEdge]) {
         return;
     }
     for edge in edges {
-        kv(
-            ui,
-            direction,
-            format!(
-                "{} {} -> {} ({})",
-                edge.relation, edge.from, edge.to, edge.source_count
-            )
-            .as_str(),
-        );
+        ui.horizontal(|ui| {
+            ui.label(direction);
+            ui.monospace(edge.relation.as_str());
+            id_display::expandable_id(
+                ui,
+                ("edge-from", direction, &edge.relation, &edge.from),
+                &edge.from,
+            );
+            ui.label("->");
+            id_display::expandable_id(
+                ui,
+                ("edge-to", direction, &edge.relation, &edge.to),
+                &edge.to,
+            );
+            ui.monospace(format!("({})", edge.source_count));
+        });
     }
 }
 
@@ -179,7 +187,7 @@ fn render_source_refs(ui: &mut egui::Ui, source_refs: &[String]) {
         return;
     }
     for source_ref in source_refs.iter().take(8) {
-        ui.monospace(source_ref.as_str());
+        id_display::expandable_id(ui, ("source-ref", source_ref), source_ref.as_str());
     }
     if source_refs.len() > 8 {
         kv(ui, "more", &format!("{}", source_refs.len() - 8));
@@ -192,7 +200,10 @@ fn render_patches(ui: &mut egui::Ui, patches: &[PatchSnapshot]) {
         return;
     }
     for patch in patches {
-        ui.monospace(format!("patch {}", patch.patch_id));
+        ui.horizontal(|ui| {
+            ui.label("patch");
+            id_display::expandable_id(ui, ("patch", &patch.patch_id), patch.patch_id.as_str());
+        });
         render_fields(ui, &patch.summary);
         if patch.touches.is_empty() {
             kv(ui, "touches", "none");
