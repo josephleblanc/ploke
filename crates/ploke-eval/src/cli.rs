@@ -4192,25 +4192,23 @@ impl MbeRunsCommand {
 impl MbeCampaignCandidatesCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         println!(
-            "generation\tnode\tparent\tpatch\tbytes\tlines\tinstance\ttreatment_campaign\tsubmission"
+            "generation\tnode\tparent\tprimary_instance\tcohort\tnonempty\toracle\tbytes\tlines\tinstances\ttreatment_campaign"
         );
         for candidate in crate::mbe::campaign_candidates(&self.campaign, self.nonempty_only)? {
-            let patch = if candidate.empty_patch() {
-                "empty"
-            } else {
-                "nonempty"
-            };
+            let oracle = candidate.oracle_eligible_instance_count()?;
             println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 candidate.generation(),
                 candidate.node_id(),
                 candidate.parent_node_id().unwrap_or("-"),
-                patch,
-                candidate.fix_patch_bytes(),
-                candidate.fix_patch_lines(),
-                candidate.instance_id(),
+                candidate.primary_instance_id(),
+                candidate.cohort_size(),
+                candidate.nonempty_instance_count(),
+                oracle,
+                candidate.total_fix_patch_bytes(),
+                candidate.total_fix_patch_lines(),
+                candidate.instance_ids().join(","),
                 candidate.treatment_campaign_id()?,
-                candidate.submission_path()?.display()
             );
         }
         Ok(())
@@ -4220,7 +4218,7 @@ impl MbeCampaignCandidatesCommand {
 impl MbeRunCampaignCandidateCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let candidate = crate::mbe::campaign_candidate_by_node(&self.campaign, &self.node)?;
-        let request = crate::mbe::Request::from_campaign_candidate(
+        let request = crate::mbe::CohortRequest::from_campaign_candidate(
             &candidate,
             self.output_dir,
             self.repo_dir,
@@ -4228,22 +4226,28 @@ impl MbeRunCampaignCandidateCommand {
         )?;
         let run = request.run_harness(self.python)?;
         println!("node: {}", candidate.node_id());
+        println!("cohort_instances: {}", candidate.cohort_size());
         println!("config: {}", run.written.path.display());
         println!("report: {}", run.written.report_path.display());
         println!("command: {}", run.invocation.command_line());
         println!(
-            "verdict: {}\t{}",
-            run.evidence.report_id, run.evidence.verdict
+            "submitted/completed/resolved/unresolved: {}/{}/{}/{}",
+            run.report.submitted_instances,
+            run.report.completed_instances,
+            run.report.resolved_instances,
+            run.report.unresolved_instances
         );
-        println!(
-            "instance_report: {}",
-            run.evaluation.instance_report_path.display()
-        );
-        println!("diagnostic: {}", run.evaluation.diagnostic);
-        println!(
-            "usable_for_selection: {}",
-            run.evaluation.usable_for_selection
-        );
+        println!("instance\tverdict\tdiagnostic\tusable\tinstance_report");
+        for evaluation in run.evaluations {
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                evaluation.evidence.instance_id,
+                evaluation.evidence.verdict,
+                evaluation.diagnostic,
+                evaluation.usable_for_selection,
+                evaluation.instance_report_path.display()
+            );
+        }
         Ok(())
     }
 }

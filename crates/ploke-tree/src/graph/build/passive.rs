@@ -561,6 +561,7 @@ mod tests {
             target: Target {
                 dataset_key: Some("ripgrep".to_owned()),
                 instance: Some("BurntSushi__ripgrep-2209".to_owned()),
+                instances: vec!["BurntSushi__ripgrep-2209".to_owned()],
             },
             search: Search {
                 max_generations: 15,
@@ -584,6 +585,7 @@ mod tests {
                 stop_after: ExecutionStopAfter::Complete,
                 trace_jsonl: TraceJsonl::Auto,
                 debug_tools: true,
+                mbe: ploke_records::run_profile::Mbe::default(),
             },
         }
     }

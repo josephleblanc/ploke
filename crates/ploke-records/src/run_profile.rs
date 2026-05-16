@@ -57,6 +57,8 @@ pub struct Target {
     pub dataset_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,13 +151,15 @@ pub enum SelectionEvidence {
     OperationalAndProtocol,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Execution {
     pub stop_after: ExecutionStopAfter,
     #[serde(default)]
     pub trace_jsonl: TraceJsonl,
     #[serde(default)]
     pub debug_tools: bool,
+    #[serde(default)]
+    pub mbe: Mbe,
 }
 
 impl Default for Execution {
@@ -164,6 +168,27 @@ impl Default for Execution {
             stop_after: ExecutionStopAfter::Complete,
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
+            mbe: Mbe::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Mbe {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_mbe_python")]
+    pub python: String,
+    #[serde(default = "default_mbe_workers")]
+    pub workers: u32,
+}
+
+impl Default for Mbe {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            python: default_mbe_python(),
+            workers: default_mbe_workers(),
         }
     }
 }
@@ -202,6 +227,14 @@ impl Record for RunProfileCommitmentRecord {
     const FORMAT: RecordFormat = RecordFormat::Json;
 }
 
+fn default_mbe_python() -> String {
+    "python".to_string()
+}
+
+fn default_mbe_workers() -> u32 {
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +249,7 @@ worktree_root = "~/.ploke-eval/worktrees"
 [target]
 dataset_key = "ripgrep"
 instance = "BurntSushi__ripgrep-2209"
+instances = ["BurntSushi__ripgrep-2209"]
 
 [search]
 max_generations = 15
@@ -239,6 +273,7 @@ seed = 0
 stop_after = "complete"
 trace_jsonl = "auto"
 debug_tools = true
+mbe = { enabled = true, python = "python3", workers = 2 }
 "#;
 
     #[test]
@@ -256,7 +291,14 @@ debug_tools = true
             profile.generation.surface,
             Some(GenerationSurface::WorkspaceExceptPlokeEval)
         );
+        assert_eq!(
+            profile.target.instances,
+            vec!["BurntSushi__ripgrep-2209".to_string()]
+        );
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
+        assert!(profile.execution.mbe.enabled);
+        assert_eq!(profile.execution.mbe.python, "python3");
+        assert_eq!(profile.execution.mbe.workers, 2);
 
         let encoded = toml::to_string(&profile).expect("profile serializes");
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
@@ -343,6 +385,28 @@ source = "deterministic-tui-tools"
             deterministic.generation.source,
             GenerationSource::DeterministicTuiTools
         );
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_multi_instance_target_cohort() {
+        let profile = PROFILE.replace(
+            "instances = [\"BurntSushi__ripgrep-2209\"]",
+            "instances = [\"BurntSushi__ripgrep-2209\", \"BurntSushi__ripgrep-454\"]",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(
+            parsed.target.instances,
+            vec![
+                "BurntSushi__ripgrep-2209".to_string(),
+                "BurntSushi__ripgrep-454".to_string()
+            ]
+        );
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
     }
 
     #[test]

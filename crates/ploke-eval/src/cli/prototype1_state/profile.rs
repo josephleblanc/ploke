@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -50,8 +51,18 @@ impl Prototype1RunProfile {
                 self.schema_version, RUN_PROFILE_SCHEMA_VERSION
             )));
         }
+        self.target.validate()?;
         self.search.validate()?;
-        self.generation.validate()
+        self.generation.validate()?;
+        self.execution.validate()?;
+        if matches!(self.generation.source, GenerationSource::Legacy)
+            && self.target.eval_instances().len() > 1
+        {
+            return Err(profile_error(
+                "legacy generation currently requires exactly one target instance",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn search_policy(&self) -> Prototype1SearchPolicy {
@@ -86,6 +97,57 @@ pub(crate) struct Target {
     pub(crate) dataset_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) instance: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) instances: Vec<String>,
+}
+
+impl Target {
+    fn validate(&self) -> Result<(), PrepareError> {
+        let mut seen = BTreeSet::new();
+        for instance in &self.instances {
+            if instance.trim().is_empty() {
+                return Err(profile_error(
+                    "target.instances must not contain empty benchmark instance ids",
+                ));
+            }
+            if !seen.insert(instance) {
+                return Err(profile_error(format!(
+                    "target.instances contains duplicate benchmark instance '{}'",
+                    instance
+                )));
+            }
+        }
+        if let Some(primary) = self.instance.as_deref() {
+            if primary.trim().is_empty() {
+                return Err(profile_error(
+                    "target.instance must not be an empty benchmark instance id",
+                ));
+            }
+            if !self.instances.is_empty()
+                && !self.instances.iter().any(|instance| instance == primary)
+            {
+                return Err(profile_error(format!(
+                    "target.instance '{}' must be included in target.instances when both are set",
+                    primary
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn eval_instances(&self) -> Vec<String> {
+        if !self.instances.is_empty() {
+            self.instances.clone()
+        } else {
+            self.instance.clone().into_iter().collect()
+        }
+    }
+
+    pub(crate) fn primary_instance(&self) -> Option<&str> {
+        self.instance
+            .as_deref()
+            .or_else(|| self.instances.first().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -225,17 +287,23 @@ pub(crate) enum SelectionEvidence {
     OperationalAndProtocol,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Execution {
     pub(crate) stop_after: ExecutionStopAfter,
     #[serde(default)]
     pub(crate) trace_jsonl: TraceJsonl,
     #[serde(default)]
     pub(crate) debug_tools: bool,
+    #[serde(default)]
+    pub(crate) mbe: Mbe,
 }
 
 impl Execution {
-    pub(crate) fn state_stop_after(self) -> Prototype1StateStopAfter {
+    fn validate(&self) -> Result<(), PrepareError> {
+        self.mbe.validate()
+    }
+
+    pub(crate) fn state_stop_after(&self) -> Prototype1StateStopAfter {
         match self.stop_after {
             ExecutionStopAfter::Materialize => Prototype1StateStopAfter::Materialize,
             ExecutionStopAfter::Build => Prototype1StateStopAfter::Build,
@@ -251,7 +319,44 @@ impl Default for Execution {
             stop_after: ExecutionStopAfter::Complete,
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
+            mbe: Mbe::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Mbe {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_mbe_python")]
+    pub(crate) python: String,
+    #[serde(default = "default_mbe_workers")]
+    pub(crate) workers: u32,
+}
+
+impl Default for Mbe {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            python: default_mbe_python(),
+            workers: default_mbe_workers(),
+        }
+    }
+}
+
+impl Mbe {
+    fn validate(&self) -> Result<(), PrepareError> {
+        if self.enabled && self.python.trim().is_empty() {
+            return Err(profile_error(
+                "execution.mbe.python must not be empty when MBE oracle execution is enabled",
+            ));
+        }
+        if self.enabled && self.workers == 0 {
+            return Err(profile_error(
+                "execution.mbe.workers must be nonzero when MBE oracle execution is enabled",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -276,6 +381,14 @@ impl Default for TraceJsonl {
     fn default() -> Self {
         Self::Inherit
     }
+}
+
+fn default_mbe_python() -> String {
+    "python".to_string()
+}
+
+fn default_mbe_workers() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -486,6 +599,7 @@ worktree_root = "~/.ploke-eval/worktrees"
 [target]
 dataset_key = "ripgrep"
 instance = "BurntSushi__ripgrep-2209"
+instances = ["BurntSushi__ripgrep-2209"]
 
 [search]
 max_generations = 15
@@ -508,6 +622,7 @@ seed = 0
 stop_after = "complete"
 trace_jsonl = "auto"
 debug_tools = true
+mbe = { enabled = true, python = "python3", workers = 2 }
 "#;
 
     #[test]
@@ -530,6 +645,9 @@ debug_tools = true
             profile.execution.state_stop_after(),
             Prototype1StateStopAfter::Complete
         );
+        assert!(profile.execution.mbe.enabled);
+        assert_eq!(profile.execution.mbe.python, "python3");
+        assert_eq!(profile.execution.mbe.workers, 2);
     }
 
     #[test]
@@ -577,5 +695,82 @@ debug_tools = true
             loaded.commitment.profile_path,
             tmp.path().join("prototype1").join(RUN_PROFILE_FILE)
         );
+    }
+
+    #[test]
+    fn target_instances_drive_eval_cohort() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "instances = [\"BurntSushi__ripgrep-2209\"]",
+                "instances = [\"BurntSushi__ripgrep-2209\", \"BurntSushi__ripgrep-454\"]",
+            ),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.target.eval_instances(),
+            vec![
+                "BurntSushi__ripgrep-2209".to_string(),
+                "BurntSushi__ripgrep-454".to_string()
+            ]
+        );
+        assert_eq!(
+            profile.target.primary_instance(),
+            Some("BurntSushi__ripgrep-2209")
+        );
+    }
+
+    #[test]
+    fn target_primary_instance_must_belong_to_instances() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "instances = [\"BurntSushi__ripgrep-2209\"]",
+                "instances = [\"BurntSushi__ripgrep-454\"]",
+            ),
+        )
+        .expect_err("mismatched primary instance should reject");
+
+        assert!(
+            err.to_string()
+                .contains("target.instance 'BurntSushi__ripgrep-2209' must be included")
+        );
+    }
+
+    #[test]
+    fn legacy_generation_rejects_multi_instance_target_cohort() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE
+                .replace("source = \"broad-harness-request\"", "source = \"legacy\"")
+                .replace(
+                    "instances = [\"BurntSushi__ripgrep-2209\"]",
+                    "instances = [\"BurntSushi__ripgrep-2209\", \"BurntSushi__ripgrep-454\"]",
+                ),
+        )
+        .expect_err("legacy generation should reject multi-instance cohort");
+
+        assert!(
+            err.to_string()
+                .contains("legacy generation currently requires exactly one target instance")
+        );
+    }
+
+    #[test]
+    fn enabled_mbe_requires_python_and_workers() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("python3", "   "),
+        )
+        .expect_err("blank python must reject");
+        assert!(err.to_string().contains("execution.mbe.python"));
+
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("workers = 2", "workers = 0"),
+        )
+        .expect_err("zero workers must reject");
+        assert!(err.to_string().contains("execution.mbe.workers"));
     }
 }

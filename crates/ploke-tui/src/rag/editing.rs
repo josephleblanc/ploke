@@ -236,6 +236,12 @@ async fn apply_ns_edit(
             let mut reg = state.proposals.write().await;
             reg.insert(proposal_id, proposal);
             drop(reg);
+            // Non-semantic patch application changes live file content immediately, so the
+            // loaded index must be refreshed before follow-up tool calls rely on stale anchors.
+            if applied_any {
+                rescan_for_changes(state, event_bus, request_id).await;
+            }
+
             let summary = if applied_ok {
                 format!("Applied {} edits across {} files", applied, file_count)
             } else if applied_any {
@@ -281,17 +287,12 @@ async fn apply_ns_edit(
                 format!("No edits were applied for request_id {}", request_id)
             };
             add_msg_imm(msg).await;
+            if applied_any {
+                add_msg_imm("Refreshed workspace after applying edits".to_string()).await;
+            }
 
             // Persist proposals (best-effort)
             crate::app_state::handlers::proposals::save_proposals(state).await;
-
-            // Non-semantic patch application changes live file content immediately, so the
-            // loaded index must be refreshed before follow-up tool calls rely on stale anchors.
-            if applied_any {
-                rescan_for_changes(state, event_bus, request_id);
-                let msg = "Scheduled rescan of workspace after applying edits".to_string();
-                add_msg_imm(msg).await;
-            }
         }
         Err(e) => {
             tracing::debug!(
@@ -419,6 +420,12 @@ async fn apply_semantic_edit(
             let mut reg = state.proposals.write().await;
             reg.insert(proposal_id, proposal);
             drop(reg);
+            // Post-apply: trigger a rescan to refresh indexes after semantic edits only,
+            // e.g. not after `NsPatch`
+            if applied_ok {
+                rescan_for_changes(state, event_bus, request_id).await;
+            }
+
             let ui_payload = ToolUiPayload::new(
                 tool_name,
                 call_id_val.clone(),
@@ -459,18 +466,12 @@ async fn apply_semantic_edit(
                 format!("No edits were applied for request_id {}", request_id)
             };
             add_msg_imm(msg).await;
+            if applied_ok {
+                add_msg_imm("Refreshed workspace after applying edits".to_string()).await;
+            }
 
             // Persist proposals (best-effort)
             crate::app_state::handlers::proposals::save_proposals(state).await;
-
-            // Post-apply: trigger a rescan to refresh indexes after semantic edits only,
-            // e.g. not after `NsPatch`
-            if applied_ok {
-                rescan_for_changes(state, event_bus, request_id);
-                // Surface a brief SysInfo so users see that a rescan has been scheduled
-                let msg = "Scheduled rescan of workspace after applying edits".to_string();
-                add_msg_imm(msg).await;
-            }
         }
         Err(e) => {
             proposal.status = EditProposalStatus::Failed(e.to_string());
@@ -516,55 +517,49 @@ async fn apply_semantic_edit(
     }
 }
 
-fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+async fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     #[cfg(feature = "test_harness")]
     RESCAN_FOR_CHANGES_CALLS.fetch_add(1, Ordering::SeqCst);
 
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
-    tokio::spawn({
-        let state = Arc::clone(state);
-        let event_bus = Arc::clone(event_bus);
-        async move {
-            crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
-            let add_chat_message = |msg: String| {
-                chat::add_msg_immediate_background(
-                    &state,
-                    &event_bus,
-                    Uuid::new_v4(),
-                    msg.to_string(),
-                    MessageKind::SysInfo,
-                )
-            };
-            match scan_rx.await {
-                Ok(Some(files_changed)) => {
-                    let changed_string = files_changed.iter().map(|f| f.to_string_lossy()).fold(
-                        String::new(),
-                        |mut acc, s| {
-                            acc.push_str(&s);
-                            acc.push('\n');
-                            acc
-                        },
-                    );
-                    let msg = format!("Files noted as having changed:\n{:?}", changed_string);
-                    tracing::info!(target: "edit-proposals", msg);
-                    add_chat_message(msg).await;
-                }
-                Ok(None) => {
-                    let msg = "No changed files detected".to_string();
-                    tracing::info!(target: "edit-proposals", msg);
-                    add_chat_message(msg).await;
-                }
-                Err(e) => {
-                    let msg = format!(
-                        "Error scanning workspace for changes in request id {}\nError: {}",
-                        request_id, e
-                    );
-                    tracing::error!(target: "edit-proposals", msg);
-                    add_chat_message(msg).await;
-                }
-            }
+    crate::app_state::handlers::db::scan_for_change(state, event_bus, scan_tx).await;
+    let add_chat_message = |msg: String| {
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+    };
+    match scan_rx.await {
+        Ok(Some(files_changed)) => {
+            let changed_string = files_changed.iter().map(|f| f.to_string_lossy()).fold(
+                String::new(),
+                |mut acc, s| {
+                    acc.push_str(&s);
+                    acc.push('\n');
+                    acc
+                },
+            );
+            let msg = format!("Files noted as having changed:\n{:?}", changed_string);
+            tracing::info!(target: "edit-proposals", msg);
+            add_chat_message(msg).await;
         }
-    });
+        Ok(None) => {
+            let msg = "No changed files detected".to_string();
+            tracing::info!(target: "edit-proposals", msg);
+            add_chat_message(msg).await;
+        }
+        Err(e) => {
+            let msg = format!(
+                "Error scanning workspace for changes in request id {}\nError: {}",
+                request_id, e
+            );
+            tracing::error!(target: "edit-proposals", msg);
+            add_chat_message(msg).await;
+        }
+    }
 }
 
 pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, proposal_id: Uuid) {

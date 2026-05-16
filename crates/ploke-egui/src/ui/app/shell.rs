@@ -462,7 +462,6 @@ fn render_prefixed_id_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::{Event, Id, Subscriber};
@@ -470,7 +469,6 @@ mod tests {
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
 
-    use crate::import::graph_from_run_root;
     use crate::ui::inspector::{ArtifactInspection, SelectionInspector};
     use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
@@ -711,80 +709,6 @@ mod tests {
         assert!(traces.iter().any(|line| line.contains(
             "span:ploke_egui.inspector.artifact_ids_section selection_kind=run_forest_node state=not_applicable selection_key=node-f1fbab3a2bb5e7e5"
         )));
-    }
-
-    #[test]
-    fn artifact_id_section_traces_real_campaign_artifact_ids_when_present() {
-        let run_root = Path::new(
-            "/home/brasides/.ploke-eval/campaigns/p1-broad-harness-retry-20260514-1/prototype1",
-        );
-        if !run_root.exists() {
-            eprintln!("skipping real campaign artifact-id render test: missing {run_root:?}");
-            return;
-        }
-
-        let graph = graph_from_run_root(run_root).expect("real campaign graph loads");
-        let tree = graph.artifact_tree();
-        let node = tree
-            .nodes
-            .values()
-            .filter(|node| {
-                node.sources.iter().any(|source| {
-                    !source.ids.artifact_ids.is_empty()
-                        || !source.ids.artifact_refs.is_empty()
-                        || !source.ids.tree_keys.is_empty()
-                })
-            })
-            .max_by_key(|node| {
-                node.sources
-                    .iter()
-                    .map(|source| {
-                        source.ids.artifact_ids.len()
-                            + source.ids.artifact_refs.len()
-                            + source.ids.tree_keys.len()
-                    })
-                    .sum::<usize>()
-            })
-            .expect("real campaign exposes at least one artifact identity bundle");
-        let artifact = ArtifactInspection {
-            sources: node.sources.clone(),
-            incoming: Vec::new(),
-            outgoing: Vec::new(),
-            patches: Vec::new(),
-            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
-                record: "child_plan",
-                key: "derived_artifact",
-                value: node.key.as_str(),
-            }),
-            role_badges: Vec::new(),
-        };
-
-        let (_, traces) = collect_traces(|| {
-            egui::__run_test_ui(|ui| {
-                render_artifact_ids(ui, &artifact);
-            });
-        });
-
-        let artifact_rows = traces
-            .iter()
-            .filter(|line| {
-                line.contains("span:ploke_egui.inspector.render_artifact_id_row")
-                    || line.contains("span:ploke_egui.id_display.show_compact")
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        eprintln!(
-            "real campaign artifact key={} rows={:?}",
-            node.key.as_str(),
-            artifact_rows
-        );
-        assert!(
-            traces
-                .iter()
-                .any(|line| line.contains("span:ploke_egui.inspector.render_artifact_id_row")),
-            "expected at least one artifact-id row trace for real campaign node {}",
-            node.key.as_str()
-        );
     }
 }
 

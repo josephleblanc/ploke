@@ -417,6 +417,7 @@ mod tests {
                         convergence: true,
                         oracle_eligible: true,
                     }),
+                    oracle_evaluation: None,
                     status: "complete".to_string(),
                 },
             ],
@@ -995,6 +996,82 @@ fn validate_treatment_patch_projection(
         }
     }
     Ok(())
+}
+
+fn maybe_attach_treatment_oracle(
+    baseline_manifest_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    treatment_state: &crate::closure::ClosureState,
+    treatment: &mut Prototype1TreatmentEvidence,
+) -> Result<(), PrepareError> {
+    if treatment.benchmark_family != crate::target_registry::BenchmarkFamily::MultiSweBenchRust {
+        return Ok(());
+    }
+    let Some(admitted) =
+        crate::cli::prototype1_state::profile::load_admitted_run_profile(baseline_manifest_path)?
+    else {
+        return Ok(());
+    };
+    let mbe = admitted.profile.execution.mbe;
+    if !mbe.enabled {
+        return Ok(());
+    }
+
+    let request = crate::mbe::CohortRequest::from_treatment_state(
+        node,
+        treatment_state,
+        None,
+        None,
+        treatment_mbe_options(mbe.workers),
+    )?;
+    let run = request.run_harness(mbe.python)?;
+    attach_treatment_oracle_evaluations(treatment, run.evaluations)
+}
+
+fn attach_treatment_oracle_evaluations(
+    treatment: &mut Prototype1TreatmentEvidence,
+    evaluations: Vec<crate::mbe::OracleEvaluation>,
+) -> Result<(), PrepareError> {
+    let mut evaluations_by_instance = std::collections::BTreeMap::new();
+    for evaluation in evaluations {
+        let instance_id = evaluation.evidence.instance_id.clone();
+        if evaluations_by_instance
+            .insert(instance_id.clone(), evaluation)
+            .is_some()
+        {
+            return Err(PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "treatment '{}' produced duplicate oracle evaluations for instance '{}'",
+                    treatment.treatment_campaign_id, instance_id
+                ),
+            });
+        }
+    }
+
+    for instance in &mut treatment.instances {
+        instance.oracle_evaluation = evaluations_by_instance.remove(&instance.instance_id);
+    }
+
+    if let Some(unmatched) = evaluations_by_instance.keys().next().cloned() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "treatment '{}' produced oracle evaluation for unknown instance '{}'",
+                treatment.treatment_campaign_id, unmatched
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn treatment_mbe_options(workers: u32) -> crate::mbe::Options {
+    let mut options = crate::mbe::Options::default();
+    options.workers = crate::mbe::Workers {
+        general: workers,
+        build_image: workers,
+        run_instance: workers,
+    };
+    options
 }
 
 fn validate_child_patch_projection_checkout(
@@ -2116,7 +2193,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
 
 pub(super) async fn run_prototype1_resolved_branch_treatment(
     baseline_campaign_id: &str,
-    _baseline_manifest_path: &Path,
+    baseline_manifest_path: &Path,
     resolved_branch: &ResolvedTreatmentBranch,
     node: &crate::intervention::Prototype1NodeRecord,
     repo_root: &Path,
@@ -2238,7 +2315,7 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
             || load_closure_state(&treatment_campaign.campaign_id),
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
-        let treatment = step!(
+        let mut treatment = step!(
             "prototype1.child.evaluate.treatment_evidence",
             "BuildTreatmentEvidence",
             || {
@@ -2255,6 +2332,17 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
             "prototype1.child.evaluate.patch_projection_gate",
             "PatchProjectionGate",
             || validate_treatment_patch_projection(node, &treatment),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+        step!(
+            "prototype1.child.evaluate.mbe_oracle",
+            "MbeOracle",
+            || maybe_attach_treatment_oracle(
+                baseline_manifest_path,
+                node,
+                &treatment_state,
+                &mut treatment,
+            ),
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
 

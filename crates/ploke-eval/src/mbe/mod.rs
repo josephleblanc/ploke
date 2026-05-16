@@ -121,6 +121,27 @@ pub struct HarnessRun {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CohortMember {
+    pub prepared: PreparedSingleRun,
+    pub submission_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CohortRequest {
+    pub members: Vec<CohortMember>,
+    pub layout: Layout,
+    pub options: Options,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CohortRun {
+    pub written: WrittenConfig,
+    pub invocation: HarnessInvocation,
+    pub report: FinalReport,
+    pub evaluations: Vec<OracleEvaluation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunCandidate {
     pub attempt: usize,
     pub latest: bool,
@@ -139,6 +160,11 @@ pub struct RunCandidate {
 pub struct CampaignCandidate {
     pub node: Prototype1NodeRecord,
     pub runner_result: Prototype1RunnerResult,
+    pub instances: Vec<CampaignInstance>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CampaignInstance {
     pub closure_row: ClosureInstanceRow,
     pub submission: MultiSweBenchSubmissionRecord,
 }
@@ -294,25 +320,6 @@ impl Request {
             candidate.run_manifest,
             Some(submission_path),
             output_dir,
-            repo_dir,
-            options,
-        )
-    }
-
-    pub fn from_campaign_candidate(
-        candidate: &CampaignCandidate,
-        output_dir: Option<PathBuf>,
-        repo_dir: Option<PathBuf>,
-        options: Options,
-    ) -> Result<Self, PrepareError> {
-        let output_dir = match output_dir {
-            Some(path) => path,
-            None => candidate.run_root()?.join("mbe"),
-        };
-        Self::from_manifest(
-            candidate.run_manifest()?.to_path_buf(),
-            Some(candidate.submission_path()?.to_path_buf()),
-            Some(output_dir),
             repo_dir,
             options,
         )
@@ -496,6 +503,233 @@ impl Request {
         let evidence =
             OracleEvidence::from_report(&self.prepared, report_path.to_path_buf(), &final_report)?;
         OracleEvaluation::from_evidence(&self.prepared, evidence, &self.layout)
+    }
+}
+
+impl CohortRequest {
+    pub fn from_campaign_candidate(
+        candidate: &CampaignCandidate,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let output_dir = output_dir.unwrap_or_else(|| candidate.node.node_dir.join("mbe"));
+        let members = cohort_members_from_campaign_instances(&candidate.instances)?;
+        let repo_dir = match repo_dir {
+            Some(path) => path,
+            None => repo_cache_dir_for_members(&members)?,
+        };
+        Self::new(members, Layout::under(output_dir, repo_dir), options)
+    }
+
+    pub fn from_treatment_state(
+        node: &Prototype1NodeRecord,
+        treatment_state: &crate::closure::ClosureState,
+        output_dir: Option<PathBuf>,
+        repo_dir: Option<PathBuf>,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        let output_dir = output_dir.unwrap_or_else(|| node.node_dir.join("mbe"));
+        let members = cohort_members_from_rows(treatment_state.instances.iter())?;
+        let repo_dir = match repo_dir {
+            Some(path) => path,
+            None => repo_cache_dir_for_members(&members)?,
+        };
+        Self::new(members, Layout::under(output_dir, repo_dir), options)
+    }
+
+    pub fn new(
+        members: Vec<CohortMember>,
+        layout: Layout,
+        options: Options,
+    ) -> Result<Self, PrepareError> {
+        if members.is_empty() {
+            return Err(PrepareError::InvalidMbeRequest {
+                detail: "MBE cohort request requires at least one prepared run".to_string(),
+            });
+        }
+        let mut seen_report_ids = BTreeSet::new();
+        for member in &members {
+            if !member.submission_path.is_file() {
+                return Err(PrepareError::MissingMbeSubmission(
+                    member.submission_path.clone(),
+                ));
+            }
+            let source = require_msb_source(&member.prepared)?;
+            if !source.dataset_file.is_file() {
+                return Err(PrepareError::MissingDatasetFile(
+                    source.dataset_file.clone(),
+                ));
+            }
+            let report_id = report_id_for_source(source);
+            if !seen_report_ids.insert(report_id.clone()) {
+                return Err(PrepareError::InvalidMbeRequest {
+                    detail: format!(
+                        "MBE cohort request contains duplicate report id '{report_id}'"
+                    ),
+                });
+            }
+        }
+        if !options.need_clone && !layout.repo_dir.is_dir() {
+            return Err(PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "repo_dir '{}' must exist when need_clone is false",
+                    layout.repo_dir.display()
+                ),
+            });
+        }
+        Ok(Self {
+            members,
+            layout,
+            options,
+        })
+    }
+
+    pub fn harness_config(&self) -> Result<HarnessConfig, PrepareError> {
+        Ok(HarnessConfig {
+            mode: Mode::Evaluation,
+            workdir: self.layout.workdir.clone(),
+            patch_files: vec![self.aggregate_submission_path()],
+            dataset_files: cohort_dataset_files(&self.members)?,
+            force_build: self.options.force_build,
+            output_dir: self.layout.output_dir.clone(),
+            specifics: cohort_report_ids(&self.members)?,
+            skips: Vec::new(),
+            repo_dir: self.layout.repo_dir.clone(),
+            need_clone: self.options.need_clone,
+            global_env: self.options.global_env.clone(),
+            clear_env: self.options.clear_env,
+            stop_on_error: self.options.stop_on_error,
+            max_workers: self.options.workers.general,
+            max_workers_build_image: self.options.workers.build_image,
+            max_workers_run_instance: self.options.workers.run_instance,
+            fix_patch_run_cmd: self.options.fix_patch_run_cmd.clone(),
+            log_dir: self.layout.log_dir.clone(),
+            log_level: self.options.log_level.clone(),
+            log_to_console: self.options.log_to_console,
+            human_mode: self.options.human_mode,
+        })
+    }
+
+    pub fn write_config(&self) -> Result<WrittenConfig, PrepareError> {
+        fs::create_dir_all(&self.layout.output_dir).map_err(|source| {
+            PrepareError::CreateOutputDir {
+                path: self.layout.output_dir.clone(),
+                source,
+            }
+        })?;
+        fs::create_dir_all(&self.layout.workdir).map_err(|source| {
+            PrepareError::CreateOutputDir {
+                path: self.layout.workdir.clone(),
+                source,
+            }
+        })?;
+        fs::create_dir_all(&self.layout.log_dir).map_err(|source| {
+            PrepareError::CreateOutputDir {
+                path: self.layout.log_dir.clone(),
+                source,
+            }
+        })?;
+
+        let submission_path = self.aggregate_submission_path();
+        fs::write(&submission_path, self.aggregate_submission_blob()?).map_err(|source| {
+            PrepareError::WriteManifest {
+                path: submission_path.clone(),
+                source,
+            }
+        })?;
+
+        let path = self.layout.output_dir.join(CONFIG_FILE);
+        let json = serde_json::to_string_pretty(&self.harness_config()?)
+            .map_err(PrepareError::Serialize)?;
+        fs::write(&path, json).map_err(|source| PrepareError::WriteManifest {
+            path: path.clone(),
+            source,
+        })?;
+
+        Ok(WrittenConfig {
+            path,
+            report_path: self.layout.output_dir.join(FINAL_REPORT_FILE),
+        })
+    }
+
+    pub fn run_harness(&self, python: impl Into<String>) -> Result<CohortRun, PrepareError> {
+        let written = self.write_config()?;
+        let invocation = written.harness_invocation(python);
+        let status = Command::new(&invocation.program)
+            .args(&invocation.args)
+            .status()
+            .map_err(|source| PrepareError::MbeHarnessCommand {
+                command: invocation.command_line(),
+                source,
+            })?;
+        if !status.success() {
+            return Err(PrepareError::MbeHarnessStatus {
+                command: invocation.command_line(),
+                status: status.code().unwrap_or(-1),
+            });
+        }
+
+        let report = FinalReport::load(&written.report_path)?;
+        let evaluations = self.load_oracle_evaluations_from(&written.report_path)?;
+        Ok(CohortRun {
+            written,
+            invocation,
+            report,
+            evaluations,
+        })
+    }
+
+    pub fn load_oracle_evaluations(&self) -> Result<Vec<OracleEvaluation>, PrepareError> {
+        self.load_oracle_evaluations_from(&self.layout.output_dir.join(FINAL_REPORT_FILE))
+    }
+
+    pub fn load_oracle_evaluations_from(
+        &self,
+        report_path: &Path,
+    ) -> Result<Vec<OracleEvaluation>, PrepareError> {
+        let final_report = FinalReport::load(report_path)?;
+        self.members
+            .iter()
+            .map(|member| {
+                let source = require_msb_source(&member.prepared)?;
+                let evidence = OracleEvidence {
+                    report_path: report_path.to_path_buf(),
+                    instance_id: source.instance_id.clone(),
+                    report_id: report_id_for_source(source),
+                    verdict: final_report.verdict_for(&report_id_for_source(source)),
+                };
+                OracleEvaluation::from_evidence(&member.prepared, evidence, &self.layout)
+            })
+            .collect()
+    }
+
+    fn aggregate_submission_path(&self) -> PathBuf {
+        self.layout.output_dir.join(SUBMISSION_FILE)
+    }
+
+    fn aggregate_submission_blob(&self) -> Result<String, PrepareError> {
+        let mut blob = String::new();
+        for member in &self.members {
+            let text = fs::read_to_string(&member.submission_path).map_err(|source| {
+                PrepareError::ReadManifest {
+                    path: member.submission_path.clone(),
+                    source,
+                }
+            })?;
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Err(PrepareError::InvalidMbeRequest {
+                    detail: format!(
+                        "MBE submission '{}' is empty",
+                        member.submission_path.display()
+                    ),
+                });
+            }
+            blob.push_str(trimmed);
+            blob.push('\n');
+        }
+        Ok(blob)
     }
 }
 
@@ -915,8 +1149,8 @@ impl CampaignCandidate {
         &self.node.branch_id
     }
 
-    pub fn instance_id(&self) -> &str {
-        &self.closure_row.instance_id
+    pub fn primary_instance_id(&self) -> &str {
+        &self.node.instance_id
     }
 
     pub fn treatment_campaign_id(&self) -> Result<&str, PrepareError> {
@@ -928,13 +1162,64 @@ impl CampaignCandidate {
             })
     }
 
+    pub fn instances(&self) -> &[CampaignInstance] {
+        &self.instances
+    }
+
+    pub fn cohort_size(&self) -> usize {
+        self.instances.len()
+    }
+
+    pub fn instance_ids(&self) -> Vec<&str> {
+        self.instances
+            .iter()
+            .map(CampaignInstance::instance_id)
+            .collect()
+    }
+
+    pub fn nonempty_instance_count(&self) -> usize {
+        self.instances
+            .iter()
+            .filter(|instance| !instance.empty_patch())
+            .count()
+    }
+
+    pub fn oracle_eligible_instance_count(&self) -> Result<usize, PrepareError> {
+        self.instances.iter().try_fold(0usize, |count, instance| {
+            Ok(count + usize::from(instance.oracle_eligible()?))
+        })
+    }
+
+    pub fn total_fix_patch_bytes(&self) -> usize {
+        self.instances
+            .iter()
+            .map(CampaignInstance::fix_patch_bytes)
+            .sum()
+    }
+
+    pub fn total_fix_patch_lines(&self) -> usize {
+        self.instances
+            .iter()
+            .map(CampaignInstance::fix_patch_lines)
+            .sum()
+    }
+}
+
+impl CampaignInstance {
+    pub fn instance_id(&self) -> &str {
+        &self.closure_row.instance_id
+    }
+
     pub fn run_manifest(&self) -> Result<&Path, PrepareError> {
         self.closure_row
             .artifacts
             .run_manifest
             .as_deref()
             .ok_or_else(|| PrepareError::InvalidMbeRequest {
-                detail: format!("candidate node '{}' has no run manifest", self.node.node_id),
+                detail: format!(
+                    "campaign instance '{}' has no run manifest",
+                    self.closure_row.instance_id
+                ),
             })
     }
 
@@ -944,7 +1229,10 @@ impl CampaignCandidate {
             .run_root
             .as_deref()
             .ok_or_else(|| PrepareError::InvalidMbeRequest {
-                detail: format!("candidate node '{}' has no run root", self.node.node_id),
+                detail: format!(
+                    "campaign instance '{}' has no run root",
+                    self.closure_row.instance_id
+                ),
             })
     }
 
@@ -955,8 +1243,8 @@ impl CampaignCandidate {
             .as_deref()
             .ok_or_else(|| PrepareError::InvalidMbeRequest {
                 detail: format!(
-                    "candidate node '{}' has no MBE submission artifact",
-                    self.node.node_id
+                    "campaign instance '{}' has no MBE submission artifact",
+                    self.closure_row.instance_id
                 ),
             })
     }
@@ -971,6 +1259,10 @@ impl CampaignCandidate {
 
     pub fn fix_patch_lines(&self) -> usize {
         self.submission.fix_patch.lines().count()
+    }
+
+    pub fn oracle_eligible(&self) -> Result<bool, PrepareError> {
+        row_has_oracle_eligible_projection(&self.closure_row)
     }
 }
 
@@ -1084,31 +1376,25 @@ fn candidates_for_result(
     };
 
     let state = load_closure_state(treatment_campaign_id)?;
-    let mut candidates = Vec::new();
-    for row in state
-        .instances
-        .iter()
-        .filter(|row| row.instance_id == node.instance_id)
-    {
-        if row.eval_status != ClosureClass::Complete || row.artifacts.msb_submission.is_none() {
-            continue;
-        }
-        let submission_path = row.artifacts.msb_submission.as_deref().unwrap();
-        let submission = load_submission_record(submission_path)?;
-        if nonempty_only && submission.fix_patch.trim().is_empty() {
-            continue;
-        }
-        if nonempty_only && !row_has_oracle_eligible_projection(row)? {
-            continue;
-        }
-        candidates.push(CampaignCandidate {
+    let instances = campaign_instances_from_rows(state.instances.iter())?;
+    let keep = if nonempty_only {
+        instances
+            .iter()
+            .try_fold(false, |keep, instance| -> Result<bool, PrepareError> {
+                Ok(keep || (!instance.empty_patch() && instance.oracle_eligible()?))
+            })?
+    } else {
+        !instances.is_empty()
+    };
+    if keep {
+        Ok(vec![CampaignCandidate {
             node: node.clone(),
             runner_result: result.clone(),
-            closure_row: row.clone(),
-            submission,
-        });
+            instances,
+        }])
+    } else {
+        Ok(Vec::new())
     }
-    Ok(candidates)
 }
 
 fn row_has_oracle_eligible_projection(row: &ClosureInstanceRow) -> Result<bool, PrepareError> {
@@ -1121,6 +1407,50 @@ fn row_has_oracle_eligible_projection(row: &ClosureInstanceRow) -> Result<bool, 
             source,
         })?;
     Ok(record.operational_metrics().oracle_eligible)
+}
+
+fn campaign_instances_from_rows<'a>(
+    rows: impl IntoIterator<Item = &'a ClosureInstanceRow>,
+) -> Result<Vec<CampaignInstance>, PrepareError> {
+    let mut instances = Vec::new();
+    for row in rows {
+        if row.eval_status != ClosureClass::Complete || row.artifacts.msb_submission.is_none() {
+            continue;
+        }
+        let submission_path = row
+            .artifacts
+            .msb_submission
+            .as_deref()
+            .expect("checked submission artifact");
+        instances.push(CampaignInstance {
+            closure_row: row.clone(),
+            submission: load_submission_record(submission_path)?,
+        });
+    }
+    Ok(instances)
+}
+
+fn cohort_members_from_campaign_instances(
+    instances: &[CampaignInstance],
+) -> Result<Vec<CohortMember>, PrepareError> {
+    instances
+        .iter()
+        .map(|instance| {
+            let run_manifest = instance.run_manifest()?.to_path_buf();
+            let submission_path = instance.submission_path()?.to_path_buf();
+            Ok(CohortMember {
+                prepared: PreparedSingleRun::load_manifest(run_manifest)?,
+                submission_path,
+            })
+        })
+        .collect()
+}
+
+fn cohort_members_from_rows<'a>(
+    rows: impl IntoIterator<Item = &'a ClosureInstanceRow>,
+) -> Result<Vec<CohortMember>, PrepareError> {
+    let instances = campaign_instances_from_rows(rows)?;
+    cohort_members_from_campaign_instances(&instances)
 }
 
 fn require_msb_source(
@@ -1162,6 +1492,41 @@ fn repo_cache_dir_for_prepared_run(prepared: &PreparedSingleRun) -> Result<PathB
     }
 
     Ok(repo_dir.to_path_buf())
+}
+
+fn repo_cache_dir_for_members(members: &[CohortMember]) -> Result<PathBuf, PrepareError> {
+    let mut repo_dirs = members
+        .iter()
+        .map(|member| repo_cache_dir_for_prepared_run(&member.prepared))
+        .collect::<Result<BTreeSet<_>, PrepareError>>()?;
+    match repo_dirs.len() {
+        0 => Err(PrepareError::InvalidMbeRequest {
+            detail: "MBE cohort request requires at least one prepared run".to_string(),
+        }),
+        1 => Ok(repo_dirs.pop_first().expect("single repo dir present")),
+        _ => Err(PrepareError::InvalidMbeRequest {
+            detail:
+                "MBE cohort request spans multiple repo cache roots; pass --repo-dir explicitly"
+                    .to_string(),
+        }),
+    }
+}
+
+fn cohort_dataset_files(members: &[CohortMember]) -> Result<Vec<PathBuf>, PrepareError> {
+    members
+        .iter()
+        .map(|member| {
+            require_msb_source(&member.prepared).map(|source| source.dataset_file.clone())
+        })
+        .collect::<Result<BTreeSet<_>, PrepareError>>()
+        .map(|paths| paths.into_iter().collect())
+}
+
+fn cohort_report_ids(members: &[CohortMember]) -> Result<Vec<String>, PrepareError> {
+    members
+        .iter()
+        .map(|member| require_msb_source(&member.prepared).map(report_id_for_source))
+        .collect()
 }
 
 fn report_id_for_source(source: &crate::spec::MultiSweBenchSource) -> String {
@@ -1346,13 +1711,14 @@ fn validate_terminal_membership(report: &FinalReport) -> Result<(), PrepareError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::closure::{ClosureArtifactRefs, ClosureClass, RegistryInstanceStatus};
     use crate::spec::{EvalBudget, IssueInput, MultiSweBenchSource, PreparedSingleRun, RunSource};
 
-    fn prepared_run(tmp: &Path) -> PreparedSingleRun {
+    fn prepared_run_for(tmp: &Path, instance_id: &str, number: u64) -> PreparedSingleRun {
         PreparedSingleRun {
-            task_id: "BurntSushi__ripgrep-2209".to_string(),
+            task_id: instance_id.to_string(),
             repo_root: tmp.join("repos").join("BurntSushi").join("ripgrep"),
-            output_dir: tmp.join("instances").join("BurntSushi__ripgrep-2209"),
+            output_dir: tmp.join("instances").join(instance_id),
             issue: IssueInput {
                 title: Some("issue".to_string()),
                 body: None,
@@ -1364,10 +1730,10 @@ mod tests {
             source: Some(RunSource::MultiSweBench(MultiSweBenchSource {
                 dataset_file: tmp.join("dataset.jsonl"),
                 dataset_url: None,
-                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                instance_id: instance_id.to_string(),
                 org: "BurntSushi".to_string(),
                 repo: "ripgrep".to_string(),
-                number: 2209,
+                number,
                 language: Some("rust".to_string()),
                 expected_patch_files: Vec::new(),
             })),
@@ -1382,12 +1748,27 @@ mod tests {
         fs::write(&submission_path, "{}\n").expect("write submission");
 
         Request::new(
-            prepared_run(tmp),
+            prepared_run_for(tmp, "BurntSushi__ripgrep-2209", 2209),
             submission_path,
             Layout::under(tmp.join("mbe"), tmp.join("repos")),
             Options::default(),
         )
         .expect("valid request")
+    }
+
+    fn write_submission_record(path: &Path, number: u64) {
+        fs::write(
+            path,
+            serde_json::to_string(&MultiSweBenchSubmissionRecord {
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number,
+                fix_patch: format!("diff --git a/file-{number} b/file-{number}\n"),
+            })
+            .expect("serialize submission")
+                + "\n",
+        )
+        .expect("write submission");
     }
 
     fn final_report_with_resolved_id(report_id: &str) -> FinalReport {
@@ -1511,7 +1892,7 @@ mod tests {
     #[test]
     fn request_from_manifest_defaults_mbe_layout_from_prepared_run() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let prepared = prepared_run(tmp.path());
+        let prepared = prepared_run_for(tmp.path(), "BurntSushi__ripgrep-2209", 2209);
         fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
             .expect("create repo");
         fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
@@ -1542,7 +1923,7 @@ mod tests {
     #[test]
     fn request_from_candidate_uses_attempt_scoped_submission_and_output_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let prepared = prepared_run(tmp.path());
+        let prepared = prepared_run_for(tmp.path(), "BurntSushi__ripgrep-2209", 2209);
         fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
             .expect("create repo");
         fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
@@ -1736,5 +2117,189 @@ mod tests {
 
         assert_eq!(evaluation.diagnostic, OracleDiagnostic::FixCompileFailed);
         assert!(!evaluation.usable_for_selection);
+    }
+
+    #[test]
+    fn cohort_request_projects_multiple_runs_into_harness_config() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
+            .expect("create repo");
+        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
+
+        let first_submission = tmp.path().join("submission-2209.jsonl");
+        let second_submission = tmp.path().join("submission-454.jsonl");
+        write_submission_record(&first_submission, 2209);
+        write_submission_record(&second_submission, 454);
+
+        let request = CohortRequest::new(
+            vec![
+                CohortMember {
+                    prepared: prepared_run_for(tmp.path(), "BurntSushi__ripgrep-2209", 2209),
+                    submission_path: first_submission,
+                },
+                CohortMember {
+                    prepared: prepared_run_for(tmp.path(), "BurntSushi__ripgrep-454", 454),
+                    submission_path: second_submission,
+                },
+            ],
+            Layout::under(tmp.path().join("mbe"), tmp.path().join("repos")),
+            Options::default(),
+        )
+        .expect("valid cohort request");
+
+        let config = request.harness_config().expect("harness config");
+
+        assert_eq!(
+            config.patch_files,
+            vec![tmp.path().join("mbe").join(SUBMISSION_FILE)]
+        );
+        assert_eq!(config.dataset_files, vec![tmp.path().join("dataset.jsonl")]);
+        assert_eq!(
+            config.specifics,
+            vec![
+                "BurntSushi/ripgrep:pr-2209".to_string(),
+                "BurntSushi/ripgrep:pr-454".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn cohort_request_writes_aggregate_submission_and_loads_per_instance_evaluations() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(tmp.path().join("repos").join("BurntSushi").join("ripgrep"))
+            .expect("create repo");
+        fs::write(tmp.path().join("dataset.jsonl"), "{}\n").expect("write dataset");
+
+        let first_submission = tmp.path().join("submission-2209.jsonl");
+        let second_submission = tmp.path().join("submission-454.jsonl");
+        write_submission_record(&first_submission, 2209);
+        write_submission_record(&second_submission, 454);
+
+        let request = CohortRequest::new(
+            vec![
+                CohortMember {
+                    prepared: prepared_run_for(tmp.path(), "BurntSushi__ripgrep-2209", 2209),
+                    submission_path: first_submission,
+                },
+                CohortMember {
+                    prepared: prepared_run_for(tmp.path(), "BurntSushi__ripgrep-454", 454),
+                    submission_path: second_submission,
+                },
+            ],
+            Layout::under(tmp.path().join("mbe"), tmp.path().join("repos")),
+            Options::default(),
+        )
+        .expect("valid cohort request");
+
+        let written = request.write_config().expect("write config");
+        let aggregate = fs::read_to_string(request.layout.output_dir.join(SUBMISSION_FILE))
+            .expect("read aggregate submission");
+        assert_eq!(aggregate.lines().count(), 2);
+
+        let report = FinalReport {
+            total_instances: 2,
+            submitted_instances: 2,
+            completed_instances: 2,
+            incomplete_instances: 0,
+            resolved_instances: 1,
+            unresolved_instances: 1,
+            empty_patch_instances: 0,
+            error_instances: 0,
+            submitted_ids: vec![
+                "BurntSushi/ripgrep:pr-2209".to_string(),
+                "BurntSushi/ripgrep:pr-454".to_string(),
+            ],
+            completed_ids: vec![
+                "BurntSushi/ripgrep:pr-2209".to_string(),
+                "BurntSushi/ripgrep:pr-454".to_string(),
+            ],
+            incomplete_ids: Vec::new(),
+            resolved_ids: vec!["BurntSushi/ripgrep:pr-2209".to_string()],
+            unresolved_ids: vec!["BurntSushi/ripgrep:pr-454".to_string()],
+            empty_patch_ids: Vec::new(),
+            error_ids: Vec::new(),
+        };
+        fs::write(
+            &written.report_path,
+            serde_json::to_string_pretty(&report).expect("serialize report"),
+        )
+        .expect("write report");
+
+        let evaluations = request
+            .load_oracle_evaluations_from(&written.report_path)
+            .expect("load evaluations");
+
+        assert_eq!(evaluations.len(), 2);
+        assert_eq!(
+            evaluations[0].evidence.instance_id,
+            "BurntSushi__ripgrep-2209"
+        );
+        assert_eq!(evaluations[0].diagnostic, OracleDiagnostic::Resolved);
+        assert_eq!(
+            evaluations[1].evidence.instance_id,
+            "BurntSushi__ripgrep-454"
+        );
+        assert_eq!(
+            evaluations[1].diagnostic,
+            OracleDiagnostic::MissingInstanceReport
+        );
+    }
+
+    #[test]
+    fn campaign_instances_from_rows_preserves_full_cohort() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first_submission = tmp.path().join("submission-2209.jsonl");
+        let second_submission = tmp.path().join("submission-454.jsonl");
+        let first_manifest = tmp.path().join("run-2209.json");
+        let second_manifest = tmp.path().join("run-454.json");
+        write_submission_record(&first_submission, 2209);
+        write_submission_record(&second_submission, 454);
+        fs::write(&first_manifest, "{}").expect("write first manifest placeholder");
+        fs::write(&second_manifest, "{}").expect("write second manifest placeholder");
+
+        let rows = vec![
+            ClosureInstanceRow {
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                dataset_label: "ripgrep".to_string(),
+                repo_family: "ripgrep".to_string(),
+                registry_status: RegistryInstanceStatus::Mapped,
+                eval_status: ClosureClass::Complete,
+                protocol_status: ClosureClass::Complete,
+                eval_failure: None,
+                protocol_failure: None,
+                artifacts: ClosureArtifactRefs {
+                    run_manifest: Some(first_manifest),
+                    msb_submission: Some(first_submission),
+                    ..ClosureArtifactRefs::default()
+                },
+                protocol_procedures: std::collections::BTreeMap::new(),
+                protocol_counts: None,
+                last_event_at: None,
+            },
+            ClosureInstanceRow {
+                instance_id: "BurntSushi__ripgrep-454".to_string(),
+                dataset_label: "ripgrep".to_string(),
+                repo_family: "ripgrep".to_string(),
+                registry_status: RegistryInstanceStatus::Mapped,
+                eval_status: ClosureClass::Complete,
+                protocol_status: ClosureClass::Complete,
+                eval_failure: None,
+                protocol_failure: None,
+                artifacts: ClosureArtifactRefs {
+                    run_manifest: Some(second_manifest),
+                    msb_submission: Some(second_submission),
+                    ..ClosureArtifactRefs::default()
+                },
+                protocol_procedures: std::collections::BTreeMap::new(),
+                protocol_counts: None,
+                last_event_at: None,
+            },
+        ];
+
+        let instances = campaign_instances_from_rows(rows.iter()).expect("campaign instances");
+
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0].instance_id(), "BurntSushi__ripgrep-2209");
+        assert_eq!(instances[1].instance_id(), "BurntSushi__ripgrep-454");
     }
 }

@@ -106,7 +106,9 @@ async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &A
 fn has_scheduled_rescan_message(chat: &ploke_tui::chat_history::ChatHistory) -> bool {
     chat.messages.values().any(|m| {
         m.kind == ploke_tui::chat_history::MessageKind::SysInfo
-            && m.content.contains("Scheduled rescan of workspace")
+            && (m.content.contains("Scheduled rescan of workspace")
+                || m.content
+                    .contains("Refreshed workspace after applying edits"))
     })
 }
 

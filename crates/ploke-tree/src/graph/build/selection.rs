@@ -5,6 +5,8 @@ mod membership;
 #[path = "selection/tests.rs"]
 mod tests;
 
+use std::collections::btree_map;
+
 use ploke_records::history::{
     AdmittedEntryRecord, EvaluationPayloadRecord, SelectionDecisionEntryRecord,
     TraversalCandidateSourceRecord,
@@ -82,7 +84,11 @@ impl Builder {
                         selection_entry_id: entry.core.entry_id.clone(),
                         payload_hash: member.payload_hash.0.clone(),
                     };
-                    if self.graph.candidates.memberships.contains_key(&key) {
+                    if let btree_map::Entry::Vacant(e) =
+                        self.graph.candidates.memberships.entry(key)
+                    {
+                        e.insert(node);
+                    } else {
                         self.warn(
                             GraphWarningKind::DuplicateCandidateMembershipId,
                             format!(
@@ -90,8 +96,6 @@ impl Builder {
                                 entry.core.entry_id.0, membership_id.0
                             ),
                         );
-                    } else {
-                        self.graph.candidates.memberships.insert(key, node);
                     }
                 }
             }

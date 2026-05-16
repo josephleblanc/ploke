@@ -1,10 +1,13 @@
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
+use crate::rag::editing::approve_edits;
 use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool, resolve_code_edit_request};
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, rag_types::ApplyCodeEditResult};
 use ploke_db::NodeType;
+use ploke_db::helpers::graph_resolve_exact;
+use ploke_io::read::generate_hash_for_file;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
@@ -54,6 +57,14 @@ fn restore_fixture() {
             e
         )
     });
+}
+
+struct FixtureRestoreGuard;
+
+impl Drop for FixtureRestoreGuard {
+    fn drop(&mut self) {
+        restore_fixture();
+    }
 }
 
 // Helper functions for test setup
@@ -1022,6 +1033,56 @@ async fn test_tool_result_structure() {
         assert!(!structured_result.preview_mode.is_empty());
     }
     restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn semantic_approval_refreshes_file_hash_before_returning() {
+    restore_fixture();
+    let _restore_guard = FixtureRestoreGuard;
+
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let request_id = Uuid::new_v4();
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub refreshed: bool, }",
+        Some(0.9f32),
+    );
+
+    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
+
+    apply_code_edit_tool(params).await;
+    approve_edits(
+        &harness.state,
+        &harness.event_bus,
+        test_proposal_id(request_id),
+    )
+    .await;
+
+    let target_path = workspace_root().join(ORIGINAL_FIXTURE);
+    let mut resolved = graph_resolve_exact(
+        &harness.state.db,
+        NodeType::Struct.relation_str(),
+        &target_path,
+        &["crate".to_string(), "structs".to_string()],
+        "SampleStruct",
+    )
+    .expect("resolve edited struct");
+    assert_eq!(resolved.len(), 1, "edited struct should resolve uniquely");
+
+    let node = resolved.remove(0);
+    let actual_hash = generate_hash_for_file(&target_path, node.namespace)
+        .await
+        .expect("compute live file hash");
+    assert_eq!(
+        node.file_tracking_hash, actual_hash,
+        "approve_edits should not return until the rescanned file hash matches the live file"
+    );
 }
 
 // ============================================================================

@@ -1173,6 +1173,7 @@ fn node_context(manifest_path: &Path, node: &Prototype1NodeRecord) -> Prototype1
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loop_graph::ArtifactId;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::{Event, Id, Subscriber};

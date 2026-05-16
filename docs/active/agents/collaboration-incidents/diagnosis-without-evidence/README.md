@@ -41,3 +41,7 @@ re-ask for a real trace.
   The agent responded to archaeology criticism with a series of narrow
   compliance patches instead of redoing the whole report to the sibling-report
   standard in one exacting pass.
+- [`2026-05-16-protocol-dir-rule-answered-before-tracing-write-target.md`](2026-05-16-protocol-dir-rule-answered-before-tracing-write-target.md)
+  The agent answered from the generic `protocol-artifacts` rule before tracing
+  the active Prototype 1 campaign's real `write_protocol_artifact(record_path,
+  ...)` targets through evaluation artifacts and run registrations.

@@ -181,7 +181,8 @@ struct Prototype1SetupReport {
     scheduler_path: PathBuf,
     batch_id: String,
     batch_manifest: PathBuf,
-    instance_id: String,
+    primary_instance_id: String,
+    eval_instances: Vec<String>,
     repo_root: PathBuf,
     artifact_branch: String,
     parent_identity_path: PathBuf,
@@ -204,14 +205,26 @@ fn prepare_prototype1_parent_setup(
         .transpose()?;
     let profile_ref = operator_profile.as_ref().map(|profile| &profile.profile);
     let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command, profile_ref)?;
-    if prepared_batch.instances.len() != 1 {
+    if prepared_batch.instances.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1 setup requires at least one prepared benchmark instance"
+                .to_string(),
+        });
+    }
+    if prepared_batch.instances.len() != 1
+        && !profile_ref.is_some_and(|profile| {
+            !matches!(profile.generation.source, profile::GenerationSource::Legacy)
+        })
+    {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "prototype1 setup currently requires exactly one instance, got {}",
+                "prototype1 setup supports multi-instance child self-eval only through a non-legacy run profile; got {} prepared instances",
                 prepared_batch.instances.len()
             ),
         });
     }
+    let primary_instance_id =
+        resolve_setup_primary_instance(command, profile_ref, &prepared_batch.instances)?;
 
     let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
     let admitted_profile = operator_profile
@@ -239,7 +252,7 @@ fn prepare_prototype1_parent_setup(
     let node = register_root_parent_node(
         &campaign.campaign_id,
         &campaign.manifest_path,
-        &prepared_batch.instances[0],
+        &primary_instance_id,
         &artifact_branch,
         &repo_root,
         search_policy.clone(),
@@ -281,7 +294,8 @@ fn prepare_prototype1_parent_setup(
         scheduler_path: prototype1_scheduler_path(&campaign.manifest_path),
         batch_id: prepared_batch.batch_id,
         batch_manifest,
-        instance_id: prepared_batch.instances[0].clone(),
+        primary_instance_id,
+        eval_instances: prepared_batch.instances,
         repo_root,
         artifact_branch,
         parent_identity_path,
@@ -305,7 +319,8 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("scheduler: {}", report.scheduler_path.display());
     println!("batch_id: {}", report.batch_id);
     println!("batch_manifest: {}", report.batch_manifest.display());
-    println!("instance_id: {}", report.instance_id);
+    println!("primary_instance_id: {}", report.primary_instance_id);
+    println!("eval_instances: {}", report.eval_instances.join(", "));
     println!("repo_root: {}", report.repo_root.display());
     println!("artifact_branch: {}", report.artifact_branch);
     println!("parent_identity: {}", report.parent_identity_path.display());
@@ -341,9 +356,40 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     );
     println!(
         "  ./target/debug/ploke-eval select instance {}",
-        report.instance_id
+        report.primary_instance_id
     );
     println!("  ./target/debug/ploke-eval loop prototype1-state --repo-root .");
+}
+
+fn resolve_setup_primary_instance(
+    command: &Prototype1LoopCommand,
+    run_profile: Option<&profile::Prototype1RunProfile>,
+    prepared_instances: &[String],
+) -> Result<String, PrepareError> {
+    if let Some(primary) = command.instance.first() {
+        return Ok(primary.clone());
+    }
+    if let Some(primary) = run_profile.and_then(|profile| profile.target.primary_instance()) {
+        if prepared_instances
+            .iter()
+            .any(|instance| instance == primary)
+        {
+            return Ok(primary.to_string());
+        }
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "run profile primary target.instance '{}' is not present in the prepared eval cohort",
+                primary
+            ),
+        });
+    }
+    prepared_instances
+        .first()
+        .cloned()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "prototype1 setup requires at least one prepared benchmark instance"
+                .to_string(),
+        })
 }
 
 fn load_existing_prototype1_campaign(
@@ -3497,9 +3543,8 @@ fn prepare_or_load_prototype1_batch(
         .or_else(|| run_profile.and_then(|profile| profile.target.dataset_key.clone()));
     let instance_ids = if command.instance.is_empty() {
         run_profile
-            .and_then(|profile| profile.target.instance.clone())
-            .into_iter()
-            .collect()
+            .map(|profile| profile.target.eval_instances())
+            .unwrap_or_default()
     } else {
         command.instance.clone()
     };
@@ -9836,6 +9881,7 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
 
         let baseline_metrics: Option<OperationalRunMetrics> = Some(row.metrics.clone());
         let treatment_metrics = treatment_row.and_then(|row| row.metrics.clone());
+        let oracle_evaluation = treatment_row.and_then(|row| row.oracle_evaluation.clone());
 
         let (status, evaluation) = match (&baseline_metrics, &treatment_metrics) {
             (Some(baseline_metrics), Some(treatment_metrics)) => {
@@ -9873,6 +9919,7 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
             treatment_record_path,
             baseline_metrics,
             treatment_metrics,
+            oracle_evaluation,
             evaluation,
             status,
         });
@@ -9950,6 +9997,7 @@ pub(crate) fn build_prototype1_treatment_evidence(
                 registration_path: row.artifacts.registration_path.clone(),
                 record_path: row.artifacts.record_path.clone(),
                 metrics,
+                oracle_evaluation: None,
                 status,
             })
         })
@@ -10431,6 +10479,8 @@ pub(crate) struct Prototype1TreatmentInstanceEvidence {
     pub(crate) record_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_evaluation: Option<crate::mbe::OracleEvaluation>,
     pub(crate) status: String,
 }
 
@@ -10487,6 +10537,8 @@ pub(crate) struct Prototype1ComparedInstanceReport {
     pub(crate) treatment_record_path: Option<PathBuf>,
     pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
     pub(crate) treatment_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_evaluation: Option<crate::mbe::OracleEvaluation>,
     pub(crate) evaluation: Option<BranchEvaluationResult>,
     pub(crate) status: String,
 }
@@ -12986,6 +13038,7 @@ stop_after = "complete"
                 treatment_record_path: None,
                 baseline_metrics: Some(test_metrics(false, false, 0)),
                 treatment_metrics: Some(test_metrics(true, true, 0)),
+                oracle_evaluation: None,
                 evaluation: None,
                 status: "compared".to_string(),
             }],
@@ -13007,6 +13060,7 @@ stop_after = "complete"
                 registration_path: Some(PathBuf::from("/tmp/treatment/registration.json")),
                 record_path: Some(PathBuf::from("/tmp/treatment/record.json.gz")),
                 metrics: Some(test_metrics(true, true, 0)),
+                oracle_evaluation: None,
                 status: "complete".to_string(),
             }],
         }
