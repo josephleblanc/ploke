@@ -297,12 +297,8 @@ impl EdgeCrossingsByKind {
         #[cfg(test)]
         match (left, right) {
             (
-                ViewEdgeKind::HistoryArtifact
-                | ViewEdgeKind::HistoryOpenedFrom
-                | ViewEdgeKind::ArtifactPatch,
-                ViewEdgeKind::HistoryArtifact
-                | ViewEdgeKind::HistoryOpenedFrom
-                | ViewEdgeKind::ArtifactPatch,
+                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
+                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
             ) => {
                 self.artifact_artifact += 1;
             }
@@ -391,12 +387,7 @@ mod tests {
         raw.add_edge(
             node,
             node,
-            edge(
-                "P1",
-                ViewEdgeKind::HistoryOpenedFrom,
-                style.edge.colors.opened_from,
-                style,
-            ),
+            edge("P1", ViewEdgeKind::ArtifactPatch, Color32::WHITE, style),
         );
 
         let mut graph: WidgetGraph = egui_graphs::to_graph_custom(

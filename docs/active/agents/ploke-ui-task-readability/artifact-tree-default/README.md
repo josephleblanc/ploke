@@ -13,8 +13,10 @@ The default tree graph view is an artifact-first tree/DAG projection over
 Primary default geometry:
 
 - nodes are artifact identities from `ploke_tree::graph::artifact_tree::Tree<'_>`;
-- edges are artifact relations such as sealed History successor edges and
-  applied-patch/base-to-derived edges;
+- edges are default visible artifact relations `P_H ∪ P_C`;
+- sealed History opened-from context `P_O` and applied-patch provenance
+  `P_B` stay available as relation inventory, inspector context, and
+  diagnostics, but not as default visible edge geometry;
 - scheduler/process facts such as node ids, generation, candidate ids, and
   parent/child runtime topology appear only as attached provenance, drilldown,
   or later step-through overlays;
@@ -28,6 +30,15 @@ History remains crucial, but it is not the canvas spine in the default view.
 Use History for reveal order, dimming/stepping state, and highlighting the
 current `Parent<Ruler>`. Do not collapse the default canvas into a sealed
 History-block chain.
+
+Promotion continuity is also part of the default artifact identity fold:
+
+- if a selected child Artifact later becomes the next Parent checkout, the
+  selected child `ArtifactId` and the later next-parent base `ArtifactId`
+  should display as one artifact node in this view;
+- raw ids remain visible in the inspector and CLI diagnostics;
+- this is a graph-owned quotient over child-plan continuity facts, not a
+  renderer-local alias.
 
 ## Separation From Drilldown And Debug
 
@@ -91,7 +102,7 @@ step-through surface must be a borrowed projection over `&Graph`, not an owned
   schedule projection over `&Graph`.
 - Keep full composed/all-record graph rendering behind an explicit debug mode.
 - Add tests that default geometry contains Artifact nodes and artifact
-  patch/derivation/history-successor edges, and does not switch to
+  produced-child/history-successor edges, and does not switch to
   run-forest/scheduler nodes when scheduler records are present.
 - Keep full raw ids available only in hover/details/debug text.
 - Verify with the snapshot command against a real run root after code changes.

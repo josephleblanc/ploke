@@ -71,16 +71,11 @@ WARN_G = graph warnings in G.warnings
 For UI product views:
 
 ```text
-F = typed run-forest nodes from RunGraph.forest, when present
-E_F = parent_node_id -> node_id over F
 A = resolved artifact identities derived from A_G
 D = H_G union R_G union O_G union CTX_G union SRC_G union WARN_G
 ```
 
-For real Prototype 1 runs, `F` is the default canvas node set and `E_F` is the
-default canvas edge set. `A` remains the artifact identity set available for
-node details, filters, drilldown, and fallback rendering when no typed
-run-forest records are available. `D` is drilldown/debug material unless a
+`A` is the default canvas node set. `D` is drilldown/debug material unless a
 specific non-default graph projection says otherwise.
 
 `G.artifacts` may store `ArtifactKey::HistoryRef { value }` and
@@ -90,17 +85,7 @@ History ref stores `artifact:<id>` and a passive artifact id stores `<id>`.
 
 ## Artifact Node Contract
 
-The default product graph has one primary visible node kind when a typed
-run forest is present:
-
-```text
-node(F(n)) = Prototype 1 scheduler/run node n
-```
-
-Those nodes carry artifact facts such as base/derived artifact ids. Those facts
-do not become separate canvas nodes in the default view.
-
-The fallback artifact-id graph has one material node kind:
+The default product graph has one material node kind:
 
 ```text
 node(A(a)) = Artifact state identified by canonical artifact id a
@@ -119,9 +104,17 @@ artifact_key_equivalence:
   ArtifactRefRecord("artifact:<id>") == ArtifactId("<id>")
 ```
 
-This rule only merges source references that denote the same artifact id. It
-does not connect distinct artifacts. Distinct artifact ids require explicit
-edges in one of the relation sets below.
+The default artifact view also applies a promotion-continuity quotient when the
+graph can prove that a selected child Artifact later became the next Parent
+checkout:
+
+```text
+selected child ArtifactId == later next-parent base ArtifactId
+```
+
+This rule only merges source references or promotion-continuity aliases that
+denote the same displayed Artifact in this view. Distinct artifact ids still
+require explicit edges in one of the relation sets below.
 
 Branch, candidate, membership, and selection records do not create a second
 material entity when they carry an artifact id. They say that an Artifact is
@@ -148,7 +141,7 @@ They are not additional default `ArtifactTree` material nodes.
 | Context | Identity key | Artifact effect | Default ArtifactTree use |
 |---|---|---|---|
 | History records | `BlockHash`, `EntryId` | Mark artifacts as History-admitted or lineage-associated; supply `P_H` source refs. | Source for `P_H`, lineage marks, ruler highlight, and diagnostics. |
-| Artifact context records | branch id, `CandidateId`, membership id, selection entry id | Mark Artifacts as considered, evaluated, selected, or branch-produced; may supply applied-patch edge source refs. | Source for `P_B` when base and derived Artifact ids are present; can support filters such as “considered Artifacts” or “selected Artifacts.” |
+| Artifact context records | branch id, `CandidateId`, membership id, selection entry id | Mark Artifacts as considered, evaluated, selected, or branch-produced; may supply applied-patch source refs. | Source for context/provenance such as `P_B` when base and derived Artifact ids are present; can support filters such as “considered Artifacts” or “selected Artifacts.” |
 | Runtime records | `RuntimeId` | Explain which runtime/Parent/Child/Successor source refers to an artifact. | Drilldown or non-default runtime/artifact views. |
 | Operation records | `Coordinate` or `OperationTarget` when graph-owned | Explain which operation targeted or produced source facts about an artifact. | Drilldown or non-default operation views. |
 | Source/projection records | source locator or graph attachment id | Support artifact facts and relation facts for inspection. | Detail panels and diagnostics. |
@@ -208,8 +201,9 @@ loaded in `G` without being part of the default `ArtifactTree`.
 | Set | Edge | Endpoint keys | Source records / fields | Source / relation status | Default ArtifactTree status |
 |---|---|---|---|---|---|
 | `P_H` | History successor | `A -> A` | `HistoryBlockNode.active_artifact -> HistoryBlockNode.selected_successor.artifact` | Admitted History successor relation. | Rendered. Implemented. Self-loops are allowed but do not connect components. |
-| `P_B` | Applied-patch edge observed through branch/candidate records | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Source fact that a derived Artifact was produced from a base Artifact. It may overlap a selected/admitted successor, but does not imply that by itself. | Rendered. Implemented. |
-| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context relation. | Rendered in the default artifact projection as an artifact-context edge. |
+| `P_C` | Parent-produced child edge | `A -> A` | graph-owned child-plan continuity over `ChildPlanRecord.parent_node_id` and `ChildPlanChildRecord` derived artifact ids | Source fact that a displayed parent Artifact produced a displayed child Artifact in the next generation. | Rendered. Implemented. |
+| `P_B` | Applied-patch edge observed through branch/candidate records | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Source fact that a derived Artifact was produced from a base Artifact. It may overlap a selected/admitted successor, but does not imply that by itself. | Not rendered by default. Kept as relation inventory, inspector context, and diagnostics. |
+| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context relation. | Not rendered by default. Kept as relation inventory, inspector context, and diagnostics. |
 | `B_PARENT` | Branch ancestry | branch id -> branch id | `parent_branch_id`, `source_state_id`, branch registry/scheduler branch facts | Branch/process ancestry, not an artifact edge by itself. | Not rendered by default. Cannot connect artifacts unless a graph-owned projection maps branch ancestry to artifact endpoints. |
 | `N_PARENT` | Node/process ancestry | node id -> node id | `NodeRecord.parent_node_id -> NodeRecord.node_id` | Scheduler/process ancestry, not an artifact edge by itself. | Not rendered by default. |
 | `SELECTS` | Selection chooses an Artifact-bearing successor | History/selection fact -> artifact-consideration fact | selection decision payload, `output_refs`, selected candidate/member fields | Selection/admission context. | Not rendered by default as artifact edge. May explain why an Artifact was chosen. |
@@ -217,10 +211,10 @@ loaded in `G` without being part of the default `ArtifactTree`.
 | `HYDRATES` | Artifact hydrates runtime / runtime materializes artifact | `A <-> R` direction must be defined by projection | selected successor runtime refs and handoff sources when graph-owned | Runtime/handoff relation, not an artifact edge. | Not rendered by default. |
 | `SOURCE_FOR` | Source/projection record supports entity/relation | `SRC -> A/H/C/R/O` | graph source/projection attachments | Inspection/provenance relation. | Not rendered by default. |
 
-Fallback artifact-id edge set:
+Default artifact edge set:
 
 ```text
-E_artifact = P_H union P_O union P_B
+E_artifact = P_H union P_C
 ```
 
 Non-default relations such as `B_PARENT` can explain why two artifacts are in
@@ -247,27 +241,24 @@ replacement for a borrowed `ploke_tree::Graph` projection.
 ### ArtifactTree
 
 ```text
-if F is non-empty:
-  N_artifact = F
-  E_artifact = E_F
-else:
-  N_artifact = A
-  E_artifact = P_H union P_O union P_B
+N_artifact = A
+E_artifact = P_H union P_C
 
 P_H = { (a_parent, a_child) | exists h. history_successor(h, a_parent, a_child) }
-P_B = { (a_base, a_child) | exists k. applied_patch_edge(k, a_base, a_child) }
+P_C = { (a_parent, a_child) | exists c. produced_child_edge(c, a_parent, a_child) }
 ```
 
 Properties:
 
-- `P_H` and `P_B` both connect artifact nodes, but they come from different
+- `P_H` and `P_C` both connect artifact nodes, but they come from different
   relation sources.
 - `P_H` is History-admitted successor flow.
-- `P_B` is applied-patch Artifact flow observed through branch/candidate
-  records. It can overlap `P_H` for a selected/admitted candidate Artifact.
-- In the run-forest path, artifacts are facts on `F` nodes and are available for
-  filtering, detail, and drilldown.
-- In the fallback artifact-id path, `A` nodes are connected by `P_H union P_B`.
+- `P_C` is graph-owned produced-child Artifact flow derived from child-plan
+  continuity.
+- `P_B` remains applied-patch Artifact provenance observed through
+  branch/candidate records.
+- `P_O` and `P_B` remain available as graph-owned context relations, but they
+  are not part of the default visible canvas edge set.
 - History blocks, entries, runtimes, artifact-consideration facts, operations,
   source/projection attachments, warnings, and synthetic anchors are not
   material nodes in this projection.
@@ -279,6 +270,7 @@ Current graph-owned computation:
 ```text
 A       = artifact nodes after display-key equivalence
 P_H     = HistoryBlockNode.active_artifact -> selected_successor.artifact
+P_C     = parent Artifact -> child Artifact via child-plan continuity
 P_B     = CandidateBranchNode.base_artifact_id -> derived_artifact_id
 lineage = loaded lineage maximizing (block_count, max_block_height)
 ruler   = selected_successor artifact from max-height block in lineage
@@ -313,8 +305,8 @@ This is an explicit debug/drilldown family. It must not leak into
 ## Reconciliation With Existing Docs
 
 - `view-set-contract.md` correctly states that `ArtifactTree` renders artifact
-  nodes with `P_H union P_B` edges. It should treat this file as the source for
-  what `P_H` and `P_B` mean.
+  nodes with `P_H union P_C` edges. It should treat this file as the source for
+  what `P_H`, `P_C`, and contextual `P_B` mean.
 - `default-view-contract.md` correctly requires the center canvas to default to
   `ArtifactTree`, but its CLI-testable signals should eventually report
   relation classes from a `ploke-tree` projection, not egui-local inference.
@@ -330,11 +322,12 @@ This is an explicit debug/drilldown family. It must not leak into
 `ploke-tree` exposes a borrowed projection:
 
 ```text
-ArtifactTree(G) = (A, P_H, P_B, diagnostics)
+ArtifactTree(G) = (A, P_H, P_C, diagnostics)
 ```
 
-where `A`, `P_H`, and `P_B` refer back to graph-owned records or indices. That
-projection is the object `ploke-egui` and CLI diagnostics should consume.
+where `A`, `P_H`, and `P_C` refer back to graph-owned records or indices, and
+`P_B` remains graph-owned context/provenance inventory. That projection is the
+object `ploke-egui` and CLI diagnostics should consume.
 
 The projection should remain the owner of endpoint-missing diagnostics,
 artifact identity collision behavior, and relation source classes without

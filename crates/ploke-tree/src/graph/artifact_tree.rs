@@ -3,6 +3,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use ploke_records::child_plan::ChildPlanChildRecord;
+use ploke_records::ids::ArtifactId;
+
 use super::{ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageNode};
 
 /// Borrowed artifact-first projection over a [`Graph`].
@@ -14,6 +17,7 @@ pub struct Tree<'g> {
     pub nodes: BTreeMap<Key<'g>, Node<'g>>,
     pub history_successors: Vec<HistoryEdge<'g>>,
     pub opened_from_edges: Vec<HistoryEdge<'g>>,
+    pub produced_child_edges: Vec<ProducedChildEdge<'g>>,
     pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
     pub marks: Marks<'g>,
     pub diagnostics: Diagnostics<'g>,
@@ -54,6 +58,13 @@ pub struct AppliedPatchEdge<'g> {
     pub sources: Vec<&'g CandidateBranchNode>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducedChildEdge<'g> {
+    pub from: Key<'g>,
+    pub to: Key<'g>,
+    pub sources: Vec<&'g ChildPlanChildRecord>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Marks<'g> {
     pub primary_lineage: Option<&'g LineageNode>,
@@ -78,6 +89,7 @@ pub struct Component<'g> {
     pub roots: Vec<Key<'g>>,
     pub history_successors: Vec<HistoryEdge<'g>>,
     pub opened_from_edges: Vec<HistoryEdge<'g>>,
+    pub produced_child_edges: Vec<ProducedChildEdge<'g>>,
     pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
 }
 
@@ -92,6 +104,7 @@ pub struct MissingEndpoint<'g> {
 pub enum Relation<'g> {
     HistorySuccessor(&'g HistoryBlockNode),
     HistoryOpenedFrom(&'g HistoryBlockNode),
+    ProducedChild(&'g ChildPlanChildRecord),
     AppliedPatch(&'g CandidateBranchNode),
 }
 
@@ -112,9 +125,10 @@ impl<'g> Tree<'g> {
     /// proof:docs/active/archaeology/ploke-tree-graph/artifact-promotion-continuity.md
     pub fn from_graph(graph: &'g Graph) -> Self {
         let promotion_aliases = promotion_aliases(graph);
+        let material_keys = material_keys(graph, &promotion_aliases);
         let mut nodes = BTreeMap::new();
         for artifact in graph.artifacts.artifacts.values() {
-            let Some(key) = node_key(artifact, &promotion_aliases) else {
+            let Some(key) = node_key(artifact, &promotion_aliases, &material_keys) else {
                 continue;
             };
             nodes
@@ -132,13 +146,17 @@ impl<'g> Tree<'g> {
             BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g HistoryBlockNode>>::new();
         let mut opened_from_edges =
             BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g HistoryBlockNode>>::new();
+        let mut produced_child_edges =
+            BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g ChildPlanChildRecord>>::new();
         for block in graph.history.blocks.values() {
             let opened_from = canonical_key(
                 history_ref_key(&block.opened_from_artifact.value),
                 &promotion_aliases,
             );
-            let active =
-                canonical_key(history_ref_key(&block.active_artifact.value), &promotion_aliases);
+            let active = canonical_key(
+                history_ref_key(&block.active_artifact.value),
+                &promotion_aliases,
+            );
             if endpoints_present(
                 &nodes,
                 Relation::HistoryOpenedFrom(block),
@@ -152,8 +170,10 @@ impl<'g> Tree<'g> {
                     .push(block);
             }
 
-            let from =
-                canonical_key(history_ref_key(&block.active_artifact.value), &promotion_aliases);
+            let from = canonical_key(
+                history_ref_key(&block.active_artifact.value),
+                &promotion_aliases,
+            );
             let to = canonical_key(
                 history_ref_key(&block.selected_successor.artifact.value),
                 &promotion_aliases,
@@ -169,6 +189,35 @@ impl<'g> Tree<'g> {
                     .entry((from, to))
                     .or_default()
                     .push(block);
+            }
+        }
+
+        for plan in graph.child_plans.plans.values() {
+            let Some(parent) = parent_artifact_key(
+                graph,
+                plan.parent_node_id.as_str(),
+                &promotion_aliases,
+                &material_keys,
+            ) else {
+                continue;
+            };
+            for child in &plan.children {
+                let Some(derived) = child_derived_artifact(child) else {
+                    continue;
+                };
+                let to = canonical_key(passive_id_key(derived.0.as_str()), &promotion_aliases);
+                if endpoints_present(
+                    &nodes,
+                    Relation::ProducedChild(child),
+                    parent,
+                    to,
+                    &mut missing_endpoints,
+                ) {
+                    produced_child_edges
+                        .entry((parent, to))
+                        .or_default()
+                        .push(child);
+                }
             }
         }
 
@@ -205,6 +254,10 @@ impl<'g> Tree<'g> {
             .into_iter()
             .map(|((from, to), sources)| HistoryEdge { from, to, sources })
             .collect::<Vec<_>>();
+        let produced_child_edges = produced_child_edges
+            .into_iter()
+            .map(|((from, to), sources)| ProducedChildEdge { from, to, sources })
+            .collect::<Vec<_>>();
         let applied_patch_edges = applied_patch_edges
             .into_iter()
             .map(|((from, to), sources)| AppliedPatchEdge { from, to, sources })
@@ -215,6 +268,7 @@ impl<'g> Tree<'g> {
             &nodes,
             &history_successors,
             &opened_from_edges,
+            &produced_child_edges,
             &applied_patch_edges,
             missing_endpoints,
         );
@@ -223,6 +277,7 @@ impl<'g> Tree<'g> {
             nodes,
             history_successors,
             opened_from_edges,
+            produced_child_edges,
             applied_patch_edges,
             marks,
             diagnostics,
@@ -235,6 +290,7 @@ impl<'g> Diagnostics<'g> {
         nodes: &BTreeMap<Key<'g>, Node<'g>>,
         history_successors: &[HistoryEdge<'g>],
         opened_from_edges: &[HistoryEdge<'g>],
+        produced_child_edges: &[ProducedChildEdge<'g>],
         applied_patch_edges: &[AppliedPatchEdge<'g>],
         missing_endpoints: Vec<MissingEndpoint<'g>>,
     ) -> Self {
@@ -258,7 +314,7 @@ impl<'g> Diagnostics<'g> {
                 &mut incident,
             );
         }
-        for edge in applied_patch_edges {
+        for edge in produced_child_edges {
             join_edge(
                 edge.from,
                 edge.to,
@@ -305,6 +361,11 @@ impl<'g> Diagnostics<'g> {
                     .filter(|edge| artifacts.contains(&edge.from))
                     .cloned()
                     .collect();
+                let produced_child_edges = produced_child_edges
+                    .iter()
+                    .filter(|edge| artifacts.contains(&edge.from))
+                    .cloned()
+                    .collect();
                 let applied_patch_edges = applied_patch_edges
                     .iter()
                     .filter(|edge| artifacts.contains(&edge.from))
@@ -315,6 +376,7 @@ impl<'g> Diagnostics<'g> {
                     roots,
                     history_successors,
                     opened_from_edges,
+                    produced_child_edges,
                     applied_patch_edges,
                 }
             })
@@ -431,8 +493,10 @@ fn primary_lineage(graph: &Graph) -> Option<&LineageNode> {
 fn node_key<'g>(
     artifact: &'g ArtifactNode,
     promotion_aliases: &BTreeMap<Key<'g>, Key<'g>>,
+    material_keys: &BTreeSet<Key<'g>>,
 ) -> Option<Key<'g>> {
-    Some(canonical_key(Key(artifact.entity_key()), promotion_aliases))
+    let key = canonical_key(Key(artifact.entity_key()), promotion_aliases);
+    material_keys.contains(&key).then_some(key)
 }
 
 fn history_ref_key(value: &str) -> Key<'_> {
@@ -452,6 +516,96 @@ fn canonical_key<'g>(mut key: Key<'g>, aliases: &BTreeMap<Key<'g>, Key<'g>>) -> 
         key = next;
     }
     key
+}
+
+/// archaeology:artifact-promotion-continuity
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-promotion-continuity.md
+fn material_keys<'g>(graph: &'g Graph, aliases: &BTreeMap<Key<'g>, Key<'g>>) -> BTreeSet<Key<'g>> {
+    let mut keys = BTreeSet::new();
+    for block in graph.history.blocks.values() {
+        keys.insert(canonical_key(
+            history_ref_key(&block.opened_from_artifact.value),
+            aliases,
+        ));
+        keys.insert(canonical_key(
+            history_ref_key(&block.active_artifact.value),
+            aliases,
+        ));
+        keys.insert(canonical_key(
+            history_ref_key(&block.selected_successor.artifact.value),
+            aliases,
+        ));
+    }
+    for candidate in &graph.candidates.candidates {
+        if let Some(artifact_id) = candidate.artifact_after.as_ref() {
+            keys.insert(canonical_key(
+                passive_id_key(artifact_id.0.as_str()),
+                aliases,
+            ));
+        }
+    }
+    for child in graph
+        .child_plans
+        .plans
+        .values()
+        .flat_map(|plan| plan.children.iter())
+    {
+        if let Some(artifact_id) = child_derived_artifact(child) {
+            keys.insert(canonical_key(
+                passive_id_key(artifact_id.0.as_str()),
+                aliases,
+            ));
+        }
+    }
+    keys
+}
+
+/// archaeology:artifact-promotion-continuity
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-promotion-continuity.md
+fn parent_artifact_key<'g>(
+    graph: &'g Graph,
+    parent_node_id: &str,
+    aliases: &BTreeMap<Key<'g>, Key<'g>>,
+    material_keys: &BTreeSet<Key<'g>>,
+) -> Option<Key<'g>> {
+    let mut matches = BTreeSet::new();
+    for candidate in &graph.candidates.candidates {
+        if candidate.node_id.as_deref() != Some(parent_node_id) {
+            continue;
+        }
+        if let Some(artifact_id) = candidate.artifact_after.as_ref() {
+            matches.insert(canonical_key(
+                passive_id_key(artifact_id.0.as_str()),
+                aliases,
+            ));
+        }
+    }
+    if let Some(child) = graph.child_plans.child_for_node_id(parent_node_id)
+        && let Some(artifact_id) = child_derived_artifact(child)
+    {
+        matches.insert(canonical_key(
+            passive_id_key(artifact_id.0.as_str()),
+            aliases,
+        ));
+    }
+    let key = only_key(matches)?;
+    material_keys.contains(&key).then_some(key)
+}
+
+fn child_derived_artifact(child: &ChildPlanChildRecord) -> Option<&ArtifactId> {
+    child
+        .surface
+        .as_ref()
+        .map(|surface| &surface.after.artifact_id)
+        .or(child.node.derived_artifact_id.as_ref())
+}
+
+fn only_key<'g>(mut keys: BTreeSet<Key<'g>>) -> Option<Key<'g>> {
+    if keys.len() == 1 {
+        keys.pop_first()
+    } else {
+        None
+    }
 }
 
 fn promotion_aliases<'g>(graph: &'g Graph) -> BTreeMap<Key<'g>, Key<'g>> {
@@ -536,19 +690,26 @@ fn find(parent: &mut [usize], index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
+    use ploke_records::branch::{
+        ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus,
+    };
+    use ploke_records::child_plan::{ChildPlanChildRecord, ChildPlanRecord};
     use ploke_records::history::{
         ActorRefRecord, ArtifactRefRecord, ProcedureRefRecord, SurfaceCommitmentRecord,
         SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
     };
     use ploke_records::ids::{
-        ArtifactId, BlockHash, BlockId, EntryId, HistoryHash, LineageId, RecordedAt, RuntimeId,
+        ArtifactId, BlockHash, BlockId, BranchId, CampaignId, CandidateId, EntryId, HistoryHash,
+        InstanceId, LineageId, PatchId, RecordedAt, RuntimeId, SchedulerNodeId, SourceStateId,
     };
+    use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, RunnerRequestRecord};
 
     use crate::graph::{
         ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode,
-        CandidateBranchNode, CandidateIndex, Graph, HistoryBlockNode, HistoryIndex, LineageNode,
-        OpeningAuthorityNode, SuccessorNode,
+        CandidateBranchNode, CandidateIndex, ChildPlanIndex, Graph, HistoryBlockNode, HistoryIndex,
+        LineageNode, OpeningAuthorityNode, SuccessorNode,
     };
 
     #[test]
@@ -570,6 +731,24 @@ mod tests {
                 ..HistoryIndex::default()
             },
             candidates: CandidateIndex {
+                candidates: vec![crate::graph::CandidateNode {
+                    selection_entry_id: EntryId("entry-derived".to_owned()),
+                    payload_index: 0,
+                    subject: ploke_records::history::SubjectRefRecord {
+                        value: "candidate:derived".to_owned(),
+                    },
+                    source: Some(crate::graph::CandidateSource::CurrentGeneration),
+                    occurrence_id: None,
+                    membership_id: None,
+                    membership_key: None,
+                    node_id: Some("node-derived".to_owned()),
+                    branch_id: Some("branch-derived".to_owned()),
+                    generation: Some(1),
+                    primary_runtime_id: None,
+                    artifact_after: Some(ArtifactId("derived".to_owned())),
+                    patch_id: None,
+                    evidence: Vec::new(),
+                }],
                 branches: vec![candidate_branch("successor", "derived")],
                 ..CandidateIndex::default()
             },
@@ -590,10 +769,16 @@ mod tests {
         assert_eq!(tree.applied_patch_edges[0].from.as_str(), "successor");
         assert_eq!(tree.applied_patch_edges[0].to.as_str(), "derived");
         assert_eq!(tree.marks.selected_ruler.map(|key| key.as_str()), None);
-        assert!(tree.diagnostics.weakly_connected);
-        assert_eq!(tree.diagnostics.weak_component_count, 1);
-        assert!(tree.diagnostics.roots.is_empty());
-        assert!(tree.diagnostics.orphan_artifacts.is_empty());
+        assert!(!tree.diagnostics.weakly_connected);
+        assert_eq!(tree.diagnostics.weak_component_count, 2);
+        assert_eq!(
+            key_strings(&tree.diagnostics.roots),
+            vec!["base", "derived"]
+        );
+        assert_eq!(
+            key_strings(&tree.diagnostics.orphan_artifacts),
+            vec!["derived"]
+        );
         assert!(tree.diagnostics.missing_endpoints.is_empty());
 
         graph.artifacts.artifacts.insert(
@@ -617,7 +802,7 @@ mod tests {
         assert_eq!(tree.diagnostics.weak_component_count, 2);
         assert_eq!(
             key_strings(&tree.diagnostics.orphan_artifacts),
-            vec!["orphan"]
+            vec!["derived"]
         );
     }
 
@@ -727,15 +912,75 @@ mod tests {
         let tree = graph.artifact_tree();
 
         assert!(tree.history_successors.is_empty());
-        assert_eq!(tree.diagnostics.missing_endpoints.len(), 2);
+        assert_eq!(tree.diagnostics.missing_endpoints.len(), 4);
         assert_eq!(
             tree.diagnostics
                 .missing_endpoints
                 .iter()
                 .map(|endpoint| endpoint.artifact_key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["base", "successor"]
+            vec!["base", "base", "base", "successor"]
         );
+    }
+
+    #[test]
+    fn artifact_tree_collapses_selected_child_and_next_parent_base_artifact() {
+        let selected = "selected";
+        let next_parent_base = "next-parent-base";
+        let grandchild = "grandchild";
+        let child_node_id = "node-selected-child";
+
+        let graph = Graph {
+            artifacts: ArtifactIndex {
+                artifacts: BTreeMap::from([
+                    artifact_passive(selected),
+                    artifact_passive(next_parent_base),
+                    artifact_passive(grandchild),
+                ]),
+            },
+            candidates: CandidateIndex {
+                branches: vec![candidate_branch(next_parent_base, grandchild)],
+                ..CandidateIndex::default()
+            },
+            child_plans: ChildPlanIndex {
+                plans: BTreeMap::from([
+                    (
+                        SchedulerNodeId("node-parent-g1".to_owned()),
+                        child_plan_record(
+                            "node-parent-g1",
+                            child_node_id,
+                            "parent-base",
+                            selected,
+                            "branch-selected",
+                            "candidate-selected",
+                            "patch-selected",
+                        ),
+                    ),
+                    (
+                        SchedulerNodeId(child_node_id.to_owned()),
+                        child_plan_record(
+                            child_node_id,
+                            "node-child-g2",
+                            next_parent_base,
+                            grandchild,
+                            "branch-grandchild",
+                            "candidate-grandchild",
+                            "patch-grandchild",
+                        ),
+                    ),
+                ]),
+            },
+            ..Graph::default()
+        };
+
+        let tree = graph.artifact_tree();
+
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.nodes[selected].sources.len(), 2);
+        assert_eq!(tree.applied_patch_edges.len(), 1);
+        assert_eq!(tree.applied_patch_edges[0].from.as_str(), selected);
+        assert_eq!(tree.applied_patch_edges[0].to.as_str(), grandchild);
+        assert!(tree.diagnostics.weakly_connected);
     }
 
     fn key_strings<'a>(keys: &[super::Key<'a>]) -> Vec<&'a str> {
@@ -846,6 +1091,143 @@ mod tests {
             derived_artifact_id: Some(ArtifactId(derived.to_owned())),
             patch_id: None,
             evidence: Vec::new(),
+        }
+    }
+
+    fn child_plan_record(
+        parent_node_id: &str,
+        child_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+    ) -> ChildPlanRecord {
+        ChildPlanRecord {
+            message: PathBuf::from(format!("/tmp/{parent_node_id}.json")),
+            parent_node_id: SchedulerNodeId(parent_node_id.to_owned()),
+            child_generation: 1,
+            children: vec![ChildPlanChildRecord {
+                node: node_record(
+                    child_node_id,
+                    base_artifact_id,
+                    derived_artifact_id,
+                    branch_id,
+                    candidate_id,
+                    patch_id,
+                ),
+                request: runner_request_record(
+                    child_node_id,
+                    base_artifact_id,
+                    derived_artifact_id,
+                    branch_id,
+                    patch_id,
+                ),
+                resolved: resolved_branch(branch_id, candidate_id, patch_id, base_artifact_id),
+                surface: None,
+            }],
+            rejected_surface_attempts: Vec::new(),
+        }
+    }
+
+    fn node_record(
+        child_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+    ) -> NodeRecord {
+        NodeRecord {
+            schema_version: "prototype1-treatment-node.v1".to_owned(),
+            node_id: SchedulerNodeId(child_node_id.to_owned()),
+            parent_node_id: None,
+            generation: 1,
+            instance_id: InstanceId("instance".to_owned()),
+            source_state_id: SourceStateId("source".to_owned()),
+            operation_target: None,
+            base_artifact_id: Some(ArtifactId(base_artifact_id.to_owned())),
+            patch_id: Some(PatchId(patch_id.to_owned())),
+            derived_artifact_id: Some(ArtifactId(derived_artifact_id.to_owned())),
+            parent_branch_id: None,
+            branch_id: BranchId(branch_id.to_owned()),
+            candidate_id: CandidateId(candidate_id.to_owned()),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            node_dir: PathBuf::from(format!("/tmp/nodes/{child_node_id}")),
+            workspace_root: PathBuf::from(format!("/tmp/workspaces/{child_node_id}")),
+            binary_path: PathBuf::from("/tmp/bin/ploke"),
+            runner_request_path: PathBuf::from(format!("/tmp/requests/{child_node_id}.json")),
+            runner_result_path: PathBuf::from(format!("/tmp/results/{child_node_id}.json")),
+            status: NodeStatusRecord::Planned,
+            created_at: "now".to_owned(),
+            updated_at: "now".to_owned(),
+        }
+    }
+
+    fn runner_request_record(
+        child_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        patch_id: &str,
+    ) -> RunnerRequestRecord {
+        RunnerRequestRecord {
+            schema_version: "prototype1-runner-request.v1".to_owned(),
+            campaign_id: CampaignId("campaign".to_owned()),
+            node_id: SchedulerNodeId(child_node_id.to_owned()),
+            generation: 1,
+            instance_id: InstanceId("instance".to_owned()),
+            source_state_id: SourceStateId("source".to_owned()),
+            operation_target: None,
+            base_artifact_id: Some(ArtifactId(base_artifact_id.to_owned())),
+            patch_id: Some(PatchId(patch_id.to_owned())),
+            derived_artifact_id: Some(ArtifactId(derived_artifact_id.to_owned())),
+            branch_id: BranchId(branch_id.to_owned()),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            workspace_root: PathBuf::from(format!("/tmp/workspaces/{child_node_id}")),
+            binary_path: PathBuf::from("/tmp/bin/ploke"),
+            stop_on_error: false,
+            runner_args: vec!["prototype1".to_owned(), "runner".to_owned()],
+        }
+    }
+
+    fn resolved_branch(
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+        base_artifact_id: &str,
+    ) -> ResolvedTreatmentBranch {
+        ResolvedTreatmentBranch {
+            instance_id: "instance".to_owned(),
+            source_state_id: "source".to_owned(),
+            parent_branch_id: None,
+            target_relpath: PathBuf::from("src/lib.rs"),
+            source_content: "fn main() {}".to_owned(),
+            source_content_hash: "sha256:source".to_owned(),
+            selected_branch_id: Some(branch_id.to_owned()),
+            branch: TreatmentBranchNode {
+                branch_id: branch_id.to_owned(),
+                candidate_id: candidate_id.to_owned(),
+                patch_id: Some(PatchId(patch_id.to_owned())),
+                branch_label: candidate_id.to_owned(),
+                synthesized_spec_id: "spec".to_owned(),
+                proposed_content: "fn main() { println!(\"hi\"); }".to_owned(),
+                proposed_content_hash: "sha256:proposal".to_owned(),
+                generation_target: Some(ploke_records::ids::OperationTarget::Artifact {
+                    artifact_id: ArtifactId(base_artifact_id.to_owned()),
+                }),
+                generation_coordinate: Some(ploke_records::ids::Coordinate {
+                    runtime_id: RuntimeId("runtime".to_owned()),
+                    target: ploke_records::ids::OperationTarget::Artifact {
+                        artifact_id: ArtifactId(base_artifact_id.to_owned()),
+                    },
+                }),
+                status: TreatmentBranchStatus::Applied,
+                apply_id: Some("apply".to_owned()),
+                applied_content_hash: Some("sha256:applied".to_owned()),
+                derived_artifact_id: None,
+                latest_evaluation: None,
+            },
         }
     }
 

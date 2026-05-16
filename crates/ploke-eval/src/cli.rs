@@ -540,6 +540,12 @@ pub enum LoopSubcommand {
     Prototype1(Prototype1LoopCommand),
     /// Create a Prototype 1 campaign and admit the current checkout as Parent(0).
     Prototype1Setup(Prototype1LoopCommand),
+    /// Diagnose the active Prototype 1 parent checkout and print the next exact commands.
+    Prototype1Doctor(Prototype1ControlCommand),
+    /// Resume the active Prototype 1 parent checkout until the current turn completes or hands off.
+    Prototype1Continue(Prototype1ControlCommand),
+    /// Advance exactly one diagnosed Prototype 1 parent phase.
+    Prototype1Step(Prototype1ControlCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
     /// Inspect or execute one staged Prototype 1 runner invocation.
@@ -638,6 +644,17 @@ pub struct Prototype1StateCommand {
     /// Candidate generator used before publishing the child plan.
     #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
     pub candidate_generator: Prototype1CandidateGenerator,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(about = "Diagnose or control the active Prototype 1 parent checkout")]
+pub struct Prototype1ControlCommand {
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -1383,6 +1400,9 @@ impl LoopCommand {
         match self.command {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
+            LoopSubcommand::Prototype1Doctor(cmd) => prototype1_state::run::doctor(cmd).await,
+            LoopSubcommand::Prototype1Continue(cmd) => prototype1_state::run::resume(cmd).await,
+            LoopSubcommand::Prototype1Step(cmd) => prototype1_state::run::step(cmd).await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Harness(cmd) => cmd.run().await,
@@ -5857,7 +5877,7 @@ fn clone_repo_into_cache(org: &str, repo: &str, repo_cache: &Path) -> Result<(),
     Ok(())
 }
 
-async fn advance_eval_closure(
+pub(crate) async fn advance_eval_closure(
     config: &ResolvedCampaignConfig,
     policy: &EvalCampaignPolicy,
     dry_run: bool,
@@ -5944,7 +5964,7 @@ async fn advance_eval_closure(
     })
 }
 
-async fn advance_protocol_closure(
+pub(crate) async fn advance_protocol_closure(
     config: &ResolvedCampaignConfig,
     policy: &ProtocolCampaignPolicy,
     dry_run: bool,
@@ -13213,6 +13233,74 @@ mod tests {
                     cmd.candidate_generator,
                     Prototype1CandidateGenerator::BroadHarnessRequest
                 );
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_doctor_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-doctor",
+            "--repo-root",
+            "/tmp/repo",
+            "--format",
+            "json",
+        ])
+        .expect("loop prototype1-doctor should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Doctor(cmd),
+            }) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_continue_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-continue",
+            "--repo-root",
+            "/tmp/repo",
+        ])
+        .expect("loop prototype1-continue should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Continue(cmd),
+            }) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_step_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-step",
+            "--repo-root",
+            "/tmp/repo",
+        ])
+        .expect("loop prototype1-step should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Step(cmd),
+            }) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

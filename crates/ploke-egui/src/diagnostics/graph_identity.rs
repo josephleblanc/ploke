@@ -15,6 +15,8 @@ pub struct GraphIdentity {
     pub artifact_tree_nodes: usize,
     #[serde(rename = "artifact_tree_P_H")]
     pub artifact_tree_p_h: usize,
+    #[serde(rename = "artifact_tree_P_C")]
+    pub artifact_tree_p_c: usize,
     #[serde(rename = "artifact_tree_P_O")]
     pub artifact_tree_p_o: usize,
     #[serde(rename = "artifact_tree_P_B")]
@@ -52,6 +54,7 @@ impl GraphIdentity {
             default_visible_edges: diagnostics.edge_count,
             artifact_tree_nodes: artifact_tree.nodes.len(),
             artifact_tree_p_h: artifact_tree.history_successors.len(),
+            artifact_tree_p_c: artifact_tree.produced_child_edges.len(),
             artifact_tree_p_o: artifact_tree.opened_from_edges.len(),
             artifact_tree_p_b: artifact_tree.applied_patch_edges.len(),
             visible_node_fingerprint: fingerprint(&visible_node_keys),

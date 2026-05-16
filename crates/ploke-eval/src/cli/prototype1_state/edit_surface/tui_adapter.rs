@@ -1133,7 +1133,9 @@ fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
     prompt.push_str("Previous attempt result:\n");
     prompt.push_str(feedback);
     prompt.push_str("\n\n");
-    push_blocked_paths(&mut prompt);
+    prompt.push_str(
+        "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`. Ordinary edits touching that surface will be rejected.\n",
+    );
     if has_applied_edits {
         prompt
             .push_str("\nThe workspace already contains allowed edits from earlier tool calls.\n");
@@ -1141,22 +1143,6 @@ fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
         prompt.push_str("\nNo allowed source edit has been applied yet.\n");
     }
     prompt
-}
-
-fn push_blocked_paths(prompt: &mut String) {
-    use crate::cli::prototype1_state::backend::{
-        WORKSPACE_EXCEPT_AUTHORITY_FILENAMES, WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
-    };
-
-    prompt.push_str("Do not edit files under:\n");
-    for prefix in WORKSPACE_EXCEPT_AUTHORITY_PREFIXES {
-        prompt.push_str(&format!("- `{}/`\n", prefix.trim_end_matches('/')));
-    }
-
-    prompt.push_str("\nDo not edit files named:\n");
-    for filename in WORKSPACE_EXCEPT_AUTHORITY_FILENAMES {
-        prompt.push_str(&format!("- `{}`\n", filename));
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2713,12 +2699,12 @@ mod tests {
                     role: EvidenceRole::EvaluationPayloads,
                 },
             ],
-            "Modify any part of the codebase at `/tmp/prototype1/workspace`.\n\nPast benchmark scores, failures, and metrics can be found here:\n- `/tmp/prototype1/evaluations`\n",
+            "Modify any part of the codebase at `/tmp/prototype1/workspace`.\n\nPast benchmark results live under `/tmp/prototype1/evaluations`.\n",
             Some("tool failed"),
         );
 
         assert!(prompt.starts_with("Modify any part of the codebase at"));
-        assert!(prompt.contains("Past benchmark scores, failures, and metrics"));
+        assert!(prompt.contains("Past benchmark results live under"));
         assert!(prompt.contains("Previous attempt result:"));
         assert!(prompt.contains("tool failed"));
         assert!(!prompt.contains("Headless TUI harness boundary"));
@@ -2789,8 +2775,8 @@ mod tests {
             policy_repair_prompt("Rejected protected paths: crates/example/Cargo.toml", true);
 
         assert!(prompt.contains("Previous attempt result"));
-        assert!(prompt.contains("Do not edit files under:"));
-        assert!(prompt.contains("Cargo.toml"));
+        assert!(prompt.contains("Protected core: see"));
+        assert!(prompt.contains("WORKSPACE_EXCEPT_AUTHORITY_*"));
         assert!(prompt.contains("The workspace already contains allowed edits"));
         assert!(!prompt.contains("authority/runtime directories"));
         assert!(!prompt.contains("stage only allowed follow-up source edits"));

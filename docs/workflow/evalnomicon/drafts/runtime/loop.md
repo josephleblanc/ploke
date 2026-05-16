@@ -228,6 +228,62 @@ Current code anchors:
 - [cli/prototype1_state/c3.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/c3.rs)
 - [cli/prototype1_state/journal.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/journal.rs)
 
+## Baseline Continuity And Restart
+
+Two separate continuity questions matter in the live implementation:
+
+- what becomes the next parent baseline after successor handoff
+- what can be reused if the current parent process dies before handoff
+
+The first point is better than the old mental model may suggest. Generation 0
+still establishes its baseline from the campaign closure state, but later
+parents do not keep reusing that original closure baseline. For `generation > 0`
+the active parent baseline is promoted from the selected child's own treatment
+evaluation report:
+
+```text
+selected child treatment record + metrics
+  -> branch evaluation report for selected branch
+  -> next Parent baseline
+```
+
+So once a child has been selected and installed as the next Parent, the next
+comparison is intended to be against that child-evaluated baseline, not against
+the original generation-0 parent eval.
+
+The second point is only partially solved today. If the parent dies before
+successor handoff:
+
+- the persisted child-plan message can already be reused on restart instead of
+  regenerating candidates
+- existing managed child worktrees can already be safely reused if branch,
+  target path, and target content still match the expected child
+
+That means a same-campaign restart should not need to redo the expensive child
+patch-synthesis step merely because the parent process died before handoff.
+
+But the current restart surface is still weaker than the intended model:
+
+- resumed child execution does not yet reload a typed `Child<...>` lifecycle
+  carrier from persisted state
+- the parent re-enters the per-child `C1 -> C5` path instead of resuming from a
+  persisted build/spawn/observe checkpoint
+- the admitted run profile still owns fanout, so a restart does not yet provide
+  a first-class way to continue the same child plan with a lower concurrency
+  budget after a resource-kill
+
+So the current practical statement is:
+
+```text
+baseline continuity across generations is mostly correct
+restart continuity across in-flight child execution is still incomplete
+```
+
+The missing near-term object is not another mutable scheduler snapshot. It is a
+typed persisted resume carrier for planned children and observed child outcomes,
+plus a bounded operator surface for resuming the same admitted plan under a
+resource-safe fanout policy.
+
 ## Policy
 
 Prototype 1 already has a useful first policy surface in the old

@@ -130,9 +130,10 @@ pub(super) fn build(
             vec![
                 format!("E_F={}", center.edges.e_f),
                 format!("P_H={}", center.edges.p_h),
-                format!("P_O={}", center.edges.p_o),
-                format!("P_B={}", center.edges.p_b),
-                format!("total={}", center.edges.total()),
+                format!("P_C={}", center.edges.p_c),
+                format!("visible_primary={}", center.edges.visible_primary_total()),
+                format!("P_O_context={}", center.edges.p_o),
+                format!("P_B_context={}", center.edges.p_b),
             ],
         ),
         check(

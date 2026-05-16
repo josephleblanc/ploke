@@ -27,6 +27,12 @@ pub(crate) enum State {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         selection_decision: Option<SuccessorDecision>,
     },
+    /// Parent consumed the handoff phase without spawning a successor.
+    Stopped {
+        decision: Prototype1ContinuationDecision,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection_decision: Option<SuccessorDecision>,
+    },
     /// Parent spawned the successor process.
     Spawned {
         pid: u32,
@@ -108,6 +114,24 @@ impl Record {
             campaign_id,
             node_id,
             state: State::Selected {
+                decision,
+                selection_decision: Some(selection_decision),
+            },
+        }
+    }
+
+    pub(crate) fn stopped(
+        campaign_id: String,
+        node_id: String,
+        decision: Prototype1ContinuationDecision,
+        selection_decision: SuccessorDecision,
+    ) -> Self {
+        Self {
+            runtime_id: None,
+            recorded_at: RecordedAt::now(),
+            campaign_id,
+            node_id,
+            state: State::Stopped {
                 decision,
                 selection_decision: Some(selection_decision),
             },
@@ -226,6 +250,7 @@ impl Record {
     pub(crate) fn entry_kind(&self) -> &'static str {
         match self.state {
             State::Selected { .. } => "successor:selected",
+            State::Stopped { .. } => "successor:stopped",
             State::Checkout { phase, .. } => match phase {
                 CommitPhase::Before => "successor:checkout:before",
                 CommitPhase::After => "successor:checkout:after",

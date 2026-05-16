@@ -107,8 +107,8 @@ typed status facts instead of empty space or inferred facts.
 | Question family | Primary frame | First visible answer | Source facts | Current status |
 |---|---|---|---|---|
 | Run load/progress | Top strip, left sidebar | loaded/empty/failed, generation/node counts | `&Graph`, run picker state, `RunForest` when present | Partial: counts exist in the left panel and top strip; richer generation summary is missing. |
-| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.forest`, `Graph.artifact_tree()` fallback, History marks | Partial: canvas and inspector shell exist; typed lineage facts are incomplete. |
-| Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | scheduler nodes, candidate/branch graph indices | Partial: visible siblings exist for run-forest topology; candidate drilldown is missing. |
+| Artifact lineage / selected path | Center canvas, right inspector | visible tree, selected node identity, parent/child relation | `Graph.artifact_tree()`, History marks, child-plan continuity | Partial: canvas and inspector shell exist; typed lineage facts are incomplete. |
+| Nearby alternatives | Center canvas, right inspector | sibling nodes, candidate/branch refs, hidden/visible status | artifact tree, candidate/branch graph indices | Partial: visible siblings exist as artifact branches; candidate drilldown is missing. |
 | Successor selection | Right inspector | selected candidate/member, considered count, candidate-set root | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries selection facts; no inspector answer path yet. |
 | Source/projection status | Right inspector | typed source refs, graph-build warnings, missing/not-applicable/failed | graph refs, warnings, History/report-derived records | Missing: diagnostic shape exists; typed inspector facts do not. |
 | Patch/surface detail | Right inspector, later drilldown | target path, patch id, base/derived artifact, source state | scheduler node facts, branch/candidate surface evidence | Partial: run-forest detail text exists, but typed inspector facts are incomplete. |
@@ -215,7 +215,7 @@ Purpose:
 Should contain:
 
 - `A` Artifact nodes as the primary visible nodes;
-- `P_H union P_B` patch/derivation edges as primary visible edges;
+- `P_H union P_C` successor/produced-child edges as primary visible edges;
 - current ruler or latest selected successor highlight;
 - nearby alternatives visible as artifact branches;
 - pan, zoom, drag, hover, and selection behavior.
@@ -235,12 +235,12 @@ Testable signals:
 - `graph_identity.default_visible_nodes` reports the rendered default
   projection node count.
 - `graph_identity.artifact_tree_nodes`, `graph_identity.artifact_tree_P_H`,
-  and `graph_identity.artifact_tree_P_B` report the borrowed artifact-tree
+  and `graph_identity.artifact_tree_P_C` report the borrowed artifact-tree
   relation counts used by the default canvas.
 - `graph_identity.visible_node_fingerprint` is stable for the visible default
   node key set, so CLI and app-written diagnostics can be compared directly.
 - `canvas.primary_node_set = A`.
-- `canvas.primary_edge_set = P_H union P_B`.
+- `canvas.primary_edge_set = P_H union P_C`.
 - `canvas.synthetic_anchors_visible = false`
 - `canvas.debug_nodes_visible = false`
 - `canvas.artifact_nodes.count > 0` for non-empty real Prototype 1 runs
@@ -254,7 +254,8 @@ Status:
 - Implemented: central graph canvas exists.
 - Implemented: ArtifactTree hides synthetic anchors.
 - Implemented: diagnostics report whether synthetic anchors are visible.
-- Implemented: diagnostics report `A`, `P_H`, `P_B`, total visible
+- Implemented: diagnostics report `A`, `P_H`, `P_C`, plus `P_O`/`P_B`
+  context inventory, total visible
   nodes, total visible edges, weak components, roots, orphan artifacts, and
   ruler highlight count.
 - Implemented: contract checks include artifact node-set reporting, artifact
@@ -286,8 +287,8 @@ First-frame content contract:
 | Summary | What exactly did I select? | display label and selected graph kind | selected widget payload plus borrowed `Graph` lookup | Implemented for selected nodes. |
 | Identity | Which artifact and attached process/candidate facts does this belong to? | primary artifact id, aliases, and attached branch/candidate/runtime provenance when present | `Graph.artifact_tree()` refs plus attached graph evidence | Partial: artifact identity is present; richer attached provenance remains incomplete. |
 | Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | candidate/branch surface evidence and attached graph evidence | Partial: artifact-backed patch facts exist; patch diff body is deferred. |
-| Lineage | What path led here? | immediate predecessor/successor and patch-derivation relations | `P_H`/`P_B` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
-| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing typed artifact-edge facts | `Graph.artifact_tree()` | Partial: artifact selections show `P_H`/`P_B`; richer relation families are deferred. |
+| Lineage | What path led here? | immediate predecessor/successor and produced-child relations | `P_H`/`P_C` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
+| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing typed artifact-edge facts | `Graph.artifact_tree()` | Partial: artifact selections show `P_H`/`P_C`, with `P_O`/`P_B` retained as typed context/provenance. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
 | Source refs | Which typed records or report-derived facts support this displayed answer? | source record refs, graph warnings, and source counts | `TreeNode` refs, artifact source refs, graph warnings | Partial: record-ref facts exist where the graph projection exposes them; source/projection classification is deferred. |
@@ -427,12 +428,8 @@ without a human opening the UI:
 DefaultView :=
   Layout(top?, left, center, right?, bottom?)
   + Center.mode = ArtifactTree
-  + if F non-empty:
-      Center.nodes = F
-      Center.edges = E_F
-    else:
-      Center.nodes = A
-      Center.edges = P_H union P_B
+  + Center.nodes = A
+  + Center.edges = P_H union P_C
   + Center.nodes disjoint D
   + Center.nodes disjoint SYN
   + History is highlight/reveal state, not the default canvas spine
@@ -443,8 +440,7 @@ Required pass/fail checks:
 - The default mode is `ArtifactTree`.
 - The default center canvas is the largest horizontal region and receives at
   least `50%` of the initial native window width with both side panels visible.
-- A non-empty real Prototype 1 run renders run-forest nodes in the center
-  canvas; fallback artifact-only graphs render artifact nodes.
+- A non-empty real Prototype 1 run renders artifact nodes in the center canvas.
 - The default canvas does not render synthetic anchor nodes.
 - The default canvas does not render runtime/tool/provider/debug records as
   primary nodes.
@@ -458,16 +454,15 @@ Current status:
 
 - Implemented: default mode check is possible from existing diagnostics.
 - Implemented: synthetic anchor visibility is reported by existing diagnostics.
-- Implemented: node/edge counts are reported by semantic set for `F`, `A`,
-  `E_F`, `P_H`, and `P_B`.
+- Implemented: node/edge counts are reported by semantic set for `A`, `P_H`,
+  `P_B`, and `P_O` context inventory.
 - Implemented: selected summary is represented in the default-view diagnostic
   shape when selection exists.
 - Implemented: layout-region presence is reported for the top, left, center,
   right, and bottom frames.
 - Implemented: pass/fail contract report exists for the current diagnostic
   shape.
-- Partial: the run-forest path reports graph-owned topology; fallback
-  artifact-only membership and relation diagnostics still depend on the current
+- Partial: artifact-only membership and relation diagnostics still depend on the current
   projection path.
 - Missing: unavailable drilldown classification.
 

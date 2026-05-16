@@ -8,5 +8,10 @@ projection-only labels.
   Identity surface for Artifact inspector claims, including `ArtifactId`,
   `ArtifactRef`, `TreeKeyHash`, and nearby provenance carriers.
 - [`artifact-relations.md`](artifact-relations.md)
-  Default artifact-canvas relation families, including `P_H`, `P_O`, and
-  `P_B`, and the typed graph carriers they render from.
+  Default artifact-canvas relation families: visible `P_H ∪ P_C`, with `P_O`
+  and `P_B` kept as context/provenance inventory, and the typed graph carriers
+  they render from.
+- [`artifact-promotion-continuity.md`](artifact-promotion-continuity.md)
+  Default artifact-tree identity quotient for selected child -> next parent
+  continuity, keeping one displayed Artifact node when graph-owned child-plan
+  facts prove the continuation.

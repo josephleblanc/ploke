@@ -94,6 +94,10 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 ## Typed UI Projection Style
 
 - Requirement: `ploke-egui` is a typed projection of `ploke-tree::Graph`, not a string-rendering layer. Preserve semantic graph facts as typed borrowed values until the egui render boundary.
+- Requirement: before adding, changing, or explaining a UI-facing semantic claim with ambiguous identity/provenance carriers, use both project skills `ploke-debugger-claim-workflow` and `ui-claim-archaeology`.
+- Requirement: before editing an archaeology report inside an existing `docs/active/archaeology/` group, re-read the local archaeology set: `README.md`, `INDEX.md`, the group `README.md`, and at least one sibling report in that group. Do not update one report in isolation and call the archaeology pass complete.
+- Requirement: archaeology report carrier tables must use concrete type/path references in `where it appears`. Do not use vague buckets like `scheduler records`, `child-plan record`, or `sealed History fields` when a real type/field path is available.
+- Requirement: do not cite a file, type, helper, or field in archaeology work unless you actually read it in the current pass. If an entry is not yet grounded, mark it `unverified` and stop instead of filling it with plausible text.
 - Requirement: do not collapse Artifact, Runtime, role, History, candidate, or evidence facts into `InspectorRow`, string labels, or row-shaped carriers. If the UI fact means `Parent`, `Child`, selected Artifact, Runtime role, or evidence relation, carry that meaning in the type.
 - Requirement: visual row layout may exist only inside the renderer. Rows are not semantic objects, cache entries, inspector facts, or projection carriers. Text-only rendering belongs at the egui/text boundary after typed facts have already been selected.
 - Requirement: prefer graph-derived typed witnesses such as `Badge::Child(&ArtifactId)` or `Badge::Parent(&ArtifactId)` over labels like `"child"` or `"parent"`. The carried id is a binding: it proves the rendered item is attached to an underlying semantic object and should make detached role labels hard to construct.

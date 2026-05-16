@@ -776,7 +776,7 @@ mod tests {
         diagnostics.edge_count = 2;
         diagnostics.artifact_tree = Shape::new(
             Nodes::new(3),
-            Edges::new(1, 1, 1),
+            Edges::new(1, 1, 1, 1),
             Components::new(2, 2, 1),
             Marks::new(1),
         );
@@ -838,7 +838,8 @@ mod tests {
         assert_eq!(report.center.edges.p_h, 1);
         assert_eq!(report.center.edges.p_o, 1);
         assert_eq!(report.center.edges.p_b, 1);
-        assert_eq!(report.center.edges.total(), 3);
+        assert_eq!(report.center.edges.total(), 4);
+        assert_eq!(report.center.edges.visible_primary_total(), 2);
         assert_eq!(report.center.components.weak, 2);
         assert_eq!(report.center.components.roots, 2);
         assert_eq!(report.center.components.orphan_artifacts, 1);

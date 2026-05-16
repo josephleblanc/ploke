@@ -304,6 +304,7 @@ impl<'g> PatchInspection<'g> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactRelationKind {
     HistoryPatch,
+    ProducedChild,
     HistoryOpenedFrom,
     AppliedPatch,
 }
@@ -312,6 +313,7 @@ impl ArtifactRelationKind {
     fn edge_relation(self) -> EdgeRelation {
         match self {
             Self::HistoryPatch => EdgeRelation::HistoryPatch,
+            Self::ProducedChild => EdgeRelation::ProducedChild,
             Self::HistoryOpenedFrom => EdgeRelation::HistoryOpenedFrom,
             Self::AppliedPatch => EdgeRelation::AppliedPatch,
         }
@@ -619,6 +621,8 @@ pub enum EdgeRelation {
     RunForest,
     #[serde(rename = "P_H")]
     HistoryPatch,
+    #[serde(rename = "P_C")]
+    ProducedChild,
     #[serde(rename = "P_O")]
     HistoryOpenedFrom,
     #[serde(rename = "P_B")]
@@ -630,6 +634,7 @@ impl EdgeRelation {
         match self {
             Self::RunForest => "E_F",
             Self::HistoryPatch => "P_H",
+            Self::ProducedChild => "P_C",
             Self::HistoryOpenedFrom => "P_O",
             Self::AppliedPatch => "P_B",
         }
@@ -819,6 +824,18 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             patch_ids: Vec::new(),
         })
         .chain(
+            tree.produced_child_edges
+                .iter()
+                .filter(|edge| edge.to == node.key)
+                .map(|edge| ArtifactRelation {
+                    kind: ArtifactRelationKind::ProducedChild,
+                    from: edge.from.as_str(),
+                    to: edge.to.as_str(),
+                    source_count: edge.sources.len(),
+                    patch_ids: edge.sources.iter().filter_map(child_patch_id).collect(),
+                }),
+        )
+        .chain(
             tree.opened_from_edges
                 .iter()
                 .filter(|edge| edge.to == node.key)
@@ -858,6 +875,18 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             source_count: edge.sources.len(),
             patch_ids: Vec::new(),
         })
+        .chain(
+            tree.produced_child_edges
+                .iter()
+                .filter(|edge| edge.from == node.key)
+                .map(|edge| ArtifactRelation {
+                    kind: ArtifactRelationKind::ProducedChild,
+                    from: edge.from.as_str(),
+                    to: edge.to.as_str(),
+                    source_count: edge.sources.len(),
+                    patch_ids: edge.sources.iter().filter_map(child_patch_id).collect(),
+                }),
+        )
         .chain(
             tree.opened_from_edges
                 .iter()
@@ -907,7 +936,7 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         outgoing,
         patches,
         parent_create: graph.parent_create_for_artifact_key(node.key.as_str()),
-        role_badges: role_badges_for_artifact_key(graph, node.key.as_str()),
+        role_badges: role_badges_for_artifact_node(graph, node),
     })
 }
 
@@ -1359,6 +1388,17 @@ fn artifact_identity_label(identity: &ploke_tree::graph::ArtifactIdentity) -> &s
     }
 }
 
+fn child_patch_id<'a>(
+    child: &&'a ploke_records::child_plan::ChildPlanChildRecord,
+) -> Option<&'a ploke_records::ids::PatchId> {
+    child
+        .surface
+        .as_ref()
+        .map(|surface| &surface.patch_id)
+        .or(child.node.patch_id.as_ref())
+        .or(child.request.patch_id.as_ref())
+}
+
 pub(crate) fn run_forest_artifact_edges(
     node: &ploke_tree::TreeNode,
 ) -> impl Iterator<Item = SelectionEdge<'_>> + '_ {
@@ -1396,13 +1436,25 @@ fn role_badges_for_run_forest_node<'g>(
     }))
 }
 
-fn role_badges_for_artifact_key<'g>(
+fn role_badges_for_artifact_node<'g>(
     graph: &'g ploke_tree::Graph,
-    artifact_key: &str,
+    node: &ploke_tree::graph::artifact_tree::Node<'g>,
 ) -> Vec<Badge<'g>> {
+    let mut artifact_ids = Vec::new();
+    for source in &node.sources {
+        for artifact_id in source.artifact_ids() {
+            let artifact_id = artifact_id.0.as_str();
+            if !artifact_ids.contains(&artifact_id) {
+                artifact_ids.push(artifact_id);
+            }
+        }
+    }
     unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
         let badge = Badge::from_invocation(invocation)?;
-        (badge.artifact_id().0.as_str() == artifact_key).then_some(invocation)
+        artifact_ids
+            .iter()
+            .any(|artifact_id| badge.artifact_id().0.as_str() == *artifact_id)
+            .then_some(invocation)
     }))
 }
 
@@ -1750,6 +1802,7 @@ mod tests {
         ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus,
     };
     use ploke_records::child_plan::ChildPlanChildRecord;
+    use ploke_records::history::SubjectRefRecord;
     use ploke_records::history::{
         SurfaceApplyStatusRecord, SurfaceArtifactRefRecord, SurfaceCheckStatusRecord,
         SurfaceEvidenceRecord, SurfaceTouchRecord,
@@ -1806,8 +1859,15 @@ mod tests {
             }),
             ..Default::default()
         };
-        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "A2")
-            .expect("A2 resolves from default visible selection order");
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "A2".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::RunForestNode {
+                key: "child".to_owned(),
+            },
+        };
+        let inspector = SelectionInspector::from_graph(&graph, &selection);
 
         match &inspector {
             SelectionInspector::RunForestNode(run) => {
@@ -1871,10 +1931,11 @@ mod tests {
         };
         assert_eq!(metrics.source_records, 1);
         assert_eq!(metrics.evidence_refs, 0);
-        assert_eq!(snapshot.incoming.len(), 1);
-        assert_eq!(snapshot.incoming[0].relation, EdgeRelation::AppliedPatch);
+        assert_eq!(snapshot.incoming.len(), 2);
+        assert_eq!(snapshot.incoming[0].relation, EdgeRelation::ProducedChild);
         assert_eq!(snapshot.incoming[0].from, "base");
         assert_eq!(snapshot.incoming[0].to, "after");
+        assert_eq!(snapshot.incoming[1].relation, EdgeRelation::AppliedPatch);
         assert_eq!(
             snapshot.source_refs,
             vec![SourceRef::ArtifactId {
@@ -2152,8 +2213,15 @@ mod tests {
     #[test]
     fn typed_edge_relation_classification_covers_all_visible_relations() {
         let graph = graph_with_parent_child();
-        let (_, inspector) = SelectionInspector::from_default_selector(&graph, "A2")
-            .expect("child selection resolves");
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "A2".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::RunForestNode {
+                key: "child".to_owned(),
+            },
+        };
+        let inspector = SelectionInspector::from_graph(&graph, &selection);
         let SelectionInspector::RunForestNode(run) = inspector else {
             panic!("expected run-forest node inspection");
         };
@@ -2169,16 +2237,32 @@ mod tests {
                 patch_ids: Vec::new(),
             },
             ArtifactRelation {
+                kind: ArtifactRelationKind::ProducedChild,
+                from: "artifact:parent",
+                to: "artifact:child",
+                source_count: 1,
+                patch_ids: Vec::new(),
+            },
+            ArtifactRelation {
                 kind: ArtifactRelationKind::AppliedPatch,
                 from: "artifact:base",
                 to: "artifact:after",
                 source_count: 1,
                 patch_ids: Vec::new(),
             },
+            ArtifactRelation {
+                kind: ArtifactRelationKind::HistoryOpenedFrom,
+                from: "artifact:opened",
+                to: "artifact:active",
+                source_count: 1,
+                patch_ids: Vec::new(),
+            },
         ];
         let edges = artifact_edges(&relations).collect::<Vec<_>>();
         assert_eq!(edges[0].relation, EdgeRelation::HistoryPatch);
-        assert_eq!(edges[1].relation, EdgeRelation::AppliedPatch);
+        assert_eq!(edges[1].relation, EdgeRelation::ProducedChild);
+        assert_eq!(edges[2].relation, EdgeRelation::AppliedPatch);
+        assert_eq!(edges[3].relation, EdgeRelation::HistoryOpenedFrom);
     }
 
     #[test]
@@ -2189,9 +2273,10 @@ mod tests {
         let snapshot = inspector.snapshot(&selection);
         let json = serde_json::to_value(&snapshot).expect("serialize selection snapshot");
 
-        assert_eq!(json["identity"]["artifact"]["artifact"], "after");
+        assert_eq!(json["identity"]["artifact"]["artifact"], "artifact:after");
         assert_eq!(json["metrics"]["artifact"]["source_records"], 1);
-        assert_eq!(json["incoming"][0]["relation"], "P_B");
+        assert_eq!(json["incoming"][0]["relation"], "P_C");
+        assert_eq!(json["incoming"][1]["relation"], "P_B");
         assert_eq!(json["unavailable"], serde_json::Value::Null);
     }
 
@@ -2265,6 +2350,24 @@ mod tests {
         ploke_tree::Graph {
             artifacts: ploke_tree::graph::ArtifactIndex { artifacts },
             candidates: ploke_tree::graph::CandidateIndex {
+                candidates: vec![ploke_tree::graph::CandidateNode {
+                    selection_entry_id: EntryId("entry:base".to_owned()),
+                    payload_index: 0,
+                    subject: SubjectRefRecord {
+                        value: "candidate:base".to_owned(),
+                    },
+                    source: Some(ploke_tree::graph::CandidateSource::CurrentGeneration),
+                    occurrence_id: None,
+                    membership_id: None,
+                    membership_key: None,
+                    node_id: Some("node-base".to_owned()),
+                    branch_id: Some("branch-base".to_owned()),
+                    generation: Some(0),
+                    primary_runtime_id: None,
+                    artifact_after: Some(base.clone()),
+                    patch_id: None,
+                    evidence: Vec::new(),
+                }],
                 branches: vec![ploke_tree::graph::CandidateBranchNode {
                     selection_entry_id: EntryId("entry:1".to_owned()),
                     payload_index: 0,
@@ -2279,7 +2382,24 @@ mod tests {
                 }],
                 ..Default::default()
             },
+            child_plans: ploke_tree::graph::ChildPlanIndex {
+                plans: BTreeMap::from([(
+                    SchedulerNodeId("node-base".to_owned()),
+                    child_plan_record(),
+                )]),
+            },
             ..Default::default()
+        }
+    }
+
+    fn child_plan_record() -> ploke_records::child_plan::ChildPlanRecord {
+        let child = child_plan_child_record();
+        ploke_records::child_plan::ChildPlanRecord {
+            message: PathBuf::from("/tmp/node-base.json"),
+            parent_node_id: SchedulerNodeId("node-base".to_owned()),
+            child_generation: 1,
+            children: vec![child],
+            rejected_surface_attempts: Vec::new(),
         }
     }
 
@@ -2323,6 +2443,27 @@ mod tests {
 
         ploke_tree::Graph {
             artifacts: ploke_tree::graph::ArtifactIndex { artifacts },
+            candidates: ploke_tree::graph::CandidateIndex {
+                candidates: vec![ploke_tree::graph::CandidateNode {
+                    selection_entry_id: EntryId("entry:after".to_owned()),
+                    payload_index: 0,
+                    subject: SubjectRefRecord {
+                        value: "candidate:after".to_owned(),
+                    },
+                    source: Some(ploke_tree::graph::CandidateSource::CurrentGeneration),
+                    occurrence_id: None,
+                    membership_id: None,
+                    membership_key: None,
+                    node_id: Some("node-after".to_owned()),
+                    branch_id: Some("branch-after".to_owned()),
+                    generation: Some(1),
+                    primary_runtime_id: None,
+                    artifact_after: Some(ArtifactId("artifact:after".to_owned())),
+                    patch_id: None,
+                    evidence: Vec::new(),
+                }],
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

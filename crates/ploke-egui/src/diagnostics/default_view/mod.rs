@@ -179,6 +179,8 @@ pub struct Edges {
     pub e_f: usize,
     #[serde(rename = "P_H")]
     pub p_h: usize,
+    #[serde(rename = "P_C")]
+    pub p_c: usize,
     #[serde(rename = "P_O")]
     pub p_o: usize,
     #[serde(rename = "P_B")]
@@ -187,7 +189,11 @@ pub struct Edges {
 
 impl Edges {
     pub fn total(&self) -> usize {
-        self.e_f + self.p_h + self.p_o + self.p_b
+        self.e_f + self.p_h + self.p_c + self.p_o + self.p_b
+    }
+
+    pub fn visible_primary_total(&self) -> usize {
+        self.e_f + self.p_h + self.p_c
     }
 }
 
@@ -196,6 +202,7 @@ impl From<tree::Edges> for Edges {
         Self {
             e_f: value.run_forest,
             p_h: value.history_patches,
+            p_c: value.produced_child_edges,
             p_o: value.opened_from_edges,
             p_b: value.applied_patch_edges,
         }

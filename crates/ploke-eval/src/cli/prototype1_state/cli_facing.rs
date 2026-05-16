@@ -191,6 +191,7 @@ struct Prototype1SetupReport {
     branch_id: String,
     search_policy: Prototype1SearchPolicy,
     run_profile: Option<profile::RunProfileCommitment>,
+    run_control: crate::cli::prototype1_state::run::core::Prototype1RunControl,
 }
 
 fn prepare_prototype1_parent_setup(
@@ -227,6 +228,10 @@ fn prepare_prototype1_parent_setup(
     } else {
         search_policy_from_command(command)?
     };
+    let run_control = crate::cli::prototype1_state::run::core::write_default_run_control(
+        &campaign.manifest_path,
+        &search_policy,
+    )?;
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
         sanitize_batch_component(&campaign.campaign_id)
@@ -286,6 +291,7 @@ fn prepare_prototype1_parent_setup(
         branch_id: identity.branch_id().to_string(),
         search_policy,
         run_profile: admitted_profile.map(|profile| profile.commitment),
+        run_control,
     })
 }
 
@@ -322,6 +328,11 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
         println!("run_profile: {}", commitment.profile_path.display());
         println!("run_profile_sha256: {}", commitment.sha256);
     }
+    println!(
+        "run_control: {}",
+        crate::cli::prototype1_state::run::core::run_control_path(&report.campaign_manifest)
+            .display()
+    );
     println!();
     println!("next:");
     println!(
@@ -362,7 +373,7 @@ fn load_existing_prototype1_campaign(
     })
 }
 
-fn ensure_prototype1_baseline_closure_state(
+pub(crate) fn ensure_prototype1_baseline_closure_state(
     config: &ResolvedCampaignConfig,
 ) -> Result<PathBuf, PrepareError> {
     let path = campaign_closure_state_path(&config.campaign_id)?;
@@ -373,7 +384,7 @@ fn ensure_prototype1_baseline_closure_state(
     recompute_closure_state(config.closure_recompute_request()).map(|(path, _)| path)
 }
 
-async fn establish_parent_baseline(
+pub(crate) async fn establish_parent_baseline(
     campaign_id: &str,
     config: &ResolvedCampaignConfig,
     manifest_path: &Path,
@@ -682,28 +693,28 @@ enum ParentTargetSelection {
     AwaitingHarnessBatch(HarnessRequestBatch),
 }
 
-struct PlannedChildren {
-    parent: Parent<Selectable>,
-    plan: Received<ChildPlan>,
-    children: Vec<ChildFiles>,
-    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+pub(crate) struct PlannedChildren {
+    pub(crate) parent: Parent<Selectable>,
+    pub(crate) plan: Received<ChildPlan>,
+    pub(crate) children: Vec<ChildFiles>,
+    pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
 #[derive(Debug)]
-struct PlannedChildOutcome {
-    plan_index: usize,
-    node: Prototype1NodeRecord,
-    node_id: String,
-    outcome: String,
-    node_status: Prototype1NodeStatus,
-    workspace_root: PathBuf,
-    binary_path: PathBuf,
-    resolved: crate::intervention::ResolvedTreatmentBranch,
-    child_runtime: Option<String>,
-    evaluation_report: Option<Prototype1BranchEvaluationReport>,
-    selection_input: Option<SelectionInput>,
-    surface: Option<SurfaceEvidence>,
-    artifact_surface: Option<ArtifactSurface>,
+pub(crate) struct PlannedChildOutcome {
+    pub(crate) plan_index: usize,
+    pub(crate) node: Prototype1NodeRecord,
+    pub(crate) node_id: String,
+    pub(crate) outcome: String,
+    pub(crate) node_status: Prototype1NodeStatus,
+    pub(crate) workspace_root: PathBuf,
+    pub(crate) binary_path: PathBuf,
+    pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
+    pub(crate) child_runtime: Option<String>,
+    pub(crate) evaluation_report: Option<Prototype1BranchEvaluationReport>,
+    pub(crate) selection_input: Option<SelectionInput>,
+    pub(crate) surface: Option<SurfaceEvidence>,
+    pub(crate) artifact_surface: Option<ArtifactSurface>,
 }
 
 const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
@@ -715,7 +726,7 @@ struct DeterministicTuiToolsCandidates {
     rejected_attempts: Vec<surface_attempt::Evidence>,
 }
 
-struct SelectionSealMaterial {
+pub(crate) struct SelectionSealMaterial {
     procedure: ProcedureRef,
     scope: SelectionScope,
     selected_candidate: SubjectRef,
@@ -801,7 +812,7 @@ impl SelectionSealMaterial {
         }
     }
 
-    fn selected_artifact(&self) -> Result<CandidateArtifact, PrepareError> {
+    pub(crate) fn selected_artifact(&self) -> Result<CandidateArtifact, PrepareError> {
         self.selected_payload()?.artifact.clone().ok_or_else(|| {
             PrepareError::InvalidBatchSelection {
                 detail: format!(
@@ -812,7 +823,7 @@ impl SelectionSealMaterial {
         })
     }
 
-    fn into_entry(
+    pub(crate) fn into_entry(
         self,
         decision: SuccessorDecision,
     ) -> Result<SelectionDecisionEntry, PrepareError> {
@@ -7376,7 +7387,27 @@ async fn resolve_child_plan(
     })
 }
 
-fn compare_observed_child_treatment(
+pub(crate) async fn resolve_profile_child_plan(
+    campaign_id: &str,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    run_profile: &profile::Prototype1RunProfile,
+    child_budget: Prototype1ChildBudget,
+) -> Result<PlannedChildren, PrepareError> {
+    resolve_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        parent,
+        CandidateGenerationConfig::from_profile_generation(run_profile.generation),
+        None,
+        child_budget,
+    )
+    .await
+}
+
+pub(crate) fn compare_observed_child_treatment(
     campaign_id: &str,
     manifest_path: &Path,
     parent_baseline: &CompleteBaseline,
@@ -7433,7 +7464,7 @@ fn compare_observed_child_treatment(
     Ok(report)
 }
 
-fn run_planned_child(
+pub(crate) fn run_planned_child(
     campaign_id: String,
     manifest_path: PathBuf,
     repo_root: PathBuf,
@@ -7942,7 +7973,7 @@ fn adaptive_selection_accepts_successor(
     })
 }
 
-fn live_successor_continuation_decision(
+pub(crate) fn live_successor_continuation_decision(
     campaign_manifest_path: &Path,
     parent_identity: &ParentIdentity,
     policy: &Prototype1SearchPolicy,
@@ -8115,6 +8146,13 @@ fn reserve_complete_child_budget(
     })
 }
 
+pub(crate) fn reserve_profile_child_budget(
+    policy: &Prototype1SearchPolicy,
+    current_node_count: u32,
+) -> Result<Prototype1ChildBudget, PrepareError> {
+    reserve_complete_child_budget(policy, current_node_count)
+}
+
 struct GenerationCandidateProjection {
     considered: Vec<EvaluationPayload>,
     projection_failures: Vec<SelectionProjectionFailure>,
@@ -8156,6 +8194,27 @@ impl Prototype1SuccessorSelection {
             },
         }
     }
+}
+
+pub(crate) fn select_successor_for_profile(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    child_outcomes: &[PlannedChildOutcome],
+    rejected_surface_attempts: &[surface_attempt::Evidence],
+    run_profile: &profile::Prototype1RunProfile,
+) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
+    let metric_inputs = traversal_metric_inputs(run_profile.selection.traversal_metrics());
+    let strategy = run_profile
+        .selection
+        .successor_selection()
+        .active_strategy(metric_inputs);
+    ParentSelection::new(
+        manifest_path,
+        parent_identity,
+        child_outcomes,
+        rejected_surface_attempts,
+    )
+    .select_successor(run_profile.selection.seed, strategy)
 }
 
 #[instrument(
@@ -8614,7 +8673,7 @@ fn candidate_artifact_from_outcome(
         selected_from_generation_outcomes = material.selected_from_generation_outcomes,
     )
 )]
-fn select_artifact_for_handoff(
+pub(crate) fn select_artifact_for_handoff(
     decision: &SuccessorDecision,
     material: &SelectionSealMaterial,
 ) -> Result<state_selection::Selection<state_selection::Artifact>, PrepareError> {
@@ -9479,6 +9538,19 @@ impl Prototype1StateCommand {
                     }
                 }
             } else {
+                journal
+                    .append(JournalEntry::Successor(SuccessorRecord::stopped(
+                        campaign_id.clone(),
+                        node.node_id.clone(),
+                        decision.clone(),
+                        selection_decision.clone(),
+                    )))
+                    .map_err(|err| {
+                        prototype1_state_transition_error(
+                            "prototype1_successor_stopped",
+                            err.to_string(),
+                        )
+                    })?;
                 outcome.push_str(&format!(
                     ";successor_handoff=skipped:{:?}",
                     decision.disposition
@@ -10419,7 +10491,7 @@ pub(crate) struct Prototype1ComparedInstanceReport {
     pub(crate) status: String,
 }
 
-fn selection_input_from_child_report(
+pub(crate) fn selection_input_from_child_report(
     node: &Prototype1NodeRecord,
     report: &Prototype1BranchEvaluationReport,
 ) -> SelectionInput {

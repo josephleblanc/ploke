@@ -1,9 +1,10 @@
 //! ArtifactTree projection shape.
 //!
 //! This module carries the contract-level facts for the default graph view:
-//! artifact nodes (`A`), admitted History successor edges (`P_H`), History
-//! opened-from context edges (`P_O`), observed branch applied-patch edges
-//! (`P_B`), weak components, roots, orphans, and ruler marks.
+//! artifact nodes (`A`), admitted History successor edges (`P_H`),
+//! parent-produced child edges (`P_C`), plus relation inventory for History
+//! opened-from context (`P_O`) and raw patch provenance (`P_B`), weak
+//! components, roots, orphans, and ruler marks.
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape {
@@ -63,6 +64,7 @@ impl Nodes {
 pub struct Edges {
     pub run_forest: usize,
     pub history_patches: usize,
+    pub produced_child_edges: usize,
     pub opened_from_edges: usize,
     pub applied_patch_edges: usize,
 }
@@ -70,19 +72,29 @@ pub struct Edges {
 impl Edges {
     pub(crate) fn new(
         history_patches: usize,
+        produced_child_edges: usize,
         opened_from_edges: usize,
         applied_patch_edges: usize,
     ) -> Self {
         Self {
             run_forest: 0,
             history_patches,
+            produced_child_edges,
             opened_from_edges,
             applied_patch_edges,
         }
     }
 
     pub fn total(self) -> usize {
-        self.run_forest + self.history_patches + self.opened_from_edges + self.applied_patch_edges
+        self.run_forest
+            + self.history_patches
+            + self.produced_child_edges
+            + self.opened_from_edges
+            + self.applied_patch_edges
+    }
+
+    pub fn visible_primary_total(self) -> usize {
+        self.run_forest + self.history_patches + self.produced_child_edges
     }
 }
 

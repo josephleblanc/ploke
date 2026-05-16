@@ -28,17 +28,16 @@ state. `Mark_m` must not add semantic facts.
 Base sets:
 
 ```text
-F      = typed run-forest nodes observed in RunGraph.forest
-E_F    = run-forest parent edges:
-         parent_node_id -> node_id
 A      = resolved Artifact nodes observed in RunGraph
 H      = History records / blocks observed in RunGraph
 R      = Runtime records observed in RunGraph
 P_H    = admitted History transition edges:
          active Artifact -> selected successor Artifact
-P_B    = observed applied-patch Artifact edges:
+P_C    = parent-produced child Artifact edges:
+         parent Artifact -> child Artifact, sourced from graph-owned child-plan continuity
+P_B    = observed applied-patch Artifact provenance:
          base Artifact -> derived Artifact, sourced from branch/candidate records
-P      = P_H union P_B
+P      = P_H union P_C
 L      = primary-lineage subset of A and P_H
 D      = non-artifact context/debug records: H, R, artifact-consideration
          records, selections, operations, source/projection attachments,
@@ -54,28 +53,23 @@ A disjoint SYN
 D disjoint SYN
 ```
 
-`E_F` may only connect nodes in `F`. `P` may only connect nodes in `A`. If an edge endpoint is missing from `A`, the
+`P` may only connect nodes in `A`. If an edge endpoint is missing from `A`, the
 edge is absent from the rendered view and may be counted as hidden diagnostics.
-
-Current default rule:
-
-```text
-if F is non-empty:
-  N_ArtifactTree = F
-  E_ArtifactTree = E_F
-else:
-  N_ArtifactTree = A
-  E_ArtifactTree = P
-```
-
-The run-forest path is the product default for real Prototype 1 runs because it
-answers the operator question "which run node produced which child node?".
-Lower-granularity artifact ids remain node detail/filter/drilldown facts unless
-a different view explicitly makes them the primary topology.
 
 For `ArtifactTree`, node identity is the resolved Artifact id, not the source
 reference wrapper. A History `ArtifactRef("artifact:<id>")` and a passive
 `ArtifactId("<id>")` denote the same node in `A` for display.
+
+For `ArtifactTree`, display identity also applies a promotion-continuity
+quotient:
+
+```text
+selected child ArtifactId == later next-parent base ArtifactId
+```
+
+when that equality is proven by graph-owned child-plan continuity facts. This
+quotient is for display identity in the default artifact view; it does not
+erase the raw ids from inspector drilldown.
 
 Branch, candidate, membership, and selection records that carry artifact ids
 contribute consideration/evaluation/selection context to the same `A` node.
@@ -88,11 +82,13 @@ material node sets. For example:
 A_considered = { A(a) | exists branch/candidate context fact k referring to a }
 ```
 
-`P_H` and `P_B` are not equivalent relation sources. `P_H` is derived from
-sealed History and represents an admitted successor transition. `P_B` is an
-observed applied-patch Artifact edge sourced from branch/candidate records. A
-selected candidate Artifact can be represented in both sets, but `P_B` alone
-must not imply History admission.
+`P_H` and `P_C` are not equivalent relation sources. `P_H` is derived from
+sealed History and represents an admitted successor transition. `P_C` is a
+graph-owned parent-produced-child relation sourced from child-plan continuity.
+`P_B` remains observed applied-patch provenance sourced from
+branch/candidate records. A selected candidate Artifact can be represented in
+all three families, but `P_B` alone must not imply History admission or
+artifact-parent display topology.
 
 ## Canonical Mapping
 
@@ -105,7 +101,9 @@ In short:
 ```text
 A   = resolved artifact identities from RunGraph.artifacts
 P_H = HistoryBlockNode.active_artifact -> selected_successor.artifact
-P_B = applied-patch Artifact edge observed through CandidateBranchNode.base_artifact_id
+P_C = graph-owned child-plan continuity:
+      parent Artifact -> produced child Artifact
+P_B = applied-patch Artifact provenance observed through CandidateBranchNode.base_artifact_id
       -> derived_artifact_id
 ```
 
@@ -132,22 +130,15 @@ be reimplemented in new UI surfaces.
 Default product surface.
 
 ```text
-if F is non-empty:
-  N_artifact = F
-  E_artifact = E_F
-else:
-  N_artifact = A
-  E_artifact = P
+N_artifact = A
+E_artifact = P
 Mark_artifact includes current-ruler highlight from latest primary-lineage
 selected successor.
 ```
 
 Properties:
 
-- In the run-forest path, edge direction is parent run-forest node -> child
-  run-forest node.
-- In the fallback artifact-id path, edge direction is parent Artifact -> child
-  Artifact.
+- Edge direction is parent Artifact -> child Artifact.
 - `D` and `SYN` are not rendered.
 - Labels are compact display handles such as `A1`, `A2`, `P1`, and `P2`;
   raw ids belong in detail/debug text.
@@ -216,7 +207,9 @@ not change the default artifact-tree contract.
 Future edit-surface drilldowns may introduce explicit nodes or relations for
 surface grants, edit proposals, surface checks, and History admission. Those
 belong to debug or drilldown views unless they are reduced to admitted Artifact
-transition edges in `P_H` or observed applied-patch Artifact edges in `P_B`.
+transition edges in `P_H` or produced-child Artifact edges in `P_C`. Observed
+applied-patch Artifact provenance in `P_B` may support those drilldowns without
+becoming the default visible canvas spine.
 
 ## Implementation Checks
 

@@ -9,6 +9,8 @@ pub struct ComponentBreakdown {
     pub roots: Vec<String>,
     #[serde(rename = "P_H")]
     pub p_h: Vec<Edge<HistorySource>>,
+    #[serde(rename = "P_C")]
+    pub p_c: Vec<Edge<ProducedChildSource>>,
     #[serde(rename = "P_O")]
     pub p_o: Vec<Edge<HistorySource>>,
     #[serde(rename = "P_B")]
@@ -36,6 +38,15 @@ impl From<(usize, &tree::Component<'_>)> for ComponentBreakdown {
                     from: edge.from.as_str().to_owned(),
                     to: edge.to.as_str().to_owned(),
                     sources: edge.sources.iter().map(HistorySource::from).collect(),
+                })
+                .collect(),
+            p_c: value
+                .produced_child_edges
+                .iter()
+                .map(|edge| Edge {
+                    from: edge.from.as_str().to_owned(),
+                    to: edge.to.as_str().to_owned(),
+                    sources: edge.sources.iter().map(ProducedChildSource::from).collect(),
                 })
                 .collect(),
             p_o: value
@@ -101,6 +112,36 @@ impl From<&&ploke_tree::graph::CandidateBranchNode> for AppliedPatchSource {
             payload_index: value.payload_index,
             candidate_id: value.candidate_id.as_ref().map(|id| id.0.clone()),
             patch_id: value.patch_id.as_ref().map(|id| id.0.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProducedChildSource {
+    pub node_id: String,
+    pub parent_node_id: Option<String>,
+    pub branch_id: String,
+    pub candidate_id: String,
+    pub patch_id: Option<String>,
+}
+
+impl From<&&ploke_records::child_plan::ChildPlanChildRecord> for ProducedChildSource {
+    fn from(value: &&ploke_records::child_plan::ChildPlanChildRecord) -> Self {
+        Self {
+            node_id: value.node.node_id.as_str().to_owned(),
+            parent_node_id: value
+                .node
+                .parent_node_id
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
+            branch_id: value.resolved.branch.branch_id.clone(),
+            candidate_id: value.resolved.branch.candidate_id.clone(),
+            patch_id: value
+                .surface
+                .as_ref()
+                .map(|surface| surface.patch_id.0.clone())
+                .or_else(|| value.node.patch_id.as_ref().map(|id| id.0.clone()))
+                .or_else(|| value.request.patch_id.as_ref().map(|id| id.0.clone())),
         }
     }
 }

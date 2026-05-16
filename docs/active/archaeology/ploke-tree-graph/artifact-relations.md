@@ -5,16 +5,19 @@ Status: `draft`
 ## 1. Target Entity / Visible Claim
 
 The default artifact canvas renders artifact-to-artifact relations from the
-borrowed `ploke_tree::graph::artifact_tree::Tree<'g>` without hiding admitted
-History context edges that the same projection already exposes.
+borrowed `ploke_tree::graph::artifact_tree::Tree<'g>` with:
+
+- visible primary edge set: `P_H ∪ P_C`
+- graph-owned relation inventory/context: `P_O` and `P_B`
 
 ## 2. Competing Carriers
 
 | carrier | location | semantic class | notes |
 | --- | --- | --- | --- |
 | `HistoryEdge` in `Tree.history_successors` | `ploke_tree::graph::artifact_tree::Tree` | relation | sealed History successor `P_H` |
+| `ProducedChildEdge` in `Tree.produced_child_edges` | `ploke_tree::graph::artifact_tree::Tree` | relation | parent-produced child artifact relation `P_C` derived from child-plan continuity |
 | `HistoryEdge` in `Tree.opened_from_edges` | `ploke_tree::graph::artifact_tree::Tree` | relation | sealed History opened-from context `P_O` |
-| `AppliedPatchEdge` in `Tree.applied_patch_edges` | `ploke_tree::graph::artifact_tree::Tree` | relation | observed applied-patch derivation `P_B` |
+| `AppliedPatchEdge` in `Tree.applied_patch_edges` | `ploke_tree::graph::artifact_tree::Tree` | provenance relation | observed applied-patch derivation `P_B`; kept for drilldown and diagnostics, not default visible geometry |
 | `RunForest` parent/child topology | `Graph.forest` | projection-only / process provenance | not an artifact relation; rejected for default artifact canvas |
 | node coloring or selection marks | `ploke-egui` render state | render projection | not relation carriers; must not replace an edge family |
 
@@ -23,6 +26,11 @@ History context edges that the same projection already exposes.
 - `P_H`
   - persisted source: `ploke_records::history::SealedBlockRecord.state.header.active_artifact`
     and `selected_successor.artifact`
+  - graph ingestion: `ploke_tree::graph::artifact_tree::Tree::from_graph`
+- `P_C`
+  - persisted source: `ploke_records::child_plan::ChildPlanRecord.parent_node_id`
+    plus `ChildPlanChildRecord` derived artifact ids, joined through graph-owned
+    parent-child continuity
   - graph ingestion: `ploke_tree::graph::artifact_tree::Tree::from_graph`
 - `P_O`
   - persisted source: `ploke_records::history::SealedBlockRecord.state.header.opened_from_artifact`
@@ -39,10 +47,13 @@ For default canvas rendering, the primary carriers are the typed relation
 families already exposed on `Tree<'g>`:
 
 - `history_successors`
-- `opened_from_edges`
-- `applied_patch_edges`
+- `produced_child_edges`
 
-`ploke-egui` should render from those borrowed relation families directly.
+`ploke-egui` should render visible default geometry from those borrowed
+relation families directly.
+
+`opened_from_edges` and `applied_patch_edges` remain graph-owned relation
+families, but they are not part of the default visible edge set.
 
 ## 5. Rejected Alternatives
 
@@ -50,6 +61,12 @@ families already exposed on `Tree<'g>`:
   process topology, not artifact relations
 - node color substitution for `P_O`:
   loses the edge claim and makes context look like a node property
+- promoting `P_O` into the default visible edge set:
+  overstates History context as artifact-topology geometry
+- promoting raw `P_B` into the default visible edge set:
+  turns generation-target/base provenance into the apparent artifact-parent
+  spine, which splits selected-child -> next-parent continuity into separate
+  nodes
 - ad hoc CLI/debug edge reconstruction:
   projection-only and not authoritative for the canvas
 
@@ -67,6 +84,7 @@ families already exposed on `Tree<'g>`:
 
 - `ploke_tree::graph::artifact_tree::Tree<'g>`
   - `history_successors: Vec<HistoryEdge<'g>>`
+  - `produced_child_edges: Vec<ProducedChildEdge<'g>>`
   - `opened_from_edges: Vec<HistoryEdge<'g>>`
   - `applied_patch_edges: Vec<AppliedPatchEdge<'g>>`
 
@@ -79,6 +97,10 @@ families already exposed on `Tree<'g>`:
 ## 9. Open Gaps / Caveats
 
 - `P_O` is a History context relation, not a successor relation.
+- selected child -> next parent continuity is a separate identity-fold problem,
+  not a reason to render `P_O` as default geometry.
+- `P_B` is still useful provenance. The UI should not throw it away; it should
+  stop treating it as the primary visible parent-child spine.
 - Branch ancestry, node/process ancestry, hydration, and selection context are
   separate relation families and should not be smuggled into the default
   artifact edge set as fake derivation edges.

@@ -32,9 +32,9 @@ candidates, selections, operations, source/projection attachments, and
 warnings.
 
 The required layer is a graph-owned projection for semantic view membership.
-For the default canvas, that object should expose the run-forest topology when
-available, or the fallback artifact node set and classified artifact edge sets,
-before egui allocates labels, layout coordinates, or widget payloads.
+For the default canvas, that object should expose the artifact node set,
+promotion-continuity display identity fold, and classified artifact relation
+sets before egui allocates labels, layout coordinates, or widget payloads.
 
 `RawGraph` is a local projection graph:
 
@@ -151,11 +151,13 @@ not by rendering every loaded record as one large debug graph.
 ## Artifact Tree Invariant
 
 The default `ArtifactTree` mode is the git-tree product surface. It must render
-artifact patch edges from parent artifact to child artifact so the root parent
-is above its descendants in the top-down layout. The latest selected successor
-artifact on the primary lineage is the next `Parent<Ruler>` and must be visually
-highlighted as the current ruler candidate. The previous parent remains visible
-as the source of the patch edge, not as the highlighted node.
+artifact parent-to-produced-child edges from parent artifact to child artifact
+so the root parent is above its descendants in the top-down layout. Sealed
+History successor edges remain visible as admitted continuity. The latest
+selected successor artifact on the primary lineage is the next `Parent<Ruler>`
+and must be visually highlighted as the current ruler candidate. The previous
+parent remains visible as the source artifact, not as a duplicated next-parent
+node.
 
 ## Current Problem Area
 

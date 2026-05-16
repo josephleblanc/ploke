@@ -113,28 +113,31 @@ raw JSON, copied labels, widget-local strings, or row-shaped inspector carriers.
 
 ## Current Default Projection
 
-The current implemented `ArtifactTree` projection has two cases. This describes
-what the app is doing now; it is also the main semantic tension to resolve if
-the product default is meant to be artifact-first in the stricter sense.
-
-The intended and now restored default is:
+The current implemented and intended default is:
 
 ```text
 visible nodes = A = artifact identities
-visible edges = P_H union P_B
+visible edges = P_H union P_C
 ```
 
 Where:
 
 - `P_H` is a History successor relation from active artifact to selected
   successor artifact.
-- `P_B` is an applied-patch/base relation from base artifact to derived
-  artifact.
+- `P_C` is the graph-owned parent-produced-child relation derived from
+  child-plan continuity.
+- `P_B` remains applied-patch/base provenance from base artifact to derived
+  artifact, but it is not the default visible parent-child spine.
 
 The artifact tree is a borrowed projection. It may group multiple
 source records into one artifact node when they resolve to the same artifact
 identity, for example `ArtifactRefRecord("artifact:<id>")` and
 `ArtifactId("<id>")`.
+
+The default artifact tree also applies a promotion-continuity quotient: when a
+selected child Artifact later becomes the next Parent checkout, the selected
+child `ArtifactId` and the later next-parent base `ArtifactId` should collapse
+to one displayed Artifact node in this view. Raw ids still remain inspectable.
 
 Scheduler/run facts explain how artifacts were produced or used. They are not
 the primary canvas nodes unless the operator explicitly switches to a future
@@ -148,7 +151,7 @@ For a selected default node, the inspector should answer:
 |---|---|
 | What did I select? | selected `TreeNode` or artifact-tree node borrowed from `Graph` |
 | Which artifact facts are attached? | `base_artifact_id`, `derived_artifact_id`, `patch_id`, `Graph.artifacts` |
-| Why is this connected to its neighbors? | run-forest parent/child edge, or fallback `P_H`/`P_B` edge |
+| Why is this connected to its neighbors? | `P_H` / `P_C` edge or promotion-continuity fold over graph-owned child-plan facts |
 | Was this artifact considered or selected? | `Graph.candidates`, `Graph.selections`, History selection payloads |
 | What process produced it? | scheduler node, child outcome, candidate artifact payload, surface evidence |
 | What evaluation or report data exists? | `Graph.evidence`, evaluation artifacts, sealed candidate evidence |
@@ -164,9 +167,10 @@ For a selected edge, the inspector should answer:
 
 | Edge kind | Assertion | Source |
 |---|---|---|
-| `E_F` | child run/scheduler node was recorded with this parent node | `NodeRecord.parent_node_id` through `RunForest` |
 | `P_H` | selected successor artifact followed active artifact in sealed History | `SealedBlockHeaderRecord.active_artifact` and `selected_successor.artifact` |
+| `P_C` | this parent artifact produced that child artifact in the next generation | graph-owned child-plan continuity fold over `ChildPlanRecord.parent_node_id` and `ChildPlanChildRecord` |
 | `P_B` | derived artifact was produced from a base artifact by a patch/surface relation | candidate branch facts, scheduler node artifact fields, or surface evidence |
+| promotion continuity | selected child artifact and later next-parent base artifact are the same displayed artifact in this view | graph-owned child-plan continuity fold over `ChildPlanRecord.parent_node_id`, previous child `derived_artifact_id`, and later next-parent base artifact id |
 
 The UI should not conflate these edges. A run-forest edge explains process
 topology. An artifact edge explains artifact identity lineage.

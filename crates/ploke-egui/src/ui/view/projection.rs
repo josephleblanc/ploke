@@ -620,7 +620,6 @@ impl GraphEdgePayload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ViewEdgeKind {
     ArtifactPatch,
-    HistoryOpenedFrom,
     #[cfg(test)]
     HistoryArtifact,
 }
@@ -697,6 +696,9 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         ) else {
             continue;
         };
+        if parent == child {
+            continue;
+        }
         let layers = if lineage_edges.contains(&(edge.from, edge.to)) {
             GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE
         } else {
@@ -716,64 +718,35 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         }
     }
 
-    let mut opened_from_edges = tree.opened_from_edges.iter().collect::<Vec<_>>();
-    opened_from_edges.sort_by_key(|edge| {
-        edge.sources
-            .iter()
-            .map(|source| source.block_height)
-            .min()
-            .unwrap_or_default()
-    });
-    for edge in opened_from_edges {
-        let (Some(opened_from), Some(active)) = (
-            artifact_lookup.get(&edge.from).copied(),
-            artifact_lookup.get(&edge.to).copied(),
-        ) else {
-            continue;
-        };
-        let layers = if lineage_edges.contains(&(edge.from, edge.to)) {
-            GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE
-        } else {
-            GraphLayerMask::ARTIFACT
-        };
-        if add_unique_edge_with_layers(
-            &mut raw,
-            opened_from,
-            active,
-            format!("O{patch_index}"),
-            true,
-            ViewEdgeKind::HistoryOpenedFrom,
-            style,
-            layers,
-        ) {
-            patch_index += 1;
-        }
-    }
-
-    let mut branches = tree.applied_patch_edges.iter().collect::<Vec<_>>();
-    branches.sort_by(|left, right| {
+    let mut produced_children = tree.produced_child_edges.iter().collect::<Vec<_>>();
+    produced_children.sort_by(|left, right| {
         let left_source = left.sources.first();
         let right_source = right.sources.first();
         (
-            left_source.map(|source| source.selection_entry_id.0.as_str()),
-            left_source.map(|source| source.payload_index),
-            left_source.map(|source| source.branch_id.as_str()),
-            left_source.and_then(|source| source.derived_artifact_id.as_ref()),
+            left_source.map(|source| source.node.node_id.as_str()),
+            left_source
+                .and_then(|source| source.node.parent_node_id.as_ref().map(|id| id.as_str())),
+            left_source.map(|source| source.resolved.branch.branch_id.as_str()),
+            left_source.and_then(|source| source.node.derived_artifact_id.as_ref()),
         )
             .cmp(&(
-                right_source.map(|source| source.selection_entry_id.0.as_str()),
-                right_source.map(|source| source.payload_index),
-                right_source.map(|source| source.branch_id.as_str()),
-                right_source.and_then(|source| source.derived_artifact_id.as_ref()),
+                right_source.map(|source| source.node.node_id.as_str()),
+                right_source
+                    .and_then(|source| source.node.parent_node_id.as_ref().map(|id| id.as_str())),
+                right_source.map(|source| source.resolved.branch.branch_id.as_str()),
+                right_source.and_then(|source| source.node.derived_artifact_id.as_ref()),
             ))
     });
-    for edge in branches {
+    for edge in produced_children {
         let (Some(base), Some(derived)) = (
             artifact_lookup.get(&edge.from).copied(),
             artifact_lookup.get(&edge.to).copied(),
         ) else {
             continue;
         };
+        if base == derived {
+            continue;
+        }
         if add_unique_edge_with_layers(
             &mut raw,
             base,
@@ -803,6 +776,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         artifact_tree::Nodes::new(tree.nodes.len()),
         artifact_tree::Edges::new(
             tree.history_successors.len(),
+            tree.produced_child_edges.len(),
             tree.opened_from_edges.len(),
             tree.applied_patch_edges.len(),
         ),
@@ -1159,7 +1133,6 @@ fn add_edge_with_layers(
 fn edge_color(kind: ViewEdgeKind, style: ViewStyle) -> Color32 {
     match kind {
         ViewEdgeKind::ArtifactPatch => style.edge.colors.synthesized,
-        ViewEdgeKind::HistoryOpenedFrom => style.edge.colors.opened_from,
         #[cfg(test)]
         ViewEdgeKind::HistoryArtifact => style.edge.colors.selected,
     }
@@ -1211,14 +1184,18 @@ mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
     use petgraph::stable_graph::NodeIndex;
+    use ploke_records::branch::{
+        ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus,
+    };
+    use ploke_records::child_plan::{ChildPlanChildRecord, ChildPlanRecord};
     use ploke_records::history::{
         ActorRefRecord, ArtifactRefRecord, ProcedureRefRecord, SurfaceCommitmentRecord,
         SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
     };
     use ploke_records::ids::{BlockHash, BlockId, HistoryHash, LineageId, RecordedAt, RuntimeId};
     use ploke_records::scheduler::{
-        NodeRecord, NodeStatusRecord, SCHEDULER_STATE_SCHEMA_V1, SchedulerStateRecord,
-        SearchPolicyRecord, TREATMENT_NODE_SCHEMA_V1,
+        NodeRecord, NodeStatusRecord, RunnerRequestRecord, SCHEDULER_STATE_SCHEMA_V1,
+        SchedulerStateRecord, SearchPolicyRecord, TREATMENT_NODE_SCHEMA_V1,
     };
     use ploke_tree::Graph;
     use ploke_tree::graph::{
@@ -1286,7 +1263,8 @@ mod tests {
 
     #[test]
     fn artifact_tree_stays_artifact_first_when_scheduler_records_are_present() {
-        let graph = Graph::from_records(&run_records_with_parent_and_children());
+        let mut graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
+        graph.forest = Graph::from_records(&run_records_with_parent_and_children()).forest;
 
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
@@ -1296,7 +1274,6 @@ mod tests {
             count_nodes(&projected, "artifact"),
             projected.raw.node_count()
         );
-        assert_eq!(count_nodes(&projected, "artifact"), 4);
         assert_eq!(projected.artifact_tree.edges().run_forest, 0);
     }
 
@@ -1309,8 +1286,9 @@ mod tests {
         assert_eq!(projected.raw.edge_count(), 1);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 0);
+        assert_eq!(projected.artifact_tree.edges().produced_child_edges, 1);
         assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 1);
-        assert_eq!(projected.artifact_tree.edges().total(), 1);
+        assert_eq!(projected.artifact_tree.edges().total(), 2);
         assert_eq!(count_nodes(&projected, "candidate"), 0);
         assert_eq!(count_nodes(&projected, "selection"), 0);
         assert_eq!(count_nodes(&projected, "branch"), 0);
@@ -1344,20 +1322,15 @@ mod tests {
             vec!["child", "parent"]
         );
         assert!(components[0].history_successors.is_empty());
+        assert_eq!(components[0].produced_child_edges.len(), 1);
         assert_eq!(components[0].applied_patch_edges.len(), 1);
 
-        let edge = &components[0].applied_patch_edges[0];
+        let edge = &components[0].produced_child_edges[0];
         assert_eq!(edge.from.as_str(), "parent");
         assert_eq!(edge.to.as_str(), "child");
-        assert_eq!(edge.sources[0].branch_id, "branch-1");
-        assert_eq!(edge.sources[0].selection_entry_id.0, "entry-1");
-        assert_eq!(
-            edge.sources[0]
-                .candidate_id
-                .as_ref()
-                .map(|id| id.0.as_str()),
-            Some("candidate-1")
-        );
+        assert_eq!(edge.sources[0].resolved.branch.branch_id, "branch-1");
+        assert_eq!(edge.sources[0].node.node_id.as_str(), "node-1");
+        assert_eq!(edge.sources[0].resolved.branch.candidate_id, "candidate-1");
     }
 
     #[test]
@@ -1366,13 +1339,13 @@ mod tests {
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
-        assert_eq!(projected.raw.edge_count(), 2);
+        assert_eq!(projected.raw.edge_count(), 1);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 1);
         assert_eq!(projected.artifact_tree.edges().opened_from_edges, 1);
         assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 0);
         assert_eq!(projected.artifact_tree.components().weak, 1);
-        assert_eq!(projected.artifact_tree.components().roots, 0);
+        assert_eq!(projected.artifact_tree.components().roots, 1);
         assert_eq!(projected.artifact_tree.components().orphan_artifacts, 0);
         assert!(projected.artifact_tree.components().weakly_connected(2));
         assert_eq!(projected.artifact_tree.marks().ruler_highlights, 1);
@@ -1382,14 +1355,6 @@ mod tests {
             .map(|edge| edge.kind)
             .collect::<Vec<_>>();
         assert!(kinds.contains(&super::ViewEdgeKind::ArtifactPatch));
-        assert!(kinds.contains(&super::ViewEdgeKind::HistoryOpenedFrom));
-        assert!(
-            projected.raw.edge_weights().any(|edge| {
-                edge.kind == super::ViewEdgeKind::HistoryOpenedFrom
-                    && edge.color == ViewStyle::default().edge.colors.opened_from
-            }),
-            "opened-from edges should be rendered with the opened-from edge color"
-        );
         assert_eq!(count_nodes(&projected, "history-block"), 0);
         assert_eq!(count_nodes(&projected, "lineage"), 0);
     }
@@ -1445,13 +1410,47 @@ mod tests {
             patch_id: None,
             evidence: Vec::new(),
         });
+        graph
+            .candidates
+            .candidates
+            .push(ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId("entry-base".to_owned()),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: "candidate:base".to_owned(),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some("node-base".to_owned()),
+                branch_id: Some("branch-base".to_owned()),
+                generation: Some(0),
+                primary_runtime_id: None,
+                artifact_after: Some(ArtifactId("base".to_owned())),
+                patch_id: None,
+                evidence: Vec::new(),
+            });
+        graph.child_plans.plans.insert(
+            SchedulerNodeId("node-base".to_owned()),
+            child_plan_record(
+                "node-base",
+                "node-child",
+                "base",
+                "child",
+                "branch-1",
+                "candidate-1",
+                "patch-1",
+            ),
+        );
 
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
-        assert_eq!(projected.raw.edge_count(), 2);
+        assert_eq!(projected.raw.edge_count(), 1);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 1);
+        assert_eq!(projected.artifact_tree.edges().produced_child_edges, 1);
         assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 1);
         assert_eq!(projected.artifact_tree.components().weak, 1);
         assert!(projected.artifact_tree.components().weakly_connected(2));
@@ -1504,7 +1503,7 @@ mod tests {
 
     #[test]
     fn primary_labels_are_short_handles() {
-        let graph = Graph::from_records(&run_records_with_parent_and_children());
+        let graph = materialized_artifact_graph_with_four_nodes();
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
         let labels = projected
@@ -1517,7 +1516,7 @@ mod tests {
 
     #[test]
     fn full_raw_ids_remain_in_node_detail_text() {
-        let graph = Graph::from_records(&run_records_with_parent_and_children());
+        let graph = materialized_artifact_graph_with_four_nodes();
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
         assert!(
@@ -1727,6 +1726,27 @@ mod tests {
             .candidates
             .candidates
             .push(ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId("entry-parent".to_owned()),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: "candidate:parent".to_owned(),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some("node-parent".to_owned()),
+                branch_id: Some("branch-0".to_owned()),
+                generation: Some(0),
+                primary_runtime_id: None,
+                artifact_after: Some(parent_id.clone()),
+                patch_id: None,
+                evidence: Vec::new(),
+            });
+        graph
+            .candidates
+            .candidates
+            .push(ploke_tree::graph::CandidateNode {
                 selection_entry_id: entry_id.clone(),
                 payload_index: 0,
                 subject: subject.clone(),
@@ -1738,10 +1758,22 @@ mod tests {
                 branch_id: Some("branch-1".to_owned()),
                 generation: Some(1),
                 primary_runtime_id: None,
-                artifact_after: Some(child_id),
+                artifact_after: Some(child_id.clone()),
                 patch_id: None,
                 evidence: Vec::new(),
             });
+        graph.child_plans.plans.insert(
+            SchedulerNodeId("node-parent".to_owned()),
+            child_plan_record(
+                "node-parent",
+                "node-1",
+                parent_id.0.as_str(),
+                child_id.0.as_str(),
+                "branch-1",
+                "candidate-1",
+                "patch-1",
+            ),
+        );
         graph.selections.selections.insert(
             entry_id.clone(),
             ploke_tree::graph::SelectionNode {
@@ -1949,6 +1981,209 @@ mod tests {
             evidence: Default::default(),
             warnings: Vec::new(),
             ..Graph::default()
+        }
+    }
+
+    fn child_plan_record(
+        parent_node_id: &str,
+        child_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+    ) -> ChildPlanRecord {
+        ChildPlanRecord {
+            message: PathBuf::from(format!("/tmp/{parent_node_id}.json")),
+            parent_node_id: SchedulerNodeId(parent_node_id.to_owned()),
+            child_generation: 1,
+            children: vec![ChildPlanChildRecord {
+                node: child_plan_node_record(
+                    child_node_id,
+                    parent_node_id,
+                    base_artifact_id,
+                    derived_artifact_id,
+                    branch_id,
+                    candidate_id,
+                    patch_id,
+                ),
+                request: runner_request_record(
+                    child_node_id,
+                    base_artifact_id,
+                    derived_artifact_id,
+                    branch_id,
+                    patch_id,
+                ),
+                resolved: resolved_branch(branch_id, candidate_id, patch_id, base_artifact_id),
+                surface: None,
+            }],
+            rejected_surface_attempts: Vec::new(),
+        }
+    }
+
+    fn child_plan_node_record(
+        child_node_id: &str,
+        parent_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+    ) -> NodeRecord {
+        NodeRecord {
+            schema_version: TREATMENT_NODE_SCHEMA_V1.to_owned(),
+            node_id: SchedulerNodeId(child_node_id.to_owned()),
+            parent_node_id: Some(SchedulerNodeId(parent_node_id.to_owned())),
+            generation: 1,
+            instance_id: InstanceId("instance".to_owned()),
+            source_state_id: SourceStateId("source".to_owned()),
+            operation_target: None,
+            base_artifact_id: Some(ArtifactId(base_artifact_id.to_owned())),
+            patch_id: Some(PatchId(patch_id.to_owned())),
+            derived_artifact_id: Some(ArtifactId(derived_artifact_id.to_owned())),
+            parent_branch_id: None,
+            branch_id: BranchId(branch_id.to_owned()),
+            candidate_id: CandidateId(candidate_id.to_owned()),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            node_dir: PathBuf::from(format!("/tmp/nodes/{child_node_id}")),
+            workspace_root: PathBuf::from(format!("/tmp/workspaces/{child_node_id}")),
+            binary_path: PathBuf::from("/tmp/bin/ploke"),
+            runner_request_path: PathBuf::from(format!("/tmp/nodes/{child_node_id}/request.json")),
+            runner_result_path: PathBuf::from(format!("/tmp/nodes/{child_node_id}/result.json")),
+            status: NodeStatusRecord::Planned,
+            created_at: "created".to_owned(),
+            updated_at: "updated".to_owned(),
+        }
+    }
+
+    fn runner_request_record(
+        child_node_id: &str,
+        base_artifact_id: &str,
+        derived_artifact_id: &str,
+        branch_id: &str,
+        patch_id: &str,
+    ) -> RunnerRequestRecord {
+        RunnerRequestRecord {
+            schema_version: "prototype1-runner-request.v1".to_owned(),
+            campaign_id: CampaignId("campaign".to_owned()),
+            node_id: SchedulerNodeId(child_node_id.to_owned()),
+            generation: 1,
+            instance_id: InstanceId("instance".to_owned()),
+            source_state_id: SourceStateId("source".to_owned()),
+            operation_target: None,
+            base_artifact_id: Some(ArtifactId(base_artifact_id.to_owned())),
+            patch_id: Some(PatchId(patch_id.to_owned())),
+            derived_artifact_id: Some(ArtifactId(derived_artifact_id.to_owned())),
+            branch_id: BranchId(branch_id.to_owned()),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            workspace_root: PathBuf::from(format!("/tmp/workspaces/{child_node_id}")),
+            binary_path: PathBuf::from("/tmp/bin/ploke"),
+            stop_on_error: false,
+            runner_args: vec!["prototype1".to_owned(), "runner".to_owned()],
+        }
+    }
+
+    fn resolved_branch(
+        branch_id: &str,
+        candidate_id: &str,
+        patch_id: &str,
+        base_artifact_id: &str,
+    ) -> ResolvedTreatmentBranch {
+        ResolvedTreatmentBranch {
+            instance_id: "instance".to_owned(),
+            source_state_id: "source".to_owned(),
+            parent_branch_id: None,
+            target_relpath: PathBuf::from("src/lib.rs"),
+            source_content: "fn main() {}".to_owned(),
+            source_content_hash: "sha256:source".to_owned(),
+            selected_branch_id: Some(branch_id.to_owned()),
+            branch: TreatmentBranchNode {
+                branch_id: branch_id.to_owned(),
+                candidate_id: candidate_id.to_owned(),
+                patch_id: Some(PatchId(patch_id.to_owned())),
+                branch_label: candidate_id.to_owned(),
+                synthesized_spec_id: "spec".to_owned(),
+                proposed_content: "fn main() { println!(\"hi\"); }".to_owned(),
+                proposed_content_hash: "sha256:proposal".to_owned(),
+                generation_target: Some(ploke_records::ids::OperationTarget::Artifact {
+                    artifact_id: ArtifactId(base_artifact_id.to_owned()),
+                }),
+                generation_coordinate: Some(ploke_records::ids::Coordinate {
+                    runtime_id: RuntimeId("runtime".to_owned()),
+                    target: ploke_records::ids::OperationTarget::Artifact {
+                        artifact_id: ArtifactId(base_artifact_id.to_owned()),
+                    },
+                }),
+                status: TreatmentBranchStatus::Applied,
+                apply_id: Some("apply".to_owned()),
+                applied_content_hash: Some("sha256:applied".to_owned()),
+                derived_artifact_id: None,
+                latest_evaluation: None,
+            },
+        }
+    }
+
+    fn materialized_artifact_graph_with_four_nodes() -> Graph {
+        let ids = [
+            "artifact:root",
+            "artifact:child-a",
+            "artifact:child-b",
+            "artifact:child-c",
+        ];
+        let artifacts = ids
+            .iter()
+            .copied()
+            .map(|id| {
+                (
+                    ArtifactKey::PassiveId {
+                        value: id.to_owned(),
+                    },
+                    ArtifactNode {
+                        key: ArtifactKey::PassiveId {
+                            value: id.to_owned(),
+                        },
+                        identity: ArtifactIdentity::PassiveId(ArtifactId(id.to_owned())),
+                        ids: ploke_tree::graph::ArtifactIds {
+                            artifact_ids: vec![ArtifactId(id.to_owned())],
+                            ..Default::default()
+                        },
+                        evidence: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+
+        let candidates = ids
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, id)| ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId(format!("entry:{index}")),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: format!("candidate:{index}"),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some(format!("node:{index}")),
+                branch_id: Some(format!("branch:{index}")),
+                generation: Some(index as u32),
+                primary_runtime_id: None,
+                artifact_after: Some(ArtifactId(id.to_owned())),
+                patch_id: None,
+                evidence: Vec::new(),
+            })
+            .collect();
+
+        Graph {
+            artifacts: ArtifactIndex { artifacts },
+            candidates: CandidateIndex {
+                candidates,
+                ..Default::default()
+            },
+            ..Default::default()
         }
     }
 

@@ -31,12 +31,13 @@ pub fn print_artifact_edges_report(graph: &Graph) -> Result<(), Box<dyn Error>> 
     for component in &components {
         let _ = writeln!(
             out,
-            "- #{}: roots=[{}], artifacts={} [{}], P_H={}, P_O={}, P_B={}",
+            "- #{}: roots=[{}], artifacts={} [{}], P_H={}, P_C={}, P_O={}, P_B={}",
             component.index,
             component.roots.join(", "),
             component.artifacts.len(),
             component.artifacts.join(", "),
             component.p_h.len(),
+            component.p_c.len(),
             component.p_o.len(),
             component.p_b.len()
         );
@@ -62,6 +63,18 @@ pub fn print_artifact_edges_report(graph: &Graph) -> Result<(), Box<dyn Error>> 
                     .first()
                     .map(|source| source.block_hash.as_str())
                     .unwrap_or("unknown-block")
+            );
+        }
+        for edge in &component.p_c {
+            let _ = writeln!(
+                out,
+                "  P_C {} -> {} via {}",
+                edge.from,
+                edge.to,
+                edge.sources
+                    .first()
+                    .map(|source| source.node_id.as_str())
+                    .unwrap_or("unknown-child")
             );
         }
         for edge in &component.p_b {

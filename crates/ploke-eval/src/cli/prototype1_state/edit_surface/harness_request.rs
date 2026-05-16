@@ -7,13 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::cli::prototype1_state::{
-    backend::{
-        EditSurfaceAdmission, WORKSPACE_EXCEPT_AUTHORITY_FILENAMES,
-        WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
-    },
-    history::ArtifactSurface,
-};
+use crate::cli::prototype1_state::{backend::EditSurfaceAdmission, history::ArtifactSurface};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
 use super::surface;
@@ -958,15 +952,6 @@ pub(crate) enum EvidenceRootKind {
     Oracle,
 }
 
-impl EvidenceRootKind {
-    fn is_benchmark_result_location(self) -> bool {
-        matches!(
-            self,
-            Self::Evaluations | Self::Nodes | Self::ProtocolArtifacts | Self::Oracle
-        )
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum EvidenceRootLocation {
@@ -1179,32 +1164,50 @@ impl BroadHarnessRequest {
             self.workspace.display_candidate_workspace(),
             self.evaluation.scope.benchmark_name()
         ));
-
-        push_blocked_paths(&mut prompt);
-        prompt.push('\n');
-
-        prompt.push_str(
-            "Past benchmark scores, failures, and metrics can be found here when available:\n",
-        );
-        for root in &self.evidence_roots {
-            if !root.kind.is_benchmark_result_location() {
-                continue;
-            }
-            prompt.push_str(&format!("- `{}`\n", root.location.render()));
+        if let Some(evaluations) = self.evidence_root(EvidenceRootKind::Evaluations) {
+            prompt.push_str(&format!(
+                "Past benchmark results live under `{}`.\n",
+                evaluations.location.render()
+            ));
         }
+        if let Some(nodes) = self.evidence_root(EvidenceRootKind::Nodes) {
+            prompt.push_str(&format!(
+                "If prior attempt or conversation history is useful, inspect `{}`.\n",
+                nodes.location.render()
+            ));
+        }
+        if let Some(protected_core) = self.protected_core_definition() {
+            prompt.push_str(&format!(
+                "Protected core: see `{}`. Ordinary edits touching that surface will be rejected.\n",
+                protected_core
+            ));
+        }
+        prompt.push_str(
+            "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. You may edit any file outside the protected core. Protocol diagnoses are guidance, not hard edit targets.\n",
+        );
         prompt
+    }
+
+    fn evidence_root(&self, kind: EvidenceRootKind) -> Option<&EvidenceRoot> {
+        self.evidence_roots.iter().find(|root| root.kind == kind)
+    }
+
+    fn protected_core_definition(&self) -> Option<String> {
+        match &self.protected_core.anchor {
+            ProtectedCoreAnchor::AuthorityConstant { code_path, symbol } => Some(format!(
+                "{}::{symbol_name} and `WORKSPACE_EXCEPT_AUTHORITY_*`",
+                code_path.display(),
+                symbol_name = symbol.render()
+            )),
+        }
     }
 }
 
-fn push_blocked_paths(prompt: &mut String) {
-    prompt.push_str("Do not edit files under:\n");
-    for prefix in WORKSPACE_EXCEPT_AUTHORITY_PREFIXES {
-        prompt.push_str(&format!("- `{}/`\n", prefix.trim_end_matches('/')));
-    }
-
-    prompt.push_str("\nDo not edit files named:\n");
-    for filename in WORKSPACE_EXCEPT_AUTHORITY_FILENAMES {
-        prompt.push_str(&format!("- `{}`\n", filename));
+impl ProtectedCoreSymbol {
+    fn render(self) -> &'static str {
+        match self {
+            Self::EvalCoreSurfaceRoot => "EVAL_CORE_SURFACE_ROOT",
+        }
     }
 }
 
@@ -1483,16 +1486,15 @@ mod tests {
                 .display()
         );
         assert!(prompt.contains(&opening));
-        assert!(prompt.contains("Do not edit files under:"));
-        assert!(prompt.contains("`crates/ploke-eval/`"));
-        assert!(prompt.contains("`docs/archive/`"));
-        assert!(prompt.contains("Do not edit files named:"));
-        assert!(prompt.contains("`Cargo.toml`"));
-        assert!(prompt.contains("Past benchmark scores, failures, and metrics"));
+        assert!(prompt.contains("Past benchmark results live under"));
         assert!(prompt.contains("/evaluations`"));
+        assert!(prompt.contains("If prior attempt or conversation history is useful"));
         assert!(prompt.contains("/nodes`"));
-        assert!(prompt.contains("/nodes/<node>/protocol-artifacts`"));
-        assert!(prompt.contains("`final_report.json when present`"));
+        assert!(prompt.contains("Protected core: see"));
+        assert!(prompt.contains("backend.rs::EVAL_CORE_SURFACE_ROOT"));
+        assert!(prompt.contains("WORKSPACE_EXCEPT_AUTHORITY_*"));
+        assert!(prompt.contains("You may edit any file outside the protected core"));
+        assert!(prompt.contains("Protocol diagnoses are guidance, not hard edit targets"));
         assert!(!prompt.contains("## Latest Evidence Digest"));
         assert!(!prompt.contains("## Validation Contract"));
         assert!(!prompt.contains("## Attempt Policy"));
@@ -1504,6 +1506,11 @@ mod tests {
             !prompt.contains(fixture.submitted_result_path.to_str().unwrap()),
             "model-facing prompt must not name the eval-owned submitted result path"
         );
+        assert!(!prompt.contains("Do not edit files under:"));
+        assert!(!prompt.contains("Do not edit files named:"));
+        assert!(!prompt.contains("`Cargo.toml`"));
+        assert!(!prompt.contains("/nodes/<node>/protocol-artifacts`"));
+        assert!(!prompt.contains("`final_report.json when present`"));
         assert!(!prompt.contains("submitted-result"));
         assert!(!prompt.contains("submitted result output"));
         assert!(!prompt.contains("Authority boundary"));

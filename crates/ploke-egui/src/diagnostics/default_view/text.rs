@@ -36,13 +36,14 @@ impl Report<'_> {
         if let Some(identity) = &self.graph_identity {
             let _ = writeln!(
                 out,
-                "graph identity: F_nodes={}, F_roots={}, visible_nodes={}, visible_edges={}, A_nodes={}, P_H={}, P_O={}, P_B={}, visible_fingerprint={}",
+                "graph identity: F_nodes={}, F_roots={}, visible_nodes={}, visible_edges={}, A_nodes={}, P_H={}, P_C={}, P_O={}, P_B={}, visible_fingerprint={}",
                 identity.forest_nodes,
                 identity.forest_roots,
                 identity.default_visible_nodes,
                 identity.default_visible_edges,
                 identity.artifact_tree_nodes,
                 identity.artifact_tree_p_h,
+                identity.artifact_tree_p_c,
                 identity.artifact_tree_p_o,
                 identity.artifact_tree_p_b,
                 identity.visible_node_fingerprint
@@ -85,22 +86,24 @@ impl Report<'_> {
             );
             let _ = writeln!(
                 out,
-                "center edge sets: E_F={}, P_H={}, P_O={}, P_B={}, total={}",
+                "center edge sets: E_F={}, P_H={}, P_C={}, visible_total={}, P_O_context={}, P_B_context={}",
                 self.center.edges.e_f,
                 self.center.edges.p_h,
+                self.center.edges.p_c,
+                self.center.edges.visible_primary_total(),
                 self.center.edges.p_o,
-                self.center.edges.p_b,
-                self.center.edges.total()
+                self.center.edges.p_b
             );
         } else {
             let _ = writeln!(out, "center node sets: A={}", self.center.nodes.a);
             let _ = writeln!(
                 out,
-                "center edge sets: P_H={}, P_O={}, P_B={}, P={}",
+                "center edge sets: P_H={}, P_C={}, visible_primary={}, P_O_context={}, P_B_context={}",
                 self.center.edges.p_h,
+                self.center.edges.p_c,
+                self.center.edges.visible_primary_total(),
                 self.center.edges.p_o,
-                self.center.edges.p_b,
-                self.center.edges.total()
+                self.center.edges.p_b
             );
         }
         let _ = writeln!(
@@ -121,12 +124,13 @@ impl Report<'_> {
             {
                 let _ = writeln!(
                     out,
-                    "- #{}: roots=[{}], artifacts={} [{}], P_H={}, P_O={}, P_B={}",
+                    "- #{}: roots=[{}], artifacts={} [{}], P_H={}, P_C={}, P_O={}, P_B={}",
                     component.index,
                     summarize_items(&component.roots),
                     component.artifacts.len(),
                     summarize_items(&component.artifacts),
                     component.p_h.len(),
+                    component.p_c.len(),
                     component.p_o.len(),
                     component.p_b.len()
                 );
@@ -152,6 +156,18 @@ impl Report<'_> {
                             .first()
                             .map(|source| source.block_hash.as_str())
                             .unwrap_or("unknown-block")
+                    );
+                }
+                for edge in component.p_c.iter().take(ITEM_TEXT_LIMIT) {
+                    let _ = writeln!(
+                        out,
+                        "  P_C {} -> {} via {}",
+                        edge.from,
+                        edge.to,
+                        edge.sources
+                            .first()
+                            .map(|source| source.node_id.as_str())
+                            .unwrap_or("unknown-child")
                     );
                 }
                 for edge in component.p_b.iter().take(ITEM_TEXT_LIMIT) {

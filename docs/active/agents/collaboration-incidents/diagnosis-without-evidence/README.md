@@ -6,6 +6,10 @@ re-ask for a real trace.
 
 ## Entries
 
+- [`2026-05-15-eval-home-log-misdiagnosed-instead-of-measuring-targets.md`](2026-05-15-eval-home-log-misdiagnosed-instead-of-measuring-targets.md)
+  The agent analyzed the tiny eval-home checkpoint log itself instead of first
+  measuring the real storage driver inside `~/.ploke-eval`, which turned out to
+  be accumulated `target/` directories.
 - [`2026-05-15-prototype1-handoff-model-not-reconstructed-before-fix-talk.md`](2026-05-15-prototype1-handoff-model-not-reconstructed-before-fix-talk.md)
   The agent talked about repairing a Prototype 1 handoff/root mismatch before
   first reconstructing the active-checkout vs child-worktree vs successor
@@ -24,3 +28,16 @@ re-ask for a real trace.
   The agent reasoned about which run artifacts mattered before proving, from
   the current run files themselves, what data those artifacts actually
   contained and what was missing.
+- [`2026-05-16-archaeology-report-updated-in-isolation.md`](2026-05-16-archaeology-report-updated-in-isolation.md)
+  The agent updated one archaeology report and its proof comments without
+  re-reading the existing archaeology set, which produced a shallow,
+  inconsistent report update despite stronger sibling examples already being on
+  disk.
+- [`2026-05-16-plausible-archaeology-filler-instead-of-grounded-references.md`](2026-05-16-plausible-archaeology-filler-instead-of-grounded-references.md)
+  The agent used vague carrier-location prose in archaeology work instead of
+  concrete type/field references, making the report look more grounded than it
+  was.
+- [`2026-05-16-minimum-compliance-archaeology-pass.md`](2026-05-16-minimum-compliance-archaeology-pass.md)
+  The agent responded to archaeology criticism with a series of narrow
+  compliance patches instead of redoing the whole report to the sibling-report
+  standard in one exacting pass.

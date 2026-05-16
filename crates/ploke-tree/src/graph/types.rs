@@ -28,8 +28,9 @@ use crate::RunAttemptEvidence;
 pub struct Graph {
     /// Scheduler/prototype node forest assembled from typed run records.
     ///
-    /// This is the default UI topology when present. Lower-granularity artifact
-    /// ids remain attached facts rather than the default canvas spine.
+    /// This remains available for process/schedule drilldown and future
+    /// step-through projections. The default `ploke-egui` canvas is now the
+    /// borrowed artifact-first `artifact_tree()` projection instead.
     pub forest: Option<crate::RunForest>,
     /// Sealed History is the primary ordering and authority spine.
     pub history: HistoryIndex,

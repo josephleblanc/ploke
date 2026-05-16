@@ -2114,6 +2114,11 @@ fn successor_record(entry: &super::successor::Record) -> JournalProjection {
             "prototype1.successor.selected",
             vec!["selection_decision:inline".to_string()],
         ),
+        super::successor::State::Stopped { .. } => (
+            EntryKind::Observation,
+            "prototype1.successor.stopped",
+            vec!["selection_decision:inline".to_string()],
+        ),
         super::successor::State::Spawned {
             invocation_path,
             ready_path,
