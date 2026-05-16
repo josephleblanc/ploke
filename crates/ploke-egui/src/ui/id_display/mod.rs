@@ -178,7 +178,7 @@ impl InteractiveId for ArtifactId {
 
 impl InteractiveId for ArtifactRefRecord {
     fn full_id(&self) -> &str {
-        self.value.as_str()
+        self.as_str()
     }
 }
 

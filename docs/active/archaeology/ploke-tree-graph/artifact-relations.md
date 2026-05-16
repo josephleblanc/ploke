@@ -97,10 +97,25 @@ families, but they are not part of the default visible edge set.
 ## 9. Open Gaps / Caveats
 
 - `P_O` is a History context relation, not a successor relation.
+- sealed History can legitimately produce self-loop `P_H` and `P_O` relations
+  when `active_artifact`, `selected_successor.artifact`, or
+  `opened_from_artifact` collapse to the same displayed Artifact. The
+  graph-owned relation inventory keeps those edges, but
+  `crates/ploke-egui/src/ui/view/projection.rs::project_artifact_tree`
+  currently skips `parent == child`, so a node backed only by self-loop History
+  relations renders as a visually disconnected singleton in the default canvas.
 - selected child -> next parent continuity is a separate identity-fold problem,
   not a reason to render `P_O` as default geometry.
 - `P_B` is still useful provenance. The UI should not throw it away; it should
   stop treating it as the primary visible parent-child spine.
+- generation-0 child plans can currently materialize child Artifact nodes
+  without materializing the base Artifact that the root Parent operated on.
+  `Tree::material_keys` includes History/opened/selected artifacts plus
+  candidate-after and child-derived artifacts, while `parent_artifact_key`
+  resolves a displayed parent only from graph-owned candidate/current-child
+  continuity. When that parent lookup fails, `P_C` is absent; if the same
+  unmaterialized base also blocks `P_B`, the child Artifact appears as a true
+  zero-edge singleton component.
 - Branch ancestry, node/process ancestry, hydration, and selection context are
   separate relation families and should not be smuggled into the default
   artifact edge set as fake derivation edges.

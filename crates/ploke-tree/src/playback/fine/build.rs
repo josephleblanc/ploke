@@ -147,7 +147,15 @@ pub fn fine_history_steps_from_sealed_history(
                 entry_index: None,
                 candidate_index: None,
             },
-            label: Some(block.state.header.selected_successor.artifact.value.clone()),
+            label: Some(
+                block
+                    .state
+                    .header
+                    .selected_successor
+                    .artifact
+                    .as_str()
+                    .to_owned(),
+            ),
             occurrence_id: None,
             membership_id: None,
             candidate_set_root: None,
@@ -285,15 +293,7 @@ pub fn fine_run_playback_ref_steps_from_sealed_history<'a>(
                 entry_index: None,
                 candidate_index: None,
             },
-            label: Some(
-                block
-                    .state
-                    .header
-                    .selected_successor
-                    .artifact
-                    .value
-                    .as_str(),
-            ),
+            label: Some(block.state.header.selected_successor.artifact.as_str()),
             occurrence_id: None,
             membership_id: None,
             candidate_set_root: None,

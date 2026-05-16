@@ -192,6 +192,12 @@ Planned consumer:
 - `TreeKeyHash` is stronger checkout identity than `ArtifactId`, but it remains
   secondary for this UI claim even though the graph now carries it on
   `ArtifactNode.ids.tree_keys`.
+- History-backed artifact refs can currently arrive as
+  `artifact:artifact:<id>` while passive ids still arrive as
+  `artifact:<id>` or `<id>`. The current graph reconciliation path strips only
+  one leading `artifact:` prefix when deriving the entity key, so those
+  carriers can still materialize separate default artifact-tree nodes instead
+  of one shared Artifact identity.
 - the current graph join uses normalized key reconciliation and
   `active_artifact -> ClaimsRecord.artifact` attachment. That is good enough for
   this slice, but it is not yet the final first-class artifact entity model.

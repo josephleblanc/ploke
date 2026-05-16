@@ -6,9 +6,10 @@
 //! a lineage head.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::ids::{
-    BlockHash, BlockId, EntryId, HistoryHash, HistoryStateRoot, LineageId, RecordedAt,
+    ArtifactId, BlockHash, BlockId, EntryId, HistoryHash, HistoryStateRoot, LineageId, RecordedAt,
 };
 
 mod payload;
@@ -51,9 +52,184 @@ value_ref! {
     EvidenceRefRecord
 }
 
-value_ref! {
-    /// Recoverable artifact identity used by History boundaries.
-    ArtifactRefRecord
+/// Stable sha256 identity for one History artifact-boundary reference.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ArtifactRefIdRecord(pub String);
+
+mod artifact_ref {
+    use super::{ArtifactId, ArtifactRefIdRecord};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) enum Repr {
+        Tagged(Tagged),
+        Legacy(Legacy),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case", tag = "kind")]
+    pub(super) enum Tagged {
+        Artifact {
+            id: ArtifactRefIdRecord,
+            artifact_id: ArtifactId,
+        },
+        Branch {
+            id: ArtifactRefIdRecord,
+            branch_id: String,
+        },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+    pub(super) struct Legacy {
+        pub(super) value: String,
+    }
+
+    impl<'de> Deserialize<'de> for Repr {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum Untagged {
+                Tagged(Tagged),
+                Legacy(Legacy),
+            }
+
+            match Untagged::deserialize(deserializer)? {
+                Untagged::Tagged(tagged) => Ok(Self::Tagged(tagged)),
+                Untagged::Legacy(legacy) => Ok(Self::Legacy(legacy)),
+            }
+        }
+    }
+}
+
+/// Recoverable artifact identity used by History boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "artifact_ref::Tagged", try_from = "artifact_ref::Repr")]
+pub enum ArtifactRefRecord {
+    Artifact {
+        id: ArtifactRefIdRecord,
+        artifact_id: ArtifactId,
+    },
+    Branch {
+        id: ArtifactRefIdRecord,
+        branch_id: String,
+    },
+}
+
+impl ArtifactRefRecord {
+    pub fn from_artifact_id(artifact_id: ArtifactId) -> Self {
+        Self::Artifact {
+            id: artifact_ref_id("artifact", artifact_id.as_str()),
+            artifact_id,
+        }
+    }
+
+    pub fn from_branch_id(branch_id: impl Into<String>) -> Self {
+        let branch_id = branch_id.into();
+        Self::Branch {
+            id: artifact_ref_id("branch", branch_id.as_str()),
+            branch_id,
+        }
+    }
+
+    pub fn id(&self) -> &ArtifactRefIdRecord {
+        match self {
+            Self::Artifact { id, .. } | Self::Branch { id, .. } => id,
+        }
+    }
+
+    pub fn artifact_id(&self) -> Option<&ArtifactId> {
+        match self {
+            Self::Artifact { artifact_id, .. } => Some(artifact_id),
+            Self::Branch { .. } => None,
+        }
+    }
+
+    pub fn branch_id(&self) -> Option<&str> {
+        match self {
+            Self::Artifact { .. } => None,
+            Self::Branch { branch_id, .. } => Some(branch_id.as_str()),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Artifact { artifact_id, .. } => artifact_id.as_str(),
+            Self::Branch { branch_id, .. } => branch_id.as_str(),
+        }
+    }
+
+    pub fn graph_entity_key(&self) -> &str {
+        match self {
+            Self::Artifact { artifact_id, .. } => artifact_id
+                .as_str()
+                .strip_prefix("artifact:")
+                .unwrap_or(artifact_id.as_str()),
+            Self::Branch { id, .. } => id.0.as_str(),
+        }
+    }
+}
+
+impl From<ArtifactRefRecord> for artifact_ref::Tagged {
+    fn from(value: ArtifactRefRecord) -> Self {
+        match value {
+            ArtifactRefRecord::Artifact { id, artifact_id } => Self::Artifact { id, artifact_id },
+            ArtifactRefRecord::Branch { id, branch_id } => Self::Branch { id, branch_id },
+        }
+    }
+}
+
+impl TryFrom<artifact_ref::Repr> for ArtifactRefRecord {
+    type Error = String;
+
+    fn try_from(value: artifact_ref::Repr) -> Result<Self, Self::Error> {
+        match value {
+            artifact_ref::Repr::Tagged(tagged) => match tagged {
+                artifact_ref::Tagged::Artifact { id, artifact_id } => {
+                    let expected = artifact_ref_id("artifact", artifact_id.as_str());
+                    if id != expected {
+                        return Err(format!(
+                            "artifact ref id mismatch: expected {}, got {}",
+                            expected.0, id.0
+                        ));
+                    }
+                    Ok(Self::Artifact { id, artifact_id })
+                }
+                artifact_ref::Tagged::Branch { id, branch_id } => {
+                    let expected = artifact_ref_id("branch", branch_id.as_str());
+                    if id != expected {
+                        return Err(format!(
+                            "artifact ref id mismatch: expected {}, got {}",
+                            expected.0, id.0
+                        ));
+                    }
+                    Ok(Self::Branch { id, branch_id })
+                }
+            },
+            artifact_ref::Repr::Legacy(artifact_ref::Legacy { value }) => {
+                if let Some(artifact_id) = value.strip_prefix("artifact:") {
+                    return Ok(Self::from_artifact_id(ArtifactId(artifact_id.to_owned())));
+                }
+                if let Some(branch_id) = value.strip_prefix("branch:") {
+                    return Ok(Self::from_branch_id(branch_id));
+                }
+                Err(format!("unsupported legacy artifact ref value: {value}"))
+            }
+        }
+    }
+}
+
+fn artifact_ref_id(kind: &str, value: &str) -> ArtifactRefIdRecord {
+    let mut hasher = Sha256::new();
+    hasher.update("prototype1.history.artifact_ref.v1");
+    hasher.update([0]);
+    hasher.update(kind.as_bytes());
+    hasher.update([0]);
+    hasher.update(value.as_bytes());
+    ArtifactRefIdRecord(format!("{:x}", hasher.finalize()))
 }
 
 /// Operational environment in which an entry occurred or was observed.
@@ -426,9 +602,9 @@ mod tests {
         let evidence = EvidenceRefRecord {
             value: "evidence:crown-lock".to_string(),
         };
-        let artifact = ArtifactRefRecord {
-            value: "artifact:successor".to_string(),
-        };
+        let artifact = ArtifactRefRecord::from_artifact_id(crate::ids::ArtifactId(
+            "artifact:successor".to_string(),
+        ));
         let block = SealedBlockRecord {
             state: SealedBlockStateRecord {
                 header: SealedBlockHeaderRecord {
@@ -502,6 +678,20 @@ mod tests {
         let parsed: SealedBlockRecord = serde_json::from_str(&json).expect("parse block");
 
         assert_eq!(parsed, block);
+    }
+
+    #[test]
+    fn artifact_ref_record_deserializes_legacy_string_shape() {
+        let parsed: ArtifactRefRecord =
+            serde_json::from_str(r#"{"value":"artifact:artifact:git-commit:95e4ee12"}"#)
+                .expect("deserialize legacy artifact ref");
+
+        assert_eq!(
+            parsed,
+            ArtifactRefRecord::from_artifact_id(crate::ids::ArtifactId(
+                "artifact:git-commit:95e4ee12".to_string(),
+            ))
+        );
     }
 
     #[test]

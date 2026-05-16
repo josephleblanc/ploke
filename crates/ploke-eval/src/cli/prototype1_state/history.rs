@@ -1675,20 +1675,179 @@ impl EvidenceRef {
 
 /// Recoverable artifact identity used by History block boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ArtifactRef {
-    value: String,
+#[serde(into = "artifact_ref::Tagged", try_from = "artifact_ref::Repr")]
+pub(crate) enum ArtifactRef {
+    Artifact {
+        id: ArtifactRefId,
+        artifact_id: ArtifactId,
+    },
+    Branch {
+        id: ArtifactRefId,
+        branch_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct ArtifactRefId(String);
+
+mod artifact_ref {
+    use super::{ArtifactId, ArtifactRefId};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) enum Repr {
+        Tagged(Tagged),
+        Legacy(Legacy),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case", tag = "kind")]
+    pub(crate) enum Tagged {
+        Artifact {
+            id: ArtifactRefId,
+            artifact_id: ArtifactId,
+        },
+        Branch {
+            id: ArtifactRefId,
+            branch_id: String,
+        },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+    pub(crate) struct Legacy {
+        pub(crate) value: String,
+    }
+
+    impl<'de> Deserialize<'de> for Repr {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum Untagged {
+                Tagged(Tagged),
+                Legacy(Legacy),
+            }
+
+            match Untagged::deserialize(deserializer)? {
+                Untagged::Tagged(tagged) => Ok(Self::Tagged(tagged)),
+                Untagged::Legacy(legacy) => Ok(Self::Legacy(legacy)),
+            }
+        }
+    }
 }
 
 impl ArtifactRef {
-    pub(crate) fn new(value: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
+    pub(crate) fn from_artifact_id(artifact_id: ArtifactId) -> Self {
+        Self::Artifact {
+            id: artifact_ref_id("artifact", artifact_id.as_str()),
+            artifact_id,
+        }
+    }
+
+    pub(crate) fn from_branch_id(branch_id: impl Into<String>) -> Self {
+        let branch_id = branch_id.into();
+        Self::Branch {
+            id: artifact_ref_id("branch", branch_id.as_str()),
+            branch_id,
+        }
+    }
+
+    pub(crate) fn id(&self) -> &ArtifactRefId {
+        match self {
+            Self::Artifact { id, .. } | Self::Branch { id, .. } => id,
+        }
+    }
+
+    pub(crate) fn artifact_id(&self) -> Option<&ArtifactId> {
+        match self {
+            Self::Artifact { artifact_id, .. } => Some(artifact_id),
+            Self::Branch { .. } => None,
+        }
+    }
+
+    pub(crate) fn branch_id(&self) -> Option<&str> {
+        match self {
+            Self::Artifact { .. } => None,
+            Self::Branch { branch_id, .. } => Some(branch_id.as_str()),
         }
     }
 
     pub(crate) fn as_str(&self) -> &str {
-        &self.value
+        match self {
+            Self::Artifact { artifact_id, .. } => artifact_id.as_str(),
+            Self::Branch { branch_id, .. } => branch_id.as_str(),
+        }
     }
+}
+
+impl From<ArtifactRef> for artifact_ref::Tagged {
+    fn from(value: ArtifactRef) -> Self {
+        match value {
+            ArtifactRef::Artifact { id, artifact_id } => Self::Artifact { id, artifact_id },
+            ArtifactRef::Branch { id, branch_id } => Self::Branch { id, branch_id },
+        }
+    }
+}
+
+impl TryFrom<artifact_ref::Repr> for ArtifactRef {
+    type Error = String;
+
+    fn try_from(value: artifact_ref::Repr) -> Result<Self, Self::Error> {
+        match value {
+            artifact_ref::Repr::Tagged(tagged) => match tagged {
+                artifact_ref::Tagged::Artifact { id, artifact_id } => {
+                    let expected = artifact_ref_id("artifact", artifact_id.as_str());
+                    if id != expected {
+                        return Err(format!(
+                            "artifact ref id mismatch: expected {}, got {}",
+                            expected.as_str(),
+                            id.as_str()
+                        ));
+                    }
+                    Ok(Self::Artifact { id, artifact_id })
+                }
+                artifact_ref::Tagged::Branch { id, branch_id } => {
+                    let expected = artifact_ref_id("branch", branch_id.as_str());
+                    if id != expected {
+                        return Err(format!(
+                            "artifact ref id mismatch: expected {}, got {}",
+                            expected.as_str(),
+                            id.as_str()
+                        ));
+                    }
+                    Ok(Self::Branch { id, branch_id })
+                }
+            },
+            artifact_ref::Repr::Legacy(artifact_ref::Legacy { value }) => {
+                if let Some(artifact_id) = value.strip_prefix("artifact:") {
+                    return Ok(Self::from_artifact_id(ArtifactId::new(artifact_id)));
+                }
+                if let Some(branch_id) = value.strip_prefix("branch:") {
+                    return Ok(Self::from_branch_id(branch_id));
+                }
+                Err(format!("unsupported legacy artifact ref value: {value}"))
+            }
+        }
+    }
+}
+
+impl ArtifactRefId {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+fn artifact_ref_id(kind: &str, value: &str) -> ArtifactRefId {
+    let mut hasher = Sha256::new();
+    hasher.update("prototype1.history.artifact_ref.v1");
+    hasher.update([0]);
+    hasher.update(kind.as_bytes());
+    hasher.update([0]);
+    hasher.update(value.as_bytes());
+    ArtifactRefId(format!("{:x}", hasher.finalize()))
 }
 
 /// Marker states for the partitioned Artifact surface committed by a block.
@@ -5737,10 +5896,10 @@ impl SealBlock {
             EvidenceRef::new("transition:crown-lock"),
             SuccessorRef::new(
                 ActorRef::Process("successor".to_string()),
-                ArtifactRef::new("artifact:successor"),
+                ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             ),
             test_parent_identity(),
-            ArtifactRef::new("artifact:successor"),
+            ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             RecordedAt(30),
         )
     }
@@ -6772,7 +6931,9 @@ mod tests {
 
     fn env() -> OperationalEnvironment {
         OperationalEnvironment::new()
-            .artifact(ArtifactRef::new("artifact:base"))
+            .artifact(ArtifactRef::from_artifact_id(ArtifactId::new(
+                "artifact:base",
+            )))
             .binary(EvidenceRef::new("bin:ploke-eval"))
             .tool_surface(EvidenceRef::new("tool-surface:1"))
             .procedure_version(ProcedureRef::new("procedure:v1"))
@@ -6855,7 +7016,7 @@ mod tests {
             regime: Regime::prototype1_baseline(height),
             opening_authority,
             opened_by: actor("parent"),
-            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:base")),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
             surface: surface_commitment("open-block"),
@@ -7058,7 +7219,7 @@ mod tests {
     fn candidate_occurrence_id_is_deterministic_for_same_preimage() {
         let lineage = LineageId::new("lineage:a");
         let coordinate = occurrence_coordinate("node-a", "branch-a", 0);
-        let artifact = ArtifactRef::new("artifact:a");
+        let artifact = ArtifactRef::from_artifact_id(ArtifactId::new("artifact:a"));
         let runtime = runtime_actor(1);
         let first = CandidateOccurrenceId::from_preimage(CandidateOccurrencePreimage {
             lineage_id: Some(&lineage),
@@ -7389,10 +7550,10 @@ mod tests {
             crown_lock_transition: EvidenceRef::new(transition),
             selected_successor: SuccessorRef::new(
                 actor("successor"),
-                ArtifactRef::new("artifact:successor"),
+                ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             ),
             selected_parent_identity: test_parent_identity(),
-            active_artifact: ArtifactRef::new("artifact:successor"),
+            active_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             claims,
             sealed_at: at(30),
         };
@@ -7490,7 +7651,9 @@ mod tests {
                     additional_parent_block_hashes: Vec::new(),
                     opened_from_state: HistoryStateRoot::test("state:successor"),
                     opened_by: actor("successor"),
-                    opened_from_artifact: ArtifactRef::new("artifact:successor"),
+                    opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new(
+                        "artifact:successor",
+                    )),
                     ruling_authority: actor("successor"),
                     policy_ref: ProcedureRef::new("policy:next"),
                     surface: surface_commitment("wrong-lineage-successor"),
@@ -9182,7 +9345,7 @@ mod tests {
                 BlockHash::from(HistoryHash::of_bytes(b"parent")),
             )),
             opened_by: actor("parent"),
-            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:base")),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
             surface: surface_commitment("non-genesis-without-parents"),
@@ -9205,7 +9368,7 @@ mod tests {
                 BlockHash::from(HistoryHash::of_bytes(b"parent")),
             )),
             opened_by: actor("parent"),
-            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:base")),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
             surface: surface_commitment("genesis-without-bootstrap"),
@@ -9231,7 +9394,7 @@ mod tests {
                 ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
             )),
             opened_by: actor("parent"),
-            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:base")),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
             surface: surface_commitment("bootstrap-on-child"),
@@ -9254,7 +9417,7 @@ mod tests {
             regime: Regime::prototype1_baseline(1),
             opening_authority: OpeningAuthority::Predecessor(PredecessorAuthority::new(other_hash)),
             opened_by: actor("parent"),
-            opened_from_artifact: ArtifactRef::new("artifact:base"),
+            opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new("artifact:base")),
             ruling_authority: actor("ruler"),
             policy_ref: ProcedureRef::new("policy:test"),
             surface: surface_commitment("wrong-predecessor"),
@@ -9283,7 +9446,9 @@ mod tests {
                     ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
                 )),
                 opened_by: actor("parent"),
-                opened_from_artifact: ArtifactRef::new("artifact:base"),
+                opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new(
+                    "artifact:base",
+                )),
                 ruling_authority: actor("ruler"),
                 policy_ref: ProcedureRef::new("policy:test"),
                 surface: surface_commitment("genesis-tree-a"),
@@ -9309,7 +9474,9 @@ mod tests {
                     ParentIdentityRef::new(EvidenceRef::new("parent-identity:genesis")),
                 )),
                 opened_by: actor("parent"),
-                opened_from_artifact: ArtifactRef::new("artifact:base"),
+                opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new(
+                    "artifact:base",
+                )),
                 ruling_authority: actor("ruler"),
                 policy_ref: ProcedureRef::new("policy:test"),
                 surface: surface_commitment("genesis-tree-b"),
@@ -9355,7 +9522,9 @@ mod tests {
                 additional_parent_block_hashes: vec![merge_parent],
                 opened_from_state: HistoryStateRoot::test("state:merge"),
                 opened_by: actor("successor"),
-                opened_from_artifact: ArtifactRef::new("artifact:successor"),
+                opened_from_artifact: ArtifactRef::from_artifact_id(ArtifactId::new(
+                    "artifact:successor",
+                )),
                 ruling_authority: actor("successor"),
                 policy_ref: ProcedureRef::new("policy:next"),
                 surface: surface_commitment("successor-merge"),

@@ -114,9 +114,7 @@ fn node(id: &str, parent: Option<&str>, generation: u32) -> NodeRecord {
 
 fn sealed_block(block_height: u64, ruler: &str, selected: &str) -> SealedBlockRecord {
     let actor = ActorRefRecord::Process(format!("parent:{ruler}"));
-    let artifact = ArtifactRefRecord {
-        value: format!("artifact:{ruler}"),
-    };
+    let artifact = ArtifactRefRecord::from_artifact_id(ArtifactId(format!("artifact:{ruler}")));
     let evidence = EvidenceRefRecord {
         value: format!("evidence:block:{block_height}"),
     };
@@ -163,9 +161,9 @@ fn sealed_block(block_height: u64, ruler: &str, selected: &str) -> SealedBlockRe
                 crown_lock_transition: evidence,
                 selected_successor: SuccessorRefRecord {
                     runtime: ActorRefRecord::Runtime(RuntimeId(format!("runtime:{selected}"))),
-                    artifact: ArtifactRefRecord {
-                        value: format!("artifact:{selected}"),
-                    },
+                    artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(format!(
+                        "artifact:{selected}"
+                    ))),
                 },
                 active_artifact: artifact,
                 claims: ClaimsRecord {

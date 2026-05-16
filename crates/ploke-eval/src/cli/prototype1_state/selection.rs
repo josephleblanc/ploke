@@ -100,12 +100,12 @@ impl Artifact {
 
 fn artifact_ref(node: &Prototype1NodeRecord) -> ArtifactRef {
     if let Some(artifact_id) = node.derived_artifact_id.as_ref() {
-        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
+        return ArtifactRef::from_artifact_id(artifact_id.clone());
     }
     if let Some(artifact_id) = node.base_artifact_id.as_ref() {
-        return ArtifactRef::new(format!("artifact:{}", artifact_id.as_str()));
+        return ArtifactRef::from_artifact_id(artifact_id.clone());
     }
-    ArtifactRef::new(format!("branch:{}", node.branch_id))
+    ArtifactRef::from_branch_id(node.branch_id.clone())
 }
 
 impl ArtifactMismatch {

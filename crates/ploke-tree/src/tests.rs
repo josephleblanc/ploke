@@ -1596,9 +1596,8 @@ fn synthetic_sealed_block(
     runtime_id: &str,
 ) -> SealedBlockRecord {
     let runtime = ActorRefRecord::Runtime(RuntimeId(runtime_id.to_owned()));
-    let artifact = ArtifactRefRecord {
-        value: format!("artifact:{runtime_id}"),
-    };
+    let artifact =
+        ArtifactRefRecord::from_artifact_id(ArtifactId(format!("artifact:{runtime_id}")));
 
     let entries = selection
         .map(|(candidate, considered_count)| {

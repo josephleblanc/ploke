@@ -1543,7 +1543,7 @@ mod tests {
             EvidenceRef::new("transition:crown-lock"),
             SuccessorRef::new(
                 ActorRef::Process("successor".to_string()),
-                ArtifactRef::new("artifact:successor"),
+                ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             ),
             ParentIdentity::root_bootstrap(
                 "campaign-1",
@@ -1552,7 +1552,7 @@ mod tests {
                 "branch-child-1",
                 Some("artifact-branch-child-1".to_string()),
             ),
-            ArtifactRef::new("artifact:successor"),
+            ArtifactRef::from_artifact_id(ArtifactId::new("artifact:successor")),
             crate::cli::prototype1_state::event::RecordedAt(30),
         ));
 

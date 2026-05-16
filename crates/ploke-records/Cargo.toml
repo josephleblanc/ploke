@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
+sha2 = "0.10"
 ploke-protocol = { path = "../ploke-protocol", default-features = false, features = ["record-types"], optional = true }
 ploke-tui = { path = "../ploke-tui", default-features = false, features = ["tool_contracts"], optional = true }
 

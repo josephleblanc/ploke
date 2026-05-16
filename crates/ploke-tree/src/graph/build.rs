@@ -84,7 +84,7 @@ impl Builder {
                 ids: ArtifactIds::default(),
                 evidence: Vec::new(),
             });
-        let entity_key = artifact_entity_key(artifact.value.as_str());
+        let entity_key = artifact_entity_key(artifact);
         self.register_artifact_entity_key(&entity_key, artifact_ref_key(artifact));
         self.artifact_ids_by_entity
             .entry(entity_key.clone())
@@ -105,7 +105,11 @@ impl Builder {
                 ids: ArtifactIds::default(),
                 evidence: Vec::new(),
             });
-        let entity_key = artifact_entity_key(artifact.0.as_str());
+        let entity_key = artifact
+            .0
+            .strip_prefix("artifact:")
+            .unwrap_or(artifact.0.as_str())
+            .to_owned();
         self.register_artifact_entity_key(&entity_key, ArtifactKey::from_passive_id(artifact));
         self.artifact_ids_by_entity
             .entry(entity_key.clone())
@@ -120,7 +124,7 @@ impl Builder {
         tree_key: &TreeKeyHashRecord,
     ) {
         self.observe_artifact_ref(artifact);
-        let entity_key = artifact_entity_key(artifact.value.as_str());
+        let entity_key = artifact_entity_key(artifact);
         self.artifact_ids_by_entity
             .entry(entity_key.clone())
             .or_default()
@@ -316,8 +320,8 @@ fn artifact_ref_key(artifact: &ArtifactRefRecord) -> ArtifactKey {
     ArtifactKey::from_history_ref(artifact)
 }
 
-fn artifact_entity_key(value: &str) -> String {
-    value.strip_prefix("artifact:").unwrap_or(value).to_owned()
+fn artifact_entity_key(artifact: &ArtifactRefRecord) -> String {
+    artifact.graph_entity_key().to_owned()
 }
 
 #[cfg(test)]
@@ -331,9 +335,7 @@ mod tests {
     #[test]
     fn artifact_nodes_share_reconciled_ids_by_entity_key() {
         let mut builder = Builder::default();
-        let history_ref = ArtifactRefRecord {
-            value: "artifact:after".to_owned(),
-        };
+        let history_ref = ArtifactRefRecord::from_artifact_id(ArtifactId("after".to_owned()));
         let passive_id = ArtifactId("after".to_owned());
         let tree_key = TreeKeyHashRecord {
             hash: HistoryHash("tree:after".to_owned()),
@@ -348,7 +350,7 @@ mod tests {
             .artifacts
             .artifacts
             .get(&ArtifactKey::HistoryRef {
-                value: history_ref.value.clone(),
+                id: history_ref.id().0.clone(),
             })
             .expect("history artifact node");
         let passive_node = builder

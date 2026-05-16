@@ -248,7 +248,7 @@ fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>
         render_fixed_id_row(
             ui,
             "artifact",
-            ("artifact-ref-primary", artifact_ref.value.as_str()),
+            ("artifact-ref-primary", artifact_ref.id().0.as_str()),
             artifact_ref,
         );
         return;
@@ -608,9 +608,9 @@ mod tests {
 
     #[test]
     fn artifact_id_section_traces_expected_compact_rows() {
-        let history_ref = ArtifactRefRecord {
-            value: "artifact:git-commit:deadbeefcafebabe".to_owned(),
-        };
+        let history_ref = ArtifactRefRecord::from_artifact_id(ArtifactId(
+            "artifact:git-commit:deadbeefcafebabe".to_owned(),
+        ));
         let artifact_id =
             ArtifactId("text-file-sha256:f6f73d0a2259c38d377144ed14f53be3".to_owned());
         let tree_key = TreeKeyHashRecord {
@@ -618,7 +618,7 @@ mod tests {
         };
         let node = ArtifactNode {
             key: ArtifactKey::HistoryRef {
-                value: history_ref.value.clone(),
+                id: history_ref.id().0.clone(),
             },
             identity: ArtifactIdentity::HistoryRef(history_ref.clone()),
             ids: ArtifactIds {

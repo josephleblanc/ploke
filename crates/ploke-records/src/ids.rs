@@ -85,6 +85,7 @@ macro_rules! passive_string_accessors {
 }
 
 passive_string_accessors!(
+    ArtifactId,
     CampaignId,
     SchedulerNodeId,
     BranchId,

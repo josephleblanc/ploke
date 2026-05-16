@@ -10,8 +10,8 @@ use ploke_records::history::{
     SurfaceRecord, SurfaceRootRecord, TreeKeyHashRecord,
 };
 use ploke_records::ids::{
-    BlockHash, BlockId, CandidateMembershipId, CandidateOccurrenceId, EntryId, HistoryHash,
-    HistoryStateRoot, LineageId, RecordedAt, RuntimeId,
+    ArtifactId, BlockHash, BlockId, CandidateMembershipId, CandidateOccurrenceId, EntryId,
+    HistoryHash, HistoryStateRoot, LineageId, RecordedAt, RuntimeId,
 };
 use ploke_records::playback::FineStepKind;
 use ploke_records::selection::{Decision, Outcome};
@@ -287,9 +287,7 @@ fn membership_with_payload_hash(
 
 fn sealed_block(selection: SelectionDecisionEntryRecord) -> SealedBlockRecord {
     let runtime = ActorRefRecord::Runtime(RuntimeId("runtime:test".to_owned()));
-    let artifact = ArtifactRefRecord {
-        value: "artifact:test".to_owned(),
-    };
+    let artifact = ArtifactRefRecord::from_artifact_id(ArtifactId("artifact:test".to_owned()));
     let entry = AdmittedEntryRecord {
         core: EntryCoreRecord {
             entry_id: EntryId("entry:test".to_owned()),

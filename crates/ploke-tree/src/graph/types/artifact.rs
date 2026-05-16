@@ -28,28 +28,20 @@ pub struct ArtifactIds {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ArtifactKey {
-    HistoryRef { value: String },
+    HistoryRef { id: String },
     PassiveId { value: String },
 }
 
 impl ArtifactKey {
     pub(crate) fn from_history_ref(artifact: &ArtifactRefRecord) -> Self {
         Self::HistoryRef {
-            value: artifact.value.clone(),
+            id: artifact.id().0.clone(),
         }
     }
 
     pub(crate) fn from_passive_id(artifact: &ArtifactId) -> Self {
         Self::PassiveId {
             value: artifact.0.clone(),
-        }
-    }
-
-    pub fn entity_key(&self) -> &str {
-        match self {
-            Self::HistoryRef { value } | Self::PassiveId { value } => {
-                value.strip_prefix("artifact:").unwrap_or(value)
-            }
         }
     }
 }
@@ -62,7 +54,13 @@ pub enum ArtifactIdentity {
 
 impl ArtifactNode {
     pub fn entity_key(&self) -> &str {
-        self.key.entity_key()
+        match &self.identity {
+            ArtifactIdentity::HistoryRef(history_ref) => history_ref.graph_entity_key(),
+            ArtifactIdentity::PassiveId(artifact_id) => artifact_id
+                .0
+                .strip_prefix("artifact:")
+                .unwrap_or(artifact_id.0.as_str()),
+        }
     }
 
     pub fn artifact_ids(&self) -> &[ArtifactId] {

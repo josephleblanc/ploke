@@ -876,9 +876,9 @@ mod tests {
                 ruling_parent: None,
                 selected_successor: SuccessorRefRecord {
                     runtime: ActorRefRecord::Process("successor".to_owned()),
-                    artifact: ArtifactRefRecord {
-                        value: "artifact:successor".to_owned(),
-                    },
+                    artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(
+                        "artifact:successor".to_owned(),
+                    )),
                 },
                 selected_node: None,
                 selected_branch: None,
@@ -921,9 +921,9 @@ mod tests {
                 ruling_parent: None,
                 selected_successor: SuccessorRefRecord {
                     runtime: ActorRefRecord::Process("successor".to_owned()),
-                    artifact: ArtifactRefRecord {
-                        value: "artifact:successor".to_owned(),
-                    },
+                    artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(
+                        "artifact:successor".to_owned(),
+                    )),
                 },
                 selected_node: None,
                 selected_branch: None,

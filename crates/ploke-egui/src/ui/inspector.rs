@@ -69,7 +69,7 @@ impl<'g> SelectionInspector<'g> {
                             .collect(),
                         artifact_refs: identity
                             .artifact_refs()
-                            .map(|artifact_ref| artifact_ref.value.as_str())
+                            .map(|artifact_ref| artifact_ref.as_str())
                             .collect(),
                         tree_keys: identity
                             .tree_keys()
@@ -181,7 +181,7 @@ fn artifact_node_label(source: &ploke_tree::graph::ArtifactNode) -> &str {
             source
                 .artifact_refs()
                 .first()
-                .map(|artifact| artifact.value.as_str())
+                .map(|artifact| artifact.as_str())
         })
         .unwrap_or_else(|| artifact_identity_label(&source.identity))
 }
@@ -1044,7 +1044,7 @@ where
         .map(|source| match &source.identity {
             ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
                 SourceRef::ArtifactHistoryRef {
-                    artifact: artifact.value.as_str(),
+                    artifact: artifact.as_str(),
                 }
             }
             ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => SourceRef::ArtifactId {
@@ -1367,7 +1367,7 @@ pub(crate) fn artifact_source_refs<'a>(
     sources.iter().map(|source| match &source.identity {
         ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
             SourceRef::ArtifactHistoryRef {
-                artifact: artifact.value.as_str(),
+                artifact: artifact.as_str(),
             }
         }
         ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => SourceRef::ArtifactId {
@@ -1378,10 +1378,7 @@ pub(crate) fn artifact_source_refs<'a>(
 
 fn artifact_identity_label(identity: &ploke_tree::graph::ArtifactIdentity) -> &str {
     match identity {
-        ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => artifact
-            .value
-            .strip_prefix("artifact:")
-            .unwrap_or(&artifact.value),
+        ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => artifact.as_str(),
         ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => {
             artifact.0.strip_prefix("artifact:").unwrap_or(&artifact.0)
         }
@@ -1953,7 +1950,12 @@ mod tests {
             .artifacts
             .artifacts
             .get(&ploke_tree::graph::ArtifactKey::HistoryRef {
-                value: "artifact:after".to_owned(),
+                id: ploke_records::history::ArtifactRefRecord::from_artifact_id(ArtifactId(
+                    "artifact:after".to_owned(),
+                ))
+                .id()
+                .0
+                .clone(),
             })
             .expect("history artifact source exists");
         let passive_node = graph
@@ -1983,7 +1985,7 @@ mod tests {
                 source
                     .artifact_refs()
                     .iter()
-                    .map(|artifact| artifact.value.as_str())
+                    .map(|artifact| artifact.as_str())
                     .collect::<Vec<_>>(),
                 vec!["artifact:after"]
             );
@@ -1994,7 +1996,7 @@ mod tests {
         for source in identity.sources {
             match &source.identity {
                 ploke_tree::graph::ArtifactIdentity::HistoryRef(record) => {
-                    assert_eq!(record.value, "artifact:after");
+                    assert_eq!(record.as_str(), "artifact:after");
                     let ploke_tree::graph::ArtifactIdentity::HistoryRef(expected) =
                         &history_node.identity
                     else {
@@ -2404,9 +2406,9 @@ mod tests {
     }
 
     fn artifact_graph_with_mixed_identity_sources() -> ploke_tree::Graph {
-        let history_after = ploke_records::history::ArtifactRefRecord {
-            value: "artifact:after".to_owned(),
-        };
+        let history_after = ploke_records::history::ArtifactRefRecord::from_artifact_id(
+            ArtifactId("artifact:after".to_owned()),
+        );
         let passive_after = ArtifactId("artifact:after".to_owned());
         let ids = ploke_tree::graph::ArtifactIds {
             artifact_ids: vec![passive_after.clone()],
@@ -2416,11 +2418,11 @@ mod tests {
         let mut artifacts = BTreeMap::new();
         artifacts.insert(
             ploke_tree::graph::ArtifactKey::HistoryRef {
-                value: history_after.value.clone(),
+                id: history_after.id().0.clone(),
             },
             ploke_tree::graph::ArtifactNode {
                 key: ploke_tree::graph::ArtifactKey::HistoryRef {
-                    value: history_after.value.clone(),
+                    id: history_after.id().0.clone(),
                 },
                 identity: ploke_tree::graph::ArtifactIdentity::HistoryRef(history_after),
                 ids: ids.clone(),
