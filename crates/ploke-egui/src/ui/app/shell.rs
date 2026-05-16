@@ -122,6 +122,17 @@ pub(crate) fn render_right_inspector(
                         kv(ui, "record refs", "not_applicable");
                     }
                 });
+
+            ui.separator();
+            egui::CollapsingHeader::new("Artifact Ids")
+                .default_open(false)
+                .show(ui, |ui| {
+                    if let Some(inspector) = inspector {
+                        render_artifact_ids_for_inspector(ui, inspector);
+                    } else {
+                        kv(ui, "artifact ids", "not_applicable");
+                    }
+                });
         });
 }
 
@@ -222,10 +233,26 @@ fn render_run_forest_identity(ui: &mut egui::Ui, run: &RunForestNodeInspection<'
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
 fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
     let identity = artifact.identity();
-    // This is still a flat identity row. The next intended shape is a collapsed
-    // "Artifact Ids" inspector section near the bottom of the panel, with typed
-    // artifact identity slots rendered as compact prefix + short-hash values and
-    // expanding to full ids on click/right-click.
+    if let Some(artifact_id) = identity.primary_artifact_id() {
+        render_fixed_id_row(
+            ui,
+            "artifact",
+            ("artifact-primary", artifact_id.0.as_str()),
+            artifact_id,
+        );
+        return;
+    }
+
+    if let Some(artifact_ref) = identity.artifact_refs().next() {
+        render_fixed_id_row(
+            ui,
+            "artifact",
+            ("artifact-ref-primary", artifact_ref.value.as_str()),
+            artifact_ref,
+        );
+        return;
+    }
+
     kv(ui, "artifact", identity.artifact());
 }
 
@@ -324,8 +351,71 @@ fn render_source_refs_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInsp
     }
 }
 
+/// archaeology:artifact-identity
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+fn render_artifact_ids_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
+    match inspector {
+        SelectionInspector::RunForestNode(_) => kv(ui, "artifact ids", "not_applicable"),
+        SelectionInspector::Artifact(artifact) => render_artifact_ids(ui, artifact),
+        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+    }
+}
+
+fn render_artifact_ids(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
+    let identity = artifact.identity();
+
+    let mut saw_artifact_id = false;
+    for artifact_id in identity.artifact_ids() {
+        saw_artifact_id = true;
+        render_prefixed_id_row(ui, "artifact id", artifact_id);
+    }
+    if !saw_artifact_id {
+        kv(ui, "artifact id", "not_recorded");
+    }
+
+    let mut saw_artifact_ref = false;
+    for artifact_ref in identity.artifact_refs() {
+        saw_artifact_ref = true;
+        render_prefixed_id_row(ui, "artifact ref", artifact_ref);
+    }
+    if !saw_artifact_ref {
+        kv(ui, "artifact ref", "not_recorded");
+    }
+
+    let mut saw_tree_key = false;
+    for tree_key in identity.tree_keys() {
+        saw_tree_key = true;
+        render_prefixed_id_row(ui, "tree key", tree_key);
+    }
+    if !saw_tree_key {
+        kv(ui, "tree key", "not_recorded");
+    }
+}
+
 fn render_unavailable(ui: &mut egui::Ui, reason: UnavailableReason) {
     kv(ui, reason.subject(), reason.state());
+}
+
+fn render_fixed_id_row(
+    ui: &mut egui::Ui,
+    key: &str,
+    id_source: impl std::hash::Hash,
+    id: &impl id_display::InteractiveId,
+) {
+    ui.horizontal(|ui| {
+        ui.label(key);
+        id.show_compact(ui, id_source);
+    });
+}
+
+fn render_prefixed_id_row(
+    ui: &mut egui::Ui,
+    fallback_key: &str,
+    id: &impl id_display::InteractiveId,
+) {
+    let full = id.full_id();
+    let key = id.id_prefix().unwrap_or(fallback_key);
+    render_fixed_id_row(ui, key, ("artifact-ids", key, full), id);
 }
 
 fn render_parent_create(ui: &mut egui::Ui, lookup: ParentCreateLookup<'_, '_>) {

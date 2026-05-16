@@ -4,6 +4,8 @@ use std::fmt;
 use std::hash::Hash;
 
 use eframe::egui;
+use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
+use ploke_records::ids::ArtifactId;
 
 const HASH_CHARS: usize = 8;
 const MAX_PLAIN_CHARS: usize = 24;
@@ -98,6 +100,79 @@ pub(crate) fn expandable_id(ui: &mut egui::Ui, id_source: impl Hash, full: &str)
     response
 }
 
+pub(crate) trait InteractiveId {
+    fn full_id(&self) -> &str;
+
+    fn compact_label(&self) -> (&str, bool) {
+        compact_label(self.full_id())
+    }
+
+    fn id_prefix(&self) -> Option<&str> {
+        id_prefix(self.full_id())
+    }
+
+    fn show_compact(&self, ui: &mut egui::Ui, id_source: impl Hash) -> egui::Response {
+        let full = self.full_id();
+        let id = ui.make_persistent_id(("ploke-egui.compact-id", id_source));
+        let mut expanded = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+        let (compact, expandable) = self.compact_label();
+        let label = if expanded { full } else { compact };
+        let hint = if expanded {
+            "Click to collapse. Right click to copy the full id."
+        } else {
+            "Click to expand. Right click to copy the full id."
+        };
+        let response = ui.monospace(label).on_hover_ui(|ui| {
+            ui.monospace(full);
+            ui.label(hint);
+        });
+
+        if response.clicked() && expandable {
+            expanded = !expanded;
+            ui.data_mut(|data| data.insert_temp(id, expanded));
+        }
+
+        response.context_menu(|ui| {
+            if ui.button("Copy full id").clicked() {
+                ui.ctx().copy_text(full.to_owned());
+                ui.close();
+            }
+        });
+
+        response
+    }
+}
+
+impl InteractiveId for ArtifactId {
+    fn full_id(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl InteractiveId for ArtifactRefRecord {
+    fn full_id(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl InteractiveId for TreeKeyHashRecord {
+    fn full_id(&self) -> &str {
+        self.hash.0.as_str()
+    }
+}
+
+impl InteractiveId for str {
+    fn full_id(&self) -> &str {
+        self
+    }
+}
+
+pub(crate) fn id_prefix(full: &str) -> Option<&str> {
+    full.rsplit_once(':')
+        .or_else(|| full.rsplit_once('-'))
+        .map(|(prefix, _)| prefix)
+}
+
 fn is_shortenable_id(value: &str) -> bool {
     if value.contains('/') || value.chars().any(char::is_whitespace) {
         return false;
@@ -124,9 +199,31 @@ fn short_prefix(value: &str, max_chars: usize) -> &str {
         .unwrap_or(value)
 }
 
+fn compact_label(full: &str) -> (&str, bool) {
+    let suffix = full
+        .rsplit_once(':')
+        .or_else(|| full.rsplit_once('-'))
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(full);
+
+    if is_hexish(suffix) && suffix.len() > HASH_CHARS {
+        return (short_prefix(suffix, HASH_CHARS), true);
+    }
+
+    if id_prefix(full).is_some() {
+        return (suffix, false);
+    }
+
+    if full.len() > HASH_CHARS && is_hexish(full) {
+        return (short_prefix(full, HASH_CHARS), true);
+    }
+
+    (full, false)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ShortId;
+    use super::{ShortId, compact_label, id_prefix};
 
     fn short(value: &str) -> Option<String> {
         ShortId::new(value).map(|id| id.to_string())
@@ -152,5 +249,31 @@ mod tests {
     fn leaves_paths_and_short_values_alone() {
         assert_eq!(short("crates/ploke-tui/src/tools/cargo.rs"), None);
         assert_eq!(short("not_available"), None);
+    }
+
+    #[test]
+    fn compact_label_omits_prefix_for_hash_ids() {
+        assert_eq!(
+            compact_label("text-file-sha256:f6f73d0a2259c38d377144ed14f53be3"),
+            ("f6f73d0a", true)
+        );
+        assert_eq!(
+            compact_label("artifact:git-commit:deadbeefcafebabe"),
+            ("deadbeef", true)
+        );
+    }
+
+    #[test]
+    fn compact_label_keeps_non_hash_suffix_without_prefix() {
+        assert_eq!(compact_label("artifact:after"), ("after", false));
+    }
+
+    #[test]
+    fn id_prefix_uses_last_separator_boundary() {
+        assert_eq!(
+            id_prefix("artifact:git-commit:deadbeefcafebabe"),
+            Some("artifact:git-commit")
+        );
+        assert_eq!(id_prefix("node-71c2d4aa6246bf58"), Some("node"));
     }
 }

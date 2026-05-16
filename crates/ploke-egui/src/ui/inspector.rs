@@ -96,6 +96,39 @@ impl<'a, 'g> ArtifactIdentityWitness<'a, 'g> {
         );
         label
     }
+
+    pub(crate) fn primary_artifact_id(self) -> Option<&'g ploke_records::ids::ArtifactId> {
+        self.bundle()
+            .and_then(|source| source.artifact_ids().first())
+    }
+
+    pub(crate) fn artifact_ids(
+        self,
+    ) -> impl Iterator<Item = &'g ploke_records::ids::ArtifactId> + 'a {
+        self.bundle()
+            .into_iter()
+            .flat_map(|source| source.artifact_ids().iter())
+    }
+
+    pub(crate) fn artifact_refs(
+        self,
+    ) -> impl Iterator<Item = &'g ploke_records::history::ArtifactRefRecord> + 'a {
+        self.bundle()
+            .into_iter()
+            .flat_map(|source| source.artifact_refs().iter())
+    }
+
+    pub(crate) fn tree_keys(
+        self,
+    ) -> impl Iterator<Item = &'g ploke_records::history::TreeKeyHashRecord> + 'a {
+        self.bundle()
+            .into_iter()
+            .flat_map(|source| source.tree_keys().iter())
+    }
+
+    fn bundle(self) -> Option<&'g ploke_tree::graph::ArtifactNode> {
+        self.sources.first().copied()
+    }
 }
 
 /// archaeology:artifact-identity
