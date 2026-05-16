@@ -6,7 +6,7 @@ use crate::graph::{
 };
 use crate::{
     AgentTurnArtifactEvidence, AgentTurnEvidence, ChildPlanEvidence, EvaluationEvidence,
-    PassiveEvidence, ProtocolArtifactsEvidence, RunProfileEvidence,
+    PassiveEvidence, ProtocolArtifactsEvidence, RunProfileEvidence, RunRecordEvidence,
 };
 
 use super::Builder;
@@ -55,6 +55,9 @@ impl Builder {
         }
         if let Some(protocol_artifacts) = evidence.protocol_artifacts.as_ref() {
             self.ingest_protocol_artifacts(protocol_artifacts);
+        }
+        if let Some(run_records) = evidence.run_records.as_ref() {
+            self.ingest_run_records(run_records);
         }
         if let Some(run_profile) = evidence.run_profile.as_ref() {
             self.ingest_run_profile(run_profile);
@@ -147,6 +150,51 @@ impl Builder {
                     run_id: artifact.run_id.clone(),
                 }],
             );
+        }
+    }
+
+    fn ingest_run_records(&mut self, evidence: &RunRecordEvidence) {
+        self.attach_located_evidence(
+            EvidenceSubject::RunRecordSummary {
+                file_count: evidence.summary.file_count,
+                parsed_count: evidence.summary.parsed_count,
+                branch_ref_count: evidence.summary.branch_ref_count,
+                baseline_ref_count: evidence.summary.baseline_ref_count,
+                treatment_ref_count: evidence.summary.treatment_ref_count,
+                records_with_setup_count: evidence.summary.records_with_setup_count,
+                records_with_packaging_count: evidence.summary.records_with_packaging_count,
+                total_turn_count: evidence.summary.total_turn_count,
+                total_tool_call_count: evidence.summary.total_tool_call_count,
+                failed_tool_call_count: evidence.summary.failed_tool_call_count,
+            },
+            EvidenceKind::RunRecordSummary,
+            vec![EvidenceLocator::LoadedSummary {
+                name: "run_records",
+            }],
+        );
+
+        for (branch_id, refs) in &evidence.refs_by_branch {
+            for record_ref in refs {
+                let Some(record) = evidence.index.get(&record_ref.record_key) else {
+                    continue;
+                };
+                let evidence_id = self.attach_located_evidence(
+                    EvidenceSubject::RunRecord {
+                        manifest_id: record.manifest_id.clone(),
+                        instance_id: record.metadata.benchmark.instance_id.clone(),
+                        turn_count: record.turn_count(),
+                        tool_call_count: record.tool_call_count(),
+                        failed_tool_call_count: record.failed_tool_call_count(),
+                    },
+                    EvidenceKind::RunRecord,
+                    vec![EvidenceLocator::RunRecord {
+                        path: record_ref.record_path.clone(),
+                        manifest_id: record.manifest_id.clone(),
+                        instance_id: record.metadata.benchmark.instance_id.clone(),
+                    }],
+                );
+                self.attach_to_branch(branch_id, evidence_id);
+            }
         }
     }
 

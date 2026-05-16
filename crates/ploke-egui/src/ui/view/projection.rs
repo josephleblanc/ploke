@@ -1049,6 +1049,8 @@ fn evidence_subject_has_loaded_node(graph: &DomainGraph, subject: &EvidenceSubje
         | EvidenceSubject::ChildPlanSummary { .. }
         | EvidenceSubject::ProtocolArtifactSummary { .. }
         | EvidenceSubject::ProtocolArtifact { .. }
+        | EvidenceSubject::RunRecordSummary { .. }
+        | EvidenceSubject::RunRecord { .. }
         | EvidenceSubject::RunProfileSummary(_)
         | EvidenceSubject::RunProfileCommitment(_)
         | EvidenceSubject::AgentTurnEvidenceSummary { .. }

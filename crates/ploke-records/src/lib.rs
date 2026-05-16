@@ -26,6 +26,8 @@ pub mod playback;
 pub mod protocol;
 pub mod record;
 pub mod run_profile;
+#[cfg(feature = "tool-contracts")]
+pub mod run_record;
 pub mod scheduler;
 pub mod selection;
 #[cfg(feature = "tool-contracts")]

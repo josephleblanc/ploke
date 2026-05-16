@@ -6510,6 +6510,7 @@ dependencies = [
  "egui_graphs",
  "getrandom 0.2.15",
  "getrandom 0.3.1",
+ "itoa",
  "petgraph 0.8.3",
  "ploke-records",
  "ploke-tree",
@@ -6713,6 +6714,7 @@ dependencies = [
 name = "ploke-records"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ploke-protocol",
  "ploke-tui",
  "serde",
@@ -6789,6 +6791,7 @@ dependencies = [
 name = "ploke-tree"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ploke-records",
  "serde",
  "serde_json",

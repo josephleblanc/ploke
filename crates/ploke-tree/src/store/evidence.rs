@@ -7,6 +7,7 @@ use ploke_records::invocation::InvocationRecord;
 use ploke_records::journal::JournalEntry;
 use ploke_records::protocol::Artifact as ProtocolArtifact;
 use ploke_records::run_profile::{RunProfileCommitmentRecord, RunProfileRecord};
+use ploke_records::run_record::{RunRecord, ToolResult};
 use ploke_records::scheduler::{RunnerRequestRecord, RunnerResultRecord};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,8 @@ pub struct PassiveEvidence {
     pub evaluations: Option<EvaluationEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_records: Option<RunRecordEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_profile: Option<RunProfileEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +161,84 @@ pub struct ProtocolArtifactSummary {
     pub review_count: usize,
     pub segment_review_count: usize,
     pub typed_payload_count: usize,
+}
+
+/// Read-only typed evidence loaded from compressed `record.json.gz` files.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RunRecordEvidence {
+    pub summary: RunRecordSummary,
+    pub index: BTreeMap<String, RunRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stats: BTreeMap<String, RunRecordStats>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refs_by_branch: BTreeMap<String, Vec<BranchRunRecordRef>>,
+}
+
+/// Counts from persisted compressed run records.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunRecordSummary {
+    pub file_count: usize,
+    pub parsed_count: usize,
+    pub branch_ref_count: usize,
+    pub baseline_ref_count: usize,
+    pub treatment_ref_count: usize,
+    pub records_with_setup_count: usize,
+    pub records_with_packaging_count: usize,
+    pub total_turn_count: usize,
+    pub total_tool_call_count: usize,
+    pub failed_tool_call_count: usize,
+}
+
+/// Load-time facts derived once from a compressed run record for UI inspection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunRecordStats {
+    pub turn_count: usize,
+    pub tool_call_count: usize,
+    pub failed_tool_call_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_wall_clock_millis: Option<u64>,
+}
+
+impl RunRecordStats {
+    pub fn from_record(record: &RunRecord) -> Self {
+        let turn_count = record.phases.agent_turns.len();
+        let mut tool_call_count = 0;
+        let mut failed_tool_call_count = 0;
+        for turn in &record.phases.agent_turns {
+            tool_call_count += turn.tool_calls.len();
+            failed_tool_call_count += turn
+                .tool_calls
+                .iter()
+                .filter(|call| matches!(call.result, ToolResult::Failed(_)))
+                .count();
+        }
+        Self {
+            turn_count,
+            tool_call_count,
+            failed_tool_call_count,
+            total_wall_clock_millis: record
+                .timing
+                .as_ref()
+                .map(|timing| (timing.total_wall_clock_secs * 1000.0).round() as u64),
+        }
+    }
+}
+
+/// Branch-scoped comparison arm that points at one loaded compressed run record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchRunRecordRef {
+    pub branch_id: String,
+    pub instance_id: String,
+    pub arm: ComparedRunArm,
+    pub record_key: String,
+    pub record_path: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparedRunArm {
+    Baseline,
+    Treatment,
 }
 
 /// Read-only run metadata and reproducibility commitment loaded from a run root.

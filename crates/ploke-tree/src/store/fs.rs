@@ -21,6 +21,7 @@ use ploke_records::protocol::{
     TOOL_CALL_SEGMENT_REVIEW,
 };
 use ploke_records::run_profile::{RunProfileCommitmentRecord, RunProfileRecord};
+use ploke_records::run_record::{RunRecord as EvalRunRecord, read_compressed_record};
 use ploke_records::scheduler::{
     NodeRecord, RunnerRequestRecord, RunnerResultRecord, SchedulerStateRecord,
 };
@@ -30,10 +31,11 @@ use crate::{RunForest, assemble_run_forest};
 
 use super::{
     AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, BranchRegistryEvidence,
-    ChannelEvidence, ChildPlanEvidence, ChildPlanSummary, EvaluationArtifactSummary,
-    EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord, PassiveEvidence,
-    ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence, RunAttemptSummary,
-    RunForestInput, RunProfileEvidence, RunRecordSet, TransitionJournal,
+    BranchRunRecordRef, ChannelEvidence, ChildPlanEvidence, ChildPlanSummary, ComparedRunArm,
+    EvaluationArtifactSummary, EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord,
+    PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence,
+    RunAttemptSummary, RunForestInput, RunProfileEvidence, RunRecordEvidence, RunRecordSet,
+    RunRecordStats, RunRecordSummary, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -179,6 +181,7 @@ impl FsRunStore {
 
     fn load_passive_evidence(&self) -> Result<PassiveEvidence, FsRunStoreError> {
         let evaluations = self.load_evaluation_evidence()?;
+        let run_records = self.load_run_record_evidence(evaluations.as_ref())?;
         let protocol_artifacts = self.load_protocol_artifacts_evidence(evaluations.as_ref())?;
         Ok(PassiveEvidence {
             branch_registry: self.load_branch_registry_evidence()?,
@@ -188,6 +191,7 @@ impl FsRunStore {
             child_plans: self.load_child_plan_evidence()?,
             evaluations,
             protocol_artifacts,
+            run_records,
             run_profile: self.load_run_profile_evidence()?,
             run_attempts: self.load_run_attempt_evidence()?,
             agent_turns: self.load_agent_turn_evidence()?,
@@ -467,6 +471,117 @@ impl FsRunStore {
         }
 
         dirs.into_iter().collect()
+    }
+
+    fn load_run_record_evidence(
+        &self,
+        evaluations: Option<&EvaluationEvidence>,
+    ) -> Result<Option<RunRecordEvidence>, FsRunStoreError> {
+        let Some(evaluations) = evaluations else {
+            return Ok(None);
+        };
+
+        let mut summary = RunRecordSummary::default();
+        let mut index: BTreeMap<String, EvalRunRecord> = BTreeMap::new();
+        let mut stats: BTreeMap<String, RunRecordStats> = BTreeMap::new();
+        let mut refs_by_branch: BTreeMap<String, Vec<BranchRunRecordRef>> = BTreeMap::new();
+
+        for evaluation in evaluations.index.values() {
+            for compared in &evaluation.compared_instances {
+                if let Some(record_path) = compared.baseline_record_path.as_ref() {
+                    self.load_compared_run_record(
+                        &mut summary,
+                        &mut index,
+                        &mut stats,
+                        &mut refs_by_branch,
+                        &evaluation.branch_id,
+                        &compared.instance_id,
+                        ComparedRunArm::Baseline,
+                        record_path,
+                    )?;
+                }
+                if let Some(record_path) = compared.treatment_record_path.as_ref() {
+                    self.load_compared_run_record(
+                        &mut summary,
+                        &mut index,
+                        &mut stats,
+                        &mut refs_by_branch,
+                        &evaluation.branch_id,
+                        &compared.instance_id,
+                        ComparedRunArm::Treatment,
+                        record_path,
+                    )?;
+                }
+            }
+        }
+
+        if index.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(RunRecordEvidence {
+            summary,
+            index,
+            stats,
+            refs_by_branch,
+        }))
+    }
+
+    fn load_compared_run_record(
+        &self,
+        summary: &mut RunRecordSummary,
+        index: &mut BTreeMap<String, EvalRunRecord>,
+        stats: &mut BTreeMap<String, RunRecordStats>,
+        refs_by_branch: &mut BTreeMap<String, Vec<BranchRunRecordRef>>,
+        branch_id: &str,
+        instance_id: &str,
+        arm: ComparedRunArm,
+        record_path: &Path,
+    ) -> Result<(), FsRunStoreError> {
+        if !record_path.is_file() {
+            return Ok(());
+        }
+
+        let record_key = run_record_key(record_path);
+        if !index.contains_key(&record_key) {
+            summary.file_count += 1;
+            let record =
+                read_compressed_record(record_path).map_err(|source| FsRunStoreError::Io {
+                    path: record_path.to_path_buf(),
+                    source,
+                })?;
+            summary.parsed_count += 1;
+            if record.phases.setup.is_some() {
+                summary.records_with_setup_count += 1;
+            }
+            if record.phases.packaging.is_some() {
+                summary.records_with_packaging_count += 1;
+            }
+            let record_stats = RunRecordStats::from_record(&record);
+            summary.total_turn_count += record_stats.turn_count;
+            summary.total_tool_call_count += record_stats.tool_call_count;
+            summary.failed_tool_call_count += record_stats.failed_tool_call_count;
+            stats.insert(record_key.clone(), record_stats);
+            index.insert(record_key.clone(), record);
+        }
+
+        summary.branch_ref_count += 1;
+        match arm {
+            ComparedRunArm::Baseline => summary.baseline_ref_count += 1,
+            ComparedRunArm::Treatment => summary.treatment_ref_count += 1,
+        }
+        refs_by_branch
+            .entry(branch_id.to_owned())
+            .or_default()
+            .push(BranchRunRecordRef {
+                branch_id: branch_id.to_owned(),
+                instance_id: instance_id.to_owned(),
+                arm,
+                record_key,
+                record_path: record_path.to_path_buf(),
+            });
+
+        Ok(())
     }
 
     fn load_run_profile_evidence(&self) -> Result<Option<RunProfileEvidence>, FsRunStoreError> {
@@ -874,6 +989,10 @@ fn expected_agent_turn_files(run_root: &Path, file_name: &str) -> Vec<PathBuf> {
 }
 
 fn protocol_artifact_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn run_record_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 

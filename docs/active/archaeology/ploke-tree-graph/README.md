@@ -18,3 +18,6 @@ projection-only labels.
   Default artifact-tree identity quotient for selected child -> next parent
   continuity, keeping one displayed Artifact node when graph-owned child-plan
   facts prove the continuation.
+- [`run-record-branch-output.md`](run-record-branch-output.md)
+  Inspector claim for selected run-forest nodes showing typed baseline and
+  treatment `record.json.gz` output records through branch-scoped graph refs.

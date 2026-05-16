@@ -145,6 +145,11 @@ pub enum EvidenceLocator {
         kind: AgentTurnArtifactKind,
         task_id: String,
     },
+    RunRecord {
+        path: PathBuf,
+        manifest_id: String,
+        instance_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +223,25 @@ pub enum EvidenceSubject {
         subject_id: String,
         run_id: String,
     },
+    RunRecordSummary {
+        file_count: usize,
+        parsed_count: usize,
+        branch_ref_count: usize,
+        baseline_ref_count: usize,
+        treatment_ref_count: usize,
+        records_with_setup_count: usize,
+        records_with_packaging_count: usize,
+        total_turn_count: usize,
+        total_tool_call_count: usize,
+        failed_tool_call_count: usize,
+    },
+    RunRecord {
+        manifest_id: String,
+        instance_id: String,
+        turn_count: usize,
+        tool_call_count: usize,
+        failed_tool_call_count: usize,
+    },
     RunProfileSummary(RunProfileMetadata),
     RunProfileCommitment(RunProfileCommitmentRecord),
     AgentTurnEvidenceSummary {
@@ -257,6 +281,8 @@ pub enum EvidenceKind {
     CandidatePayload,
     CandidateEvaluation,
     ProtocolArtifact,
+    RunRecordSummary,
+    RunRecord,
     RunProfileSummary,
     RunProfileCommitment,
     AgentTurnEvidenceSummary,

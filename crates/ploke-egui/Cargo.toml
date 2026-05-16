@@ -12,6 +12,7 @@ eframe = "0.34"
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["syntect"] }
 egui_graphs = "0.30"
+itoa = "1"
 petgraph = { version = "0.8", default-features = false, features = ["stable_graph"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

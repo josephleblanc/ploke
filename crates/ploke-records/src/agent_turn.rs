@@ -34,7 +34,7 @@ impl Record for AgentTurnSummaryRecord {
     const FORMAT: RecordFormat = RecordFormat::Json;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTurnArtifactRecord {
     pub task_id: String,
@@ -52,7 +52,7 @@ pub struct AgentTurnArtifactRecord {
     pub llm_response: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ObservedTurnEventRecord {
     DebugCommand(String),
     LlmEvent(String),
@@ -64,7 +64,7 @@ pub enum ObservedTurnEventRecord {
     TurnFinished(TurnFinishedRecord),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LlmResponseRecord {
     pub content: String,
@@ -96,7 +96,7 @@ pub enum FinishReasonRecord {
     Error(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LlmMetadataRecord {
     pub model: String,
@@ -198,7 +198,7 @@ pub struct ProviderFunctionCallRecord {
     pub arguments: ToolArgumentsJson,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolRequestRecord {
     pub request_id: String,
@@ -208,7 +208,7 @@ pub struct ToolRequestRecord {
     pub arguments: ToolArgumentsJson,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCompletedRecord {
     pub request_id: String,
@@ -221,7 +221,7 @@ pub struct ToolCompletedRecord {
     pub latency_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolFailedRecord {
     pub request_id: String,

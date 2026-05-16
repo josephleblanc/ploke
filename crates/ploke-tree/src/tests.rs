@@ -847,6 +847,137 @@ fn fs_run_store_loads_protocol_artifacts_from_evaluation_record_paths() {
 }
 
 #[test]
+fn fs_run_store_loads_compressed_run_records_from_evaluation_record_paths() {
+    let root = temp_run_root("run-records-from-evaluations");
+    let baseline_run = root
+        .join("bench")
+        .join("baseline")
+        .join("runs")
+        .join("run-a");
+    let treatment_run = root
+        .join("bench")
+        .join("treatments")
+        .join("branch-1")
+        .join("runs")
+        .join("run-b");
+    let baseline_record_path = baseline_run.join("record.json.gz");
+    let treatment_record_path = treatment_run.join("record.json.gz");
+
+    fs::create_dir_all(root.join("evaluations")).expect("create evaluations dir");
+    fs::create_dir_all(&baseline_run).expect("create baseline run dir");
+    fs::create_dir_all(&treatment_run).expect("create treatment run dir");
+
+    write_json(
+        &root.join("scheduler.json"),
+        &scheduler(vec![node("root", None, NodeStatusRecord::Succeeded)]),
+    );
+    write_json(
+        &root.join("evaluations").join("branch-1.json"),
+        &serde_json::json!({
+            "baseline_campaign_id": "campaign-0",
+            "branch_id": "branch-1",
+            "treatment_campaign_id": "campaign-1",
+            "branch_registry_path": "branches.json",
+            "evaluation_artifact_path": "evaluations/branch-1.json",
+            "treatment_campaign_manifest": "campaign.json",
+            "treatment_closure_state_path": "closure-state.json",
+            "overall_disposition": "reject",
+            "compared_instances": [{
+                "instance_id": "instance-1",
+                "baseline_record_path": baseline_record_path,
+                "treatment_record_path": treatment_record_path,
+                "status": "compared"
+            }]
+        }),
+    );
+    write_gzip_json(
+        &baseline_record_path,
+        &minimal_run_record_json("instance-1", "baseline-run", "nonempty", 2, 1),
+    );
+    write_gzip_json(
+        &treatment_record_path,
+        &minimal_run_record_json("instance-1", "treatment-run", "empty", 1, 0),
+    );
+
+    let records = FsRunStore::new(&root)
+        .load_record_set()
+        .expect("load record set with compressed run records");
+    let run_records = records
+        .forest_input
+        .passive_evidence
+        .run_records
+        .as_ref()
+        .expect("run record evidence");
+
+    assert_eq!(run_records.summary.file_count, 2);
+    assert_eq!(run_records.summary.parsed_count, 2);
+    assert_eq!(run_records.summary.branch_ref_count, 2);
+    assert_eq!(run_records.summary.baseline_ref_count, 1);
+    assert_eq!(run_records.summary.treatment_ref_count, 1);
+    assert_eq!(run_records.summary.records_with_setup_count, 2);
+    assert_eq!(run_records.summary.records_with_packaging_count, 2);
+    assert_eq!(run_records.summary.total_turn_count, 2);
+    assert_eq!(run_records.summary.total_tool_call_count, 3);
+    assert_eq!(run_records.summary.failed_tool_call_count, 1);
+    assert_eq!(run_records.stats.len(), 2);
+
+    let branch_refs = run_records
+        .refs_by_branch
+        .get("branch-1")
+        .expect("branch run record refs");
+    assert_eq!(branch_refs.len(), 2);
+    assert!(branch_refs.iter().any(|record_ref| {
+        record_ref.arm == ComparedRunArm::Baseline
+            && run_records
+                .stats
+                .get(&record_ref.record_key)
+                .is_some_and(|stats| {
+                    stats.turn_count == 1
+                        && stats.tool_call_count == 2
+                        && stats.failed_tool_call_count == 1
+                })
+            && run_records
+                .index
+                .get(&record_ref.record_key)
+                .is_some_and(|record| record.manifest_id == "baseline-run")
+    }));
+    assert!(branch_refs.iter().any(|record_ref| {
+        record_ref.arm == ComparedRunArm::Treatment
+            && run_records
+                .stats
+                .get(&record_ref.record_key)
+                .is_some_and(|stats| {
+                    stats.turn_count == 1
+                        && stats.tool_call_count == 1
+                        && stats.failed_tool_call_count == 0
+                })
+            && run_records
+                .index
+                .get(&record_ref.record_key)
+                .is_some_and(|record| {
+                    record.manifest_id == "treatment-run"
+                        && record.phases.packaging.as_ref().is_some_and(|packaging| {
+                            packaging.submission_artifact_state
+                                == ploke_records::run_record::SubmissionArtifactState::Empty
+                        })
+                })
+    }));
+
+    let graph = Graph::from_records(&records);
+    let graph_records = graph.run_records().expect("graph carries run records");
+    assert_eq!(graph_records.summary.parsed_count, 2);
+    assert_eq!(
+        graph
+            .run_record_refs_for_branch("branch-1")
+            .map(|record_ref| record_ref.arm)
+            .collect::<Vec<_>>(),
+        vec![ComparedRunArm::Baseline, ComparedRunArm::Treatment]
+    );
+
+    fs::remove_dir_all(root).expect("remove temp run");
+}
+
+#[test]
 #[ignore = "real-run diagnostic; reads ~/.ploke-eval campaign records"]
 fn real_run_p1_five_gen_1x3_protocol_artifact_dirs() {
     let run_root =
@@ -952,6 +1083,100 @@ fn real_run_p1_five_gen_1x3_protocol_artifact_dirs() {
             .all(|dir| dir.file_name().and_then(|name| name.to_str()) == Some("protocol-artifacts")),
         "all derived dirs should be protocol-artifacts directories"
     );
+}
+
+#[test]
+#[ignore = "real-run diagnostic; reads ~/.ploke-eval campaign records"]
+fn real_run_p1_five_gen_1x3_loads_compressed_run_records() {
+    let run_root =
+        Path::new("/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1");
+    assert!(
+        run_root.join("scheduler.json").is_file(),
+        "missing real run scheduler at {}",
+        run_root.display()
+    );
+
+    let records = FsRunStore::new(run_root)
+        .load_record_set()
+        .expect("load typed real-run records");
+    let graph = Graph::from_records(&records);
+    let run_records = graph.run_records().expect("real run carries run records");
+
+    eprintln!("run_root={}", run_root.display());
+    eprintln!(
+        "loaded_run_records file_count={} parsed_count={} branch_refs={} baseline_refs={} treatment_refs={} setup={} packaging={} turns={} tool_calls={} failed_tool_calls={}",
+        run_records.summary.file_count,
+        run_records.summary.parsed_count,
+        run_records.summary.branch_ref_count,
+        run_records.summary.baseline_ref_count,
+        run_records.summary.treatment_ref_count,
+        run_records.summary.records_with_setup_count,
+        run_records.summary.records_with_packaging_count,
+        run_records.summary.total_turn_count,
+        run_records.summary.total_tool_call_count,
+        run_records.summary.failed_tool_call_count
+    );
+
+    let branch_id = "branch-b53a075a894cedf9";
+    let branch_refs = graph
+        .run_record_refs_for_branch(branch_id)
+        .collect::<Vec<_>>();
+    eprintln!(
+        "branch_id={} run_record_refs={}",
+        branch_id,
+        branch_refs.len()
+    );
+    assert_eq!(
+        branch_refs.len(),
+        2,
+        "expected baseline and treatment records for {branch_id}"
+    );
+
+    for record_ref in branch_refs {
+        let record = run_records
+            .index
+            .get(&record_ref.record_key)
+            .expect("loaded branch record");
+        let stats = run_records
+            .stats
+            .get(&record_ref.record_key)
+            .expect("loaded branch record stats");
+        eprintln!(
+            "  arm={:?} instance_id={} record_path={}",
+            record_ref.arm,
+            record_ref.instance_id,
+            record_ref.record_path.display()
+        );
+        eprintln!(
+            "    manifest_id={} model={:?} provider={:?} repo_root={} turns={} tool_calls={} failed_tool_calls={}",
+            record.manifest_id,
+            record.metadata.agent.model_id,
+            record.metadata.agent.provider,
+            record.metadata.benchmark.repo_root.display(),
+            stats.turn_count,
+            stats.tool_call_count,
+            stats.failed_tool_call_count
+        );
+        if let Some(packaging) = record.phases.packaging.as_ref() {
+            eprintln!(
+                "    packaging submission={:?} patch_projection_check={:?}",
+                packaging.submission_artifact_state, packaging.patch_projection_check_state
+            );
+        }
+        assert_eq!(
+            record.schema_version,
+            ploke_records::run_record::RUN_RECORD_SCHEMA_VERSION
+        );
+        assert_eq!(
+            record.metadata.benchmark.instance_id,
+            "BurntSushi__ripgrep-2209"
+        );
+        assert_eq!(stats.turn_count, record.turn_count());
+    }
+
+    assert!(run_records.summary.parsed_count >= 2);
+    assert_eq!(run_records.stats.len(), run_records.index.len());
+    assert!(run_records.summary.total_tool_call_count > 0);
 }
 
 #[test]
@@ -1785,6 +2010,158 @@ fn minimal_child_plan_json(message_path: &Path) -> serde_json::Value {
 fn write_json(path: &Path, value: &impl Serialize) {
     let json = serde_json::to_vec_pretty(value).expect("serialize fixture");
     fs::write(path, json).expect("write fixture");
+}
+
+fn write_gzip_json(path: &Path, value: &impl Serialize) {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+
+    let file = fs::File::create(path).expect("create gzip fixture");
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    let json = serde_json::to_vec_pretty(value).expect("serialize gzip fixture");
+    encoder.write_all(&json).expect("write gzip fixture");
+    encoder.finish().expect("finish gzip fixture");
+}
+
+fn minimal_run_record_json(
+    instance_id: &str,
+    manifest_id: &str,
+    submission_artifact_state: &str,
+    tool_call_count: usize,
+    failed_tool_call_count: usize,
+) -> serde_json::Value {
+    let mut tool_calls = Vec::new();
+    for index in 0..tool_call_count {
+        let failed = index < failed_tool_call_count;
+        let status = if failed { "Failed" } else { "Completed" };
+        let result = if failed {
+            serde_json::json!({
+                "status": status,
+                "request_id": format!("request-{index}"),
+                "parent_id": "parent-1",
+                "call_id": format!("call-{index}"),
+                "tool": "read_file",
+                "error": "fixture failure",
+                "ui_payload": null,
+                "latency_ms": 7
+            })
+        } else {
+            serde_json::json!({
+                "status": status,
+                "request_id": format!("request-{index}"),
+                "parent_id": "parent-1",
+                "call_id": format!("call-{index}"),
+                "tool": "read_file",
+                "content": "fixture content",
+                "ui_payload": null,
+                "latency_ms": 7
+            })
+        };
+        tool_calls.push(serde_json::json!({
+            "request": {
+                "request_id": format!("request-{index}"),
+                "parent_id": "parent-1",
+                "call_id": format!("call-{index}"),
+                "tool": "read_file",
+                "arguments": "{\"path\":\"src/lib.rs\"}"
+            },
+            "result": result,
+            "latency_ms": 7
+        }));
+    }
+
+    serde_json::json!({
+        "schema_version": "run-record.v1",
+        "manifest_id": manifest_id,
+        "metadata": {
+            "run_arm": {
+                "id": "structured-current-policy",
+                "role": "treatment",
+                "command": "run single agent",
+                "execution": "agent-single-turn"
+            },
+            "benchmark": {
+                "instance_id": instance_id,
+                "repo_root": "/tmp/repo",
+                "base_sha": "abc123",
+                "issue": {
+                    "title": "fixture",
+                    "body": "fixture body",
+                    "body_path": null
+                }
+            },
+            "agent": {
+                "selected_model": "fixture/model",
+                "selected_provider": "fixture-provider"
+            },
+            "runtime": {},
+            "budget": {
+                "max_turns": 40,
+                "max_tool_calls": 200,
+                "wall_clock_secs": 1800
+            }
+        },
+        "phases": {
+            "setup": {
+                "started_at": "2026-05-16T00:00:00Z",
+                "ended_at": "2026-05-16T00:00:01Z",
+                "repo_state": {
+                    "repo_root": "/tmp/repo",
+                    "requested_base_sha": "abc123",
+                    "checked_out_head_sha": "abc123",
+                    "git_status_porcelain": ""
+                },
+                "indexing_status": {
+                    "status": "success",
+                    "detail": "fixture"
+                },
+                "indexed_crates": [],
+                "parse_failures": [],
+                "db_timestamp_micros": 1
+            },
+            "agent_turns": [{
+                "turn_number": 1,
+                "started_at": "2026-05-16T00:00:01Z",
+                "ended_at": "2026-05-16T00:00:02Z",
+                "db_timestamp_micros": 2,
+                "issue_prompt": "fixture prompt",
+                "llm_request": {
+                    "model": "fixture/model",
+                    "messages": [{
+                        "role": "user",
+                        "content": "fixture prompt"
+                    }]
+                },
+                "tool_calls": tool_calls,
+                "outcome": {
+                    "type": "ToolCalls",
+                    "count": tool_call_count
+                }
+            }],
+            "packaging": {
+                "started_at": "2026-05-16T00:00:03Z",
+                "ended_at": "2026-05-16T00:00:04Z",
+                "submission_artifact_state": submission_artifact_state,
+                "msb_submission_path": "/tmp/submission.jsonl",
+                "patch_projection_path": "/tmp/benchmark-patch-projection.json",
+                "patch_projection_check_state": "passed"
+            }
+        },
+        "db_time_travel_index": [{
+            "turn": 1,
+            "timestamp_micros": 2,
+            "event": "turn_complete"
+        }],
+        "conversation": [],
+        "timing": {
+            "started_at": "2026-05-16T00:00:00Z",
+            "ended_at": "2026-05-16T00:00:04Z",
+            "total_wall_clock_secs": 4.0,
+            "setup_wall_clock_secs": 1.0,
+            "agent_wall_clock_secs": 1.0
+        }
+    })
 }
 
 fn protocol_issue_detection_artifact(

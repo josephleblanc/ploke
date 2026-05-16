@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use ploke_records::ids::ArtifactId;
 use ploke_records::invocation::{InvocationRecord, Role};
 
-use crate::{ProtocolArtifactsEvidence, RunAttemptEvidence};
+use crate::{BranchRunRecordRef, ProtocolArtifactsEvidence, RunAttemptEvidence, RunRecordEvidence};
 
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +86,24 @@ impl Graph {
         self.forest
             .as_ref()
             .and_then(|forest| forest.passive_evidence.protocol_artifacts.as_ref())
+    }
+
+    /// Compressed run records loaded from evaluation baseline/treatment paths.
+    pub fn run_records(&self) -> Option<&RunRecordEvidence> {
+        self.forest
+            .as_ref()
+            .and_then(|forest| forest.passive_evidence.run_records.as_ref())
+    }
+
+    /// Baseline/treatment compressed run-record refs for one evaluation branch.
+    pub fn run_record_refs_for_branch<'a>(
+        &'a self,
+        branch_id: &str,
+    ) -> impl Iterator<Item = &'a BranchRunRecordRef> + 'a {
+        self.run_records()
+            .and_then(|records| records.refs_by_branch.get(branch_id))
+            .into_iter()
+            .flatten()
     }
 
     /// Candidate protocol artifact directories derived from typed evaluation record paths.

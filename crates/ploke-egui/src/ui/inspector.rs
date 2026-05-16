@@ -1,6 +1,7 @@
 //! Graph-resolved selection inspector projections.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::Serialize;
 
@@ -96,6 +97,9 @@ pub struct RunForestNodeInspection<'g> {
     pub patch: Option<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
     pub role_badges: Vec<Badge<'g>>,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub run_records: RunRecordBranchInspection<'g>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +110,62 @@ pub struct ArtifactInspection<'g> {
     pub patches: Vec<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
     pub role_badges: Vec<Badge<'g>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunRecordInspection<'g> {
+    pub record_ref: &'g ploke_tree::BranchRunRecordRef,
+    pub record: &'g ploke_records::run_record::RunRecord,
+    pub stats: &'g ploke_tree::RunRecordStats,
+}
+
+/// archaeology:run-record-branch-output
+/// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+#[derive(Debug, Clone, Copy)]
+pub struct RunRecordBranchInspection<'g> {
+    evidence: Option<&'g ploke_tree::RunRecordEvidence>,
+    refs: &'g [ploke_tree::BranchRunRecordRef],
+}
+
+impl<'g> RunRecordBranchInspection<'g> {
+    pub(crate) fn empty() -> Self {
+        Self {
+            evidence: None,
+            refs: &[],
+        }
+    }
+
+    pub(crate) fn from_graph(graph: &'g ploke_tree::Graph, branch_id: &str) -> Self {
+        let Some(evidence) = graph.run_records() else {
+            return Self::empty();
+        };
+        let refs = evidence
+            .refs_by_branch
+            .get(branch_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        Self {
+            evidence: Some(evidence),
+            refs,
+        }
+    }
+
+    pub(crate) fn iter(self) -> impl Iterator<Item = RunRecordInspection<'g>> + 'g {
+        let evidence = self.evidence;
+        self.refs.iter().filter_map(move |record_ref| {
+            evidence.and_then(|evidence| {
+                evidence
+                    .index
+                    .get(&record_ref.record_key)
+                    .zip(evidence.stats.get(&record_ref.record_key))
+                    .map(|(record, stats)| RunRecordInspection {
+                        record_ref,
+                        record,
+                        stats,
+                    })
+            })
+        })
+    }
 }
 
 impl<'g> ArtifactInspection<'g> {
@@ -355,6 +415,9 @@ pub struct SelectionInspectorSnapshot<'a> {
     pub roles: Vec<Badge<'a>>,
     pub metrics: Option<SelectionMetrics>,
     pub parent_create: Option<ParentCreateSnapshot<'a>>,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub run_records: Vec<RunRecordSnapshot<'a>>,
     pub incoming: Vec<SelectionEdge<'a>>,
     pub outgoing: Vec<SelectionEdge<'a>>,
     pub artifact_incoming: Vec<SelectionEdge<'a>>,
@@ -382,6 +445,7 @@ impl<'a> SelectionInspectorSnapshot<'a> {
                 roles: Vec::new(),
                 metrics: None,
                 parent_create: None,
+                run_records: Vec::new(),
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
                 artifact_incoming: Vec::new(),
@@ -410,6 +474,7 @@ impl<'a> SelectionInspectorSnapshot<'a> {
         render_badges(&mut out, "roles", &self.roles);
         render_metrics(&mut out, self.metrics.as_ref());
         render_parent_create(&mut out, self.parent_create.as_ref());
+        render_run_records(&mut out, &self.run_records);
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
         render_edges(&mut out, "artifact_incoming", &self.artifact_incoming);
@@ -596,6 +661,23 @@ pub struct AgentTurnSnapshot<'a> {
     pub edit_proposals: usize,
     pub create_proposals: usize,
     pub expected_file_changes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunRecordSnapshot<'a> {
+    pub arm: ploke_tree::ComparedRunArm,
+    pub instance_id: &'a str,
+    pub record_path: &'a Path,
+    pub manifest_id: &'a str,
+    pub model: Option<&'a str>,
+    pub provider: Option<&'a str>,
+    pub repo_root: &'a Path,
+    pub turn_count: usize,
+    pub tool_call_count: usize,
+    pub failed_tool_call_count: usize,
+    pub packaging: Option<ploke_records::run_record::SubmissionArtifactState>,
+    pub patch_projection_check: Option<ploke_records::evaluation::PatchProjectionCheckState>,
+    pub total_wall_clock_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -805,6 +887,7 @@ fn run_forest_node_inspection<'g>(
             .map(|child| PatchInspection { child }),
         parent_create: graph.parent_create_for_node_id(node.key.as_str()),
         role_badges: role_badges_for_run_forest_node(graph, node),
+        run_records: RunRecordBranchInspection::from_graph(graph, node.branch_id.as_str()),
     })
 }
 
@@ -964,6 +1047,7 @@ where
         patch,
         parent_create,
         role_badges,
+        run_records,
     } = inspector;
     let identity = SelectionIdentity::RunForestNode(run_forest_node_identity(node));
     let metrics = SelectionMetrics::RunForestNode(RunForestMetrics {
@@ -1024,6 +1108,7 @@ where
         roles: role_badges,
         metrics: Some(metrics),
         parent_create: Some(parent_create_snapshot(parent_create)),
+        run_records: run_records.iter().map(run_record_snapshot).collect(),
         incoming,
         outgoing,
         artifact_incoming: Vec::new(),
@@ -1075,6 +1160,7 @@ where
         roles: role_badges,
         metrics: Some(SelectionMetrics::Artifact(artifact_metrics(&sources))),
         parent_create: Some(parent_create_snapshot(parent_create)),
+        run_records: Vec::new(),
         incoming: incoming
             .iter()
             .map(|edge| {
@@ -1122,6 +1208,25 @@ where
         patches: patches.into_iter().map(patch_snapshot).collect(),
         source_refs,
         unavailable: None,
+    }
+}
+
+fn run_record_snapshot(record: RunRecordInspection<'_>) -> RunRecordSnapshot<'_> {
+    let packaging = record.record.phases.packaging.as_ref();
+    RunRecordSnapshot {
+        arm: record.record_ref.arm,
+        instance_id: record.record_ref.instance_id.as_str(),
+        record_path: record.record_ref.record_path.as_path(),
+        manifest_id: record.record.manifest_id.as_str(),
+        model: record.record.metadata.agent.model_id.as_deref(),
+        provider: record.record.metadata.agent.provider.as_deref(),
+        repo_root: record.record.metadata.benchmark.repo_root.as_path(),
+        turn_count: record.stats.turn_count,
+        tool_call_count: record.stats.tool_call_count,
+        failed_tool_call_count: record.stats.failed_tool_call_count,
+        packaging: packaging.map(|packaging| packaging.submission_artifact_state),
+        patch_projection_check: packaging.map(|packaging| packaging.patch_projection_check_state),
+        total_wall_clock_millis: record.stats.total_wall_clock_millis,
     }
 }
 
@@ -1694,6 +1799,38 @@ fn render_parent_create(out: &mut String, parent_create: Option<&ParentCreateSna
     }
 }
 
+fn render_run_records(out: &mut String, records: &[RunRecordSnapshot<'_>]) {
+    if records.is_empty() {
+        out.push_str("run_records: none\n");
+        return;
+    }
+
+    out.push_str(&format!("run_records: count={}\n", records.len()));
+    for record in records {
+        out.push_str(&format!("- arm: {:?}\n", record.arm));
+        out.push_str(&format!("  instance: {}\n", record.instance_id));
+        out.push_str(&format!("  manifest: {}\n", record.manifest_id));
+        if let Some(model) = record.model {
+            out.push_str(&format!("  model: {model}\n"));
+        }
+        if let Some(provider) = record.provider {
+            out.push_str(&format!("  provider: {provider}\n"));
+        }
+        out.push_str(&format!("  repo_root: {}\n", record.repo_root.display()));
+        out.push_str(&format!(
+            "  tools: total={} failed={}\n",
+            record.tool_call_count, record.failed_tool_call_count
+        ));
+        out.push_str(&format!("  turns: {}\n", record.turn_count));
+        if let Some(packaging) = record.packaging {
+            out.push_str(&format!("  packaging: {packaging:?}\n"));
+        }
+        if let Some(check) = record.patch_projection_check {
+            out.push_str(&format!("  patch_projection_check: {check:?}\n"));
+        }
+    }
+}
+
 fn render_source_ref(out: &mut String, source_ref: &SourceRef<'_>) {
     match source_ref {
         SourceRef::Evidence {
@@ -1821,9 +1958,10 @@ mod tests {
     use ploke_records::invocation::{InvocationRecord, Role};
     use ploke_records::scheduler::{NodeRecord, NodeStatusRecord, RunnerRequestRecord};
     use ploke_tree::{
-        AuthorityLabel, CampaignRef, EvidenceKind, EvidenceRef, Lanes, NodeKey, NodeKind,
-        PassiveEvidence, Phase, Progress, ResultClass, RunAttemptEvidence, RunAttemptSummary,
-        RunForest, Terminality, TreeNode,
+        AuthorityLabel, BranchRunRecordRef, CampaignRef, ComparedRunArm, EvidenceKind, EvidenceRef,
+        Lanes, NodeKey, NodeKind, PassiveEvidence, Phase, Progress, ResultClass,
+        RunAttemptEvidence, RunAttemptSummary, RunForest, RunRecordEvidence, RunRecordStats,
+        RunRecordSummary, Terminality, TreeNode,
     };
 
     use super::*;
@@ -1920,6 +2058,118 @@ mod tests {
                 .iter()
                 .any(|badge| matches!(badge, Badge::Parent(artifact_id) if artifact_id.0 == "artifact:child:after"))
         );
+    }
+
+    #[test]
+    fn selected_run_forest_node_exposes_branch_run_record_output_witnesses() {
+        let parent = key("parent");
+        let child = key("child");
+        let mut passive_evidence = PassiveEvidence::default();
+        let baseline_key = "/runs/baseline/record.json.gz".to_owned();
+        let treatment_key = "/runs/treatment/record.json.gz".to_owned();
+        let baseline_record = run_record_fixture("baseline-run", "nonempty", 18, 2);
+        let treatment_record = run_record_fixture("treatment-run", "empty", 39, 8);
+        passive_evidence.run_records = Some(RunRecordEvidence {
+            summary: RunRecordSummary {
+                file_count: 2,
+                parsed_count: 2,
+                branch_ref_count: 2,
+                baseline_ref_count: 1,
+                treatment_ref_count: 1,
+                records_with_setup_count: 2,
+                records_with_packaging_count: 2,
+                total_turn_count: 2,
+                total_tool_call_count: 57,
+                failed_tool_call_count: 10,
+            },
+            index: BTreeMap::from([
+                (baseline_key.clone(), baseline_record.clone()),
+                (treatment_key.clone(), treatment_record.clone()),
+            ]),
+            stats: BTreeMap::from([
+                (
+                    baseline_key.clone(),
+                    RunRecordStats::from_record(&baseline_record),
+                ),
+                (
+                    treatment_key.clone(),
+                    RunRecordStats::from_record(&treatment_record),
+                ),
+            ]),
+            refs_by_branch: BTreeMap::from([(
+                "branch:child".to_owned(),
+                vec![
+                    BranchRunRecordRef {
+                        branch_id: "branch:child".to_owned(),
+                        instance_id: "instance:child".to_owned(),
+                        arm: ComparedRunArm::Baseline,
+                        record_key: baseline_key,
+                        record_path: PathBuf::from("/runs/baseline/record.json.gz"),
+                    },
+                    BranchRunRecordRef {
+                        branch_id: "branch:child".to_owned(),
+                        instance_id: "instance:child".to_owned(),
+                        arm: ComparedRunArm::Treatment,
+                        record_key: treatment_key,
+                        record_path: PathBuf::from("/runs/treatment/record.json.gz"),
+                    },
+                ],
+            )]),
+        });
+
+        let graph = ploke_tree::Graph {
+            forest: Some(RunForest {
+                campaign: CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: vec![parent.clone()],
+                nodes: vec![
+                    node(parent.clone(), None, vec![child.clone()], 0),
+                    node(child.clone(), Some(parent.clone()), Vec::new(), 1),
+                ],
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence,
+                diagnostics: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "child".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::RunForestNode {
+                key: "child".to_owned(),
+            },
+        };
+        let inspector = SelectionInspector::from_graph(&graph, &selection);
+        let SelectionInspector::RunForestNode(run) = &inspector else {
+            panic!("expected run-forest node inspection");
+        };
+
+        assert_eq!(run.run_records.iter().count(), 2);
+        assert!(run.run_records.iter().any(|record| {
+            record.record_ref.arm == ComparedRunArm::Baseline
+                && record.record.tool_call_count() == 18
+                && record.record.failed_tool_call_count() == 2
+        }));
+        assert!(run.run_records.iter().any(|record| {
+            record.record_ref.arm == ComparedRunArm::Treatment
+                && record.record.tool_call_count() == 39
+                && record.record.failed_tool_call_count() == 8
+        }));
+
+        let snapshot = inspector.snapshot(&selection);
+        assert_eq!(snapshot.run_records.len(), 2);
+        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Baseline);
+        assert_eq!(snapshot.run_records[0].tool_call_count, 18);
+        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Treatment);
+        assert_eq!(snapshot.run_records[1].failed_tool_call_count, 8);
+        assert!(snapshot.render_text().contains("run_records: count=2"));
     }
 
     #[test]
@@ -2487,6 +2737,104 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    fn run_record_fixture(
+        manifest_id: &str,
+        submission: &str,
+        tool_calls: usize,
+        failed_tools: usize,
+    ) -> ploke_records::run_record::RunRecord {
+        let mut calls = Vec::new();
+        for index in 0..tool_calls {
+            let failed = index < failed_tools;
+            let result = if failed {
+                serde_json::json!({
+                    "status": "Failed",
+                    "request_id": format!("request-{index}"),
+                    "parent_id": "parent",
+                    "call_id": format!("call-{index}"),
+                    "tool": "read_file",
+                    "error": "fixture failure",
+                    "ui_payload": null,
+                    "latency_ms": 1
+                })
+            } else {
+                serde_json::json!({
+                    "status": "Completed",
+                    "request_id": format!("request-{index}"),
+                    "parent_id": "parent",
+                    "call_id": format!("call-{index}"),
+                    "tool": "read_file",
+                    "content": "fixture",
+                    "ui_payload": null,
+                    "latency_ms": 1
+                })
+            };
+            calls.push(serde_json::json!({
+                "request": {
+                    "request_id": format!("request-{index}"),
+                    "parent_id": "parent",
+                    "call_id": format!("call-{index}"),
+                    "tool": "read_file",
+                    "arguments": "{\"path\":\"src/lib.rs\"}"
+                },
+                "result": result,
+                "latency_ms": 1
+            }));
+        }
+
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "run-record.v1",
+            "manifest_id": manifest_id,
+            "metadata": {
+                "run_arm": {
+                    "id": "structured-current-policy",
+                    "role": "treatment",
+                    "command": "run single agent",
+                    "execution": "agent-single-turn"
+                },
+                "benchmark": {
+                    "instance_id": "instance:child",
+                    "repo_root": "/tmp/repo",
+                    "base_sha": "abc123",
+                    "issue": null
+                },
+                "agent": {
+                    "selected_model": "fixture/model",
+                    "selected_provider": "fixture-provider"
+                },
+                "runtime": {},
+                "budget": {
+                    "max_turns": 40,
+                    "max_tool_calls": 200,
+                    "wall_clock_secs": 1800
+                }
+            },
+            "phases": {
+                "agent_turns": [{
+                    "turn_number": 1,
+                    "started_at": "2026-05-16T00:00:00Z",
+                    "ended_at": "2026-05-16T00:00:01Z",
+                    "db_timestamp_micros": 1,
+                    "issue_prompt": "fixture",
+                    "tool_calls": calls,
+                    "outcome": {
+                        "type": "ToolCalls",
+                        "count": tool_calls
+                    }
+                }],
+                "packaging": {
+                    "started_at": "2026-05-16T00:00:01Z",
+                    "ended_at": "2026-05-16T00:00:02Z",
+                    "submission_artifact_state": submission,
+                    "patch_projection_check_state": "passed"
+                }
+            },
+            "db_time_travel_index": [],
+            "conversation": []
+        }))
+        .expect("run record fixture")
     }
 
     fn node(

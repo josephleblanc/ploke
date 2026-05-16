@@ -45,3 +45,8 @@ re-ask for a real trace.
   The agent answered from the generic `protocol-artifacts` rule before tracing
   the active Prototype 1 campaign's real `write_protocol_artifact(record_path,
   ...)` targets through evaluation artifacts and run registrations.
+- [`2026-05-16-self-improvement-eval-underread-existing-metrics.md`](2026-05-16-self-improvement-eval-underread-existing-metrics.md)
+  The agent gave a strategic self-improvement/MBE/consensus critique before
+  fully inventorying existing typed metric, evaluation, oracle, selection, and
+  History payload carriers, leading to overbroad "missing type" claims where
+  the real gap was policy/admission integration.

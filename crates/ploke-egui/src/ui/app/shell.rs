@@ -6,15 +6,17 @@ use crate::ui::diff;
 use crate::ui::id_display;
 use crate::ui::id_display::TraceId;
 use crate::ui::inspector::{
-    ArtifactInspection, PatchInspection, RunForestNodeInspection, SelectionEdge,
-    SelectionInspector, SourceRef, UnavailableReason, artifact_edges, artifact_metrics,
-    artifact_source_refs, phase_label, result_class_label, run_forest_artifact_edges,
-    run_forest_incoming_edges, run_forest_node_identity, run_forest_outgoing_edges,
-    run_forest_source_refs, surface_apply_status_label, surface_check_status_label,
+    ArtifactInspection, PatchInspection, RunForestNodeInspection, RunRecordInspection,
+    SelectionEdge, SelectionInspector, SourceRef, UnavailableReason, artifact_edges,
+    artifact_metrics, artifact_source_refs, phase_label, result_class_label,
+    run_forest_artifact_edges, run_forest_incoming_edges, run_forest_node_identity,
+    run_forest_outgoing_edges, run_forest_source_refs, surface_apply_status_label,
+    surface_check_status_label,
 };
 use crate::ui::text::decor::Badge;
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics, GraphViewMode};
 use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
+use std::path::Path;
 
 pub(crate) fn render_top_strip(
     ui: &mut egui::Ui,
@@ -79,6 +81,17 @@ pub(crate) fn render_right_inspector(
             } else {
                 kv(ui, "attempt", "not_applicable");
             }
+
+            ui.separator();
+            egui::CollapsingHeader::new("Run Records")
+                .default_open(false)
+                .show(ui, |ui| {
+                    if let Some(inspector) = inspector {
+                        render_run_records_for_inspector(ui, inspector);
+                    } else {
+                        kv(ui, "run records", "not_applicable");
+                    }
+                });
 
             ui.separator();
             egui::CollapsingHeader::new("Graph edges")
@@ -172,6 +185,15 @@ fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
         ui.label(key);
         id_display::expandable_id(ui, ("kv", key, value), value);
     });
+}
+
+fn kv_usize(ui: &mut egui::Ui, key: &str, value: usize) {
+    let mut buffer = itoa::Buffer::new();
+    kv(ui, key, buffer.format(value));
+}
+
+fn kv_path(ui: &mut egui::Ui, key: &str, path: &Path) {
+    kv(ui, key, path.to_str().unwrap_or("non_utf8_path"));
 }
 
 fn render_badges(ui: &mut egui::Ui, badges: &[Badge<'_>]) {
@@ -299,6 +321,91 @@ fn render_parent_create_for_inspector(ui: &mut egui::Ui, inspector: &SelectionIn
         SelectionInspector::RunForestNode(run) => render_parent_create(ui, run.parent_create),
         SelectionInspector::Artifact(artifact) => render_parent_create(ui, artifact.parent_create),
         SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+    }
+}
+
+/// archaeology:run-record-branch-output
+/// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+fn render_run_records_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
+    match inspector {
+        SelectionInspector::RunForestNode(run) => render_run_records(ui, run.run_records.iter()),
+        SelectionInspector::Artifact(_) => kv(ui, "run records", "not_applicable"),
+        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+    }
+}
+
+fn render_run_records<'a>(
+    ui: &mut egui::Ui,
+    records: impl IntoIterator<Item = RunRecordInspection<'a>>,
+) {
+    let mut rendered = false;
+    for record in records {
+        rendered = true;
+        ui.separator();
+        kv(ui, "arm", compared_run_arm_label(record.record_ref.arm));
+        kv(ui, "instance", record.record_ref.instance_id.as_str());
+        kv_path(ui, "record", record.record_ref.record_path.as_path());
+        kv(ui, "manifest", record.record.manifest_id.as_str());
+        if let Some(model) = record.record.metadata.agent.model_id.as_deref() {
+            kv(ui, "model", model);
+        }
+        if let Some(provider) = record.record.metadata.agent.provider.as_deref() {
+            kv(ui, "provider", provider);
+        }
+        kv_path(
+            ui,
+            "repo root",
+            record.record.metadata.benchmark.repo_root.as_path(),
+        );
+        kv_usize(ui, "turns", record.stats.turn_count);
+        kv_usize(ui, "tool calls", record.stats.tool_call_count);
+        kv_usize(ui, "failed tool calls", record.stats.failed_tool_call_count);
+        if let Some(packaging) = record.record.phases.packaging.as_ref() {
+            kv(
+                ui,
+                "submission",
+                submission_artifact_state_label(packaging.submission_artifact_state),
+            );
+            kv(
+                ui,
+                "patch projection",
+                patch_projection_check_state_label(packaging.patch_projection_check_state),
+            );
+        }
+    }
+    if !rendered {
+        kv(ui, "run records", "none");
+    }
+}
+
+fn compared_run_arm_label(arm: ploke_tree::ComparedRunArm) -> &'static str {
+    match arm {
+        ploke_tree::ComparedRunArm::Baseline => "baseline",
+        ploke_tree::ComparedRunArm::Treatment => "treatment",
+    }
+}
+
+fn submission_artifact_state_label(
+    state: ploke_records::run_record::SubmissionArtifactState,
+) -> &'static str {
+    match state {
+        ploke_records::run_record::SubmissionArtifactState::NotRecorded => "not_recorded",
+        ploke_records::run_record::SubmissionArtifactState::NotApplicable => "not_applicable",
+        ploke_records::run_record::SubmissionArtifactState::Missing => "missing",
+        ploke_records::run_record::SubmissionArtifactState::Empty => "empty",
+        ploke_records::run_record::SubmissionArtifactState::Nonempty => "nonempty",
+    }
+}
+
+fn patch_projection_check_state_label(
+    state: ploke_records::evaluation::PatchProjectionCheckState,
+) -> &'static str {
+    match state {
+        ploke_records::evaluation::PatchProjectionCheckState::NotRecorded => "not_recorded",
+        ploke_records::evaluation::PatchProjectionCheckState::NotApplicable => "not_applicable",
+        ploke_records::evaluation::PatchProjectionCheckState::Passed => "passed",
+        ploke_records::evaluation::PatchProjectionCheckState::Failed => "failed",
+        ploke_records::evaluation::PatchProjectionCheckState::NotRun => "not_run",
     }
 }
 
@@ -698,6 +805,7 @@ mod tests {
                 value: node.key.as_str(),
             }),
             role_badges: Vec::new(),
+            run_records: crate::ui::inspector::RunRecordBranchInspection::empty(),
         });
 
         let (_, traces) = collect_traces(|| {
