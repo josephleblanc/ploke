@@ -343,6 +343,12 @@ pub(crate) enum MaterializeBranchError {
         #[source]
         source: PrepareError,
     },
+    #[error("failed to resolve parent repo root '{path}' to its git worktree root")]
+    ResolveParentRepoRoot {
+        path: PathBuf,
+        #[source]
+        source: BackendError,
+    },
     #[error("child plan request does not match node '{node_id}'")]
     InvalidChildPlanRequest { node_id: String },
     #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
@@ -440,6 +446,12 @@ impl Prototype<Parent, Parent, Absent, Unacknowledged> {
         let campaign_id = campaign_id.into();
         let campaign_manifest_path = campaign_manifest_path.into();
         let repo_root = repo_root.into();
+        let repo_root = GitWorktreeBackend
+            .worktree_root(&repo_root)
+            .map_err(|source| MaterializeBranchError::ResolveParentRepoRoot {
+                path: repo_root.clone(),
+                source,
+            })?;
         if request.node_id != node.node_id
             || request.campaign_id != campaign_id
             || request.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION

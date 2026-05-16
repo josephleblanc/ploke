@@ -2706,6 +2706,7 @@ mod tests {
         let preflight_error = ToolCallPreflightError {
             call_id: ploke_core::ArcStr::from("call_preflight"),
             tool_name: ToolName::NsRead,
+            rejected_arguments: "{\"file\":1}".to_string(),
             error: ToolError::new(
                 ToolName::NsRead,
                 ToolErrorCode::WrongType,
@@ -2767,6 +2768,7 @@ mod tests {
             let preflight_error = ToolCallPreflightError {
                 call_id: ploke_core::ArcStr::from("call_preflight"),
                 tool_name: ToolName::NsRead,
+                rejected_arguments: "{\"file\":1}".to_string(),
                 error: ToolError::new(
                     ToolName::NsRead,
                     ToolErrorCode::WrongType,
@@ -2790,6 +2792,7 @@ mod tests {
         let preflight_error = ToolCallPreflightError {
             call_id: ploke_core::ArcStr::from("call_preflight"),
             tool_name: ToolName::NsRead,
+            rejected_arguments: "{\"file\":1}".to_string(),
             error: ToolError::new(
                 ToolName::NsRead,
                 ToolErrorCode::WrongType,

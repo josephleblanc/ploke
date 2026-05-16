@@ -15,6 +15,8 @@ pub struct GraphIdentity {
     pub artifact_tree_nodes: usize,
     #[serde(rename = "artifact_tree_P_H")]
     pub artifact_tree_p_h: usize,
+    #[serde(rename = "artifact_tree_P_O")]
+    pub artifact_tree_p_o: usize,
     #[serde(rename = "artifact_tree_P_B")]
     pub artifact_tree_p_b: usize,
     pub visible_node_fingerprint: String,
@@ -50,6 +52,7 @@ impl GraphIdentity {
             default_visible_edges: diagnostics.edge_count,
             artifact_tree_nodes: artifact_tree.nodes.len(),
             artifact_tree_p_h: artifact_tree.history_successors.len(),
+            artifact_tree_p_o: artifact_tree.opened_from_edges.len(),
             artifact_tree_p_b: artifact_tree.applied_patch_edges.len(),
             visible_node_fingerprint: fingerprint(&visible_node_keys),
             visible_node_keys_preview,
@@ -65,24 +68,7 @@ struct VisibleNodeKey<'g> {
 }
 
 fn visible_node_keys(graph: &ploke_tree::Graph) -> Vec<VisibleNodeKey<'_>> {
-    if let Some(forest) = graph
-        .forest
-        .as_ref()
-        .filter(|forest| !forest.nodes.is_empty())
-    {
-        let mut keys = forest
-            .nodes
-            .iter()
-            .map(|node| VisibleNodeKey {
-                set: "F",
-                value: node.key.as_str(),
-            })
-            .collect::<Vec<_>>();
-        keys.sort_by(|left, right| left.value.cmp(right.value));
-        return keys;
-    }
-
-    graph
+    let mut keys = graph
         .artifact_tree()
         .nodes
         .values()
@@ -90,7 +76,9 @@ fn visible_node_keys(graph: &ploke_tree::Graph) -> Vec<VisibleNodeKey<'_>> {
             set: "A",
             value: node.key.as_str(),
         })
-        .collect()
+        .collect::<Vec<_>>();
+    keys.sort_by(|left, right| left.value.cmp(right.value));
+    keys
 }
 
 fn fingerprint(keys: &[VisibleNodeKey<'_>]) -> String {
@@ -123,7 +111,7 @@ mod tests {
     use ploke_tree::{CampaignRef, Lanes, NodeKey, RunForest, TreeNode};
 
     #[test]
-    fn graph_identity_fingerprints_default_visible_forest_nodes() {
+    fn graph_identity_fingerprints_default_visible_artifact_nodes() {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
@@ -148,21 +136,9 @@ mod tests {
         assert_eq!(identity.forest_roots, 1);
         assert_eq!(identity.default_visible_nodes, 2);
         assert_eq!(identity.default_visible_edges, 1);
-        assert_eq!(identity.visible_node_keys_preview, vec!["child", "root"]);
+        assert!(identity.visible_node_keys_preview.is_empty());
         assert_eq!(identity.visible_node_keys_truncated, 0);
-        assert_eq!(
-            identity.visible_node_fingerprint,
-            fingerprint(&[
-                VisibleNodeKey {
-                    set: "F",
-                    value: "child"
-                },
-                VisibleNodeKey {
-                    set: "F",
-                    value: "root"
-                }
-            ])
-        );
+        assert_eq!(identity.visible_node_fingerprint, fingerprint(&[]));
     }
 
     fn diagnostics(node_count: usize, edge_count: usize) -> GraphViewDiagnostics {

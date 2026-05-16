@@ -3,6 +3,8 @@
 //! This module only parses startup options. Runtime graph loading, UI state, and
 //! diagnostic interpretation live in the surrounding library modules.
 
+pub mod report;
+
 use std::path::PathBuf;
 
 #[cfg(feature = "dev")]
@@ -19,7 +21,11 @@ pub struct Run {
     pub run_picker_report: bool,
     pub artifact_connectivity_report: bool,
     #[cfg(feature = "dev")]
+    pub artifact_edges_report: bool,
+    #[cfg(feature = "dev")]
     pub inspect_node: Option<String>,
+    #[cfg(feature = "dev")]
+    pub artifact_ids_report: Option<String>,
 }
 
 impl Run {
@@ -34,7 +40,9 @@ impl Run {
                 contract_report: args.contract_report,
                 run_picker_report: args.run_picker_report,
                 artifact_connectivity_report: args.artifact_connectivity_report,
+                artifact_edges_report: args.artifact_edges_report,
                 inspect_node: args.inspect_node,
+                artifact_ids_report: args.artifact_ids_report,
             };
         }
 
@@ -85,10 +93,23 @@ struct Args {
 
     #[arg(
         long,
+        help = "Print artifact-tree component edges for the loaded run without opening the native UI"
+    )]
+    artifact_edges_report: bool,
+
+    #[arg(
+        long,
         value_name = "NODE",
         help = "Print the graph-resolved inspector for a visible node label like A1 or a graph key"
     )]
     inspect_node: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "NODE",
+        help = "Print artifact-id section applicability for a visible node label like A1 or a graph key"
+    )]
+    artifact_ids_report: Option<String>,
 
     #[arg(
         long,

@@ -14,7 +14,22 @@
 
 - Requirement: when reporting whether a feature was tested, name the exact verified surface in the first sentence. Valid surfaces include `CLI snapshot/export`, `focused egui renderer test`, `native interactive window`, `real-run import`, or `not tested`.
 - Requirement: do not let one verification surface stand in for another. In particular, do not describe CLI snapshot inspection as though it proves live egui right-panel behavior, and do not describe focused renderer tests as though they prove native pointer interaction.
-- Requirement: for graph or edge rendering changes, distinguish `projected payload visible` from `drawable in the current renderer/readability path`. Do not claim an edge is visible just because `GraphViewDiagnostics.edge_count` or contract reports include it. If the geometry/readability path drops the edge class, or the renderer cannot draw that edge shape (for example self-loops), report it as not visibly rendered until that path is verified.
+
+## Context Budget / Large File Guardrails
+
+- Context explosion counter:
+  - Total incidents: 2
+  - Last context explosion: 2026-05-11
+  - Days since last context explosion: 0
+
+- Requirement: do not read large logs, journals, generated artifacts, or long documents directly. Before opening any unknown-size file, use metadata guardrails such as `wc -l` and `ls -lh` to estimate both line count and byte size.
+- Requirement: for JSONL, journals, traces, or other record-oriented files, a small line count is not enough. Lines may be huge, so content reads must cap both record count and record width, for example `rg -n '<pattern>' <file> | head -n 5 | cut -c 1-400`, `sed -n 'start,endp' <file> | cut -c 1-400`, or `tail -n 3 <file> | cut -c 1-400`.
+- Requirement: do not read `transition-journal.jsonl` or similar run/history journals wholesale. Query them only with narrow `rg` patterns, bounded line ranges, or very small tails, always with a width cap such as `cut -c 1-400`, unless the user explicitly asks for a full read.
+- Requirement added 2026-05-11: repeated health checks for Prototype 1 campaigns must be metadata-first. Use admitted node counts/statuses, file mtimes, byte sizes, line counts, transition-file mtimes, and disk usage as the default signal. Do not read JSONL content during routine health checks.
+- Requirement added 2026-05-11: JSONL content reads during Prototype 1 health checks are anomaly diagnostics only. If an anomaly requires content inspection, read at most one explicitly named file, at most three records, and at most 400 characters per record, for example `tail -n 3 <file> | cut -c 1-400`. Do not run broad `rg` over multiple observation streams or journal files for routine health.
+- Requirement added 2026-05-11: if the user asks for repeated loop health checks, preserve context by reporting compact deltas from the last check: node count, generation range, status counts, newest mtime, and disk free. Do not restate or dump raw trace records unless the user explicitly asks for raw evidence.
+- Requirement: docs are not exempt from context discipline. When consulting a doc, first identify the needed section with `rg` or inspect a bounded range; avoid dumping whole planning documents into context.
+- If a bounded read is insufficient, state what extra range or pattern is needed before expanding it, and keep the expansion targeted.
 
 ## Coding Style & Naming Discipline
 
@@ -149,14 +164,6 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 
 - Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, start from the shared track index at `docs/active/plans/self-improvement-loop/handoffs.md`.
 - Before changing the default `ploke-egui` tree graph projection or graph view mode, read `docs/active/agents/ploke-ui-task-readability/artifact-tree-default/README.md`.
-- Before changing default artifact-graph semantics, also re-read:
-  - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
-  - `crates/ploke-egui/docs/model/README.md`
-  - `crates/ploke-egui/docs/model/source-process-graph.md`
-  - `crates/ploke-egui/docs/model/default-view-contract.md`
-  - `crates/ploke-egui/docs/model/view-set-contract.md`
-  - `crates/ploke-egui/docs/model/run-graph-crosswalk.md`
-  and restate the intended default node set and edge set before editing.
 - The default `ploke-egui` graph is an artifact-first tree/DAG: Artifact states are primary nodes, applied patch / derivation relations are primary edges, and History is reveal/dimming/highlight state rather than the canvas spine.
 - Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, or typed drilldown.
 - Treat `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md` as the typed playback contract, not necessarily the latest operational handoff.

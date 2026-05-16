@@ -40,10 +40,49 @@ impl<'g> SelectionInspector<'g> {
             .find(|selection| {
                 selection.label == selector || selection.reference.matches_key(selector)
             })
+            .or_else(|| graph_selection_by_key(graph, selector))
             .map(|selection| {
                 let inspector = Self::from_graph(graph, &selection);
                 (selection, inspector)
             })
+    }
+
+    /// archaeology:artifact-identity
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+    pub fn artifact_ids_section(&self) -> ArtifactIdsSectionSnapshot<'g> {
+        match self {
+            SelectionInspector::RunForestNode(run) => ArtifactIdsSectionSnapshot {
+                selection_kind: ArtifactIdsSelectionKind::RunForestNode,
+                state: ArtifactIdsSectionState::NotApplicable {
+                    selection_key: run.node.key.as_str(),
+                },
+            },
+            SelectionInspector::Artifact(artifact) => {
+                let identity = artifact.identity();
+                ArtifactIdsSectionSnapshot {
+                    selection_kind: ArtifactIdsSelectionKind::Artifact,
+                    state: ArtifactIdsSectionState::Rendered {
+                        selection_key: identity.artifact(),
+                        artifact_ids: identity
+                            .artifact_ids()
+                            .map(|artifact_id| artifact_id.0.as_str())
+                            .collect(),
+                        artifact_refs: identity
+                            .artifact_refs()
+                            .map(|artifact_ref| artifact_ref.value.as_str())
+                            .collect(),
+                        tree_keys: identity
+                            .tree_keys()
+                            .map(|tree_key| tree_key.hash.0.as_str())
+                            .collect(),
+                    },
+                }
+            }
+            SelectionInspector::Unresolved(reason) => ArtifactIdsSectionSnapshot {
+                selection_kind: ArtifactIdsSelectionKind::Unresolved,
+                state: ArtifactIdsSectionState::Unavailable(*reason),
+            },
+        }
     }
 }
 
@@ -265,6 +304,7 @@ impl<'g> PatchInspection<'g> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactRelationKind {
     HistoryPatch,
+    HistoryOpenedFrom,
     AppliedPatch,
 }
 
@@ -272,6 +312,7 @@ impl ArtifactRelationKind {
     fn edge_relation(self) -> EdgeRelation {
         match self {
             Self::HistoryPatch => EdgeRelation::HistoryPatch,
+            Self::HistoryOpenedFrom => EdgeRelation::HistoryOpenedFrom,
             Self::AppliedPatch => EdgeRelation::AppliedPatch,
         }
     }
@@ -412,6 +453,69 @@ pub struct ArtifactSelectionIdentity<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ArtifactIdsSelectionKind {
+    RunForestNode,
+    Artifact,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ArtifactIdsSectionSnapshot<'a> {
+    pub selection_kind: ArtifactIdsSelectionKind,
+    pub state: ArtifactIdsSectionState<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum ArtifactIdsSectionState<'a> {
+    NotApplicable {
+        selection_key: &'a str,
+    },
+    Rendered {
+        selection_key: &'a str,
+        artifact_ids: Vec<&'a str>,
+        artifact_refs: Vec<&'a str>,
+        tree_keys: Vec<&'a str>,
+    },
+    Unavailable(UnavailableReason),
+}
+
+impl<'a> ArtifactIdsSectionSnapshot<'a> {
+    pub fn render_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "selection_kind: {}\n",
+            artifact_ids_selection_kind_label(self.selection_kind)
+        ));
+        match &self.state {
+            ArtifactIdsSectionState::NotApplicable { selection_key } => {
+                out.push_str("artifact_ids: not_applicable\n");
+                out.push_str(&format!("selection_key: {selection_key}\n"));
+            }
+            ArtifactIdsSectionState::Rendered {
+                selection_key,
+                artifact_ids,
+                artifact_refs,
+                tree_keys,
+            } => {
+                out.push_str("artifact_ids: rendered\n");
+                out.push_str(&format!("selection_key: {selection_key}\n"));
+                render_id_list(&mut out, "artifact_id", artifact_ids);
+                render_id_list(&mut out, "artifact_ref", artifact_refs);
+                render_id_list(&mut out, "tree_key", tree_keys);
+            }
+            ArtifactIdsSectionState::Unavailable(reason) => {
+                out.push_str("artifact_ids: unavailable\n");
+                out.push_str(&format!("subject: {}\n", reason.subject()));
+                out.push_str(&format!("state: {}\n", reason.state()));
+            }
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SelectionMetrics {
     RunForestNode(RunForestMetrics),
     Artifact(ArtifactMetrics),
@@ -515,6 +619,8 @@ pub enum EdgeRelation {
     RunForest,
     #[serde(rename = "P_H")]
     HistoryPatch,
+    #[serde(rename = "P_O")]
+    HistoryOpenedFrom,
     #[serde(rename = "P_B")]
     AppliedPatch,
 }
@@ -524,6 +630,7 @@ impl EdgeRelation {
         match self {
             Self::RunForest => "E_F",
             Self::HistoryPatch => "P_H",
+            Self::HistoryOpenedFrom => "P_O",
             Self::AppliedPatch => "P_B",
         }
     }
@@ -606,29 +713,6 @@ impl std::fmt::Display for SourceRef<'_> {
 }
 
 pub fn default_selections(graph: &ploke_tree::Graph) -> Vec<GraphSelectionDetail> {
-    if let Some(forest) = graph
-        .forest
-        .as_ref()
-        .filter(|forest| !forest.nodes.is_empty())
-    {
-        let mut nodes = forest.nodes.iter().collect::<Vec<_>>();
-        nodes.sort_by(|left, right| {
-            (left.generation, left.key.as_str()).cmp(&(right.generation, right.key.as_str()))
-        });
-        return nodes
-            .into_iter()
-            .enumerate()
-            .map(|(index, node)| GraphSelectionDetail {
-                kind: "artifact".to_owned(),
-                label: artifact_handle_label(index + 1),
-                detail: String::new(),
-                reference: GraphSelectionRef::RunForestNode {
-                    key: node.key.as_str().to_owned(),
-                },
-            })
-            .collect();
-    }
-
     graph
         .artifact_tree()
         .nodes
@@ -651,6 +735,41 @@ impl GraphSelectionRef {
             Self::Artifact { key } | Self::RunForestNode { key } => key == selector,
         }
     }
+}
+
+fn graph_selection_by_key(
+    graph: &ploke_tree::Graph,
+    selector: &str,
+) -> Option<GraphSelectionDetail> {
+    if graph.forest.as_ref().is_some_and(|forest| {
+        forest
+            .nodes
+            .iter()
+            .any(|node| node.key.as_str() == selector)
+    }) {
+        return Some(GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: selector.to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::RunForestNode {
+                key: selector.to_owned(),
+            },
+        });
+    }
+
+    graph
+        .artifact_tree()
+        .nodes
+        .values()
+        .find(|node| node.key.as_str() == selector)
+        .map(|node| GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: selector.to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::Artifact {
+                key: node.key.as_str().to_owned(),
+            },
+        })
 }
 
 fn run_forest_node_inspection<'g>(
@@ -700,6 +819,18 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             patch_ids: Vec::new(),
         })
         .chain(
+            tree.opened_from_edges
+                .iter()
+                .filter(|edge| edge.to == node.key)
+                .map(|edge| ArtifactRelation {
+                    kind: ArtifactRelationKind::HistoryOpenedFrom,
+                    from: edge.from.as_str(),
+                    to: edge.to.as_str(),
+                    source_count: edge.sources.len(),
+                    patch_ids: Vec::new(),
+                }),
+        )
+        .chain(
             tree.applied_patch_edges
                 .iter()
                 .filter(|edge| edge.to == node.key)
@@ -727,6 +858,18 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             source_count: edge.sources.len(),
             patch_ids: Vec::new(),
         })
+        .chain(
+            tree.opened_from_edges
+                .iter()
+                .filter(|edge| edge.from == node.key)
+                .map(|edge| ArtifactRelation {
+                    kind: ArtifactRelationKind::HistoryOpenedFrom,
+                    from: edge.from.as_str(),
+                    to: edge.to.as_str(),
+                    source_count: edge.sources.len(),
+                    patch_ids: Vec::new(),
+                }),
+        )
         .chain(
             tree.applied_patch_edges
                 .iter()
@@ -1578,6 +1721,25 @@ fn render_unavailable(out: &mut String, unavailable: Option<UnavailableReason>) 
     out.push_str(&format!("- {}: {}\n", reason.subject(), reason.state()));
 }
 
+fn artifact_ids_selection_kind_label(kind: ArtifactIdsSelectionKind) -> &'static str {
+    match kind {
+        ArtifactIdsSelectionKind::RunForestNode => "run_forest_node",
+        ArtifactIdsSelectionKind::Artifact => "artifact",
+        ArtifactIdsSelectionKind::Unresolved => "unresolved",
+    }
+}
+
+fn render_id_list(out: &mut String, label: &str, ids: &[&str]) {
+    if ids.is_empty() {
+        out.push_str(&format!("{label}: none\n"));
+        return;
+    }
+    out.push_str(&format!("{label}:\n"));
+    for id in ids {
+        out.push_str(&format!("- {id}\n"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1795,6 +1957,144 @@ mod tests {
 
         assert!(saw_history_ref);
         assert!(saw_passive_id);
+    }
+
+    #[test]
+    fn artifact_ids_section_reports_rendered_ids_for_artifact_selection() {
+        let graph = artifact_graph_with_mixed_identity_sources();
+        let (_, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+
+        let section = inspector.artifact_ids_section();
+        let rendered = section.render_text();
+
+        assert_eq!(section.selection_kind, ArtifactIdsSelectionKind::Artifact);
+        let ArtifactIdsSectionState::Rendered {
+            selection_key,
+            artifact_ids,
+            artifact_refs,
+            tree_keys,
+        } = section.state
+        else {
+            panic!("expected rendered artifact ids section");
+        };
+        assert_eq!(selection_key, "artifact:after");
+        assert_eq!(artifact_ids, vec!["artifact:after"]);
+        assert_eq!(artifact_refs, vec!["artifact:after"]);
+        assert!(tree_keys.is_empty());
+        assert!(rendered.contains("selection_kind: artifact"));
+        assert!(rendered.contains("artifact_ids: rendered"));
+        assert!(rendered.contains("artifact_id:\n- artifact:after"));
+    }
+
+    #[test]
+    fn artifact_ids_section_reports_not_applicable_for_explicit_run_forest_selection() {
+        let parent = key("parent");
+        let child = key("child");
+        let graph = ploke_tree::Graph {
+            forest: Some(RunForest {
+                campaign: CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: vec![parent.clone()],
+                nodes: vec![
+                    node(parent.clone(), None, vec![child.clone()], 0),
+                    node(child.clone(), Some(parent.clone()), Vec::new(), 1),
+                ],
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence: passive_invocations(Vec::new()),
+                diagnostics: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "child".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::RunForestNode {
+                key: "child".to_owned(),
+            },
+        };
+        let inspector = SelectionInspector::from_graph(&graph, &selection);
+
+        let section = inspector.artifact_ids_section();
+        let rendered = section.render_text();
+
+        assert_eq!(
+            section.selection_kind,
+            ArtifactIdsSelectionKind::RunForestNode
+        );
+        let ArtifactIdsSectionState::NotApplicable { selection_key } = section.state else {
+            panic!("expected not_applicable artifact ids section");
+        };
+        assert_eq!(selection_key, "child");
+        assert!(rendered.contains("selection_kind: run_forest_node"));
+        assert!(rendered.contains("artifact_ids: not_applicable"));
+    }
+
+    #[test]
+    fn default_selector_resolves_artifact_graph_key_even_when_forest_is_present() {
+        let mut graph = artifact_graph_with_mixed_identity_sources();
+        graph.forest = Some(RunForest {
+            campaign: CampaignRef {
+                campaign_id: "campaign".to_owned(),
+                updated_at: "now".to_owned(),
+            },
+            roots: vec![key("parent")],
+            nodes: vec![
+                node(key("parent"), None, vec![key("child")], 0),
+                node(key("child"), Some(key("parent")), Vec::new(), 1),
+            ],
+            lanes: Lanes {
+                frontier: Vec::new(),
+                completed: Vec::new(),
+                failed: Vec::new(),
+            },
+            passive_evidence: passive_invocations(Vec::new()),
+            diagnostics: Vec::new(),
+        });
+
+        let (_, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact graph key resolves even when forest is present");
+
+        assert!(matches!(inspector, SelectionInspector::Artifact(_)));
+    }
+
+    #[test]
+    fn default_visible_selections_prefer_artifact_tree_even_when_forest_is_present() {
+        let mut graph = artifact_graph_with_mixed_identity_sources();
+        graph.forest = Some(RunForest {
+            campaign: CampaignRef {
+                campaign_id: "campaign".to_owned(),
+                updated_at: "now".to_owned(),
+            },
+            roots: vec![key("parent")],
+            nodes: vec![
+                node(key("parent"), None, vec![key("child")], 0),
+                node(key("child"), Some(key("parent")), Vec::new(), 1),
+            ],
+            lanes: Lanes {
+                frontier: Vec::new(),
+                completed: Vec::new(),
+                failed: Vec::new(),
+            },
+            passive_evidence: passive_invocations(Vec::new()),
+            diagnostics: Vec::new(),
+        });
+
+        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "A1")
+            .expect("A1 resolves from visible default artifact selections");
+
+        assert!(matches!(
+            selection.reference,
+            GraphSelectionRef::Artifact { .. }
+        ));
+        assert!(matches!(inspector, SelectionInspector::Artifact(_)));
     }
 
     #[test]

@@ -10,15 +10,16 @@ history timeline, or debug projection.
 The default tree graph view is an artifact-first tree/DAG projection over
 `ploke_tree::graph::Graph`.
 
-Primary default geometry when a typed run forest is available:
+Primary default geometry:
 
-- nodes are Prototype 1 run-forest nodes: one visible node per scheduler
-  node / materialized child candidate state;
-- edges are scheduler `parent_node_id -> node_id` relations;
-- lower-granularity artifact ids such as bounded text-file before/after ids
-  appear in node detail, filters, or drilldown, not as the primary canvas
-  topology;
-- the initial parent appears uppermost and children appear below;
+- nodes are artifact identities from `ploke_tree::graph::artifact_tree::Tree<'_>`;
+- edges are artifact relations such as sealed History successor edges and
+  applied-patch/base-to-derived edges;
+- scheduler/process facts such as node ids, generation, candidate ids, and
+  parent/child runtime topology appear only as attached provenance, drilldown,
+  or later step-through overlays;
+- the initial parent artifact appears uppermost and derived/successor artifacts
+  appear below;
 - edge labels are short patch handles such as `P1`, `P2`, `P3`;
 - primary node labels are short stable display handles such as `A1`, `A2`,
   `A3`, never raw full ids.
@@ -65,11 +66,10 @@ artifact membership and classified patch/derivation edges directly from
 as a borrowed projection before richer drilldown, styling, or all-record layout
 work relies on it.
 
-Current correction: `ploke_tree::Graph` now carries the existing
-`RunForest` projection when built from a run record set. The default
-`ArtifactTree` renderer uses that run forest as the primary topology when it is
-present, and falls back to the lower-granularity artifact-id relation fold only
-for graphs without run-forest records.
+Current correction: the default renderer should use
+`ploke_tree::Graph::artifact_tree()` directly. Any future process/scheduler
+step-through surface must be a borrowed projection over `&Graph`, not an owned
+`RunForest`-style topology embedded alongside the graph.
 
 ## Evidence Links
 
@@ -85,11 +85,13 @@ for graphs without run-forest records.
 
 ## Follow-Up Tasks
 
-- Move the artifact-tree relation fold into `ploke-tree` as a borrowed
+- Keep the artifact-tree relation fold in `ploke-tree` as the borrowed default
   projection consumed by egui.
+- Move any process/scheduler stepping surface to a borrowed iterator/cursor or
+  schedule projection over `&Graph`.
 - Keep full composed/all-record graph rendering behind an explicit debug mode.
-- Add tests that default geometry contains Artifact nodes and patch/derivation
-  edges, and does not contain HistoryBlock, tool, evidence, provider, or
-  unattached synthetic nodes.
+- Add tests that default geometry contains Artifact nodes and artifact
+  patch/derivation/history-successor edges, and does not switch to
+  run-forest/scheduler nodes when scheduler records are present.
 - Keep full raw ids available only in hover/details/debug text.
 - Verify with the snapshot command against a real run root after code changes.

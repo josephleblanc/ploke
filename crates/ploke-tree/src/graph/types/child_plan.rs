@@ -10,6 +10,13 @@ pub struct ChildPlanIndex {
 }
 
 impl ChildPlanIndex {
+    pub fn plan_for_parent_node_id(&self, node_id: &str) -> Option<&ChildPlanRecord> {
+        self.plans
+            .iter()
+            .find(|(parent_node_id, _)| parent_node_id.as_str() == node_id)
+            .map(|(_, plan)| plan)
+    }
+
     pub fn child_for_node_id(&self, node_id: &str) -> Option<&ChildPlanChildRecord> {
         self.plans
             .values()

@@ -208,18 +208,14 @@ Status:
 Purpose:
 
 - Make the `ArtifactTree` the primary default surface.
-- Show the run-forest parent/child topology when available, with artifact,
-  patch, branch, candidate, and History facts available as detail, filter,
-  mark, or drilldown material.
+- Show artifact identities and artifact relations directly, with scheduler,
+  branch, candidate, runtime, and History process facts available as detail,
+  filter, mark, or drilldown material.
 
 Should contain:
 
-- `F` run-forest nodes as the primary visible nodes when `Graph.forest` is
-  present and non-empty;
-- `E_F` run-forest parent edges as primary visible edges when `Graph.forest`
-  is present and non-empty;
-- fallback `A` Artifact nodes and `P_H union P_B` patch/derivation edges only
-  when run-forest records are absent;
+- `A` Artifact nodes as the primary visible nodes;
+- `P_H union P_B` patch/derivation edges as primary visible edges;
 - current ruler or latest selected successor highlight;
 - nearby alternatives visible as artifact branches;
 - pan, zoom, drag, hover, and selection behavior.
@@ -236,27 +232,20 @@ Testable signals:
 
 - `view.mode = "artifact-tree"` by default.
 - `canvas.present = true`
-- `graph_identity.forest_nodes` reports the loaded `Graph.forest` node count.
 - `graph_identity.default_visible_nodes` reports the rendered default
   projection node count.
 - `graph_identity.artifact_tree_nodes`, `graph_identity.artifact_tree_P_H`,
   and `graph_identity.artifact_tree_P_B` report the borrowed artifact-tree
-  relation counts even when the default canvas is using `F`.
+  relation counts used by the default canvas.
 - `graph_identity.visible_node_fingerprint` is stable for the visible default
   node key set, so CLI and app-written diagnostics can be compared directly.
-- `canvas.primary_node_set = F` when `F` is non-empty.
-- `canvas.primary_edge_set = E_F` when `F` is non-empty.
-- `canvas.primary_node_set = A` only for fallback graphs without `F`.
-- `canvas.primary_edge_set = P_H union P_B` only for fallback graphs without
-  `F`.
+- `canvas.primary_node_set = A`.
+- `canvas.primary_edge_set = P_H union P_B`.
 - `canvas.synthetic_anchors_visible = false`
 - `canvas.debug_nodes_visible = false`
-- `canvas.run_forest_nodes.count > 0` for non-empty real Prototype 1 runs
+- `canvas.artifact_nodes.count > 0` for non-empty real Prototype 1 runs
   loaded through `RunRecordSet`.
-- `canvas.artifact_nodes.count > 0` for fallback graphs without run-forest
-  records.
-- `canvas.patch_edges.count > 0` when fallback patch/derivation relations
-  exist.
+- `canvas.patch_edges.count > 0` when patch/derivation relations exist.
 - `canvas.ruler_highlight.count <= 1` until multi-ruler semantics are defined.
 
 Status:
@@ -265,14 +254,13 @@ Status:
 - Implemented: central graph canvas exists.
 - Implemented: ArtifactTree hides synthetic anchors.
 - Implemented: diagnostics report whether synthetic anchors are visible.
-- Implemented: diagnostics report `F`, `A`, `E_F`, `P_H`, `P_B`, total visible
+- Implemented: diagnostics report `A`, `P_H`, `P_B`, total visible
   nodes, total visible edges, weak components, roots, orphan artifacts, and
   ruler highlight count.
 - Implemented: contract checks include artifact node-set reporting, artifact
   edge-set reporting, ruler-highlight reporting, and component reporting.
-- Partial: run-forest topology is graph-owned through `Graph.forest`; fallback
-  artifact relation diagnostics are still computed from the current graph
-  projection path.
+- Implemented: artifact relation diagnostics are computed from the borrowed
+  artifact-tree projection path.
 - Missing: CLI-readable assertion that debug-node exclusion is sourced from the
   graph-owned projection rather than from egui-local membership inference.
 
@@ -296,10 +284,10 @@ First-frame content contract:
 | Section | Question answered | First slice content | Source | Status |
 |---|---|---|---|---|
 | Summary | What exactly did I select? | display label and selected graph kind | selected widget payload plus borrowed `Graph` lookup | Implemented for selected nodes. |
-| Identity | Which generation, parent, child, artifact, and candidate does this belong to? | run-forest node id, parent node, child nodes, candidate id, source/base/derived artifact ids, patch id when present | `Graph.forest` / `TreeNode` refs; fallback `Graph.artifact_tree()` refs | Implemented for run-forest nodes and artifact fallback nodes. |
-| Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | scheduler node fields and candidate/branch surface evidence | Partial: core fields exist on run-forest nodes; patch diff body is deferred. |
-| Lineage | What path led here? | immediate parent/child relation, ancestry availability status | `E_F` parent edges, fallback `P_H`/`P_B` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
-| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing typed artifact-edge facts, distinct from run-forest `E_F` facts | `Graph.artifact_tree()` and run-forest base/derived artifact refs | Partial: fallback artifact selections show `P_H`/`P_B`; run-forest selections show `P_B` only when base and derived artifact ids are both present. |
+| Identity | Which artifact and attached process/candidate facts does this belong to? | primary artifact id, aliases, and attached branch/candidate/runtime provenance when present | `Graph.artifact_tree()` refs plus attached graph evidence | Partial: artifact identity is present; richer attached provenance remains incomplete. |
+| Surface | What changed, and where? | target path, patch id, source state id, base artifact, derived artifact | candidate/branch surface evidence and attached graph evidence | Partial: artifact-backed patch facts exist; patch diff body is deferred. |
+| Lineage | What path led here? | immediate predecessor/successor and patch-derivation relations | `P_H`/`P_B` edges | Partial: immediate graph topology edges exist; full ancestry path is deferred. |
+| Artifact relations | Which artifact-id edges are known for this selection? | separate incoming/outgoing typed artifact-edge facts | `Graph.artifact_tree()` | Partial: artifact selections show `P_H`/`P_B`; richer relation families are deferred. |
 | Selection | Why was this successor selected over nearby candidates? | selected candidate/member refs, candidate-set root, considered count, decision outcome | `Graph.selections`, `Graph.candidates` | Partial/blocked: graph carries many facts, but no borrowed inspector answer path exists. |
 | Candidate set | From among which candidates? | candidate set root, membership ids, selected membership, unavailable reason if source/decision roles are ambiguous | `CandidateMembershipKey`, `SelectionNode` | Blocked until a graph-owned answer object preserves source-set vs decision-set roles. |
 | Source refs | Which typed records or report-derived facts support this displayed answer? | source record refs, graph warnings, and source counts | `TreeNode` refs, artifact source refs, graph warnings | Partial: record-ref facts exist where the graph projection exposes them; source/projection classification is deferred. |
@@ -333,9 +321,7 @@ Status:
   `SelectionInspectorSnapshot<'_>`, but `InspectorRow` is not an acceptable
   semantic carrier. Runtime roles, artifact relations, source refs, and
   availability must remain typed facts until the renderer arranges them.
-- Implemented: run-forest selections expose explicit parent/child topology facts
-  and keep graph topology edges separate from artifact-id edge facts.
-- Partial: typed record refs are present for run-forest source refs and artifact
+- Partial: typed record refs are present for artifact source refs and artifact
   source counts; full source/projection locator facts are deferred.
 - Partial: drilldown-candidate shell text exists; typed availability is deferred.
 - Partial: unavailable-reason classification is visible for first shell text.

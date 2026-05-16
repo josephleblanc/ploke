@@ -29,6 +29,22 @@ pub(super) fn curve_points(start: Pos2, end: Pos2, style: CurveStyle) -> [Pos2; 
     [start, start + handle, end - handle, end]
 }
 
+pub(super) fn self_loop_points(center: Pos2, radius: f32, style: CurveStyle) -> [Pos2; 4] {
+    let radius = radius.max(1.0);
+    let lift = (style.min_handle * 0.9).max(radius * 5.0);
+    let spread = (style.min_handle * 0.6).max(radius * 3.5);
+    let shoulder = radius * 0.8;
+    let rise = radius * 0.45;
+    let start = center + Vec2::new(shoulder, -rise);
+    let end = center + Vec2::new(-shoulder, -rise);
+    [
+        start,
+        start + Vec2::new(spread, -lift),
+        end + Vec2::new(-spread, -lift),
+        end,
+    ]
+}
+
 pub(super) fn cubic_point(points: [Pos2; 4], t: f32) -> Pos2 {
     let mt = 1.0 - t;
     let weights = cubic_bezier_weights(mt, t);

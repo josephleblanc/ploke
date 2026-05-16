@@ -4,6 +4,7 @@ use eframe::egui;
 
 use crate::ui::diff;
 use crate::ui::id_display;
+use crate::ui::id_display::TraceId;
 use crate::ui::inspector::{
     ArtifactInspection, PatchInspection, RunForestNodeInspection, SelectionEdge,
     SelectionInspector, SourceRef, UnavailableReason, artifact_edges, artifact_metrics,
@@ -355,14 +356,49 @@ fn render_source_refs_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInsp
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
 fn render_artifact_ids_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
     match inspector {
-        SelectionInspector::RunForestNode(_) => kv(ui, "artifact ids", "not_applicable"),
-        SelectionInspector::Artifact(artifact) => render_artifact_ids(ui, artifact),
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+        SelectionInspector::RunForestNode(run) => {
+            let _span = tracing::trace_span!(
+                "ploke_egui.inspector.artifact_ids_section",
+                selection_kind = "run_forest_node",
+                state = "not_applicable",
+                selection_key = run.node.key.as_str()
+            )
+            .entered();
+            kv(ui, "artifact ids", "not_applicable");
+        }
+        SelectionInspector::Artifact(artifact) => {
+            let _span = tracing::trace_span!(
+                "ploke_egui.inspector.artifact_ids_section",
+                selection_kind = "artifact",
+                state = "rendered",
+                selection_key = artifact.identity().artifact()
+            )
+            .entered();
+            render_artifact_ids(ui, artifact);
+        }
+        SelectionInspector::Unresolved(reason) => {
+            let _span = tracing::trace_span!(
+                "ploke_egui.inspector.artifact_ids_section",
+                selection_kind = "unresolved",
+                state = reason.state(),
+                selection_key = reason.subject()
+            )
+            .entered();
+            render_unavailable(ui, *reason);
+        }
     }
 }
 
 fn render_artifact_ids(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
     let identity = artifact.identity();
+    let _span = tracing::trace_span!(
+        "ploke_egui.inspector.render_artifact_ids",
+        primary_artifact_id = identity
+            .primary_artifact_id()
+            .map(|artifact| artifact.0.as_str())
+            .unwrap_or("not_recorded")
+    )
+    .entered();
 
     let mut saw_artifact_id = false;
     for artifact_id in identity.artifact_ids() {
@@ -415,7 +451,341 @@ fn render_prefixed_id_row(
 ) {
     let full = id.full_id();
     let key = id.id_prefix().unwrap_or(fallback_key);
-    render_fixed_id_row(ui, key, ("artifact-ids", key, full), id);
+    render_fixed_id_row(
+        ui,
+        key,
+        ("artifact-ids", key, full),
+        id.trace_artifact_id_row(fallback_key, key),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing::{Event, Id, Subscriber};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
+
+    use crate::import::graph_from_run_root;
+    use crate::ui::inspector::{ArtifactInspection, SelectionInspector};
+    use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
+    use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
+    use ploke_records::ids::{ArtifactId, HistoryHash};
+    use ploke_tree::graph::{
+        ArtifactIdentity, ArtifactIds, ArtifactKey, ArtifactNode, ParentCreateLookup,
+        ParentCreateUnavailable,
+    };
+    use ploke_tree::{
+        AuthorityLabel, Diagnostic, EvidenceRef, NodeKey, NodeKind, Phase, Progress, ResultClass,
+        Terminality, TreeNode,
+    };
+
+    #[derive(Clone, Default)]
+    struct TraceLines(Arc<Mutex<Vec<String>>>);
+
+    impl TraceLines {
+        fn push(&self, line: String) {
+            self.0.lock().expect("trace lock").push(line);
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.0.lock().expect("trace lock").clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct TraceFields {
+        values: Vec<String>,
+    }
+
+    impl TraceFields {
+        fn push(&mut self, field: &Field, value: impl Into<String>) {
+            self.values
+                .push(format!("{}={}", field.name(), value.into()));
+        }
+
+        fn finish(self) -> String {
+            self.values.join(" ")
+        }
+    }
+
+    impl Visit for TraceFields {
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.push(field, format!("{value:?}"));
+        }
+    }
+
+    struct TraceLayer {
+        lines: TraceLines,
+    }
+
+    impl<S> Layer<S> for TraceLayer
+    where
+        S: Subscriber + for<'span> LookupSpan<'span>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            _id: &Id,
+            _ctx: Context<'_, S>,
+        ) {
+            let mut fields = TraceFields::default();
+            attrs.record(&mut fields);
+            self.lines.push(format!(
+                "span:{} {}",
+                attrs.metadata().name(),
+                fields.finish()
+            ));
+        }
+
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            let mut fields = TraceFields::default();
+            event.record(&mut fields);
+            self.lines.push(format!(
+                "event:{} {}",
+                event.metadata().target(),
+                fields.finish()
+            ));
+        }
+    }
+
+    fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+        let lines = TraceLines::default();
+        let subscriber = Registry::default().with(TraceLayer {
+            lines: lines.clone(),
+        });
+        let output = tracing::subscriber::with_default(subscriber, f);
+        (output, lines.snapshot())
+    }
+
+    fn test_run_forest_node(key: &str, source_artifact: &str) -> TreeNode {
+        TreeNode {
+            key: NodeKey::from(key),
+            kind: NodeKind::SchedulerSearchNode,
+            authority: AuthorityLabel::MutableProjection,
+            parent: None,
+            children: Vec::new(),
+            generation: 0,
+            branch_id: "branch".to_owned(),
+            parent_branch_id: None,
+            candidate_id: key.to_owned(),
+            instance_id: "instance".to_owned(),
+            source_state_id: source_artifact.to_owned(),
+            target_relpath: ".ploke/prototype1/parent_identity.json".to_owned(),
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            progress: Progress {
+                phase: Phase::Running,
+                terminality: Terminality::NonTerminal,
+                result_class: ResultClass::Unknown,
+            },
+            created_at: "2026-05-15T00:00:00Z".to_owned(),
+            updated_at: "2026-05-15T00:00:00Z".to_owned(),
+            evidence: vec![EvidenceRef {
+                kind: ploke_tree::EvidenceKind::SchedulerNode,
+                authority: AuthorityLabel::MutableProjection,
+                node_key: Some(NodeKey::from(key)),
+                runtime_id: None,
+                recorded_at: Some("2026-05-15T00:00:00Z".to_owned()),
+                detail: None,
+            }],
+            diagnostics: Vec::<Diagnostic>::new(),
+        }
+    }
+
+    #[test]
+    fn artifact_id_section_traces_expected_compact_rows() {
+        let history_ref = ArtifactRefRecord {
+            value: "artifact:git-commit:deadbeefcafebabe".to_owned(),
+        };
+        let artifact_id =
+            ArtifactId("text-file-sha256:f6f73d0a2259c38d377144ed14f53be3".to_owned());
+        let tree_key = TreeKeyHashRecord {
+            hash: HistoryHash("tree:abcdef0123456789fedcba".to_owned()),
+        };
+        let node = ArtifactNode {
+            key: ArtifactKey::HistoryRef {
+                value: history_ref.value.clone(),
+            },
+            identity: ArtifactIdentity::HistoryRef(history_ref.clone()),
+            ids: ArtifactIds {
+                artifact_ids: vec![artifact_id.clone()],
+                artifact_refs: vec![history_ref.clone()],
+                tree_keys: vec![tree_key.clone()],
+            },
+            evidence: Vec::new(),
+        };
+        let artifact = ArtifactInspection {
+            sources: vec![&node],
+            incoming: Vec::new(),
+            outgoing: Vec::new(),
+            patches: Vec::new(),
+            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
+                record: "child_plan",
+                key: "derived_artifact",
+                value: node.entity_key(),
+            }),
+            role_badges: Vec::new(),
+        };
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "A1".to_owned(),
+            detail: String::new(),
+            reference: GraphSelectionRef::Artifact {
+                key: node.entity_key().to_owned(),
+            },
+        };
+        let inspector = SelectionInspector::Artifact(artifact);
+
+        let (_, traces) = collect_traces(|| {
+            egui::__run_test_ui(|ui| {
+                render_right_inspector(ui, Some(&selection), Some(&inspector));
+                render_artifact_ids_for_inspector(ui, &inspector);
+            });
+        });
+
+        assert!(traces.iter().any(|line| {
+            line.contains("span:ploke_egui.inspector.artifact_ids_section")
+                && line.contains("selection_kind=artifact")
+                && line.contains("state=rendered")
+        }));
+        assert!(traces.iter().any(|line| line.contains(
+            "span:ploke_egui.inspector.render_artifact_ids primary_artifact_id=text-file-sha256:f6f73d0a2259c38d377144ed14f53be3"
+        )));
+        assert!(traces.iter().any(|line| {
+            line.contains(
+                "span:ploke_egui.inspector.render_artifact_id_row slot=artifact id label=text-file-sha256"
+            ) && line.contains("compact=f6f73d0a")
+                && line.contains("expandable=true")
+        }));
+        assert!(traces.iter().any(|line| line.contains(
+            "span:ploke_egui.inspector.render_artifact_id_row slot=artifact ref label=artifact:git-commit"
+        ) && line.contains("compact=deadbeef")
+            && line.contains("expandable=true")));
+        assert!(traces.iter().any(|line| {
+            line.contains(
+                "span:ploke_egui.inspector.render_artifact_id_row slot=tree key label=tree",
+            ) && line.contains("compact=abcdef01")
+                && line.contains("expandable=true")
+        }));
+        assert!(traces.iter().any(|line| line.contains(
+            "span:ploke_egui.id_display.show_compact full=text-file-sha256:f6f73d0a2259c38d377144ed14f53be3 compact=f6f73d0a expandable=true expanded=false"
+        )));
+    }
+
+    #[test]
+    fn artifact_id_section_traces_not_applicable_for_run_forest_selection() {
+        let node = test_run_forest_node("node-f1fbab3a2bb5e7e5", "artifact:source");
+        let inspector = SelectionInspector::RunForestNode(RunForestNodeInspection {
+            node: &node,
+            parent: None,
+            children: &node.children,
+            patch: None,
+            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
+                record: "child_plan",
+                key: "node_id",
+                value: node.key.as_str(),
+            }),
+            role_badges: Vec::new(),
+        });
+
+        let (_, traces) = collect_traces(|| {
+            egui::__run_test_ui(|ui| {
+                render_artifact_ids_for_inspector(ui, &inspector);
+            });
+        });
+
+        assert!(traces.iter().any(|line| line.contains(
+            "span:ploke_egui.inspector.artifact_ids_section selection_kind=run_forest_node state=not_applicable selection_key=node-f1fbab3a2bb5e7e5"
+        )));
+    }
+
+    #[test]
+    fn artifact_id_section_traces_real_campaign_artifact_ids_when_present() {
+        let run_root = Path::new(
+            "/home/brasides/.ploke-eval/campaigns/p1-broad-harness-retry-20260514-1/prototype1",
+        );
+        if !run_root.exists() {
+            eprintln!("skipping real campaign artifact-id render test: missing {run_root:?}");
+            return;
+        }
+
+        let graph = graph_from_run_root(run_root).expect("real campaign graph loads");
+        let tree = graph.artifact_tree();
+        let node = tree
+            .nodes
+            .values()
+            .filter(|node| {
+                node.sources.iter().any(|source| {
+                    !source.ids.artifact_ids.is_empty()
+                        || !source.ids.artifact_refs.is_empty()
+                        || !source.ids.tree_keys.is_empty()
+                })
+            })
+            .max_by_key(|node| {
+                node.sources
+                    .iter()
+                    .map(|source| {
+                        source.ids.artifact_ids.len()
+                            + source.ids.artifact_refs.len()
+                            + source.ids.tree_keys.len()
+                    })
+                    .sum::<usize>()
+            })
+            .expect("real campaign exposes at least one artifact identity bundle");
+        let artifact = ArtifactInspection {
+            sources: node.sources.clone(),
+            incoming: Vec::new(),
+            outgoing: Vec::new(),
+            patches: Vec::new(),
+            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
+                record: "child_plan",
+                key: "derived_artifact",
+                value: node.key.as_str(),
+            }),
+            role_badges: Vec::new(),
+        };
+
+        let (_, traces) = collect_traces(|| {
+            egui::__run_test_ui(|ui| {
+                render_artifact_ids(ui, &artifact);
+            });
+        });
+
+        let artifact_rows = traces
+            .iter()
+            .filter(|line| {
+                line.contains("span:ploke_egui.inspector.render_artifact_id_row")
+                    || line.contains("span:ploke_egui.id_display.show_compact")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        eprintln!(
+            "real campaign artifact key={} rows={:?}",
+            node.key.as_str(),
+            artifact_rows
+        );
+        assert!(
+            traces
+                .iter()
+                .any(|line| line.contains("span:ploke_egui.inspector.render_artifact_id_row")),
+            "expected at least one artifact-id row trace for real campaign node {}",
+            node.key.as_str()
+        );
+    }
 }
 
 fn render_parent_create(ui: &mut egui::Ui, lookup: ParentCreateLookup<'_, '_>) {

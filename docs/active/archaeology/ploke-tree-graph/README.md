@@ -7,3 +7,6 @@ projection-only labels.
 - [`artifact-identity.md`](artifact-identity.md)
   Identity surface for Artifact inspector claims, including `ArtifactId`,
   `ArtifactRef`, `TreeKeyHash`, and nearby provenance carriers.
+- [`artifact-relations.md`](artifact-relations.md)
+  Default artifact-canvas relation families, including `P_H`, `P_O`, and
+  `P_B`, and the typed graph carriers they render from.

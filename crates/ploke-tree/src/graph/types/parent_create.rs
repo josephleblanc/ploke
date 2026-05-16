@@ -1,6 +1,6 @@
 use ploke_records::child_plan::ChildPlanChildRecord;
 use ploke_records::history::{SurfaceEvidenceRecord, SurfaceProposalProducerRecord};
-use ploke_records::ids::PatchId;
+use ploke_records::ids::{ArtifactId, PatchId};
 
 use super::{
     AgentTurnArtifactMetadata, CandidateBranchNode, EvidenceAttachment, EvidenceKind,
@@ -123,8 +123,44 @@ impl<'g> ParentCreateAttempt<'g> {
         self.child
     }
 
+    pub fn derived_artifact_id(&self) -> Option<&'g ArtifactId> {
+        self.child
+            .surface
+            .as_ref()
+            .map(|surface| &surface.after.artifact_id)
+            .or(self.child.node.derived_artifact_id.as_ref())
+    }
+
     pub fn branch(&self) -> Option<&'g CandidateBranchNode> {
         self.branch
+    }
+
+    pub fn next_parent_plan(&self) -> Option<&'g ploke_records::child_plan::ChildPlanRecord> {
+        self.graph
+            .child_plans
+            .plan_for_parent_node_id(self.child.node.node_id.as_str())
+    }
+
+    pub fn next_parent_base_artifact_id(&self) -> Option<&'g ArtifactId> {
+        let plan = self.next_parent_plan()?;
+        let mut unique = None;
+        for child in &plan.children {
+            let Some(base) = child
+                .surface
+                .as_ref()
+                .map(|surface| &surface.base.artifact_id)
+                .or(child.request.base_artifact_id.as_ref())
+                .or(child.node.base_artifact_id.as_ref())
+            else {
+                return None;
+            };
+            match unique {
+                None => unique = Some(base),
+                Some(existing) if existing == base => {}
+                Some(_) => return None,
+            }
+        }
+        unique
     }
 
     pub fn surface(&self) -> Option<&'g SurfaceEvidenceRecord> {

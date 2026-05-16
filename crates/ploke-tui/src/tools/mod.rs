@@ -159,7 +159,18 @@ pub struct ToolResult {
 pub struct ToolCallPreflightError {
     pub call_id: ArcStr,
     pub tool_name: ToolName,
+    pub rejected_arguments: String,
     pub error: ToolError,
+}
+
+impl ToolCallPreflightError {
+    pub fn format_for_audience(&self, audience: Audience) -> String {
+        format!(
+            "{}\nRejected arguments: {}",
+            self.error.format_for_audience(audience),
+            self.rejected_arguments
+        )
+    }
 }
 
 pub fn validate_and_sanitize_tool_calls(
@@ -180,6 +191,10 @@ pub fn validate_and_sanitize_tool_call(
         |error| ToolCallPreflightError {
             call_id: sanitized.call_id.clone(),
             tool_name: sanitized.function.name,
+            rejected_arguments: crate::tools::error::truncate_for_error(
+                &sanitized.function.arguments,
+                1024,
+            ),
             error,
         },
     )?;

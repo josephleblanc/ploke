@@ -116,6 +116,14 @@ pub(crate) trait InteractiveId {
         let id = ui.make_persistent_id(("ploke-egui.compact-id", id_source));
         let mut expanded = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
         let (compact, expandable) = self.compact_label();
+        let _span = tracing::trace_span!(
+            "ploke_egui.id_display.show_compact",
+            full = full,
+            compact = compact,
+            expandable = expandable,
+            expanded = expanded
+        )
+        .entered();
         let label = if expanded { full } else { compact };
         let hint = if expanded {
             "Click to collapse. Right click to copy the full id."
@@ -142,6 +150,25 @@ pub(crate) trait InteractiveId {
         response
     }
 }
+
+pub(crate) trait TraceId: InteractiveId {
+    fn trace_artifact_id_row<'a>(&'a self, slot: &str, label: &str) -> &'a Self {
+        let full = self.full_id();
+        let (compact, expandable) = self.compact_label();
+        let _span = tracing::trace_span!(
+            "ploke_egui.inspector.render_artifact_id_row",
+            slot = slot,
+            label = label,
+            full = full,
+            compact = compact,
+            expandable = expandable
+        )
+        .entered();
+        self
+    }
+}
+
+impl<T> TraceId for T where T: InteractiveId + ?Sized {}
 
 impl InteractiveId for ArtifactId {
     fn full_id(&self) -> &str {

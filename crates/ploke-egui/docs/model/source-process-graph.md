@@ -117,37 +117,7 @@ The current implemented `ArtifactTree` projection has two cases. This describes
 what the app is doing now; it is also the main semantic tension to resolve if
 the product default is meant to be artifact-first in the stricter sense.
 
-When `Graph.forest` is present and non-empty:
-
-```text
-visible nodes = F = run-forest scheduler nodes
-visible edges = E_F = parent_node_id -> node_id
-```
-
-Each visible node is a run/scheduler node carrying artifact facts:
-
-```text
-node_id
-generation
-parent_node_id
-branch_id
-candidate_id
-source_state_id
-base_artifact_id?
-patch_id?
-derived_artifact_id?
-status
-```
-
-Those artifact ids are facts attached to the run node. They are not separate
-material canvas nodes in the default forest projection.
-
-This makes the current canvas a process/run tree annotated with artifact facts.
-It is useful for seeing scheduler generation and parent/child process shape,
-but it is not the same as an artifact-primary canvas where each material node
-is one artifact identity.
-
-When no run forest is available:
+The intended and now restored default is:
 
 ```text
 visible nodes = A = artifact identities
@@ -161,23 +131,14 @@ Where:
 - `P_B` is an applied-patch/base relation from base artifact to derived
   artifact.
 
-The fallback artifact tree is a borrowed projection. It may group multiple
+The artifact tree is a borrowed projection. It may group multiple
 source records into one artifact node when they resolve to the same artifact
 identity, for example `ArtifactRefRecord("artifact:<id>")` and
 `ArtifactId("<id>")`.
 
-If the intended product default is strictly artifact-first, then the target
-projection should instead start from:
-
-```text
-visible nodes = A = artifact identities
-visible edges = P_H union P_B or another named artifact relation set
-process facts = annotations, filters, marks, timeline spans, or typed inspector facts
-```
-
-In that target, scheduler/run nodes explain how artifacts were produced or
-used. They are not the primary canvas nodes unless the operator explicitly
-switches to a process/run-forest view.
+Scheduler/run facts explain how artifacts were produced or used. They are not
+the primary canvas nodes unless the operator explicitly switches to a future
+process/schedule view.
 
 ## What A Node Should Explain
 

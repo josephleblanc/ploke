@@ -93,8 +93,8 @@ pub fn normalize_tool_call_preflight_error(
         "Provider emitted invalid arguments for tool `{}`.",
         preflight_error.tool_name.as_str()
     ));
-    let repair_details = preflight_error.error.format_for_audience(Audience::Llm);
-    let diagnostic = preflight_error.error.format_for_audience(Audience::System);
+    let repair_details = preflight_error.format_for_audience(Audience::Llm);
+    let diagnostic = preflight_error.format_for_audience(Audience::System);
     let mut constraints = vec![
         ArcStr::from("Arguments must be strict JSON."),
         ArcStr::from("Arguments must match the tool schema."),
@@ -360,5 +360,37 @@ mod tests {
             }
         ));
         assert_eq!(spec.context.tool_name.as_deref(), Some("fake_tool"));
+    }
+
+    #[test]
+    fn normalize_tool_call_preflight_error_includes_rejected_arguments() {
+        let preflight_error = ToolCallPreflightError {
+            call_id: ArcStr::from("call_preflight"),
+            tool_name: crate::tools::ToolName::RequestCodeContext,
+            rejected_arguments: "{\"search_term\":42}".to_string(),
+            error: crate::tools::ToolError::new(
+                crate::tools::ToolName::RequestCodeContext,
+                crate::tools::ToolErrorCode::WrongType,
+                "failed to parse tool arguments: invalid type: integer `42`, expected a string",
+            ),
+        };
+
+        let spec =
+            normalize_tool_call_preflight_error(preflight_error, None, ErrorContext::new(1, 0));
+
+        let details = spec
+            .llm_action
+            .as_ref()
+            .and_then(|action| action.next_steps.first())
+            .and_then(|step| step.details.as_deref())
+            .expect("repair details");
+        assert!(details.contains("Rejected arguments: {\"search_term\":42}"));
+
+        let diagnostic = spec
+            .diagnostics
+            .as_ref()
+            .map(|diag| diag.diagnostic.as_ref())
+            .expect("diagnostic");
+        assert!(diagnostic.contains("Rejected arguments: {\"search_term\":42}"));
     }
 }

@@ -115,6 +115,7 @@ pub struct ArtifactTree {
     pub synthetic_anchors_visible: bool,
     pub visible_node_count: usize,
     pub visible_edge_count: usize,
+    pub hidden_edge_count: usize,
     pub nodes: Nodes,
     pub edges: Edges,
     pub components: Components,
@@ -134,6 +135,7 @@ impl ArtifactTree {
             synthetic_anchors_visible: diagnostics.connectivity.synthetic_anchors_visible,
             visible_node_count: diagnostics.node_count,
             visible_edge_count: diagnostics.edge_count,
+            hidden_edge_count: diagnostics.connectivity.hidden_edge_count,
             nodes: shape.nodes().into(),
             edges: shape.edges().into(),
             components: (shape.components(), shape.nodes()).into(),
@@ -144,14 +146,6 @@ impl ArtifactTree {
 }
 
 pub(crate) fn component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBreakdown> {
-    if graph
-        .forest
-        .as_ref()
-        .is_some_and(|forest| !forest.nodes.is_empty())
-    {
-        return Vec::new();
-    }
-
     graph
         .artifact_tree()
         .diagnostics
@@ -185,13 +179,15 @@ pub struct Edges {
     pub e_f: usize,
     #[serde(rename = "P_H")]
     pub p_h: usize,
+    #[serde(rename = "P_O")]
+    pub p_o: usize,
     #[serde(rename = "P_B")]
     pub p_b: usize,
 }
 
 impl Edges {
     pub fn total(&self) -> usize {
-        self.e_f + self.p_h + self.p_b
+        self.e_f + self.p_h + self.p_o + self.p_b
     }
 }
 
@@ -200,6 +196,7 @@ impl From<tree::Edges> for Edges {
         Self {
             e_f: value.run_forest,
             p_h: value.history_patches,
+            p_o: value.opened_from_edges,
             p_b: value.applied_patch_edges,
         }
     }

@@ -253,6 +253,15 @@ pub fn render_error_view(
             {
                 details = Some(format!("Suggested action: {}", action));
             }
+            if matches!(verbosity, Verbosity::Normal | Verbosity::Verbose)
+                && error.code.as_ref() == "TOOL_ARGS_REPAIR_REQUIRED"
+                && let Some(diag) = &error.diagnostics
+            {
+                details = Some(match details {
+                    Some(existing) => format!("{existing}\n{}", diag.diagnostic),
+                    None => diag.diagnostic.to_string(),
+                });
+            }
             if matches!(verbosity, Verbosity::Verbose) {
                 let context = format_error_context(error);
                 details = Some(match details {
@@ -1041,5 +1050,22 @@ mod tests {
 
         assert_eq!(payload["recovery"]["decision"], "repair");
         assert_eq!(payload["retry"]["allowed"], false);
+    }
+
+    #[test]
+    fn user_error_view_includes_diagnostics_for_tool_arg_repairs() {
+        let loop_error = build_tool_arg_repair_error(
+            ErrorContext::new(1, 0),
+            CommitPhase::PreCommit,
+            "Invalid tool args.".to_string(),
+            "tool=RequestCodeContext code=WrongType: failed to parse tool arguments\nRejected arguments: {\"search_term\":42}".to_string(),
+            Some("repair details".to_string()),
+            vec!["Arguments must be strict JSON.".to_string()],
+        );
+
+        let view = render_error_view(&loop_error, ErrorAudience::User, Verbosity::Normal);
+        let details = view.details.expect("details");
+        assert!(details.contains("Suggested action: Request a corrected tool call and retry."));
+        assert!(details.contains("Rejected arguments: {\"search_term\":42}"));
     }
 }

@@ -9,6 +9,8 @@ pub struct ComponentBreakdown {
     pub roots: Vec<String>,
     #[serde(rename = "P_H")]
     pub p_h: Vec<Edge<HistorySource>>,
+    #[serde(rename = "P_O")]
+    pub p_o: Vec<Edge<HistorySource>>,
     #[serde(rename = "P_B")]
     pub p_b: Vec<Edge<AppliedPatchSource>>,
 }
@@ -29,6 +31,15 @@ impl From<(usize, &tree::Component<'_>)> for ComponentBreakdown {
                 .collect(),
             p_h: value
                 .history_successors
+                .iter()
+                .map(|edge| Edge {
+                    from: edge.from.as_str().to_owned(),
+                    to: edge.to.as_str().to_owned(),
+                    sources: edge.sources.iter().map(HistorySource::from).collect(),
+                })
+                .collect(),
+            p_o: value
+                .opened_from_edges
                 .iter()
                 .map(|edge| Edge {
                     from: edge.from.as_str().to_owned(),

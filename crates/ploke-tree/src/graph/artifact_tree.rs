@@ -13,6 +13,7 @@ use super::{ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageN
 pub struct Tree<'g> {
     pub nodes: BTreeMap<Key<'g>, Node<'g>>,
     pub history_successors: Vec<HistoryEdge<'g>>,
+    pub opened_from_edges: Vec<HistoryEdge<'g>>,
     pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
     pub marks: Marks<'g>,
     pub diagnostics: Diagnostics<'g>,
@@ -76,6 +77,7 @@ pub struct Component<'g> {
     pub artifacts: Vec<Key<'g>>,
     pub roots: Vec<Key<'g>>,
     pub history_successors: Vec<HistoryEdge<'g>>,
+    pub opened_from_edges: Vec<HistoryEdge<'g>>,
     pub applied_patch_edges: Vec<AppliedPatchEdge<'g>>,
 }
 
@@ -89,6 +91,7 @@ pub struct MissingEndpoint<'g> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Relation<'g> {
     HistorySuccessor(&'g HistoryBlockNode),
+    HistoryOpenedFrom(&'g HistoryBlockNode),
     AppliedPatch(&'g CandidateBranchNode),
 }
 
@@ -105,10 +108,13 @@ impl Graph {
 }
 
 impl<'g> Tree<'g> {
+    /// archaeology:artifact-promotion-continuity
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-promotion-continuity.md
     pub fn from_graph(graph: &'g Graph) -> Self {
+        let promotion_aliases = promotion_aliases(graph);
         let mut nodes = BTreeMap::new();
         for artifact in graph.artifacts.artifacts.values() {
-            let Some(key) = node_key(artifact) else {
+            let Some(key) = node_key(artifact, &promotion_aliases) else {
                 continue;
             };
             nodes
@@ -124,9 +130,34 @@ impl<'g> Tree<'g> {
         let mut missing_endpoints = Vec::new();
         let mut history_successors =
             BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g HistoryBlockNode>>::new();
+        let mut opened_from_edges =
+            BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g HistoryBlockNode>>::new();
         for block in graph.history.blocks.values() {
-            let from = history_ref_key(&block.active_artifact.value);
-            let to = history_ref_key(&block.selected_successor.artifact.value);
+            let opened_from = canonical_key(
+                history_ref_key(&block.opened_from_artifact.value),
+                &promotion_aliases,
+            );
+            let active =
+                canonical_key(history_ref_key(&block.active_artifact.value), &promotion_aliases);
+            if endpoints_present(
+                &nodes,
+                Relation::HistoryOpenedFrom(block),
+                opened_from,
+                active,
+                &mut missing_endpoints,
+            ) {
+                opened_from_edges
+                    .entry((opened_from, active))
+                    .or_default()
+                    .push(block);
+            }
+
+            let from =
+                canonical_key(history_ref_key(&block.active_artifact.value), &promotion_aliases);
+            let to = canonical_key(
+                history_ref_key(&block.selected_successor.artifact.value),
+                &promotion_aliases,
+            );
             if endpoints_present(
                 &nodes,
                 Relation::HistorySuccessor(block),
@@ -150,8 +181,8 @@ impl<'g> Tree<'g> {
             ) else {
                 continue;
             };
-            let from = passive_id_key(&base.0);
-            let to = passive_id_key(&derived.0);
+            let from = canonical_key(passive_id_key(&base.0), &promotion_aliases);
+            let to = canonical_key(passive_id_key(&derived.0), &promotion_aliases);
             if endpoints_present(
                 &nodes,
                 Relation::AppliedPatch(branch),
@@ -170,6 +201,10 @@ impl<'g> Tree<'g> {
             .into_iter()
             .map(|((from, to), sources)| HistoryEdge { from, to, sources })
             .collect::<Vec<_>>();
+        let opened_from_edges = opened_from_edges
+            .into_iter()
+            .map(|((from, to), sources)| HistoryEdge { from, to, sources })
+            .collect::<Vec<_>>();
         let applied_patch_edges = applied_patch_edges
             .into_iter()
             .map(|((from, to), sources)| AppliedPatchEdge { from, to, sources })
@@ -179,6 +214,7 @@ impl<'g> Tree<'g> {
         let diagnostics = Diagnostics::from_edges(
             &nodes,
             &history_successors,
+            &opened_from_edges,
             &applied_patch_edges,
             missing_endpoints,
         );
@@ -186,6 +222,7 @@ impl<'g> Tree<'g> {
         Self {
             nodes,
             history_successors,
+            opened_from_edges,
             applied_patch_edges,
             marks,
             diagnostics,
@@ -197,6 +234,7 @@ impl<'g> Diagnostics<'g> {
     fn from_edges(
         nodes: &BTreeMap<Key<'g>, Node<'g>>,
         history_successors: &[HistoryEdge<'g>],
+        opened_from_edges: &[HistoryEdge<'g>],
         applied_patch_edges: &[AppliedPatchEdge<'g>],
         missing_endpoints: Vec<MissingEndpoint<'g>>,
     ) -> Self {
@@ -262,6 +300,11 @@ impl<'g> Diagnostics<'g> {
                     .filter(|edge| artifacts.contains(&edge.from))
                     .cloned()
                     .collect();
+                let opened_from_edges = opened_from_edges
+                    .iter()
+                    .filter(|edge| artifacts.contains(&edge.from))
+                    .cloned()
+                    .collect();
                 let applied_patch_edges = applied_patch_edges
                     .iter()
                     .filter(|edge| artifacts.contains(&edge.from))
@@ -271,6 +314,7 @@ impl<'g> Diagnostics<'g> {
                     artifacts,
                     roots,
                     history_successors,
+                    opened_from_edges,
                     applied_patch_edges,
                 }
             })
@@ -384,8 +428,11 @@ fn primary_lineage(graph: &Graph) -> Option<&LineageNode> {
         })
 }
 
-fn node_key(artifact: &ArtifactNode) -> Option<Key<'_>> {
-    Some(Key(artifact.entity_key()))
+fn node_key<'g>(
+    artifact: &'g ArtifactNode,
+    promotion_aliases: &BTreeMap<Key<'g>, Key<'g>>,
+) -> Option<Key<'g>> {
+    Some(canonical_key(Key(artifact.entity_key()), promotion_aliases))
 }
 
 fn history_ref_key(value: &str) -> Key<'_> {
@@ -396,6 +443,41 @@ fn passive_id_key(value: &str) -> Key<'_> {
     Key(value.strip_prefix("artifact:").unwrap_or(value))
 }
 
+fn canonical_key<'g>(mut key: Key<'g>, aliases: &BTreeMap<Key<'g>, Key<'g>>) -> Key<'g> {
+    let mut seen = BTreeSet::new();
+    while let Some(next) = aliases.get(&key).copied() {
+        if next == key || !seen.insert(key) {
+            break;
+        }
+        key = next;
+    }
+    key
+}
+
+fn promotion_aliases<'g>(graph: &'g Graph) -> BTreeMap<Key<'g>, Key<'g>> {
+    let mut aliases = BTreeMap::new();
+    for plan in graph.child_plans.plans.values() {
+        let parent_node_id = plan.parent_node_id.as_str();
+        let super::ParentCreateLookup::Attempt(attempt) =
+            graph.parent_create_for_node_id(parent_node_id)
+        else {
+            continue;
+        };
+        let (Some(selected_child), Some(next_parent_base)) = (
+            attempt.derived_artifact_id(),
+            attempt.next_parent_base_artifact_id(),
+        ) else {
+            continue;
+        };
+        let selected_child = passive_id_key(selected_child.0.as_str());
+        let next_parent_base = passive_id_key(next_parent_base.0.as_str());
+        if selected_child != next_parent_base {
+            aliases.insert(next_parent_base, selected_child);
+        }
+    }
+    aliases
+}
+
 fn join_edge<'g>(
     from: Key<'g>,
     to: Key<'g>,
@@ -404,6 +486,10 @@ fn join_edge<'g>(
     incoming: &mut BTreeMap<Key<'g>, usize>,
     incident: &mut BTreeMap<Key<'g>, usize>,
 ) {
+    if from == to {
+        return;
+    }
+
     if let Some(count) = incoming.get_mut(&to) {
         *count += 1;
     }
@@ -497,13 +583,16 @@ mod tests {
         assert_eq!(tree.history_successors.len(), 1);
         assert_eq!(tree.history_successors[0].from.as_str(), "base");
         assert_eq!(tree.history_successors[0].to.as_str(), "successor");
+        assert_eq!(tree.opened_from_edges.len(), 1);
+        assert_eq!(tree.opened_from_edges[0].from.as_str(), "base");
+        assert_eq!(tree.opened_from_edges[0].to.as_str(), "base");
         assert_eq!(tree.applied_patch_edges.len(), 1);
         assert_eq!(tree.applied_patch_edges[0].from.as_str(), "successor");
         assert_eq!(tree.applied_patch_edges[0].to.as_str(), "derived");
         assert_eq!(tree.marks.selected_ruler.map(|key| key.as_str()), None);
         assert!(tree.diagnostics.weakly_connected);
         assert_eq!(tree.diagnostics.weak_component_count, 1);
-        assert_eq!(key_strings(&tree.diagnostics.roots), vec!["base"]);
+        assert!(tree.diagnostics.roots.is_empty());
         assert!(tree.diagnostics.orphan_artifacts.is_empty());
         assert!(tree.diagnostics.missing_endpoints.is_empty());
 

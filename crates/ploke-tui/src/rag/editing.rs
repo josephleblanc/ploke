@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(feature = "test_harness")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::{
@@ -9,6 +11,19 @@ use crate::{
 };
 
 use super::*;
+
+#[cfg(feature = "test_harness")]
+static RESCAN_FOR_CHANGES_CALLS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "test_harness")]
+pub(crate) fn reset_rescan_for_changes_calls_for_test() {
+    RESCAN_FOR_CHANGES_CALLS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(feature = "test_harness")]
+pub(crate) fn rescan_for_changes_calls_for_test() -> u64 {
+    RESCAN_FOR_CHANGES_CALLS.load(Ordering::SeqCst)
+}
 
 pub fn spawn_auto_confirm_edits(state: Arc<AppState>, event_bus: Arc<EventBus>, proposal_id: Uuid) {
     tokio::spawn(async move {
@@ -270,8 +285,10 @@ async fn apply_ns_edit(
             // Persist proposals (best-effort)
             crate::app_state::handlers::proposals::save_proposals(state).await;
 
-            // Surface a brief SysInfo so users see that a rescan has been scheduled
+            // Non-semantic patch application changes live file content immediately, so the
+            // loaded index must be refreshed before follow-up tool calls rely on stale anchors.
             if applied_any {
+                rescan_for_changes(state, event_bus, request_id);
                 let msg = "Scheduled rescan of workspace after applying edits".to_string();
                 add_msg_imm(msg).await;
             }
@@ -500,6 +517,9 @@ async fn apply_semantic_edit(
 }
 
 fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+    #[cfg(feature = "test_harness")]
+    RESCAN_FOR_CHANGES_CALLS.fetch_add(1, Ordering::SeqCst);
+
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
     tokio::spawn({
         let state = Arc::clone(state);

@@ -1115,7 +1115,7 @@ impl GitWorktreeBackend {
         ))
     }
 
-    fn worktree_root(&self, repo_root: &Path) -> Result<PathBuf, BackendError> {
+    pub(crate) fn worktree_root(&self, repo_root: &Path) -> Result<PathBuf, BackendError> {
         let output = Command::new("git")
             .current_dir(repo_root)
             .args(["rev-parse", "--show-toplevel"])

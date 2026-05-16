@@ -7,7 +7,7 @@ use eframe::egui::{
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
 
-use super::geometry::{curve_points, distance_to_curve, endpoint_direction};
+use super::geometry::{curve_points, distance_to_curve, endpoint_direction, self_loop_points};
 use super::label::{EdgeLabelInput, place_edge_label, record_edge_label};
 use super::projection::GraphEdgePayload;
 use super::style::{CurveStyle, EdgeStyle};
@@ -95,6 +95,27 @@ impl GraphEdgeShape {
             }
         }
     }
+
+    /// archaeology:artifact-relations
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
+    fn curve_for_nodes<N, Ty, Ix, D>(
+        &self,
+        start: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+        end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
+    ) -> [Pos2; 4]
+    where
+        N: Clone,
+        Ty: EdgeType,
+        Ix: IndexType,
+        D: egui_graphs::DisplayNode<N, GraphEdgePayload, Ty, Ix>,
+    {
+        if start.location() == end.location() {
+            return self_loop_points(start.location(), node_radius(start), self.style.curve);
+        }
+
+        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
+        self.curve(start_point, end_point)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,12 +146,7 @@ where
         if !self.visible {
             return Vec::new();
         }
-        if end.location() == start.location() {
-            return Vec::new();
-        }
-
-        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
-        let curve = self.curve(start_point, end_point);
+        let curve = self.curve_for_nodes(start, end);
         let screen_curve = curve.map(|point| ctx.meta.canvas_to_screen_pos(point));
 
         let color = self.color;
@@ -205,12 +221,7 @@ where
         if !self.visible {
             return false;
         }
-        if end.location() == start.location() {
-            return false;
-        }
-
-        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
-        distance_to_curve(self.curve(start_point, end_point), pos, self.style)
+        distance_to_curve(self.curve_for_nodes(start, end), pos, self.style)
             <= self.style.hit_tolerance
     }
 
@@ -222,8 +233,7 @@ where
         if !self.visible {
             return None;
         }
-        let (start_point, end_point) = attachment_points(start, end, self.style.curve);
-        let curve = self.curve(start_point, end_point);
+        let curve = self.curve_for_nodes(start, end);
         let min = Pos2::new(
             curve.iter().map(|point| point.x).fold(f32::MAX, f32::min),
             curve.iter().map(|point| point.y).fold(f32::MAX, f32::min),
@@ -234,6 +244,19 @@ where
         );
         Some((min, max))
     }
+}
+
+fn node_radius<N, Ty, Ix, D>(node: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>) -> f32
+where
+    N: Clone,
+    Ty: EdgeType,
+    Ix: IndexType,
+    D: egui_graphs::DisplayNode<N, GraphEdgePayload, Ty, Ix>,
+{
+    node.display()
+        .closest_boundary_point(Vec2::X)
+        .distance(node.location())
+        .max(1.0)
 }
 
 fn attachment_points<N, Ty, Ix, D>(

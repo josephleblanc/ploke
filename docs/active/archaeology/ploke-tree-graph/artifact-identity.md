@@ -170,10 +170,14 @@ Important caveat:
 - `crates/ploke-egui/src/ui/app/shell.rs`
   - `render_artifact_identity`
   - `render_run_forest_identity` artifact-related rows
+  - `render_artifact_ids_for_inspector`
 - `crates/ploke-egui/src/ui/inspector.rs`
   - `ArtifactInspection`
   - `ArtifactIdentityWitness`
+  - `ArtifactIdsSectionSnapshot`
   - diagnostics snapshot projection for artifact identity
+- `crates/ploke-egui/src/cli/report.rs`
+  - `print_artifact_ids_report`
 
 Planned consumer:
 

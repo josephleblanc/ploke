@@ -21,6 +21,9 @@ use crate::app_state::core::{
     DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
 };
 use crate::app_state::events::SystemEvent;
+use crate::rag::editing::{
+    rescan_for_changes_calls_for_test, reset_rescan_for_changes_calls_for_test,
+};
 use crate::{AppEvent, EventPriority, emit_app_event};
 
 const FIRST_SAME_FILE_DIFF: &str = r#"--- a/notes.txt
@@ -113,6 +116,10 @@ fn write_named_fixture(workspace_root: &Path, relative_path: &str, contents: &st
 }
 
 fn same_file_tool_call(call_id: &str, diff: &str, reasoning: &str) -> ToolCall {
+    ns_patch_tool_call(call_id, "notes.txt", diff, reasoning)
+}
+
+fn ns_patch_tool_call(call_id: &str, file: &str, diff: &str, reasoning: &str) -> ToolCall {
     ToolCall {
         call_id: ArcStr::from(call_id),
         call_type: FunctionMarker,
@@ -120,7 +127,7 @@ fn same_file_tool_call(call_id: &str, diff: &str, reasoning: &str) -> ToolCall {
             name: ToolName::NsPatch,
             arguments: serde_json::json!({
                 "patches": [{
-                    "file": "notes.txt",
+                    "file": file,
                     "diff": diff,
                     "reasoning": reasoning,
                 }]
@@ -191,6 +198,82 @@ async fn wait_for_proposal_status(
         }
         if Instant::now() >= deadline {
             panic!("timed out waiting for proposal status transition: {status:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_approval_triggers_rescan_helper() {
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db)
+        .spawn_state_manager()
+        .spawn_event_bus()
+        .spawn_llm_manager();
+
+    let state = rt.state_arc();
+    let events = rt.events_builder().build_event_bus_only();
+    let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("rescan-after-ns-patch");
+    let fixture_path =
+        write_named_fixture(&workspace_root, "notes.txt", "alpha\nbeta\ngamma\ndelta\n");
+    configure_temp_workspace(&state, &workspace_root).await;
+
+    let app = rt.into_app_with_state_pwd(workspace_root.clone()).await;
+    let cmd_tx = app.state_cmd_tx();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    reset_rescan_for_changes_calls_for_test();
+
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let call = ns_patch_tool_call(
+        "ns-patch-triggers-rescan",
+        "notes.txt",
+        FIRST_SAME_FILE_DIFF,
+        "Apply one non-semantic edit and rescan",
+    );
+
+    let staged =
+        stage_tool_call_via_llm_manager(request_id, parent_id, call.clone(), &mut realtime_rx)
+            .await;
+    assert!(staged.ok, "staged ns_patch should complete successfully");
+    assert_eq!(staged.staged, 1, "request should stage exactly one ns edit");
+
+    let proposal_id = derive_edit_proposal_id(request_id, &call.call_id);
+    cmd_tx
+        .send(StateCommand::ApproveEdits { proposal_id })
+        .await
+        .expect("approve proposal");
+
+    let terminal_status = wait_for_proposal_status(&state, proposal_id, |status| {
+        matches!(
+            status,
+            EditProposalStatus::Applied | EditProposalStatus::Failed(_)
+        )
+    })
+    .await;
+    assert!(
+        matches!(terminal_status, EditProposalStatus::Applied),
+        "ns_patch approval should apply successfully, got {terminal_status:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture_path).expect("read file after approval"),
+        "alpha\nbeta-one\ngamma\ndelta\n",
+        "ns_patch approval should advance the live file state"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if rescan_for_changes_calls_for_test() > 0 {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for ns_patch approval to trigger rescan helper");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

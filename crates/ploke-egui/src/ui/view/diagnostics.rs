@@ -4,7 +4,7 @@ use petgraph::{
     visit::{EdgeRef, IntoEdgeReferences},
 };
 
-use super::geometry::{cubic_point, curve_points, segments_intersect};
+use super::geometry::{cubic_point, curve_points, segments_intersect, self_loop_points};
 use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
 use super::{
@@ -125,6 +125,8 @@ impl EdgeCurve {
     }
 }
 
+/// archaeology:artifact-relations
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
 fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
     graph
         .g()
@@ -141,16 +143,18 @@ fn edge_curves(graph: &WidgetGraph, style: ViewStyle) -> Vec<EdgeCurve> {
             }
             let start = source.location();
             let end = target.location();
-            if start == end {
-                return None;
-            }
+            let points = if start == end {
+                self_loop_points(start, style.layout.node_radius, style.edge.curve)
+            } else {
+                curve_points(start, end, style.edge.curve)
+            };
 
             Some(EdgeCurve {
                 source: edge.source(),
                 target: edge.target(),
                 kind: payload.kind,
                 salient: payload.color == style.edge.colors.selected,
-                points: curve_points(start, end, style.edge.curve),
+                points,
             })
         })
         .collect()
@@ -293,8 +297,12 @@ impl EdgeCrossingsByKind {
         #[cfg(test)]
         match (left, right) {
             (
-                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
-                ViewEdgeKind::HistoryArtifact | ViewEdgeKind::ArtifactPatch,
+                ViewEdgeKind::HistoryArtifact
+                | ViewEdgeKind::HistoryOpenedFrom
+                | ViewEdgeKind::ArtifactPatch,
+                ViewEdgeKind::HistoryArtifact
+                | ViewEdgeKind::HistoryOpenedFrom
+                | ViewEdgeKind::ArtifactPatch,
             ) => {
                 self.artifact_artifact += 1;
             }
@@ -373,6 +381,36 @@ mod tests {
         ];
 
         assert_eq!(long_edge_count(&edges, Some(50.0)), 1);
+    }
+
+    #[test]
+    fn edge_curves_include_self_loops() {
+        let style = ViewStyle::default();
+        let mut raw = StableGraph::<GraphNode, GraphEdgePayload, Directed>::default();
+        let node = raw.add_node(node("loop"));
+        raw.add_edge(
+            node,
+            node,
+            edge(
+                "P1",
+                ViewEdgeKind::HistoryOpenedFrom,
+                style.edge.colors.opened_from,
+                style,
+            ),
+        );
+
+        let mut graph: WidgetGraph = egui_graphs::to_graph_custom(
+            &raw,
+            |node| {
+                node.set_label(String::new());
+            },
+            |_edge| {},
+        );
+        graph.g_mut()[node].set_location(Pos2::new(0.0, 0.0));
+
+        let curves = edge_curves(&graph, style);
+
+        assert_eq!(curves.len(), 1);
     }
 
     fn crossing_graph(left: GraphEdgePayload, right: GraphEdgePayload) -> WidgetGraph {

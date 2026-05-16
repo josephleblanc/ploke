@@ -9,3 +9,9 @@ track whether skills, repo guidance, and memory actually reduce repeats.
 - [`authority-boundary-violations/`](authority-boundary-violations/README.md)
   Incidents where the agent treated a sensitive authority surface like routine
   edit territory without first respecting the documented boundary.
+- [`diagnosis-without-evidence/`](diagnosis-without-evidence/README.md)
+  Incidents where the agent presented a causal diagnosis before reading the
+  code that actually controlled the runtime behavior.
+- [`verification-surface-drift/`](verification-surface-drift/README.md)
+  Incidents where the agent blurred the distinction between CLI snapshots,
+  focused renderer tests, and live interactive UI verification.

@@ -607,7 +607,21 @@ impl From<Vec2> for Pair {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use eframe::egui::Vec2;
+    use ploke_records::history::{
+        ActorRefRecord, ArtifactRefRecord, ProcedureRefRecord, SurfaceCommitmentRecord,
+        SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
+    };
+    use ploke_records::ids::{
+        BlockHash, BlockId, EntryId, HistoryHash, LineageId, RecordedAt, RuntimeId,
+    };
+    use ploke_tree::graph::{
+        ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode, HistoryBlockNode,
+        HistoryIndex, OpeningAuthorityNode, SuccessorNode,
+    };
+    use ploke_tree::{CampaignRef, Lanes, NodeKey, RunForest, TreeNode};
 
     use super::*;
     use crate::ui::view::{
@@ -694,6 +708,47 @@ mod tests {
     }
 
     #[test]
+    fn artifact_component_breakdown_uses_artifact_tree_even_when_forest_is_present() {
+        let graph = ploke_tree::Graph {
+            forest: Some(RunForest {
+                campaign: CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: vec![NodeKey::from("root")],
+                nodes: vec![tree_node("root")],
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence: Default::default(),
+                diagnostics: Vec::new(),
+            }),
+            artifacts: ArtifactIndex {
+                artifacts: BTreeMap::from([
+                    artifact_history("artifact:base"),
+                    artifact_history("artifact:successor"),
+                ]),
+            },
+            history: HistoryIndex {
+                blocks: BTreeMap::from([(
+                    BlockHash("block-hash".to_owned()),
+                    history_block("artifact:base", "artifact:successor"),
+                )]),
+                ..HistoryIndex::default()
+            },
+            ..ploke_tree::Graph::default()
+        };
+
+        let components = artifact_component_breakdown(&graph);
+
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].p_h.len(), 1);
+        assert_eq!(components[0].p_o.len(), 1);
+    }
+
+    #[test]
     fn thin_horizontal_composition_is_high_severity() {
         let mut diagnostics = diagnostics();
         diagnostics.node_count = 31;
@@ -721,7 +776,7 @@ mod tests {
         diagnostics.edge_count = 2;
         diagnostics.artifact_tree = Shape::new(
             Nodes::new(3),
-            Edges::new(1, 1),
+            Edges::new(1, 1, 1),
             Components::new(2, 2, 1),
             Marks::new(1),
         );
@@ -781,8 +836,9 @@ mod tests {
         assert!(report.layout.width_budget.center_canvas_satisfies_minimum());
         assert_eq!(report.center.nodes.a, 3);
         assert_eq!(report.center.edges.p_h, 1);
+        assert_eq!(report.center.edges.p_o, 1);
         assert_eq!(report.center.edges.p_b, 1);
-        assert_eq!(report.center.edges.total(), 2);
+        assert_eq!(report.center.edges.total(), 3);
         assert_eq!(report.center.components.weak, 2);
         assert_eq!(report.center.components.roots, 2);
         assert_eq!(report.center.components.orphan_artifacts, 1);
@@ -856,5 +912,113 @@ mod tests {
         assert!(text.contains("Failed: non-empty-artifact-run-renders-nodes"));
         assert!(text.contains("Failed: synthetic-anchors-hidden"));
         assert!(text.contains("Passed: right-inspector-present"));
+    }
+
+    fn tree_node(key: &str) -> TreeNode {
+        TreeNode {
+            key: NodeKey::from(key),
+            kind: ploke_tree::NodeKind::SchedulerSearchNode,
+            authority: ploke_tree::AuthorityLabel::MutableProjection,
+            parent: None,
+            children: Vec::new(),
+            generation: 0,
+            branch_id: format!("branch:{key}"),
+            parent_branch_id: None,
+            candidate_id: format!("candidate:{key}"),
+            instance_id: format!("instance:{key}"),
+            source_state_id: format!("artifact:{key}"),
+            target_relpath: "target.rs".to_owned(),
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            progress: ploke_tree::Progress {
+                phase: ploke_tree::Phase::Planned,
+                terminality: ploke_tree::Terminality::NonTerminal,
+                result_class: ploke_tree::ResultClass::Unknown,
+            },
+            created_at: "created".to_owned(),
+            updated_at: "updated".to_owned(),
+            evidence: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn artifact_history(value: &str) -> (ArtifactKey, ArtifactNode) {
+        let artifact = ArtifactRefRecord {
+            value: value.to_owned(),
+        };
+        let key = ArtifactKey::HistoryRef {
+            value: artifact.value.clone(),
+        };
+        (
+            key.clone(),
+            ArtifactNode {
+                key,
+                identity: ArtifactIdentity::HistoryRef(artifact),
+                ids: ArtifactIds {
+                    artifact_refs: vec![ArtifactRefRecord {
+                        value: value.to_owned(),
+                    }],
+                    ..ArtifactIds::default()
+                },
+                evidence: Vec::new(),
+            },
+        )
+    }
+
+    fn history_block(active: &str, successor: &str) -> HistoryBlockNode {
+        HistoryBlockNode {
+            block_hash: BlockHash("block-hash".to_owned()),
+            block_id: BlockId("block-id".to_owned()),
+            lineage_id: LineageId("lineage".to_owned()),
+            block_height: 0,
+            parent_block_hashes: Vec::new(),
+            opened_from_artifact: ArtifactRefRecord {
+                value: active.to_owned(),
+            },
+            active_artifact: ArtifactRefRecord {
+                value: active.to_owned(),
+            },
+            selected_successor: SuccessorNode {
+                runtime: ActorRefRecord::Runtime(RuntimeId("runtime".to_owned())),
+                artifact: ArtifactRefRecord {
+                    value: successor.to_owned(),
+                },
+            },
+            opening_authority: OpeningAuthorityNode::Predecessor {
+                predecessor_block_hash: BlockHash("previous".to_owned()),
+            },
+            ruling_authority: ActorRefRecord::Runtime(RuntimeId("runtime".to_owned())),
+            policy_ref: ProcedureRefRecord {
+                value: "policy".to_owned(),
+            },
+            surface: surface(),
+            opened_at: RecordedAt(1),
+            sealed_at: RecordedAt(2),
+            entry_count: 0,
+            entries: Vec::<EntryId>::new(),
+        }
+    }
+
+    fn surface() -> SurfaceCommitmentRecord {
+        SurfaceCommitmentRecord {
+            immutable: surface_record("immutable"),
+            mutated: SurfaceDeltaRecord {
+                before: surface_record("mutated-before"),
+                after: surface_record("mutated-after"),
+            },
+            ambient: SurfaceDeltaRecord {
+                before: surface_record("ambient-before"),
+                after: surface_record("ambient-after"),
+            },
+        }
+    }
+
+    fn surface_record(value: &str) -> SurfaceRecord {
+        SurfaceRecord {
+            root: SurfaceRootRecord {
+                hash: HistoryHash(value.to_owned()),
+            },
+        }
     }
 }

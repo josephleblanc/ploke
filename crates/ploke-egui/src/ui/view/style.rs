@@ -125,6 +125,7 @@ impl Default for EdgeLabelStyle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatusColors {
     pub synthesized: Color32,
+    pub opened_from: Color32,
     pub selected: Color32,
     pub applied: Color32,
     pub restored: Color32,
@@ -135,6 +136,7 @@ impl Default for StatusColors {
     fn default() -> Self {
         Self {
             synthesized: Color32::from_rgb(118, 128, 142),
+            opened_from: Color32::from_rgb(196, 145, 58),
             selected: Color32::from_rgb(33, 164, 106),
             applied: Color32::from_rgb(55, 118, 184),
             restored: Color32::from_rgb(126, 116, 95),

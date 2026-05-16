@@ -209,7 +209,7 @@ loaded in `G` without being part of the default `ArtifactTree`.
 |---|---|---|---|---|---|
 | `P_H` | History successor | `A -> A` | `HistoryBlockNode.active_artifact -> HistoryBlockNode.selected_successor.artifact` | Admitted History successor relation. | Rendered. Implemented. Self-loops are allowed but do not connect components. |
 | `P_B` | Applied-patch edge observed through branch/candidate records | `A -> A` | `CandidateBranchNode.base_artifact_id -> CandidateBranchNode.derived_artifact_id` | Source fact that a derived Artifact was produced from a base Artifact. It may overlap a selected/admitted successor, but does not imply that by itself. | Rendered. Implemented. |
-| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context relation. | Not rendered by default. May support lineage/context views if explicitly admitted into that projection. |
+| `P_O` | History opened-from context | `A -> A` | `HistoryBlockNode.opened_from_artifact -> HistoryBlockNode.active_artifact` | Sealed History context relation. | Rendered in the default artifact projection as an artifact-context edge. |
 | `B_PARENT` | Branch ancestry | branch id -> branch id | `parent_branch_id`, `source_state_id`, branch registry/scheduler branch facts | Branch/process ancestry, not an artifact edge by itself. | Not rendered by default. Cannot connect artifacts unless a graph-owned projection maps branch ancestry to artifact endpoints. |
 | `N_PARENT` | Node/process ancestry | node id -> node id | `NodeRecord.parent_node_id -> NodeRecord.node_id` | Scheduler/process ancestry, not an artifact edge by itself. | Not rendered by default. |
 | `SELECTS` | Selection chooses an Artifact-bearing successor | History/selection fact -> artifact-consideration fact | selection decision payload, `output_refs`, selected candidate/member fields | Selection/admission context. | Not rendered by default as artifact edge. May explain why an Artifact was chosen. |
@@ -220,7 +220,7 @@ loaded in `G` without being part of the default `ArtifactTree`.
 Fallback artifact-id edge set:
 
 ```text
-E_artifact = P_H union P_B
+E_artifact = P_H union P_O union P_B
 ```
 
 Non-default relations such as `B_PARENT` can explain why two artifacts are in
@@ -252,7 +252,7 @@ if F is non-empty:
   E_artifact = E_F
 else:
   N_artifact = A
-  E_artifact = P_H union P_B
+  E_artifact = P_H union P_O union P_B
 
 P_H = { (a_parent, a_child) | exists h. history_successor(h, a_parent, a_child) }
 P_B = { (a_base, a_child) | exists k. applied_patch_edge(k, a_base, a_child) }

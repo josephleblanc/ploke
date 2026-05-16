@@ -36,3 +36,6 @@ web-sys = { version = "0.3.98", features = [
 [features]
 default = []
 dev = ["dep:clap"]
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }

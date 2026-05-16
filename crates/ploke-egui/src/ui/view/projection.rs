@@ -620,6 +620,7 @@ impl GraphEdgePayload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ViewEdgeKind {
     ArtifactPatch,
+    HistoryOpenedFrom,
     #[cfg(test)]
     HistoryArtifact,
 }
@@ -637,15 +638,9 @@ pub(super) struct ProjectedGraph {
     artifact_tree: artifact_tree::Shape,
 }
 
+/// archaeology:artifact-relations
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
 fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGraph {
-    if let Some(forest) = graph
-        .forest
-        .as_ref()
-        .filter(|forest| !forest.nodes.is_empty())
-    {
-        return project_run_forest_artifact_tree(graph, forest, style);
-    }
-
     let mut raw = RawGraph::default();
     let mut artifact_nodes = BTreeMap::new();
     let mut artifact_lookup = HashMap::new();
@@ -721,6 +716,40 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         }
     }
 
+    let mut opened_from_edges = tree.opened_from_edges.iter().collect::<Vec<_>>();
+    opened_from_edges.sort_by_key(|edge| {
+        edge.sources
+            .iter()
+            .map(|source| source.block_height)
+            .min()
+            .unwrap_or_default()
+    });
+    for edge in opened_from_edges {
+        let (Some(opened_from), Some(active)) = (
+            artifact_lookup.get(&edge.from).copied(),
+            artifact_lookup.get(&edge.to).copied(),
+        ) else {
+            continue;
+        };
+        let layers = if lineage_edges.contains(&(edge.from, edge.to)) {
+            GraphLayerMask::ARTIFACT | GraphLayerMask::LINEAGE
+        } else {
+            GraphLayerMask::ARTIFACT
+        };
+        if add_unique_edge_with_layers(
+            &mut raw,
+            opened_from,
+            active,
+            format!("O{patch_index}"),
+            true,
+            ViewEdgeKind::HistoryOpenedFrom,
+            style,
+            layers,
+        ) {
+            patch_index += 1;
+        }
+    }
+
     let mut branches = tree.applied_patch_edges.iter().collect::<Vec<_>>();
     branches.sort_by(|left, right| {
         let left_source = left.sources.first();
@@ -774,6 +803,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         artifact_tree::Nodes::new(tree.nodes.len()),
         artifact_tree::Edges::new(
             tree.history_successors.len(),
+            tree.opened_from_edges.len(),
             tree.applied_patch_edges.len(),
         ),
         artifact_tree::Components::new(
@@ -788,135 +818,6 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         raw,
         connectivity,
         artifact_tree,
-    }
-}
-
-fn project_run_forest_artifact_tree(
-    graph: &DomainGraph,
-    forest: &ploke_tree::RunForest,
-    style: ViewStyle,
-) -> ProjectedGraph {
-    let mut raw = RawGraph::default();
-    let mut node_lookup = BTreeMap::new();
-    let mut nodes = forest.nodes.iter().collect::<Vec<_>>();
-    nodes.sort_by(|left, right| {
-        (left.generation, left.key.as_str()).cmp(&(right.generation, right.key.as_str()))
-    });
-
-    for node in nodes {
-        let graph_node = raw.add_node(GraphNode::Artifact {
-            label: Arc::from(artifact_handle_label(node_lookup.len() + 1)),
-            detail: Arc::from(run_forest_node_detail(node)),
-            reference: GraphSelectionRef::RunForestNode {
-                key: node.key.as_str().to_owned(),
-            },
-            color: run_forest_node_color(node, style),
-            layers: GraphLayerMask::ARTIFACT,
-            visible: true,
-        });
-        node_lookup.insert(node.key.as_str(), graph_node);
-    }
-
-    let mut edge_count = 0;
-    let mut sorted_edges = forest
-        .nodes
-        .iter()
-        .filter_map(|node| {
-            let parent = node.parent.as_ref()?;
-            Some((parent.as_str(), node.key.as_str(), node.generation))
-        })
-        .collect::<Vec<_>>();
-    sorted_edges.sort_unstable();
-
-    for (parent_key, child_key, _) in sorted_edges {
-        let (Some(parent), Some(child)) = (
-            node_lookup.get(parent_key).copied(),
-            node_lookup.get(child_key).copied(),
-        ) else {
-            continue;
-        };
-        if add_unique_edge_with_layers(
-            &mut raw,
-            parent,
-            child,
-            format!("P{}", edge_count + 1),
-            true,
-            ViewEdgeKind::ArtifactPatch,
-            style,
-            GraphLayerMask::ARTIFACT,
-        ) {
-            edge_count += 1;
-        }
-    }
-
-    let component_count = run_forest_component_count(forest);
-    let artifact_tree = artifact_tree::Shape::new(
-        artifact_tree::Nodes::run_forest(forest.nodes.len()),
-        artifact_tree::Edges::run_forest(edge_count),
-        artifact_tree::Components::new(component_count, forest.roots.len(), 0),
-        artifact_tree::Marks::new(0),
-    );
-
-    let hidden_record_count = full_debug_record_count(graph).saturating_sub(raw.node_count());
-    let hidden_edge_count = full_debug_edge_count(graph).saturating_sub(raw.edge_count());
-    let connectivity = GraphConnectivityDiagnostics {
-        component_count_before_anchoring: component_count,
-        hidden_record_count,
-        hidden_edge_count,
-        hidden_evidence_count: graph.evidence.attachments.len(),
-        hidden_operation_count: graph.operations.operations.len(),
-        hidden_unattached_component_count: component_count.saturating_sub(1),
-        synthetic_anchors_visible: false,
-    };
-
-    ProjectedGraph {
-        raw,
-        connectivity,
-        artifact_tree,
-    }
-}
-
-fn run_forest_node_detail(node: &ploke_tree::TreeNode) -> String {
-    let mut detail = vec![
-        format!("node: {}", node.key.as_str()),
-        format!("generation: {}", node.generation),
-        format!("branch: {}", node.branch_id),
-        format!("candidate: {}", node.candidate_id),
-        format!("source state: {}", node.source_state_id),
-        format!("target: {}", node.target_relpath),
-        format!("phase: {:?}", node.progress.phase),
-    ];
-    if let Some(parent) = node.parent.as_ref() {
-        detail.push(format!("parent node: {}", parent.as_str()));
-    }
-    if let Some(parent_branch) = node.parent_branch_id.as_ref() {
-        detail.push(format!("parent branch: {parent_branch}"));
-    }
-    if let Some(base) = node.base_artifact_id.as_ref() {
-        detail.push(format!("base artifact: {base}"));
-    }
-    if let Some(patch) = node.patch_id.as_ref() {
-        detail.push(format!("patch: {patch}"));
-    }
-    if let Some(derived) = node.derived_artifact_id.as_ref() {
-        detail.push(format!("derived artifact: {derived}"));
-    }
-    detail.join("\n")
-}
-
-fn run_forest_node_color(node: &ploke_tree::TreeNode, style: ViewStyle) -> Color32 {
-    match node.progress.result_class {
-        ploke_tree::ResultClass::Success => style.edge.colors.applied,
-        ploke_tree::ResultClass::Failure => style.edge.colors.dropped,
-        ploke_tree::ResultClass::Unknown => style.edge.colors.synthesized,
-    }
-}
-
-fn run_forest_component_count(forest: &ploke_tree::RunForest) -> usize {
-    if forest.nodes.is_empty() {
-        0
-    } else {
-        forest.roots.len().max(1)
     }
 }
 
@@ -1196,7 +1097,7 @@ fn add_unique_edge_with_layers(
 ) -> bool {
     if let Some(edge) = raw
         .edges_connecting(source, target)
-        .next()
+        .find(|edge| edge.weight().kind == kind)
         .map(|edge| edge.id())
     {
         if let Some(payload) = raw.edge_weight_mut(edge) {
@@ -1258,6 +1159,7 @@ fn add_edge_with_layers(
 fn edge_color(kind: ViewEdgeKind, style: ViewStyle) -> Color32 {
     match kind {
         ViewEdgeKind::ArtifactPatch => style.edge.colors.synthesized,
+        ViewEdgeKind::HistoryOpenedFrom => style.edge.colors.opened_from,
         #[cfg(test)]
         ViewEdgeKind::HistoryArtifact => style.edge.colors.selected,
     }
@@ -1383,25 +1285,19 @@ mod tests {
     }
 
     #[test]
-    fn artifact_tree_uses_run_forest_parent_child_topology_when_available() {
+    fn artifact_tree_stays_artifact_first_when_scheduler_records_are_present() {
         let graph = Graph::from_records(&run_records_with_parent_and_children());
 
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
-        assert_eq!(projected.artifact_tree.nodes().run_forest, 4);
-        assert_eq!(projected.artifact_tree.nodes().artifacts, 0);
-        assert_eq!(projected.artifact_tree.edges().history_patches, 0);
-        assert_eq!(projected.artifact_tree.edges().run_forest, 3);
-        assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 0);
-        assert_eq!(projected.artifact_tree.components().weak, 1);
-        assert!(projected.artifact_tree.components().weakly_connected(4));
-        assert_eq!(projected.raw.edge_count(), 3);
-        assert!(
-            projected
-                .raw
-                .node_weights()
-                .any(|node| node.detail().contains("derived artifact: artifact:child-a"))
+        assert_eq!(projected.artifact_tree.nodes().run_forest, 0);
+        assert!(projected.artifact_tree.nodes().artifacts > 0);
+        assert_eq!(
+            count_nodes(&projected, "artifact"),
+            projected.raw.node_count()
         );
+        assert_eq!(count_nodes(&projected, "artifact"), 4);
+        assert_eq!(projected.artifact_tree.edges().run_forest, 0);
     }
 
     #[test]
@@ -1470,19 +1366,30 @@ mod tests {
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
-        assert_eq!(projected.raw.edge_count(), 1);
+        assert_eq!(projected.raw.edge_count(), 2);
         assert_eq!(projected.artifact_tree.nodes().artifacts, 2);
         assert_eq!(projected.artifact_tree.edges().history_patches, 1);
+        assert_eq!(projected.artifact_tree.edges().opened_from_edges, 1);
         assert_eq!(projected.artifact_tree.edges().applied_patch_edges, 0);
         assert_eq!(projected.artifact_tree.components().weak, 1);
-        assert_eq!(projected.artifact_tree.components().roots, 1);
+        assert_eq!(projected.artifact_tree.components().roots, 0);
         assert_eq!(projected.artifact_tree.components().orphan_artifacts, 0);
         assert!(projected.artifact_tree.components().weakly_connected(2));
         assert_eq!(projected.artifact_tree.marks().ruler_highlights, 1);
-        let edge = projected.raw.edge_weights().next().expect("patch edge");
-        assert_eq!(edge.label.as_ref(), "P1");
-        assert!(edge.label_visible);
-        assert_eq!(edge.kind, super::ViewEdgeKind::ArtifactPatch);
+        let kinds = projected
+            .raw
+            .edge_weights()
+            .map(|edge| edge.kind)
+            .collect::<Vec<_>>();
+        assert!(kinds.contains(&super::ViewEdgeKind::ArtifactPatch));
+        assert!(kinds.contains(&super::ViewEdgeKind::HistoryOpenedFrom));
+        assert!(
+            projected.raw.edge_weights().any(|edge| {
+                edge.kind == super::ViewEdgeKind::HistoryOpenedFrom
+                    && edge.color == ViewStyle::default().edge.colors.opened_from
+            }),
+            "opened-from edges should be rendered with the opened-from edge color"
+        );
         assert_eq!(count_nodes(&projected, "history-block"), 0);
         assert_eq!(count_nodes(&projected, "lineage"), 0);
     }
@@ -1613,10 +1520,12 @@ mod tests {
         let graph = Graph::from_records(&run_records_with_parent_and_children());
         let projected = project_artifact_tree(&graph, ViewStyle::default());
 
-        assert!(projected.raw.node_weights().any(|node| {
-            node.detail().contains("node: node-child-a")
-                && node.detail().contains("derived artifact: artifact:child-a")
-        }));
+        assert!(
+            projected
+                .raw
+                .node_weights()
+                .any(|node| { node.detail().contains("artifact_id: artifact:child-a") })
+        );
     }
 
     #[test]
