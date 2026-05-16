@@ -3,9 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use super::{
-    ArtifactIdentity, ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageNode,
-};
+use super::{ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageNode};
 
 /// Borrowed artifact-first projection over a [`Graph`].
 ///
@@ -387,10 +385,7 @@ fn primary_lineage(graph: &Graph) -> Option<&LineageNode> {
 }
 
 fn node_key(artifact: &ArtifactNode) -> Option<Key<'_>> {
-    match &artifact.identity {
-        ArtifactIdentity::HistoryRef(artifact) => Some(history_ref_key(&artifact.value)),
-        ArtifactIdentity::PassiveId(artifact) => Some(passive_id_key(&artifact.0)),
-    }
+    Some(Key(artifact.entity_key()))
 }
 
 fn history_ref_key(value: &str) -> Key<'_> {
@@ -465,9 +460,9 @@ mod tests {
     };
 
     use crate::graph::{
-        ArtifactIdentity, ArtifactIndex, ArtifactKey, ArtifactNode, CandidateBranchNode,
-        CandidateIndex, Graph, HistoryBlockNode, HistoryIndex, LineageNode, OpeningAuthorityNode,
-        SuccessorNode,
+        ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode,
+        CandidateBranchNode, CandidateIndex, Graph, HistoryBlockNode, HistoryIndex, LineageNode,
+        OpeningAuthorityNode, SuccessorNode,
     };
 
     #[test]
@@ -521,6 +516,10 @@ mod tests {
                     value: "orphan".to_owned(),
                 },
                 identity: ArtifactIdentity::PassiveId(ArtifactId("orphan".to_owned())),
+                ids: ArtifactIds {
+                    artifact_ids: vec![ArtifactId("orphan".to_owned())],
+                    ..ArtifactIds::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -666,6 +665,12 @@ mod tests {
             ArtifactNode {
                 key,
                 identity: ArtifactIdentity::HistoryRef(artifact),
+                ids: ArtifactIds {
+                    artifact_refs: vec![ArtifactRefRecord {
+                        value: value.to_owned(),
+                    }],
+                    ..ArtifactIds::default()
+                },
                 evidence: Vec::new(),
             },
         )
@@ -681,6 +686,10 @@ mod tests {
             ArtifactNode {
                 key,
                 identity: ArtifactIdentity::PassiveId(artifact),
+                ids: ArtifactIds {
+                    artifact_ids: vec![ArtifactId(value.to_owned())],
+                    ..ArtifactIds::default()
+                },
                 evidence: Vec::new(),
             },
         )

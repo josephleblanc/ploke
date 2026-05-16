@@ -20,7 +20,7 @@ Current UI surfaces involved:
 | --- | --- | --- | --- |
 | `ArtifactId` | `loop_graph::ArtifactId`, `ploke_records::ids::ArtifactId`, `Prototype1NodeRecord.{base_artifact_id,derived_artifact_id}` | identity / durable handle | intended backend-neutral durable artifact identity slot |
 | `ArtifactRef` / `ArtifactRefRecord` | History block boundaries, selection carrier, `ploke_tree::graph::ArtifactIdentity::HistoryRef` | handle / alias | recoverable History-facing artifact handle |
-| `TreeKeyHash` | `ArtifactSurface.tree_key`, History artifact claim admission via `ArtifactLocator` | identity / stronger checkout proof | strongest current checkout-state identity, but not yet exposed in `ploke_tree::Graph` artifact identity carriers |
+| `TreeKeyHash` | `ArtifactSurface.tree_key`, sealed History artifact claim via `ClaimsRecord.artifact`, artifact claim admission via `ArtifactLocator` | identity / stronger checkout proof | strongest current checkout-state identity; now copied onto `ploke_tree::graph::ArtifactNode.ids.tree_keys` when sealed History carries an artifact claim for the active Artifact |
 | `node_id` | `Prototype1NodeRecord.node_id`, parent identity and scheduler flow | provenance | identifies the generation attempt / scheduler node, not the Artifact itself |
 | `branch_id` | scheduler, selection fallback for `ArtifactRef` | fallback / provenance | branch handle is explicitly not artifact identity in the docs |
 | `candidate_id` | scheduler and run-forest records | provenance | selection provenance, not artifact identity |
@@ -56,6 +56,7 @@ Current UI surfaces involved:
 - minted from backend clean checkout state in
   `crates/ploke-eval/src/cli/prototype1_state/backend.rs`
 - carried through `ArtifactSurface.tree_key`
+- persisted in sealed History as `ClaimsRecord.artifact`
 - used for History artifact claim admission via `ArtifactLocator` in
   `crates/ploke-eval/src/cli/prototype1_state/history.rs`
 
@@ -83,10 +84,10 @@ Why:
 
 ### `TreeKeyHash` is not primary for this UI claim
 
-It is the strongest current checkout-state identity, but it is not yet exposed
-through `ploke_tree::Graph` artifact identity carriers, and it is likely too
-noisy to act as the first displayed handle in the inspector. It should be a
-drilldown slot when the graph can prove it.
+It is the strongest current checkout-state identity, but it remains secondary
+to `ArtifactId` for this UI claim, and it is likely too noisy to act as the
+first displayed handle in the inspector. It should be a drilldown slot, even
+now that the graph can carry it on `ArtifactNode.ids.tree_keys`.
 
 ### `ArtifactRef` is not primary
 
@@ -111,6 +112,8 @@ and must not be treated as the source authority for debugger identity claims.
 
 - `ploke_records::ids::ArtifactId`
 - `ploke_records::history::ArtifactRefRecord.value`
+- `ploke_records::history::TreeKeyHashRecord`
+- `ploke_records::history::ClaimsRecord.artifact`
 - `ploke_records::history::SealedBlockRecord.state.header.common.opened_from_artifact`
 - `ploke_records::history::SealedBlockRecord.state.header.active_artifact`
 - `ploke_records::history::SealedBlockRecord.state.header.selected_successor.artifact`
@@ -129,9 +132,11 @@ and must not be treated as the source authority for debugger identity claims.
 Current graph carriers:
 
 - `ploke_tree::graph::ArtifactNode`
+- `ploke_tree::graph::ArtifactIds`
 - `ploke_tree::graph::ArtifactIdentity`
   - `HistoryRef(ArtifactRefRecord)`
   - `PassiveId(ArtifactId)`
+- `ploke_tree::graph::OpeningAuthorityNode::Genesis { tree_key_hash, .. }`
 - artifact-tree grouping node sources: one display/grouping artifact may be
   backed by multiple `ArtifactNode`s
 
@@ -140,10 +145,23 @@ Current UI carrier path:
 - `ArtifactInspection.sources`
 - `ArtifactIdentityWitness<'_, 'g>` over `&[&ArtifactNode]`
 
-Important gap:
+Current join behavior:
 
-- `TreeKeyHash` is not currently available on the `ploke_tree::Graph` artifact
-  identity surface, so `ploke-egui` must not invent it locally
+- `ArtifactNode.ids` is reconciled by the same normalized entity key the
+  artifact tree uses today: strip the `artifact:` prefix when present and group
+  matching values
+- `ArtifactId` and `ArtifactRefRecord` are accumulated into the shared
+  `ArtifactIds` bundle for every source node in that entity group
+- `TreeKeyHash` is accumulated into that same bundle when sealed History
+  provides `ClaimsRecord.artifact`, attached through the block's
+  `active_artifact`
+
+Important caveat:
+
+- the graph now exposes `TreeKeyHash` on the artifact identity surface when a
+  sealed artifact claim is present, but the join still depends on the current
+  normalized active-artifact key path rather than on a richer first-class
+  artifact entity object
 
 ## 8. Downstream UI Consumers by Crate / Module
 
@@ -167,8 +185,12 @@ Planned consumer:
 
 ## 9. Open Gaps, Caveats, and Fallback Status
 
-- `TreeKeyHash` is stronger checkout identity than `ArtifactId`, but the graph
-  does not currently expose it on Artifact identity carriers.
+- `TreeKeyHash` is stronger checkout identity than `ArtifactId`, but it remains
+  secondary for this UI claim even though the graph now carries it on
+  `ArtifactNode.ids.tree_keys`.
+- the current graph join uses normalized key reconciliation and
+  `active_artifact -> ClaimsRecord.artifact` attachment. That is good enough for
+  this slice, but it is not yet the final first-class artifact entity model.
 - `ArtifactRef` construction currently wraps `ArtifactId` textually and can
   produce inconsistent prefixes.
 - grouped artifact-tree nodes may have multiple source identities; the UI must
@@ -186,5 +208,4 @@ Expected slot order for the next UI pass:
 
 1. primary `ArtifactId`
 2. alias `ArtifactRef` values
-3. stronger checkout identity such as `TreeKeyHash` once `ploke_tree::Graph`
-   exposes it
+3. secondary `TreeKeyHash` from `ArtifactNode.ids.tree_keys`

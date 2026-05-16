@@ -594,6 +594,17 @@ pub(crate) struct BroadTuiAttemptOptions {
 }
 
 impl BroadTuiAttemptOptions {
+    pub(crate) fn for_parent_patcher_defaults(
+        max_attempts: Option<u32>,
+        timeout_secs: Option<u64>,
+    ) -> Result<Self, PrepareError> {
+        Ok(Self {
+            model: Some(crate::cli::load_parent_patcher_model_selection()?),
+            max_attempts,
+            timeout_secs,
+        })
+    }
+
     pub(crate) fn from_cli(
         model_id: Option<String>,
         provider: Option<String>,
@@ -622,7 +633,7 @@ impl BroadTuiAttemptOptions {
                     detail: format!("broad TUI attempt provider '{provider}' requires --model-id"),
                 });
             }
-            (None, None) => None,
+            (None, None) => Some(crate::cli::load_parent_patcher_model_selection()?),
         };
         Ok(Self {
             model,
@@ -1371,7 +1382,8 @@ fn try_admit_request_result(
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
-    run_broad_headless_tui_attempt_with_options(slot, &BroadTuiAttemptOptions::default()).await
+    let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(None, None)?;
+    run_broad_headless_tui_attempt_with_options(slot, &options).await
 }
 
 fn effective_broad_tui_max_attempts(
@@ -11956,8 +11968,13 @@ stop_after = "complete"
             crate::cli::prototype1_state::edit_surface::harness_request::contract::Bundle::prototype1(
                 Path::new("/tmp/prototype1"),
             );
-        let options =
-            BroadTuiAttemptOptions::from_cli(None, None, Some(1), Some(180)).expect("options");
+        let options = BroadTuiAttemptOptions::from_cli(
+            Some("moonshotai/kimi-k2".to_string()),
+            None,
+            Some(1),
+            Some(180),
+        )
+        .expect("options");
 
         assert_eq!(effective_broad_tui_max_attempts(&contract, &options), 1);
         assert_eq!(effective_broad_tui_timeout_secs(&contract, &options), 180);

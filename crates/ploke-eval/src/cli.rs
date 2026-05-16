@@ -66,11 +66,12 @@ use crate::intervention_issue_aggregate::{
 };
 use crate::layout::{
     active_model_file, batches_dir, cache_dir, datasets_dir, instances_dir, model_registry_file,
-    models_dir, repos_dir, starting_db_cache_dir, workspace_root_for_key,
+    models_dir, parent_patcher_model_file, repos_dir, starting_db_cache_dir,
+    workspace_root_for_key,
 };
 use crate::model_registry::{
-    find_models, load_active_model, load_model_registry, refresh_model_registry,
-    registry_has_model, save_active_model,
+    find_models, load_active_model, load_model_registry, load_parent_patcher_model,
+    refresh_model_registry, registry_has_model, save_active_model, save_parent_patcher_model,
 };
 use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
 use crate::projection::OperatorProjectionRead;
@@ -2433,6 +2434,21 @@ pub struct ProviderCommand {
     pub command: ProviderSubcommand,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    about = "Manage the persisted default model used for parent broad-harness patch generation",
+    after_help = "\
+Examples:
+
+  cargo run -p ploke-eval -- model parent-patcher set minimax/minimax-m2.5
+  cargo run -p ploke-eval -- model parent-patcher current
+"
+)]
+pub struct ParentPatcherCommand {
+    #[command(subcommand)]
+    pub command: ParentPatcherSubcommand,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ProviderSubcommand {
     /// Persist the default provider for the current or specified model.
@@ -2456,6 +2472,17 @@ pub enum ProviderSubcommand {
         #[arg(long)]
         model_id: Option<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ParentPatcherSubcommand {
+    /// Persist the model used for parent broad-harness patch generation.
+    Set {
+        /// Exact model id to mark as the parent patcher.
+        model_id: String,
+    },
+    /// Show the current parent patcher model selection.
+    Current,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2489,6 +2516,9 @@ The output shows provider slug, provider name, tool support, and context length.
         /// Exact model id to inspect. Defaults to the current active model.
         model_id: Option<String>,
     },
+    /// Persist or inspect the model used for parent broad-harness patch generation.
+    #[command(name = "parent-patcher")]
+    ParentPatcher(ParentPatcherCommand),
     /// Persist or inspect the default provider for a model.
     Provider(ProviderCommand),
     /// Persist the active model selection.
@@ -2554,6 +2584,7 @@ impl ModelCommand {
                 }
                 Ok(())
             }
+            ModelSubcommand::ParentPatcher(cmd) => cmd.run().await,
             ModelSubcommand::Providers { model_id } => print_model_providers(model_id).await,
             ModelSubcommand::Provider(cmd) => cmd.run().await,
             ModelSubcommand::Set { model_id } => {
@@ -2584,6 +2615,47 @@ impl ModelCommand {
                         }
                     }
                     Err(PrepareError::MissingModelRegistry(_)) => println!("{}", active.model_id),
+                    Err(err) => return Err(err),
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl ParentPatcherCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        match self.command {
+            ParentPatcherSubcommand::Set { model_id } => {
+                let registry = load_model_registry()?;
+                let registry_path = crate::model_registry::model_registry_path()?;
+                let selected = registry
+                    .data
+                    .iter()
+                    .find(|item| item.id.to_string() == model_id)
+                    .ok_or_else(|| PrepareError::UnknownModelInRegistry {
+                        model: model_id.clone(),
+                        path: registry_path.clone(),
+                    })?;
+                save_parent_patcher_model(&selected.id)?;
+                println!("{}", selected.id);
+                Ok(())
+            }
+            ParentPatcherSubcommand::Current => {
+                let selected = load_parent_patcher_model()?;
+                match load_model_registry() {
+                    Ok(registry) => {
+                        if let Some(item) = registry
+                            .data
+                            .iter()
+                            .find(|item| item.id == selected.model_id)
+                        {
+                            println!("{}\t{}", item.id, item.name.as_str());
+                        } else {
+                            println!("{}", selected.model_id);
+                        }
+                    }
+                    Err(PrepareError::MissingModelRegistry(_)) => println!("{}", selected.model_id),
                     Err(err) => return Err(err),
                 }
                 Ok(())
@@ -2694,6 +2766,21 @@ fn current_provider_for_model(
     let model = resolve_provider_model_id(model_id)?;
     let provider = load_provider_for_model(&model)?;
     Ok((model, provider))
+}
+
+fn load_parent_patcher_model_selection()
+-> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    let selected = load_parent_patcher_model().or_else(|err| match err {
+        PrepareError::MissingParentPatcherModel(_) => load_active_model(),
+        other => Err(other),
+    })?;
+    let provider = load_provider_for_model(&selected.model_id)?;
+    Ok(
+        prototype1_state::edit_surface::tui_adapter::ModelSelection::new(
+            selected.model_id,
+            provider,
+        ),
+    )
 }
 
 async fn set_persisted_provider(
@@ -11985,6 +12072,53 @@ fn run_doctor() -> Result<(), PrepareError> {
             print_advice(&[
                 "cargo run -p ploke-eval -- model refresh",
                 "cargo run -p ploke-eval -- model set <model_id>",
+            ]);
+        }
+        Err(err) => return Err(err),
+    }
+
+    match load_parent_patcher_model() {
+        Ok(selected) => match load_model_registry() {
+            Ok(registry) => {
+                if registry_has_model(&registry, &selected.model_id) {
+                    ok += 1;
+                    println!(
+                        "[ok] parent patcher model: {} ({})",
+                        selected.model_id,
+                        parent_patcher_model_file()?.display()
+                    );
+                } else {
+                    warn += 1;
+                    println!(
+                        "[warn] parent patcher model: {} is not present in the current registry ({})",
+                        selected.model_id,
+                        parent_patcher_model_file()?.display()
+                    );
+                    print_advice(&[
+                        "cargo run -p ploke-eval -- model refresh",
+                        "cargo run -p ploke-eval -- model parent-patcher set <model_id>",
+                    ]);
+                }
+            }
+            Err(PrepareError::MissingModelRegistry(_)) => {
+                warn += 1;
+                println!(
+                    "[warn] parent patcher model: {} ({})",
+                    selected.model_id,
+                    parent_patcher_model_file()?.display()
+                );
+            }
+            Err(err) => return Err(err),
+        },
+        Err(PrepareError::MissingParentPatcherModel(path)) => {
+            warn += 1;
+            println!(
+                "[warn] parent patcher model: missing ({}); broad harness will fall back to the active model",
+                path.display()
+            );
+            print_advice(&[
+                "cargo run -p ploke-eval -- model refresh",
+                "cargo run -p ploke-eval -- model parent-patcher set <model_id>",
             ]);
         }
         Err(err) => return Err(err),

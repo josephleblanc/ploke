@@ -55,6 +55,10 @@ pub fn active_model_file() -> Result<PathBuf, PrepareError> {
     Ok(models_dir()?.join("active-model.json"))
 }
 
+pub fn parent_patcher_model_file() -> Result<PathBuf, PrepareError> {
+    Ok(models_dir()?.join("parent-patcher-model.json"))
+}
+
 pub fn provider_prefs_file() -> Result<PathBuf, PrepareError> {
     Ok(models_dir()?.join("provider-preferences.json"))
 }

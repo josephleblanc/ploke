@@ -123,6 +123,14 @@ Maintain this list when a bug is discovered that would have been prevented by pr
   - Parent/child protocol state should be modeled structurally, e.g. `Child<Ready>`, not as flattened event names such as `ChildReady`, `ChildProgress`, or `ChildHeartbeat`.
 - If a local Prototype 1 pattern conflicts with that model, patch toward the model. Do not preserve agent-created clutter for consistency.
 
+## Collaboration Incident Ledger
+
+- When the user expresses anger, frustration, alarm, or trust loss caused by agent behavior, create or update an incident log under `docs/active/agents/collaboration-incidents/`.
+- Group incidents by failure family in subdirectories, keep every directory indexed with a `README.md`, and add the new area to `docs/active/agents/readme.md` when needed.
+- Each incident entry must record: trigger, user-visible failure, touched code surface, skipped docs/skills/instructions, why the behavior was risky, and the concrete prevention rule for next time.
+- If the incident reveals a durable repo-level workflow gap, update `AGENTS.md` or the relevant skill in the same turn when feasible.
+- Use the `collaboration-incident-logging` skill when this trigger fires.
+
 ## Bounded Edit Surface Plan
 
 - Before implementing bounded edit-surface work, read `docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`.

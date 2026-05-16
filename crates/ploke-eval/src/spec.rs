@@ -229,6 +229,23 @@ pub enum PrepareError {
     },
     #[error("failed to serialize active model selection: {0}")]
     SerializeActiveModel(serde_json::Error),
+    #[error("failed to read parent patcher model file '{path}': {source}")]
+    ReadParentPatcherModel {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to parse parent patcher model file '{path}': {source}")]
+    ParseParentPatcherModel {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("failed to write parent patcher model file '{path}': {source}")]
+    WriteParentPatcherModel {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to serialize parent patcher model selection: {0}")]
+    SerializeParentPatcherModel(serde_json::Error),
     #[error("failed to read provider preferences file '{path}': {source}")]
     ReadProviderPrefs {
         path: PathBuf,
@@ -330,6 +347,8 @@ pub enum PrepareError {
     MissingModelRegistry(PathBuf),
     #[error("active model file '{0}' does not exist")]
     MissingActiveModel(PathBuf),
+    #[error("parent patcher model file '{0}' does not exist")]
+    MissingParentPatcherModel(PathBuf),
     #[error("no completed eval run was found in '{0}'")]
     MissingLastRun(PathBuf),
     #[error("completed run '{0}' does not contain a final snapshot")]

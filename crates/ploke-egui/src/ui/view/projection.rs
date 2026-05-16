@@ -1269,6 +1269,12 @@ trait DetailText {
 
 impl DetailText for ArtifactNode {
     fn detail_text(&self) -> String {
+        if let Some(artifact_id) = self.artifact_ids().first() {
+            return format!("artifact_id: {}", artifact_id.0);
+        }
+        if let Some(history_ref) = self.artifact_refs().first() {
+            return format!("artifact history ref: {}", history_ref.value);
+        }
         match &self.identity {
             ArtifactIdentity::HistoryRef(history_ref) => {
                 format!("artifact history ref: {}", history_ref.value)
@@ -1497,6 +1503,10 @@ mod tests {
                     value: base_id.0.clone(),
                 },
                 identity: ArtifactIdentity::PassiveId(base_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![base_id.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1509,6 +1519,10 @@ mod tests {
                     value: child_id.0.clone(),
                 },
                 identity: ArtifactIdentity::PassiveId(child_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![child_id.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1764,6 +1778,10 @@ mod tests {
                     value: parent_id.0.clone(),
                 },
                 identity: ArtifactIdentity::PassiveId(parent_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![parent_id.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1776,6 +1794,10 @@ mod tests {
                     value: child_id.0.clone(),
                 },
                 identity: ArtifactIdentity::PassiveId(child_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![child_id.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1935,6 +1957,10 @@ mod tests {
                     value: parent.to_owned(),
                 },
                 identity: ArtifactIdentity::HistoryRef(parent_ref.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_refs: vec![parent_ref.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1947,6 +1973,10 @@ mod tests {
                     value: child.to_owned(),
                 },
                 identity: ArtifactIdentity::HistoryRef(child_ref.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_refs: vec![child_ref.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );

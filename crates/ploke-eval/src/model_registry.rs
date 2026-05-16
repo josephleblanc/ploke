@@ -9,7 +9,9 @@ use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{active_model_file, model_registry_file, models_dir};
+use crate::layout::{
+    active_model_file, model_registry_file, models_dir, parent_patcher_model_file,
+};
 use crate::spec::PrepareError;
 
 pub type ModelRegistry = Response;
@@ -25,6 +27,10 @@ pub fn model_registry_path() -> Result<PathBuf, PrepareError> {
 
 pub fn active_model_path() -> Result<PathBuf, PrepareError> {
     active_model_file()
+}
+
+pub fn parent_patcher_model_path() -> Result<PathBuf, PrepareError> {
+    parent_patcher_model_file()
 }
 
 fn openrouter_headers() -> HeaderMap {
@@ -143,21 +149,44 @@ pub fn load_active_model() -> Result<ActiveModelSelection, PrepareError> {
 }
 
 pub fn load_active_model_at(path: impl AsRef<Path>) -> Result<ActiveModelSelection, PrepareError> {
+    load_model_selection_at(
+        path,
+        PrepareError::MissingActiveModel,
+        |path, source| PrepareError::ReadActiveModel { path, source },
+        |path, source| PrepareError::ParseActiveModel { path, source },
+    )
+}
+
+pub fn load_parent_patcher_model() -> Result<ActiveModelSelection, PrepareError> {
+    load_parent_patcher_model_at(parent_patcher_model_path()?)
+}
+
+pub fn load_parent_patcher_model_at(
+    path: impl AsRef<Path>,
+) -> Result<ActiveModelSelection, PrepareError> {
+    load_model_selection_at(
+        path,
+        PrepareError::MissingParentPatcherModel,
+        |path, source| PrepareError::ReadParentPatcherModel { path, source },
+        |path, source| PrepareError::ParseParentPatcherModel { path, source },
+    )
+}
+
+fn load_model_selection_at(
+    path: impl AsRef<Path>,
+    missing: impl Fn(PathBuf) -> PrepareError,
+    read: impl Fn(PathBuf, std::io::Error) -> PrepareError,
+    parse: impl Fn(PathBuf, serde_json::Error) -> PrepareError,
+) -> Result<ActiveModelSelection, PrepareError> {
     let path = path.as_ref();
     let text = fs::read_to_string(path).map_err(|source| {
         if source.kind() == std::io::ErrorKind::NotFound {
-            PrepareError::MissingActiveModel(path.to_path_buf())
+            missing(path.to_path_buf())
         } else {
-            PrepareError::ReadActiveModel {
-                path: path.to_path_buf(),
-                source,
-            }
+            read(path.to_path_buf(), source)
         }
     })?;
-    serde_json::from_str(&text).map_err(|source| PrepareError::ParseActiveModel {
-        path: path.to_path_buf(),
-        source,
-    })
+    serde_json::from_str(&text).map_err(|source| parse(path.to_path_buf(), source))
 }
 
 pub fn save_active_model(model_id: &ModelId) -> Result<(), PrepareError> {
@@ -168,23 +197,46 @@ pub fn save_active_model_at(
     path: impl AsRef<Path>,
     model_id: &ModelId,
 ) -> Result<(), PrepareError> {
+    save_model_selection_at(
+        path,
+        model_id,
+        |path, source| PrepareError::WriteActiveModel { path, source },
+        PrepareError::SerializeActiveModel,
+    )
+}
+
+pub fn save_parent_patcher_model(model_id: &ModelId) -> Result<(), PrepareError> {
+    save_parent_patcher_model_at(parent_patcher_model_path()?, model_id)
+}
+
+pub fn save_parent_patcher_model_at(
+    path: impl AsRef<Path>,
+    model_id: &ModelId,
+) -> Result<(), PrepareError> {
+    save_model_selection_at(
+        path,
+        model_id,
+        |path, source| PrepareError::WriteParentPatcherModel { path, source },
+        PrepareError::SerializeParentPatcherModel,
+    )
+}
+
+fn save_model_selection_at(
+    path: impl AsRef<Path>,
+    model_id: &ModelId,
+    write: impl Fn(PathBuf, std::io::Error) -> PrepareError,
+    serialize: impl Fn(serde_json::Error) -> PrepareError,
+) -> Result<(), PrepareError> {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteActiveModel {
-            path: parent.to_path_buf(),
-            source,
-        })?;
+        fs::create_dir_all(parent).map_err(|source| write(parent.to_path_buf(), source))?;
     }
 
     let selection = ActiveModelSelection {
         model_id: model_id.clone(),
     };
-    let json =
-        serde_json::to_string_pretty(&selection).map_err(PrepareError::SerializeActiveModel)?;
-    fs::write(path, json).map_err(|source| PrepareError::WriteActiveModel {
-        path: path.to_path_buf(),
-        source,
-    })
+    let json = serde_json::to_string_pretty(&selection).map_err(serialize)?;
+    fs::write(path, json).map_err(|source| write(path.to_path_buf(), source))
 }
 
 pub fn registry_has_model(registry: &ModelRegistry, model_id: &ModelId) -> bool {
@@ -333,6 +385,18 @@ mod tests {
 
         save_active_model_at(&path, &model_id).expect("save active model");
         let loaded = load_active_model_at(&path).expect("load active model");
+
+        assert_eq!(loaded.model_id, model_id);
+    }
+
+    #[test]
+    fn save_and_load_parent_patcher_model_roundtrip() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("parent-patcher-model.json");
+        let model_id = ModelId::from(ModelKey::default());
+
+        save_parent_patcher_model_at(&path, &model_id).expect("save parent patcher model");
+        let loaded = load_parent_patcher_model_at(&path).expect("load parent patcher model");
 
         assert_eq!(loaded.model_id, model_id);
     }

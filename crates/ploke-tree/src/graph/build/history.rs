@@ -103,6 +103,9 @@ impl Builder {
             self.observe_artifact_ref(&common.opened_from_artifact);
             self.observe_artifact_ref(&header.active_artifact);
             self.observe_artifact_ref(&header.selected_successor.artifact);
+            if let Some(artifact_claim) = header.claims.artifact.as_ref() {
+                self.observe_artifact_tree_key(&header.active_artifact, &artifact_claim.key);
+            }
             self.observe_actor_ref(&header.selected_successor.runtime);
             self.observe_actor_ref(&common.opened_by);
             self.observe_actor_ref(&common.ruling_authority);

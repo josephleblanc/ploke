@@ -19,7 +19,7 @@ mod selection;
 
 use std::collections::BTreeMap;
 
-use ploke_records::history::{ActorRefRecord, ArtifactRefRecord};
+use ploke_records::history::{ActorRefRecord, ArtifactRefRecord, TreeKeyHashRecord};
 use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 use ploke_records::scheduler::NodeRecord;
 
@@ -45,6 +45,8 @@ struct Builder {
     graph: Graph,
     next_evidence_id: u64,
     branch_by_node_id: BTreeMap<String, String>,
+    artifact_keys_by_entity: BTreeMap<String, Vec<ArtifactKey>>,
+    artifact_ids_by_entity: BTreeMap<String, ArtifactIds>,
 }
 
 impl Builder {
@@ -79,8 +81,16 @@ impl Builder {
             .or_insert_with(|| ArtifactNode {
                 key,
                 identity: ArtifactIdentity::HistoryRef(artifact.clone()),
+                ids: ArtifactIds::default(),
                 evidence: Vec::new(),
             });
+        let entity_key = artifact_entity_key(artifact.value.as_str());
+        self.register_artifact_entity_key(&entity_key, artifact_ref_key(artifact));
+        self.artifact_ids_by_entity
+            .entry(entity_key.clone())
+            .or_default()
+            .record_artifact_ref(artifact.clone());
+        self.sync_artifact_entity_ids(&entity_key);
     }
 
     fn observe_artifact_id(&mut self, artifact: &ArtifactId) {
@@ -92,8 +102,30 @@ impl Builder {
             .or_insert_with(|| ArtifactNode {
                 key,
                 identity: ArtifactIdentity::PassiveId(artifact.clone()),
+                ids: ArtifactIds::default(),
                 evidence: Vec::new(),
             });
+        let entity_key = artifact_entity_key(artifact.0.as_str());
+        self.register_artifact_entity_key(&entity_key, ArtifactKey::from_passive_id(artifact));
+        self.artifact_ids_by_entity
+            .entry(entity_key.clone())
+            .or_default()
+            .record_artifact_id(artifact.clone());
+        self.sync_artifact_entity_ids(&entity_key);
+    }
+
+    fn observe_artifact_tree_key(
+        &mut self,
+        artifact: &ArtifactRefRecord,
+        tree_key: &TreeKeyHashRecord,
+    ) {
+        self.observe_artifact_ref(artifact);
+        let entity_key = artifact_entity_key(artifact.value.as_str());
+        self.artifact_ids_by_entity
+            .entry(entity_key.clone())
+            .or_default()
+            .record_tree_key(tree_key.clone());
+        self.sync_artifact_entity_ids(&entity_key);
     }
 
     fn attach_to_branch(&mut self, branch_id: &str, evidence_id: EvidenceId) {
@@ -254,8 +286,87 @@ impl Builder {
     fn warn(&mut self, kind: GraphWarningKind, detail: String) {
         self.graph.warnings.push(GraphWarning { kind, detail });
     }
+
+    fn register_artifact_entity_key(&mut self, entity_key: &str, artifact_key: ArtifactKey) {
+        let artifact_keys = self
+            .artifact_keys_by_entity
+            .entry(entity_key.to_owned())
+            .or_default();
+        if !artifact_keys.contains(&artifact_key) {
+            artifact_keys.push(artifact_key);
+        }
+    }
+
+    fn sync_artifact_entity_ids(&mut self, entity_key: &str) {
+        let Some(artifact_ids) = self.artifact_ids_by_entity.get(entity_key).cloned() else {
+            return;
+        };
+        let Some(artifact_keys) = self.artifact_keys_by_entity.get(entity_key).cloned() else {
+            return;
+        };
+        for artifact_key in artifact_keys {
+            if let Some(node) = self.graph.artifacts.artifacts.get_mut(&artifact_key) {
+                node.ids = artifact_ids.clone();
+            }
+        }
+    }
 }
 
 fn artifact_ref_key(artifact: &ArtifactRefRecord) -> ArtifactKey {
     ArtifactKey::from_history_ref(artifact)
+}
+
+fn artifact_entity_key(value: &str) -> String {
+    value.strip_prefix("artifact:").unwrap_or(value).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
+    use ploke_records::ids::{ArtifactId, HistoryHash};
+
+    use super::Builder;
+    use crate::graph::ArtifactKey;
+
+    #[test]
+    fn artifact_nodes_share_reconciled_ids_by_entity_key() {
+        let mut builder = Builder::default();
+        let history_ref = ArtifactRefRecord {
+            value: "artifact:after".to_owned(),
+        };
+        let passive_id = ArtifactId("after".to_owned());
+        let tree_key = TreeKeyHashRecord {
+            hash: HistoryHash("tree:after".to_owned()),
+        };
+
+        builder.observe_artifact_ref(&history_ref);
+        builder.observe_artifact_id(&passive_id);
+        builder.observe_artifact_tree_key(&history_ref, &tree_key);
+
+        let history_node = builder
+            .graph
+            .artifacts
+            .artifacts
+            .get(&ArtifactKey::HistoryRef {
+                value: history_ref.value.clone(),
+            })
+            .expect("history artifact node");
+        let passive_node = builder
+            .graph
+            .artifacts
+            .artifacts
+            .get(&ArtifactKey::PassiveId {
+                value: passive_id.0.clone(),
+            })
+            .expect("passive artifact node");
+
+        assert_eq!(history_node.entity_key(), "after");
+        assert_eq!(passive_node.entity_key(), "after");
+        assert_eq!(history_node.artifact_ids(), &[passive_id.clone()]);
+        assert_eq!(passive_node.artifact_ids(), &[passive_id.clone()]);
+        assert_eq!(history_node.artifact_refs(), &[history_ref.clone()]);
+        assert_eq!(passive_node.artifact_refs(), &[history_ref.clone()]);
+        assert_eq!(history_node.tree_keys(), &[tree_key.clone()]);
+        assert_eq!(passive_node.tree_keys(), &[tree_key]);
+    }
 }

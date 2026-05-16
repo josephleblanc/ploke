@@ -85,17 +85,33 @@ impl<'a, 'g> ArtifactIdentityWitness<'a, 'g> {
         let Some(label) = self
             .sources
             .first()
-            .map(|source| artifact_identity_label(&source.identity))
+            .map(|source| artifact_node_label(source))
         else {
             return "missing_artifact_identity";
         };
         debug_assert!(
             self.sources
                 .iter()
-                .all(|source| artifact_identity_label(&source.identity) == label)
+                .all(|source| artifact_node_label(source) == label)
         );
         label
     }
+}
+
+/// archaeology:artifact-identity
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+fn artifact_node_label(source: &ploke_tree::graph::ArtifactNode) -> &str {
+    source
+        .artifact_ids()
+        .first()
+        .map(|artifact| artifact.0.as_str())
+        .or_else(|| {
+            source
+                .artifact_refs()
+                .first()
+                .map(|artifact| artifact.value.as_str())
+        })
+        .unwrap_or_else(|| artifact_identity_label(&source.identity))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1654,7 +1670,7 @@ mod tests {
         let Some(SelectionIdentity::Artifact(identity)) = snapshot.identity else {
             panic!("expected artifact identity");
         };
-        assert_eq!(identity.artifact, "after");
+        assert_eq!(identity.artifact, "artifact:after");
         let Some(SelectionMetrics::Artifact(metrics)) = snapshot.metrics else {
             panic!("expected artifact metrics");
         };
@@ -1697,7 +1713,25 @@ mod tests {
         };
         let identity = artifact.identity();
 
-        assert_eq!(identity.artifact(), "after");
+        assert_eq!(identity.artifact(), "artifact:after");
+        for source in identity.sources {
+            assert_eq!(
+                source
+                    .artifact_ids()
+                    .iter()
+                    .map(|artifact| artifact.0.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["artifact:after"]
+            );
+            assert_eq!(
+                source
+                    .artifact_refs()
+                    .iter()
+                    .map(|artifact| artifact.value.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["artifact:after"]
+            );
+        }
 
         let mut saw_history_ref = false;
         let mut saw_passive_id = false;
@@ -1871,6 +1905,10 @@ mod tests {
                     value: base.0.clone(),
                 },
                 identity: ploke_tree::graph::ArtifactIdentity::PassiveId(base.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![base.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1883,6 +1921,10 @@ mod tests {
                     value: after.0.clone(),
                 },
                 identity: ploke_tree::graph::ArtifactIdentity::PassiveId(after.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![after.clone()],
+                    ..Default::default()
+                },
                 evidence: Vec::new(),
             },
         );
@@ -1913,6 +1955,11 @@ mod tests {
             value: "artifact:after".to_owned(),
         };
         let passive_after = ArtifactId("artifact:after".to_owned());
+        let ids = ploke_tree::graph::ArtifactIds {
+            artifact_ids: vec![passive_after.clone()],
+            artifact_refs: vec![history_after.clone()],
+            ..Default::default()
+        };
         let mut artifacts = BTreeMap::new();
         artifacts.insert(
             ploke_tree::graph::ArtifactKey::HistoryRef {
@@ -1923,6 +1970,7 @@ mod tests {
                     value: history_after.value.clone(),
                 },
                 identity: ploke_tree::graph::ArtifactIdentity::HistoryRef(history_after),
+                ids: ids.clone(),
                 evidence: Vec::new(),
             },
         );
@@ -1935,6 +1983,7 @@ mod tests {
                     value: passive_after.0.clone(),
                 },
                 identity: ploke_tree::graph::ArtifactIdentity::PassiveId(passive_after),
+                ids,
                 evidence: Vec::new(),
             },
         );
