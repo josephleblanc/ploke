@@ -63,11 +63,12 @@ impl Report<'_> {
         }
         let _ = writeln!(
             out,
-            "controls: run_selector={}, mode_selector={}, load_state={:?}, quick_filters={}",
+            "controls: run_selector={}, mode_selector={}, load_state={:?}, quick_filters={}, hide_non_lineage_children={}",
             self.controls.run_selector_present,
             self.controls.mode_selector_present,
             self.controls.load_state,
-            self.controls.quick_filters_present
+            self.controls.quick_filters_present,
+            self.controls.hide_non_lineage_children
         );
         let _ = writeln!(
             out,
@@ -193,8 +194,10 @@ impl Report<'_> {
         }
         let _ = writeln!(
             out,
-            "center marks: ruler_highlights={}",
-            self.center.marks.ruler_highlights
+            "center marks: ruler_highlights={}, dimmed_children={}, dotted_child_edges={}",
+            self.center.marks.ruler_highlights,
+            self.center.marks.dimmed_children,
+            self.center.marks.dotted_child_edges
         );
         if let Some(selected) = &self.inspector.selected_detail {
             let _ = writeln!(out, "selection: {} {}", selected.kind, selected.label);

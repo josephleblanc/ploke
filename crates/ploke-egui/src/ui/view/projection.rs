@@ -22,8 +22,8 @@ use super::edge::GraphEdgeShape;
 use super::node::GraphNodeShape;
 use super::style::{EdgeStyle, ViewStyle};
 use super::{
-    EdgeLabelDiagnostics, GraphConnectivityDiagnostics, GraphSelectionDetail, GraphSelectionRef,
-    GraphViewDiagnostics, GraphViewMode,
+    ArtifactTreeFilters, EdgeLabelDiagnostics, GraphConnectivityDiagnostics, GraphSelectionDetail,
+    GraphSelectionRef, GraphViewDiagnostics, GraphViewMode,
 };
 
 pub(super) type WidgetGraph = egui_graphs::Graph<
@@ -48,6 +48,7 @@ pub(super) struct GraphViewCache {
     signature: Option<GraphSignature>,
     style: ViewStyle,
     mode: GraphViewMode,
+    filters: ArtifactTreeFilters,
     graph: WidgetGraph,
     connectivity: GraphConnectivityDiagnostics,
     artifact_tree: artifact_tree::Shape,
@@ -59,6 +60,7 @@ impl Default for GraphViewCache {
             signature: None,
             style: ViewStyle::default(),
             mode: GraphViewMode::default(),
+            filters: ArtifactTreeFilters::default(),
             graph: to_widget_graph(&RawGraph::default(), ViewStyle::default()),
             connectivity: GraphConnectivityDiagnostics::default(),
             artifact_tree: artifact_tree::Shape::default(),
@@ -72,9 +74,11 @@ impl GraphViewCache {
         graph: &DomainGraph,
         style: ViewStyle,
         mode: GraphViewMode,
+        filters: ArtifactTreeFilters,
     ) -> bool {
         let signature = GraphSignature::from(graph);
-        let projection_changed = self.signature != Some(signature) || self.style != style;
+        let projection_changed =
+            self.signature != Some(signature) || self.style != style || self.filters != filters;
         let mode_changed = self.mode != mode;
 
         if !projection_changed && !mode_changed {
@@ -84,7 +88,8 @@ impl GraphViewCache {
         if projection_changed {
             self.signature = Some(signature);
             self.style = style;
-            let built = build_widget_graph(graph, style, mode);
+            self.filters = filters;
+            let built = build_widget_graph(graph, style, mode, filters);
             self.graph = built.graph;
             self.connectivity = built.connectivity;
             self.artifact_tree = built.artifact_tree;
@@ -146,7 +151,8 @@ impl GraphViewCache {
     fn apply_visibility(&mut self, mode: GraphViewMode) {
         let mask = mode.layer_mask();
         for node in self.graph.g_mut().node_weights_mut() {
-            let visible = node.payload().layers().contains_any(mask);
+            let visible =
+                node.payload().layers().contains_any(mask) && node.payload().filter_visible();
             node.payload_mut().set_visible(visible);
             if !visible {
                 node.set_selected(false);
@@ -179,7 +185,10 @@ impl GraphViewCache {
                     .is_some_and(|node| node.payload().visible());
                 (
                     edge,
-                    payload.layers.contains_any(mask) && source_visible && target_visible,
+                    payload.layers.contains_any(mask)
+                        && payload.filter_visible
+                        && source_visible
+                        && target_visible,
                 )
             })
             .collect::<Vec<_>>();
@@ -334,8 +343,8 @@ fn graph_projection_fingerprint(graph: &DomainGraph) -> u64 {
             block.block_hash.hash(&mut state);
             block.lineage_id.hash(&mut state);
             block.block_height.hash(&mut state);
-            block.active_artifact.value.hash(&mut state);
-            block.selected_successor.artifact.value.hash(&mut state);
+            block.active_artifact.id().0.hash(&mut state);
+            block.selected_successor.artifact.id().0.hash(&mut state);
         }
         for branch in &graph.candidates.branches {
             branch.selection_entry_id.hash(&mut state);
@@ -409,7 +418,7 @@ fn hash_artifact_node(node: &ArtifactNode, state: &mut DefaultHasher) {
     match &node.identity {
         ArtifactIdentity::HistoryRef(history_ref) => {
             "history-ref".hash(state);
-            history_ref.value.hash(state);
+            history_ref.id().0.hash(state);
         }
         ArtifactIdentity::PassiveId(artifact_id) => {
             "passive-id".hash(state);
@@ -534,6 +543,7 @@ pub(super) enum GraphNode {
         reference: GraphSelectionRef,
         color: Color32,
         layers: GraphLayerMask,
+        filter_visible: bool,
         visible: bool,
     },
 }
@@ -575,6 +585,12 @@ impl GraphNode {
         }
     }
 
+    fn filter_visible(&self) -> bool {
+        match self {
+            Self::Artifact { filter_visible, .. } => *filter_visible,
+        }
+    }
+
     fn set_visible(&mut self, visible: bool) {
         match self {
             Self::Artifact { visible: slot, .. } => *slot = visible,
@@ -603,7 +619,9 @@ pub(super) struct GraphEdgePayload {
     pub(super) color: Color32,
     pub(super) style: EdgeStyle,
     pub(super) kind: ViewEdgeKind,
+    pub(super) pattern: EdgePattern,
     pub(super) layers: GraphLayerMask,
+    pub(super) filter_visible: bool,
     pub(super) visible: bool,
 }
 
@@ -615,6 +633,12 @@ impl GraphEdgePayload {
     fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EdgePattern {
+    Solid,
+    Dotted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,7 +663,11 @@ pub(super) struct ProjectedGraph {
 
 /// archaeology:artifact-relations
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
-fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGraph {
+fn project_artifact_tree(
+    graph: &DomainGraph,
+    style: ViewStyle,
+    filters: ArtifactTreeFilters,
+) -> ProjectedGraph {
     let mut raw = RawGraph::default();
     let mut artifact_nodes = BTreeMap::new();
     let mut artifact_lookup = HashMap::new();
@@ -649,6 +677,18 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
     let lineage_refs = tree
         .marks
         .lineage_artifacts
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let non_lineage_children = tree
+        .marks
+        .non_lineage_children
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let non_lineage_child_edges = tree
+        .marks
+        .non_lineage_child_edges
         .iter()
         .copied()
         .collect::<HashSet<_>>();
@@ -663,12 +703,15 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         let Some(artifact) = tree_node.sources.first().copied() else {
             continue;
         };
+        let dimmed = non_lineage_children.contains(&tree_node.key);
         let node = add_artifact_tree_node(
             &mut raw,
             &mut artifact_nodes,
             tree_node.key,
             artifact,
             style,
+            dimmed,
+            !filters.hide_non_lineage_children || !dimmed,
         );
         if selected_ruler == Some(tree_node.key) {
             set_artifact_tree_node_color(&mut raw, node, style.edge.colors.selected);
@@ -711,8 +754,10 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             format!("P{patch_index}"),
             true,
             ViewEdgeKind::ArtifactPatch,
+            EdgePattern::Solid,
             style,
             layers,
+            true,
         ) {
             patch_index += 1;
         }
@@ -747,6 +792,7 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
         if base == derived {
             continue;
         }
+        let dotted = non_lineage_child_edges.contains(&(edge.from, edge.to));
         if add_unique_edge_with_layers(
             &mut raw,
             base,
@@ -754,8 +800,14 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             format!("P{patch_index}"),
             true,
             ViewEdgeKind::ArtifactPatch,
+            if dotted {
+                EdgePattern::Dotted
+            } else {
+                EdgePattern::Solid
+            },
             style,
             GraphLayerMask::ARTIFACT,
+            !filters.hide_non_lineage_children || !dotted,
         ) {
             patch_index += 1;
         }
@@ -785,7 +837,11 @@ fn project_artifact_tree(graph: &DomainGraph, style: ViewStyle) -> ProjectedGrap
             tree.diagnostics.roots.len(),
             tree.diagnostics.orphan_artifacts.len(),
         ),
-        artifact_tree::Marks::new(ruler_highlights.len()),
+        artifact_tree::Marks::new(
+            ruler_highlights.len(),
+            tree.marks.non_lineage_children.len(),
+            tree.marks.non_lineage_child_edges.len(),
+        ),
     );
 
     ProjectedGraph {
@@ -822,10 +878,10 @@ fn full_debug_edge_count(graph: &DomainGraph) -> usize {
             .iter()
             .filter(|hash| graph.history.blocks.contains_key(*hash))
             .count();
-        if has_history_artifact(graph, block.active_artifact.value.as_str()) {
+        if has_history_artifact(graph, block.active_artifact.id().0.as_str()) {
             count += 1;
         }
-        if has_history_artifact(graph, block.selected_successor.artifact.value.as_str()) {
+        if has_history_artifact(graph, block.selected_successor.artifact.id().0.as_str()) {
             count += 1;
         }
         if let ploke_records::history::ActorRefRecord::Runtime(runtime_id) =
@@ -1002,7 +1058,7 @@ fn has_history_artifact(graph: &DomainGraph, value: &str) -> bool {
     graph.artifacts.artifacts.values().any(|artifact| {
         matches!(
             &artifact.identity,
-            ArtifactIdentity::HistoryRef(history_ref) if history_ref.value == value
+            ArtifactIdentity::HistoryRef(history_ref) if history_ref.id().0 == value
         )
     })
 }
@@ -1030,19 +1086,27 @@ fn add_artifact_tree_node<'a>(
     key: ploke_tree::graph::artifact_tree::Key<'a>,
     artifact: &'a ArtifactNode,
     style: ViewStyle,
+    dimmed: bool,
+    filter_visible: bool,
 ) -> NodeIndex {
     if let Some(node) = artifact_nodes.get(&key).copied() {
         return node;
     }
 
+    let color = if dimmed {
+        style.edge.colors.synthesized.gamma_multiply(0.45)
+    } else {
+        style.edge.colors.synthesized
+    };
     let node = raw.add_node(GraphNode::Artifact {
         label: Arc::from(artifact_handle_label(artifact_nodes.len() + 1)),
         detail: Arc::from(artifact.detail_text()),
         reference: GraphSelectionRef::Artifact {
             key: key.as_str().to_owned(),
         },
-        color: style.edge.colors.synthesized,
+        color,
         layers: GraphLayerMask::ARTIFACT,
+        filter_visible,
         visible: true,
     });
     artifact_nodes.insert(key, node);
@@ -1066,8 +1130,10 @@ fn add_unique_edge_with_layers(
     label: impl Into<Arc<str>>,
     label_visible: bool,
     kind: ViewEdgeKind,
+    pattern: EdgePattern,
     style: ViewStyle,
     layers: GraphLayerMask,
+    filter_visible: bool,
 ) -> bool {
     if let Some(edge) = raw
         .edges_connecting(source, target)
@@ -1076,6 +1142,10 @@ fn add_unique_edge_with_layers(
     {
         if let Some(payload) = raw.edge_weight_mut(edge) {
             payload.layers.insert(layers);
+            payload.filter_visible &= filter_visible;
+            if payload.pattern != EdgePattern::Dotted {
+                payload.pattern = pattern;
+            }
         }
         return false;
     }
@@ -1086,8 +1156,10 @@ fn add_unique_edge_with_layers(
         label,
         label_visible,
         kind,
+        pattern,
         style,
         layers,
+        filter_visible,
     );
     true
 }
@@ -1096,8 +1168,9 @@ fn build_widget_graph(
     graph: &DomainGraph,
     style: ViewStyle,
     _mode: GraphViewMode,
+    filters: ArtifactTreeFilters,
 ) -> BuiltWidgetGraph {
-    let projected = project_artifact_tree(graph, style);
+    let projected = project_artifact_tree(graph, style, filters);
     BuiltWidgetGraph {
         graph: to_widget_graph(&projected.raw, style),
         connectivity: projected.connectivity,
@@ -1112,8 +1185,10 @@ fn add_edge_with_layers(
     label: impl Into<Arc<str>>,
     label_visible: bool,
     kind: ViewEdgeKind,
+    pattern: EdgePattern,
     style: ViewStyle,
     layers: GraphLayerMask,
+    filter_visible: bool,
 ) {
     raw.add_edge(
         source,
@@ -1124,7 +1199,9 @@ fn add_edge_with_layers(
             color: edge_color(kind, style),
             style: style.edge,
             kind,
+            pattern,
             layers,
+            filter_visible,
             visible: true,
         },
     );
@@ -1148,11 +1225,11 @@ impl DetailText for ArtifactNode {
             return format!("artifact_id: {}", artifact_id.0);
         }
         if let Some(history_ref) = self.artifact_refs().first() {
-            return format!("artifact history ref: {}", history_ref.value);
+            return format!("artifact history ref: {}", history_ref.as_str());
         }
         match &self.identity {
             ArtifactIdentity::HistoryRef(history_ref) => {
-                format!("artifact history ref: {}", history_ref.value)
+                format!("artifact history ref: {}", history_ref.as_str())
             }
             ArtifactIdentity::PassiveId(artifact_id) => format!("artifact_id: {}", artifact_id.0),
         }
@@ -1211,13 +1288,13 @@ mod tests {
     use ploke_tree::graph::{CandidateBranchNode, CandidateSource};
     use ploke_tree::{PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal};
 
-    use super::{GraphNode, GraphViewCache, project_artifact_tree};
-    use crate::ui::view::{GraphViewMode, ViewStyle};
+    use super::{EdgePattern, GraphNode, GraphViewCache, project_artifact_tree};
+    use crate::ui::view::{ArtifactTreeFilters, GraphViewMode, ViewStyle};
 
     #[test]
     fn artifact_tree_does_not_render_unattached_anchor_by_default() {
         let graph = graph_with_candidate_inventory_selection();
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(projected.connectivity.component_count_before_anchoring, 0);
         assert_eq!(count_nodes(&projected, "unattached"), 0);
@@ -1253,7 +1330,7 @@ mod tests {
                 });
         }
 
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(projected.raw.node_count(), 0);
         assert_eq!(projected.raw.edge_count(), 0);
@@ -1266,7 +1343,7 @@ mod tests {
         let mut graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
         graph.forest = Graph::from_records(&run_records_with_parent_and_children()).forest;
 
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(projected.artifact_tree.nodes().run_forest, 0);
         assert!(projected.artifact_tree.nodes().artifacts > 0);
@@ -1280,7 +1357,7 @@ mod tests {
     #[test]
     fn artifact_tree_keeps_debug_record_classes_hidden() {
         let graph = graph_with_artifact_branch_selection();
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
         assert_eq!(projected.raw.edge_count(), 1);
@@ -1336,7 +1413,7 @@ mod tests {
     #[test]
     fn artifact_tree_connects_history_artifacts_with_patch_edge() {
         let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
         assert_eq!(projected.raw.edge_count(), 1);
@@ -1444,7 +1521,7 @@ mod tests {
             ),
         );
 
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert_eq!(count_nodes(&projected, "artifact"), 2);
         assert_eq!(projected.raw.edge_count(), 1);
@@ -1459,7 +1536,7 @@ mod tests {
     #[test]
     fn artifact_tree_edges_flow_from_parent_to_child() {
         let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         let parent = artifact_node(&projected, "artifact:parent");
         let child = artifact_node(&projected, "artifact:child");
@@ -1486,7 +1563,7 @@ mod tests {
     fn artifact_tree_highlights_selected_successor_as_next_ruler() {
         let style = ViewStyle::default();
         let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
-        let projected = project_artifact_tree(&graph, style);
+        let projected = project_artifact_tree(&graph, style, filters());
 
         let parent = artifact_node(&projected, "artifact:parent");
         let child = artifact_node(&projected, "artifact:child");
@@ -1502,9 +1579,83 @@ mod tests {
     }
 
     #[test]
+    fn artifact_tree_dims_non_lineage_children_and_dots_their_edges() {
+        let style = ViewStyle::default();
+        let graph = graph_with_non_lineage_sibling();
+        let projected = project_artifact_tree(&graph, style, filters());
+
+        let parent = artifact_node(&projected, "artifact:parent");
+        let selected = artifact_node(&projected, "artifact:selected");
+        let sibling = artifact_node(&projected, "artifact:sibling");
+        let selected_edge = projected
+            .raw
+            .edges_connecting(parent, selected)
+            .next()
+            .expect("selected child edge");
+        let sibling_edge = projected
+            .raw
+            .edges_connecting(parent, sibling)
+            .next()
+            .expect("sibling child edge");
+
+        assert_eq!(projected.artifact_tree.marks().dimmed_children, 1);
+        assert_eq!(projected.artifact_tree.marks().dotted_child_edges, 1);
+        assert_eq!(
+            node_color(&projected.raw[sibling]),
+            Some(style.edge.colors.synthesized.gamma_multiply(0.45))
+        );
+        assert_eq!(selected_edge.weight().pattern, EdgePattern::Solid);
+        assert_eq!(sibling_edge.weight().pattern, EdgePattern::Dotted);
+    }
+
+    #[test]
+    fn artifact_tree_filter_hides_non_lineage_children_from_visible_projection() {
+        let style = ViewStyle::default();
+        let graph = graph_with_non_lineage_sibling();
+        let mut cache = GraphViewCache::default();
+
+        assert!(cache.refresh(
+            &graph,
+            style,
+            GraphViewMode::ArtifactTree,
+            ArtifactTreeFilters {
+                hide_non_lineage_children: true,
+            },
+        ));
+
+        let sibling = cache
+            .graph
+            .g()
+            .node_indices()
+            .find(|node| {
+                cache.graph.g()[*node]
+                    .payload()
+                    .detail()
+                    .contains("artifact:sibling")
+            })
+            .expect("sibling node");
+        let visible_nodes = cache
+            .graph
+            .g()
+            .node_weights()
+            .filter(|node| node.payload().visible())
+            .count();
+        let visible_edges = cache
+            .graph
+            .g()
+            .edge_weights()
+            .filter(|edge| edge.payload().visible())
+            .count();
+
+        assert!(!cache.graph.g()[sibling].payload().visible());
+        assert_eq!(visible_nodes, 2);
+        assert_eq!(visible_edges, 1);
+    }
+
+    #[test]
     fn primary_labels_are_short_handles() {
         let graph = materialized_artifact_graph_with_four_nodes();
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         let labels = projected
             .raw
@@ -1517,7 +1668,7 @@ mod tests {
     #[test]
     fn full_raw_ids_remain_in_node_detail_text() {
         let graph = materialized_artifact_graph_with_four_nodes();
-        let projected = project_artifact_tree(&graph, ViewStyle::default());
+        let projected = project_artifact_tree(&graph, ViewStyle::default(), filters());
 
         assert!(
             projected
@@ -1534,7 +1685,12 @@ mod tests {
         let first = graph_with_selected_successor("artifact:old-parent", "artifact:old-child", 3);
         let second = graph_with_selected_successor("artifact:new-parent", "artifact:new-child", 3);
 
-        assert!(cache.refresh(&first, style, GraphViewMode::ArtifactTree));
+        assert!(cache.refresh(
+            &first,
+            style,
+            GraphViewMode::ArtifactTree,
+            ArtifactTreeFilters::default(),
+        ));
         assert!(
             cache
                 .graph
@@ -1543,7 +1699,12 @@ mod tests {
                 .any(|node| { node.payload().detail().contains("artifact:old-child") })
         );
 
-        assert!(cache.refresh(&second, style, GraphViewMode::ArtifactTree));
+        assert!(cache.refresh(
+            &second,
+            style,
+            GraphViewMode::ArtifactTree,
+            ArtifactTreeFilters::default(),
+        ));
         assert!(
             cache
                 .graph
@@ -1583,6 +1744,10 @@ mod tests {
         match node {
             GraphNode::Artifact { color, .. } => Some(*color),
         }
+    }
+
+    fn filters() -> ArtifactTreeFilters {
+        ArtifactTreeFilters::default()
     }
 
     fn run_records_with_parent_and_children() -> RunRecordSet {
@@ -1881,21 +2046,17 @@ mod tests {
     fn graph_with_selected_successor(parent: &str, child: &str, block_height: u64) -> Graph {
         let lineage_id = LineageId("lineage:test".to_owned());
         let block_hash = BlockHash(format!("{block_height:064x}"));
-        let parent_ref = ArtifactRefRecord {
-            value: parent.to_owned(),
-        };
-        let child_ref = ArtifactRefRecord {
-            value: child.to_owned(),
-        };
+        let parent_ref = ArtifactRefRecord::from_artifact_id(ArtifactId(parent.to_owned()));
+        let child_ref = ArtifactRefRecord::from_artifact_id(ArtifactId(child.to_owned()));
 
         let mut artifacts = BTreeMap::new();
         artifacts.insert(
             ArtifactKey::HistoryRef {
-                value: parent.to_owned(),
+                id: parent_ref.id().0.clone(),
             },
             ArtifactNode {
                 key: ArtifactKey::HistoryRef {
-                    value: parent.to_owned(),
+                    id: parent_ref.id().0.clone(),
                 },
                 identity: ArtifactIdentity::HistoryRef(parent_ref.clone()),
                 ids: ploke_tree::graph::ArtifactIds {
@@ -1907,11 +2068,11 @@ mod tests {
         );
         artifacts.insert(
             ArtifactKey::HistoryRef {
-                value: child.to_owned(),
+                id: child_ref.id().0.clone(),
             },
             ArtifactNode {
                 key: ArtifactKey::HistoryRef {
-                    value: child.to_owned(),
+                    id: child_ref.id().0.clone(),
                 },
                 identity: ArtifactIdentity::HistoryRef(child_ref.clone()),
                 ids: ploke_tree::graph::ArtifactIds {
@@ -1982,6 +2143,110 @@ mod tests {
             warnings: Vec::new(),
             ..Graph::default()
         }
+    }
+
+    fn graph_with_non_lineage_sibling() -> Graph {
+        let mut graph = graph_with_selected_successor("artifact:selected", "artifact:selected", 3);
+        let parent_id = ArtifactId("artifact:parent".to_owned());
+        let sibling_id = ArtifactId("artifact:sibling".to_owned());
+
+        graph.artifacts.artifacts.insert(
+            ArtifactKey::PassiveId {
+                value: parent_id.0.clone(),
+            },
+            ArtifactNode {
+                key: ArtifactKey::PassiveId {
+                    value: parent_id.0.clone(),
+                },
+                identity: ArtifactIdentity::PassiveId(parent_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![parent_id.clone()],
+                    ..Default::default()
+                },
+                evidence: Vec::new(),
+            },
+        );
+        graph.artifacts.artifacts.insert(
+            ArtifactKey::PassiveId {
+                value: sibling_id.0.clone(),
+            },
+            ArtifactNode {
+                key: ArtifactKey::PassiveId {
+                    value: sibling_id.0.clone(),
+                },
+                identity: ArtifactIdentity::PassiveId(sibling_id.clone()),
+                ids: ploke_tree::graph::ArtifactIds {
+                    artifact_ids: vec![sibling_id.clone()],
+                    ..Default::default()
+                },
+                evidence: Vec::new(),
+            },
+        );
+        graph
+            .candidates
+            .candidates
+            .push(ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId("entry-parent".to_owned()),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: "candidate:parent".to_owned(),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some("node-parent".to_owned()),
+                branch_id: Some("branch-parent".to_owned()),
+                generation: Some(0),
+                primary_runtime_id: None,
+                artifact_after: Some(parent_id.clone()),
+                patch_id: None,
+                evidence: Vec::new(),
+            });
+        graph.child_plans.plans.insert(
+            SchedulerNodeId("node-parent".to_owned()),
+            ChildPlanRecord {
+                children: vec![
+                    child_plan_record(
+                        "node-parent",
+                        "node-selected",
+                        parent_id.0.as_str(),
+                        "artifact:selected",
+                        "branch-selected",
+                        "candidate-selected",
+                        "patch-selected",
+                    )
+                    .children
+                    .into_iter()
+                    .next()
+                    .expect("selected child"),
+                    child_plan_record(
+                        "node-parent",
+                        "node-sibling",
+                        parent_id.0.as_str(),
+                        sibling_id.0.as_str(),
+                        "branch-sibling",
+                        "candidate-sibling",
+                        "patch-sibling",
+                    )
+                    .children
+                    .into_iter()
+                    .next()
+                    .expect("sibling child"),
+                ],
+                ..child_plan_record(
+                    "node-parent",
+                    "node-selected",
+                    parent_id.0.as_str(),
+                    "artifact:selected",
+                    "branch-selected",
+                    "candidate-selected",
+                    "patch-selected",
+                )
+            },
+        );
+
+        graph
     }
 
     fn child_plan_record(

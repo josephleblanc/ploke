@@ -16,7 +16,7 @@ use crate::import::graph_from_run_root;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::inspector::SelectionInspector;
-use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
+use crate::ui::view::{ArtifactTreeFilters, GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
 pub struct OperatorApp {
@@ -123,6 +123,7 @@ impl eframe::App for OperatorApp {
                         #[cfg(not(target_arch = "wasm32"))]
                         self.render_run_picker(ui);
                         render_mode_picker(ui, &mut self.view);
+                        render_quick_filters(ui, &mut self.view);
                         render_graph_facts(ui, &self.graph);
                         if let Some(diagnostics) = self.view.diagnostics() {
                             ui.separator();
@@ -221,6 +222,9 @@ impl OperatorApp {
         });
         let observation = SnapshotObservation::new(diagnostics)
             .with_graph_has_content(graph_has_content(&self.graph))
+            .with_hide_non_lineage_children(
+                self.view.artifact_tree_filters().hide_non_lineage_children,
+            )
             .with_run_error(self.run_error.clone())
             .with_run(run)
             .with_graph_identity(graph_identity)
@@ -254,6 +258,9 @@ impl OperatorApp {
             });
             let observation = SnapshotObservation::new(diagnostics)
                 .with_graph_has_content(graph_has_content(&self.graph))
+                .with_hide_non_lineage_children(
+                    self.view.artifact_tree_filters().hide_non_lineage_children,
+                )
                 .with_run_error(self.run_error.clone())
                 .with_run(run)
                 .with_graph_identity(graph_identity)
@@ -317,6 +324,19 @@ fn render_graph_facts(ui: &mut egui::Ui, graph: &Graph) {
     ui.label(format!("Runtimes: {}", graph.runtimes.runtimes.len()));
     ui.label(format!("Operations: {}", graph.operations.operations.len()));
     ui.label(format!("Evidence: {}", graph.evidence.attachments.len()));
+}
+
+fn render_quick_filters(ui: &mut egui::Ui, view: &mut GraphView) {
+    let ArtifactTreeFilters {
+        hide_non_lineage_children,
+    } = view.artifact_tree_filters();
+    let mut hide = hide_non_lineage_children;
+    if ui
+        .checkbox(&mut hide, "Hide non-lineage children")
+        .changed()
+    {
+        view.set_hide_non_lineage_children(hide);
+    }
 }
 
 fn graph_has_content(graph: &Graph) -> bool {

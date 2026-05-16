@@ -122,10 +122,20 @@ impl Components {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Marks {
     pub ruler_highlights: usize,
+    pub dimmed_children: usize,
+    pub dotted_child_edges: usize,
 }
 
 impl Marks {
-    pub(crate) fn new(ruler_highlights: usize) -> Self {
-        Self { ruler_highlights }
+    pub(crate) fn new(
+        ruler_highlights: usize,
+        dimmed_children: usize,
+        dotted_child_edges: usize,
+    ) -> Self {
+        Self {
+            ruler_highlights,
+            dimmed_children,
+            dotted_child_edges,
+        }
     }
 }

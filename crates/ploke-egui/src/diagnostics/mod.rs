@@ -95,6 +95,7 @@ pub struct SnapshotObservation<'a> {
     pub diagnostics: GraphViewDiagnostics,
     pub artifact_components: Vec<ComponentBreakdown>,
     pub graph_has_content: bool,
+    pub hide_non_lineage_children: bool,
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
     pub graph_identity: Option<GraphIdentity>,
@@ -106,6 +107,7 @@ impl<'a> SnapshotObservation<'a> {
     pub fn new(diagnostics: GraphViewDiagnostics) -> Self {
         Self {
             graph_has_content: diagnostics.node_count > 0,
+            hide_non_lineage_children: false,
             diagnostics,
             artifact_components: Vec::new(),
             run_error: None,
@@ -123,6 +125,11 @@ impl<'a> SnapshotObservation<'a> {
 
     pub fn with_run_error(mut self, run_error: Option<String>) -> Self {
         self.run_error = run_error;
+        self
+    }
+
+    pub fn with_hide_non_lineage_children(mut self, hide: bool) -> Self {
+        self.hide_non_lineage_children = hide;
         self
     }
 
@@ -223,6 +230,7 @@ impl<'a> Snapshot<'a> {
             diagnostics,
             artifact_components,
             graph_has_content,
+            hide_non_lineage_children,
             run_error,
             run,
             graph_identity,
@@ -232,6 +240,7 @@ impl<'a> Snapshot<'a> {
         let default_view_contract = DefaultViewContractReport::from_parts(
             &diagnostics,
             graph_has_content,
+            hide_non_lineage_children,
             run_error,
             graph_identity,
             selected,
@@ -615,7 +624,7 @@ mod tests {
         SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
     };
     use ploke_records::ids::{
-        BlockHash, BlockId, EntryId, HistoryHash, LineageId, RecordedAt, RuntimeId,
+        ArtifactId, BlockHash, BlockId, EntryId, HistoryHash, LineageId, RecordedAt, RuntimeId,
     };
     use ploke_tree::graph::{
         ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode, HistoryBlockNode,
@@ -778,7 +787,7 @@ mod tests {
             Nodes::new(3),
             Edges::new(1, 1, 1, 1),
             Components::new(2, 2, 1),
-            Marks::new(1),
+            Marks::new(1, 1, 1),
         );
         diagnostics.graph_size = Vec2::new(300.0, 200.0);
         diagnostics.viewport_size = Vec2::new(600.0, 400.0);
@@ -845,6 +854,10 @@ mod tests {
         assert_eq!(report.center.components.orphan_artifacts, 1);
         assert!(!report.center.components.weakly_connected);
         assert_eq!(report.center.marks.ruler_highlights, 1);
+        assert_eq!(report.center.marks.dimmed_children, 1);
+        assert_eq!(report.center.marks.dotted_child_edges, 1);
+        assert!(report.controls.quick_filters_present);
+        assert!(!report.controls.hide_non_lineage_children);
 
         let statuses = report
             .checks
@@ -945,11 +958,9 @@ mod tests {
     }
 
     fn artifact_history(value: &str) -> (ArtifactKey, ArtifactNode) {
-        let artifact = ArtifactRefRecord {
-            value: value.to_owned(),
-        };
+        let artifact = ArtifactRefRecord::from_artifact_id(ArtifactId(value.to_owned()));
         let key = ArtifactKey::HistoryRef {
-            value: artifact.value.clone(),
+            id: artifact.id().0.clone(),
         };
         (
             key.clone(),
@@ -957,9 +968,9 @@ mod tests {
                 key,
                 identity: ArtifactIdentity::HistoryRef(artifact),
                 ids: ArtifactIds {
-                    artifact_refs: vec![ArtifactRefRecord {
-                        value: value.to_owned(),
-                    }],
+                    artifact_refs: vec![ArtifactRefRecord::from_artifact_id(ArtifactId(
+                        value.to_owned(),
+                    ))],
                     ..ArtifactIds::default()
                 },
                 evidence: Vec::new(),
@@ -974,17 +985,13 @@ mod tests {
             lineage_id: LineageId("lineage".to_owned()),
             block_height: 0,
             parent_block_hashes: Vec::new(),
-            opened_from_artifact: ArtifactRefRecord {
-                value: active.to_owned(),
-            },
-            active_artifact: ArtifactRefRecord {
-                value: active.to_owned(),
-            },
+            opened_from_artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(
+                active.to_owned(),
+            )),
+            active_artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(active.to_owned())),
             selected_successor: SuccessorNode {
                 runtime: ActorRefRecord::Runtime(RuntimeId("runtime".to_owned())),
-                artifact: ArtifactRefRecord {
-                    value: successor.to_owned(),
-                },
+                artifact: ArtifactRefRecord::from_artifact_id(ArtifactId(successor.to_owned())),
             },
             opening_authority: OpeningAuthorityNode::Predecessor {
                 predecessor_block_hash: BlockHash("previous".to_owned()),

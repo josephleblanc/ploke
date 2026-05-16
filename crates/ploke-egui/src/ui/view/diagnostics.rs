@@ -314,7 +314,7 @@ mod tests {
 
     use super::*;
     use crate::ui::view::GraphSelectionRef;
-    use crate::ui::view::projection::{GraphLayerMask, GraphNode};
+    use crate::ui::view::projection::{EdgePattern, GraphLayerMask, GraphNode};
 
     #[test]
     fn selected_path_crossings_ignore_unselected_artifact_patch_edges() {
@@ -437,6 +437,7 @@ mod tests {
             },
             color: Color32::WHITE,
             layers: GraphLayerMask::ARTIFACT,
+            filter_visible: true,
             visible: true,
         }
     }
@@ -453,7 +454,9 @@ mod tests {
             color,
             style: style.edge,
             kind,
+            pattern: EdgePattern::Solid,
             layers: GraphLayerMask::ARTIFACT,
+            filter_visible: true,
             visible: true,
         }
     }

@@ -4,6 +4,7 @@ use std::{
 };
 
 use ploke_records::child_plan::ChildPlanChildRecord;
+use ploke_records::history::ArtifactRefRecord;
 use ploke_records::ids::ArtifactId;
 
 use super::{ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageNode};
@@ -70,6 +71,8 @@ pub struct Marks<'g> {
     pub primary_lineage: Option<&'g LineageNode>,
     pub lineage_artifacts: Vec<Key<'g>>,
     pub lineage_edges: Vec<(Key<'g>, Key<'g>)>,
+    pub non_lineage_children: Vec<Key<'g>>,
+    pub non_lineage_child_edges: Vec<(Key<'g>, Key<'g>)>,
     pub selected_ruler: Option<Key<'g>>,
 }
 
@@ -150,13 +153,10 @@ impl<'g> Tree<'g> {
             BTreeMap::<(Key<'g>, Key<'g>), Vec<&'g ChildPlanChildRecord>>::new();
         for block in graph.history.blocks.values() {
             let opened_from = canonical_key(
-                history_ref_key(&block.opened_from_artifact.value),
+                history_ref_key(&block.opened_from_artifact),
                 &promotion_aliases,
             );
-            let active = canonical_key(
-                history_ref_key(&block.active_artifact.value),
-                &promotion_aliases,
-            );
+            let active = canonical_key(history_ref_key(&block.active_artifact), &promotion_aliases);
             if endpoints_present(
                 &nodes,
                 Relation::HistoryOpenedFrom(block),
@@ -170,12 +170,9 @@ impl<'g> Tree<'g> {
                     .push(block);
             }
 
-            let from = canonical_key(
-                history_ref_key(&block.active_artifact.value),
-                &promotion_aliases,
-            );
+            let from = canonical_key(history_ref_key(&block.active_artifact), &promotion_aliases);
             let to = canonical_key(
-                history_ref_key(&block.selected_successor.artifact.value),
+                history_ref_key(&block.selected_successor.artifact),
                 &promotion_aliases,
             );
             if endpoints_present(
@@ -263,7 +260,7 @@ impl<'g> Tree<'g> {
             .map(|((from, to), sources)| AppliedPatchEdge { from, to, sources })
             .collect::<Vec<_>>();
 
-        let marks = Marks::from_graph(graph, &history_successors);
+        let marks = Marks::from_graph(graph, &history_successors, &produced_child_edges);
         let diagnostics = Diagnostics::from_edges(
             &nodes,
             &history_successors,
@@ -421,10 +418,16 @@ fn endpoints_present<'g>(
 }
 
 impl<'g> Marks<'g> {
-    fn from_graph(graph: &'g Graph, history_successors: &[HistoryEdge<'g>]) -> Self {
+    fn from_graph(
+        graph: &'g Graph,
+        history_successors: &[HistoryEdge<'g>],
+        produced_child_edges: &[ProducedChildEdge<'g>],
+    ) -> Self {
         let primary_lineage = primary_lineage(graph);
         let mut lineage_artifacts = BTreeSet::new();
         let mut lineage_edges = BTreeSet::new();
+        let mut non_lineage_children = BTreeSet::new();
+        let mut non_lineage_child_edges = BTreeSet::new();
         let mut selected_ruler = None;
 
         if let Some(lineage) = primary_lineage {
@@ -455,10 +458,19 @@ impl<'g> Marks<'g> {
             }
         }
 
+        for edge in produced_child_edges {
+            if !lineage_artifacts.contains(&edge.to) {
+                non_lineage_children.insert(edge.to);
+                non_lineage_child_edges.insert((edge.from, edge.to));
+            }
+        }
+
         Self {
             primary_lineage,
             lineage_artifacts: lineage_artifacts.into_iter().collect(),
             lineage_edges: lineage_edges.into_iter().collect(),
+            non_lineage_children: non_lineage_children.into_iter().collect(),
+            non_lineage_child_edges: non_lineage_child_edges.into_iter().collect(),
             selected_ruler,
         }
     }
@@ -499,8 +511,8 @@ fn node_key<'g>(
     material_keys.contains(&key).then_some(key)
 }
 
-fn history_ref_key(value: &str) -> Key<'_> {
-    Key(value.strip_prefix("artifact:").unwrap_or(value))
+fn history_ref_key(artifact: &ArtifactRefRecord) -> Key<'_> {
+    Key(artifact.graph_entity_key())
 }
 
 fn passive_id_key(value: &str) -> Key<'_> {
@@ -524,15 +536,15 @@ fn material_keys<'g>(graph: &'g Graph, aliases: &BTreeMap<Key<'g>, Key<'g>>) -> 
     let mut keys = BTreeSet::new();
     for block in graph.history.blocks.values() {
         keys.insert(canonical_key(
-            history_ref_key(&block.opened_from_artifact.value),
+            history_ref_key(&block.opened_from_artifact),
             aliases,
         ));
         keys.insert(canonical_key(
-            history_ref_key(&block.active_artifact.value),
+            history_ref_key(&block.active_artifact),
             aliases,
         ));
         keys.insert(canonical_key(
-            history_ref_key(&block.selected_successor.artifact.value),
+            history_ref_key(&block.selected_successor.artifact),
             aliases,
         ));
     }
@@ -557,6 +569,15 @@ fn material_keys<'g>(graph: &'g Graph, aliases: &BTreeMap<Key<'g>, Key<'g>>) -> 
             ));
         }
     }
+    for plan in graph.child_plans.plans.values() {
+        if let Some(key) = only_key(parent_artifact_matches(
+            graph,
+            plan.parent_node_id.as_str(),
+            aliases,
+        )) {
+            keys.insert(key);
+        }
+    }
     keys
 }
 
@@ -568,6 +589,15 @@ fn parent_artifact_key<'g>(
     aliases: &BTreeMap<Key<'g>, Key<'g>>,
     material_keys: &BTreeSet<Key<'g>>,
 ) -> Option<Key<'g>> {
+    let key = only_key(parent_artifact_matches(graph, parent_node_id, aliases))?;
+    material_keys.contains(&key).then_some(key)
+}
+
+fn parent_artifact_matches<'g>(
+    graph: &'g Graph,
+    parent_node_id: &str,
+    aliases: &BTreeMap<Key<'g>, Key<'g>>,
+) -> BTreeSet<Key<'g>> {
     let mut matches = BTreeSet::new();
     for candidate in &graph.candidates.candidates {
         if candidate.node_id.as_deref() != Some(parent_node_id) {
@@ -588,8 +618,7 @@ fn parent_artifact_key<'g>(
             aliases,
         ));
     }
-    let key = only_key(matches)?;
-    material_keys.contains(&key).then_some(key)
+    matches
 }
 
 fn child_derived_artifact(child: &ChildPlanChildRecord) -> Option<&ArtifactId> {
@@ -983,16 +1012,134 @@ mod tests {
         assert!(tree.diagnostics.weakly_connected);
     }
 
+    #[test]
+    fn artifact_tree_materializes_parent_for_non_lineage_siblings() {
+        let graph = Graph {
+            artifacts: ArtifactIndex {
+                artifacts: BTreeMap::from([
+                    artifact_passive("parent"),
+                    artifact_passive("selected"),
+                    artifact_passive("sibling"),
+                ]),
+            },
+            history: HistoryIndex {
+                lineages: BTreeMap::from([(
+                    LineageId("lineage:primary".to_owned()),
+                    LineageNode {
+                        lineage_id: LineageId("lineage:primary".to_owned()),
+                        blocks: vec![BlockHash("block:selected".to_owned())],
+                    },
+                )]),
+                blocks: BTreeMap::from([(
+                    BlockHash("block:selected".to_owned()),
+                    history_block_in(
+                        BlockHash("block:selected".to_owned()),
+                        LineageId("lineage:primary".to_owned()),
+                        1,
+                        "artifact:selected",
+                        "artifact:selected",
+                    ),
+                )]),
+                ..HistoryIndex::default()
+            },
+            candidates: CandidateIndex {
+                candidates: vec![crate::graph::CandidateNode {
+                    selection_entry_id: EntryId("entry-parent".to_owned()),
+                    payload_index: 0,
+                    subject: ploke_records::history::SubjectRefRecord {
+                        value: "candidate:parent".to_owned(),
+                    },
+                    source: Some(crate::graph::CandidateSource::CurrentGeneration),
+                    occurrence_id: None,
+                    membership_id: None,
+                    membership_key: None,
+                    node_id: Some("node-parent".to_owned()),
+                    branch_id: Some("branch-parent".to_owned()),
+                    generation: Some(0),
+                    primary_runtime_id: None,
+                    artifact_after: Some(ArtifactId("parent".to_owned())),
+                    patch_id: None,
+                    evidence: Vec::new(),
+                }],
+                ..CandidateIndex::default()
+            },
+            child_plans: ChildPlanIndex {
+                plans: BTreeMap::from([(
+                    SchedulerNodeId("node-parent".to_owned()),
+                    ChildPlanRecord {
+                        children: vec![
+                            child_plan_record(
+                                "node-parent",
+                                "node-selected",
+                                "parent",
+                                "selected",
+                                "branch-selected",
+                                "candidate-selected",
+                                "patch-selected",
+                            )
+                            .children
+                            .into_iter()
+                            .next()
+                            .expect("selected child"),
+                            child_plan_record(
+                                "node-parent",
+                                "node-sibling",
+                                "parent",
+                                "sibling",
+                                "branch-sibling",
+                                "candidate-sibling",
+                                "patch-sibling",
+                            )
+                            .children
+                            .into_iter()
+                            .next()
+                            .expect("sibling child"),
+                        ],
+                        ..child_plan_record(
+                            "node-parent",
+                            "node-selected",
+                            "parent",
+                            "selected",
+                            "branch-selected",
+                            "candidate-selected",
+                            "patch-selected",
+                        )
+                    },
+                )]),
+            },
+            ..Graph::default()
+        };
+
+        let tree = graph.artifact_tree();
+
+        assert_eq!(
+            key_strings(&tree.nodes.keys().copied().collect::<Vec<_>>()),
+            vec!["parent", "selected", "sibling"]
+        );
+        assert_eq!(tree.produced_child_edges.len(), 2);
+        assert_eq!(
+            key_strings(&tree.marks.non_lineage_children),
+            vec!["sibling"]
+        );
+        assert_eq!(
+            tree.marks
+                .non_lineage_child_edges
+                .iter()
+                .map(|(from, to)| (from.as_str(), to.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("parent", "sibling")]
+        );
+    }
+
     fn key_strings<'a>(keys: &[super::Key<'a>]) -> Vec<&'a str> {
         keys.iter().map(|key| key.as_str()).collect()
     }
 
     fn artifact_history(value: &str) -> (ArtifactKey, ArtifactNode) {
-        let artifact = ArtifactRefRecord {
-            value: value.to_owned(),
-        };
+        let artifact =
+            ArtifactRefRecord::from_artifact_id(ploke_records::ids::ArtifactId(value.to_owned()));
         let key = ArtifactKey::HistoryRef {
-            value: artifact.value.clone(),
+            id: artifact.id().0.clone(),
         };
         (
             key.clone(),
@@ -1000,9 +1147,9 @@ mod tests {
                 key,
                 identity: ArtifactIdentity::HistoryRef(artifact),
                 ids: ArtifactIds {
-                    artifact_refs: vec![ArtifactRefRecord {
-                        value: value.to_owned(),
-                    }],
+                    artifact_refs: vec![ArtifactRefRecord::from_artifact_id(
+                        ploke_records::ids::ArtifactId(value.to_owned()),
+                    )],
                     ..ArtifactIds::default()
                 },
                 evidence: Vec::new(),
@@ -1232,9 +1379,7 @@ mod tests {
     }
 
     fn artifact_ref(value: &str) -> ArtifactRefRecord {
-        ArtifactRefRecord {
-            value: value.to_owned(),
-        }
+        ArtifactRefRecord::from_artifact_id(ploke_records::ids::ArtifactId(value.to_owned()))
     }
 
     fn surface() -> SurfaceCommitmentRecord {

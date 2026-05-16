@@ -7,9 +7,11 @@ use eframe::egui::{
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
 
-use super::geometry::{curve_points, distance_to_curve, endpoint_direction, self_loop_points};
+use super::geometry::{
+    cubic_point, curve_points, distance_to_curve, endpoint_direction, self_loop_points,
+};
 use super::label::{EdgeLabelInput, place_edge_label, record_edge_label};
-use super::projection::GraphEdgePayload;
+use super::projection::{EdgePattern, GraphEdgePayload};
 use super::style::{CurveStyle, EdgeStyle};
 
 #[derive(Debug, Clone)]
@@ -19,6 +21,7 @@ pub(super) struct GraphEdgeShape {
     color: Color32,
     selected: bool,
     visible: bool,
+    pattern: EdgePattern,
     style: EdgeStyle,
     curve: Cell<Option<EdgeCurve>>,
     label_galley: Option<EdgeLabelGalley>,
@@ -33,6 +36,7 @@ impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
             color: edge.payload.color,
             selected: edge.selected,
             visible,
+            pattern: edge.payload.pattern,
             style: edge.payload.style,
             curve: Cell::new(None),
             label_galley: None,
@@ -156,15 +160,25 @@ where
             self.style.normal_width
         };
         let mut shapes = Vec::with_capacity(1);
-        shapes.push(
-            CubicBezierShape::from_points_stroke(
-                screen_curve,
-                false,
-                Color32::TRANSPARENT,
-                Stroke::new(stroke_width, color),
-            )
-            .into(),
-        );
+        match self.pattern {
+            EdgePattern::Solid => {
+                shapes.push(
+                    CubicBezierShape::from_points_stroke(
+                        screen_curve,
+                        false,
+                        Color32::TRANSPARENT,
+                        Stroke::new(stroke_width, color),
+                    )
+                    .into(),
+                );
+            }
+            EdgePattern::Dotted => {
+                shapes.extend(dotted_curve_shapes(
+                    screen_curve,
+                    Stroke::new(stroke_width, color),
+                ));
+            }
+        }
 
         if self.label_visible {
             let galley = self.label_galley(ctx, color);
@@ -209,6 +223,7 @@ where
         self.color = state.payload.color;
         self.selected = state.selected;
         self.visible = state.payload.visible();
+        self.pattern = state.payload.pattern;
         self.style = state.payload.style;
     }
 
@@ -244,6 +259,26 @@ where
         );
         Some((min, max))
     }
+}
+
+fn dotted_curve_shapes(points: [Pos2; 4], stroke: Stroke) -> Vec<Shape> {
+    let step_count = 48usize;
+    let on_segments = 2usize;
+    let off_segments = 2usize;
+    let cycle = on_segments + off_segments;
+    let mut shapes = Vec::new();
+    let mut previous = points[0];
+
+    for step in 1..=step_count {
+        let current = cubic_point(points, step as f32 / step_count as f32);
+        let slot = (step - 1) % cycle;
+        if slot < on_segments {
+            shapes.push(Shape::line_segment([previous, current], stroke));
+        }
+        previous = current;
+    }
+
+    shapes
 }
 
 fn node_radius<N, Ty, Ix, D>(node: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>) -> f32

@@ -30,6 +30,7 @@ impl<'a> Report<'a> {
     pub(crate) fn from_parts(
         diagnostics: &GraphViewDiagnostics,
         graph_has_content: bool,
+        hide_non_lineage_children: bool,
         run_error: Option<String>,
         graph_identity: Option<GraphIdentity>,
         selected: Option<SelectionSnapshot<'a>>,
@@ -42,7 +43,8 @@ impl<'a> Report<'a> {
             mode_selector_present: true,
             load_state: LoadState::from_app_state(graph_has_content, run_error.as_deref()),
             run_error,
-            quick_filters_present: false,
+            quick_filters_present: true,
+            hide_non_lineage_children,
         };
         let center = ArtifactTree::from_diagnostics(diagnostics, component_breakdown);
         let inspector = Inspector {
@@ -86,6 +88,7 @@ pub struct Controls {
     pub load_state: LoadState,
     pub run_error: Option<String>,
     pub quick_filters_present: bool,
+    pub hide_non_lineage_children: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,12 +234,16 @@ impl From<(tree::Components, tree::Nodes)> for Components {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marks {
     pub ruler_highlights: usize,
+    pub dimmed_children: usize,
+    pub dotted_child_edges: usize,
 }
 
 impl From<tree::Marks> for Marks {
     fn from(value: tree::Marks) -> Self {
         Self {
             ruler_highlights: value.ruler_highlights,
+            dimmed_children: value.dimmed_children,
+            dotted_child_edges: value.dotted_child_edges,
         }
     }
 }

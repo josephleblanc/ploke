@@ -36,6 +36,7 @@ pub struct GraphView {
     layout_state_pending: bool,
     diagnostics: Option<GraphViewDiagnostics>,
     mode: GraphViewMode,
+    artifact_tree_filters: ArtifactTreeFilters,
 }
 
 impl Default for GraphView {
@@ -56,6 +57,7 @@ impl Default for GraphView {
             layout_state_pending: false,
             diagnostics: None,
             mode: GraphViewMode::ArtifactTree,
+            artifact_tree_filters: ArtifactTreeFilters::default(),
         }
     }
 }
@@ -93,6 +95,17 @@ impl GraphView {
         }
     }
 
+    pub fn artifact_tree_filters(&self) -> ArtifactTreeFilters {
+        self.artifact_tree_filters
+    }
+
+    pub fn set_hide_non_lineage_children(&mut self, hide: bool) {
+        if self.artifact_tree_filters.hide_non_lineage_children != hide {
+            self.artifact_tree_filters.hide_non_lineage_children = hide;
+            self.fit_next_frame = true;
+        }
+    }
+
     pub fn contract_diagnostics(
         graph: &DomainGraph,
         mode: GraphViewMode,
@@ -100,7 +113,7 @@ impl GraphView {
     ) -> Option<GraphViewDiagnostics> {
         let view_style = ViewStyle::default();
         let mut cache = GraphViewCache::default();
-        cache.refresh(graph, view_style, mode);
+        cache.refresh(graph, view_style, mode, ArtifactTreeFilters::default());
         cache.diagnostics(viewport_size, view_style, EdgeLabelDiagnostics::default())
     }
 
@@ -141,11 +154,21 @@ impl GraphView {
     }
 
     fn sync_projection(&mut self, graph: &DomainGraph) {
-        if self.cache.refresh(graph, self.view_style, self.mode) {
+        if self.cache.refresh(
+            graph,
+            self.view_style,
+            self.mode,
+            self.artifact_tree_filters,
+        ) {
             self.layout_state_pending = true;
             self.fit_next_frame = true;
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ArtifactTreeFilters {
+    pub hide_non_lineage_children: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
