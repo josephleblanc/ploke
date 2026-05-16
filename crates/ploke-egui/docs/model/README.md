@@ -25,6 +25,9 @@ operator drilldown questions without becoming a second graph model.
 - [debugger-claim-workflow.md](debugger-claim-workflow.md) defines the
   evidence-first workflow for turning a developer-visible debugger claim into a
   typed graph-derived UI witness.
+- [protocol-and-evaluation-data-locations.md](protocol-and-evaluation-data-locations.md)
+  maps Prototype 1 evaluation artifacts, protocol evidence records, and
+  `record.json.gz` paths to the current `ploke_tree::Graph` import boundary.
 - [animation-hooks.md](animation-hooks.md) records how `DisplayNode`,
   `DisplayEdge`, and custom layout implementations can support transitions
   without making display state semantic authority.

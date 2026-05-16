@@ -45,7 +45,7 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-05-11_mbe-oracle-calibration-handoff.md`](2026-05-11_mbe-oracle-calibration-handoff.md) — restart packet for MBE/oracle calibration over Prototype 1 loop outputs, including gold/empty controls and candidate patch-export questions.
 - [`2026-05-11_mbe-oracle-calibration-plan.md`](2026-05-11_mbe-oracle-calibration-plan.md) — active plan for child-owned MBE instance targets, patch projection provenance, cleanup, and oracle eligibility gating.
 - [`death-by-slice/`](death-by-slice/README.md) — ledger for narrow implementation slices that later fail because policy, identity, authority, or state was not preserved across runtime boundaries.
-- [`collaboration-incidents/`](collaboration-incidents/README.md) — durable ledger for agent-caused trust failures, frustration triggers, and boundary overreach patterns to see whether memory and workflow changes reduce repeats.
+- [`collaboration-incidents/`](collaboration-incidents/README.md) — durable ledger for agent-caused trust failures, frustration triggers, boundary overreach, and semantic naming failures to see whether memory and workflow changes reduce repeats.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 

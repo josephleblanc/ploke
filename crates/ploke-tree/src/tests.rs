@@ -748,6 +748,213 @@ fn fs_run_store_loads_synthetic_run_read_only_counts() {
 }
 
 #[test]
+fn fs_run_store_loads_protocol_artifacts_from_evaluation_record_paths() {
+    let root = temp_run_root("protocol-from-evaluations");
+    let baseline_run = root
+        .join("bench")
+        .join("baseline")
+        .join("runs")
+        .join("run-a");
+    let treatment_run = root
+        .join("bench")
+        .join("treatments")
+        .join("branch-1")
+        .join("runs")
+        .join("run-b");
+    let baseline_protocol_dir = baseline_run.join("protocol-artifacts");
+    let treatment_protocol_dir = treatment_run.join("protocol-artifacts");
+
+    fs::create_dir_all(root.join("evaluations")).expect("create evaluations dir");
+    fs::create_dir_all(&baseline_protocol_dir).expect("create baseline protocol dir");
+    fs::create_dir_all(&treatment_protocol_dir).expect("create treatment protocol dir");
+
+    write_json(
+        &root.join("scheduler.json"),
+        &scheduler(vec![node("root", None, NodeStatusRecord::Succeeded)]),
+    );
+    write_json(
+        &root.join("evaluations").join("branch-1.json"),
+        &serde_json::json!({
+            "baseline_campaign_id": "campaign-0",
+            "branch_id": "branch-1",
+            "treatment_campaign_id": "campaign-1",
+            "branch_registry_path": "branches.json",
+            "evaluation_artifact_path": "evaluations/branch-1.json",
+            "treatment_campaign_manifest": "campaign.json",
+            "treatment_closure_state_path": "closure-state.json",
+            "overall_disposition": "keep",
+            "compared_instances": [{
+                "instance_id": "instance-1",
+                "baseline_record_path": baseline_run.join("record.json.gz"),
+                "treatment_record_path": treatment_run.join("record.json.gz"),
+                "status": "compared"
+            }]
+        }),
+    );
+    write_json(
+        &baseline_protocol_dir.join("1000_intervention_issue_detection_instance-1.json"),
+        &protocol_issue_detection_artifact("run-a", "instance-1", 1000),
+    );
+    write_json(
+        &treatment_protocol_dir.join("2000_intervention_issue_detection_instance-1.json"),
+        &protocol_issue_detection_artifact("run-b", "instance-1", 2000),
+    );
+
+    let records = FsRunStore::new(&root)
+        .load_record_set()
+        .expect("load record set with protocol artifacts");
+    let protocol_artifacts = records
+        .forest_input
+        .passive_evidence
+        .protocol_artifacts
+        .as_ref()
+        .expect("protocol artifact evidence");
+
+    assert_eq!(protocol_artifacts.summary.file_count, 2);
+    assert_eq!(protocol_artifacts.summary.parsed_count, 2);
+    assert_eq!(protocol_artifacts.summary.typed_payload_count, 2);
+    assert!(
+        protocol_artifacts.index.contains_key(
+            &baseline_protocol_dir
+                .join("1000_intervention_issue_detection_instance-1.json")
+                .to_string_lossy()
+                .to_string()
+        )
+    );
+    assert!(
+        protocol_artifacts.index.contains_key(
+            &treatment_protocol_dir
+                .join("2000_intervention_issue_detection_instance-1.json")
+                .to_string_lossy()
+                .to_string()
+        )
+    );
+
+    let graph = Graph::from_records(&records);
+    let dirs = graph.protocol_artifact_dirs();
+    assert!(dirs.contains(&baseline_protocol_dir));
+    assert!(dirs.contains(&treatment_protocol_dir));
+    assert_eq!(
+        graph
+            .protocol_artifacts()
+            .expect("graph carries protocol artifacts")
+            .summary
+            .parsed_count,
+        2
+    );
+
+    fs::remove_dir_all(root).expect("remove temp run");
+}
+
+#[test]
+#[ignore = "real-run diagnostic; reads ~/.ploke-eval campaign records"]
+fn real_run_p1_five_gen_1x3_protocol_artifact_dirs() {
+    let run_root =
+        Path::new("/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1");
+    assert!(
+        run_root.join("scheduler.json").is_file(),
+        "missing real run scheduler at {}",
+        run_root.display()
+    );
+
+    let records = FsRunStore::new(run_root)
+        .load_record_set()
+        .expect("load typed real-run records");
+    let graph = Graph::from_records(&records);
+    let dirs = graph.protocol_artifact_dirs();
+    let evaluations = records
+        .forest_input
+        .passive_evidence
+        .evaluations
+        .as_ref()
+        .expect("real run carries evaluation evidence");
+
+    let compared_instances = evaluations
+        .index
+        .values()
+        .map(|evaluation| evaluation.compared_instances.len())
+        .sum::<usize>();
+    let existing_dirs = dirs.iter().filter(|dir| dir.is_dir()).count();
+
+    eprintln!("run_root={}", run_root.display());
+    eprintln!(
+        "evaluations={} compared_instances={} protocol_artifact_dirs={} existing_dirs={}",
+        evaluations.index.len(),
+        compared_instances,
+        dirs.len(),
+        existing_dirs
+    );
+
+    match records
+        .forest_input
+        .passive_evidence
+        .protocol_artifacts
+        .as_ref()
+    {
+        Some(protocol_artifacts) => eprintln!(
+            "loaded_protocol_artifacts file_count={} parsed_count={} typed_payload_count={}",
+            protocol_artifacts.summary.file_count,
+            protocol_artifacts.summary.parsed_count,
+            protocol_artifacts.summary.typed_payload_count
+        ),
+        None => eprintln!("loaded_protocol_artifacts=none"),
+    }
+
+    for (branch_id, evaluation) in &evaluations.index {
+        eprintln!(
+            "evaluation branch_id={} evaluation_artifact_path={}",
+            branch_id,
+            evaluation.evaluation_artifact_path.display()
+        );
+        for compared in &evaluation.compared_instances {
+            eprintln!("  instance_id={}", compared.instance_id);
+            match compared.baseline_record_path.as_ref() {
+                Some(record_path) => {
+                    eprintln!("    baseline_record_path={}", record_path.display());
+                    if let Some(run_dir) = record_path.parent() {
+                        eprintln!(
+                            "    baseline_protocol_artifact_dir={}",
+                            run_dir.join("protocol-artifacts").display()
+                        );
+                    }
+                }
+                None => eprintln!("    baseline_record_path=<none>"),
+            }
+            match compared.treatment_record_path.as_ref() {
+                Some(record_path) => {
+                    eprintln!("    treatment_record_path={}", record_path.display());
+                    if let Some(run_dir) = record_path.parent() {
+                        eprintln!(
+                            "    treatment_protocol_artifact_dir={}",
+                            run_dir.join("protocol-artifacts").display()
+                        );
+                    }
+                }
+                None => eprintln!("    treatment_record_path=<none>"),
+            }
+        }
+    }
+
+    for dir in &dirs {
+        eprintln!(
+            "protocol_artifact_dir exists={} {}",
+            dir.is_dir(),
+            dir.display()
+        );
+    }
+
+    assert!(
+        !dirs.is_empty(),
+        "expected protocol artifact dirs from evaluations"
+    );
+    assert!(
+        dirs.iter()
+            .all(|dir| dir.file_name().and_then(|name| name.to_str()) == Some("protocol-artifacts")),
+        "all derived dirs should be protocol-artifacts directories"
+    );
+}
+
+#[test]
 fn fs_run_store_loads_branch_log_evidence() {
     let root = temp_run_root("branch-log");
     fs::create_dir_all(&root).expect("create run root");
@@ -1578,6 +1785,35 @@ fn minimal_child_plan_json(message_path: &Path) -> serde_json::Value {
 fn write_json(path: &Path, value: &impl Serialize) {
     let json = serde_json::to_vec_pretty(value).expect("serialize fixture");
     fs::write(path, json).expect("write fixture");
+}
+
+fn protocol_issue_detection_artifact(
+    run_id: &str,
+    subject_id: &str,
+    created_at_ms: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "protocol-artifact.v1",
+        "procedure_name": "intervention_issue_detection",
+        "subject_id": subject_id,
+        "run_id": run_id,
+        "created_at_ms": created_at_ms,
+        "input": {
+            "run_id": run_id,
+            "subject_id": subject_id,
+            "total_calls_in_run": 3,
+            "anchor_segment_count": 1,
+            "protocol_reviewed_call_count": 1,
+            "protocol_reviewed_segment_count": 0,
+            "protocol_artifact_count": 2
+        },
+        "output": {
+            "cases": []
+        },
+        "artifact": {
+            "case_count": 0
+        }
+    })
 }
 
 fn temp_run_root(name: &str) -> PathBuf {

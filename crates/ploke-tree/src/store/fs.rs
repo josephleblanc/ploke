@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -41,7 +41,7 @@ use super::{
 pub struct FsRunStore {
     run_root: PathBuf,
     parent_identity_path: Option<PathBuf>,
-    protocol_artifacts_dir: Option<PathBuf>,
+    protocol_artifacts_dirs: Vec<PathBuf>,
 }
 
 impl FsRunStore {
@@ -49,7 +49,7 @@ impl FsRunStore {
         Self {
             run_root: run_root.into(),
             parent_identity_path: None,
-            protocol_artifacts_dir: None,
+            protocol_artifacts_dirs: Vec::new(),
         }
     }
 
@@ -70,7 +70,17 @@ impl FsRunStore {
     }
 
     pub fn with_protocol_artifacts_dir(mut self, path: impl Into<PathBuf>) -> Self {
-        self.protocol_artifacts_dir = Some(path.into());
+        self.protocol_artifacts_dirs.push(path.into());
+        self
+    }
+
+    pub fn with_protocol_artifacts_dirs<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.protocol_artifacts_dirs
+            .extend(paths.into_iter().map(Into::into));
         self
     }
 
@@ -168,14 +178,16 @@ impl FsRunStore {
     }
 
     fn load_passive_evidence(&self) -> Result<PassiveEvidence, FsRunStoreError> {
+        let evaluations = self.load_evaluation_evidence()?;
+        let protocol_artifacts = self.load_protocol_artifacts_evidence(evaluations.as_ref())?;
         Ok(PassiveEvidence {
             branch_registry: self.load_branch_registry_evidence()?,
             transition_journal: self.load_transition_journal_evidence()?,
             history: self.load_history_evidence()?,
             channel_envelopes: self.load_channel_evidence()?,
             child_plans: self.load_child_plan_evidence()?,
-            evaluations: self.load_evaluation_evidence()?,
-            protocol_artifacts: self.load_protocol_artifacts_evidence()?,
+            evaluations,
+            protocol_artifacts,
             run_profile: self.load_run_profile_evidence()?,
             run_attempts: self.load_run_attempt_evidence()?,
             agent_turns: self.load_agent_turn_evidence()?,
@@ -395,33 +407,66 @@ impl FsRunStore {
 
     fn load_protocol_artifacts_evidence(
         &self,
+        evaluations: Option<&EvaluationEvidence>,
     ) -> Result<Option<ProtocolArtifactsEvidence>, FsRunStoreError> {
-        let Some(dir) = &self.protocol_artifacts_dir else {
-            return Ok(None);
-        };
-        if !dir.is_dir() {
-            return Ok(None);
-        }
-
+        let dirs = self.protocol_artifact_dirs(evaluations);
         let mut summary = ProtocolArtifactSummary::default();
         let mut index = BTreeMap::new();
-        for path in sorted_json_files(dir)? {
-            summary.file_count += 1;
-            let artifact = self.read_json::<ProtocolArtifact>(&path)?;
-            summary.parsed_count += 1;
-            match artifact.procedure_name.as_str() {
-                TOOL_CALL_INTENT_SEGMENTATION => summary.intent_segmentation_count += 1,
-                TOOL_CALL_REVIEW => summary.review_count += 1,
-                TOOL_CALL_SEGMENT_REVIEW => summary.segment_review_count += 1,
-                _ => {}
+        let mut loaded_dir = false;
+
+        for dir in dirs {
+            if !dir.is_dir() {
+                continue;
             }
-            if artifact.body().is_some() {
-                summary.typed_payload_count += 1;
+            loaded_dir = true;
+            for path in sorted_json_files(&dir)? {
+                summary.file_count += 1;
+                let artifact = self.read_json::<ProtocolArtifact>(&path)?;
+                summary.parsed_count += 1;
+                match artifact.procedure_name.as_str() {
+                    TOOL_CALL_INTENT_SEGMENTATION => summary.intent_segmentation_count += 1,
+                    TOOL_CALL_REVIEW => summary.review_count += 1,
+                    TOOL_CALL_SEGMENT_REVIEW => summary.segment_review_count += 1,
+                    _ => {}
+                }
+                if artifact.body().is_some() {
+                    summary.typed_payload_count += 1;
+                }
+                index.insert(protocol_artifact_key(&path), artifact);
             }
-            index.insert(protocol_artifact_key(&path), artifact);
+        }
+
+        if !loaded_dir {
+            return Ok(None);
         }
 
         Ok(Some(ProtocolArtifactsEvidence { summary, index }))
+    }
+
+    fn protocol_artifact_dirs(&self, evaluations: Option<&EvaluationEvidence>) -> Vec<PathBuf> {
+        let mut dirs = BTreeSet::new();
+        dirs.insert(self.run_root.join("protocol-artifacts"));
+        dirs.extend(self.protocol_artifacts_dirs.iter().cloned());
+
+        if let Some(evaluations) = evaluations {
+            for evaluation in evaluations.index.values() {
+                for compared in &evaluation.compared_instances {
+                    for record_path in [
+                        compared.baseline_record_path.as_ref(),
+                        compared.treatment_record_path.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        if let Some(run_dir) = record_path.parent() {
+                            dirs.insert(run_dir.join("protocol-artifacts"));
+                        }
+                    }
+                }
+            }
+        }
+
+        dirs.into_iter().collect()
     }
 
     fn load_run_profile_evidence(&self) -> Result<Option<RunProfileEvidence>, FsRunStoreError> {
@@ -829,11 +874,7 @@ fn expected_agent_turn_files(run_root: &Path, file_name: &str) -> Vec<PathBuf> {
 }
 
 fn protocol_artifact_key(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|name| name.to_str())
-        .or_else(|| path.file_name().and_then(|name| name.to_str()))
-        .unwrap_or("unknown")
-        .to_owned()
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn run_relative_key(run_root: &Path, path: &Path) -> String {

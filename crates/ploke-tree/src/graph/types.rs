@@ -18,10 +18,13 @@ pub use runtime::*;
 pub use selection::*;
 pub use warning::*;
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
 use ploke_records::ids::ArtifactId;
 use ploke_records::invocation::{InvocationRecord, Role};
 
-use crate::RunAttemptEvidence;
+use crate::{ProtocolArtifactsEvidence, RunAttemptEvidence};
 
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +79,43 @@ impl Graph {
         self.forest
             .as_ref()
             .and_then(|forest| forest.passive_evidence.run_attempts.as_ref())
+    }
+
+    /// Protocol artifacts loaded from run-attempt directories referenced by this graph.
+    pub fn protocol_artifacts(&self) -> Option<&ProtocolArtifactsEvidence> {
+        self.forest
+            .as_ref()
+            .and_then(|forest| forest.passive_evidence.protocol_artifacts.as_ref())
+    }
+
+    /// Candidate protocol artifact directories derived from typed evaluation record paths.
+    pub fn protocol_artifact_dirs(&self) -> BTreeSet<PathBuf> {
+        let mut dirs = BTreeSet::new();
+        let Some(evaluations) = self
+            .forest
+            .as_ref()
+            .and_then(|forest| forest.passive_evidence.evaluations.as_ref())
+        else {
+            return dirs;
+        };
+
+        for evaluation in evaluations.index.values() {
+            for compared in &evaluation.compared_instances {
+                for record_path in [
+                    compared.baseline_record_path.as_ref(),
+                    compared.treatment_record_path.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if let Some(run_dir) = record_path.parent() {
+                        dirs.insert(run_dir.join("protocol-artifacts"));
+                    }
+                }
+            }
+        }
+
+        dirs
     }
 
     /// Invocation records loaded from `nodes/<node>/invocations/<runtime>.json`.
