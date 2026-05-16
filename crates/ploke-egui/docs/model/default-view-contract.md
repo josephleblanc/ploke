@@ -218,6 +218,8 @@ Should contain:
 - `P_H union P_C` successor/produced-child edges as primary visible edges;
 - current ruler or latest selected successor highlight;
 - nearby alternatives visible as artifact branches;
+- dimmed/dotted marks only for produced children that never entered the
+  current-generation selection process;
 - pan, zoom, drag, hover, and selection behavior.
 
 Questions supported:

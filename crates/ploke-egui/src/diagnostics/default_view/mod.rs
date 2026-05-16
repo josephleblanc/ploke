@@ -30,7 +30,7 @@ impl<'a> Report<'a> {
     pub(crate) fn from_parts(
         diagnostics: &GraphViewDiagnostics,
         graph_has_content: bool,
-        hide_non_lineage_children: bool,
+        hide_unconsidered_children: bool,
         run_error: Option<String>,
         graph_identity: Option<GraphIdentity>,
         selected: Option<SelectionSnapshot<'a>>,
@@ -44,7 +44,7 @@ impl<'a> Report<'a> {
             load_state: LoadState::from_app_state(graph_has_content, run_error.as_deref()),
             run_error,
             quick_filters_present: true,
-            hide_non_lineage_children,
+            hide_unconsidered_children,
         };
         let center = ArtifactTree::from_diagnostics(diagnostics, component_breakdown);
         let inspector = Inspector {
@@ -88,7 +88,7 @@ pub struct Controls {
     pub load_state: LoadState,
     pub run_error: Option<String>,
     pub quick_filters_present: bool,
-    pub hide_non_lineage_children: bool,
+    pub hide_unconsidered_children: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

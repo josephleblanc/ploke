@@ -1,5 +1,7 @@
 //! Graph-resolved selection inspector projections.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 use crate::ui::text::decor::Badge;
@@ -917,25 +919,33 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         )
         .collect();
 
+    let parent_create = graph.parent_create_for_artifact_key(node.key.as_str());
     let sources = node.sources.clone();
-    let patches = incoming
+    let mut patches = BTreeMap::new();
+    for child in incoming
         .iter()
         .chain(outgoing.iter())
-        .flat_map(|relation| relation.patch_ids.iter().copied())
-        .filter_map(|patch_id| {
-            graph
-                .child_plans
-                .child_for_patch_id(patch_id)
-                .map(|child| PatchInspection { child })
-        })
-        .collect();
+        .flat_map(|relation| relation.patch_ids.iter())
+        .filter_map(|patch_id| graph.child_plans.child_for_patch_id(patch_id))
+    {
+        patches
+            .entry(child.node.node_id.as_str())
+            .or_insert(PatchInspection { child });
+    }
+    if let ParentCreateLookup::Attempt(attempt) = parent_create {
+        let child = attempt.child();
+        patches
+            .entry(child.node.node_id.as_str())
+            .or_insert(PatchInspection { child });
+    }
+    let patches = patches.into_values().collect();
 
     SelectionInspector::Artifact(ArtifactInspection {
         sources,
         incoming,
         outgoing,
         patches,
-        parent_create: graph.parent_create_for_artifact_key(node.key.as_str()),
+        parent_create,
         role_badges: role_badges_for_artifact_node(graph, node),
     })
 }
@@ -1933,6 +1943,15 @@ mod tests {
         assert_eq!(snapshot.incoming[0].from, "base");
         assert_eq!(snapshot.incoming[0].to, "after");
         assert_eq!(snapshot.incoming[1].relation, EdgeRelation::AppliedPatch);
+        assert_eq!(snapshot.patches.len(), 1);
+        assert_eq!(
+            snapshot
+                .parent_create
+                .as_ref()
+                .expect("parent create snapshot")
+                .state,
+            ParentCreateState::Available
+        );
         assert_eq!(
             snapshot.source_refs,
             vec![SourceRef::ArtifactId {

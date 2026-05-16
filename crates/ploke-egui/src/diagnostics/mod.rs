@@ -95,7 +95,7 @@ pub struct SnapshotObservation<'a> {
     pub diagnostics: GraphViewDiagnostics,
     pub artifact_components: Vec<ComponentBreakdown>,
     pub graph_has_content: bool,
-    pub hide_non_lineage_children: bool,
+    pub hide_unconsidered_children: bool,
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
     pub graph_identity: Option<GraphIdentity>,
@@ -107,7 +107,7 @@ impl<'a> SnapshotObservation<'a> {
     pub fn new(diagnostics: GraphViewDiagnostics) -> Self {
         Self {
             graph_has_content: diagnostics.node_count > 0,
-            hide_non_lineage_children: false,
+            hide_unconsidered_children: false,
             diagnostics,
             artifact_components: Vec::new(),
             run_error: None,
@@ -128,8 +128,8 @@ impl<'a> SnapshotObservation<'a> {
         self
     }
 
-    pub fn with_hide_non_lineage_children(mut self, hide: bool) -> Self {
-        self.hide_non_lineage_children = hide;
+    pub fn with_hide_unconsidered_children(mut self, hide: bool) -> Self {
+        self.hide_unconsidered_children = hide;
         self
     }
 
@@ -230,7 +230,7 @@ impl<'a> Snapshot<'a> {
             diagnostics,
             artifact_components,
             graph_has_content,
-            hide_non_lineage_children,
+            hide_unconsidered_children,
             run_error,
             run,
             graph_identity,
@@ -240,7 +240,7 @@ impl<'a> Snapshot<'a> {
         let default_view_contract = DefaultViewContractReport::from_parts(
             &diagnostics,
             graph_has_content,
-            hide_non_lineage_children,
+            hide_unconsidered_children,
             run_error,
             graph_identity,
             selected,
@@ -857,7 +857,7 @@ mod tests {
         assert_eq!(report.center.marks.dimmed_children, 1);
         assert_eq!(report.center.marks.dotted_child_edges, 1);
         assert!(report.controls.quick_filters_present);
-        assert!(!report.controls.hide_non_lineage_children);
+        assert!(!report.controls.hide_unconsidered_children);
 
         let statuses = report
             .checks

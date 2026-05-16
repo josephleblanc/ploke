@@ -11,8 +11,10 @@ inventing synthetic nodes or string-only UI heuristics:
 2. Sibling child Artifacts from the same parent must remain attached to that
    parent Artifact even when they never join the selected History lineage.
 
-The dimmed/dotted sibling treatment in `ploke-egui` is a view mark over this
-second rule, not a new graph relation class.
+The dimmed/dotted child treatment in `ploke-egui` is documented separately in
+[`artifact-child-consideration.md`](artifact-child-consideration.md). This
+report is only about parent endpoint materialization and selected-child ->
+next-parent identity continuity.
 
 ## Chosen Primary Carrier
 
@@ -23,8 +25,8 @@ relation families, and mark set. It is the right place to decide:
 
 - which Artifact identities materialize into the default view,
 - which parent Artifact endpoint a `P_C` relation should attach to,
-- which produced children are outside the primary lineage and therefore receive
-  a dimmed/dotted/filterable mark in the UI.
+- which selected child Artifact and later next-parent base Artifact collapse to
+  one displayed identity in this view.
 
 ## Carrier Table
 
@@ -34,7 +36,7 @@ relation families, and mark set. It is the right place to decide:
 | Which Artifact was materialized for a parent node before children were created? | `ploke_tree::graph::CandidateNode.artifact_after` | `crates/ploke-tree/src/graph/types/selection.rs`, `crates/ploke-tree/src/graph/artifact_tree.rs` |
 | Which selected child continues as the next parent base Artifact? | `ploke_tree::graph::ParentCreateAttempt::{derived_artifact_id,next_parent_base_artifact_id}` | `crates/ploke-tree/src/graph/types/parent_create.rs`, `crates/ploke-tree/src/graph/artifact_tree.rs` |
 | Which Artifact edges are primary visible default-view relations? | `ploke_tree::graph::artifact_tree::{HistoryEdge,ProducedChildEdge}` | `crates/ploke-tree/src/graph/artifact_tree.rs`, `crates/ploke-egui/src/ui/view/projection.rs` |
-| Which produced children are outside the primary selected lineage? | `ploke_tree::graph::artifact_tree::Marks::{non_lineage_children,non_lineage_child_edges}` | `crates/ploke-tree/src/graph/artifact_tree.rs`, `crates/ploke-egui/src/ui/view/projection.rs` |
+| Which Artifact was already active for a parent-owned child plan when no prior child continuity exists yet? | unique base Artifact fold over `ChildPlanRecord.children[*].{surface.base.artifact_id,request.base_artifact_id,node.base_artifact_id}` | `crates/ploke-tree/src/graph/artifact_tree.rs` |
 
 ## Read Path
 
@@ -50,12 +52,10 @@ relation families, and mark set. It is the right place to decide:
    - History-opened, active, and selected successor Artifacts,
    - candidate `artifact_after` Artifacts,
    - child-plan derived Artifacts,
-   - parent Artifact endpoints recoverable from the producing node.
+   - parent Artifact endpoints recoverable from the producing node or from a
+     unique child-plan base Artifact.
 5. `artifact_tree::parent_artifact_key` resolves the displayed parent Artifact
    for each `ChildPlanRecord.parent_node_id`.
-6. `artifact_tree::Marks::from_graph` classifies any visible `ProducedChildEdge`
-   whose child Artifact is absent from the primary lineage as a non-lineage
-   child mark.
 
 ## Why The Example Siblings Were Singleton Nodes Before
 
@@ -71,16 +71,5 @@ but their shared parent Artifact endpoint was not materialized into the default
 artifact tree. Without that parent endpoint, the `P_C` edges could not be
 emitted, so the children appeared as true zero-edge singleton components.
 
-They were not “unevaluated children”. They were evaluated child Artifacts that
-did not enter the selected History lineage.
-
-## UI Consequence
-
-`ploke-egui` should treat `Marks.non_lineage_children` and
-`Marks.non_lineage_child_edges` as render-only emphasis/filter controls:
-
-- child nodes are dimmed,
-- their `P_C` edges are dotted,
-- a left-panel filter may hide them,
-
-while the underlying graph relation remains `ProducedChildEdge`.
+They were not “unevaluated children”. They were evaluated child Artifacts whose
+shared parent Artifact endpoint was missing from the default projection.

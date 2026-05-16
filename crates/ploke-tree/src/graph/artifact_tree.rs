@@ -3,11 +3,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use ploke_records::child_plan::ChildPlanChildRecord;
+use ploke_records::child_plan::{ChildPlanChildRecord, ChildPlanRecord};
 use ploke_records::history::ArtifactRefRecord;
 use ploke_records::ids::ArtifactId;
 
-use super::{ArtifactNode, CandidateBranchNode, Graph, HistoryBlockNode, LineageNode};
+use super::{
+    ArtifactNode, CandidateBranchNode, CandidateSource, Graph, HistoryBlockNode, LineageNode,
+};
 
 /// Borrowed artifact-first projection over a [`Graph`].
 ///
@@ -71,8 +73,12 @@ pub struct Marks<'g> {
     pub primary_lineage: Option<&'g LineageNode>,
     pub lineage_artifacts: Vec<Key<'g>>,
     pub lineage_edges: Vec<(Key<'g>, Key<'g>)>,
-    pub non_lineage_children: Vec<Key<'g>>,
-    pub non_lineage_child_edges: Vec<(Key<'g>, Key<'g>)>,
+    /// archaeology:artifact-child-consideration
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
+    pub unconsidered_children: Vec<Key<'g>>,
+    /// archaeology:artifact-child-consideration
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
+    pub unconsidered_child_edges: Vec<(Key<'g>, Key<'g>)>,
     pub selected_ruler: Option<Key<'g>>,
 }
 
@@ -260,7 +266,12 @@ impl<'g> Tree<'g> {
             .map(|((from, to), sources)| AppliedPatchEdge { from, to, sources })
             .collect::<Vec<_>>();
 
-        let marks = Marks::from_graph(graph, &history_successors, &produced_child_edges);
+        let marks = Marks::from_graph(
+            graph,
+            &history_successors,
+            &produced_child_edges,
+            &promotion_aliases,
+        );
         let diagnostics = Diagnostics::from_edges(
             &nodes,
             &history_successors,
@@ -418,16 +429,20 @@ fn endpoints_present<'g>(
 }
 
 impl<'g> Marks<'g> {
+    /// archaeology:artifact-child-consideration
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
     fn from_graph(
         graph: &'g Graph,
         history_successors: &[HistoryEdge<'g>],
         produced_child_edges: &[ProducedChildEdge<'g>],
+        aliases: &BTreeMap<Key<'g>, Key<'g>>,
     ) -> Self {
         let primary_lineage = primary_lineage(graph);
         let mut lineage_artifacts = BTreeSet::new();
         let mut lineage_edges = BTreeSet::new();
-        let mut non_lineage_children = BTreeSet::new();
-        let mut non_lineage_child_edges = BTreeSet::new();
+        let considered = considered_children(graph, aliases);
+        let mut unconsidered_children = BTreeSet::new();
+        let mut unconsidered_child_edges = BTreeSet::new();
         let mut selected_ruler = None;
 
         if let Some(lineage) = primary_lineage {
@@ -459,9 +474,13 @@ impl<'g> Marks<'g> {
         }
 
         for edge in produced_child_edges {
-            if !lineage_artifacts.contains(&edge.to) {
-                non_lineage_children.insert(edge.to);
-                non_lineage_child_edges.insert((edge.from, edge.to));
+            if !edge
+                .sources
+                .iter()
+                .any(|child| considered.contains(child, edge.to))
+            {
+                unconsidered_children.insert(edge.to);
+                unconsidered_child_edges.insert((edge.from, edge.to));
             }
         }
 
@@ -469,10 +488,52 @@ impl<'g> Marks<'g> {
             primary_lineage,
             lineage_artifacts: lineage_artifacts.into_iter().collect(),
             lineage_edges: lineage_edges.into_iter().collect(),
-            non_lineage_children: non_lineage_children.into_iter().collect(),
-            non_lineage_child_edges: non_lineage_child_edges.into_iter().collect(),
+            unconsidered_children: unconsidered_children.into_iter().collect(),
+            unconsidered_child_edges: unconsidered_child_edges.into_iter().collect(),
             selected_ruler,
         }
+    }
+}
+
+struct ConsideredChildren<'g> {
+    node_ids: BTreeSet<&'g str>,
+    artifact_keys: BTreeSet<Key<'g>>,
+}
+
+impl<'g> ConsideredChildren<'g> {
+    fn contains(&self, child: &'g ChildPlanChildRecord, artifact_key: Key<'g>) -> bool {
+        self.node_ids.contains(child.node.node_id.as_str())
+            || self.artifact_keys.contains(&artifact_key)
+    }
+}
+
+/// archaeology:artifact-child-consideration
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
+fn considered_children<'g>(
+    graph: &'g Graph,
+    aliases: &BTreeMap<Key<'g>, Key<'g>>,
+) -> ConsideredChildren<'g> {
+    let mut node_ids = BTreeSet::new();
+    let mut artifact_keys = BTreeSet::new();
+    for candidate in graph
+        .candidates
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.source == Some(CandidateSource::CurrentGeneration))
+    {
+        if let Some(node_id) = candidate.node_id.as_deref() {
+            node_ids.insert(node_id);
+        }
+        if let Some(artifact_id) = candidate.artifact_after.as_ref() {
+            artifact_keys.insert(canonical_key(
+                passive_id_key(artifact_id.0.as_str()),
+                aliases,
+            ));
+        }
+    }
+    ConsideredChildren {
+        node_ids,
+        artifact_keys,
     }
 }
 
@@ -618,6 +679,14 @@ fn parent_artifact_matches<'g>(
             aliases,
         ));
     }
+    if let Some(plan) = graph.child_plans.plan_for_parent_node_id(parent_node_id)
+        && let Some(artifact_id) = plan_base_artifact(plan)
+    {
+        matches.insert(canonical_key(
+            passive_id_key(artifact_id.0.as_str()),
+            aliases,
+        ));
+    }
     matches
 }
 
@@ -627,6 +696,27 @@ fn child_derived_artifact(child: &ChildPlanChildRecord) -> Option<&ArtifactId> {
         .as_ref()
         .map(|surface| &surface.after.artifact_id)
         .or(child.node.derived_artifact_id.as_ref())
+}
+
+fn plan_base_artifact(plan: &ChildPlanRecord) -> Option<&ArtifactId> {
+    let mut unique = None;
+    for child in &plan.children {
+        let Some(base) = child
+            .surface
+            .as_ref()
+            .map(|surface| &surface.base.artifact_id)
+            .or(child.request.base_artifact_id.as_ref())
+            .or(child.node.base_artifact_id.as_ref())
+        else {
+            return None;
+        };
+        match unique {
+            None => unique = Some(base),
+            Some(existing) if existing == base => {}
+            Some(_) => return None,
+        }
+    }
+    unique
 }
 
 fn only_key<'g>(mut keys: BTreeSet<Key<'g>>) -> Option<Key<'g>> {
@@ -1013,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_tree_materializes_parent_for_non_lineage_siblings() {
+    fn artifact_tree_materializes_parent_for_unconsidered_siblings() {
         let graph = Graph {
             artifacts: ArtifactIndex {
                 artifacts: BTreeMap::from([
@@ -1043,24 +1133,44 @@ mod tests {
                 ..HistoryIndex::default()
             },
             candidates: CandidateIndex {
-                candidates: vec![crate::graph::CandidateNode {
-                    selection_entry_id: EntryId("entry-parent".to_owned()),
-                    payload_index: 0,
-                    subject: ploke_records::history::SubjectRefRecord {
-                        value: "candidate:parent".to_owned(),
+                candidates: vec![
+                    crate::graph::CandidateNode {
+                        selection_entry_id: EntryId("entry-parent".to_owned()),
+                        payload_index: 0,
+                        subject: ploke_records::history::SubjectRefRecord {
+                            value: "candidate:parent".to_owned(),
+                        },
+                        source: Some(crate::graph::CandidateSource::CurrentGeneration),
+                        occurrence_id: None,
+                        membership_id: None,
+                        membership_key: None,
+                        node_id: Some("node-parent".to_owned()),
+                        branch_id: Some("branch-parent".to_owned()),
+                        generation: Some(0),
+                        primary_runtime_id: None,
+                        artifact_after: Some(ArtifactId("parent".to_owned())),
+                        patch_id: None,
+                        evidence: Vec::new(),
                     },
-                    source: Some(crate::graph::CandidateSource::CurrentGeneration),
-                    occurrence_id: None,
-                    membership_id: None,
-                    membership_key: None,
-                    node_id: Some("node-parent".to_owned()),
-                    branch_id: Some("branch-parent".to_owned()),
-                    generation: Some(0),
-                    primary_runtime_id: None,
-                    artifact_after: Some(ArtifactId("parent".to_owned())),
-                    patch_id: None,
-                    evidence: Vec::new(),
-                }],
+                    crate::graph::CandidateNode {
+                        selection_entry_id: EntryId("entry-selected".to_owned()),
+                        payload_index: 0,
+                        subject: ploke_records::history::SubjectRefRecord {
+                            value: "candidate:selected".to_owned(),
+                        },
+                        source: Some(crate::graph::CandidateSource::CurrentGeneration),
+                        occurrence_id: None,
+                        membership_id: None,
+                        membership_key: None,
+                        node_id: Some("node-selected".to_owned()),
+                        branch_id: Some("branch-selected".to_owned()),
+                        generation: Some(1),
+                        primary_runtime_id: None,
+                        artifact_after: Some(ArtifactId("selected".to_owned())),
+                        patch_id: Some(PatchId("patch-selected".to_owned())),
+                        evidence: Vec::new(),
+                    },
+                ],
                 ..CandidateIndex::default()
             },
             child_plans: ChildPlanIndex {
@@ -1118,16 +1228,129 @@ mod tests {
         );
         assert_eq!(tree.produced_child_edges.len(), 2);
         assert_eq!(
-            key_strings(&tree.marks.non_lineage_children),
+            key_strings(&tree.marks.unconsidered_children),
             vec!["sibling"]
         );
         assert_eq!(
             tree.marks
-                .non_lineage_child_edges
+                .unconsidered_child_edges
                 .iter()
                 .map(|(from, to)| (from.as_str(), to.as_str()))
                 .collect::<Vec<_>>(),
             vec![("parent", "sibling")]
+        );
+    }
+
+    #[test]
+    fn artifact_tree_materializes_root_parent_from_child_plan_base_artifact() {
+        let graph = Graph {
+            artifacts: ArtifactIndex {
+                artifacts: BTreeMap::from([
+                    artifact_passive("root"),
+                    artifact_passive("selected"),
+                    artifact_passive("rejected"),
+                ]),
+            },
+            history: HistoryIndex {
+                lineages: BTreeMap::from([(
+                    LineageId("lineage:primary".to_owned()),
+                    LineageNode {
+                        lineage_id: LineageId("lineage:primary".to_owned()),
+                        blocks: vec![BlockHash("block:selected".to_owned())],
+                    },
+                )]),
+                blocks: BTreeMap::from([(
+                    BlockHash("block:selected".to_owned()),
+                    history_block_in(
+                        BlockHash("block:selected".to_owned()),
+                        LineageId("lineage:primary".to_owned()),
+                        1,
+                        "artifact:selected",
+                        "artifact:selected",
+                    ),
+                )]),
+                ..HistoryIndex::default()
+            },
+            candidates: CandidateIndex {
+                candidates: vec![crate::graph::CandidateNode {
+                    selection_entry_id: EntryId("entry-selected".to_owned()),
+                    payload_index: 0,
+                    subject: ploke_records::history::SubjectRefRecord {
+                        value: "candidate:selected".to_owned(),
+                    },
+                    source: Some(crate::graph::CandidateSource::CurrentGeneration),
+                    occurrence_id: None,
+                    membership_id: None,
+                    membership_key: None,
+                    node_id: Some("node-selected".to_owned()),
+                    branch_id: Some("branch-selected".to_owned()),
+                    generation: Some(1),
+                    primary_runtime_id: None,
+                    artifact_after: Some(ArtifactId("selected".to_owned())),
+                    patch_id: Some(PatchId("patch-selected".to_owned())),
+                    evidence: Vec::new(),
+                }],
+                ..CandidateIndex::default()
+            },
+            child_plans: ChildPlanIndex {
+                plans: BTreeMap::from([(
+                    SchedulerNodeId("node-root".to_owned()),
+                    ChildPlanRecord {
+                        children: vec![
+                            child_plan_record(
+                                "node-root",
+                                "node-selected",
+                                "root",
+                                "selected",
+                                "branch-selected",
+                                "candidate-selected",
+                                "patch-selected",
+                            )
+                            .children
+                            .into_iter()
+                            .next()
+                            .expect("selected child"),
+                            child_plan_record(
+                                "node-root",
+                                "node-rejected",
+                                "root",
+                                "rejected",
+                                "branch-rejected",
+                                "candidate-rejected",
+                                "patch-rejected",
+                            )
+                            .children
+                            .into_iter()
+                            .next()
+                            .expect("rejected child"),
+                        ],
+                        ..child_plan_record(
+                            "node-root",
+                            "node-selected",
+                            "root",
+                            "selected",
+                            "branch-selected",
+                            "candidate-selected",
+                            "patch-selected",
+                        )
+                    },
+                )]),
+            },
+            ..Graph::default()
+        };
+
+        let tree = graph.artifact_tree();
+
+        assert_eq!(
+            key_strings(&tree.nodes.keys().copied().collect::<Vec<_>>()),
+            vec!["rejected", "root", "selected"]
+        );
+        assert_eq!(
+            tree.produced_child_edges
+                .iter()
+                .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("root", "rejected"), ("root", "selected")]
         );
     }
 

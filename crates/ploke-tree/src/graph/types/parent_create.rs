@@ -78,7 +78,10 @@ impl Graph {
             .plans
             .values()
             .flat_map(|plan| plan.children.iter())
-            .filter(|child| child_derived_artifact(child) == Some(artifact_key))
+            .filter(|child| {
+                child_derived_artifact(child)
+                    .is_some_and(|derived| same_artifact_key(derived, artifact_key))
+            })
         {
             count += 1;
             first.get_or_insert(child);
@@ -210,4 +213,12 @@ fn child_derived_artifact(child: &ChildPlanChildRecord) -> Option<&str> {
                 .as_ref()
                 .map(|id| id.0.as_str())
         })
+}
+
+fn same_artifact_key(left: &str, right: &str) -> bool {
+    normalize_artifact_key(left) == normalize_artifact_key(right)
+}
+
+fn normalize_artifact_key(value: &str) -> &str {
+    value.strip_prefix("artifact:").unwrap_or(value)
 }

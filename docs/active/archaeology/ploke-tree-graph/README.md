@@ -11,6 +11,9 @@ projection-only labels.
   Default artifact-canvas relation families: visible `P_H ∪ P_C`, with `P_O`
   and `P_B` kept as context/provenance inventory, and the typed graph carriers
   they render from.
+- [`artifact-child-consideration.md`](artifact-child-consideration.md)
+  Mark/filter semantics for produced child Artifacts that never entered the
+  current-generation selection process.
 - [`artifact-promotion-continuity.md`](artifact-promotion-continuity.md)
   Default artifact-tree identity quotient for selected child -> next parent
   continuity, keeping one displayed Artifact node when graph-owned child-plan

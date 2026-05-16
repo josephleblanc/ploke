@@ -133,7 +133,8 @@ Default product surface.
 N_artifact = A
 E_artifact = P
 Mark_artifact includes current-ruler highlight from latest primary-lineage
-selected successor.
+selected successor plus produced-child dimming/dotted marks for children that
+never entered current-generation consideration.
 ```
 
 Properties:

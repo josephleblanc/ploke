@@ -663,6 +663,8 @@ pub(super) struct ProjectedGraph {
 
 /// archaeology:artifact-relations
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
+/// archaeology:artifact-child-consideration
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
 fn project_artifact_tree(
     graph: &DomainGraph,
     style: ViewStyle,
@@ -680,15 +682,15 @@ fn project_artifact_tree(
         .iter()
         .copied()
         .collect::<HashSet<_>>();
-    let non_lineage_children = tree
+    let unconsidered_children = tree
         .marks
-        .non_lineage_children
+        .unconsidered_children
         .iter()
         .copied()
         .collect::<HashSet<_>>();
-    let non_lineage_child_edges = tree
+    let unconsidered_child_edges = tree
         .marks
-        .non_lineage_child_edges
+        .unconsidered_child_edges
         .iter()
         .copied()
         .collect::<HashSet<_>>();
@@ -703,7 +705,7 @@ fn project_artifact_tree(
         let Some(artifact) = tree_node.sources.first().copied() else {
             continue;
         };
-        let dimmed = non_lineage_children.contains(&tree_node.key);
+        let dimmed = unconsidered_children.contains(&tree_node.key);
         let node = add_artifact_tree_node(
             &mut raw,
             &mut artifact_nodes,
@@ -711,7 +713,7 @@ fn project_artifact_tree(
             artifact,
             style,
             dimmed,
-            !filters.hide_non_lineage_children || !dimmed,
+            !filters.hide_unconsidered_children || !dimmed,
         );
         if selected_ruler == Some(tree_node.key) {
             set_artifact_tree_node_color(&mut raw, node, style.edge.colors.selected);
@@ -792,7 +794,7 @@ fn project_artifact_tree(
         if base == derived {
             continue;
         }
-        let dotted = non_lineage_child_edges.contains(&(edge.from, edge.to));
+        let dotted = unconsidered_child_edges.contains(&(edge.from, edge.to));
         if add_unique_edge_with_layers(
             &mut raw,
             base,
@@ -807,7 +809,7 @@ fn project_artifact_tree(
             },
             style,
             GraphLayerMask::ARTIFACT,
-            !filters.hide_non_lineage_children || !dotted,
+            !filters.hide_unconsidered_children || !dotted,
         ) {
             patch_index += 1;
         }
@@ -839,8 +841,8 @@ fn project_artifact_tree(
         ),
         artifact_tree::Marks::new(
             ruler_highlights.len(),
-            tree.marks.non_lineage_children.len(),
-            tree.marks.non_lineage_child_edges.len(),
+            tree.marks.unconsidered_children.len(),
+            tree.marks.unconsidered_child_edges.len(),
         ),
     );
 
@@ -1579,9 +1581,9 @@ mod tests {
     }
 
     #[test]
-    fn artifact_tree_dims_non_lineage_children_and_dots_their_edges() {
+    fn artifact_tree_dims_unconsidered_children_and_dots_their_edges() {
         let style = ViewStyle::default();
-        let graph = graph_with_non_lineage_sibling();
+        let graph = graph_with_unconsidered_sibling();
         let projected = project_artifact_tree(&graph, style, filters());
 
         let parent = artifact_node(&projected, "artifact:parent");
@@ -1609,9 +1611,9 @@ mod tests {
     }
 
     #[test]
-    fn artifact_tree_filter_hides_non_lineage_children_from_visible_projection() {
+    fn artifact_tree_filter_hides_unconsidered_children_from_visible_projection() {
         let style = ViewStyle::default();
-        let graph = graph_with_non_lineage_sibling();
+        let graph = graph_with_unconsidered_sibling();
         let mut cache = GraphViewCache::default();
 
         assert!(cache.refresh(
@@ -1619,7 +1621,7 @@ mod tests {
             style,
             GraphViewMode::ArtifactTree,
             ArtifactTreeFilters {
-                hide_non_lineage_children: true,
+                hide_unconsidered_children: true,
             },
         ));
 
@@ -1927,6 +1929,27 @@ mod tests {
                 patch_id: None,
                 evidence: Vec::new(),
             });
+        graph
+            .candidates
+            .candidates
+            .push(ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId("entry-selected".to_owned()),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: "candidate:selected".to_owned(),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some("node-selected".to_owned()),
+                branch_id: Some("branch-selected".to_owned()),
+                generation: Some(1),
+                primary_runtime_id: None,
+                artifact_after: Some(ArtifactId("artifact:selected".to_owned())),
+                patch_id: Some(PatchId("patch-selected".to_owned())),
+                evidence: Vec::new(),
+            });
         graph.child_plans.plans.insert(
             SchedulerNodeId("node-parent".to_owned()),
             child_plan_record(
@@ -2145,7 +2168,7 @@ mod tests {
         }
     }
 
-    fn graph_with_non_lineage_sibling() -> Graph {
+    fn graph_with_unconsidered_sibling() -> Graph {
         let mut graph = graph_with_selected_successor("artifact:selected", "artifact:selected", 3);
         let parent_id = ArtifactId("artifact:parent".to_owned());
         let sibling_id = ArtifactId("artifact:sibling".to_owned());
@@ -2201,6 +2224,27 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(parent_id.clone()),
                 patch_id: None,
+                evidence: Vec::new(),
+            });
+        graph
+            .candidates
+            .candidates
+            .push(ploke_tree::graph::CandidateNode {
+                selection_entry_id: EntryId("entry-selected".to_owned()),
+                payload_index: 0,
+                subject: SubjectRefRecord {
+                    value: "candidate:selected".to_owned(),
+                },
+                source: Some(CandidateSource::CurrentGeneration),
+                occurrence_id: None,
+                membership_id: None,
+                membership_key: None,
+                node_id: Some("node-selected".to_owned()),
+                branch_id: Some("branch-selected".to_owned()),
+                generation: Some(1),
+                primary_runtime_id: None,
+                artifact_after: Some(ArtifactId("artifact:selected".to_owned())),
+                patch_id: Some(PatchId("patch-selected".to_owned())),
                 evidence: Vec::new(),
             });
         graph.child_plans.plans.insert(

@@ -63,12 +63,12 @@ impl Report<'_> {
         }
         let _ = writeln!(
             out,
-            "controls: run_selector={}, mode_selector={}, load_state={:?}, quick_filters={}, hide_non_lineage_children={}",
+            "controls: run_selector={}, mode_selector={}, load_state={:?}, quick_filters={}, hide_unconsidered_children={}",
             self.controls.run_selector_present,
             self.controls.mode_selector_present,
             self.controls.load_state,
             self.controls.quick_filters_present,
-            self.controls.hide_non_lineage_children
+            self.controls.hide_unconsidered_children
         );
         let _ = writeln!(
             out,

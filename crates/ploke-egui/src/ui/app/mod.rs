@@ -222,8 +222,8 @@ impl OperatorApp {
         });
         let observation = SnapshotObservation::new(diagnostics)
             .with_graph_has_content(graph_has_content(&self.graph))
-            .with_hide_non_lineage_children(
-                self.view.artifact_tree_filters().hide_non_lineage_children,
+            .with_hide_unconsidered_children(
+                self.view.artifact_tree_filters().hide_unconsidered_children,
             )
             .with_run_error(self.run_error.clone())
             .with_run(run)
@@ -258,8 +258,8 @@ impl OperatorApp {
             });
             let observation = SnapshotObservation::new(diagnostics)
                 .with_graph_has_content(graph_has_content(&self.graph))
-                .with_hide_non_lineage_children(
-                    self.view.artifact_tree_filters().hide_non_lineage_children,
+                .with_hide_unconsidered_children(
+                    self.view.artifact_tree_filters().hide_unconsidered_children,
                 )
                 .with_run_error(self.run_error.clone())
                 .with_run(run)
@@ -328,14 +328,14 @@ fn render_graph_facts(ui: &mut egui::Ui, graph: &Graph) {
 
 fn render_quick_filters(ui: &mut egui::Ui, view: &mut GraphView) {
     let ArtifactTreeFilters {
-        hide_non_lineage_children,
+        hide_unconsidered_children,
     } = view.artifact_tree_filters();
-    let mut hide = hide_non_lineage_children;
+    let mut hide = hide_unconsidered_children;
     if ui
-        .checkbox(&mut hide, "Hide non-lineage children")
+        .checkbox(&mut hide, "Hide children excluded from selection")
         .changed()
     {
-        view.set_hide_non_lineage_children(hide);
+        view.set_hide_unconsidered_children(hide);
     }
 }
 

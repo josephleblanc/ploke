@@ -99,9 +99,9 @@ impl GraphView {
         self.artifact_tree_filters
     }
 
-    pub fn set_hide_non_lineage_children(&mut self, hide: bool) {
-        if self.artifact_tree_filters.hide_non_lineage_children != hide {
-            self.artifact_tree_filters.hide_non_lineage_children = hide;
+    pub fn set_hide_unconsidered_children(&mut self, hide: bool) {
+        if self.artifact_tree_filters.hide_unconsidered_children != hide {
+            self.artifact_tree_filters.hide_unconsidered_children = hide;
             self.fit_next_frame = true;
         }
     }
@@ -168,7 +168,9 @@ impl GraphView {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ArtifactTreeFilters {
-    pub hide_non_lineage_children: bool,
+    /// archaeology:artifact-child-consideration
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
+    pub hide_unconsidered_children: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
