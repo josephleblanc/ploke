@@ -2770,6 +2770,10 @@ fn current_provider_for_model(
 
 fn load_parent_patcher_model_selection()
 -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    // Temporary split config: broad parent patch generation reads the
+    // parent-patcher selection here, while eval/protocol defaults still read
+    // `load_active_model()` in `resolve_protocol_model_id()` above. Collapse
+    // both onto the admitted profile/campaign config once that plumbing exists.
     let selected = load_parent_patcher_model().or_else(|err| match err {
         PrepareError::MissingParentPatcherModel(_) => load_active_model(),
         other => Err(other),
@@ -10470,6 +10474,10 @@ fn resolve_protocol_model_id(model_id: Option<String>) -> Result<ModelId, Prepar
                     detail: err.to_string(),
                 })
         }
+        // Temporary split config: eval/protocol defaults still read the active
+        // model selection here, while broad parent patching reads
+        // `load_parent_patcher_model_selection()` below. Collapse both onto the
+        // admitted profile/campaign config once that plumbing exists.
         None => load_active_model().map(|selection| selection.model_id),
     }
 }
