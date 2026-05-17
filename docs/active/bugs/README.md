@@ -47,3 +47,5 @@ for near-term implementation planning.
   `ploke-tui` can resolve workspace-relative file-tool paths against the focused crate after reindex, producing doubled member paths in broad harness slots.
 - [`2026-05-15-ns-patch-apply-missing-rescan-causes-stale-index-retries.md`](./2026-05-15-ns-patch-apply-missing-rescan-causes-stale-index-retries.md)
   Non-semantic patch apply claims a rescan was scheduled but does not trigger one, leaving broad-harness sessions on stale indexed file state and causing repeated `NsContentMismatch` retries.
+- [`2026-05-17-headless-tui-same-file-ns-patch-stale-anchor-retries.md`](./2026-05-17-headless-tui-same-file-ns-patch-stale-anchor-retries.md)
+  Headless TUI attempts can keep applying or retrying same-file `ns_patch` proposals after an earlier accepted proposal has already invalidated their staged file hashes.

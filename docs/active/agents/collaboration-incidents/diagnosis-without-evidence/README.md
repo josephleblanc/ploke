@@ -50,3 +50,7 @@ re-ask for a real trace.
   fully inventorying existing typed metric, evaluation, oracle, selection, and
   History payload carriers, leading to overbroad "missing type" claims where
   the real gap was policy/admission integration.
+- [`2026-05-17-hyperagents-review-underread-existing-docs.md`](2026-05-17-hyperagents-review-underread-existing-docs.md)
+  The agent compared Prototype 1 to HyperAgents before integrating the existing
+  HyperAgents handoff, History/Crown protocol-upgrade model, and prompt/evidence
+  docs, causing useful but under-qualified gap claims.
