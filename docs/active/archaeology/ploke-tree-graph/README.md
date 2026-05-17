@@ -25,4 +25,4 @@ projection-only labels.
 - [`run-record-branch-output.md`](run-record-branch-output.md)
   Inspector claim for selected run-forest nodes and uniquely branch-backed
   Artifacts showing typed baseline and treatment `record.json.gz` output
-  records through branch-scoped graph refs.
+  records, LLM turns, and ordered tool steps through branch-scoped graph refs.

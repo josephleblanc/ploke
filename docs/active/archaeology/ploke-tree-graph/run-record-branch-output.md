@@ -5,11 +5,13 @@
 The visible claim is: for a selected run-forest node, or for a selected
 Artifact with a unique graph-owned child/patch branch, the Inspector can show
 the baseline and treatment `record.json.gz` outputs associated with that
-evaluation branch.
+evaluation branch, including the branch arm's LLM turns and ordered tool steps.
 
 This is a branch-scoped run-output claim, not Artifact identity and not History
 authority. It answers: "what did the benchmark run record say happened for this
-branch arm?"
+branch arm?" The nested LLM-call claim is still scoped to the branch run
+record: it does not come from parent-create sidecar artifacts unless no branch
+run records exist for the selected branch.
 
 ## 2. Competing IDs and Carriers
 
@@ -22,8 +24,11 @@ branch arm?"
 | `InstanceComparison.{baseline_record_path,treatment_record_path}` | `ploke_records::evaluation::InstanceComparison` | source handle | concrete paths to the compressed run records for each compared arm |
 | `BranchRunRecordRef.{branch_id,instance_id,arm,record_key,record_path}` | `ploke_tree::BranchRunRecordRef` | graph read-model join | branch-scoped ref minted during `FsRunStore` ingestion after the run record parses |
 | `RunRecordStats.{turn_count,tool_call_count,failed_tool_call_count}` | `ploke_tree::RunRecordStats` | graph read-model derived facts | per-record stats computed once at ingestion to avoid render-frame scans |
+| `RunRecord.phases.agent_turns` | `ploke_records::run_record::RunRecord` | typed branch run output | ordered turn slice rendered through `RunRecordTurnInspection` for the selected branch arm |
+| `TurnRecord.tool_calls` | `ploke_records::run_record::TurnRecord` | typed branch run output | ordered tool-step slice rendered from `ToolExecutionRecord` metadata only |
 | `RunRecord.manifest_id` | `ploke_records::run_record::RunRecord.manifest_id` | run identity handle | identifies the benchmark task/run record payload, not the branch comparison by itself |
 | `RunRecord.metadata.benchmark.instance_id` | `ploke_records::run_record::BenchmarkMetadata.instance_id` | target identity | identifies the benchmark instance inside the run output |
+| `AgentTurnArtifactMetadata` | `ploke_tree::graph::AgentTurnArtifactMetadata` from `ParentCreateAttempt::agent_turns()` | fallback/legacy evidence | sidecar event-count projection; may render only when no branch run records exist for the selected branch |
 | file path string alone | filesystem path to `record.json.gz` | fallback / source handle | useful locator only; must not be the sole semantic source |
 
 ## 3. Minting Sites
@@ -43,6 +48,9 @@ branch arm?"
   parses `record.json.gz` through `ploke_records::run_record::RunRecord`.
 - `RunRecord` is emitted by `ploke-eval` as `record.json.gz`; the passive
   shared schema lives in `ploke_records::run_record`.
+- `TurnRecord` and `ToolExecutionRecord` are nested typed fields inside the
+  already-loaded `RunRecord`. `ploke-egui` does not parse the compressed file,
+  inspect JSON, or walk paths to get these fields.
 
 ## 4. Chosen Primary Carrier
 
@@ -70,6 +78,9 @@ Why:
   that evaluation artifacts use
 - ambiguous multi-branch artifact patch witnesses are rejected rather than
   merged into a misleading run-record section
+- nested LLM-call details are ordered inside the typed `RunRecord` itself, so
+  preserving `RunRecord -> TurnRecord -> ToolExecutionRecord` borrows keeps the
+  branch arm, turn, and tool-step provenance attached.
 
 ## 5. Rejected Alternatives
 
@@ -90,6 +101,13 @@ The claim is about branch-scoped benchmark run output. Artifact ids can lead to
 a producing child branch through graph-owned parent-create or patch witnesses,
 but the artifact id text alone is not enough to select baseline/treatment run
 records.
+
+### `AgentTurnArtifactMetadata` is not primary
+
+Parent-create sidecar metadata is useful fallback evidence, but it is not
+branch-arm scoped and can be absent even when the evaluation's compressed run
+records contain baseline/treatment turns and tool calls. It must not override
+`BranchRunRecordRef -> RunRecord` evidence.
 
 ## 6. Upstream Record Types and Fields
 
@@ -120,6 +138,12 @@ records.
 - `ploke_tree::Graph::run_record_refs_for_branch`
 - `ploke_tree::Graph::parent_create_for_artifact_key`
 - `ploke_tree::graph::ParentCreateAttempt`
+- `crates/ploke-egui/src/ui/inspector.rs`
+  - `RunRecordInspection`
+  - `RunRecordTurnInspection`
+  - `RunRecordSnapshot`
+  - `RunRecordTurnSnapshot`
+  - `RunRecordToolStepSnapshot`
 
 Graph invariant:
 
@@ -140,32 +164,53 @@ Graph::parent_create_for_artifact_key(selected_artifact) == Attempt(child)
   for the selected Artifact.
 ```
 
+Nested LLM-call invariant:
+
+```text
+BranchRunRecordRef.record_key resolves to RunRecordEvidence.index[record_key]
+  and RunRecord.phases.agent_turns is the typed turn order for that arm
+  and TurnRecord.tool_calls is the typed tool-step order for that turn
+  therefore the Inspector may show treatment-first LLM turns and ordered tool
+  steps for the selected branch, without sidecar JSON or path reads.
+```
+
 ## 8. Downstream UI Consumers
 
 - `crates/ploke-egui/src/ui/inspector.rs`
   - `RunRecordBranchInspection`
   - `RunRecordInspection`
+  - `RunRecordTurnInspection`
   - `RunRecordSnapshot`
+  - `RunRecordTurnSnapshot`
+  - `RunRecordToolStepSnapshot`
   - selected run-forest-node snapshot reconstruction
   - selected artifact snapshot reconstruction when a unique branch witness is available
 - `crates/ploke-egui/src/ui/app/shell.rs`
   - `render_run_records_for_inspector`
+  - `render_parent_create_attempt`
+  - `render_run_record_turns`
+  - `render_run_record_tool_steps`
 
 ## 9. Open Gaps and Caveats
 
 - Artifact selections get run-record output only when a graph-owned
   parent-create attempt or unique patch branch proves the branch. Ambiguous
   multi-branch artifact witnesses render as no run records rather than guessing.
-- The first UI summary exposes setup/turn/tool/packaging/timing counts and
-  locators. Full turn/tool drilldown should be added as typed nested witnesses,
-  not as raw JSON rendering.
+- The Inspector now exposes turn/tool drilldown as typed nested witnesses:
+  `RunRecordInspection -> RunRecordTurnInspection -> ToolExecutionRecord`.
+  The live renderer shows metadata and ordered tool steps only; full prompts,
+  responses, tool arguments, and tool content remain out of scope for this
+  slice.
 - The native Inspector path uses `RunRecordBranchInspection` as a borrowed
   branch view over graph evidence, so it does not allocate a run-record witness
   vector each frame. Snapshot/diagnostic export still materializes owned
-  `RunRecordSnapshot` rows at the explicit export boundary.
+  `RunRecordSnapshot`, `RunRecordTurnSnapshot`, and
+  `RunRecordToolStepSnapshot` rows at the explicit export boundary.
 - Run-record counts are computed during `FsRunStore` ingestion as graph
   read-model facts. The visible egui renderer consumes borrowed path strings
   through `Path::to_str`, stack-formatted numeric labels, and static enum
   labels rather than heap-formatting those values while the section is open.
 - This claim is evaluation evidence. It does not upgrade run-output facts into
   History authority.
+- `ParentCreateAttempt::agent_turns()` remains an explicitly labeled fallback
+  path for older or incomplete runs with no branch-scoped run records.

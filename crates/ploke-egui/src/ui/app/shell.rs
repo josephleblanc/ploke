@@ -7,9 +7,12 @@ use crate::ui::id_display;
 use crate::ui::id_display::{InteractiveId, ShortId, TraceId};
 use crate::ui::inspector::{
     ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, PatchInspection,
-    RoleBadgeSet, RunRecordInspection, SelectionEdge, SourceRef, UnavailableReason,
-    find_run_forest_node, phase_label, result_class_label, run_forest_node_identity,
-    surface_apply_status_label, surface_check_status_label,
+    RoleBadgeSet, RunRecordInspection, RunRecordSlot, RunRecordTurnInspection, SelectionEdge,
+    SourceRef, UnavailableReason, find_run_forest_node, phase_label, response_finish_reason_label,
+    result_class_label, run_forest_node_identity, surface_apply_status_label,
+    surface_check_status_label, tool_execution_name, tool_execution_status_label,
+    tool_execution_summary, turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label,
+    turn_outcome_tool_count,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
 use ploke_tree::Graph;
@@ -555,6 +558,26 @@ fn cached_kv_usize(
     cached_kv_id(ui, render_cache, key, buffer.format(value));
 }
 
+fn cached_kv_u32(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: u32,
+) {
+    let mut buffer = itoa::Buffer::new();
+    cached_kv_id(ui, render_cache, key, buffer.format(value));
+}
+
+fn cached_kv_u64(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: u64,
+) {
+    let mut buffer = itoa::Buffer::new();
+    cached_kv_id(ui, render_cache, key, buffer.format(value));
+}
+
 fn cached_kv_text(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -765,7 +788,13 @@ fn render_parent_create_for_inspector(
         return;
     }
     match sections.parent_create() {
-        Some(slot) => render_parent_create(ui, slot.resolve(graph), render_cache),
+        Some(slot) => render_parent_create(
+            ui,
+            graph,
+            slot.resolve(graph),
+            sections.run_records(),
+            render_cache,
+        ),
         None => kv(ui, "attempt", "not_available"),
     }
 }
@@ -1610,12 +1639,14 @@ mod tests {
 
 fn render_parent_create(
     ui: &mut egui::Ui,
+    graph: &Graph,
     lookup: ParentCreateLookup<'_, '_>,
+    run_record_slots: &[RunRecordSlot],
     render_cache: &mut InspectorRenderCache,
 ) {
     match lookup {
         ParentCreateLookup::Attempt(attempt) => {
-            render_parent_create_attempt(ui, attempt, render_cache);
+            render_parent_create_attempt(ui, graph, attempt, run_record_slots, render_cache);
         }
         ParentCreateLookup::Unavailable(reason) => {
             cached_kv_id(ui, render_cache, "attempt", "missing");
@@ -1631,12 +1662,15 @@ fn render_parent_create(
 
 fn render_parent_create_attempt(
     ui: &mut egui::Ui,
+    graph: &Graph,
     attempt: ParentCreateAttempt<'_>,
+    run_record_slots: &[RunRecordSlot],
     render_cache: &mut InspectorRenderCache,
 ) {
     let child = attempt.child();
     let surface = attempt.surface();
-    let summary = agent_turn_summary(attempt);
+    let branch_summary = run_record_turn_summary(graph, run_record_slots);
+    let summary = branch_summary.unwrap_or_else(|| agent_turn_summary(attempt));
     let (surface_producer, router_model) = match attempt.surface_producer() {
         Some(ploke_records::history::SurfaceProposalProducerRecord::NonRouter) => {
             (Some("non_router"), None)
@@ -1691,7 +1725,11 @@ fn render_parent_create_attempt(
     egui::CollapsingHeader::new("LLM calls")
         .default_open(false)
         .show(ui, |ui| {
-            render_agent_turns(ui, render_cache, attempt.agent_turns())
+            if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
+                return;
+            }
+            cached_kv_id(ui, render_cache, "evidence", "agent_turn_sidecar_fallback");
+            render_agent_turns(ui, render_cache, attempt.agent_turns());
         });
     egui::CollapsingHeader::new("Source status")
         .default_open(false)
@@ -1757,7 +1795,7 @@ fn render_parent_create_unavailable(
     });
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct AgentTurnSummary {
     tool_requested: usize,
     tool_completed: usize,
@@ -1778,6 +1816,295 @@ fn agent_turn_summary(attempt: ParentCreateAttempt<'_>) -> AgentTurnSummary {
         summary.expected_file_changes += turn.expected_file_change_count;
     }
     summary
+}
+
+/// archaeology:run-record-branch-output
+/// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+fn run_record_turn_summary(
+    graph: &Graph,
+    run_record_slots: &[RunRecordSlot],
+) -> Option<AgentTurnSummary> {
+    let mut rendered = false;
+    let mut summary = AgentTurnSummary::default();
+    for record in run_record_slots
+        .iter()
+        .filter_map(|slot| slot.resolve(graph))
+    {
+        if record.stats.turn_count == 0 {
+            continue;
+        }
+        rendered = true;
+        summary.tool_requested += record.stats.tool_call_count;
+        summary.tool_failed += record.stats.failed_tool_call_count;
+        summary.tool_completed += record
+            .stats
+            .tool_call_count
+            .saturating_sub(record.stats.failed_tool_call_count);
+        for turn in record.turns() {
+            if let Some(artifact) = turn.turn.agent_turn_artifact.as_ref() {
+                summary.edit_proposals += artifact.patch_artifact.edit_proposals.len();
+                summary.create_proposals += artifact.patch_artifact.create_proposals.len();
+                summary.expected_file_changes +=
+                    artifact.patch_artifact.expected_file_changes.len();
+            }
+        }
+    }
+    rendered.then_some(summary)
+}
+
+/// archaeology:run-record-branch-output
+/// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+fn render_run_record_turns(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    graph: &Graph,
+    run_record_slots: &[RunRecordSlot],
+) -> bool {
+    let treatment = render_run_record_arm_turns(
+        ui,
+        render_cache,
+        graph,
+        run_record_slots,
+        ploke_tree::ComparedRunArm::Treatment,
+        true,
+    );
+    let baseline = render_run_record_arm_turns(
+        ui,
+        render_cache,
+        graph,
+        run_record_slots,
+        ploke_tree::ComparedRunArm::Baseline,
+        false,
+    );
+    treatment || baseline
+}
+
+fn has_run_record_arm_turns(
+    graph: &Graph,
+    run_record_slots: &[RunRecordSlot],
+    arm: ploke_tree::ComparedRunArm,
+) -> bool {
+    run_record_slots
+        .iter()
+        .filter_map(|slot| slot.resolve(graph))
+        .any(|record| record.record_ref.arm == arm && record.record.turn_count() > 0)
+}
+
+fn render_run_record_arm_turns(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    graph: &Graph,
+    run_record_slots: &[RunRecordSlot],
+    arm: ploke_tree::ComparedRunArm,
+    default_open: bool,
+) -> bool {
+    if !has_run_record_arm_turns(graph, run_record_slots, arm) {
+        return false;
+    }
+
+    egui::CollapsingHeader::new(compared_run_arm_label(arm))
+        .default_open(default_open)
+        .show(ui, |ui| {
+            cached_kv_id(ui, render_cache, "evidence", "branch_run_record");
+            for record in run_record_slots
+                .iter()
+                .filter_map(|slot| slot.resolve(graph))
+                .filter(|record| record.record_ref.arm == arm)
+            {
+                for turn in record.turns() {
+                    render_run_record_turn(ui, render_cache, turn);
+                }
+            }
+        });
+    true
+}
+
+fn render_run_record_turn(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: RunRecordTurnInspection<'_>,
+) {
+    ui.separator();
+    cached_kv_id(
+        ui,
+        render_cache,
+        "arm",
+        compared_run_arm_label(turn.record_ref.arm),
+    );
+    cached_kv_id(
+        ui,
+        render_cache,
+        "instance",
+        turn.record_ref.instance_id.as_str(),
+    );
+    if let Some(model) = turn
+        .turn
+        .llm_request
+        .as_ref()
+        .map(|request| request.model.as_str())
+        .or(turn.record.metadata.agent.model_id.as_deref())
+    {
+        cached_kv_id(ui, render_cache, "model", model);
+    }
+    if let Some(provider) = turn.record.metadata.agent.provider.as_deref() {
+        cached_kv_id(ui, render_cache, "provider", provider);
+    }
+    cached_kv_usize(ui, render_cache, "turn", turn.turn.turn_number as usize);
+    cached_kv_id(
+        ui,
+        render_cache,
+        "outcome",
+        turn_outcome_label(&turn.turn.outcome),
+    );
+    if let Some(count) = turn_outcome_tool_count(&turn.turn.outcome) {
+        cached_kv_usize(ui, render_cache, "outcome tools", count);
+    }
+    if let Some(message) = turn_outcome_error(&turn.turn.outcome) {
+        cached_kv_text(ui, render_cache, "outcome error", message);
+    }
+    if let Some(elapsed) = turn_outcome_elapsed_secs(&turn.turn.outcome) {
+        cached_kv_u64(ui, render_cache, "elapsed secs", elapsed);
+    }
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "prompt messages",
+        turn.turn
+            .llm_request
+            .as_ref()
+            .map_or(0, |request| request.messages.len()),
+    );
+    if let Some(response) = turn.turn.llm_response.as_ref() {
+        cached_kv_id(ui, render_cache, "response", "present");
+        if let Some(reason) = response.finish_reason.as_ref() {
+            cached_kv_id(
+                ui,
+                render_cache,
+                "finish reason",
+                response_finish_reason_label(reason),
+            );
+        }
+        if let Some(usage) = response.usage {
+            render_token_usage(ui, render_cache, usage);
+        }
+    } else {
+        cached_kv_id(ui, render_cache, "response", "missing");
+    }
+    render_run_record_agent_turn_artifact(ui, render_cache, turn);
+    render_run_record_tool_steps(ui, render_cache, turn.turn.tool_calls.as_slice());
+}
+
+fn render_token_usage(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    usage: ploke_records::agent_turn::TokenUsageRecord,
+) {
+    ui.horizontal(|ui| {
+        let mut prompt = itoa::Buffer::new();
+        let mut completion = itoa::Buffer::new();
+        let mut total = itoa::Buffer::new();
+        cached_label(ui, render_cache, "usage");
+        cached_monospace_label(ui, render_cache, "prompt=");
+        cached_monospace_label(ui, render_cache, prompt.format(usage.prompt_tokens));
+        cached_monospace_label(ui, render_cache, " completion=");
+        cached_monospace_label(ui, render_cache, completion.format(usage.completion_tokens));
+        cached_monospace_label(ui, render_cache, " total=");
+        cached_monospace_label(ui, render_cache, total.format(usage.total_tokens));
+    });
+}
+
+fn render_run_record_agent_turn_artifact(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: RunRecordTurnInspection<'_>,
+) {
+    let Some(artifact) = turn.turn.agent_turn_artifact.as_ref() else {
+        cached_kv_id(ui, render_cache, "agent-turn artifact", "not_recorded");
+        return;
+    };
+
+    cached_kv_usize(ui, render_cache, "artifact events", artifact.events.len());
+    if let Some(terminal) = artifact.terminal_record.as_ref() {
+        cached_kv_id(
+            ui,
+            render_cache,
+            "terminal outcome",
+            terminal.outcome.as_str(),
+        );
+        cached_kv_u32(ui, render_cache, "terminal attempts", terminal.attempts);
+        cached_kv_text(
+            ui,
+            render_cache,
+            "terminal summary",
+            terminal.summary.as_str(),
+        );
+    } else {
+        cached_kv_id(ui, render_cache, "terminal", "not_recorded");
+    }
+    ui.horizontal(|ui| {
+        let mut edits = itoa::Buffer::new();
+        let mut creates = itoa::Buffer::new();
+        let mut expected = itoa::Buffer::new();
+        cached_label(ui, render_cache, "patch proposals");
+        cached_monospace_label(ui, render_cache, "edits=");
+        cached_monospace_label(
+            ui,
+            render_cache,
+            edits.format(artifact.patch_artifact.edit_proposals.len()),
+        );
+        cached_monospace_label(ui, render_cache, " creates=");
+        cached_monospace_label(
+            ui,
+            render_cache,
+            creates.format(artifact.patch_artifact.create_proposals.len()),
+        );
+        cached_monospace_label(ui, render_cache, " expected_files=");
+        cached_monospace_label(
+            ui,
+            render_cache,
+            expected.format(artifact.patch_artifact.expected_file_changes.len()),
+        );
+    });
+}
+
+fn render_run_record_tool_steps(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    tools: &[ploke_records::run_record::ToolExecutionRecord],
+) {
+    if tools.is_empty() {
+        cached_kv_id(ui, render_cache, "tool steps", "none");
+        return;
+    }
+
+    cached_kv_usize(ui, render_cache, "tool steps", tools.len());
+    for (index, tool) in tools.iter().enumerate() {
+        render_run_record_tool_step(ui, render_cache, index, tool);
+    }
+}
+
+fn render_run_record_tool_step(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    ui.horizontal(|ui| {
+        let mut step = itoa::Buffer::new();
+        let mut latency = itoa::Buffer::new();
+        cached_monospace_label(ui, render_cache, step.format(index + 1));
+        cached_monospace_label(ui, render_cache, tool_execution_name(tool));
+        cached_monospace_label(ui, render_cache, tool_execution_status_label(tool));
+        cached_monospace_label(ui, render_cache, latency.format(tool.latency_ms));
+        cached_monospace_label(ui, render_cache, "ms");
+        cached_expandable_id(
+            ui,
+            render_cache,
+            ("run-record-tool", index, tool.request.call_id.as_str()),
+            tool.request.call_id.as_str(),
+        );
+        cached_monospace_label(ui, render_cache, tool_execution_summary(tool));
+    });
 }
 
 fn render_agent_turns<'a>(

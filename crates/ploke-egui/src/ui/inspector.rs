@@ -700,6 +700,42 @@ pub struct RunRecordInspection<'g> {
     pub stats: &'g ploke_tree::RunRecordStats,
 }
 
+impl<'g> RunRecordInspection<'g> {
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub fn turns(self) -> impl Iterator<Item = RunRecordTurnInspection<'g>> + 'g {
+        self.record
+            .phases
+            .agent_turns
+            .iter()
+            .enumerate()
+            .map(move |(turn_index, turn)| RunRecordTurnInspection {
+                record_ref: self.record_ref,
+                record: self.record,
+                turn_index,
+                turn,
+            })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunRecordTurnInspection<'g> {
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub record_ref: &'g ploke_tree::BranchRunRecordRef,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub record: &'g ploke_records::run_record::RunRecord,
+    /// Stable slot within the graph-owned `RunRecord.phases.agent_turns` slice.
+    ///
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub turn_index: usize,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub turn: &'g ploke_records::run_record::TurnRecord,
+}
+
 /// archaeology:run-record-branch-output
 /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
 #[derive(Debug, Clone, Copy)]
@@ -732,20 +768,31 @@ impl<'g> RunRecordBranchInspection<'g> {
     }
 
     pub(crate) fn iter(self) -> impl Iterator<Item = RunRecordInspection<'g>> + 'g {
+        self.iter_for_arm(ploke_tree::ComparedRunArm::Treatment)
+            .chain(self.iter_for_arm(ploke_tree::ComparedRunArm::Baseline))
+    }
+
+    fn iter_for_arm(
+        self,
+        arm: ploke_tree::ComparedRunArm,
+    ) -> impl Iterator<Item = RunRecordInspection<'g>> + 'g {
         let evidence = self.evidence;
-        self.refs.iter().filter_map(move |record_ref| {
-            evidence.and_then(|evidence| {
-                evidence
-                    .index
-                    .get(&record_ref.record_key)
-                    .zip(evidence.stats.get(&record_ref.record_key))
-                    .map(|(record, stats)| RunRecordInspection {
-                        record_ref,
-                        record,
-                        stats,
-                    })
+        self.refs
+            .iter()
+            .filter(move |record_ref| record_ref.arm == arm)
+            .filter_map(move |record_ref| {
+                evidence.and_then(|evidence| {
+                    evidence
+                        .index
+                        .get(&record_ref.record_key)
+                        .zip(evidence.stats.get(&record_ref.record_key))
+                        .map(|(record, stats)| RunRecordInspection {
+                            record_ref,
+                            record,
+                            stats,
+                        })
+                })
             })
-        })
     }
 }
 
@@ -1043,7 +1090,7 @@ impl<'a> SelectionInspectorSnapshot<'a> {
         render_identity(&mut out, self.identity.as_ref());
         render_badges(&mut out, "roles", &self.roles);
         render_metrics(&mut out, self.metrics.as_ref());
-        render_parent_create(&mut out, self.parent_create.as_ref());
+        render_parent_create(&mut out, self.parent_create.as_ref(), &self.run_records);
         render_run_records(&mut out, &self.run_records);
         render_edges(&mut out, "incoming", &self.incoming);
         render_edges(&mut out, "outgoing", &self.outgoing);
@@ -1233,7 +1280,7 @@ pub struct AgentTurnSnapshot<'a> {
     pub expected_file_changes: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunRecordSnapshot<'a> {
     pub arm: ploke_tree::ComparedRunArm,
     pub instance_id: &'a str,
@@ -1248,6 +1295,44 @@ pub struct RunRecordSnapshot<'a> {
     pub packaging: Option<ploke_records::run_record::SubmissionArtifactState>,
     pub patch_projection_check: Option<ploke_records::evaluation::PatchProjectionCheckState>,
     pub total_wall_clock_millis: Option<u64>,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub turns: Vec<RunRecordTurnSnapshot<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunRecordTurnSnapshot<'a> {
+    pub arm: ploke_tree::ComparedRunArm,
+    pub instance_id: &'a str,
+    pub model: Option<&'a str>,
+    pub provider: Option<&'a str>,
+    pub turn_index: usize,
+    pub turn_number: u32,
+    pub outcome: &'static str,
+    pub outcome_tool_count: Option<usize>,
+    pub outcome_error: Option<&'a str>,
+    pub outcome_elapsed_secs: Option<u64>,
+    pub prompt_message_count: usize,
+    pub has_response: bool,
+    pub response_finish_reason: Option<&'static str>,
+    pub usage: Option<ploke_records::agent_turn::TokenUsageRecord>,
+    pub agent_turn_event_count: Option<usize>,
+    pub terminal_outcome: Option<&'a str>,
+    pub terminal_summary: Option<&'a str>,
+    pub terminal_attempts: Option<u32>,
+    pub edit_proposal_count: Option<usize>,
+    pub create_proposal_count: Option<usize>,
+    pub expected_file_change_count: Option<usize>,
+    pub tool_steps: Vec<RunRecordToolStepSnapshot<'a>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunRecordToolStepSnapshot<'a> {
+    pub tool_name: &'a str,
+    pub status: &'static str,
+    pub latency_ms: u64,
+    pub call_id: &'a str,
+    pub summary: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1827,6 +1912,149 @@ fn run_record_snapshot(record: RunRecordInspection<'_>) -> RunRecordSnapshot<'_>
         packaging: packaging.map(|packaging| packaging.submission_artifact_state),
         patch_projection_check: packaging.map(|packaging| packaging.patch_projection_check_state),
         total_wall_clock_millis: record.stats.total_wall_clock_millis,
+        turns: record.turns().map(run_record_turn_snapshot).collect(),
+    }
+}
+
+fn run_record_turn_snapshot(turn: RunRecordTurnInspection<'_>) -> RunRecordTurnSnapshot<'_> {
+    let response = turn.turn.llm_response.as_ref();
+    let artifact = turn.turn.agent_turn_artifact.as_ref();
+    let terminal = artifact.and_then(|artifact| artifact.terminal_record.as_ref());
+    let patch = artifact.map(|artifact| &artifact.patch_artifact);
+
+    RunRecordTurnSnapshot {
+        arm: turn.record_ref.arm,
+        instance_id: turn.record_ref.instance_id.as_str(),
+        model: turn
+            .turn
+            .llm_request
+            .as_ref()
+            .map(|request| request.model.as_str())
+            .or(turn.record.metadata.agent.model_id.as_deref()),
+        provider: turn.record.metadata.agent.provider.as_deref(),
+        turn_index: turn.turn_index,
+        turn_number: turn.turn.turn_number,
+        outcome: turn_outcome_label(&turn.turn.outcome),
+        outcome_tool_count: turn_outcome_tool_count(&turn.turn.outcome),
+        outcome_error: turn_outcome_error(&turn.turn.outcome),
+        outcome_elapsed_secs: turn_outcome_elapsed_secs(&turn.turn.outcome),
+        prompt_message_count: turn
+            .turn
+            .llm_request
+            .as_ref()
+            .map_or(0, |request| request.messages.len()),
+        has_response: response.is_some(),
+        response_finish_reason: response
+            .and_then(|response| response.finish_reason.as_ref())
+            .map(response_finish_reason_label),
+        usage: response.and_then(|response| response.usage),
+        agent_turn_event_count: artifact.map(|artifact| artifact.events.len()),
+        terminal_outcome: terminal.map(|terminal| terminal.outcome.as_str()),
+        terminal_summary: terminal.map(|terminal| terminal.summary.as_str()),
+        terminal_attempts: terminal.map(|terminal| terminal.attempts),
+        edit_proposal_count: patch.map(|patch| patch.edit_proposals.len()),
+        create_proposal_count: patch.map(|patch| patch.create_proposals.len()),
+        expected_file_change_count: patch.map(|patch| patch.expected_file_changes.len()),
+        tool_steps: turn
+            .turn
+            .tool_calls
+            .iter()
+            .map(run_record_tool_step_snapshot)
+            .collect(),
+    }
+}
+
+fn run_record_tool_step_snapshot(
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) -> RunRecordToolStepSnapshot<'_> {
+    RunRecordToolStepSnapshot {
+        tool_name: tool_execution_name(tool),
+        status: tool_execution_status_label(tool),
+        latency_ms: tool.latency_ms,
+        call_id: tool.request.call_id.as_str(),
+        summary: Some(tool_execution_summary(tool)),
+    }
+}
+
+pub(crate) fn turn_outcome_label(outcome: &ploke_records::run_record::TurnOutcome) -> &'static str {
+    match outcome {
+        ploke_records::run_record::TurnOutcome::ToolCalls { .. } => "tool_calls",
+        ploke_records::run_record::TurnOutcome::Content => "content",
+        ploke_records::run_record::TurnOutcome::Error { .. } => "error",
+        ploke_records::run_record::TurnOutcome::Timeout { .. } => "timeout",
+    }
+}
+
+pub(crate) fn turn_outcome_tool_count(
+    outcome: &ploke_records::run_record::TurnOutcome,
+) -> Option<usize> {
+    match outcome {
+        ploke_records::run_record::TurnOutcome::ToolCalls { count } => Some(*count),
+        _ => None,
+    }
+}
+
+pub(crate) fn turn_outcome_error(outcome: &ploke_records::run_record::TurnOutcome) -> Option<&str> {
+    match outcome {
+        ploke_records::run_record::TurnOutcome::Error { message } => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+pub(crate) fn turn_outcome_elapsed_secs(
+    outcome: &ploke_records::run_record::TurnOutcome,
+) -> Option<u64> {
+    match outcome {
+        ploke_records::run_record::TurnOutcome::Timeout { elapsed_secs } => Some(*elapsed_secs),
+        _ => None,
+    }
+}
+
+pub(crate) fn response_finish_reason_label(
+    reason: &ploke_records::agent_turn::FinishReasonRecord,
+) -> &'static str {
+    match reason {
+        ploke_records::agent_turn::FinishReasonRecord::Stop => "stop",
+        ploke_records::agent_turn::FinishReasonRecord::Length => "length",
+        ploke_records::agent_turn::FinishReasonRecord::ContentFilter => "content_filter",
+        ploke_records::agent_turn::FinishReasonRecord::ToolCalls => "tool_calls",
+        ploke_records::agent_turn::FinishReasonRecord::Timeout => "timeout",
+        ploke_records::agent_turn::FinishReasonRecord::Error(_) => "error",
+    }
+}
+
+pub(crate) fn tool_execution_name(tool: &ploke_records::run_record::ToolExecutionRecord) -> &str {
+    match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(result) => result.tool.as_str(),
+        ploke_records::run_record::ToolResult::Failed(result) => {
+            result.tool.as_deref().unwrap_or(tool.request.tool.as_str())
+        }
+    }
+}
+
+pub(crate) fn tool_execution_status_label(
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) -> &'static str {
+    match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(_) => "completed",
+        ploke_records::run_record::ToolResult::Failed(_) => "failed",
+    }
+}
+
+pub(crate) fn tool_execution_summary(
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) -> &str {
+    match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(result) => result
+            .ui_payload
+            .as_ref()
+            .map(|payload| payload.summary.as_str())
+            .unwrap_or("completed"),
+        ploke_records::run_record::ToolResult::Failed(result) => result
+            .ui_payload
+            .as_ref()
+            .map(|payload| payload.summary.as_str())
+            .unwrap_or(result.error.as_str()),
     }
 }
 
@@ -2307,7 +2535,43 @@ fn render_metrics(out: &mut String, metrics: Option<&SelectionMetrics>) {
     }
 }
 
-fn render_parent_create(out: &mut String, parent_create: Option<&ParentCreateSnapshot<'_>>) {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RunRecordTurnSummary {
+    tool_requested: usize,
+    tool_completed: usize,
+    tool_failed: usize,
+    edit_proposals: usize,
+    create_proposals: usize,
+    expected_file_changes: usize,
+}
+
+fn run_record_snapshot_summary(
+    run_records: &[RunRecordSnapshot<'_>],
+) -> Option<RunRecordTurnSummary> {
+    let mut saw_turn = false;
+    let mut summary = RunRecordTurnSummary::default();
+    for turn in run_records.iter().flat_map(|record| record.turns.iter()) {
+        saw_turn = true;
+        let failed = turn
+            .tool_steps
+            .iter()
+            .filter(|tool| tool.status == "failed")
+            .count();
+        summary.tool_requested += turn.tool_steps.len();
+        summary.tool_completed += turn.tool_steps.len().saturating_sub(failed);
+        summary.tool_failed += failed;
+        summary.edit_proposals += turn.edit_proposal_count.unwrap_or(0);
+        summary.create_proposals += turn.create_proposal_count.unwrap_or(0);
+        summary.expected_file_changes += turn.expected_file_change_count.unwrap_or(0);
+    }
+    saw_turn.then_some(summary)
+}
+
+fn render_parent_create(
+    out: &mut String,
+    parent_create: Option<&ParentCreateSnapshot<'_>>,
+    run_records: &[RunRecordSnapshot<'_>],
+) {
     let Some(parent_create) = parent_create else {
         out.push_str("parent_create: none\n");
         return;
@@ -2316,6 +2580,7 @@ fn render_parent_create(out: &mut String, parent_create: Option<&ParentCreateSna
     out.push_str("parent_create:\n");
     match parent_create.state {
         ParentCreateState::Available => {
+            let run_record_summary = run_record_snapshot_summary(run_records);
             out.push_str("- state: available\n");
             if let Some(target) = parent_create.target_relpath {
                 out.push_str(&format!("- target: {target}\n"));
@@ -2329,17 +2594,36 @@ fn render_parent_create(out: &mut String, parent_create: Option<&ParentCreateSna
             if let Some(model) = parent_create.router_model {
                 out.push_str(&format!("- model: {model}\n"));
             }
+            if run_record_summary.is_some() {
+                out.push_str("- llm_calls_evidence: branch_run_record\n");
+            } else if !parent_create.agent_turns.is_empty() {
+                out.push_str("- llm_calls_evidence: agent_turn_sidecar_fallback\n");
+            }
+            let tool_requested = run_record_summary
+                .map(|summary| summary.tool_requested)
+                .unwrap_or(parent_create.tool_requested);
+            let tool_completed = run_record_summary
+                .map(|summary| summary.tool_completed)
+                .unwrap_or(parent_create.tool_completed);
+            let tool_failed = run_record_summary
+                .map(|summary| summary.tool_failed)
+                .unwrap_or(parent_create.tool_failed);
+            let edit_proposals = run_record_summary
+                .map(|summary| summary.edit_proposals)
+                .unwrap_or(parent_create.edit_proposals);
+            let create_proposals = run_record_summary
+                .map(|summary| summary.create_proposals)
+                .unwrap_or(parent_create.create_proposals);
+            let expected_file_changes = run_record_summary
+                .map(|summary| summary.expected_file_changes)
+                .unwrap_or(parent_create.expected_file_changes);
             out.push_str(&format!(
                 "- tools: requested={} completed={} failed={}\n",
-                parent_create.tool_requested,
-                parent_create.tool_completed,
-                parent_create.tool_failed
+                tool_requested, tool_completed, tool_failed
             ));
             out.push_str(&format!(
                 "- llm_proposals: edits={} creates={} expected_files={}\n",
-                parent_create.edit_proposals,
-                parent_create.create_proposals,
-                parent_create.expected_file_changes
+                edit_proposals, create_proposals, expected_file_changes
             ));
             if let (Some(check), Some(apply)) =
                 (parent_create.surface_check, parent_create.surface_apply)
@@ -2398,6 +2682,44 @@ fn render_run_records(out: &mut String, records: &[RunRecordSnapshot<'_>]) {
             record.tool_call_count, record.failed_tool_call_count
         ));
         out.push_str(&format!("  turns: {}\n", record.turn_count));
+        let tool_steps = record
+            .turns
+            .iter()
+            .map(|turn| turn.tool_steps.len())
+            .sum::<usize>();
+        out.push_str(&format!(
+            "  llm_calls: turns={} tool_steps={}\n",
+            record.turns.len(),
+            tool_steps
+        ));
+        for turn in &record.turns {
+            out.push_str(&format!(
+                "  - turn: {} outcome={} prompt_messages={} tool_steps={}\n",
+                turn.turn_number,
+                turn.outcome,
+                turn.prompt_message_count,
+                turn.tool_steps.len()
+            ));
+            if let Some(usage) = turn.usage {
+                out.push_str(&format!(
+                    "    usage: prompt={} completion={} total={}\n",
+                    usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                ));
+            }
+            if let Some(event_count) = turn.agent_turn_event_count {
+                out.push_str(&format!("    agent_turn_events: {event_count}\n"));
+            }
+            if let Some(attempts) = turn.terminal_attempts {
+                out.push_str(&format!("    terminal_attempts: {attempts}\n"));
+            }
+            if let Some(edit_proposals) = turn.edit_proposal_count {
+                let create_proposals = turn.create_proposal_count.unwrap_or(0);
+                let expected_file_changes = turn.expected_file_change_count.unwrap_or(0);
+                out.push_str(&format!(
+                    "    patch_proposals: edits={edit_proposals} creates={create_proposals} expected_files={expected_file_changes}\n"
+                ));
+            }
+        }
         if let Some(packaging) = record.packaging {
             out.push_str(&format!("  packaging: {packaging:?}\n"));
         }
@@ -2741,6 +3063,23 @@ mod tests {
         };
 
         assert_eq!(run.run_records.iter().count(), 2);
+        let ordered_arms = run
+            .run_records
+            .iter()
+            .map(|record| record.record_ref.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_arms,
+            vec![ComparedRunArm::Treatment, ComparedRunArm::Baseline]
+        );
+        let first_turn = run
+            .run_records
+            .iter()
+            .next()
+            .and_then(|record| record.turns().next())
+            .expect("treatment record has one borrowed turn");
+        assert_eq!(first_turn.turn.turn_number, 1);
+        assert_eq!(first_turn.turn.tool_calls.len(), 39);
         assert!(run.run_records.iter().any(|record| {
             record.record_ref.arm == ComparedRunArm::Baseline
                 && record.record.tool_call_count() == 18
@@ -2754,11 +3093,56 @@ mod tests {
 
         let snapshot = inspector.snapshot(&selection);
         assert_eq!(snapshot.run_records.len(), 2);
-        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Baseline);
-        assert_eq!(snapshot.run_records[0].tool_call_count, 18);
-        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Treatment);
-        assert_eq!(snapshot.run_records[1].failed_tool_call_count, 8);
-        assert!(snapshot.render_text().contains("run_records: count=2"));
+        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Treatment);
+        assert_eq!(snapshot.run_records[0].tool_call_count, 39);
+        assert_eq!(snapshot.run_records[0].turns.len(), 1);
+        assert_eq!(snapshot.run_records[0].turns[0].prompt_message_count, 2);
+        assert_eq!(snapshot.run_records[0].turns[0].tool_steps.len(), 39);
+        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Baseline);
+        assert_eq!(snapshot.run_records[1].failed_tool_call_count, 2);
+        let rendered = snapshot.render_text();
+        assert!(rendered.contains("run_records: count=2"));
+        assert!(rendered.contains("llm_calls: turns=1 tool_steps=39"));
+        assert!(rendered.contains("llm_calls: turns=1 tool_steps=18"));
+    }
+
+    #[test]
+    fn inspector_run_record_turns_are_borrowed_and_treatment_first() {
+        let graph = artifact_graph_with_applied_patch_edge();
+        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let SelectionInspector::Artifact(artifact) = &inspector else {
+            panic!("expected artifact inspection");
+        };
+
+        let mut records = artifact.run_records.iter();
+        let treatment = records.next().expect("treatment run record");
+        assert_eq!(treatment.record_ref.arm, ComparedRunArm::Treatment);
+        let turn = treatment.turns().next().expect("treatment run record turn");
+        assert_eq!(turn.turn_index, 0);
+        assert_eq!(turn.turn.tool_calls.len(), 3);
+
+        let evidence = graph.run_records().expect("run-record evidence");
+        let stored = evidence
+            .index
+            .get(&treatment.record_ref.record_key)
+            .expect("stored treatment record");
+        assert!(std::ptr::eq(treatment.record, stored));
+        assert!(std::ptr::eq(turn.turn, &stored.phases.agent_turns[0]));
+
+        let baseline = records.next().expect("baseline run record");
+        assert_eq!(baseline.record_ref.arm, ComparedRunArm::Baseline);
+        assert!(records.next().is_none());
+
+        let snapshot = inspector.snapshot(&selection);
+        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Treatment);
+        assert_eq!(snapshot.run_records[0].turns[0].tool_steps.len(), 3);
+        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Baseline);
+        assert_eq!(snapshot.run_records[1].turns[0].tool_steps.len(), 2);
+        let rendered = snapshot.render_text();
+        assert!(rendered.contains("llm_calls_evidence: branch_run_record"));
+        assert!(rendered.contains("tools: requested=5 completed=4 failed=1"));
+        assert!(rendered.contains("llm_proposals: edits=2 creates=0 expected_files=2"));
     }
 
     #[test]
@@ -3551,10 +3935,82 @@ mod tests {
                     "ended_at": "2026-05-16T00:00:01Z",
                     "db_timestamp_micros": 1,
                     "issue_prompt": "fixture",
+                    "llm_request": {
+                        "model": "fixture/model",
+                        "messages": [
+                            {"role": "system", "content": "system fixture"},
+                            {"role": "user", "content": "user fixture"}
+                        ]
+                    },
+                    "llm_response": {
+                        "content": "fixture response",
+                        "model": "fixture/model",
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 5,
+                            "total_tokens": 15
+                        },
+                        "finish_reason": "tool_calls"
+                    },
                     "tool_calls": calls,
                     "outcome": {
                         "type": "ToolCalls",
                         "count": tool_calls
+                    },
+                    "agent_turn_artifact": {
+                        "task_id": format!("{manifest_id}-turn-1"),
+                        "selected_model": "fixture/model",
+                        "issue_prompt": "fixture",
+                        "user_message_id": "user-1",
+                        "events": [
+                            {"DebugCommand": "fixture"},
+                            {"TurnFinished": {
+                                "session_id": "session-1",
+                                "request_id": "request-terminal",
+                                "parent_id": "parent",
+                                "assistant_message_id": "assistant-1",
+                                "outcome": "completed",
+                                "error_id": null,
+                                "summary": "terminal fixture",
+                                "attempts": 1
+                            }}
+                        ],
+                        "prompt_debug": null,
+                        "terminal_record": {
+                            "session_id": "session-1",
+                            "request_id": "request-terminal",
+                            "parent_id": "parent",
+                            "assistant_message_id": "assistant-1",
+                            "outcome": "completed",
+                            "error_id": null,
+                            "summary": "terminal fixture",
+                            "attempts": 1
+                        },
+                        "final_assistant_message": null,
+                        "patch_artifact": {
+                            "edit_proposals": [{
+                                "request_id": "request-edit",
+                                "call_id": "call-edit",
+                                "status": "applied",
+                                "files": ["src/lib.rs"],
+                                "preview_mode": "direct"
+                            }],
+                            "create_proposals": [],
+                            "applied": true,
+                            "all_proposals_applied": true,
+                            "expected_file_changes": [{
+                                "path": "src/lib.rs",
+                                "existed_before": true,
+                                "exists_after": true,
+                                "before_sha256": "sha256:before",
+                                "after_sha256": "sha256:after",
+                                "changed": true
+                            }],
+                            "any_expected_file_changed": true,
+                            "all_expected_files_changed": true
+                        },
+                        "llm_prompt": [],
+                        "llm_response": "fixture response"
                     }
                 }],
                 "packaging": {
