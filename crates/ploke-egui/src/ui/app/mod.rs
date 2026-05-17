@@ -49,6 +49,7 @@ pub struct OperatorApp {
     graph_revision: GraphRevision,
     view: GraphView,
     inspector_cache: InspectorCache,
+    inspector_render_cache: shell::InspectorRenderCache,
     patch_diff_cache: PatchDiffCache,
     #[cfg(not(target_arch = "wasm32"))]
     run_picker: RunPicker,
@@ -83,6 +84,7 @@ impl OperatorApp {
             graph_revision: GraphRevision::default(),
             view: GraphView::default(),
             inspector_cache: InspectorCache::default(),
+            inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
             #[cfg(not(target_arch = "wasm32"))]
             run_picker: RunPicker::from_default_root(),
@@ -118,6 +120,7 @@ impl OperatorApp {
             graph_revision: GraphRevision::default(),
             view: GraphView::default(),
             inspector_cache: InspectorCache::default(),
+            inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
             run_picker,
             run_error: None,
@@ -331,6 +334,7 @@ impl eframe::App for OperatorApp {
                     selected_kind,
                     selected_label,
                     selected_sections,
+                    &mut self.inspector_render_cache,
                     &mut self.patch_diff_cache,
                     inspector_open_state,
                 );
@@ -426,6 +430,7 @@ impl OperatorApp {
                     self.view = GraphView::default();
                     self.view.set_mode(mode);
                     self.inspector_cache = InspectorCache::default();
+                    self.inspector_render_cache = shell::InspectorRenderCache::default();
                     self.patch_diff_cache = PatchDiffCache::default();
                     self.run_error = None;
                 }

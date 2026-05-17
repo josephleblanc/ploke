@@ -18,6 +18,10 @@ projection-only labels.
   Default artifact-tree identity quotient for selected child -> next parent
   continuity, keeping one displayed Artifact node when graph-owned child-plan
   facts prove the continuation.
+- [`runtime-role.md`](runtime-role.md)
+  Inspector role-badge semantics for Artifacts invoked as child runtimes or
+  selected successor/parent runtimes, preserving `Badge<'_>` as the borrowed UI
+  witness.
 - [`run-record-branch-output.md`](run-record-branch-output.md)
   Inspector claim for selected run-forest nodes and uniquely branch-backed
   Artifacts showing typed baseline and treatment `record.json.gz` output

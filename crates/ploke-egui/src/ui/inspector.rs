@@ -75,7 +75,6 @@ pub(crate) struct InspectorSections {
     identity: Option<IdentitySlot>,
     metrics: Option<MetricsSlot>,
     parent_create: Option<ParentCreateSlot>,
-    roles: Vec<BadgeSlot>,
     run_records: Vec<RunRecordSlot>,
     incoming: Vec<ArtifactRelationSlot>,
     outgoing: Vec<ArtifactRelationSlot>,
@@ -99,7 +98,6 @@ impl InspectorSections {
                 identity: Some(IdentitySlot::from_selection(selection)),
                 metrics: None,
                 parent_create: ParentCreateSlot::from_selection(selection),
-                roles: Vec::new(),
                 run_records: Vec::new(),
                 incoming: Vec::new(),
                 outgoing: Vec::new(),
@@ -157,7 +155,6 @@ impl InspectorSections {
             parent_create: Some(ParentCreateSlot::RunForestNode {
                 node_key: node_key.clone(),
             }),
-            roles: run.role_badges.iter().map(BadgeSlot::from_badge).collect(),
             run_records: run
                 .run_records
                 .iter()
@@ -202,11 +199,6 @@ impl InspectorSections {
             parent_create: Some(ParentCreateSlot::Artifact {
                 key: artifact.identity().artifact().to_owned(),
             }),
-            roles: artifact
-                .role_badges
-                .iter()
-                .map(BadgeSlot::from_badge)
-                .collect(),
             run_records: artifact
                 .run_records
                 .iter()
@@ -238,8 +230,18 @@ impl InspectorSections {
         self.parent_create.as_ref()
     }
 
-    pub(crate) fn roles(&self) -> &[BadgeSlot] {
-        self.roles.as_slice()
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
+    pub(crate) fn role_badges<'g>(&self, graph: &'g ploke_tree::Graph) -> RoleBadgeSet<'g> {
+        match self.identity.as_ref() {
+            Some(IdentitySlot::RunForestNode { node_key }) => find_run_forest_node(graph, node_key)
+                .map(|node| role_badges_for_run_forest_node(graph, node))
+                .unwrap_or_default(),
+            Some(IdentitySlot::Artifact { sources }) => {
+                role_badges_for_artifact_source_slots(graph, sources)
+            }
+            None => RoleBadgeSet::default(),
+        }
     }
 
     pub(crate) fn run_records(&self) -> &[RunRecordSlot] {
@@ -342,39 +344,52 @@ impl ArtifactSourceSlot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BadgeRole {
-    Parent,
-    Child,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RoleBadgeSet<'g> {
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
+    parent: Option<Badge<'g>>,
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
+    child: Option<Badge<'g>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BadgeSlot {
-    /// archaeology:artifact-identity
-    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
-    pub(crate) artifact_id: ArtifactId,
-    pub(crate) role: BadgeRole,
-}
-
-impl BadgeSlot {
-    fn from_badge(badge: &Badge<'_>) -> Self {
-        match badge {
-            Badge::Parent(artifact_id) => Self {
-                artifact_id: (*artifact_id).clone(),
-                role: BadgeRole::Parent,
-            },
-            Badge::Child(artifact_id) => Self {
-                artifact_id: (*artifact_id).clone(),
-                role: BadgeRole::Child,
-            },
-        }
+impl<'g> RoleBadgeSet<'g> {
+    pub fn is_empty(self) -> bool {
+        self.parent.is_none() && self.child.is_none()
     }
 
-    pub(crate) fn badge(&self) -> Badge<'_> {
-        match self.role {
-            BadgeRole::Parent => Badge::Parent(&self.artifact_id),
-            BadgeRole::Child => Badge::Child(&self.artifact_id),
+    pub fn len(self) -> usize {
+        usize::from(self.parent.is_some()) + usize::from(self.child.is_some())
+    }
+
+    pub fn parent(self) -> Option<Badge<'g>> {
+        self.parent
+    }
+
+    pub fn child(self) -> Option<Badge<'g>> {
+        self.child
+    }
+
+    pub fn badges(self) -> impl Iterator<Item = Badge<'g>> {
+        self.parent.into_iter().chain(self.child)
+    }
+
+    fn record(&mut self, badge: Badge<'g>) {
+        match badge {
+            Badge::Parent(_) if self.parent.is_none() => self.parent = Some(badge),
+            Badge::Child(_) if self.child.is_none() => self.child = Some(badge),
+            _ => {}
         }
+    }
+}
+
+impl serde::Serialize for RoleBadgeSet<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.badges())
     }
 }
 
@@ -655,7 +670,9 @@ pub struct RunForestNodeInspection<'g> {
     pub children: &'g [ploke_tree::NodeKey],
     pub patch: Option<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
-    pub role_badges: Vec<Badge<'g>>,
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
+    pub role_badges: RoleBadgeSet<'g>,
     /// archaeology:run-record-branch-output
     /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
     pub run_records: RunRecordBranchInspection<'g>,
@@ -668,7 +685,9 @@ pub struct ArtifactInspection<'g> {
     pub outgoing: Vec<ArtifactRelation<'g>>,
     pub patches: Vec<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
-    pub role_badges: Vec<Badge<'g>>,
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
+    pub role_badges: RoleBadgeSet<'g>,
     /// archaeology:run-record-branch-output
     /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
     pub run_records: RunRecordBranchInspection<'g>,
@@ -961,6 +980,8 @@ pub struct SelectionInspectorSnapshot<'a> {
     pub kind: &'a str,
     pub label: &'a str,
     pub identity: Option<SelectionIdentity<'a>>,
+    /// archaeology:runtime-role
+    /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
     pub roles: Vec<Badge<'a>>,
     pub metrics: Option<SelectionMetrics>,
     pub parent_create: Option<ParentCreateSnapshot<'a>>,
@@ -1683,7 +1704,7 @@ where
         kind: selection.kind.as_str(),
         label: selection.label.as_str(),
         identity: Some(identity),
-        roles: role_badges,
+        roles: role_badges.badges().collect(),
         metrics: Some(metrics),
         parent_create: Some(parent_create_snapshot(parent_create)),
         run_records: run_records.iter().map(run_record_snapshot).collect(),
@@ -1736,7 +1757,7 @@ where
         identity: Some(SelectionIdentity::Artifact(ArtifactSelectionIdentity {
             artifact: identity.artifact(),
         })),
-        roles: role_badges,
+        roles: role_badges.badges().collect(),
         metrics: Some(SelectionMetrics::Artifact(artifact_metrics(&sources))),
         parent_create: Some(parent_create_snapshot(parent_create)),
         run_records: run_records.iter().map(run_record_snapshot).collect(),
@@ -2057,10 +2078,12 @@ pub(crate) fn artifact_edges<'a>(
     })
 }
 
+/// archaeology:runtime-role
+/// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
 fn role_badges_for_run_forest_node<'g>(
     graph: &'g ploke_tree::Graph,
     node: &ploke_tree::TreeNode,
-) -> Vec<Badge<'g>> {
+) -> RoleBadgeSet<'g> {
     let node_key = node.key.as_str();
     let derived_artifact_id = node.derived_artifact_id.as_deref();
     unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
@@ -2071,46 +2094,76 @@ fn role_badges_for_run_forest_node<'g>(
     }))
 }
 
+/// archaeology:runtime-role
+/// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
 fn role_badges_for_artifact_node<'g>(
     graph: &'g ploke_tree::Graph,
     node: &ploke_tree::graph::artifact_tree::Node<'g>,
-) -> Vec<Badge<'g>> {
-    let mut artifact_ids = Vec::new();
-    for source in &node.sources {
-        for artifact_id in source.artifact_ids() {
-            let artifact_id = artifact_id.0.as_str();
-            if !artifact_ids.contains(&artifact_id) {
-                artifact_ids.push(artifact_id);
-            }
-        }
-    }
+) -> RoleBadgeSet<'g> {
+    role_badges_for_artifact_sources(graph, node.sources.as_slice())
+}
+
+fn role_badges_for_artifact_sources<'g>(
+    graph: &'g ploke_tree::Graph,
+    sources: &[&'g ploke_tree::graph::ArtifactNode],
+) -> RoleBadgeSet<'g> {
     unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
         let badge = Badge::from_invocation(invocation)?;
-        artifact_ids
-            .iter()
-            .any(|artifact_id| badge.artifact_id().0.as_str() == *artifact_id)
-            .then_some(invocation)
+        artifact_sources_contain_id(sources, badge.artifact_id()).then_some(invocation)
+    }))
+}
+
+fn role_badges_for_artifact_source_slots<'g>(
+    graph: &'g ploke_tree::Graph,
+    sources: &[ArtifactSourceSlot],
+) -> RoleBadgeSet<'g> {
+    unique_role_badges(graph.invocations().filter_map(move |(_, invocation)| {
+        let badge = Badge::from_invocation(invocation)?;
+        artifact_source_slots_contain_id(graph, sources, badge.artifact_id()).then_some(invocation)
     }))
 }
 
 fn unique_role_badges<'g>(
     invocations: impl IntoIterator<Item = &'g ploke_records::invocation::InvocationRecord>,
-) -> Vec<Badge<'g>> {
-    let mut parent = None;
-    let mut child = None;
+) -> RoleBadgeSet<'g> {
+    let mut badges = RoleBadgeSet::default();
     for invocation in invocations {
-        match Badge::from_invocation(invocation) {
-            Some(Badge::Parent(artifact_id)) if parent.is_none() => {
-                parent = Some(Badge::Parent(artifact_id));
-            }
-            Some(Badge::Child(artifact_id)) if child.is_none() => {
-                child = Some(Badge::Child(artifact_id));
-            }
-            _ => {}
+        if let Some(badge) = Badge::from_invocation(invocation) {
+            badges.record(badge);
         }
     }
 
-    parent.into_iter().chain(child).collect()
+    badges
+}
+
+fn artifact_sources_contain_id(
+    sources: &[&ploke_tree::graph::ArtifactNode],
+    artifact_id: &ArtifactId,
+) -> bool {
+    sources
+        .iter()
+        .any(|source| artifact_node_contains_id(source, artifact_id))
+}
+
+fn artifact_source_slots_contain_id(
+    graph: &ploke_tree::Graph,
+    sources: &[ArtifactSourceSlot],
+    artifact_id: &ArtifactId,
+) -> bool {
+    sources
+        .iter()
+        .filter_map(|source| source.resolve(graph))
+        .any(|source| artifact_node_contains_id(source, artifact_id))
+}
+
+fn artifact_node_contains_id(
+    source: &ploke_tree::graph::ArtifactNode,
+    artifact_id: &ArtifactId,
+) -> bool {
+    source
+        .artifact_ids()
+        .iter()
+        .any(|source_id| source_id == artifact_id)
 }
 
 fn artifact_handle_label(index: usize) -> String {
@@ -2541,6 +2594,19 @@ mod tests {
             SelectionInspector::RunForestNode(run) => {
                 assert_eq!(run.node.key.as_str(), "child");
                 assert_eq!(run.parent.unwrap().key.as_str(), "parent");
+                assert_eq!(run.role_badges.len(), 2);
+                let Some(Badge::Child(child_artifact_id)) = run.role_badges.child() else {
+                    panic!("expected child role badge");
+                };
+                let Some(Badge::Parent(parent_artifact_id)) = run.role_badges.parent() else {
+                    panic!("expected parent role badge");
+                };
+                let child_invocation_id =
+                    invocation_role_artifact_id(&graph, Role::Child, "artifact:child:after");
+                let parent_invocation_id =
+                    invocation_role_artifact_id(&graph, Role::Successor, "artifact:child:after");
+                assert!(std::ptr::eq(child_artifact_id, child_invocation_id));
+                assert!(std::ptr::eq(parent_artifact_id, parent_invocation_id));
             }
             _ => panic!("expected run-forest node inspection"),
         }
@@ -3582,6 +3648,22 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    fn invocation_role_artifact_id<'g>(
+        graph: &'g ploke_tree::Graph,
+        role: Role,
+        artifact_id: &str,
+    ) -> &'g ArtifactId {
+        graph
+            .invocations()
+            .filter_map(|(_, invocation)| Badge::from_invocation(invocation))
+            .find_map(|badge| match (role, badge) {
+                (Role::Child, Badge::Child(found)) if found.0 == artifact_id => Some(found),
+                (Role::Successor, Badge::Parent(found)) if found.0 == artifact_id => Some(found),
+                _ => None,
+            })
+            .expect("fixture invocation role artifact id")
     }
 
     fn invocation(

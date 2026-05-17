@@ -1,6 +1,5 @@
 //! Render-boundary diff formatting and highlighting for patch inspection.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -12,17 +11,17 @@ use crate::ui::inspector::PatchInspection;
 
 #[derive(Debug, Default)]
 pub(crate) struct PatchDiffCache {
-    entries: BTreeMap<PatchDiffKey, Arc<LayoutJob>>,
+    entries: Vec<PatchDiffEntry>,
     rebuilds: usize,
 }
 
 impl PatchDiffCache {
-    pub(crate) fn highlighted_patch_job(
+    pub(crate) fn highlighted_patch_galley(
         &mut self,
         ui: &egui::Ui,
         patch: PatchInspection<'_>,
-    ) -> Arc<LayoutJob> {
-        self.highlighted_job(
+    ) -> Arc<egui::Galley> {
+        self.highlighted_galley(
             ui,
             PatchDiffInput {
                 patch_id: patch.patch_id(),
@@ -35,16 +34,18 @@ impl PatchDiffCache {
         )
     }
 
-    fn highlighted_job(&mut self, ui: &egui::Ui, input: PatchDiffInput<'_>) -> Arc<LayoutJob> {
-        let key = PatchDiffKey {
-            patch_id: input.patch_id.to_owned(),
-            target_relpath: input.target_relpath.to_owned(),
-            source_hash: input.source_hash.to_owned(),
-            proposed_hash: input.proposed_hash.to_owned(),
-            dark_mode: ui.visuals().dark_mode,
-        };
-        if let Some(job) = self.entries.get(&key) {
-            return job.clone();
+    fn highlighted_galley(
+        &mut self,
+        ui: &egui::Ui,
+        input: PatchDiffInput<'_>,
+    ) -> Arc<egui::Galley> {
+        let dark_mode = ui.visuals().dark_mode;
+        if let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.key.matches(input, dark_mode))
+        {
+            return entry.galley.clone();
         }
 
         let diff = unified_rust_diff(
@@ -52,16 +53,26 @@ impl PatchDiffCache {
             input.source_content,
             input.proposed_content,
         );
-        let job = Arc::new(highlighted_diff_job(ui, diff.as_str(), f32::INFINITY));
-        self.entries.insert(key, job.clone());
+        let job = highlighted_diff_job(ui, diff.as_str(), f32::INFINITY);
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        self.entries.push(PatchDiffEntry {
+            key: PatchDiffKey::from_input(input, dark_mode),
+            galley: galley.clone(),
+        });
         self.rebuilds += 1;
-        job
+        galley
     }
 
     #[cfg(test)]
     pub(crate) fn rebuilds(&self) -> usize {
         self.rebuilds
     }
+}
+
+#[derive(Debug, Clone)]
+struct PatchDiffEntry {
+    key: PatchDiffKey,
+    galley: Arc<egui::Galley>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -81,6 +92,26 @@ struct PatchDiffKey {
     source_hash: String,
     proposed_hash: String,
     dark_mode: bool,
+}
+
+impl PatchDiffKey {
+    fn from_input(input: PatchDiffInput<'_>, dark_mode: bool) -> Self {
+        Self {
+            patch_id: input.patch_id.to_owned(),
+            target_relpath: input.target_relpath.to_owned(),
+            source_hash: input.source_hash.to_owned(),
+            proposed_hash: input.proposed_hash.to_owned(),
+            dark_mode,
+        }
+    }
+
+    fn matches(&self, input: PatchDiffInput<'_>, dark_mode: bool) -> bool {
+        self.dark_mode == dark_mode
+            && self.patch_id == input.patch_id
+            && self.target_relpath == input.target_relpath
+            && self.source_hash == input.source_hash
+            && self.proposed_hash == input.proposed_hash
+    }
 }
 
 pub(crate) fn unified_rust_diff(path: &str, before: &str, after: &str) -> String {
@@ -259,13 +290,13 @@ mod tests {
                 source_content: "fn a() {}\n",
                 proposed_content: "fn b() {}\n",
             };
-            cache.highlighted_job(ui, first);
+            cache.highlighted_galley(ui, first);
             assert_eq!(cache.rebuilds(), 1);
 
-            cache.highlighted_job(ui, first);
+            cache.highlighted_galley(ui, first);
             assert_eq!(cache.rebuilds(), 1);
 
-            cache.highlighted_job(
+            cache.highlighted_galley(
                 ui,
                 PatchDiffInput {
                     source_hash: "sha256:source-b",
@@ -276,7 +307,7 @@ mod tests {
             assert_eq!(cache.rebuilds(), 2);
 
             ui.visuals_mut().dark_mode = !ui.visuals().dark_mode;
-            cache.highlighted_job(ui, first);
+            cache.highlighted_galley(ui, first);
             assert_eq!(cache.rebuilds(), 3);
         });
     }
