@@ -8,9 +8,10 @@
 //! grant, surface check, and durable projection of what happened.
 
 use std::{
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ploke_llm::{ModelId, ProviderKey};
@@ -38,6 +39,9 @@ const MAX_PROMPT_MESSAGE_PREVIEWS: usize = 8;
 const MAX_PROMPT_MESSAGE_PREVIEW_CHARS: usize = 500;
 const MAX_RAG_PART_PREVIEWS: usize = 8;
 const LIVE_TRACE_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_LIVE";
+const POST_APPLY_STATUS_TIMEOUT_SECS: u64 = 120;
+const POST_APPLY_INDEX_TIMEOUT_SECS: u64 = 180;
+const POST_APPLY_INDEX_START_GRACE_MS: u64 = 2_000;
 
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,6 +274,76 @@ impl AppliedItem {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum StagedItem {
+    Edit(Uuid),
+    Create(Uuid),
+}
+
+impl StagedItem {
+    fn id(self) -> Uuid {
+        match self {
+            Self::Edit(id) | Self::Create(id) => id,
+        }
+    }
+
+    fn applied(self) -> AppliedItem {
+        match self {
+            Self::Edit(id) => AppliedItem::Edit(id),
+            Self::Create(id) => AppliedItem::Create(id),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ToolBatch {
+    expected: Vec<ploke_core::ArcStr>,
+    completed: Vec<ploke_core::ArcStr>,
+    staged: Vec<StagedItem>,
+}
+
+impl ToolBatch {
+    fn request(&mut self, call_id: ploke_core::ArcStr) {
+        if !self.expected.contains(&call_id) {
+            self.expected.push(call_id);
+        }
+    }
+
+    fn complete(&mut self, call_id: ploke_core::ArcStr, staged: Option<StagedItem>) {
+        if !self.completed.contains(&call_id) {
+            self.completed.push(call_id);
+        }
+        if let Some(staged) = staged {
+            if !self.staged.contains(&staged) {
+                self.staged.push(staged);
+            }
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        !self.expected.is_empty()
+            && self
+                .expected
+                .iter()
+                .all(|call_id| self.completed.contains(call_id))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Candidate {
+    item: StagedItem,
+    proposed_at_ms: i64,
+    paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct BatchOutcome {
+    applied: Vec<AppliedItem>,
+    changed_paths: Vec<PathBuf>,
+    feedbacks: Vec<String>,
+    retry: Option<String>,
+}
+
 async fn run_attempt(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     mut active_parent_id: Uuid,
@@ -279,24 +353,26 @@ async fn run_attempt(
     run: &mut HeadlessRun,
     observer: &LiveObserver,
 ) -> Result<AttemptEnd, Error> {
-    use ploke_tui::{
-        AppEvent,
-        app_state::{StateCommand, events::SystemEvent},
-    };
+    use ploke_tui::{AppEvent, app_state::events::SystemEvent};
 
-    let cmd_tx = runtime.app.state_cmd_tx();
     let mut pending_retry = None::<String>;
     let mut provider_failure = None::<String>;
     let mut applied = Vec::<AppliedItem>::new();
     let mut changed_paths = Vec::<PathBuf>::new();
     let mut policy_feedbacks = Vec::<String>::new();
     let mut policy_repair_turns = 0_u32;
+    let mut batches = HashMap::<Uuid, ToolBatch>::new();
+    let mut pending_events = VecDeque::<ploke_tui::AppEvent>::new();
 
     loop {
         runtime.app.pump_pending_events().await;
         drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
 
-        let event = next_event(runtime).await?;
+        let event = if let Some(event) = pending_events.pop_front() {
+            event
+        } else {
+            next_event(runtime).await?
+        };
 
         match event {
             AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
@@ -355,6 +431,10 @@ async fn run_attempt(
                     tool_call.function.name.as_str(),
                     truncate_chars(&tool_call.function.arguments, 240)
                 ));
+                batches
+                    .entry(request_id)
+                    .or_default()
+                    .request(tool_call.call_id.clone());
             }
             AppEvent::System(SystemEvent::ToolCallCompleted {
                 request_id,
@@ -375,167 +455,41 @@ async fn run_attempt(
                     call_id,
                     truncate_chars(&content, 240)
                 ));
-                let Some(payload) = ui_payload else {
-                    continue;
-                };
-                if let Some(proposal_id) = payload.proposal_id {
-                    let applied_item = AppliedItem::Edit(proposal_id);
-                    if applied.contains(&applied_item) {
-                        observer.emit(format!(
-                            "attempt {turn} proposal_already_applied id={proposal_id}"
-                        ));
-                        continue;
-                    }
-                    let Some(proposal) = runtime
-                        .state
-                        .proposals
-                        .read()
-                        .await
-                        .get(&proposal_id)
-                        .cloned()
-                    else {
-                        continue;
-                    };
-                    let paths = proposal_paths(&proposal);
-                    run.events.push(Event::Proposal {
-                        id: proposal_id.to_string(),
-                        edit_count: proposal.edits.len() + proposal.edits_ns.len(),
-                        paths: paths.clone(),
-                    });
-                    observer.emit(format!(
-                        "attempt {turn} proposal id={} edit_count={} paths={}",
-                        proposal_id,
-                        proposal.edits.len() + proposal.edits_ns.len(),
-                        join_paths(&paths)
-                    ));
-                    if paths.is_empty() {
-                        send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
-                        run.attempts.push(HeadlessAttempt {
-                            turn,
-                            proposal_id: Some(proposal_id),
-                            result: HeadlessAttemptResult::Rejected {
-                                reason: Feedback::from_outcome(&Outcome::Rejected(Reject::Empty))
-                                    .message()
-                                    .to_string(),
-                            },
-                        });
-                        let feedback = "No material edit was staged; make a concrete bounded edit."
-                            .to_string();
-                        policy_feedbacks.push(repair_prompt_feedback(&feedback));
-                        observer.emit(format!("attempt {turn} proposal_rejected empty"));
-                        continue;
-                    }
-
-                    let rejection = classify_paths(workspace_path, edit_policy, &paths);
-                    if let Some(rejection) = rejection {
-                        let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
-                        send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await?;
-                        run.attempts.push(HeadlessAttempt {
-                            turn,
-                            proposal_id: Some(proposal_id),
-                            result: HeadlessAttemptResult::Rejected {
-                                reason: feedback.message().to_string(),
-                            },
-                        });
-                        let retry = feedback.message().to_string();
-                        policy_feedbacks.push(repair_prompt_feedback(&retry));
-                        observer.emit(format!(
-                            "attempt {turn} proposal_rejected {}",
-                            truncate_chars(feedback.message(), 240)
-                        ));
-                        continue;
-                    }
-
-                    match apply_edit(runtime, proposal_id, turn, run, observer).await? {
-                        Ok(paths) => {
-                            applied.push(applied_item);
-                            push_changed_paths(&mut changed_paths, paths);
-                        }
-                        Err(feedback) => {
-                            pending_retry = Some(feedback);
-                        }
-                    }
-                } else if payload.tool == ploke_tui::tools::ToolName::CreateFile {
-                    let applied_item = AppliedItem::Create(request_id);
-                    if applied.contains(&applied_item) {
-                        observer.emit(format!(
-                            "attempt {turn} creation_already_applied id={request_id}"
-                        ));
-                        continue;
-                    }
-                    let Some(proposal) = runtime
-                        .state
-                        .create_proposals
-                        .read()
-                        .await
-                        .get(&request_id)
-                        .cloned()
-                    else {
-                        continue;
-                    };
-                    let paths = proposal.files.clone();
-                    run.events.push(Event::Proposal {
-                        id: request_id.to_string(),
-                        edit_count: proposal.creates.len(),
-                        paths: paths.clone(),
-                    });
-                    observer.emit(format!(
-                        "attempt {turn} creation id={} edit_count={} paths={}",
-                        request_id,
-                        proposal.creates.len(),
-                        join_paths(&paths)
-                    ));
-                    if paths.is_empty() {
-                        send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await?;
-                        run.attempts.push(HeadlessAttempt {
-                            turn,
-                            proposal_id: Some(request_id),
-                            result: HeadlessAttemptResult::Rejected {
-                                reason: Feedback::from_outcome(&Outcome::Rejected(Reject::Empty))
-                                    .message()
-                                    .to_string(),
-                            },
-                        });
-                        let feedback =
-                            "No material file creation was staged; make a concrete bounded edit."
-                                .to_string();
-                        policy_feedbacks.push(repair_prompt_feedback(&feedback));
-                        observer.emit(format!("attempt {turn} creation_rejected empty"));
-                        continue;
-                    }
-
-                    let rejection = classify_paths(workspace_path, edit_policy, &paths);
-                    if let Some(rejection) = rejection {
-                        let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
-                        send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await?;
-                        run.attempts.push(HeadlessAttempt {
-                            turn,
-                            proposal_id: Some(request_id),
-                            result: HeadlessAttemptResult::Rejected {
-                                reason: feedback.message().to_string(),
-                            },
-                        });
-                        let retry = feedback.message().to_string();
-                        policy_feedbacks.push(repair_prompt_feedback(&retry));
-                        observer.emit(format!(
-                            "attempt {turn} creation_rejected {}",
-                            truncate_chars(feedback.message(), 240)
-                        ));
-                        continue;
-                    }
-
-                    match apply_create(runtime, request_id, turn, run, observer).await? {
-                        Ok(paths) => {
-                            applied.push(applied_item);
-                            push_changed_paths(&mut changed_paths, paths);
-                        }
-                        Err(feedback) => {
-                            pending_retry = Some(feedback);
-                        }
+                let staged = observe_staged_item(
+                    runtime,
+                    ui_payload.as_ref(),
+                    request_id,
+                    &applied,
+                    turn,
+                    run,
+                    observer,
+                )
+                .await;
+                let batch_ready =
+                    record_batch_terminal(&mut batches, request_id, call_id.clone(), staged);
+                if let Some(items) = batch_ready {
+                    let outcome = settle_staged_batch(
+                        runtime,
+                        &mut pending_events,
+                        workspace_path,
+                        edit_policy,
+                        turn,
+                        run,
+                        observer,
+                        items,
+                        &applied,
+                    )
+                    .await?;
+                    applied.extend(outcome.applied);
+                    push_changed_paths(&mut changed_paths, outcome.changed_paths);
+                    policy_feedbacks.extend(outcome.feedbacks);
+                    if let Some(feedback) = outcome.retry {
+                        pending_retry = Some(feedback);
                     }
                 }
             }
             AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
                 parent_id,
                 call_id,
                 error,
@@ -560,6 +514,28 @@ async fn run_attempt(
                     },
                 });
                 pending_retry = Some(error);
+                let batch_ready =
+                    record_batch_terminal(&mut batches, request_id, call_id.clone(), None);
+                if let Some(items) = batch_ready {
+                    let outcome = settle_staged_batch(
+                        runtime,
+                        &mut pending_events,
+                        workspace_path,
+                        edit_policy,
+                        turn,
+                        run,
+                        observer,
+                        items,
+                        &applied,
+                    )
+                    .await?;
+                    applied.extend(outcome.applied);
+                    push_changed_paths(&mut changed_paths, outcome.changed_paths);
+                    policy_feedbacks.extend(outcome.feedbacks);
+                    if let Some(feedback) = outcome.retry {
+                        pending_retry = Some(feedback);
+                    }
+                }
             }
             AppEvent::MessageUpdated(message) => {
                 let assistant_error = {
@@ -629,6 +605,8 @@ async fn run_attempt(
                     policy_feedbacks.clear();
                     policy_repair_turns += 1;
                     let prompt = policy_repair_prompt(&feedback, !applied.is_empty());
+                    batches.clear();
+                    pending_events.clear();
                     active_parent_id = submit_prompt(&runtime.app, prompt).await?;
                     observer.emit(format!(
                         "attempt {turn} policy_repair_prompt parent={} count={} feedback={}",
@@ -700,24 +678,41 @@ async fn run_attempt(
     }
 }
 
-async fn apply_edit(
-    runtime: &mut crate::runner::WorkspaceTuiRuntime,
-    proposal_id: Uuid,
+fn record_batch_terminal(
+    batches: &mut HashMap<Uuid, ToolBatch>,
+    request_id: Uuid,
+    call_id: ploke_core::ArcStr,
+    staged: Option<StagedItem>,
+) -> Option<Vec<StagedItem>> {
+    let batch = batches.entry(request_id).or_default();
+    batch.complete(call_id, staged);
+    if batch.is_complete() {
+        batches.remove(&request_id).map(|batch| batch.staged)
+    } else {
+        None
+    }
+}
+
+async fn observe_staged_item(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    ui_payload: Option<&ploke_tui::tools::ToolUiPayload>,
+    request_id: Uuid,
+    applied: &[AppliedItem],
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
-) -> Result<Result<Vec<PathBuf>, String>, Error> {
-    use ploke_tui::app_state::{StateCommand, core::EditProposalStatus};
-
-    let cmd_tx = runtime.app.state_cmd_tx();
-    observer.emit(format!("attempt {turn} proposal_approve id={proposal_id}"));
-    send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
-
-    loop {
-        runtime.app.pump_pending_events().await;
-        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let Some(updated) = runtime
+) -> Option<StagedItem> {
+    let Some(payload) = ui_payload else {
+        return None;
+    };
+    if let Some(proposal_id) = payload.proposal_id {
+        if applied.contains(&AppliedItem::Edit(proposal_id)) {
+            observer.emit(format!(
+                "attempt {turn} proposal_already_applied id={proposal_id}"
+            ));
+            return None;
+        }
+        let Some(proposal) = runtime
             .state
             .proposals
             .read()
@@ -725,79 +720,31 @@ async fn apply_edit(
             .get(&proposal_id)
             .cloned()
         else {
-            let reason = format!("staged proposal {proposal_id} disappeared before apply");
-            run.attempts.push(HeadlessAttempt {
-                turn,
-                proposal_id: Some(proposal_id),
-                result: HeadlessAttemptResult::Rejected {
-                    reason: reason.clone(),
-                },
-            });
-            return Ok(Err(reason));
+            return None;
         };
-        match updated.status {
-            EditProposalStatus::Applied => {
-                let paths = proposal_paths(&updated);
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: Some(proposal_id),
-                    result: HeadlessAttemptResult::Applied {
-                        paths: paths.clone(),
-                    },
-                });
-                observer.emit(format!("attempt {turn} proposal_applied id={proposal_id}"));
-                return Ok(Ok(paths));
-            }
-            EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: Some(proposal_id),
-                    result: HeadlessAttemptResult::Rejected {
-                        reason: reason.clone(),
-                    },
-                });
-                observer.emit(format!(
-                    "attempt {turn} proposal_apply_failed id={} reason={}",
-                    proposal_id,
-                    truncate_chars(&reason, 240)
-                ));
-                return Ok(Err(reason));
-            }
-            EditProposalStatus::Denied => {
-                let reason = "proposal was denied before apply".to_string();
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: Some(proposal_id),
-                    result: HeadlessAttemptResult::Rejected {
-                        reason: reason.clone(),
-                    },
-                });
-                observer.emit(format!("attempt {turn} proposal_denied id={proposal_id}"));
-                return Ok(Err(reason));
-            }
-            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
-        }
+        let paths = proposal_paths(&proposal);
+        run.events.push(Event::Proposal {
+            id: proposal_id.to_string(),
+            edit_count: proposal.edits.len() + proposal.edits_ns.len(),
+            paths: paths.clone(),
+        });
+        observer.emit(format!(
+            "attempt {turn} proposal id={} edit_count={} paths={}",
+            proposal_id,
+            proposal.edits.len() + proposal.edits_ns.len(),
+            join_paths(&paths)
+        ));
+        return Some(StagedItem::Edit(proposal_id));
     }
-}
 
-async fn apply_create(
-    runtime: &mut crate::runner::WorkspaceTuiRuntime,
-    request_id: Uuid,
-    turn: u32,
-    run: &mut HeadlessRun,
-    observer: &LiveObserver,
-) -> Result<Result<Vec<PathBuf>, String>, Error> {
-    use ploke_tui::app_state::{StateCommand, core::EditProposalStatus};
-
-    let cmd_tx = runtime.app.state_cmd_tx();
-    observer.emit(format!("attempt {turn} creation_approve id={request_id}"));
-    send_state(&cmd_tx, StateCommand::ApproveCreations { request_id }).await?;
-
-    loop {
-        runtime.app.pump_pending_events().await;
-        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let Some(updated) = runtime
+    if payload.tool == ploke_tui::tools::ToolName::CreateFile {
+        if applied.contains(&AppliedItem::Create(request_id)) {
+            observer.emit(format!(
+                "attempt {turn} creation_already_applied id={request_id}"
+            ));
+            return None;
+        }
+        let Some(proposal) = runtime
             .state
             .create_proposals
             .read()
@@ -805,57 +752,461 @@ async fn apply_create(
             .get(&request_id)
             .cloned()
         else {
-            let reason = format!("staged file creation {request_id} disappeared before apply");
-            run.attempts.push(HeadlessAttempt {
-                turn,
-                proposal_id: Some(request_id),
-                result: HeadlessAttemptResult::Rejected {
-                    reason: reason.clone(),
-                },
-            });
-            return Ok(Err(reason));
+            return None;
         };
-        match updated.status {
-            EditProposalStatus::Applied => {
-                let paths = updated.files.clone();
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: Some(request_id),
-                    result: HeadlessAttemptResult::Applied {
-                        paths: paths.clone(),
-                    },
-                });
-                observer.emit(format!("attempt {turn} creation_applied id={request_id}"));
-                return Ok(Ok(paths));
+        let paths = proposal.files.clone();
+        run.events.push(Event::Proposal {
+            id: request_id.to_string(),
+            edit_count: proposal.creates.len(),
+            paths: paths.clone(),
+        });
+        observer.emit(format!(
+            "attempt {turn} creation id={} edit_count={} paths={}",
+            request_id,
+            proposal.creates.len(),
+            join_paths(&paths)
+        ));
+        return Some(StagedItem::Create(request_id));
+    }
+
+    None
+}
+
+async fn settle_staged_batch(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    pending_events: &mut VecDeque<ploke_tui::AppEvent>,
+    workspace_path: &Path,
+    edit_policy: BroadEditPolicy,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    staged: Vec<StagedItem>,
+    applied: &[AppliedItem],
+) -> Result<BatchOutcome, Error> {
+    let mut outcome = BatchOutcome::default();
+    let mut candidates = Vec::new();
+
+    for item in staged {
+        if applied.contains(&item.applied()) {
+            continue;
+        }
+        let Some(candidate) = candidate_for_item(runtime, item).await else {
+            let reason = format!("staged proposal {} disappeared before admission", item.id());
+            reject_item(runtime, item, turn, run, observer, reason.clone()).await?;
+            outcome.retry = Some(reason);
+            continue;
+        };
+        if candidate.paths.is_empty() {
+            let reason = match item {
+                StagedItem::Edit(_) => "No material edit was staged; make a concrete bounded edit.",
+                StagedItem::Create(_) => {
+                    "No material file creation was staged; make a concrete bounded edit."
+                }
             }
-            EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
+            .to_string();
+            reject_item(runtime, item, turn, run, observer, reason.clone()).await?;
+            outcome.feedbacks.push(repair_prompt_feedback(&reason));
+            continue;
+        }
+        if let Some(rejection) = classify_paths(workspace_path, edit_policy, &candidate.paths) {
+            let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
+            reject_item(
+                runtime,
+                item,
+                turn,
+                run,
+                observer,
+                feedback.message().to_string(),
+            )
+            .await?;
+            outcome
+                .feedbacks
+                .push(repair_prompt_feedback(feedback.message()));
+            continue;
+        }
+        candidates.push(candidate);
+    }
+
+    let (selected, rejected) = select_disjoint(candidates, workspace_path);
+    for candidate in rejected {
+        let reason =
+            "Staged edit overlaps a newer valid proposal from the same tool batch".to_string();
+        reject_item(runtime, candidate.item, turn, run, observer, reason.clone()).await?;
+        outcome.feedbacks.push(repair_prompt_feedback(&reason));
+    }
+
+    if selected.is_empty() {
+        return Ok(outcome);
+    }
+
+    approve_selected(runtime, turn, observer, &selected).await?;
+    let applied_outcome = wait_for_selected(runtime, turn, run, observer, &selected).await?;
+    outcome.applied.extend(applied_outcome.applied);
+    outcome.changed_paths.extend(applied_outcome.changed_paths);
+    if applied_outcome.retry.is_some() {
+        outcome.retry = applied_outcome.retry;
+    }
+    if !outcome.applied.is_empty() {
+        wait_for_refresh(runtime, pending_events, turn, observer).await?;
+    }
+    Ok(outcome)
+}
+
+async fn candidate_for_item(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    item: StagedItem,
+) -> Option<Candidate> {
+    match item {
+        StagedItem::Edit(proposal_id) => {
+            let proposal = runtime
+                .state
+                .proposals
+                .read()
+                .await
+                .get(&proposal_id)
+                .cloned()?;
+            Some(Candidate {
+                item,
+                proposed_at_ms: proposal.proposed_at_ms,
+                paths: proposal_paths(&proposal),
+            })
+        }
+        StagedItem::Create(request_id) => {
+            let proposal = runtime
+                .state
+                .create_proposals
+                .read()
+                .await
+                .get(&request_id)
+                .cloned()?;
+            Some(Candidate {
+                item,
+                proposed_at_ms: proposal.proposed_at_ms,
+                paths: proposal.files,
+            })
+        }
+    }
+}
+
+fn select_disjoint(
+    mut candidates: Vec<Candidate>,
+    workspace_path: &Path,
+) -> (Vec<Candidate>, Vec<Candidate>) {
+    candidates.sort_by(|a, b| {
+        b.proposed_at_ms
+            .cmp(&a.proposed_at_ms)
+            .then(b.item.id().cmp(&a.item.id()))
+    });
+
+    let mut occupied = Vec::<PathBuf>::new();
+    let mut selected = Vec::new();
+    let mut rejected = Vec::new();
+    for candidate in candidates {
+        let keys = candidate
+            .paths
+            .iter()
+            .map(|path| path_key(workspace_path, path))
+            .collect::<Vec<_>>();
+        if keys.iter().any(|key| occupied.contains(key)) {
+            rejected.push(candidate);
+        } else {
+            occupied.extend(keys);
+            selected.push(candidate);
+        }
+    }
+    (selected, rejected)
+}
+
+fn path_key(workspace_path: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.strip_prefix(workspace_path)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    }
+}
+
+async fn reject_item(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    item: StagedItem,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    reason: String,
+) -> Result<(), Error> {
+    deny_item(runtime, item).await?;
+    run.attempts.push(HeadlessAttempt {
+        turn,
+        proposal_id: Some(item.id()),
+        result: HeadlessAttemptResult::Rejected {
+            reason: reason.clone(),
+        },
+    });
+    observer.emit(format!(
+        "attempt {turn} proposal_rejected id={} reason={}",
+        item.id(),
+        truncate_chars(&reason, 240)
+    ));
+    Ok(())
+}
+
+async fn deny_item(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    item: StagedItem,
+) -> Result<(), Error> {
+    use ploke_tui::app_state::StateCommand;
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    match item {
+        StagedItem::Edit(proposal_id) => {
+            send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await
+        }
+        StagedItem::Create(request_id) => {
+            send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await
+        }
+    }
+}
+
+async fn approve_selected(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    turn: u32,
+    observer: &LiveObserver,
+    selected: &[Candidate],
+) -> Result<(), Error> {
+    use ploke_tui::app_state::StateCommand;
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    for candidate in selected {
+        match candidate.item {
+            StagedItem::Edit(proposal_id) => {
+                observer.emit(format!("attempt {turn} proposal_approve id={proposal_id}"));
+                send_state(&cmd_tx, StateCommand::ApproveEdits { proposal_id }).await?;
+            }
+            StagedItem::Create(request_id) => {
+                observer.emit(format!("attempt {turn} creation_approve id={request_id}"));
+                send_state(&cmd_tx, StateCommand::ApproveCreations { request_id }).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn wait_for_selected(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    selected: &[Candidate],
+) -> Result<BatchOutcome, Error> {
+    use ploke_tui::app_state::core::EditProposalStatus;
+
+    let deadline = Instant::now() + Duration::from_secs(POST_APPLY_STATUS_TIMEOUT_SECS);
+    let mut pending = selected
+        .iter()
+        .map(|candidate| candidate.item)
+        .collect::<Vec<_>>();
+    let mut outcome = BatchOutcome::default();
+
+    while !pending.is_empty() {
+        if Instant::now() >= deadline {
+            return Err(Error::HeadlessEvent(format!(
+                "timed out waiting for proposal batch apply after {POST_APPLY_STATUS_TIMEOUT_SECS}s"
+            )));
+        }
+
+        runtime.app.pump_pending_events().await;
+        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
+
+        let mut still_pending = Vec::new();
+        for item in pending {
+            let Some((status, paths)) = item_status(runtime, item).await else {
+                let reason = format!("staged proposal {} disappeared before apply", item.id());
                 run.attempts.push(HeadlessAttempt {
                     turn,
-                    proposal_id: Some(request_id),
+                    proposal_id: Some(item.id()),
                     result: HeadlessAttemptResult::Rejected {
                         reason: reason.clone(),
                     },
                 });
+                outcome.retry = Some(reason);
+                continue;
+            };
+            match status {
+                EditProposalStatus::Applied => {
+                    run.attempts.push(HeadlessAttempt {
+                        turn,
+                        proposal_id: Some(item.id()),
+                        result: HeadlessAttemptResult::Applied {
+                            paths: paths.clone(),
+                        },
+                    });
+                    observer.emit(format!("attempt {turn} proposal_applied id={}", item.id()));
+                    outcome.applied.push(item.applied());
+                    push_changed_paths(&mut outcome.changed_paths, paths);
+                }
+                EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
+                    run.attempts.push(HeadlessAttempt {
+                        turn,
+                        proposal_id: Some(item.id()),
+                        result: HeadlessAttemptResult::Rejected {
+                            reason: reason.clone(),
+                        },
+                    });
+                    observer.emit(format!(
+                        "attempt {turn} proposal_apply_failed id={} reason={}",
+                        item.id(),
+                        truncate_chars(&reason, 240)
+                    ));
+                    outcome.retry = Some(reason);
+                }
+                EditProposalStatus::Denied => {
+                    let reason = "proposal was denied before apply".to_string();
+                    run.attempts.push(HeadlessAttempt {
+                        turn,
+                        proposal_id: Some(item.id()),
+                        result: HeadlessAttemptResult::Rejected {
+                            reason: reason.clone(),
+                        },
+                    });
+                    observer.emit(format!("attempt {turn} proposal_denied id={}", item.id()));
+                    outcome.retry = Some(reason);
+                }
+                EditProposalStatus::Pending | EditProposalStatus::Approved => {
+                    still_pending.push(item);
+                }
+            }
+        }
+        pending = still_pending;
+        if !pending.is_empty() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    Ok(outcome)
+}
+
+async fn item_status(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    item: StagedItem,
+) -> Option<(ploke_tui::app_state::core::EditProposalStatus, Vec<PathBuf>)> {
+    match item {
+        StagedItem::Edit(proposal_id) => {
+            let proposal = runtime
+                .state
+                .proposals
+                .read()
+                .await
+                .get(&proposal_id)
+                .cloned()?;
+            let paths = proposal_paths(&proposal);
+            Some((proposal.status, paths))
+        }
+        StagedItem::Create(request_id) => {
+            let proposal = runtime
+                .state
+                .create_proposals
+                .read()
+                .await
+                .get(&request_id)
+                .cloned()?;
+            Some((proposal.status, proposal.files))
+        }
+    }
+}
+
+async fn wait_for_refresh(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    pending_events: &mut VecDeque<ploke_tui::AppEvent>,
+    turn: u32,
+    observer: &LiveObserver,
+) -> Result<(), Error> {
+    use ploke_tui::app_state::StateCommand;
+
+    let (scan_tx, scan_rx) = oneshot::channel();
+    send_state(
+        &runtime.app.state_cmd_tx(),
+        StateCommand::ScanForChange { scan_tx },
+    )
+    .await?;
+    let changed = scan_rx
+        .await
+        .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))?;
+    runtime.app.pump_pending_events().await;
+    observer.emit(format!(
+        "attempt {turn} scan_barrier changed={}",
+        changed
+            .as_ref()
+            .map(|paths| join_paths(paths))
+            .unwrap_or_else(|| "none".to_string())
+    ));
+    wait_for_index_output(runtime, pending_events, changed.is_some(), turn, observer).await
+}
+
+async fn wait_for_index_output(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    pending_events: &mut VecDeque<ploke_tui::AppEvent>,
+    require_index: bool,
+    turn: u32,
+    observer: &LiveObserver,
+) -> Result<(), Error> {
+    use ploke_tui::{AppEvent, app_state::events::SystemEvent};
+
+    let full_deadline = Instant::now() + Duration::from_secs(POST_APPLY_INDEX_TIMEOUT_SECS);
+    let start_grace = Instant::now() + Duration::from_millis(POST_APPLY_INDEX_START_GRACE_MS);
+    let mut saw_index = require_index;
+
+    loop {
+        runtime.app.pump_pending_events().await;
+        let now = Instant::now();
+        if now >= full_deadline {
+            return Err(Error::HeadlessEvent(format!(
+                "timed out waiting for indexing completion after {POST_APPLY_INDEX_TIMEOUT_SECS}s"
+            )));
+        }
+        if !saw_index && now >= start_grace {
+            observer.emit(format!("attempt {turn} index_barrier no_index_output"));
+            return Ok(());
+        }
+
+        let deadline = if saw_index {
+            full_deadline
+        } else {
+            start_grace
+        };
+        let wait_for = deadline
+            .saturating_duration_since(now)
+            .min(Duration::from_millis(250));
+        let event = match tokio::time::timeout(wait_for, next_event(runtime)).await {
+            Ok(Ok(event)) => event,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => continue,
+        };
+
+        match event {
+            AppEvent::System(SystemEvent::ReIndex { target }) => {
+                saw_index = true;
                 observer.emit(format!(
-                    "attempt {turn} creation_apply_failed id={} reason={}",
-                    request_id,
-                    truncate_chars(&reason, 240)
+                    "attempt {turn} reindex_scheduled target={target:?}"
                 ));
-                return Ok(Err(reason));
+                runtime.app.pump_pending_events().await;
             }
-            EditProposalStatus::Denied => {
-                let reason = "file creation was denied before apply".to_string();
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: Some(request_id),
-                    result: HeadlessAttemptResult::Rejected {
-                        reason: reason.clone(),
-                    },
-                });
-                observer.emit(format!("attempt {turn} creation_denied id={request_id}"));
-                return Ok(Err(reason));
+            AppEvent::IndexingStarted | AppEvent::IndexingProgress(_) => {
+                saw_index = true;
             }
-            EditProposalStatus::Pending | EditProposalStatus::Approved => {}
+            AppEvent::IndexingCompleted => {
+                runtime.app.pump_pending_events().await;
+                observer.emit(format!("attempt {turn} index_barrier completed"));
+                return Ok(());
+            }
+            AppEvent::IndexingFailed => {
+                return Err(Error::HeadlessEvent(
+                    "indexing failed after applying proposal batch".to_string(),
+                ));
+            }
+            AppEvent::Error(error) if error.message.contains("Indexing failed") => {
+                return Err(Error::HeadlessEvent(error.message));
+            }
+            other => pending_events.push_back(other),
         }
     }
 }
@@ -2671,6 +3022,75 @@ mod tests {
         .expect("protected path should reject");
 
         assert!(matches!(rejection, Reject::Protected { .. }));
+    }
+
+    #[test]
+    fn tool_batch_waits_for_every_requested_call() {
+        let request_id = Uuid::new_v4();
+        let first = ploke_core::ArcStr::from("call-first");
+        let second = ploke_core::ArcStr::from("call-second");
+        let staged = StagedItem::Edit(Uuid::new_v4());
+        let mut batches = HashMap::<Uuid, ToolBatch>::new();
+
+        batches
+            .entry(request_id)
+            .or_default()
+            .request(first.clone());
+        batches
+            .entry(request_id)
+            .or_default()
+            .request(second.clone());
+
+        assert!(record_batch_terminal(&mut batches, request_id, first, Some(staged)).is_none());
+        assert_eq!(
+            record_batch_terminal(&mut batches, request_id, second, None),
+            Some(vec![staged])
+        );
+        assert!(!batches.contains_key(&request_id));
+    }
+
+    #[test]
+    fn select_disjoint_keeps_newest_file_disjoint_candidates() {
+        let workspace = Path::new("/repo");
+        let newer_same_file = Candidate {
+            item: StagedItem::Edit(Uuid::from_u128(2)),
+            proposed_at_ms: 200,
+            paths: vec![PathBuf::from("/repo/crates/ploke-tui/src/lib.rs")],
+        };
+        let other_file = Candidate {
+            item: StagedItem::Edit(Uuid::from_u128(3)),
+            proposed_at_ms: 150,
+            paths: vec![PathBuf::from("crates/ploke-rag/src/lib.rs")],
+        };
+        let older_same_file = Candidate {
+            item: StagedItem::Edit(Uuid::from_u128(1)),
+            proposed_at_ms: 100,
+            paths: vec![PathBuf::from("crates/ploke-tui/src/lib.rs")],
+        };
+
+        let (selected, rejected) = select_disjoint(
+            vec![
+                older_same_file.clone(),
+                other_file.clone(),
+                newer_same_file.clone(),
+            ],
+            workspace,
+        );
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|candidate| candidate.item)
+                .collect::<Vec<_>>(),
+            vec![newer_same_file.item, other_file.item]
+        );
+        assert_eq!(
+            rejected
+                .iter()
+                .map(|candidate| candidate.item)
+                .collect::<Vec<_>>(),
+            vec![older_same_file.item]
+        );
     }
 
     #[test]

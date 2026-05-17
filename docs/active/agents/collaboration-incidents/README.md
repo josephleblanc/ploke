@@ -12,6 +12,9 @@ track whether skills, repo guidance, and memory actually reduce repeats.
 - [`diagnosis-without-evidence/`](diagnosis-without-evidence/README.md)
   Incidents where the agent presented a causal diagnosis before reading the
   code that actually controlled the runtime behavior.
+- [`model-communication-failures/`](model-communication-failures/README.md)
+  Incidents where the agent buried a practical recommendation under mixed
+  architecture models, formal vocabulary, or decision scaffolding.
 - [`semantic-naming-failures/`](semantic-naming-failures/README.md)
   Incidents where the agent reused or invented names that collapsed distinct
   domain concepts and made later graph, record, or UI work ambiguous.

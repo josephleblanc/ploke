@@ -124,6 +124,12 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - Each incident entry must record: trigger, user-visible failure, touched code surface, skipped docs/skills/instructions, why the behavior was risky, and the concrete prevention rule for next time.
 - If the incident reveals a durable repo-level workflow gap, update `AGENTS.md` or the relevant skill in the same turn when feasible.
 - Use the `collaboration-incident-logging` skill when this trigger fires.
+- When the user signals that an architecture explanation became confusing,
+  reset to a concrete recommendation in the local subsystem's terms before
+  continuing with broader authority, protocol, or formal-model language.
+- For broad-harness edit-surface work, do not solve safety by defaulting to a
+  one-edit harness. Preserve the goal of broad model autonomy and put safety at
+  the admission, batching, refresh, and evidence-counting boundaries.
 
 ## Bounded Edit Surface Plan
 
