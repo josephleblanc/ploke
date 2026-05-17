@@ -16,7 +16,7 @@ use tracing::warn;
 use ploke_core::tool_types::ToolDefinition;
 
 use super::{
-    EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
+    EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey, ReasoningConfig,
     request::{ChatCompReqCore, endpoint::ToolChoice, models},
 };
 use crate::{HTTP_REFERER, HTTP_TITLE};
@@ -509,6 +509,11 @@ where
     /// Set top_k parameter - Range: [1, Infinity) Not available for OpenAI models
     pub fn with_top_k(mut self, top_k: f32) -> Self {
         self.llm_params = self.llm_params.with_top_k(top_k);
+        self
+    }
+
+    pub fn with_reasoning(mut self, reasoning: ReasoningConfig) -> Self {
+        self.llm_params = self.llm_params.with_reasoning(reasoning);
         self
     }
 

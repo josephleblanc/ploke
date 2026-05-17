@@ -14,7 +14,7 @@ use ploke_records::ids::{
     HistoryHash, HistoryStateRoot, LineageId, RecordedAt, RuntimeId,
 };
 use ploke_records::playback::FineStepKind;
-use ploke_records::selection::{Decision, Outcome};
+use ploke_records::selection::{Decision, MetricCandidate, MetricPolicy, MetricSet, Outcome};
 
 use super::build::{
     fine_run_playback_from_sealed_history, fine_run_playback_ref_steps_from_sealed_history,
@@ -206,8 +206,15 @@ fn selection(
     considered: Vec<EvaluationPayloadRecord>,
     memberships: Vec<CandidateSetMembershipRecord>,
 ) -> SelectionDecisionEntryRecord {
+    let considered_order_hash = HistoryHash("order-hash".to_owned());
+    let metrics = selection_metrics(
+        "candidate-set-root",
+        &considered_order_hash,
+        &considered,
+        &memberships,
+    );
     SelectionDecisionEntryRecord {
-        schema_version: 1,
+        schema_version: 4,
         procedure_or_policy: ProcedureRefRecord {
             value: "prototype1.successor_selection.v1".to_owned(),
         },
@@ -219,13 +226,14 @@ fn selection(
         selected_membership_id: None,
         considered,
         considered_sources: Vec::new(),
-        considered_order_hash: HistoryHash("order-hash".to_owned()),
+        considered_order_hash,
         candidate_set: Some(CandidateSetRecord {
             root: CandidateSetRootRecord(HistoryHash("candidate-set-root".to_owned())),
             memberships,
         }),
         projection_failures: Vec::new(),
         traversal: None,
+        metrics,
         decision: Decision {
             procedure_id: "prototype1.successor_selection.v1".to_owned(),
             candidate_node_id: "node-a".to_owned(),
@@ -235,6 +243,38 @@ fn selection(
             findings: Vec::new(),
             rationale: Vec::new(),
         },
+    }
+}
+
+fn selection_metrics(
+    root: &str,
+    considered_order_hash: &HistoryHash,
+    considered: &[EvaluationPayloadRecord],
+    memberships: &[CandidateSetMembershipRecord],
+) -> MetricSet {
+    MetricSet {
+        schema_version: 1,
+        id: HistoryHash(format!("metric-set:{root}")),
+        considered_order_hash: considered_order_hash.clone(),
+        candidate_set_root: Some(HistoryHash(root.to_owned())),
+        policy: MetricPolicy::default(),
+        candidates: considered
+            .iter()
+            .enumerate()
+            .map(|(index, payload)| {
+                let membership = memberships.get(index);
+                MetricCandidate {
+                    payload_index: index,
+                    payload_hash: membership
+                        .map(|member| member.payload_hash.clone())
+                        .unwrap_or_else(|| HistoryHash(format!("payload:{index}"))),
+                    candidate: payload.candidate.value.clone(),
+                    occurrence_id: membership.and_then(|member| member.occurrence_id.clone()),
+                    membership_id: membership.and_then(|member| member.membership_id.clone()),
+                    imp_at_k: None,
+                }
+            })
+            .collect(),
     }
 }
 

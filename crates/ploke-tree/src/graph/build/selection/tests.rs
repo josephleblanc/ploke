@@ -13,10 +13,11 @@ use ploke_records::ids::{
     SchedulerNodeId, SourceStateId,
 };
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord};
-use ploke_records::selection::{Decision, Outcome};
+use ploke_records::selection::{Decision, MetricCandidate, MetricPolicy, MetricSet, Outcome};
 
 use crate::graph::{
-    CandidateMembershipKey, EvidenceKind, GraphWarningKind, OperationKey, OperationTargetKey,
+    CandidateMembershipKey, EvidenceKind, GraphWarningKind, MetricCandidateKey, OperationKey,
+    OperationTargetKey,
 };
 
 use super::super::Builder;
@@ -315,8 +316,10 @@ fn selection_with_root(
     considered: Vec<EvaluationPayloadRecord>,
     memberships: Vec<CandidateSetMembershipRecord>,
 ) -> SelectionDecisionEntryRecord {
+    let considered_order_hash = HistoryHash("order-hash".to_owned());
+    let metrics = metrics(root, &considered_order_hash, &considered, &memberships);
     SelectionDecisionEntryRecord {
-        schema_version: 3,
+        schema_version: 4,
         procedure_or_policy: ProcedureRefRecord {
             value: "prototype1.successor_selection.history_traversal.v1".to_owned(),
         },
@@ -328,13 +331,14 @@ fn selection_with_root(
         selected_membership_id: None,
         considered,
         considered_sources: Vec::new(),
-        considered_order_hash: HistoryHash("order-hash".to_owned()),
+        considered_order_hash,
         candidate_set: Some(CandidateSetRecord {
             root: CandidateSetRootRecord(HistoryHash(root.to_owned())),
             memberships,
         }),
         projection_failures: Vec::new(),
         traversal: None,
+        metrics,
         decision: Decision {
             procedure_id: "prototype1.successor_selection.history_traversal.v1".to_owned(),
             candidate_node_id: "candidate:a".to_owned(),
@@ -345,6 +349,66 @@ fn selection_with_root(
             rationale: Vec::new(),
         },
     }
+}
+
+#[test]
+fn selection_metrics_ingestion_preserves_metric_bindings() {
+    let membership_id = CandidateMembershipId("membership:metric".to_owned());
+    let selection = selection_with_root(
+        "root-metric",
+        vec![payload("candidate:metric")],
+        vec![membership(
+            "candidate:metric",
+            Some(membership_id.clone()),
+            "payload-metric",
+        )],
+    );
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    let set = builder
+        .graph
+        .metrics
+        .sets
+        .get(&selection.metrics.id)
+        .expect("metric set indexed");
+    assert_eq!(set.selection_entry_id, admitted_entry.core.entry_id);
+    assert_eq!(
+        set.candidate_set_root.as_ref(),
+        selection.metrics.candidate_set_root.as_ref()
+    );
+    let candidate = builder
+        .graph
+        .metrics
+        .candidates
+        .get(&MetricCandidateKey {
+            metric_set_id: selection.metrics.id.clone(),
+            payload_index: 0,
+        })
+        .expect("metric candidate indexed");
+    assert_eq!(candidate.membership_id.as_ref(), Some(&membership_id));
+    assert_eq!(candidate.payload_hash.0, "payload-metric");
+}
+
+#[test]
+fn selection_metrics_candidate_set_hash_mismatch_warns() {
+    let mut selection = selection_with_root(
+        "root-metric",
+        vec![payload("candidate:metric")],
+        vec![membership("candidate:metric", None, "payload-metric")],
+    );
+    selection.metrics.candidate_set_root = Some(HistoryHash("other-root".to_owned()));
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    assert!(builder.graph.warnings.iter().any(|warning| {
+        warning.kind == GraphWarningKind::SelectionMetricBindingMismatch
+            && warning.detail.contains("candidate_set_root")
+    }));
 }
 
 fn entry(selection: SelectionDecisionEntryRecord) -> AdmittedEntryRecord {
@@ -550,5 +614,37 @@ fn membership(
             value: [1; 32],
             program: Vec::new(),
         },
+    }
+}
+
+fn metrics(
+    root: &str,
+    considered_order_hash: &HistoryHash,
+    considered: &[EvaluationPayloadRecord],
+    memberships: &[CandidateSetMembershipRecord],
+) -> MetricSet {
+    MetricSet {
+        schema_version: 1,
+        id: HistoryHash(format!("metric-set:{root}")),
+        considered_order_hash: considered_order_hash.clone(),
+        candidate_set_root: Some(HistoryHash(root.to_owned())),
+        policy: MetricPolicy::default(),
+        candidates: considered
+            .iter()
+            .enumerate()
+            .map(|(index, payload)| {
+                let membership = memberships.get(index);
+                MetricCandidate {
+                    payload_index: index,
+                    payload_hash: membership
+                        .map(|member| member.payload_hash.clone())
+                        .unwrap_or_else(|| HistoryHash(format!("payload:{index}"))),
+                    candidate: payload.candidate.value.clone(),
+                    occurrence_id: membership.and_then(|member| member.occurrence_id.clone()),
+                    membership_id: membership.and_then(|member| member.membership_id.clone()),
+                    imp_at_k: None,
+                }
+            })
+            .collect(),
     }
 }

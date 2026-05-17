@@ -15,6 +15,60 @@ use ploke_tree::Graph;
 use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct InspectorOpenState {
+    force_open: Option<InspectorPanelSection>,
+}
+
+impl InspectorOpenState {
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) fn benchmark(section: Option<crate::benchmark::BenchmarkInspectorSection>) -> Self {
+        Self {
+            force_open: section.map(InspectorPanelSection::from_benchmark),
+        }
+    }
+
+    fn open(self, section: InspectorPanelSection) -> Option<bool> {
+        (self.force_open == Some(section)).then_some(true)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InspectorPanelSection {
+    RunRecords,
+    GraphEdges,
+    ArtifactEdges,
+    PatchDebug,
+    SourceRefs,
+    ArtifactIds,
+}
+
+impl InspectorPanelSection {
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    fn from_benchmark(section: crate::benchmark::BenchmarkInspectorSection) -> Self {
+        match section {
+            crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::RunRecords,
+            crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::GraphEdges,
+            crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::ArtifactEdges,
+            crate::benchmark::BenchmarkInspectorSection::PatchDebug => Self::PatchDebug,
+            crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::SourceRefs,
+            crate::benchmark::BenchmarkInspectorSection::ArtifactIds => Self::ArtifactIds,
+        }
+    }
+}
+
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "top_strip")
+)]
 pub(crate) fn render_top_strip(
     ui: &mut egui::Ui,
     mode: GraphViewMode,
@@ -36,6 +90,10 @@ pub(crate) fn render_top_strip(
     });
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "selection_inspector")
+)]
 pub(crate) fn render_right_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -43,7 +101,7 @@ pub(crate) fn render_right_inspector(
     selection_label: Option<&str>,
     sections: Option<&InspectorSections>,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
-    patch_debug_open: bool,
+    open_state: InspectorOpenState,
 ) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -85,7 +143,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Run Records")
-                .default_open(false)
+                .open(open_state.open(InspectorPanelSection::RunRecords))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_run_records_for_inspector(ui, graph, sections);
@@ -96,7 +154,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Graph edges")
-                .default_open(false)
+                .open(open_state.open(InspectorPanelSection::GraphEdges))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_graph_edges_for_inspector(ui, sections);
@@ -107,7 +165,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Artifact edges")
-                .default_open(false)
+                .open(open_state.open(InspectorPanelSection::ArtifactEdges))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_artifact_edges_for_inspector(ui, sections);
@@ -118,7 +176,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Patch Debug")
-                .default_open(patch_debug_open)
+                .open(open_state.open(InspectorPanelSection::PatchDebug))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_patches_for_inspector(ui, graph, sections, diff_cache);
@@ -129,7 +187,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Source refs")
-                .default_open(false)
+                .open(open_state.open(InspectorPanelSection::SourceRefs))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_source_refs_for_inspector(ui, graph, sections);
@@ -140,7 +198,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Artifact Ids")
-                .default_open(false)
+                .open(open_state.open(InspectorPanelSection::ArtifactIds))
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_artifact_ids_for_inspector(ui, graph, sections);
@@ -151,6 +209,10 @@ pub(crate) fn render_right_inspector(
         });
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "timeline")
+)]
 pub(crate) fn render_bottom_timeline(
     ui: &mut egui::Ui,
     diagnostics: Option<&GraphViewDiagnostics>,
@@ -348,6 +410,10 @@ fn render_parent_create_for_inspector(
 
 /// archaeology:run-record-branch-output
 /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_run_records")
+)]
 fn render_run_records_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -441,6 +507,10 @@ fn patch_projection_check_state_label(
     }
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_graph_edges")
+)]
 fn render_graph_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSections) {
     if let Some(reason) = sections.unavailable() {
         render_unavailable(ui, reason);
@@ -458,6 +528,10 @@ fn render_graph_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSecti
     );
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_artifact_edges")
+)]
 fn render_artifact_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSections) {
     if let Some(reason) = sections.unavailable() {
         render_unavailable(ui, reason);
@@ -475,6 +549,10 @@ fn render_artifact_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSe
     );
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_patch_debug")
+)]
 fn render_patches_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -495,6 +573,10 @@ fn render_patches_for_inspector(
     );
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_source_refs")
+)]
 fn render_source_refs_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -515,6 +597,10 @@ fn render_source_refs_for_inspector(
 
 /// archaeology:artifact-identity
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_artifact_ids")
+)]
 fn render_artifact_ids_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -631,7 +717,7 @@ fn render_prefixed_id_row(
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-benchmark"))]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
@@ -827,7 +913,7 @@ mod tests {
                     Some("A1"),
                     Some(sections),
                     &mut diff_cache,
-                    false,
+                    InspectorOpenState::default(),
                 );
                 render_artifact_ids_for_inspector(ui, &graph, sections);
             });
@@ -860,6 +946,17 @@ mod tests {
         assert!(traces.iter().any(|line| line.contains(
             "span:ploke_egui.id_display.show_compact full=text-file-sha256:f6f73d0a2259c38d377144ed14f53be3 compact=f6f73d0a expandable=true expanded=false"
         )));
+    }
+
+    #[test]
+    fn benchmark_inspector_open_state_forces_target_section() {
+        let state = InspectorOpenState::benchmark(Some(
+            crate::benchmark::BenchmarkInspectorSection::GraphEdges,
+        ));
+
+        assert_eq!(state.open(InspectorPanelSection::GraphEdges), Some(true));
+        assert_eq!(state.open(InspectorPanelSection::RunRecords), None);
+        assert_eq!(state.open(InspectorPanelSection::PatchDebug), None);
     }
 
     #[test]

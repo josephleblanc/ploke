@@ -126,6 +126,8 @@ pub struct Selection {
     pub strategy: SelectionStrategy,
     pub evidence: SelectionEvidence,
     #[serde(default)]
+    pub metrics: Metrics,
+    #[serde(default)]
     pub oracle: Oracle,
     pub seed: u64,
 }
@@ -135,6 +137,7 @@ impl Default for Selection {
         Self {
             strategy: SelectionStrategy::HistoryScoreChildProp,
             evidence: SelectionEvidence::Operational,
+            metrics: Metrics::default(),
             oracle: Oracle::default(),
             seed: 0,
         }
@@ -154,6 +157,78 @@ pub enum SelectionStrategy {
 pub enum SelectionEvidence {
     Operational,
     OperationalAndProtocol,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Metrics {
+    #[serde(default = "default_metrics_persist")]
+    pub persist: bool,
+    #[serde(default)]
+    pub score_profile: ScoreProfile,
+    #[serde(default)]
+    pub imp_at_k: ImpAtK,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            persist: default_metrics_persist(),
+            score_profile: ScoreProfile::default(),
+            imp_at_k: ImpAtK::default(),
+        }
+    }
+}
+
+fn default_metrics_persist() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScoreProfile {
+    #[default]
+    OperationalQualityV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImpAtK {
+    #[serde(default = "default_imp_at_k_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_imp_at_k_budget")]
+    pub budget_k: usize,
+    #[serde(default)]
+    pub archive_scope: ArchiveScope,
+    #[serde(default)]
+    pub score_points_per_imp_point: i64,
+    #[serde(default)]
+    pub require_for_score: bool,
+}
+
+impl Default for ImpAtK {
+    fn default() -> Self {
+        Self {
+            enabled: default_imp_at_k_enabled(),
+            budget_k: default_imp_at_k_budget(),
+            archive_scope: ArchiveScope::default(),
+            score_points_per_imp_point: 0,
+            require_for_score: false,
+        }
+    }
+}
+
+fn default_imp_at_k_enabled() -> bool {
+    true
+}
+
+fn default_imp_at_k_budget() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArchiveScope {
+    #[default]
+    SelectionScope,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -328,6 +403,17 @@ strategy = "history-score-child-prop"
 evidence = "operational-and-protocol"
 seed = 0
 
+[selection.metrics]
+persist = true
+score_profile = "operational-quality-v1"
+
+[selection.metrics.imp_at_k]
+enabled = true
+budget_k = 50
+archive_scope = "selection-scope"
+score_points_per_imp_point = 0
+require_for_score = false
+
 [selection.oracle]
 mode = "record-only"
 require_evidence = true
@@ -361,6 +447,9 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
         assert_eq!(profile.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(profile.selection.oracle.require_evidence);
+        assert!(profile.selection.metrics.persist);
+        assert!(profile.selection.metrics.imp_at_k.enabled);
+        assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);

@@ -13,11 +13,9 @@ thiserror = { workspace = true }
 ploke-llm = { path = "../ploke-llm", optional = true }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true }
 fxhash = { workspace = true }
+tokio = { workspace = true, optional = true }
 
 [features]
 default = ["llm"]
-llm = ["dep:ploke-llm", "dep:reqwest"]
+llm = ["dep:ploke-llm", "dep:reqwest", "dep:tokio"]
 record-types = []
-
-[dev-dependencies]
-tokio = { workspace = true }

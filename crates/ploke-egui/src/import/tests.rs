@@ -214,6 +214,7 @@ fn selection_entry(block_height: u64, selected: &str) -> AdmittedEntryRecord {
             candidate_set: None,
             projection_failures: Vec::new(),
             traversal: None,
+            metrics: selection_metrics(selected, block_height),
             decision: selection::Decision {
                 procedure_id: "policy:select".to_owned(),
                 candidate_node_id: selected.to_owned(),
@@ -258,6 +259,24 @@ fn selection_entry(block_height: u64, selected: &str) -> AdmittedEntryRecord {
         block_height,
     };
     AdmittedEntryRecord { core, state }
+}
+
+fn selection_metrics(candidate: &str, block_height: u64) -> selection::MetricSet {
+    selection::MetricSet {
+        schema_version: 1,
+        id: HistoryHash(format!("metric-set-{block_height}")),
+        considered_order_hash: HistoryHash("c".repeat(64)),
+        candidate_set_root: None,
+        policy: selection::MetricPolicy::default(),
+        candidates: vec![selection::MetricCandidate {
+            payload_index: 0,
+            payload_hash: HistoryHash(format!("payload:{candidate}")),
+            candidate: format!("candidate:{candidate}"),
+            occurrence_id: None,
+            membership_id: None,
+            imp_at_k: None,
+        }],
+    }
 }
 
 fn surface_commitment() -> SurfaceCommitmentRecord {

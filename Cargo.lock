@@ -6509,6 +6509,7 @@ dependencies = [
 name = "ploke-egui"
 version = "0.1.0"
 dependencies = [
+ "backtrace",
  "chrono",
  "clap",
  "eframe 0.34.2",
@@ -6529,6 +6530,7 @@ dependencies = [
  "similar",
  "tracing",
  "tracing-subscriber",
+ "tracking-allocator",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -9521,6 +9523,16 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "tracking-allocator"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b61e0cb3385e17df7db29c565b40fd0350dfe8a076c7eea83d416e30cfd0581"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

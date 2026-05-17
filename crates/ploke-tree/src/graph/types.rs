@@ -48,6 +48,7 @@ pub struct Graph {
     /// Selection candidate universes and their set-scoped memberships.
     pub candidates: CandidateIndex,
     pub selections: SelectionIndex,
+    pub metrics: MetricIndex,
     /// Parent-published child plans that carry patch/surface details.
     pub child_plans: ChildPlanIndex,
     /// Typed attachments that explain graph objects without replacing History.
@@ -66,6 +67,7 @@ impl Default for Graph {
             operations: OperationIndex::default(),
             candidates: CandidateIndex::default(),
             selections: SelectionIndex::default(),
+            metrics: MetricIndex::default(),
             child_plans: ChildPlanIndex::default(),
             evidence: EvidenceIndex::default(),
             warnings: Vec::new(),

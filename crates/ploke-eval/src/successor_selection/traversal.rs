@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use super::{
     HISTORY_TRAVERSAL_PROCEDURE_ID, OracleMode, PROCEDURE_ID, SelectionInput, SuccessorDecision,
     decide as decide_candidate, decision::SuccessorOutcome, disposition_as_str,
+    metrics as selection_metrics,
 };
 use crate::{
     BranchDisposition,
@@ -210,6 +211,7 @@ pub(crate) trait Strategy: Copy {
         self,
         items: &[Self::Item],
         child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
         seed: u64,
     ) -> Result<Option<StrategySelection>, HistoryError>;
 }
@@ -230,11 +232,13 @@ impl Strategy for FrontierMax {
         self,
         items: &[Self::Item],
         child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
         seed: u64,
     ) -> Result<Option<StrategySelection>, HistoryError> {
         select_frontier_max(
             items,
             child_counts,
+            metric_set,
             seed,
             self.normalize_frontier,
             self.metrics,
@@ -261,11 +265,13 @@ impl Strategy for ScoreChildProp {
         self,
         items: &[Self::Item],
         child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
         seed: u64,
     ) -> Result<Option<StrategySelection>, HistoryError> {
         select_score_child_prop(
             items,
             child_counts,
+            metric_set,
             seed,
             self.top_m,
             self.lambda_millis,
@@ -295,6 +301,7 @@ pub(crate) struct Selection {
     pub(crate) considered: Vec<EvaluationPayload>,
     pub(crate) considered_sources: Vec<TraversalCandidateSource>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) metrics: selection_metrics::Set,
     pub(crate) selected_from_current_generation: bool,
 }
 
@@ -321,10 +328,25 @@ pub(crate) fn select_from_history(
     select(Candidates::from_history(history), seed, strategy)
 }
 
+#[cfg(test)]
 pub(crate) fn select(
     candidates: Candidates,
     seed: u64,
     strategy: StrategyKind,
+) -> Result<Option<Selection>, HistoryError> {
+    select_with_policy(
+        candidates,
+        seed,
+        strategy,
+        selection_metrics::Policy::default(),
+    )
+}
+
+pub(crate) fn select_with_policy(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
 ) -> Result<Option<Selection>, HistoryError> {
     match strategy {
         StrategyKind::FrontierMax {
@@ -332,7 +354,7 @@ pub(crate) fn select(
             metrics,
             oracle,
             require_evidence,
-        } => candidates.traverse(
+        } => candidates.traverse_with_policy(
             seed,
             FrontierMax {
                 normalize_frontier,
@@ -340,6 +362,7 @@ pub(crate) fn select(
                 oracle,
                 require_evidence,
             },
+            metrics_policy,
         ),
         StrategyKind::ScoreChildProp {
             top_m,
@@ -347,7 +370,7 @@ pub(crate) fn select(
             metrics,
             oracle,
             require_evidence,
-        } => candidates.traverse(
+        } => candidates.traverse_with_policy(
             seed,
             ScoreChildProp {
                 top_m,
@@ -356,6 +379,7 @@ pub(crate) fn select(
                 oracle,
                 require_evidence,
             },
+            metrics_policy,
         ),
     }
 }
@@ -422,9 +446,10 @@ pub(crate) fn replay_score_child_prop(
         })
         .collect::<Vec<_>>();
     let child_counts = successful_child_counts(&entry.considered);
-    let weights = score_child_prop_weights(
+    let weights = score_child_prop_weights_with_set(
         &items,
         &child_counts,
+        &entry.metrics,
         top_m,
         lambda_millis,
         metrics,
@@ -491,6 +516,20 @@ where
     type Selection = Selection;
 
     fn traverse(self, seed: u64, strategy: S) -> Result<Option<Selection>, HistoryError> {
+        self.traverse_with_policy(seed, strategy, selection_metrics::Policy::default())
+    }
+}
+
+impl Candidates {
+    fn traverse_with_policy<S>(
+        self,
+        seed: u64,
+        strategy: S,
+        metrics_policy: selection_metrics::Policy,
+    ) -> Result<Option<Selection>, HistoryError>
+    where
+        S: Strategy<Item = Item>,
+    {
         let mut items = Vec::new();
         let mut failures = Vec::new();
 
@@ -513,7 +552,12 @@ where
             .collect::<Vec<_>>();
         let child_counts = successful_child_counts(&considered);
         let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
-        let Some(selection) = strategy.select(&items, &child_counts, seed)? else {
+        let metric_set = selection_metrics::Set::from_considered(
+            metrics_policy,
+            &considered,
+            &considered_sources,
+        )?;
+        let Some(selection) = strategy.select(&items, &child_counts, &metric_set, seed)? else {
             return Ok(None);
         };
         let decision_membership =
@@ -536,6 +580,7 @@ where
             considered,
             considered_sources,
             projection_failures: failures,
+            metrics: metric_set,
             selected_from_current_generation: selection.chosen.source.is_current_generation(),
         }))
     }
@@ -988,6 +1033,22 @@ fn performance_score(case: CandidateCase<'_>, metrics: metric::Inputs) -> Option
     Some(PerformanceScore(score))
 }
 
+fn performance_score_with_set(
+    index: usize,
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+    metric_set: &selection_metrics::Set,
+) -> Option<PerformanceScore> {
+    let mut score = performance_score(case, metrics)?;
+    match metric_set.score_delta(index) {
+        Ok(delta) => {
+            score.0 = score.0.saturating_add(delta);
+            Some(score)
+        }
+        Err(_) => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OracleScore {
     resolved: usize,
@@ -1181,16 +1242,19 @@ struct TraversalScore {
 impl TraversalScore {
     fn for_case(
         case: &CandidateCase<'_>,
+        index: usize,
         child_counts: &BTreeMap<String, usize>,
         max_performance: Option<PerformanceScore>,
         metrics: metric::Inputs,
+        metric_set: &selection_metrics::Set,
         oracle: OracleMode,
         require_evidence: bool,
     ) -> Result<Option<Self>, HistoryError> {
         let Some(input) = case.selection_input() else {
             return Ok(None);
         };
-        let Some(performance) = performance_score(*case, metrics) else {
+        let Some(performance) = performance_score_with_set(index, *case, metrics, metric_set)
+        else {
             return Ok(None);
         };
         let frontier_delta = max_performance
@@ -1229,6 +1293,7 @@ struct ChosenPayload {
 fn select_frontier_max(
     items: &[Item],
     child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
     seed: u64,
     normalize_frontier: bool,
     metrics: metric::Inputs,
@@ -1238,8 +1303,11 @@ fn select_frontier_max(
     let max_performance = if normalize_frontier {
         items
             .iter()
-            .map(|item| CandidateCase::from_payload(&item.payload))
-            .filter_map(|case| performance_score(case, metrics))
+            .enumerate()
+            .map(|(index, item)| (index, CandidateCase::from_payload(&item.payload)))
+            .filter_map(|(index, case)| {
+                performance_score_with_set(index, case, metrics, metric_set)
+            })
             .max()
     } else {
         None
@@ -1254,9 +1322,11 @@ fn select_frontier_max(
         };
         let Some(score) = TraversalScore::for_case(
             &case,
+            index,
             child_counts,
             max_performance,
             metrics,
+            metric_set,
             oracle,
             require_evidence,
         )?
@@ -1323,6 +1393,7 @@ struct ScoreChildPropWeight {
 fn select_score_child_prop(
     items: &[Item],
     child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
     seed: u64,
     top_m: usize,
     lambda_millis: u32,
@@ -1330,9 +1401,10 @@ fn select_score_child_prop(
     oracle: OracleMode,
     require_evidence: bool,
 ) -> Result<Option<StrategySelection>, HistoryError> {
-    let weights = score_child_prop_weights(
+    let weights = score_child_prop_weights_with_set(
         items,
         child_counts,
+        metric_set,
         top_m,
         lambda_millis,
         metrics,
@@ -1384,9 +1456,33 @@ fn select_score_child_prop(
     Ok(Some(StrategySelection { chosen, rationale }))
 }
 
+#[cfg(test)]
 fn score_child_prop_weights(
     items: &[Item],
     child_counts: &BTreeMap<String, usize>,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
+    let metric_set = metric_set_for_items(selection_metrics::Policy::default(), items)?;
+    score_child_prop_weights_with_set(
+        items,
+        child_counts,
+        &metric_set,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    )
+}
+
+fn score_child_prop_weights_with_set(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
     top_m: usize,
     lambda_millis: u32,
     metrics: metric::Inputs,
@@ -1399,7 +1495,7 @@ fn score_child_prop_weights(
         let Some(decision) = traversal_decision(&case) else {
             continue;
         };
-        let Some(performance) = performance_score(case, metrics) else {
+        let Some(performance) = performance_score_with_set(index, case, metrics, metric_set) else {
             continue;
         };
         let Some(input) = case.selection_input() else {
@@ -1498,6 +1594,22 @@ fn score_child_prop_weights(
             },
         )
         .collect::<Vec<_>>())
+}
+
+#[cfg(test)]
+fn metric_set_for_items(
+    policy: selection_metrics::Policy,
+    items: &[Item],
+) -> Result<selection_metrics::Set, HistoryError> {
+    let considered = items
+        .iter()
+        .map(|item| item.payload.clone())
+        .collect::<Vec<_>>();
+    let considered_sources = items
+        .iter()
+        .map(|item| item.source.traversal_candidate_source())
+        .collect::<Vec<_>>();
+    selection_metrics::Set::from_considered(policy, &considered, &considered_sources)
 }
 
 fn metric_inputs_name(inputs: metric::Inputs) -> &'static str {
@@ -2319,6 +2431,157 @@ mod tests {
                 .iter()
                 .any(|line| line == "traversal_strategy=score_child_prop")
         );
+    }
+
+    #[test]
+    fn imp_at_k_persist_only_keeps_base_selection() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "imp-parent",
+                    "branch-imp-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "imp-child",
+                    "branch-imp-child",
+                    Some("imp-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+
+        let selection = select_from_history(candidates, 0, StrategyKind::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "imp-child");
+        assert_eq!(
+            selection.metrics.policy.imp_at_k.score_points_per_imp_point,
+            0
+        );
+        assert_eq!(selection.metrics.candidates.len(), 2);
+        let parent_row = selection.metrics.candidates.first().expect("parent metric");
+        let imp = parent_row.imp_at_k.as_ref().expect("imp@k row");
+        assert_eq!(imp.descendant_count, 1);
+        assert!(imp.improvement.expect("improvement") > 0);
+    }
+
+    #[test]
+    fn imp_at_k_score_enabled_can_change_frontier_selection() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "imp-score-parent",
+                    "branch-imp-score-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "imp-score-child",
+                    "branch-imp-score-child",
+                    Some("imp-score-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+
+        let base = select_from_history(candidates.clone(), 0, StrategyKind::default())
+            .expect("base traversal")
+            .expect("base selection");
+        let scored = select_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            StrategyKind::default(),
+            policy,
+        )
+        .expect("scored traversal")
+        .expect("scored selection");
+
+        assert_eq!(base.decision.candidate_node_id, "imp-score-child");
+        assert_eq!(scored.decision.candidate_node_id, "imp-score-parent");
+    }
+
+    #[test]
+    fn imp_at_k_incomplete_contributes_zero_when_not_required() {
+        let payload = decision_grade_payload(
+            "imp-incomplete",
+            "branch-imp-incomplete",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                require_for_score: false,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+        let set = selection_metrics::Set::from_considered(
+            policy,
+            &[payload],
+            &[TraversalCandidateSource::History],
+        )
+        .expect("metric set");
+
+        assert_eq!(set.score_delta(0).expect("score delta"), 0);
+        assert!(
+            set.candidates[0]
+                .imp_at_k
+                .as_ref()
+                .expect("imp@k")
+                .incomplete_reasons
+                .contains(&selection_metrics::ImpAtKReason::NoDescendantsWithinBudget)
+        );
+    }
+
+    #[test]
+    fn imp_at_k_required_score_excludes_incomplete_candidate() {
+        let payload = decision_grade_payload(
+            "imp-required",
+            "branch-imp-required",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                require_for_score: true,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+        let set = selection_metrics::Set::from_considered(
+            policy,
+            &[payload],
+            &[TraversalCandidateSource::History],
+        )
+        .expect("metric set");
+
+        assert!(set.score_delta(0).is_err());
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub use types::newtypes::{
     ApiKeyEnv, Author, BaseUrl, EmbeddingModelName, EmbeddingResponseId, EndpointKey, IdError,
     ModelName, ModelSlug, ProviderConfig, ProviderKey, ProviderName, ProviderSlug, Transport,
 };
-pub use types::params::LLMParameters;
+pub use types::params::{LLMParameters, ReasoningConfig};
 pub use wire::WireRequest;
 
 pub use manager::{

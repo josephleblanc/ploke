@@ -27,6 +27,7 @@ pub enum IntentLabel {
     RefineSearch,
     ValidateHypothesis,
     EditAttempt,
+    #[serde(alias = "recover")]
     Recovery,
     Other,
 }
@@ -738,4 +739,35 @@ fn render_turn_context(turn: &TurnContext) -> String {
         "turn={} tool_count={} failed_tool_count={} patch_proposed={} patch_applied={}",
         turn.turn, turn.tool_count, turn.failed_tool_count, turn.patch_proposed, turn.patch_applied
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intent_label_accepts_recover_alias() {
+        let parsed = serde_json::from_str::<SegmentationJudgment>(
+            r#"{
+                "segments": [
+                    {
+                        "start_index": 0,
+                        "end_index": 1,
+                        "status": "labeled",
+                        "label": "recover",
+                        "confidence": "medium",
+                        "rationale": "model used a common synonym"
+                    }
+                ],
+                "overall_rationale": "ok"
+            }"#,
+        )
+        .expect("recover should be accepted as an alias for recovery");
+
+        assert_eq!(parsed.segments[0].label, Some(IntentLabel::Recovery));
+        assert_eq!(
+            serde_json::to_value(parsed.segments[0].label).expect("serialize label"),
+            serde_json::json!("recovery")
+        );
+    }
 }

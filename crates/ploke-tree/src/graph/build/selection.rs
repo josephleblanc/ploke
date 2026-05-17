@@ -15,7 +15,8 @@ use ploke_records::ids::{CandidateId, Coordinate, RuntimeId};
 
 use crate::graph::{
     CandidateBranchNode, CandidateMembershipKey, CandidateMembershipNode, CandidateNode,
-    CandidateSource, EvidenceKind, EvidenceSubject, GraphWarningKind, SelectionNode,
+    CandidateSource, EvidenceKind, EvidenceSubject, GraphWarningKind, MetricCandidateKey,
+    MetricCandidateNode, MetricSetNode, SelectionNode,
 };
 
 use super::Builder;
@@ -46,12 +47,14 @@ impl Builder {
             candidate_set_root: candidate_set_root.clone(),
             considered_count: selection.considered.len(),
             projection_failure_count: selection.projection_failures.len(),
+            metric_set_id: selection.metrics.id.clone(),
             decision_outcome: selection.decision.outcome,
         };
         self.graph
             .selections
             .selections
             .insert(entry.core.entry_id.clone(), selection_node);
+        self.ingest_selection_metrics(entry, selection, candidate_set_root.as_ref());
 
         let candidate_set = selection.candidate_set.as_ref();
         let memberships = candidate_set.map(|candidate_set| candidate_set.memberships.as_slice());
@@ -273,6 +276,64 @@ impl Builder {
                     "selection entry {} selected_membership_id is absent from candidate_set",
                     entry.core.entry_id.0
                 ),
+            );
+        }
+    }
+
+    fn ingest_selection_metrics(
+        &mut self,
+        entry: &AdmittedEntryRecord,
+        selection: &SelectionDecisionEntryRecord,
+        candidate_set_root: Option<&ploke_records::history::CandidateSetRootRecord>,
+    ) {
+        let metric_set = &selection.metrics;
+        if metric_set.considered_order_hash != selection.considered_order_hash {
+            self.warn(
+                GraphWarningKind::SelectionMetricBindingMismatch,
+                format!(
+                    "selection entry {} metrics considered_order_hash does not match decision",
+                    entry.core.entry_id.0
+                ),
+            );
+        }
+        let expected_root = candidate_set_root.map(|root| &root.0);
+        if metric_set.candidate_set_root.as_ref() != expected_root {
+            self.warn(
+                GraphWarningKind::SelectionMetricBindingMismatch,
+                format!(
+                    "selection entry {} metrics candidate_set_root does not match decision",
+                    entry.core.entry_id.0
+                ),
+            );
+        }
+
+        self.graph.metrics.sets.insert(
+            metric_set.id.clone(),
+            MetricSetNode {
+                metric_set_id: metric_set.id.clone(),
+                selection_entry_id: entry.core.entry_id.clone(),
+                considered_order_hash: metric_set.considered_order_hash.clone(),
+                candidate_set_root: metric_set.candidate_set_root.clone(),
+                candidate_count: metric_set.candidates.len(),
+            },
+        );
+
+        for candidate in &metric_set.candidates {
+            self.graph.metrics.candidates.insert(
+                MetricCandidateKey {
+                    metric_set_id: metric_set.id.clone(),
+                    payload_index: candidate.payload_index,
+                },
+                MetricCandidateNode {
+                    metric_set_id: metric_set.id.clone(),
+                    selection_entry_id: entry.core.entry_id.clone(),
+                    payload_index: candidate.payload_index,
+                    payload_hash: candidate.payload_hash.clone(),
+                    candidate: candidate.candidate.clone(),
+                    occurrence_id: candidate.occurrence_id.clone(),
+                    membership_id: candidate.membership_id.clone(),
+                    imp_at_k: candidate.imp_at_k.clone(),
+                },
             );
         }
     }

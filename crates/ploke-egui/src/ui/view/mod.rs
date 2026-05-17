@@ -144,6 +144,10 @@ impl GraphView {
         cache.diagnostics(viewport_size, view_style, EdgeLabelDiagnostics::default())
     }
 
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+        tracing::instrument(skip_all, name = "central_graph")
+    )]
     pub fn show(&mut self, ui: &mut egui::Ui, graph: &DomainGraph) {
         profiling::scope!("ploke-egui.graph-view.show");
         let viewport = ui.available_size();
@@ -181,6 +185,10 @@ impl GraphView {
                 .diagnostics(response.rect.size(), self.view_style, edge_labels);
     }
 
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+        tracing::instrument(skip_all, name = "graph_projection_cache_refresh")
+    )]
     fn sync_projection(&mut self, graph: &DomainGraph) {
         profiling::scope!("ploke-egui.graph-view.sync-projection");
         if self.cache.refresh(

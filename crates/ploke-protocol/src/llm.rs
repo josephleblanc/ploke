@@ -1,4 +1,5 @@
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use fxhash::FxBuildHasher;
@@ -6,7 +7,7 @@ use ploke_llm::manager::{ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_s
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::Router;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
-use ploke_llm::{AttemptTimeout, ProviderSlug};
+use ploke_llm::{AttemptTimeout, ProviderSlug, ReasoningConfig, ReasoningEffort};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -140,28 +141,79 @@ pub struct JsonLlmResult<T> {
 const JSON_ALIAS_KEYS: &[&str] = &["rationale", "overall_rationale"];
 
 fn parse_protocol_json_content<T: DeserializeOwned>(content: &str) -> Result<T, ProtocolLlmError> {
-    match serde_json::from_str::<T>(content) {
+    match parse_protocol_json_content_once::<T>(content) {
         Ok(parsed) => Ok(parsed),
-        Err(original_err) => {
-            let mut value: Value =
-                serde_json::from_str(content).map_err(|_| ProtocolLlmError::ParseJson {
-                    detail: original_err.to_string(),
-                    content: content.to_string(),
-                })?;
-
-            if !normalize_protocol_json_aliases(&mut value) {
-                return Err(ProtocolLlmError::ParseJson {
-                    detail: original_err.to_string(),
-                    content: content.to_string(),
-                });
+        Err(detail) => {
+            if let Some(repaired) = repair_unterminated_final_rationale(content, &detail) {
+                if let Ok(parsed) = parse_protocol_json_content_once::<T>(&repaired) {
+                    return Ok(parsed);
+                }
             }
-
-            serde_json::from_value::<T>(value).map_err(|err| ProtocolLlmError::ParseJson {
-                detail: err.to_string(),
+            Err(ProtocolLlmError::ParseJson {
+                detail,
                 content: content.to_string(),
             })
         }
     }
+}
+
+fn parse_protocol_json_content_once<T: DeserializeOwned>(content: &str) -> Result<T, String> {
+    match serde_json::from_str::<T>(content) {
+        Ok(parsed) => Ok(parsed),
+        Err(original_err) => {
+            let mut value: Value =
+                serde_json::from_str(content).map_err(|_| original_err.to_string())?;
+
+            if !normalize_protocol_json_aliases(&mut value) {
+                return Err(original_err.to_string());
+            }
+
+            serde_json::from_value::<T>(value).map_err(|err| err.to_string())
+        }
+    }
+}
+
+fn repair_unterminated_final_rationale(content: &str, detail: &str) -> Option<String> {
+    if !detail.contains("EOF while parsing a string") {
+        return None;
+    }
+
+    let trimmed = content.trim_end();
+    if !trimmed.starts_with('{')
+        || !(trimmed.contains("\"rationale\"") || trimmed.contains("\"overall_rationale\""))
+        || !has_odd_unescaped_quotes(trimmed)
+    {
+        return None;
+    }
+
+    let mut repaired = trimmed.to_string();
+    if repaired.ends_with('}') {
+        let insert_at = repaired.len() - 1;
+        repaired.insert(insert_at, '"');
+    } else {
+        repaired.push('"');
+        repaired.push('}');
+    }
+    Some(repaired)
+}
+
+fn has_odd_unescaped_quotes(input: &str) -> bool {
+    let mut escaped = false;
+    let mut quotes = 0usize;
+
+    for ch in input.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => quotes += 1,
+            _ => {}
+        }
+    }
+
+    quotes % 2 == 1
 }
 
 fn normalize_protocol_json_aliases(value: &mut Value) -> bool {
@@ -217,6 +269,7 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         ])
         .with_json_response()
         .with_max_tokens(cfg.max_tokens)
+        .with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None))
         .non_streaming();
 
     if let Some(provider_slug) = cfg.provider_slug.as_ref() {
@@ -233,6 +286,10 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
     }
 
     let http = chat_http_config_for_json_llm(cfg);
+
+    if let Some(interval) = json_llm_min_request_interval(cfg) {
+        wait_for_json_llm_rate_slot(interval).await;
+    }
 
     let response = chat_step(client, &request, &http)
         .await
@@ -258,6 +315,26 @@ fn chat_http_config_for_json_llm(cfg: &JsonLlmConfig) -> ChatHttpConfig {
     http.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
     http.max_attempts = cfg.max_attempts;
     http
+}
+
+fn json_llm_min_request_interval(cfg: &JsonLlmConfig) -> Option<Duration> {
+    let is_inception_mercury = cfg.provider_slug.as_deref() == Some("inception")
+        && cfg.model_id.starts_with("inception/mercury-2");
+    is_inception_mercury.then(|| Duration::from_millis(850))
+}
+
+async fn wait_for_json_llm_rate_slot(interval: Duration) {
+    static LAST_REQUEST: OnceLock<tokio::sync::Mutex<Option<Instant>>> = OnceLock::new();
+
+    let lock = LAST_REQUEST.get_or_init(|| tokio::sync::Mutex::new(None));
+    let mut last_request = lock.lock().await;
+    if let Some(previous) = *last_request {
+        let elapsed = previous.elapsed();
+        if elapsed < interval {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+    }
+    *last_request = Some(Instant::now());
 }
 
 #[cfg(test)]
@@ -304,6 +381,40 @@ mod tests {
             parsed,
             OverallLike {
                 overall_rationale: "coherent sequence".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_repairs_unterminated_final_rationale() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{"verdict":"redundant_repeat","confidence":"high","rationale":"model stopped mid-rationale"#,
+        )
+        .expect("parser should repair a final unterminated rationale string");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "redundant_repeat".to_string(),
+                confidence: "high".to_string(),
+                rationale: "model stopped mid-rationale".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_repairs_final_rationale_before_object_close() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{"verdict":"redundant_repeat","confidence":"high","rationale":"model swallowed the closing brace.}"#,
+        )
+        .expect("parser should close the rationale before a trailing object brace");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "redundant_repeat".to_string(),
+                confidence: "high".to_string(),
+                rationale: "model swallowed the closing brace.".to_string(),
             }
         );
     }

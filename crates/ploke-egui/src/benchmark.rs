@@ -7,28 +7,38 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::io;
-#[cfg(feature = "native-benchmark")]
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
+use ploke_records::history::SealedBlockRecord;
 use ploke_records::run_record::read_compressed_record_profiled;
+use ploke_records::scheduler::{NodeRecord, SchedulerStateRecord};
 use ploke_tree::{FsRunStore, Graph, RunRecordSet};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "native-benchmark")]
 use sha2::{Digest, Sha256};
 
-use crate::allocation::{self, AllocationDelta, AllocationSnapshot};
+use crate::allocation::{
+    self, AllocationDelta, AllocationSnapshot, HeapCallsiteProfile, HeapGroupProfile,
+    HeapProfileSnapshot, HeapProfileTotals,
+};
 use crate::ui::view::GraphViewMode;
+
+#[cfg(feature = "native-benchmark")]
+pub fn with_benchmark_tracing_subscriber<R>(f: impl FnOnce() -> R) -> R {
+    allocation::with_tracing_subscriber(f)
+}
 
 pub const STANDARD_RUN_ROOT: &str =
     "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1";
 
-const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v2";
+const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v3";
 const STANDARD_FRAME_TARGET: usize = 300;
 const TOP_FRAME_LIMIT: usize = 10;
+const TOP_HEAP_LIMIT: usize = 10;
+const RUN_PICKER_DISCOVERY_WARNING_NS: u64 = 250_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BenchmarkSuite {
@@ -58,6 +68,12 @@ pub enum BenchmarkScenario {
     StartupFrames300,
     WarmIdle300,
     SelectArtifactInspector300,
+    InspectorRunRecordsExpanded300,
+    InspectorGraphEdgesExpanded300,
+    InspectorArtifactEdgesExpanded300,
+    InspectorPatchDebugExpanded300,
+    InspectorSourceRefsExpanded300,
+    InspectorArtifactIdsExpanded300,
     PatchDebugCold300,
     PatchDebugWarm300,
     ModeLineage300,
@@ -71,6 +87,12 @@ impl BenchmarkScenario {
             "startup_frames_300" => Ok(Self::StartupFrames300),
             "warm_idle_300" => Ok(Self::WarmIdle300),
             "select_artifact_inspector_300" => Ok(Self::SelectArtifactInspector300),
+            "inspector_run_records_expanded_300" => Ok(Self::InspectorRunRecordsExpanded300),
+            "inspector_graph_edges_expanded_300" => Ok(Self::InspectorGraphEdgesExpanded300),
+            "inspector_artifact_edges_expanded_300" => Ok(Self::InspectorArtifactEdgesExpanded300),
+            "inspector_patch_debug_expanded_300" => Ok(Self::InspectorPatchDebugExpanded300),
+            "inspector_source_refs_expanded_300" => Ok(Self::InspectorSourceRefsExpanded300),
+            "inspector_artifact_ids_expanded_300" => Ok(Self::InspectorArtifactIdsExpanded300),
             "patch_debug_cold_300" => Ok(Self::PatchDebugCold300),
             "patch_debug_warm_300" => Ok(Self::PatchDebugWarm300),
             "mode_lineage_300" => Ok(Self::ModeLineage300),
@@ -85,6 +107,12 @@ impl BenchmarkScenario {
             Self::StartupFrames300,
             Self::WarmIdle300,
             Self::SelectArtifactInspector300,
+            Self::InspectorRunRecordsExpanded300,
+            Self::InspectorGraphEdgesExpanded300,
+            Self::InspectorArtifactEdgesExpanded300,
+            Self::InspectorPatchDebugExpanded300,
+            Self::InspectorSourceRefsExpanded300,
+            Self::InspectorArtifactIdsExpanded300,
             Self::PatchDebugCold300,
             Self::PatchDebugWarm300,
             Self::ModeLineage300,
@@ -98,6 +126,12 @@ impl BenchmarkScenario {
             Self::StartupFrames300 => "startup_frames_300",
             Self::WarmIdle300 => "warm_idle_300",
             Self::SelectArtifactInspector300 => "select_artifact_inspector_300",
+            Self::InspectorRunRecordsExpanded300 => "inspector_run_records_expanded_300",
+            Self::InspectorGraphEdgesExpanded300 => "inspector_graph_edges_expanded_300",
+            Self::InspectorArtifactEdgesExpanded300 => "inspector_artifact_edges_expanded_300",
+            Self::InspectorPatchDebugExpanded300 => "inspector_patch_debug_expanded_300",
+            Self::InspectorSourceRefsExpanded300 => "inspector_source_refs_expanded_300",
+            Self::InspectorArtifactIdsExpanded300 => "inspector_artifact_ids_expanded_300",
             Self::PatchDebugCold300 => "patch_debug_cold_300",
             Self::PatchDebugWarm300 => "patch_debug_warm_300",
             Self::ModeLineage300 => "mode_lineage_300",
@@ -114,15 +148,39 @@ impl BenchmarkScenario {
         match self {
             Self::StartupFrames300 | Self::WarmIdle300 => BenchmarkAction::None,
             Self::SelectArtifactInspector300 => BenchmarkAction::SelectArtifact {
-                patch_debug_open: false,
+                inspector_section: None,
+                reset_patch_cache: false,
+            },
+            Self::InspectorRunRecordsExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::RunRecords),
+                reset_patch_cache: false,
+            },
+            Self::InspectorGraphEdgesExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::GraphEdges),
+                reset_patch_cache: false,
+            },
+            Self::InspectorArtifactEdgesExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::ArtifactEdges),
+                reset_patch_cache: false,
+            },
+            Self::InspectorPatchDebugExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
+                reset_patch_cache: false,
+            },
+            Self::InspectorSourceRefsExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::SourceRefs),
+                reset_patch_cache: false,
+            },
+            Self::InspectorArtifactIdsExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::ArtifactIds),
                 reset_patch_cache: false,
             },
             Self::PatchDebugCold300 => BenchmarkAction::SelectArtifact {
-                patch_debug_open: true,
+                inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
                 reset_patch_cache: true,
             },
             Self::PatchDebugWarm300 => BenchmarkAction::SelectArtifact {
-                patch_debug_open: true,
+                inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
                 reset_patch_cache: false,
             },
             Self::ModeLineage300 => BenchmarkAction::SetMode(GraphViewMode::Lineage),
@@ -138,7 +196,7 @@ impl BenchmarkScenario {
 pub enum BenchmarkAction {
     None,
     SelectArtifact {
-        patch_debug_open: bool,
+        inspector_section: Option<BenchmarkInspectorSection>,
         reset_patch_cache: bool,
     },
     SetMode(GraphViewMode),
@@ -150,22 +208,61 @@ impl BenchmarkAction {
         match self {
             Self::None => "none",
             Self::SelectArtifact {
-                patch_debug_open: false,
+                inspector_section: None,
                 ..
             } => "select_artifact_inspector",
             Self::SelectArtifact {
-                patch_debug_open: true,
                 reset_patch_cache: true,
+                ..
             } => "patch_debug_cold",
             Self::SelectArtifact {
-                patch_debug_open: true,
                 reset_patch_cache: false,
+                inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
             } => "patch_debug_warm",
+            Self::SelectArtifact {
+                inspector_section: Some(section),
+                ..
+            } => section.action_label(),
             Self::SetMode(GraphViewMode::Lineage) => "set_mode_lineage",
             Self::SetMode(GraphViewMode::ArtifactTree) => "set_mode_artifact_tree",
             Self::SetMode(GraphViewMode::ArtifactAndLineage) => "set_mode_artifact_and_lineage",
             Self::SetMode(GraphViewMode::Empty) => "set_mode_empty",
             Self::ToggleHideUnconsideredChildren => "toggle_hide_unconsidered_children",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkInspectorSection {
+    RunRecords,
+    GraphEdges,
+    ArtifactEdges,
+    PatchDebug,
+    SourceRefs,
+    ArtifactIds,
+}
+
+impl BenchmarkInspectorSection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RunRecords => "run_records",
+            Self::GraphEdges => "graph_edges",
+            Self::ArtifactEdges => "artifact_edges",
+            Self::PatchDebug => "patch_debug",
+            Self::SourceRefs => "source_refs",
+            Self::ArtifactIds => "artifact_ids",
+        }
+    }
+
+    fn action_label(self) -> &'static str {
+        match self {
+            Self::RunRecords => "inspector_run_records_expanded",
+            Self::GraphEdges => "inspector_graph_edges_expanded",
+            Self::ArtifactEdges => "inspector_artifact_edges_expanded",
+            Self::PatchDebug => "inspector_patch_debug_expanded",
+            Self::SourceRefs => "inspector_source_refs_expanded",
+            Self::ArtifactIds => "inspector_artifact_ids_expanded",
         }
     }
 }
@@ -177,6 +274,7 @@ pub struct BenchmarkConfig {
     pub output_dir: PathBuf,
     pub scenarios: Vec<BenchmarkScenario>,
     pub command: String,
+    pub run_readiness: Option<BenchmarkRunReadiness>,
 }
 
 impl BenchmarkConfig {
@@ -203,6 +301,19 @@ impl BenchmarkConfig {
         if scenarios.is_empty() {
             return Err("benchmark scenario list is empty".to_owned());
         }
+        let run_readiness = match suite {
+            BenchmarkSuite::Standard => {
+                let readiness = benchmark_run_readiness(&run_root)
+                    .map_err(|error| format!("benchmark run readiness check failed: {error}"))?;
+                if !readiness.ready {
+                    return Err(format!(
+                        "benchmark run root is not ready for standard suite: {}",
+                        readiness.summary()
+                    ));
+                }
+                Some(readiness)
+            }
+        };
 
         Ok(Self {
             suite,
@@ -210,8 +321,144 @@ impl BenchmarkConfig {
             output_dir: output_dir.unwrap_or_else(|| default_output_dir(suite)),
             scenarios,
             command: std::env::args().collect::<Vec<_>>().join(" "),
+            run_readiness,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkRunReadiness {
+    pub policy_max_generations: u32,
+    pub policy_child_budget_min: u32,
+    pub expected_min_history_blocks: usize,
+    pub sealed_history_blocks: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_sealed_block_height: Option<u64>,
+    pub expected_min_spawned_children: usize,
+    pub spawned_child_nodes: usize,
+    pub scheduler_node_count: usize,
+    pub node_record_count: usize,
+    pub ready: bool,
+    pub reason: String,
+}
+
+impl BenchmarkRunReadiness {
+    fn from_counts(
+        policy_max_generations: u32,
+        policy_child_budget_min: u32,
+        sealed_history_blocks: usize,
+        max_sealed_block_height: Option<u64>,
+        scheduler_node_count: usize,
+        node_record_count: usize,
+        spawned_child_nodes: usize,
+    ) -> Self {
+        let expected_min_history_blocks = policy_max_generations.saturating_add(1) as usize;
+        let expected_min_spawned_children =
+            policy_max_generations.saturating_mul(policy_child_budget_min) as usize;
+        let history_reaches_policy_generation = max_sealed_block_height
+            .is_some_and(|height| height >= u64::from(policy_max_generations));
+        let history_has_expected_blocks = sealed_history_blocks >= expected_min_history_blocks;
+        let spawned_expected_children = spawned_child_nodes >= expected_min_spawned_children;
+        let (ready, reason) = if history_reaches_policy_generation {
+            (true, "sealed_history_reached_policy_generation")
+        } else if history_has_expected_blocks {
+            (true, "sealed_history_has_expected_block_count")
+        } else if spawned_expected_children {
+            (true, "spawned_child_nodes_reached_policy_minimum")
+        } else {
+            (false, "persisted_records_below_policy_expectation")
+        };
+
+        Self {
+            policy_max_generations,
+            policy_child_budget_min,
+            expected_min_history_blocks,
+            sealed_history_blocks,
+            max_sealed_block_height,
+            expected_min_spawned_children,
+            spawned_child_nodes,
+            scheduler_node_count,
+            node_record_count,
+            ready,
+            reason: reason.to_owned(),
+        }
+    }
+
+    fn from_records(
+        scheduler: &SchedulerStateRecord,
+        node_records: &[NodeRecord],
+        history_blocks: &[SealedBlockRecord],
+    ) -> Self {
+        let max_sealed_block_height = history_blocks
+            .iter()
+            .map(|block| block.state.header.common.block_height)
+            .max();
+        let spawned_child_nodes = node_records
+            .iter()
+            .filter(|record| record.generation > 0)
+            .count();
+        Self::from_counts(
+            scheduler.policy.max_generations,
+            scheduler.policy.child_budget.min,
+            history_blocks.len(),
+            max_sealed_block_height,
+            scheduler.nodes.len(),
+            node_records.len(),
+            spawned_child_nodes,
+        )
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "{}; history_blocks={}/{} max_history_height={:?} spawned_children={}/{} node_records={}",
+            self.reason,
+            self.sealed_history_blocks,
+            self.expected_min_history_blocks,
+            self.max_sealed_block_height,
+            self.spawned_child_nodes,
+            self.expected_min_spawned_children,
+            self.node_record_count
+        )
+    }
+}
+
+pub fn benchmark_run_readiness(run_root: &Path) -> Result<BenchmarkRunReadiness, Box<dyn Error>> {
+    let scheduler = read_typed_json::<SchedulerStateRecord>(&run_root.join("scheduler.json"))?;
+    let node_records = read_node_records(run_root)?;
+    let history_blocks = FsRunStore::new(run_root).load_history_blocks()?;
+    Ok(BenchmarkRunReadiness::from_records(
+        &scheduler,
+        &node_records,
+        &history_blocks,
+    ))
+}
+
+fn read_node_records(run_root: &Path) -> Result<Vec<NodeRecord>, Box<dyn Error>> {
+    let nodes_dir = run_root.join("nodes");
+    if !nodes_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut records = Vec::new();
+    for entry in fs::read_dir(nodes_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let path = entry.path().join("node.json");
+        if path.is_file() {
+            records.push(read_typed_json::<NodeRecord>(&path)?);
+        }
+    }
+    Ok(records)
+}
+
+fn read_typed_json<T>(path: &Path) -> Result<T, Box<dyn Error>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let bytes = fs::read(path)?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,9 +472,12 @@ pub struct BenchmarkReport {
     pub run_root: String,
     pub feature_set: Vec<String>,
     pub scenarios_requested: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_readiness: Option<BenchmarkRunReadiness>,
     pub startup: StartupProfile,
     pub scenarios: Vec<ScenarioReport>,
     pub puffin_artifacts: Vec<BenchmarkArtifact>,
+    pub heap_artifacts: Vec<BenchmarkArtifact>,
     pub notes: Vec<String>,
 }
 
@@ -273,6 +523,23 @@ impl StartupProfile {
     }
 }
 
+fn annotate_startup_profile(startup: &mut StartupProfile) {
+    for span in &startup.spans {
+        if span.name == "run_picker_discovery" {
+            startup.notes.push(format!(
+                "run_picker_discovery={} ns (kept in startup spans)",
+                span.duration_ns
+            ));
+            if span.duration_ns > RUN_PICKER_DISCOVERY_WARNING_NS {
+                startup.notes.push(format!(
+                    "warning: run_picker_discovery exceeded {} ns",
+                    RUN_PICKER_DISCOVERY_WARNING_NS
+                ));
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BenchmarkSpan {
     pub name: String,
@@ -299,6 +566,8 @@ pub struct ScenarioReport {
     pub frame_stats: DurationStats,
     pub top_frames: Vec<TopFrame>,
     pub component_timings: Vec<ComponentTimingReport>,
+    pub allocation_frames: AllocationFrameReport,
+    pub heap_profile: HeapScenarioProfile,
     pub allocations: AllocationDelta,
     pub action: BenchmarkActionReport,
 }
@@ -312,6 +581,8 @@ pub struct BenchmarkActionReport {
     pub target_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_section: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
@@ -323,6 +594,13 @@ impl BenchmarkActionReport {
             target_label: None,
             target_key: None,
             fallback: None,
+            inspector_section: match action {
+                BenchmarkAction::SelectArtifact {
+                    inspector_section: Some(section),
+                    ..
+                } => Some(section.as_str().to_owned()),
+                _ => None,
+            },
             notes: Vec::new(),
         }
     }
@@ -333,18 +611,153 @@ pub struct TopFrame {
     pub frame_index: usize,
     pub duration_ns: u64,
     pub components: Vec<ComponentTiming>,
+    pub allocations: FrameAllocationSample,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentTimingReport {
     pub component: String,
     pub stats: DurationStats,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median_percent_of_frame_x100: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_under: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentTiming {
     pub component: String,
     pub duration_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameAllocationSample {
+    pub allocation_count_delta: u64,
+    pub deallocation_count_delta: u64,
+    pub allocated_object_bytes_delta: u64,
+    pub deallocated_object_bytes_delta: u64,
+    pub allocated_wrapped_bytes_delta: u64,
+    pub deallocated_wrapped_bytes_delta: u64,
+    pub live_object_bytes: u64,
+    pub live_wrapped_bytes: u64,
+}
+
+impl FrameAllocationSample {
+    fn from_snapshots(start: &HeapProfileSnapshot, end: &HeapProfileSnapshot) -> Self {
+        Self {
+            allocation_count_delta: end
+                .totals
+                .allocation_count
+                .saturating_sub(start.totals.allocation_count),
+            deallocation_count_delta: end
+                .totals
+                .deallocation_count
+                .saturating_sub(start.totals.deallocation_count),
+            allocated_object_bytes_delta: end
+                .totals
+                .allocated_object_bytes
+                .saturating_sub(start.totals.allocated_object_bytes),
+            deallocated_object_bytes_delta: end
+                .totals
+                .deallocated_object_bytes
+                .saturating_sub(start.totals.deallocated_object_bytes),
+            allocated_wrapped_bytes_delta: end
+                .totals
+                .allocated_wrapped_bytes
+                .saturating_sub(start.totals.allocated_wrapped_bytes),
+            deallocated_wrapped_bytes_delta: end
+                .totals
+                .deallocated_wrapped_bytes
+                .saturating_sub(start.totals.deallocated_wrapped_bytes),
+            live_object_bytes: end.totals.live_object_bytes,
+            live_wrapped_bytes: end.totals.live_wrapped_bytes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValueStats {
+    pub count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p95: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p99: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<u64>,
+}
+
+impl ValueStats {
+    fn from_values(values: &[u64]) -> Self {
+        let mut sorted = values.to_vec();
+        sorted.sort_unstable();
+        Self {
+            count: sorted.len(),
+            min: sorted.first().copied(),
+            median: percentile(&sorted, 50),
+            p95: percentile(&sorted, 95),
+            p99: percentile(&sorted, 99),
+            max: sorted.last().copied(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AllocationFrameStats {
+    pub allocation_count: ValueStats,
+    pub allocated_object_bytes: ValueStats,
+    pub allocated_wrapped_bytes: ValueStats,
+    pub live_object_bytes: ValueStats,
+    pub live_wrapped_bytes: ValueStats,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AllocationFrameWindow {
+    pub frame_start: usize,
+    pub frame_end: usize,
+    pub stats: AllocationFrameStats,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeapSlope {
+    Plateau,
+    Growing,
+    #[default]
+    Inconclusive,
+}
+
+impl HeapSlope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Plateau => "plateau",
+            Self::Growing => "growing",
+            Self::Inconclusive => "inconclusive",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AllocationFrameReport {
+    pub per_frame: AllocationFrameStats,
+    pub first_50: AllocationFrameWindow,
+    pub last_50: AllocationFrameWindow,
+    pub slope: HeapSlope,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeapScenarioProfile {
+    pub totals: HeapProfileTotals,
+    pub unmatched_deallocations: u64,
+    pub top_groups_by_allocated_bytes: Vec<HeapGroupProfile>,
+    pub top_groups_by_allocation_count: Vec<HeapGroupProfile>,
+    pub top_groups_by_retained_bytes: Vec<HeapGroupProfile>,
+    pub top_callsites_by_allocated_bytes: Vec<HeapCallsiteProfile>,
+    pub top_callsites_by_allocation_count: Vec<HeapCallsiteProfile>,
+    pub top_callsites_by_retained_bytes: Vec<HeapCallsiteProfile>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,10 +811,13 @@ pub struct BenchmarkController {
     git: GitInfo,
     dirty_state: DirtyState,
     feature_set: Vec<String>,
+    heap_tracker: allocation::HeapProfileTracker,
     scenario_index: usize,
     current: Option<ScenarioCapture>,
     completed: Vec<ScenarioReport>,
+    completed_heap_profiles: Vec<(String, HeapProfileSnapshot)>,
     current_components: Vec<ComponentTiming>,
+    last_heap_snapshot: HeapProfileSnapshot,
     frame_start: Option<Instant>,
     finished: bool,
     #[cfg(feature = "native-benchmark")]
@@ -427,7 +843,10 @@ impl std::fmt::Debug for BenchmarkController {
 }
 
 impl BenchmarkController {
-    pub fn new(config: BenchmarkConfig, startup: StartupProfile) -> Self {
+    pub fn new(
+        config: BenchmarkConfig,
+        mut startup: StartupProfile,
+    ) -> Result<Self, Box<dyn Error>> {
         #[cfg(feature = "native-benchmark")]
         let puffin_view = {
             puffin::set_scopes_on(true);
@@ -440,23 +859,34 @@ impl BenchmarkController {
             }
             view
         };
+        let heap_tracker = allocation::install_global_tracker()?;
+        annotate_startup_profile(&mut startup);
+        if let Some(readiness) = &config.run_readiness {
+            startup.notes.push(format!(
+                "standard_run_readiness_heuristic: {}",
+                readiness.summary()
+            ));
+        }
 
-        Self {
+        Ok(Self {
             config,
             startup,
             created_at_unix_ms: unix_ms_now(),
             git: git_info(),
             dirty_state: dirty_state(),
             feature_set: feature_set(),
+            heap_tracker,
             scenario_index: 0,
             current: None,
             completed: Vec::new(),
+            completed_heap_profiles: Vec::new(),
             current_components: Vec::new(),
+            last_heap_snapshot: HeapProfileSnapshot::default(),
             frame_start: None,
             finished: false,
             #[cfg(feature = "native-benchmark")]
             puffin_view,
-        }
+        })
     }
 
     pub fn begin_frame(&mut self) -> Option<BenchmarkAction> {
@@ -471,6 +901,8 @@ impl BenchmarkController {
             let scenario = *self.config.scenarios.get(self.scenario_index)?;
             self.scenario_index += 1;
             let action = scenario.action();
+            allocation::begin_tracking_window(&self.heap_tracker);
+            self.last_heap_snapshot = allocation::heap_totals_snapshot(&self.heap_tracker);
             self.current = Some(ScenarioCapture::new(scenario, allocation::snapshot()));
             return Some(action);
         }
@@ -502,6 +934,10 @@ impl BenchmarkController {
         };
         let frame_duration = elapsed_ns(frame_start);
         let components = std::mem::take(&mut self.current_components);
+        let heap_snapshot = allocation::heap_totals_snapshot(&self.heap_tracker);
+        let frame_allocations =
+            FrameAllocationSample::from_snapshots(&self.last_heap_snapshot, &heap_snapshot);
+        self.last_heap_snapshot = heap_snapshot;
         let Some(current) = &mut self.current else {
             return Ok(None);
         };
@@ -509,6 +945,7 @@ impl BenchmarkController {
             frame_index: current.frames.len() + 1,
             duration_ns: frame_duration,
             components,
+            allocations: frame_allocations,
         });
 
         if current.frames.len() < current.scenario.frame_target() {
@@ -519,20 +956,28 @@ impl BenchmarkController {
             .current
             .take()
             .expect("current scenario exists after frame push");
-        self.completed.push(capture.finish(allocation::snapshot()));
+        let heap_profile = allocation::finish_tracking_window(&self.heap_tracker);
+        let allocation_end = heap_profile.allocation_snapshot();
+        let (report, full_heap_profile) = capture.finish(allocation_end, heap_profile);
+        self.completed_heap_profiles
+            .push((report.name.clone(), full_heap_profile));
+        self.completed.push(report);
+        let write_result = self.write_report()?;
         if self.completed.len() == self.config.scenarios.len() {
             self.finished = true;
-            return self.write_report().map(Some);
+            return Ok(Some(write_result));
         }
 
         Ok(None)
     }
 
     fn write_report(&self) -> Result<BenchmarkWriteResult, Box<dyn Error>> {
+        allocation::finish_tracking_window(&self.heap_tracker);
         #[cfg(feature = "native-benchmark")]
         let puffin_artifacts = vec![self.write_puffin_capture()?];
         #[cfg(not(feature = "native-benchmark"))]
         let puffin_artifacts = Vec::new();
+        let heap_artifacts = self.write_heap_profiles()?;
 
         let report = BenchmarkReport {
             schema_version: BENCHMARK_REPORT_VERSION.to_owned(),
@@ -549,9 +994,11 @@ impl BenchmarkController {
                 .iter()
                 .map(|scenario| scenario.as_str().to_owned())
                 .collect(),
+            run_readiness: self.config.run_readiness.clone(),
             startup: self.startup.clone(),
             scenarios: self.completed.clone(),
             puffin_artifacts,
+            heap_artifacts,
             notes: benchmark_notes(&self.dirty_state),
         };
 
@@ -576,13 +1023,29 @@ impl BenchmarkController {
         view.write(&mut file).map_err(io::Error::other)?;
         file_artifact(&path, false)
     }
+
+    fn write_heap_profiles(&self) -> Result<Vec<BenchmarkArtifact>, Box<dyn Error>> {
+        let root = default_heap_benchmark_dir(&self.config.output_dir);
+        fs::create_dir_all(&root)?;
+        let mut artifacts = Vec::new();
+        for (scenario, profile) in &self.completed_heap_profiles {
+            let path = root.join(format!("{scenario}.heap.json"));
+            let encoded = allocation::untracked(|| serde_json::to_vec_pretty(profile))?;
+            fs::write(&path, encoded)?;
+            artifacts.push(file_artifact(&path, false)?);
+        }
+        Ok(artifacts)
+    }
 }
 
 fn benchmark_notes(dirty_state: &DirtyState) -> Vec<String> {
     let mut notes = vec![
         "reporting-only benchmark; no pass/fail thresholds applied".to_owned(),
-        "allocation deltas are process-wide and exclude GPU/driver memory".to_owned(),
+        "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface".to_owned(),
+        "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode".to_owned(),
+        "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence".to_owned(),
         "puffin captures are local ignored artifacts under crates/ploke-egui/data/".to_owned(),
+        "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/".to_owned(),
     ];
     if dirty_state.classification == DirtyStateClassification::DirtyUnrelated {
         notes.push(
@@ -611,21 +1074,29 @@ impl ScenarioCapture {
         }
     }
 
-    fn finish(self, allocation_end: AllocationSnapshot) -> ScenarioReport {
+    fn finish(
+        self,
+        allocation_end: AllocationSnapshot,
+        heap_profile: HeapProfileSnapshot,
+    ) -> (ScenarioReport, HeapProfileSnapshot) {
         let durations = self
             .frames
             .iter()
             .map(|frame| frame.duration_ns)
             .collect::<Vec<_>>();
-        ScenarioReport {
+        let frame_stats = DurationStats::from_durations(&durations);
+        let report = ScenarioReport {
             name: self.scenario.as_str().to_owned(),
             target_frames: self.scenario.frame_target(),
-            frame_stats: DurationStats::from_durations(&durations),
+            frame_stats: frame_stats.clone(),
             top_frames: top_frames(&self.frames),
-            component_timings: component_reports(&self.frames),
+            component_timings: component_reports(&self.frames, frame_stats.median_ns),
+            allocation_frames: allocation_frame_report(&self.frames),
+            heap_profile: heap_summary(&heap_profile),
             allocations: allocation_end.delta_since(self.allocation_start),
             action: self.action,
-        }
+        };
+        (report, heap_profile)
     }
 }
 
@@ -634,6 +1105,7 @@ struct FrameSample {
     frame_index: usize,
     duration_ns: u64,
     components: Vec<ComponentTiming>,
+    allocations: FrameAllocationSample,
 }
 
 pub fn load_graph_with_startup_profile(
@@ -740,6 +1212,7 @@ fn top_frames(frames: &[FrameSample]) -> Vec<TopFrame> {
             frame_index: frame.frame_index,
             duration_ns: frame.duration_ns,
             components: frame.components.clone(),
+            allocations: frame.allocations,
         })
         .collect::<Vec<_>>();
     frames.sort_by(|left, right| {
@@ -752,7 +1225,10 @@ fn top_frames(frames: &[FrameSample]) -> Vec<TopFrame> {
     frames
 }
 
-fn component_reports(frames: &[FrameSample]) -> Vec<ComponentTimingReport> {
+fn component_reports(
+    frames: &[FrameSample],
+    median_frame_ns: Option<u64>,
+) -> Vec<ComponentTimingReport> {
     let mut durations: BTreeMap<String, Vec<u64>> = BTreeMap::new();
     for frame in frames {
         for component in &frame.components {
@@ -764,11 +1240,120 @@ fn component_reports(frames: &[FrameSample]) -> Vec<ComponentTimingReport> {
     }
     durations
         .into_iter()
-        .map(|(component, durations)| ComponentTimingReport {
-            component,
-            stats: DurationStats::from_durations(&durations),
+        .map(|(component, durations)| {
+            let stats = DurationStats::from_durations(&durations);
+            let median_percent_of_frame_x100 =
+                stats
+                    .median_ns
+                    .zip(median_frame_ns)
+                    .and_then(|(component_ns, frame_ns)| {
+                        (frame_ns > 0).then_some(component_ns.saturating_mul(10_000) / frame_ns)
+                    });
+            let nested_under = component_parent(component.as_str()).map(str::to_owned);
+            ComponentTimingReport {
+                component,
+                stats,
+                median_percent_of_frame_x100,
+                nested_under,
+            }
         })
         .collect()
+}
+
+fn component_parent(component: &str) -> Option<&'static str> {
+    match component {
+        "diagnostics" => Some("run_navigation"),
+        _ => None,
+    }
+}
+
+fn allocation_frame_report(frames: &[FrameSample]) -> AllocationFrameReport {
+    let first_50 = frame_window(frames, 0, 50);
+    let last_start = frames.len().saturating_sub(50);
+    let last_50 = frame_window(frames, last_start, frames.len());
+    AllocationFrameReport {
+        per_frame: allocation_frame_stats(frames),
+        first_50: first_50.clone(),
+        last_50: last_50.clone(),
+        slope: classify_heap_slope(&first_50, &last_50),
+    }
+}
+
+fn frame_window(frames: &[FrameSample], start: usize, end: usize) -> AllocationFrameWindow {
+    let end = end.min(frames.len());
+    let start = start.min(end);
+    AllocationFrameWindow {
+        frame_start: start.saturating_add(1),
+        frame_end: end,
+        stats: allocation_frame_stats(&frames[start..end]),
+    }
+}
+
+fn allocation_frame_stats(frames: &[FrameSample]) -> AllocationFrameStats {
+    AllocationFrameStats {
+        allocation_count: ValueStats::from_values(
+            &frames
+                .iter()
+                .map(|frame| frame.allocations.allocation_count_delta)
+                .collect::<Vec<_>>(),
+        ),
+        allocated_object_bytes: ValueStats::from_values(
+            &frames
+                .iter()
+                .map(|frame| frame.allocations.allocated_object_bytes_delta)
+                .collect::<Vec<_>>(),
+        ),
+        allocated_wrapped_bytes: ValueStats::from_values(
+            &frames
+                .iter()
+                .map(|frame| frame.allocations.allocated_wrapped_bytes_delta)
+                .collect::<Vec<_>>(),
+        ),
+        live_object_bytes: ValueStats::from_values(
+            &frames
+                .iter()
+                .map(|frame| frame.allocations.live_object_bytes)
+                .collect::<Vec<_>>(),
+        ),
+        live_wrapped_bytes: ValueStats::from_values(
+            &frames
+                .iter()
+                .map(|frame| frame.allocations.live_wrapped_bytes)
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+fn classify_heap_slope(first: &AllocationFrameWindow, last: &AllocationFrameWindow) -> HeapSlope {
+    let Some(first_live) = first.stats.live_wrapped_bytes.median else {
+        return HeapSlope::Inconclusive;
+    };
+    let Some(last_live) = last.stats.live_wrapped_bytes.median else {
+        return HeapSlope::Inconclusive;
+    };
+    if first.stats.live_wrapped_bytes.count < 50 || last.stats.live_wrapped_bytes.count < 50 {
+        return HeapSlope::Inconclusive;
+    }
+    let threshold = (first_live / 10).max(1_048_576);
+    if last_live > first_live.saturating_add(threshold) {
+        HeapSlope::Growing
+    } else {
+        HeapSlope::Plateau
+    }
+}
+
+fn heap_summary(snapshot: &HeapProfileSnapshot) -> HeapScenarioProfile {
+    HeapScenarioProfile {
+        totals: snapshot.totals,
+        unmatched_deallocations: snapshot.unmatched_deallocations,
+        top_groups_by_allocated_bytes: snapshot.top_groups_by_allocated_bytes(TOP_HEAP_LIMIT),
+        top_groups_by_allocation_count: snapshot.top_groups_by_allocation_count(TOP_HEAP_LIMIT),
+        top_groups_by_retained_bytes: snapshot.top_groups_by_retained_bytes(TOP_HEAP_LIMIT),
+        top_callsites_by_allocated_bytes: snapshot.top_callsites_by_allocated_bytes(TOP_HEAP_LIMIT),
+        top_callsites_by_allocation_count: snapshot
+            .top_callsites_by_allocation_count(TOP_HEAP_LIMIT),
+        top_callsites_by_retained_bytes: snapshot.top_callsites_by_retained_bytes(TOP_HEAP_LIMIT),
+    }
 }
 
 fn percentile(sorted: &[u64], percentile: usize) -> Option<u64> {
@@ -805,16 +1390,72 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
         }
         text.push('\n');
     }
+    if let Some(readiness) = &report.run_readiness {
+        text.push_str("## Run Readiness\n\n");
+        text.push_str(&format!("- ready: `{}`\n", readiness.ready));
+        text.push_str(&format!("- reason: `{}`\n", readiness.reason));
+        text.push_str(&format!(
+            "- history blocks: `{}` / `{}` expected, max height `{:?}`\n",
+            readiness.sealed_history_blocks,
+            readiness.expected_min_history_blocks,
+            readiness.max_sealed_block_height
+        ));
+        text.push_str(&format!(
+            "- spawned children: `{}` / `{}` expected minimum\n",
+            readiness.spawned_child_nodes, readiness.expected_min_spawned_children
+        ));
+        text.push('\n');
+    }
+    if !report.startup.spans.is_empty() {
+        text.push_str("## Startup\n\n");
+        for span in &report.startup.spans {
+            text.push_str(&format!("- `{}`: {} ns\n", span.name, span.duration_ns));
+        }
+        if !report.startup.notes.is_empty() {
+            for note in &report.startup.notes {
+                text.push_str(&format!("- note: {note}\n"));
+            }
+        }
+        text.push('\n');
+    }
     text.push_str("## Scenarios\n\n");
     for scenario in &report.scenarios {
         text.push_str(&format!(
-            "- `{}`: frames={}, median={} ns, p95={} ns, max={} ns\n",
+            "- `{}`: frames={}, median={} ns, p95={} ns, p99={} ns, max={} ns, heap_slope={}\n",
             scenario.name,
             scenario.frame_stats.count,
             render_optional_ns(scenario.frame_stats.median_ns),
             render_optional_ns(scenario.frame_stats.p95_ns),
-            render_optional_ns(scenario.frame_stats.max_ns)
+            render_optional_ns(scenario.frame_stats.p99_ns),
+            render_optional_ns(scenario.frame_stats.max_ns),
+            scenario.allocation_frames.slope.as_str()
         ));
+        for component in &scenario.component_timings {
+            if let Some(percent) = component.median_percent_of_frame_x100 {
+                let nested = component
+                    .nested_under
+                    .as_ref()
+                    .map(|parent| format!(", nested_under={parent}"))
+                    .unwrap_or_default();
+                text.push_str(&format!(
+                    "  - component `{}`: median={} ns, median_frame_share={}%{}\n",
+                    component.component,
+                    render_optional_ns(component.stats.median_ns),
+                    render_percent_x100(percent),
+                    nested
+                ));
+            }
+        }
+        if let Some(callsite) = scenario
+            .heap_profile
+            .top_callsites_by_allocated_bytes
+            .first()
+        {
+            text.push_str(&format!(
+                "  - top heap callsite by allocated bytes: `{}` ({} wrapped bytes)\n",
+                callsite.callsite.symbol, callsite.totals.allocated_wrapped_bytes
+            ));
+        }
     }
     text.push_str("\n## Local Puffin Captures\n\n");
     if report.puffin_artifacts.is_empty() {
@@ -827,7 +1468,18 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
             ));
         }
     }
-    text.push_str("\nSee `report.json` for typed timings and allocation deltas.\n");
+    text.push_str("\n## Local Heap Profiles\n\n");
+    if report.heap_artifacts.is_empty() {
+        text.push_str("- none recorded\n");
+    } else {
+        for artifact in &report.heap_artifacts {
+            text.push_str(&format!(
+                "- `{}`: {} bytes, sha256 `{}`\n",
+                artifact.path, artifact.bytes, artifact.sha256
+            ));
+        }
+    }
+    text.push_str("\nSee `report.json` for typed timings and compact allocation summaries.\n");
     text
 }
 
@@ -835,6 +1487,10 @@ fn render_optional_ns(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn render_percent_x100(value: u64) -> String {
+    format!("{}.{:02}", value / 100, value % 100)
 }
 
 fn unix_ms_now() -> u64 {
@@ -977,7 +1633,19 @@ fn default_puffin_benchmark_dir(output_dir: &Path) -> PathBuf {
         .join(name)
 }
 
-#[cfg(feature = "native-benchmark")]
+fn default_heap_benchmark_dir(output_dir: &Path) -> PathBuf {
+    let name = output_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "custom-output".to_owned());
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("profiling")
+        .join("heap")
+        .join("benchmarks")
+        .join(name)
+}
+
 fn file_artifact(path: &Path, tracked: bool) -> io::Result<BenchmarkArtifact> {
     let metadata = fs::metadata(path)?;
     Ok(BenchmarkArtifact {
@@ -988,7 +1656,6 @@ fn file_artifact(path: &Path, tracked: bool) -> io::Result<BenchmarkArtifact> {
     })
 }
 
-#[cfg(feature = "native-benchmark")]
 fn sha256_file(path: &Path) -> io::Result<String> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -1038,6 +1705,15 @@ mod tests {
             run_root: STANDARD_RUN_ROOT.to_owned(),
             feature_set: vec!["dev".to_owned(), "native-benchmark".to_owned()],
             scenarios_requested: vec!["startup_frames_300".to_owned()],
+            run_readiness: Some(BenchmarkRunReadiness::from_counts(
+                5,
+                1,
+                6,
+                Some(5),
+                1,
+                19,
+                18,
+            )),
             startup: StartupProfile {
                 spans: vec![BenchmarkSpan {
                     name: "Graph::from_records".to_owned(),
@@ -1057,11 +1733,16 @@ mod tests {
                         component: "central_graph".to_owned(),
                         duration_ns: 2,
                     }],
+                    allocations: FrameAllocationSample::default(),
                 }],
                 component_timings: vec![ComponentTimingReport {
                     component: "central_graph".to_owned(),
                     stats: DurationStats::from_durations(&[2]),
+                    median_percent_of_frame_x100: Some(6_666),
+                    nested_under: None,
                 }],
+                allocation_frames: AllocationFrameReport::default(),
+                heap_profile: HeapScenarioProfile::default(),
                 allocations: AllocationSnapshot {
                     enabled: true,
                     allocation_count: 10,
@@ -1080,6 +1761,13 @@ mod tests {
             }],
             puffin_artifacts: vec![BenchmarkArtifact {
                 path: "crates/ploke-egui/data/profiling/puffin/benchmarks/x/standard.puffin"
+                    .to_owned(),
+                bytes: 12,
+                sha256: "00".to_owned(),
+                tracked: false,
+            }],
+            heap_artifacts: vec![BenchmarkArtifact {
+                path: "crates/ploke-egui/data/profiling/heap/benchmarks/x/startup_frames_300.heap.json"
                     .to_owned(),
                 bytes: 12,
                 sha256: "00".to_owned(),
@@ -1107,22 +1795,113 @@ mod tests {
                 frame_index: 1,
                 duration_ns: 10,
                 components: Vec::new(),
+                allocations: FrameAllocationSample::default(),
             },
             FrameSample {
                 frame_index: 2,
                 duration_ns: 50,
                 components: Vec::new(),
+                allocations: FrameAllocationSample::default(),
             },
             FrameSample {
                 frame_index: 3,
                 duration_ns: 30,
                 components: Vec::new(),
+                allocations: FrameAllocationSample::default(),
             },
         ];
         let top = top_frames(&frames);
         assert_eq!(top[0].frame_index, 2);
         assert_eq!(top[1].frame_index, 3);
         assert_eq!(top[2].frame_index, 1);
+    }
+
+    #[test]
+    fn benchmark_heap_slope_classifies_plateau_growing_and_inconclusive() {
+        let plateau = allocation_windows_for_slope(1_000_000, 1_010_000, 50);
+        assert_eq!(
+            classify_heap_slope(&plateau.0, &plateau.1),
+            HeapSlope::Plateau
+        );
+
+        let growing = allocation_windows_for_slope(1_000_000, 3_000_000, 50);
+        assert_eq!(
+            classify_heap_slope(&growing.0, &growing.1),
+            HeapSlope::Growing
+        );
+
+        let inconclusive = allocation_windows_for_slope(1_000_000, 3_000_000, 20);
+        assert_eq!(
+            classify_heap_slope(&inconclusive.0, &inconclusive.1),
+            HeapSlope::Inconclusive
+        );
+    }
+
+    #[test]
+    fn benchmark_run_readiness_accepts_history_or_spawned_child_evidence() {
+        let history_ready = BenchmarkRunReadiness::from_counts(5, 1, 6, Some(5), 1, 1, 0);
+        assert!(history_ready.ready);
+        assert_eq!(
+            history_ready.reason,
+            "sealed_history_reached_policy_generation"
+        );
+
+        let child_ready = BenchmarkRunReadiness::from_counts(5, 1, 1, Some(0), 1, 6, 5);
+        assert!(child_ready.ready);
+        assert_eq!(
+            child_ready.reason,
+            "spawned_child_nodes_reached_policy_minimum"
+        );
+
+        let not_ready = BenchmarkRunReadiness::from_counts(5, 1, 1, Some(0), 1, 3, 2);
+        assert!(!not_ready.ready);
+        assert_eq!(
+            not_ready.reason,
+            "persisted_records_below_policy_expectation"
+        );
+    }
+
+    #[test]
+    fn benchmark_standard_run_readiness_matches_persisted_records() {
+        let run_root = Path::new(STANDARD_RUN_ROOT);
+        if !run_root.join("scheduler.json").is_file() {
+            return;
+        }
+
+        let readiness = benchmark_run_readiness(run_root).expect("standard run readiness");
+        assert!(readiness.ready, "{readiness:?}");
+        assert_eq!(readiness.policy_max_generations, 5);
+        assert_eq!(readiness.sealed_history_blocks, 6);
+        assert_eq!(readiness.max_sealed_block_height, Some(5));
+        assert!(readiness.spawned_child_nodes >= readiness.expected_min_spawned_children);
+    }
+
+    fn allocation_windows_for_slope(
+        first_live: u64,
+        last_live: u64,
+        count: usize,
+    ) -> (AllocationFrameWindow, AllocationFrameWindow) {
+        let first_frames = frame_samples_with_live_bytes(first_live, count);
+        let last_frames = frame_samples_with_live_bytes(last_live, count);
+        (
+            frame_window(&first_frames, 0, first_frames.len()),
+            frame_window(&last_frames, 0, last_frames.len()),
+        )
+    }
+
+    fn frame_samples_with_live_bytes(live_wrapped_bytes: u64, count: usize) -> Vec<FrameSample> {
+        (0..count)
+            .map(|index| FrameSample {
+                frame_index: index + 1,
+                duration_ns: 1,
+                components: Vec::new(),
+                allocations: FrameAllocationSample {
+                    live_wrapped_bytes,
+                    live_object_bytes: live_wrapped_bytes,
+                    ..FrameAllocationSample::default()
+                },
+            })
+            .collect()
     }
 
     #[test]
@@ -1146,14 +1925,26 @@ mod tests {
 
     #[test]
     fn benchmark_controller_transitions_and_autoclose_report_gate() {
+        let output_dir = benchmark_test_output_dir();
         let config = BenchmarkConfig {
             suite: BenchmarkSuite::Standard,
             run_root: PathBuf::from(STANDARD_RUN_ROOT),
-            output_dir: std::env::temp_dir().join("ploke-egui-benchmark-controller-fixture"),
+            output_dir: output_dir.clone(),
             scenarios: vec![BenchmarkScenario::StartupFrames300],
             command: "fixture".to_owned(),
+            run_readiness: Some(BenchmarkRunReadiness::from_counts(
+                5,
+                1,
+                6,
+                Some(5),
+                1,
+                19,
+                18,
+            )),
         };
-        let mut controller = BenchmarkController::new(config, StartupProfile::default());
+        let heap_dir = default_heap_benchmark_dir(&config.output_dir);
+        let mut controller =
+            BenchmarkController::new(config, StartupProfile::default()).expect("controller");
         assert_eq!(controller.begin_frame(), Some(BenchmarkAction::None));
         controller.record_action(BenchmarkActionReport::for_action(BenchmarkAction::None));
         for _ in 0..(STANDARD_FRAME_TARGET - 1) {
@@ -1162,8 +1953,18 @@ mod tests {
         }
         assert!(controller.end_frame().expect("last frame").is_some());
         assert!(controller.finished);
-        let _ = fs::remove_dir_all(
-            std::env::temp_dir().join("ploke-egui-benchmark-controller-fixture"),
-        );
+        let _ = fs::remove_dir_all(output_dir);
+        let _ = fs::remove_dir_all(heap_dir);
+    }
+
+    fn benchmark_test_output_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("profiling")
+            .join("test-output")
+            .join(format!(
+                "ploke-egui-benchmark-controller-fixture-{}",
+                std::process::id()
+            ))
     }
 }

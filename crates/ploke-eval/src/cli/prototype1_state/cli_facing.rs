@@ -771,6 +771,7 @@ pub(crate) struct SelectionSealMaterial {
     considered_sources: Vec<TraversalCandidateSource>,
     projection_failures: Vec<SelectionProjectionFailure>,
     traversal: Option<TraversalEvidence>,
+    metrics: crate::successor_selection::metrics::Set,
     selected_from_generation_outcomes: bool,
 }
 
@@ -862,7 +863,7 @@ impl SelectionSealMaterial {
         self,
         decision: SuccessorDecision,
     ) -> Result<SelectionDecisionEntry, PrepareError> {
-        SelectionDecisionEntry::new_with_traversal_identity(
+        SelectionDecisionEntry::new_with_traversal_identity_metrics(
             self.procedure,
             self.scope,
             Some(self.selected_candidate),
@@ -872,6 +873,7 @@ impl SelectionSealMaterial {
             self.considered_sources,
             self.projection_failures,
             self.traversal,
+            self.metrics,
             decision,
         )
         .map_err(|err| PrepareError::InvalidBatchSelection {
@@ -942,6 +944,7 @@ struct Prototype1StateRunShape {
     successor_selection_metrics: Prototype1TraversalMetrics,
     successor_oracle_mode: crate::successor_selection::OracleMode,
     successor_oracle_require_evidence: bool,
+    successor_metrics_policy: crate::successor_selection::metrics::Policy,
 }
 
 impl Prototype1StateRunShape {
@@ -954,6 +957,7 @@ impl Prototype1StateRunShape {
             successor_selection_metrics: command.successor_selection_metrics,
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
+            successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
         }
     }
 
@@ -968,6 +972,7 @@ impl Prototype1StateRunShape {
             successor_selection_metrics: profile.selection.traversal_metrics(),
             successor_oracle_mode: profile.selection.oracle_mode(),
             successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
+            successor_metrics_policy: profile.selection.metrics_policy(),
         }
     }
 
@@ -8215,6 +8220,7 @@ enum SelectionCandidateScope {
 struct ActiveSelectionStrategy {
     candidate_scope: SelectionCandidateScope,
     traversal: StrategyKind,
+    metrics_policy: crate::successor_selection::metrics::Policy,
 }
 
 impl Prototype1SuccessorSelection {
@@ -8223,6 +8229,7 @@ impl Prototype1SuccessorSelection {
         metrics: crate::metric::Inputs,
         oracle: crate::successor_selection::OracleMode,
         require_evidence: bool,
+        metrics_policy: crate::successor_selection::metrics::Policy,
     ) -> ActiveSelectionStrategy {
         match self {
             Prototype1SuccessorSelection::GenerationLocal => ActiveSelectionStrategy {
@@ -8230,18 +8237,21 @@ impl Prototype1SuccessorSelection {
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence),
+                metrics_policy,
             },
             Prototype1SuccessorSelection::HistoryFrontierMax => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
                 traversal: StrategyKind::default()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence),
+                metrics_policy,
             },
             Prototype1SuccessorSelection::HistoryScoreChildProp => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence),
+                metrics_policy,
             },
         }
     }
@@ -8259,6 +8269,7 @@ pub(crate) fn select_successor_for_profile(
         metric_inputs,
         run_profile.selection.oracle_mode(),
         run_profile.selection.oracle_require_evidence(),
+        run_profile.selection.metrics_policy(),
     );
     ParentSelection::new(
         manifest_path,
@@ -8636,12 +8647,15 @@ impl<'a> ParentSelection<'a> {
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to add current generation traversal candidates: {err}"),
             })?;
-        let Some(selection) =
-            traversal_selection::select(traversal_candidates, seed, strategy.traversal).map_err(
-                |err| PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to decide History traversal successor: {err}"),
-                },
-            )?
+        let Some(selection) = traversal_selection::select_with_policy(
+            traversal_candidates,
+            seed,
+            strategy.traversal,
+            strategy.metrics_policy,
+        )
+        .map_err(|err| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to decide History traversal successor: {err}"),
+        })?
         else {
             return Ok(None);
         };
@@ -8669,6 +8683,7 @@ impl<'a> ParentSelection<'a> {
                     TraversalCandidateSource::History
                 }),
             }),
+            metrics: selection.metrics,
             selected_from_generation_outcomes: selection.selected_from_current_generation,
         };
         Ok(Some((selection.decision, material)))
@@ -9417,6 +9432,7 @@ impl Prototype1StateCommand {
             metric_inputs,
             run_shape.successor_oracle_mode,
             run_shape.successor_oracle_require_evidence,
+            run_shape.successor_metrics_policy,
         );
         let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
             && children.is_empty()
@@ -11127,8 +11143,21 @@ mod tests {
                 strategy: StrategyKind::default(),
                 selected_source: Some(TraversalCandidateSource::History),
             }),
+            metrics: selection_metrics_for(&[], &[]),
             selected_from_generation_outcomes: false,
         }
+    }
+
+    fn selection_metrics_for(
+        considered: &[EvaluationPayload],
+        sources: &[TraversalCandidateSource],
+    ) -> crate::successor_selection::metrics::Set {
+        crate::successor_selection::metrics::Set::from_considered(
+            crate::successor_selection::metrics::Policy::default(),
+            considered,
+            sources,
+        )
+        .expect("selection metrics")
     }
 
     fn successor_decision_for(node: &Prototype1NodeRecord) -> SuccessorDecision {
@@ -13891,7 +13920,7 @@ stop_after = "complete"
             selected_candidate: selected,
             selected_occurrence_id: None,
             selected_membership_id: None,
-            considered: vec![payload],
+            considered: vec![payload.clone()],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
             traversal: Some(TraversalEvidence {
@@ -13899,6 +13928,7 @@ stop_after = "complete"
                 strategy: StrategyKind::default(),
                 selected_source: None,
             }),
+            metrics: selection_metrics_for(&[payload.clone()], &[]),
             selected_from_generation_outcomes: false,
         };
         let decision = SuccessorDecision {
@@ -13969,7 +13999,7 @@ stop_after = "complete"
             selected_candidate: selected,
             selected_occurrence_id: None,
             selected_membership_id: None,
-            considered: vec![payload],
+            considered: vec![payload.clone()],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
             traversal: Some(TraversalEvidence {
@@ -13977,6 +14007,7 @@ stop_after = "complete"
                 strategy: StrategyKind::default(),
                 selected_source: None,
             }),
+            metrics: selection_metrics_for(&[payload.clone()], &[]),
             selected_from_generation_outcomes: false,
         };
         let decision = SuccessorDecision {
@@ -14050,7 +14081,7 @@ stop_after = "complete"
             selected_candidate: selected,
             selected_occurrence_id: None,
             selected_membership_id: None,
-            considered: vec![payload],
+            considered: vec![payload.clone()],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
             traversal: Some(TraversalEvidence {
@@ -14058,6 +14089,7 @@ stop_after = "complete"
                 strategy: StrategyKind::default(),
                 selected_source: None,
             }),
+            metrics: selection_metrics_for(&[payload.clone()], &[]),
             selected_from_generation_outcomes: false,
         };
         let decision = SuccessorDecision {
@@ -14127,7 +14159,7 @@ stop_after = "complete"
             selected_candidate: selected,
             selected_occurrence_id: None,
             selected_membership_id: None,
-            considered: vec![payload],
+            considered: vec![payload.clone()],
             considered_sources: Vec::new(),
             projection_failures: Vec::new(),
             traversal: Some(TraversalEvidence {
@@ -14135,6 +14167,7 @@ stop_after = "complete"
                 strategy: StrategyKind::default(),
                 selected_source: None,
             }),
+            metrics: selection_metrics_for(&[payload.clone()], &[]),
             selected_from_generation_outcomes: false,
         };
         let decision = SuccessorDecision {

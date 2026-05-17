@@ -72,6 +72,10 @@ impl Default for GraphViewCache {
 }
 
 impl GraphViewCache {
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+        tracing::instrument(skip_all, name = "graph_projection_cache_refresh")
+    )]
     pub(super) fn refresh(
         &mut self,
         graph: &DomainGraph,
@@ -647,6 +651,7 @@ fn graph_warning_kind_id(kind: ploke_tree::graph::GraphWarningKind) -> u8 {
         ploke_tree::graph::GraphWarningKind::CandidateSetMembershipMissingForPayload => 6,
         ploke_tree::graph::GraphWarningKind::CandidateSetMembershipAmbiguousForPayload => 7,
         ploke_tree::graph::GraphWarningKind::SelectedMembershipMissing => 8,
+        ploke_tree::graph::GraphWarningKind::SelectionMetricBindingMismatch => 9,
     }
 }
 
@@ -2168,6 +2173,7 @@ mod tests {
                 candidate_set_root: None,
                 considered_count: 1,
                 projection_failure_count: 0,
+                metric_set_id: HistoryHash("metric-set:test".to_owned()),
                 decision_outcome: ploke_records::selection::Outcome::Accepted,
             },
         );
@@ -2249,6 +2255,7 @@ mod tests {
                 candidate_set_root: Some(root),
                 considered_count: 2,
                 projection_failure_count: 0,
+                metric_set_id: HistoryHash("metric-set:test".to_owned()),
                 decision_outcome: ploke_records::selection::Outcome::Accepted,
             },
         );

@@ -24,7 +24,7 @@ use ploke_records::invocation::{InvocationRecord, Role};
 use ploke_records::journal::JournalEntry;
 use ploke_records::playback::{EvidenceStrength, FineStepKind, RunPlaybackRef};
 use ploke_records::scheduler::{RunnerRequestRecord, RunnerResultRecord, SchedulerStateRecord};
-use ploke_records::selection::{Decision, Outcome};
+use ploke_records::selection::{Decision, MetricCandidate, MetricPolicy, MetricSet, Outcome};
 
 use super::*;
 
@@ -2262,6 +2262,11 @@ fn synthetic_sealed_block(
                         candidate_set: None,
                         projection_failures: Vec::new(),
                         traversal: None,
+                        metrics: synthetic_selection_metrics(
+                            candidate,
+                            considered_count,
+                            &HistoryHash("a".repeat(64)),
+                        ),
                         decision: Decision {
                             procedure_id: "selector-v1".to_owned(),
                             candidate_node_id: "node-0".to_owned(),
@@ -2405,5 +2410,29 @@ fn synthetic_sealed_block(
             private: (),
         },
         entries,
+    }
+}
+
+fn synthetic_selection_metrics(
+    candidate: &str,
+    considered_count: usize,
+    considered_order_hash: &HistoryHash,
+) -> MetricSet {
+    MetricSet {
+        schema_version: 1,
+        id: HistoryHash(format!("metric-set:{candidate}:{considered_count}")),
+        considered_order_hash: considered_order_hash.clone(),
+        candidate_set_root: None,
+        policy: MetricPolicy::default(),
+        candidates: (0..considered_count)
+            .map(|idx| MetricCandidate {
+                payload_index: idx,
+                payload_hash: HistoryHash(format!("payload:{candidate}:{idx}")),
+                candidate: format!("{candidate}-{idx}"),
+                occurrence_id: None,
+                membership_id: None,
+                imp_at_k: None,
+            })
+            .collect(),
     }
 }

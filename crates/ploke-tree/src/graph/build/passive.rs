@@ -627,6 +627,8 @@ mod tests {
             selection: Selection {
                 strategy: SelectionStrategy::HistoryScoreChildProp,
                 evidence: SelectionEvidence::OperationalAndProtocol,
+                metrics: ploke_records::run_profile::Metrics::default(),
+                oracle: ploke_records::run_profile::Oracle::default(),
                 seed: 42,
             },
             execution: Execution {
@@ -635,6 +637,7 @@ mod tests {
                 debug_tools: true,
                 mbe: ploke_records::run_profile::Mbe::default(),
             },
+            control: ploke_records::run_profile::Control::default(),
         }
     }
 }

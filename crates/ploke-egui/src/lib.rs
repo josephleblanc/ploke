@@ -27,7 +27,8 @@
 pub(crate) mod allocation;
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
 #[global_allocator]
-static GLOBAL_ALLOCATOR: allocation::GlobalCountingAllocator = allocation::GlobalCountingAllocator;
+static GLOBAL_ALLOCATOR: tracking_allocator::Allocator<std::alloc::System> =
+    tracking_allocator::Allocator::system();
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod benchmark;

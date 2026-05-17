@@ -705,6 +705,8 @@ pub struct SelectionDecisionEntryRecord {
     pub projection_failures: Vec<ProjectionFailureRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traversal: Option<TraversalEvidenceRecord>,
+    #[serde(default = "selection::MetricSet::absent_from_legacy_record")]
+    pub metrics: selection::MetricSet,
     pub decision: selection::Decision,
 }
 
@@ -796,8 +798,9 @@ mod tests {
         let payload_hash = "c".repeat(64);
         let root = "d".repeat(64);
         let considered_order_hash = "e".repeat(64);
+        let metric_set_id = "f".repeat(64);
         let value = json!({
-            "schema_version": 3,
+            "schema_version": 4,
             "procedure_or_policy": {"value": "prototype1.successor_selection.history_traversal.v1"},
             "scope": "history",
             "selected_candidate": {"value": "candidate:node-a:plan_index=0"},
@@ -824,6 +827,42 @@ mod tests {
                     }
                 }]
             },
+            "metrics": {
+                "schema_version": 1,
+                "id": metric_set_id,
+                "considered_order_hash": considered_order_hash,
+                "candidate_set_root": root,
+                "policy": {
+                    "persist": true,
+                    "score_profile": "operational-quality-v1",
+                    "imp_at_k": {
+                        "enabled": true,
+                        "budget_k": 50,
+                        "archive_scope": "selection-scope",
+                        "score_points_per_imp_point": 0,
+                        "require_for_score": false
+                    }
+                },
+                "candidates": [{
+                    "payload_index": 0,
+                    "payload_hash": payload_hash,
+                    "candidate": "candidate:node-a:plan_index=0",
+                    "occurrence_id": occurrence_id,
+                    "membership_id": membership_id,
+                    "imp_at_k": {
+                        "start_node_id": "node-a",
+                        "start_branch_id": "branch-a",
+                        "start_generation": 1,
+                        "primary_runtime_id": "runtime:node-a",
+                        "budget_k": 50,
+                        "baseline_score": 500,
+                        "best_descendant_score": 900,
+                        "improvement": 400,
+                        "descendant_count": 1,
+                        "scored_descendant_count": 1
+                    }
+                }]
+            },
             "decision": {
                 "procedure_id": "prototype1.successor_selection.history_traversal.v1",
                 "candidate_node_id": "node-a",
@@ -835,7 +874,9 @@ mod tests {
 
         let parsed: SelectionDecisionEntryRecord =
             serde_json::from_value(value).expect("parse occurrence-aware selection decision");
-        assert_eq!(parsed.schema_version, 3);
+        assert_eq!(parsed.schema_version, 4);
+        assert_eq!(parsed.metrics.candidates.len(), 1);
+        assert_eq!(parsed.metrics.candidates[0].payload_index, 0);
         assert_eq!(
             parsed
                 .selected_occurrence_id

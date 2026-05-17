@@ -49,3 +49,5 @@ for near-term implementation planning.
   Non-semantic patch apply claims a rescan was scheduled but does not trigger one, leaving broad-harness sessions on stale indexed file state and causing repeated `NsContentMismatch` retries.
 - [`2026-05-17-headless-tui-same-file-ns-patch-stale-anchor-retries.md`](./2026-05-17-headless-tui-same-file-ns-patch-stale-anchor-retries.md)
   Headless TUI attempts can keep applying or retrying same-file `ns_patch` proposals after an earlier accepted proposal has already invalidated their staged file hashes.
+- [`2026-05-17-headless-tui-staged-proposal-tool-result-lifecycle.md`](./2026-05-17-headless-tui-staged-proposal-tool-result-lifecycle.md)
+  Headless TUI `ns_patch` staging is replayed to the model as a completed tool result before proposal admission/apply decides whether the workspace changed.

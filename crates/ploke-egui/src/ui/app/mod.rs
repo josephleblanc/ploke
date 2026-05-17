@@ -19,7 +19,8 @@ use ploke_tree::Graph;
     feature = "native-benchmark"
 ))]
 use crate::benchmark::{
-    BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkWriteResult,
+    BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkInspectorSection,
+    BenchmarkWriteResult,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
@@ -72,7 +73,7 @@ pub struct OperatorApp {
         feature = "dev",
         feature = "native-benchmark"
     ))]
-    benchmark_patch_debug_open: bool,
+    benchmark_inspector_section: Option<BenchmarkInspectorSection>,
 }
 
 impl OperatorApp {
@@ -106,7 +107,7 @@ impl OperatorApp {
                 feature = "dev",
                 feature = "native-benchmark"
             ))]
-            benchmark_patch_debug_open: false,
+            benchmark_inspector_section: None,
         }
     }
 
@@ -136,7 +137,7 @@ impl OperatorApp {
                 feature = "dev",
                 feature = "native-benchmark"
             ))]
-            benchmark_patch_debug_open: false,
+            benchmark_inspector_section: None,
         }
     }
 
@@ -186,9 +187,56 @@ impl OperatorApp {
             None
         }
     }
+
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+        tracing::instrument(skip_all, name = "run_navigation")
+    )]
+    fn render_run_navigation_panel(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.render_run_picker(ui);
+                render_mode_picker(ui, &mut self.view);
+                render_quick_filters(ui, &mut self.view);
+                render_graph_facts(ui, &self.graph);
+                if let Some(diagnostics) = self.view.diagnostics() {
+                    ui.separator();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(run) = self.run_snapshot() {
+                        ui.label(format!("Run: {}", run.name));
+                    }
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    let diagnostics_start = Instant::now();
+                    render_diagnostics(ui, &diagnostics);
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    self.record_benchmark_component("diagnostics", diagnostics_start);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.render_diagnostics_export(ui, diagnostics);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(error) = &self.diagnostics_error {
+                    ui.separator();
+                    ui.label(error.as_str());
+                }
+            });
+    }
 }
 
 impl eframe::App for OperatorApp {
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+        tracing::instrument(skip_all, name = "frame_update")
+    )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         profiling::scope!("ploke-egui.frame");
         #[cfg(all(
@@ -234,42 +282,7 @@ impl eframe::App for OperatorApp {
             .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
             .show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.run-navigation");
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        self.render_run_picker(ui);
-                        render_mode_picker(ui, &mut self.view);
-                        render_quick_filters(ui, &mut self.view);
-                        render_graph_facts(ui, &self.graph);
-                        if let Some(diagnostics) = self.view.diagnostics() {
-                            ui.separator();
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if let Some(run) = self.run_snapshot() {
-                                ui.label(format!("Run: {}", run.name));
-                            }
-                            #[cfg(all(
-                                not(target_arch = "wasm32"),
-                                feature = "dev",
-                                feature = "native-benchmark"
-                            ))]
-                            let diagnostics_start = Instant::now();
-                            render_diagnostics(ui, &diagnostics);
-                            #[cfg(all(
-                                not(target_arch = "wasm32"),
-                                feature = "dev",
-                                feature = "native-benchmark"
-                            ))]
-                            self.record_benchmark_component("diagnostics", diagnostics_start);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.render_diagnostics_export(ui, diagnostics);
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if let Some(error) = &self.diagnostics_error {
-                            ui.separator();
-                            ui.label(error.as_str());
-                        }
-                    });
+                self.render_run_navigation_panel(ui);
             });
         #[cfg(all(
             not(target_arch = "wasm32"),
@@ -304,13 +317,14 @@ impl eframe::App for OperatorApp {
                     feature = "dev",
                     feature = "native-benchmark"
                 ))]
-                let patch_debug_open = self.benchmark_patch_debug_open;
+                let inspector_open_state =
+                    shell::InspectorOpenState::benchmark(self.benchmark_inspector_section);
                 #[cfg(not(all(
                     not(target_arch = "wasm32"),
                     feature = "dev",
                     feature = "native-benchmark"
                 )))]
-                let patch_debug_open = false;
+                let inspector_open_state = shell::InspectorOpenState::default();
                 shell::render_right_inspector(
                     ui,
                     &self.graph,
@@ -318,7 +332,7 @@ impl eframe::App for OperatorApp {
                     selected_label,
                     selected_sections,
                     &mut self.patch_diff_cache,
-                    patch_debug_open,
+                    inspector_open_state,
                 );
             });
         #[cfg(all(
@@ -573,7 +587,7 @@ impl OperatorApp {
 
     fn apply_benchmark_action(&mut self, action: BenchmarkAction) -> BenchmarkActionReport {
         let mut report = BenchmarkActionReport::for_action(action);
-        self.benchmark_patch_debug_open = false;
+        self.benchmark_inspector_section = None;
         match action {
             BenchmarkAction::None => {}
             BenchmarkAction::SetMode(mode) => {
@@ -588,10 +602,15 @@ impl OperatorApp {
                     .push(format!("hide_unconsidered_children={}", !current));
             }
             BenchmarkAction::SelectArtifact {
-                patch_debug_open,
+                inspector_section,
                 reset_patch_cache,
             } => {
-                self.benchmark_patch_debug_open = patch_debug_open;
+                self.benchmark_inspector_section = inspector_section;
+                if let Some(section) = inspector_section {
+                    report
+                        .notes
+                        .push(format!("forced_inspector_section={}", section.as_str()));
+                }
                 if reset_patch_cache {
                     self.patch_diff_cache = PatchDiffCache::default();
                     report.notes.push("patch_diff_cache_reset=true".to_owned());
@@ -739,6 +758,10 @@ fn graph_has_content(graph: &Graph) -> bool {
         > 0
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "diagnostics")
+)]
 fn render_diagnostics(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
     ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
     ui.label(format!("View nodes: {}", diagnostics.node_count));

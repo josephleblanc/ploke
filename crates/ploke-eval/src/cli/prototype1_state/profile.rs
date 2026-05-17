@@ -16,7 +16,7 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1SearchPolicy},
     layout::ploke_eval_home,
     spec::PrepareError,
-    successor_selection::OracleMode,
+    successor_selection::{OracleMode, metrics as selection_metrics},
 };
 
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
@@ -254,6 +254,8 @@ pub(crate) struct Selection {
     pub(crate) strategy: SelectionStrategy,
     pub(crate) evidence: SelectionEvidence,
     #[serde(default)]
+    pub(crate) metrics: Metrics,
+    #[serde(default)]
     pub(crate) oracle: Oracle,
     pub(crate) seed: u64,
 }
@@ -288,7 +290,28 @@ impl Selection {
         self.oracle.require_evidence
     }
 
+    pub(crate) fn metrics_policy(self) -> selection_metrics::Policy {
+        selection_metrics::Policy {
+            persist: self.metrics.persist,
+            score_profile: match self.metrics.score_profile {
+                ScoreProfile::OperationalQualityV1 => {
+                    selection_metrics::ScoreProfile::OperationalQualityV1
+                }
+            },
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                enabled: self.metrics.imp_at_k.enabled,
+                budget_k: self.metrics.imp_at_k.budget_k,
+                archive_scope: match self.metrics.imp_at_k.archive_scope {
+                    ArchiveScope::SelectionScope => selection_metrics::ArchiveScope::SelectionScope,
+                },
+                score_points_per_imp_point: self.metrics.imp_at_k.score_points_per_imp_point,
+                require_for_score: self.metrics.imp_at_k.require_for_score,
+            },
+        }
+    }
+
     fn validate(self, target: &Target, execution: &Execution) -> Result<(), PrepareError> {
+        self.metrics.validate()?;
         if execution.mbe.enabled && target.eval_instances().is_empty() {
             return Err(profile_error(
                 "execution.mbe.enabled = true requires target.instance or target.instances",
@@ -315,6 +338,7 @@ impl Default for Selection {
         Self {
             strategy: SelectionStrategy::HistoryScoreChildProp,
             evidence: SelectionEvidence::Operational,
+            metrics: Metrics::default(),
             oracle: Oracle::default(),
             seed: 0,
         }
@@ -334,6 +358,97 @@ pub(crate) enum SelectionStrategy {
 pub(crate) enum SelectionEvidence {
     Operational,
     OperationalAndProtocol,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Metrics {
+    #[serde(default = "default_metrics_persist")]
+    pub(crate) persist: bool,
+    #[serde(default)]
+    pub(crate) score_profile: ScoreProfile,
+    #[serde(default)]
+    pub(crate) imp_at_k: ImpAtK,
+}
+
+impl Metrics {
+    fn validate(self) -> Result<(), PrepareError> {
+        if self.imp_at_k.enabled && self.imp_at_k.budget_k == 0 {
+            return Err(profile_error(
+                "selection.metrics.imp_at_k.budget_k must be greater than zero when enabled",
+            ));
+        }
+        if !self.persist
+            && self.imp_at_k.enabled
+            && (self.imp_at_k.score_points_per_imp_point != 0 || self.imp_at_k.require_for_score)
+        {
+            return Err(profile_error(
+                "selection.metrics.persist = false cannot drive imp@k scoring",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            persist: default_metrics_persist(),
+            score_profile: ScoreProfile::default(),
+            imp_at_k: ImpAtK::default(),
+        }
+    }
+}
+
+fn default_metrics_persist() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ScoreProfile {
+    #[default]
+    OperationalQualityV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ImpAtK {
+    #[serde(default = "default_imp_at_k_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_imp_at_k_budget")]
+    pub(crate) budget_k: usize,
+    #[serde(default)]
+    pub(crate) archive_scope: ArchiveScope,
+    #[serde(default)]
+    pub(crate) score_points_per_imp_point: i64,
+    #[serde(default)]
+    pub(crate) require_for_score: bool,
+}
+
+impl Default for ImpAtK {
+    fn default() -> Self {
+        Self {
+            enabled: default_imp_at_k_enabled(),
+            budget_k: default_imp_at_k_budget(),
+            archive_scope: ArchiveScope::default(),
+            score_points_per_imp_point: 0,
+            require_for_score: false,
+        }
+    }
+}
+
+fn default_imp_at_k_enabled() -> bool {
+    true
+}
+
+fn default_imp_at_k_budget() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ArchiveScope {
+    #[default]
+    SelectionScope,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -732,6 +847,17 @@ strategy = "history-score-child-prop"
 evidence = "operational-and-protocol"
 seed = 0
 
+[selection.metrics]
+persist = true
+score_profile = "operational-quality-v1"
+
+[selection.metrics.imp_at_k]
+enabled = true
+budget_k = 50
+archive_scope = "selection-scope"
+score_points_per_imp_point = 0
+require_for_score = false
+
 [selection.oracle]
 mode = "record-only"
 require_evidence = true
@@ -755,6 +881,9 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.selection.traversal_metrics(),
             Prototype1TraversalMetrics::OperationalAndProtocol
         );
+        assert!(profile.selection.metrics.persist);
+        assert!(profile.selection.metrics.imp_at_k.enabled);
+        assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
         assert_eq!(
@@ -834,6 +963,42 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn run_profile_metrics_config_parses_imp_at_k_policy() {
+        let text = PROFILE
+            .replace(
+                "score_points_per_imp_point = 0",
+                "score_points_per_imp_point = 7",
+            )
+            .replace("require_for_score = false", "require_for_score = true");
+        let profile = parse_profile(Path::new("profile.toml"), &text).expect("profile parses");
+        let policy = profile.selection.metrics_policy();
+
+        assert!(policy.persist);
+        assert_eq!(
+            policy.score_profile,
+            selection_metrics::ScoreProfile::OperationalQualityV1
+        );
+        assert!(policy.imp_at_k.enabled);
+        assert_eq!(policy.imp_at_k.budget_k, 50);
+        assert_eq!(policy.imp_at_k.score_points_per_imp_point, 7);
+        assert!(policy.imp_at_k.require_for_score);
+    }
+
+    #[test]
+    fn run_profile_metrics_config_rejects_score_without_persistence() {
+        let text = PROFILE
+            .replace("persist = true", "persist = false")
+            .replace(
+                "score_points_per_imp_point = 0",
+                "score_points_per_imp_point = 1",
+            );
+        let err = parse_profile(Path::new("profile.toml"), &text)
+            .expect_err("non-persisted metrics cannot drive scoring");
+
+        assert!(err.to_string().contains("persist = false"));
     }
 
     #[test]

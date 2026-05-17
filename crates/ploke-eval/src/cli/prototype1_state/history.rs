@@ -424,6 +424,7 @@ use super::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord};
 use crate::OperationalRunMetrics;
 use crate::loop_graph::{ArtifactId, PatchId};
 use crate::metric;
+use crate::successor_selection::metrics as selection_metrics;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -4931,6 +4932,9 @@ pub(crate) struct SelectionDecisionEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) traversal: Option<TraversalEvidence>,
 
+    /// Selection-time metric evidence bound to the ordered candidate set.
+    pub(crate) metrics: selection_metrics::Set,
+
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
 }
@@ -5016,6 +5020,40 @@ impl SelectionDecisionEntry {
         traversal: Option<TraversalEvidence>,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
+        let metrics = selection_metrics::Set::from_considered(
+            selection_metrics::Policy::default(),
+            &considered,
+            &considered_sources,
+        )?;
+        Self::new_with_traversal_identity_metrics(
+            procedure_or_policy,
+            scope,
+            selected_candidate,
+            selected_occurrence_id,
+            selected_membership_id,
+            considered,
+            considered_sources,
+            projection_failures,
+            traversal,
+            metrics,
+            decision,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_traversal_identity_metrics(
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        selected_candidate: Option<SubjectRef>,
+        selected_occurrence_id: Option<CandidateOccurrenceId>,
+        selected_membership_id: Option<CandidateMembershipId>,
+        considered: Vec<EvaluationPayload>,
+        considered_sources: Vec<TraversalCandidateSource>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        traversal: Option<TraversalEvidence>,
+        metrics: selection_metrics::Set,
+        decision: crate::successor_selection::SuccessorDecision,
+    ) -> Result<Self, HistoryError> {
         let candidate_set = Some(Self::candidate_set_for_considered(
             &considered,
             &considered_sources,
@@ -5040,13 +5078,13 @@ impl SelectionDecisionEntry {
             "prototype1.history.selection_considered_order.v1",
             &Self::considered_order_preimage(&considered)?,
         )?;
+        Self::validate_metrics(
+            &metrics,
+            &considered_order_hash,
+            candidate_set.as_ref().map(|set| &set.root),
+        )?;
         Ok(Self {
-            schema_version: if selected_occurrence_id.is_some() || selected_membership_id.is_some()
-            {
-                3
-            } else {
-                2
-            },
+            schema_version: 4,
             procedure_or_policy,
             scope,
             selected_candidate,
@@ -5058,6 +5096,7 @@ impl SelectionDecisionEntry {
             candidate_set,
             projection_failures,
             traversal,
+            metrics,
             decision,
         })
     }
@@ -5204,6 +5243,26 @@ impl SelectionDecisionEntry {
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_metrics(
+        metrics: &selection_metrics::Set,
+        considered_order_hash: &HistoryHash,
+        candidate_set_root: Option<&CandidateSetRoot>,
+    ) -> Result<(), HistoryError> {
+        if &metrics.considered_order_hash != considered_order_hash {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "selection metrics considered_order_hash does not match decision input"
+                    .to_string(),
+            });
+        }
+        if metrics.candidate_set_root.as_ref() != candidate_set_root {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "selection metrics candidate_set_root does not match decision input"
+                    .to_string(),
+            });
+        }
         Ok(())
     }
 

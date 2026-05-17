@@ -8,7 +8,7 @@ use std::time::Instant;
 #[cfg(all(feature = "dev", feature = "native-benchmark"))]
 use crate::benchmark::{
     BenchmarkConfig, BenchmarkController, BenchmarkSuite, StartupProfile,
-    load_graph_with_startup_profile, span_from_start,
+    load_graph_with_startup_profile, span_from_start, with_benchmark_tracing_subscriber,
 };
 use crate::cli::Run;
 #[cfg(feature = "dev")]
@@ -84,12 +84,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )?;
         picker.select_path(&run_root);
         let mut startup = StartupProfile::default();
+        println!(
+            "benchmark startup span run_picker_discovery: {} ns",
+            run_picker_span.duration_ns
+        );
         startup.spans.push(run_picker_span);
         let (graph, startup) = load_graph_with_startup_profile(&run_root, startup)?;
         let app = OperatorApp::new_with_run_picker(graph, picker)
             .with_mode(run.mode)
-            .with_benchmark(BenchmarkController::new(config, startup));
-        eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
+            .with_benchmark(BenchmarkController::new(config, startup)?);
+        with_benchmark_tracing_subscriber(|| {
+            eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))
+        })?;
         return Ok(());
     }
     #[cfg(feature = "dev")]

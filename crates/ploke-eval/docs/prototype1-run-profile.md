@@ -82,6 +82,10 @@ The profile rejects internally conflicting settings:
 - `selection.oracle.mode = "relative-score"` with
   `selection.oracle.require_evidence = true` requires MBE to be enabled and at
   least one configured target instance.
+- `selection.metrics.imp_at_k.enabled = true` requires
+  `selection.metrics.imp_at_k.budget_k` to be nonzero.
+- `selection.metrics.persist = false` conflicts with metric-driven scoring:
+  `score_points_per_imp_point != 0` or `require_for_score = true`.
 
 ## Top Level
 
@@ -170,6 +174,45 @@ seed = 0
 - `evidence`: Non-oracle scoring inputs. `operational` uses run metrics only;
   `operational-and-protocol` also includes protocol aggregate deltas.
 - `seed`: Deterministic sampling seed for stochastic traversal strategies.
+
+## `selection.metrics`
+
+```toml
+[selection.metrics]
+persist = true
+score_profile = "operational-quality-v1"
+
+[selection.metrics.imp_at_k]
+enabled = true
+budget_k = 50
+archive_scope = "selection-scope"
+score_points_per_imp_point = 0
+require_for_score = false
+```
+
+- `persist`: When true, successor selection seals metric evidence into
+  `SelectionDecisionEntry` as part of the admitted History payload. Persisted
+  metric sets are downstream Graph/UI evidence, not console-only logging.
+- `score_profile`: Scoring profile used by the metric calculator. Current value
+  is `operational-quality-v1`.
+- `imp_at_k.enabled`: Enables selection-time `imp@k` evidence. The metric is
+  computed after History candidates and current-generation candidates are merged
+  and before the traversal strategy chooses a successor.
+- `imp_at_k.budget_k`: Candidate budget used for the `imp@k` row. It must be
+  nonzero when `imp_at_k.enabled = true`.
+- `imp_at_k.archive_scope`: Archive boundary for the metric. Current value is
+  `selection-scope`, meaning the archive visible at the selection point.
+- `imp_at_k.score_points_per_imp_point`: Additive traversal-score multiplier.
+  Set this to `0` to record metric evidence without letting `imp@k` influence
+  successor selection.
+- `imp_at_k.require_for_score`: When false, incomplete `imp@k` rows contribute
+  zero and persist their incomplete reason. When true, candidates with
+  incomplete `imp@k` are excluded from decision-grade metric scoring.
+
+The normal validation profile for new metric plumbing should keep
+`score_points_per_imp_point = 0` and `require_for_score = false`. That preserves
+the existing operational/protocol successor behavior while producing persisted
+metric fixtures for later `ploke-tree` and `ploke-egui` work.
 
 ## `selection.oracle`
 

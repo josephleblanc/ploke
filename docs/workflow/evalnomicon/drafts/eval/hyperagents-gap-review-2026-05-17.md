@@ -209,13 +209,20 @@ say: Prototype 1 has a local digest/History gate and a documented unlock model,
 but it does not yet have consensus/finality enforcement for multi-ruler or
 policy-surface self-modification.
 
-## Privileged Self-Mutation Direction
+## Privileged Self-Mutation: Candidate Options
 
-The intended design is broader than "protect `ploke-eval` forever." The point of
-the immutable surface is to carry the sandbox, admission, and unlock rules while
-the system earns authority to edit progressively more privileged surfaces.
+This section is not the chosen implementation direction. It records candidate
+mechanisms worth revisiting as the design matures.
 
-That means the immutable surface should eventually encode at least:
+The durable design intent is broader than "protect `ploke-eval` forever": the
+framework should eventually allow further self-mutation, including more
+privileged meta-learning and authority-adjacent areas, once the system can
+justify that expansion. The exact mechanism for doing that is still open.
+
+One possible family of mechanisms is to keep sandbox, admission, and unlock
+rules inside the preserved authority surface while the system earns authority to
+edit progressively more privileged surfaces. Candidate ingredients to evaluate
+later include:
 
 - execution containment, such as denying ordinary shell access where the
   benchmark/harness does not require it;
@@ -229,13 +236,14 @@ That means the immutable surface should eventually encode at least:
 - distributed membership and finality rules for when the network may admit a
   riskier surface unlock.
 
-The likely long-term shape is not a single Boolean such as:
+The useful constraint, regardless of implementation, is that privileged mutation
+should not collapse to a single Boolean such as:
 
 ```text
 allow_edit_ploke_eval = true
 ```
 
-It is a sequence of admitted unlock transitions:
+One possible sketch is a sequence of admitted unlock transitions:
 
 ```text
 Surface 0: prompts, rubrics, memory summaries
@@ -246,8 +254,8 @@ Surface 4: selection/admission/meta-learning policy code
 Surface 5: History/Crown/channel protocol code
 ```
 
-For each deeper surface, the unlock predicate should become stronger. A
-plausible future rule is:
+For each deeper surface, the unlock predicate would need to become stronger.
+One possible future rule to revisit is:
 
 ```text
 MayMutate(surface_k, runtime_R)
@@ -261,10 +269,10 @@ MayMutate(surface_k, runtime_R)
 
 That is materially different from HyperAgents' paper experiments. The paper
 allows the hyperagent to edit its own program, while the experimental outer loop
-keeps some mechanisms fixed for measurement. Prototype 1's direction is to put
-the sandbox and unlock calculus inside the framework itself, so self-mutation of
-meta-learning areas can become possible later without making the current parent
-the sole judge of its own authority expansion.
+keeps some mechanisms fixed for measurement. Prototype 1's durable design
+pressure is to make sandboxing and authority expansion part of the framework
+itself, so self-mutation of meta-learning areas can become possible later
+without making the current parent the sole judge of its own authority expansion.
 
 Current gap: History/Crown is local and single-ruler today. It can help bind
 lineage facts and ordinary digest-preserving succession, but it is not yet the
@@ -385,22 +393,29 @@ That survey should classify each benchmark by task substrate, output artifact,
 evaluator substrate, feedback visibility, split policy, staged-eval policy, and
 whether the evaluator is mechanized, model-judged, human-labeled, or hybrid.
 
-## Recommended Next Slices
+## Potential Follow-Up Slices To Revisit
+
+These are candidate slices, not a committed roadmap.
 
 1. Add a design-only benchmark survey matrix before changing enums.
-2. Define split roles in the run/eval model: probe/train, validation-selection,
+2. Explore split roles in the run/eval model: probe/train, validation-selection,
    and held-out-final.
-3. Add a typed evidence digest/improvement-memory projection for child planning,
-   explicitly marked as projection/evidence rather than authority.
-4. Add archive projections for `imp@k` and descendant-growth transfer score.
-5. Keep score-child-prop and authority code protected until an explicit
-   protocol-upgrade/fork transition exists.
+3. Explore a typed evidence digest/improvement-memory projection for child
+   planning, explicitly marked as projection/evidence rather than authority.
+4. Explore archive projections for `imp@k` and descendant-growth transfer score.
+5. Revisit privileged mutation only through an explicit protocol-upgrade,
+   unlock, or fork transition rather than ordinary child edits.
 
-## Resolving The Gaps
+## Possible Resolution Paths
+
+The paths below are implementation options. They should be reviewed against the
+current code and experiment goals before any one is treated as project
+direction.
 
 ### Split-Aware Evaluation
 
-Start with records and profile semantics, not runner behavior:
+A plausible low-risk path would start with records and profile semantics, not
+runner behavior:
 
 1. Define split roles in `ploke-records` eval-set identity.
 2. Teach `ploke-eval` run profiles to name role-labeled task sets.
@@ -413,8 +428,8 @@ Start with records and profile semantics, not runner behavior:
 
 ### Benchmark Families
 
-Do a survey pass before touching enums. The survey should compare at least the
-four HyperAgents domains across:
+One plausible path is to do a survey pass before touching enums. The survey
+could compare at least the four HyperAgents domains across:
 
 - input substrate;
 - output artifact;
@@ -426,18 +441,20 @@ four HyperAgents domains across:
 - cost/budget model;
 - whether ground truth is mechanized, human-labeled, model-judged, or hybrid.
 
-After that, make Multi-SWE one adapter rather than the framework shape.
+After that, one possible implementation would make Multi-SWE one adapter rather
+than the framework shape.
 
 ### Improvement Metrics
 
-Implement `imp@k` and descendant-growth as archive projections first. They
-should read admitted History/evaluation records and produce inspectable
-evidence with evaluator/eval-set/procedure identity. Only after the projection
-is stable should it become an active selection input.
+One possible path is to implement `imp@k` and descendant-growth as archive
+projections first. They would read admitted History/evaluation records and
+produce inspectable evidence with evaluator/eval-set/procedure identity. Only
+after the projection is stable should it be considered as an active selection
+input.
 
 ### Privileged Unlocks
 
-Keep the first implementation boring:
+One possible conservative path:
 
 1. Define surface levels and what each level may read/write.
 2. Encode simple static gates for the low levels.
@@ -448,7 +465,8 @@ Keep the first implementation boring:
    admission before allowing mutation of selection/admission/History code.
 
 This preserves the HyperAgents ambition, but makes the safety boundary part of
-the self-improvement framework rather than an external trust assumption.
+the self-improvement framework rather than an external trust assumption. This is
+an option to revisit, not a settled design.
 
 ## Reduction To Refuse
 

@@ -1,6 +1,26 @@
 use std::collections::BTreeMap;
 
 use super::*;
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct ReasoningConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl ReasoningConfig {
+    pub fn with_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.effort = Some(effort);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct LLMParameters {
     // corresponding json: `max_tokens?: number; // Range: [1, context_length)`
@@ -39,6 +59,9 @@ pub struct LLMParameters {
     // corresponding json: `top_a?: number; // Range: [0, 1]`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_a: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verbosity: Option<Verbosity>,
@@ -82,6 +105,9 @@ impl LLMParameters {
         if let Some(top_a) = other.top_a {
             self.top_a = Some(top_a);
         }
+        if let Some(reasoning) = other.reasoning.as_ref() {
+            self.reasoning = Some(reasoning.clone());
+        }
 
         self
     }
@@ -123,6 +149,9 @@ impl LLMParameters {
         if let Some(top_a) = other.top_a {
             self.top_a = Some(top_a);
         }
+        if let Some(reasoning) = other.reasoning.as_ref() {
+            self.reasoning = Some(reasoning.clone());
+        }
     }
 
     pub fn with_filled(mut self, other: &Self) -> Self {
@@ -138,6 +167,7 @@ impl LLMParameters {
         self.top_logprobs = self.top_logprobs.or(other.top_logprobs);
         self.min_p = self.min_p.or(other.min_p);
         self.top_a = self.top_a.or(other.top_a);
+        self.reasoning = self.reasoning.clone().or_else(|| other.reasoning.clone());
         self
     }
 
@@ -154,6 +184,7 @@ impl LLMParameters {
         self.top_logprobs = self.top_logprobs.or(other.top_logprobs);
         self.min_p = self.min_p.or(other.min_p);
         self.top_a = self.top_a.or(other.top_a);
+        self.reasoning = self.reasoning.clone().or_else(|| other.reasoning.clone());
     }
 
     pub fn with_intersection(mut self, other: &Self) -> Self {
@@ -217,6 +248,11 @@ impl LLMParameters {
         } else {
             None
         };
+        self.reasoning = if self.reasoning == other.reasoning {
+            self.reasoning.clone()
+        } else {
+            None
+        };
         self
     }
 
@@ -256,6 +292,9 @@ impl LLMParameters {
         }
         if self.top_a != other.top_a {
             self.top_a = None;
+        }
+        if self.reasoning != other.reasoning {
+            self.reasoning = None;
         }
     }
 
@@ -328,6 +367,11 @@ impl LLMParameters {
     /// Set top_a parameter - Range: [0, 1]
     pub fn with_top_a(mut self, top_a: f32) -> Self {
         self.top_a = Some(top_a);
+        self
+    }
+
+    pub fn with_reasoning(mut self, reasoning: ReasoningConfig) -> Self {
+        self.reasoning = Some(reasoning);
         self
     }
 }
@@ -632,6 +676,7 @@ mod tests {
             top_logprobs: Some(5),
             min_p: Some(0.1),
             top_a: Some(0.2),
+            reasoning: Some(ReasoningConfig::default().with_effort(ReasoningEffort::None)),
             verbosity: Some(Verbosity::Low),
         };
         let json = serde_json::to_string(&params)?;

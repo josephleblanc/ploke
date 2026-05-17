@@ -23,6 +23,7 @@ use crate::BranchDisposition;
 pub mod decision;
 pub mod domains;
 pub mod evidence;
+pub mod metrics;
 pub mod operator_projection;
 pub mod registry;
 pub mod traversal;

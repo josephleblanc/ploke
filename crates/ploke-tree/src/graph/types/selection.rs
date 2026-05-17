@@ -4,8 +4,10 @@ use ploke_records::history::{
     CandidateSetRootRecord, ProcedureRefRecord, SelectionScopeRecord, SubjectRefRecord,
 };
 use ploke_records::ids::{
-    ArtifactId, CandidateId, CandidateMembershipId, CandidateOccurrenceId, EntryId, PatchId,
+    ArtifactId, CandidateId, CandidateMembershipId, CandidateOccurrenceId, EntryId, HistoryHash,
+    PatchId,
 };
+use ploke_records::selection::ImpAtK;
 use ploke_records::selection::Outcome as SelectionOutcome;
 
 use super::evidence::EvidenceId;
@@ -102,5 +104,52 @@ pub struct SelectionNode {
     pub candidate_set_root: Option<CandidateSetRootRecord>,
     pub considered_count: usize,
     pub projection_failure_count: usize,
+    pub metric_set_id: HistoryHash,
     pub decision_outcome: SelectionOutcome,
+}
+
+/// Selection-time metrics sealed beside History selection entries.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MetricIndex {
+    pub sets: BTreeMap<HistoryHash, MetricSetNode>,
+    pub candidates: BTreeMap<MetricCandidateKey, MetricCandidateNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricSetNode {
+    pub metric_set_id: HistoryHash,
+    pub selection_entry_id: EntryId,
+    pub considered_order_hash: HistoryHash,
+    pub candidate_set_root: Option<HistoryHash>,
+    pub candidate_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricCandidateKey {
+    pub metric_set_id: HistoryHash,
+    pub payload_index: usize,
+}
+
+impl Ord for MetricCandidateKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.metric_set_id, self.payload_index).cmp(&(&other.metric_set_id, other.payload_index))
+    }
+}
+
+impl PartialOrd for MetricCandidateKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricCandidateNode {
+    pub metric_set_id: HistoryHash,
+    pub selection_entry_id: EntryId,
+    pub payload_index: usize,
+    pub payload_hash: HistoryHash,
+    pub candidate: String,
+    pub occurrence_id: Option<CandidateOccurrenceId>,
+    pub membership_id: Option<CandidateMembershipId>,
+    pub imp_at_k: Option<ImpAtK>,
 }

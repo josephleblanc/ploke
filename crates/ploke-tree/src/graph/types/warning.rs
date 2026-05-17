@@ -15,4 +15,5 @@ pub enum GraphWarningKind {
     CandidateSetMembershipMissingForPayload,
     CandidateSetMembershipAmbiguousForPayload,
     SelectedMembershipMissing,
+    SelectionMetricBindingMismatch,
 }

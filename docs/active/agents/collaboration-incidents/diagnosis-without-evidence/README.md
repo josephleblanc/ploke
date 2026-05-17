@@ -54,3 +54,12 @@ re-ask for a real trace.
   The agent compared Prototype 1 to HyperAgents before integrating the existing
   HyperAgents handoff, History/Crown protocol-upgrade model, and prompt/evidence
   docs, causing useful but under-qualified gap claims.
+- [`2026-05-17-ploke-egui-native-benchmark-tunnel-vision.md`](2026-05-17-ploke-egui-native-benchmark-tunnel-vision.md)
+  The agent kept retrying the full native `ploke-egui` benchmark after long-run
+  symptoms pointed to an allocator hot-path design problem, closed the
+  independent reviewer early, and only later switched to a bounded readiness
+  heuristic.
+- [`2026-05-17-ploke-egui-allocation-churn-not-gated.md`](2026-05-17-ploke-egui-allocation-churn-not-gated.md)
+  The agent produced allocation benchmark data but had not yet made allocation
+  churn, live bytes, top span groups, and callsite-attribution status mandatory
+  gates in the reusable `ploke-egui` benchmarking workflow.
