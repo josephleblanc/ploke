@@ -1954,6 +1954,22 @@ fn render_patch(
             patch.patch_id(),
         );
     });
+    cached_label(ui, render_cache, "diff");
+    render_diff(ui, patch, diff_cache);
+
+    egui::CollapsingHeader::new("Details")
+        .id_salt(("patch-details", patch.patch_id()))
+        .default_open(false)
+        .show(ui, |ui| {
+            render_patch_details(ui, render_cache, patch);
+        });
+}
+
+fn render_patch_details(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    patch: PatchInspection<'_>,
+) {
     cached_kv_id(ui, render_cache, "target", patch.target_relpath());
     cached_kv_id(ui, render_cache, "branch", patch.branch_id());
     cached_kv_id(ui, render_cache, "candidate", patch.candidate_id());
@@ -1986,8 +2002,6 @@ fn render_patch(
     if !touched {
         kv(ui, "touches", "none");
     }
-    cached_label(ui, render_cache, "diff");
-    render_diff(ui, patch, diff_cache);
 }
 
 fn render_count_parens(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, count: usize) {
