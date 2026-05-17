@@ -127,4 +127,7 @@ Reports classify git dirtiness at benchmark start as `clean`,
 `dirty_relevant`, `dirty_unrelated`, or `unknown`. `dirty_unrelated` means the
 worktree had changes outside the benchmark-relevant paths recorded in
 `dirty_state.scope`, so the run can still be compared when those unrelated paths
-are understood.
+are understood. Generated benchmark reports under
+`crates/ploke-egui/docs/profiling/benchmarks/` are recorded as output artifacts,
+not benchmark inputs, so an uncommitted prior report does not make the next run
+`dirty_relevant`.

@@ -893,7 +893,7 @@ fn dirty_state() -> DirtyState {
         paths,
         relevant_paths,
         unrelated_paths,
-        scope: "git status --short at benchmark start; benchmark-relevant prefixes are Cargo manifests, ploke-egui, ploke-tree, and ploke-records".to_owned(),
+        scope: "git status --short at benchmark start; benchmark-relevant paths are Cargo manifests, ploke-egui inputs except generated benchmark reports, ploke-tree, and ploke-records".to_owned(),
     }
 }
 
@@ -911,13 +911,25 @@ impl DirtyStateClassification {
 fn git_status_paths(status: &str) -> Vec<String> {
     status
         .lines()
-        .filter_map(|line| line.get(3..).map(str::trim))
-        .filter(|path| !path.is_empty())
-        .map(|path| path.split(" -> ").last().unwrap_or(path).to_owned())
+        .filter_map(git_status_path)
+        .map(str::to_owned)
         .collect()
 }
 
+fn git_status_path(line: &str) -> Option<&str> {
+    let path = if matches!(line.as_bytes().get(2), Some(b' ')) {
+        line.get(3..)?
+    } else {
+        line.split_once(' ').map(|(_, path)| path.trim())?
+    };
+    let path = path.split(" -> ").last().unwrap_or(path).trim();
+    (!path.is_empty()).then_some(path)
+}
+
 fn is_benchmark_relevant_dirty_path(path: &str) -> bool {
+    if path.starts_with("crates/ploke-egui/docs/profiling/benchmarks/") {
+        return false;
+    }
     path == "Cargo.lock"
         || path == "Cargo.toml"
         || path.starts_with("crates/ploke-egui/")
@@ -1116,18 +1128,20 @@ mod tests {
     #[test]
     fn dirty_state_path_classification_keeps_docs_unrelated() {
         let paths = git_status_paths(
-            " M docs/workflow/evalnomicon/drafts/eval/report.md\n?? crates/ploke-egui/tmp.txt\n",
+            "M docs/workflow/evalnomicon/drafts/eval/report.md\n?? crates/ploke-egui/tmp.txt\n?? crates/ploke-egui/docs/profiling/benchmarks/20260517-abc-standard/README.md\n",
         );
 
         assert_eq!(
             paths,
             vec![
                 "docs/workflow/evalnomicon/drafts/eval/report.md",
-                "crates/ploke-egui/tmp.txt"
+                "crates/ploke-egui/tmp.txt",
+                "crates/ploke-egui/docs/profiling/benchmarks/20260517-abc-standard/README.md",
             ]
         );
         assert!(!is_benchmark_relevant_dirty_path(&paths[0]));
         assert!(is_benchmark_relevant_dirty_path(&paths[1]));
+        assert!(!is_benchmark_relevant_dirty_path(&paths[2]));
     }
 
     #[test]
