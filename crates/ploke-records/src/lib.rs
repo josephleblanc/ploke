@@ -21,6 +21,7 @@ pub mod identity;
 pub mod ids;
 pub mod invocation;
 pub mod journal;
+pub mod oracle;
 pub mod playback;
 #[cfg(feature = "protocol")]
 pub mod protocol;

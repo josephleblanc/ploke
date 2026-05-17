@@ -5,13 +5,17 @@
 // `candidate`, `score`, and `history` so new scoring sources do not turn this
 // file into another flattened catch-all.
 
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    HISTORY_TRAVERSAL_PROCEDURE_ID, PROCEDURE_ID, SelectionInput, SuccessorDecision,
+    HISTORY_TRAVERSAL_PROCEDURE_ID, OracleMode, PROCEDURE_ID, SelectionInput, SuccessorDecision,
     decide as decide_candidate, decision::SuccessorOutcome, disposition_as_str,
 };
 use crate::{
@@ -63,12 +67,20 @@ pub(crate) enum StrategyKind {
         normalize_frontier: bool,
         #[serde(default)]
         metrics: metric::Inputs,
+        #[serde(default)]
+        oracle: OracleMode,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
     },
     ScoreChildProp {
         top_m: usize,
         lambda_millis: u32,
         #[serde(default)]
         metrics: metric::Inputs,
+        #[serde(default)]
+        oracle: OracleMode,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
     },
 }
 
@@ -80,19 +92,55 @@ impl StrategyKind {
     pub(crate) fn with_metrics(self, metrics: metric::Inputs) -> Self {
         match self {
             Self::FrontierMax {
-                normalize_frontier, ..
+                normalize_frontier,
+                oracle,
+                require_evidence,
+                ..
             } => Self::FrontierMax {
                 normalize_frontier,
                 metrics,
+                oracle,
+                require_evidence,
             },
             Self::ScoreChildProp {
                 top_m,
                 lambda_millis,
+                oracle,
+                require_evidence,
                 ..
             } => Self::ScoreChildProp {
                 top_m,
                 lambda_millis,
                 metrics,
+                oracle,
+                require_evidence,
+            },
+        }
+    }
+
+    pub(crate) fn with_oracle_policy(self, oracle: OracleMode, require_evidence: bool) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
             },
         }
     }
@@ -103,14 +151,22 @@ impl Default for StrategyKind {
         Self::FrontierMax {
             normalize_frontier: true,
             metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
         }
     }
+}
+
+fn default_oracle_require_evidence() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FrontierMax {
     normalize_frontier: bool,
     metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
 }
 
 impl Default for FrontierMax {
@@ -118,6 +174,8 @@ impl Default for FrontierMax {
         Self {
             normalize_frontier: true,
             metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
         }
     }
 }
@@ -127,6 +185,8 @@ pub(crate) struct ScoreChildProp {
     top_m: usize,
     lambda_millis: u32,
     metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
 }
 
 impl Default for ScoreChildProp {
@@ -135,6 +195,8 @@ impl Default for ScoreChildProp {
             top_m: 3,
             lambda_millis: 10_000,
             metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
         }
     }
 }
@@ -159,6 +221,8 @@ impl Strategy for FrontierMax {
         StrategyKind::FrontierMax {
             normalize_frontier: self.normalize_frontier,
             metrics: self.metrics,
+            oracle: self.oracle,
+            require_evidence: self.require_evidence,
         }
     }
 
@@ -174,6 +238,8 @@ impl Strategy for FrontierMax {
             seed,
             self.normalize_frontier,
             self.metrics,
+            self.oracle,
+            self.require_evidence,
         )
     }
 }
@@ -186,6 +252,8 @@ impl Strategy for ScoreChildProp {
             top_m: self.top_m,
             lambda_millis: self.lambda_millis,
             metrics: self.metrics,
+            oracle: self.oracle,
+            require_evidence: self.require_evidence,
         }
     }
 
@@ -202,6 +270,8 @@ impl Strategy for ScoreChildProp {
             self.top_m,
             self.lambda_millis,
             self.metrics,
+            self.oracle,
+            self.require_evidence,
         )
     }
 }
@@ -260,23 +330,31 @@ pub(crate) fn select(
         StrategyKind::FrontierMax {
             normalize_frontier,
             metrics,
+            oracle,
+            require_evidence,
         } => candidates.traverse(
             seed,
             FrontierMax {
                 normalize_frontier,
                 metrics,
+                oracle,
+                require_evidence,
             },
         ),
         StrategyKind::ScoreChildProp {
             top_m,
             lambda_millis,
             metrics,
+            oracle,
+            require_evidence,
         } => candidates.traverse(
             seed,
             ScoreChildProp {
                 top_m,
                 lambda_millis,
                 metrics,
+                oracle,
+                require_evidence,
             },
         ),
     }
@@ -288,6 +366,8 @@ pub(crate) struct ScoreChildPropReplay {
     pub(crate) top_m: usize,
     pub(crate) lambda: f64,
     pub(crate) metric_inputs: &'static str,
+    pub(crate) oracle_mode: &'static str,
+    pub(crate) oracle_require_evidence: bool,
     pub(crate) total_weight: f64,
     pub(crate) sample: f64,
     pub(crate) selected_index: Option<usize>,
@@ -304,6 +384,8 @@ pub(crate) struct ScoreChildPropReplayRow {
     pub(crate) branch_disposition: Option<String>,
     pub(crate) base_outcome: SuccessorOutcome,
     pub(crate) performance: i64,
+    pub(crate) oracle_resolved: Option<usize>,
+    pub(crate) oracle_configured: Option<usize>,
     pub(crate) child_count: usize,
     pub(crate) alpha: f64,
     pub(crate) exploitation: f64,
@@ -322,6 +404,8 @@ pub(crate) fn replay_score_child_prop(
         top_m,
         lambda_millis,
         metrics,
+        oracle,
+        require_evidence,
     } = traversal.strategy
     else {
         return Ok(None);
@@ -338,7 +422,15 @@ pub(crate) fn replay_score_child_prop(
         })
         .collect::<Vec<_>>();
     let child_counts = successful_child_counts(&entry.considered);
-    let weights = score_child_prop_weights(&items, &child_counts, top_m, lambda_millis, metrics);
+    let weights = score_child_prop_weights(
+        &items,
+        &child_counts,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    )?;
     let total_weight = weights.iter().map(|weight| weight.weight).sum::<f64>();
     let sample = sample_unit(traversal.seed, &items)?;
     let selected_index = if weights.is_empty() {
@@ -364,6 +456,8 @@ pub(crate) fn replay_score_child_prop(
                     .map(|value| disposition_as_str(value.branch_disposition.clone()).to_string()),
                 base_outcome: weight.decision.outcome,
                 performance: weight.performance.0,
+                oracle_resolved: weight.oracle.map(|score| score.resolved),
+                oracle_configured: weight.oracle.map(|score| score.configured),
                 child_count: weight.child_count,
                 alpha: weight.alpha,
                 exploitation: weight.exploitation,
@@ -378,6 +472,8 @@ pub(crate) fn replay_score_child_prop(
         top_m,
         lambda: lambda_millis as f64 / 1_000.0,
         metric_inputs: metric_inputs_name(metrics),
+        oracle_mode: oracle_mode_name(oracle),
+        oracle_require_evidence: require_evidence,
         total_weight,
         sample,
         selected_index,
@@ -892,6 +988,172 @@ fn performance_score(case: CandidateCase<'_>, metrics: metric::Inputs) -> Option
     Some(PerformanceScore(score))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OracleScore {
+    resolved: usize,
+    configured: usize,
+}
+
+impl OracleScore {
+    fn new(resolved: usize, configured: usize) -> Result<Self, HistoryError> {
+        if configured == 0 {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "relative oracle scoring requires configured target instances".to_string(),
+            });
+        }
+        Ok(Self {
+            resolved,
+            configured,
+        })
+    }
+
+    fn rate(self) -> f64 {
+        self.resolved as f64 / self.configured as f64
+    }
+
+    fn summary(self) -> String {
+        format!("{}/{}", self.resolved, self.configured)
+    }
+}
+
+impl PartialOrd for OracleScore {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OracleScore {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let left = self.resolved as u128 * other.configured as u128;
+        let right = other.resolved as u128 * self.configured as u128;
+        left.cmp(&right)
+            .then_with(|| self.resolved.cmp(&other.resolved))
+            .then_with(|| other.configured.cmp(&self.configured))
+    }
+}
+
+fn oracle_score(
+    case: &CandidateCase<'_>,
+    mode: OracleMode,
+    require_evidence: bool,
+) -> Result<Option<OracleScore>, HistoryError> {
+    if mode == OracleMode::RecordOnly {
+        return Ok(None);
+    }
+    let input = case
+        .selection_input()
+        .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+            detail: "relative oracle scoring requires selection input".to_string(),
+        })?;
+    let mut configured = case
+        .sealed_evidence()
+        .into_iter()
+        .flat_map(|sealed| sealed.evaluations.iter())
+        .filter_map(|evaluation| evaluation.eval_set_identity.as_ref())
+        .flat_map(|identity| identity.instance_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    if configured.is_empty() {
+        configured.extend(
+            input
+                .comparisons
+                .iter()
+                .map(|comparison| comparison.instance_id.clone()),
+        );
+    }
+    if configured.is_empty() {
+        if require_evidence {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "relative oracle scoring requires configured target instances".to_string(),
+            });
+        }
+        return Ok(None);
+    }
+
+    let mut evaluations = BTreeMap::new();
+    for run in case.compared_runs() {
+        let Some(evaluation) = run.oracle_evaluation.as_ref() else {
+            continue;
+        };
+        let instance_id = run
+            .instance_id
+            .as_deref()
+            .unwrap_or(evaluation.evidence.instance_id.as_str());
+        if instance_id != evaluation.evidence.instance_id {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "oracle evaluation instance mismatch: compared run '{instance_id}' carried oracle instance '{}'",
+                    evaluation.evidence.instance_id
+                ),
+            });
+        }
+        if !configured.contains(instance_id) {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("oracle evaluation for unknown target instance '{instance_id}'"),
+            });
+        }
+        if evaluations
+            .insert(instance_id.to_string(), evaluation)
+            .is_some()
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("duplicate oracle evaluation for instance '{instance_id}'"),
+            });
+        }
+    }
+
+    if evaluations.is_empty() {
+        for comparison in &input.comparisons {
+            let Some(evaluation) = comparison.oracle_evaluation.as_ref() else {
+                continue;
+            };
+            if comparison.instance_id != evaluation.evidence.instance_id {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "oracle evaluation instance mismatch: comparison '{}' carried oracle instance '{}'",
+                        comparison.instance_id, evaluation.evidence.instance_id
+                    ),
+                });
+            }
+            if !configured.contains(&comparison.instance_id) {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "oracle evaluation for unknown target instance '{}'",
+                        comparison.instance_id
+                    ),
+                });
+            }
+            if evaluations
+                .insert(comparison.instance_id.clone(), evaluation)
+                .is_some()
+            {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "duplicate oracle evaluation for instance '{}'",
+                        comparison.instance_id
+                    ),
+                });
+            }
+        }
+    }
+
+    if let Some(missing) = configured
+        .iter()
+        .find(|instance_id| !evaluations.contains_key(*instance_id))
+    {
+        if require_evidence {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("missing oracle evaluation for configured instance '{missing}'"),
+            });
+        }
+    }
+
+    let resolved = evaluations
+        .values()
+        .filter(|evaluation| evaluation.evidence.verdict == crate::mbe::Verdict::Resolved)
+        .count();
+    OracleScore::new(resolved, configured.len()).map(Some)
+}
+
 fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::<String, usize>::new();
     for payload in considered {
@@ -909,6 +1171,7 @@ fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String,
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TraversalScore {
+    oracle: Option<OracleScore>,
     performance: PerformanceScore,
     frontier_delta: i64,
     exploration_pressure: usize,
@@ -921,9 +1184,15 @@ impl TraversalScore {
         child_counts: &BTreeMap<String, usize>,
         max_performance: Option<PerformanceScore>,
         metrics: metric::Inputs,
-    ) -> Option<Self> {
-        let input = case.selection_input()?;
-        let performance = performance_score(*case, metrics)?;
+        oracle: OracleMode,
+        require_evidence: bool,
+    ) -> Result<Option<Self>, HistoryError> {
+        let Some(input) = case.selection_input() else {
+            return Ok(None);
+        };
+        let Some(performance) = performance_score(*case, metrics) else {
+            return Ok(None);
+        };
         let frontier_delta = max_performance
             .map(|max| performance.0 - max.0)
             .unwrap_or_default();
@@ -936,12 +1205,13 @@ impl TraversalScore {
             .and_then(|parent_node_id| child_counts.get(parent_node_id).copied())
             .unwrap_or_default();
         let child_count = own_child_count.saturating_add(parent_child_count);
-        Some(Self {
+        Ok(Some(Self {
+            oracle: oracle_score(case, oracle, require_evidence)?,
             performance,
             frontier_delta,
             exploration_pressure: usize::MAX.saturating_sub(child_count),
             generation: input.candidate.generation,
-        })
+        }))
     }
 }
 
@@ -962,6 +1232,8 @@ fn select_frontier_max(
     seed: u64,
     normalize_frontier: bool,
     metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
 ) -> Result<Option<StrategySelection>, HistoryError> {
     let max_performance = if normalize_frontier {
         items
@@ -980,7 +1252,14 @@ fn select_frontier_max(
         let Some(selected) = traversal_decision(&case) else {
             continue;
         };
-        let Some(score) = TraversalScore::for_case(&case, child_counts, max_performance, metrics)
+        let Some(score) = TraversalScore::for_case(
+            &case,
+            child_counts,
+            max_performance,
+            metrics,
+            oracle,
+            require_evidence,
+        )?
         else {
             continue;
         };
@@ -1005,12 +1284,17 @@ fn select_frontier_max(
             "traversal_strategy=frontier_max".to_string(),
             format!("frontier_max_normalize_frontier={normalize_frontier}"),
             format!("metric_inputs={}", metric_inputs_name(metrics)),
+            format!("oracle_mode={}", oracle_mode_name(oracle)),
+            format!("oracle_require_evidence={require_evidence}"),
         ];
         if let Some(max_performance) = max_performance {
             rationale.push(format!(
                 "frontier_normalization=max_performance_score={}",
                 max_performance.0
             ));
+        }
+        if let Some(oracle_score) = best.score.oracle {
+            rationale.push(format!("oracle_resolved_rate={}", oracle_score.summary()));
         }
         StrategySelection {
             chosen: ChosenPayload {
@@ -1027,6 +1311,7 @@ fn select_frontier_max(
 struct ScoreChildPropWeight {
     index: usize,
     performance: PerformanceScore,
+    oracle: Option<OracleScore>,
     child_count: usize,
     alpha: f64,
     exploitation: f64,
@@ -1042,8 +1327,18 @@ fn select_score_child_prop(
     top_m: usize,
     lambda_millis: u32,
     metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
 ) -> Result<Option<StrategySelection>, HistoryError> {
-    let weights = score_child_prop_weights(items, child_counts, top_m, lambda_millis, metrics);
+    let weights = score_child_prop_weights(
+        items,
+        child_counts,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    )?;
     if weights.is_empty() {
         return Ok(None);
     }
@@ -1063,11 +1358,13 @@ fn select_score_child_prop(
         source: items[selected].source.clone(),
     };
     let lambda = lambda_millis as f64 / 1_000.0;
-    let rationale = vec![
+    let mut rationale = vec![
         "traversal_strategy=score_child_prop".to_string(),
         format!("score_child_prop_top_m={top_m}"),
         format!("score_child_prop_lambda={lambda:.3}"),
         format!("metric_inputs={}", metric_inputs_name(metrics)),
+        format!("oracle_mode={}", oracle_mode_name(oracle)),
+        format!("oracle_require_evidence={require_evidence}"),
         format!("score_child_prop_total_weight={total_weight:.9}"),
         format!("score_child_prop_sample={sample:.9}"),
         format!("score_child_prop_selected_weight={:.9}", weight.weight),
@@ -1080,6 +1377,9 @@ fn select_score_child_prop(
             weight.exploration
         ),
     ];
+    if let Some(oracle_score) = weight.oracle {
+        rationale.push(format!("oracle_resolved_rate={}", oracle_score.summary()));
+    }
 
     Ok(Some(StrategySelection { chosen, rationale }))
 }
@@ -1090,7 +1390,9 @@ fn score_child_prop_weights(
     top_m: usize,
     lambda_millis: u32,
     metrics: metric::Inputs,
-) -> Vec<ScoreChildPropWeight> {
+    oracle: OracleMode,
+    require_evidence: bool,
+) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
     let mut selectable = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let case = CandidateCase::from_payload(&item.payload);
@@ -1107,35 +1409,62 @@ fn score_child_prop_weights(
             .get(&input.candidate.node_id)
             .copied()
             .unwrap_or_default();
-        selectable.push((index, performance, child_count, decision));
+        let oracle_score = oracle_score(&case, oracle, require_evidence)?;
+        selectable.push((index, performance, oracle_score, child_count, decision));
     }
 
     if selectable.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let min = selectable
+    let min_performance = selectable
         .iter()
-        .map(|(_, performance, _, _)| performance.0)
+        .map(|(_, performance, _, _, _)| performance.0)
         .min()
         .expect("nonempty selectable");
-    let max = selectable
+    let max_performance = selectable
         .iter()
-        .map(|(_, performance, _, _)| performance.0)
+        .map(|(_, performance, _, _, _)| performance.0)
         .max()
         .expect("nonempty selectable");
-    let span = max.saturating_sub(min);
-    let alpha = |performance: PerformanceScore| {
-        if span == 0 {
+    let performance_span = max_performance.saturating_sub(min_performance);
+    let performance_alpha = |performance: PerformanceScore| {
+        if performance_span == 0 {
             0.5
         } else {
-            (performance.0 - min) as f64 / span as f64
+            (performance.0 - min_performance) as f64 / performance_span as f64
+        }
+    };
+    let oracle_min_max = selectable
+        .iter()
+        .filter_map(|(_, _, oracle_score, _, _)| *oracle_score)
+        .fold(None, |acc, score| match acc {
+            None => Some((score, score)),
+            Some((min, max)) => Some((min.min(score), max.max(score))),
+        });
+    let oracle_scores_differ = oracle_min_max.is_some_and(|(min, max)| min != max);
+    let oracle_alpha = |score: OracleScore| {
+        let Some((min, max)) = oracle_min_max else {
+            return 0.5;
+        };
+        let span = max.rate() - min.rate();
+        if span == 0.0 {
+            0.5
+        } else {
+            (score.rate() - min.rate()) / span
+        }
+    };
+    let alpha = |performance: PerformanceScore, oracle_score: Option<OracleScore>| {
+        if oracle_scores_differ {
+            oracle_score.map(oracle_alpha).unwrap_or(0.5)
+        } else {
+            performance_alpha(performance)
         }
     };
 
     let mut ranked_alpha: Vec<f64> = selectable
         .iter()
-        .map(|(_, performance, _, _)| alpha(*performance))
+        .map(|(_, performance, oracle_score, _, _)| alpha(*performance, *oracle_score))
         .collect();
     ranked_alpha.sort_by(|a, b| b.total_cmp(a));
     let frontier_count = top_m.max(1).min(ranked_alpha.len());
@@ -1147,31 +1476,41 @@ fn score_child_prop_weights(
         / frontier_count as f64;
     let lambda = lambda_millis as f64 / 1_000.0;
 
-    selectable
+    Ok(selectable
         .into_iter()
-        .map(|(index, performance, child_count, decision)| {
-            let alpha = alpha(performance);
-            let exploitation = sigmoid(lambda * (alpha - alpha_mid));
-            let exploration = 1.0 / (1.0 + child_count as f64);
-            let weight = exploitation * exploration;
-            ScoreChildPropWeight {
-                index,
-                performance,
-                child_count,
-                alpha,
-                exploitation,
-                exploration,
-                weight,
-                decision,
-            }
-        })
-        .collect()
+        .map(
+            |(index, performance, oracle_score, child_count, decision)| {
+                let alpha = alpha(performance, oracle_score);
+                let exploitation = sigmoid(lambda * (alpha - alpha_mid));
+                let exploration = 1.0 / (1.0 + child_count as f64);
+                let weight = exploitation * exploration;
+                ScoreChildPropWeight {
+                    index,
+                    performance,
+                    oracle: oracle_score,
+                    child_count,
+                    alpha,
+                    exploitation,
+                    exploration,
+                    weight,
+                    decision,
+                }
+            },
+        )
+        .collect::<Vec<_>>())
 }
 
 fn metric_inputs_name(inputs: metric::Inputs) -> &'static str {
     match inputs {
         metric::Inputs::Operational => "operational",
         metric::Inputs::OperationalAndProtocol => "operational_and_protocol",
+    }
+}
+
+fn oracle_mode_name(mode: OracleMode) -> &'static str {
+    match mode {
+        OracleMode::RecordOnly => "record_only",
+        OracleMode::RelativeScore => "relative_score",
     }
 }
 
@@ -1597,6 +1936,7 @@ mod tests {
                 treatment_metrics: None,
                 baseline_protocol: None,
                 treatment_protocol: None,
+                oracle_evaluation: None,
                 diagnostics: Vec::new(),
                 baseline_run: Some(SealedRunEvidence {
                     run_id: "baseline".to_string(),
@@ -1670,17 +2010,152 @@ mod tests {
             3,
             10_000,
             metric::Inputs::Operational,
-        );
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("operational weights");
         let with_protocol = score_child_prop_weights(
             &items,
             &child_counts,
             3,
             10_000,
             metric::Inputs::OperationalAndProtocol,
-        );
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("protocol weights");
 
         assert_eq!(operational[0].performance, operational[1].performance);
         assert!(with_protocol[1].performance > with_protocol[0].performance);
+    }
+
+    #[test]
+    fn relative_oracle_score_orders_historical_frontier_before_operational_score() {
+        let unresolved_high_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "oracle-low",
+                "branch-oracle-low",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let resolved_lower_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "oracle-high",
+                "branch-oracle-high",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved_high_perf, resolved_lower_perf],
+        };
+
+        let selection = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, true),
+        )
+        .expect("relative oracle traversal")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "oracle-high");
+    }
+
+    #[test]
+    fn relative_oracle_score_requires_configured_evidence() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "oracle-missing",
+            "branch-oracle-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![missing],
+        };
+
+        let err = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, true),
+        )
+        .expect_err("missing oracle evidence is rejected");
+
+        assert!(err.to_string().contains("missing oracle evaluation"));
+    }
+
+    #[test]
+    fn relative_oracle_score_can_proceed_without_required_evidence() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "oracle-missing",
+            "branch-oracle-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![missing],
+        };
+
+        let selection = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, false),
+        )
+        .expect("missing oracle evidence is allowed")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "oracle-missing");
+    }
+
+    #[test]
+    fn relative_oracle_score_drives_score_child_prop_alpha_when_rates_differ() {
+        let resolved_lower_perf = traversal_item(with_oracle(
+            decision_grade_payload(
+                "oracle-alpha-high",
+                "branch-oracle-alpha-high",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let unresolved_higher_perf = traversal_item(with_oracle(
+            decision_grade_payload(
+                "oracle-alpha-low",
+                "branch-oracle-alpha-low",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let weights = score_child_prop_weights(
+            &[resolved_lower_perf, unresolved_higher_perf],
+            &BTreeMap::new(),
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RelativeScore,
+            true,
+        )
+        .expect("oracle weights");
+
+        assert!(weights[0].alpha > weights[1].alpha);
     }
 
     #[test]
@@ -1783,8 +2258,16 @@ mod tests {
         let mut child_counts = BTreeMap::new();
         child_counts.insert("expanded".to_string(), 1);
 
-        let weights =
-            score_child_prop_weights(&items, &child_counts, 3, 10_000, metric::Inputs::default());
+        let weights = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("weights");
 
         assert_eq!(weights.len(), 2);
         let expanded = weights.iter().find(|weight| weight.index == 0).unwrap();
@@ -1948,11 +2431,78 @@ mod tests {
                 treatment_metrics: None,
                 baseline_protocol: None,
                 treatment_protocol: Some(treatment),
+                oracle_evaluation: None,
                 diagnostics: Vec::new(),
                 baseline_run: None,
                 treatment_run: None,
             });
         payload
+    }
+
+    fn with_oracle(
+        mut payload: EvaluationPayload,
+        verdict: crate::mbe::Verdict,
+    ) -> EvaluationPayload {
+        let evaluation = oracle_evaluation("instance-a", verdict);
+        payload
+            .selection_input
+            .as_mut()
+            .expect("selection input")
+            .comparisons
+            .first_mut()
+            .expect("comparison")
+            .oracle_evaluation = Some(evaluation.clone());
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: None,
+                oracle_evaluation: Some(evaluation),
+                diagnostics: Vec::new(),
+                baseline_run: None,
+                treatment_run: None,
+            });
+
+        let input = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .clone();
+        payload.selection_input_hash = Some(
+            HistoryHash::of_domain_json("prototype1.history.selection_input.v1", &input)
+                .expect("hash selection input"),
+        );
+        payload
+    }
+
+    fn oracle_evaluation(
+        instance_id: &str,
+        verdict: crate::mbe::Verdict,
+    ) -> crate::mbe::OracleEvaluation {
+        crate::mbe::OracleEvaluation {
+            evidence: crate::mbe::OracleEvidence {
+                report_path: PathBuf::from("mbe/final_report.json"),
+                instance_id: instance_id.to_string(),
+                report_id: format!("oracle:{instance_id}"),
+                verdict,
+            },
+            instance_report_path: PathBuf::from("mbe/report.json"),
+            instance_report: None,
+            diagnostic: crate::mbe::OracleDiagnostic::MissingInstanceReport,
+            usable_for_selection: false,
+        }
     }
 
     fn protocol(
@@ -2008,6 +2558,7 @@ mod tests {
                 instance_id: "instance-a".to_string(),
                 parent_metrics: Some(metrics(false, false, 0)),
                 child_metrics: Some(child),
+                oracle_evaluation: None,
                 status: "compared".to_string(),
             }],
         );
@@ -2061,6 +2612,7 @@ mod tests {
                 instance_id: "instance-a".to_string(),
                 parent_metrics: Some(metrics(false, false, 0)),
                 child_metrics: Some(child),
+                oracle_evaluation: None,
                 status: "compared".to_string(),
             }],
         );

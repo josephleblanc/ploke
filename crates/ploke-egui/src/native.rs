@@ -15,22 +15,30 @@ use crate::diagnostics::{
     artifact_component_breakdown,
 };
 use crate::import::graph_from_run_root;
+#[cfg(feature = "dev")]
+use crate::perf::{PerformanceLogSink, PerformanceRun};
 use crate::run_picker::RunPicker;
 use crate::ui::app::{OperatorApp, layout};
-use crate::ui::view::{GraphView, GraphViewMode};
-use eframe::egui::{Vec2, ViewportBuilder};
+#[cfg(feature = "dev")]
+use crate::ui::view::GraphView;
+use crate::ui::view::GraphViewMode;
+#[cfg(feature = "dev")]
+use eframe::egui::Vec2;
+use eframe::egui::ViewportBuilder;
 use ploke_tree::Graph;
 
 pub fn run() -> Result<(), Box<dyn Error>> {
+    profiling::register_thread!("ploke-egui.main");
     let run = Run::from_env();
+    let explicit_run_root = run.run_root.clone();
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([layout::DEFAULT_WINDOW_WIDTH, layout::DEFAULT_WINDOW_HEIGHT]),
         ..Default::default()
     };
     let mut picker = RunPicker::from_default_root();
-    let initial_run_root = run
-        .run_root
+    let initial_run_root = explicit_run_root
+        .clone()
         .or_else(|| picker.first_loadable_path().map(PathBuf::from));
     if let Some(path) = initial_run_root.as_deref() {
         picker.select_path(path);
@@ -43,6 +51,23 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "dev")]
     if run.artifact_connectivity_report {
         print!("{}", picker.artifact_connectivity_batch().render_text());
+        return Ok(());
+    }
+    #[cfg(feature = "dev")]
+    if run.perf_log {
+        let Some(run_root) = explicit_run_root.clone() else {
+            return Err("--perf-log requires an explicit --run-root or positional RUN_ROOT".into());
+        };
+        let sink = PerformanceLogSink::new(default_profiling_dir())?;
+        let path = sink.observe(PerformanceRun::new(
+            run_root,
+            run.mode,
+            Vec2::new(
+                layout::DEFAULT_CENTER_CANVAS_WIDTH,
+                layout::DEFAULT_CENTER_CANVAS_HEIGHT,
+            ),
+        ))?;
+        println!("Performance log written: {}", path.display());
         return Ok(());
     }
     #[cfg(feature = "dev")]
@@ -73,6 +98,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn initial_graph(run_root: Option<PathBuf>) -> Result<Graph, Box<dyn Error>> {
+    profiling::scope!("ploke-egui.initial-graph");
     let Some(run_root) = run_root else {
         return Ok(sample_graph());
     };
@@ -108,6 +134,7 @@ fn print_contract_report(
     mode: GraphViewMode,
     run_root: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn Error>> {
+    profiling::scope!("ploke-egui.contract-report");
     let diagnostics = GraphView::contract_diagnostics(
         graph,
         mode,
@@ -159,4 +186,9 @@ fn run_snapshot(path: &std::path::Path) -> RunSnapshot {
 #[cfg(feature = "dev")]
 fn default_diagnostics_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/diagnostics")
+}
+
+#[cfg(feature = "dev")]
+fn default_profiling_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/profiling")
 }

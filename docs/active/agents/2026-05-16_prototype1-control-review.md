@@ -13,6 +13,11 @@ Review target:
 - `crates/ploke-eval/src/cli/prototype1_state/successor.rs`
 - `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs`
 
+Update, 2026-05-17: findings 4 and 5 describe the earlier two-file
+`run-profile.toml` plus `run-control.toml` shape. The current config shape folds
+control into `[control]` inside the admitted `run-profile.toml`; legacy
+`prototype1/run-control.toml` is no longer read by the control path.
+
 ## Findings
 
 1. **High: resume blocks terminal failed children that never produce `runner-result.json`.**

@@ -111,6 +111,7 @@ impl GraphView {
         mode: GraphViewMode,
         viewport_size: Vec2,
     ) -> Option<GraphViewDiagnostics> {
+        profiling::scope!("ploke-egui.graph-view.contract-diagnostics");
         let view_style = ViewStyle::default();
         let mut cache = GraphViewCache::default();
         cache.refresh(graph, view_style, mode, ArtifactTreeFilters::default());
@@ -118,6 +119,7 @@ impl GraphView {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, graph: &DomainGraph) {
+        profiling::scope!("ploke-egui.graph-view.show");
         let viewport = ui.available_size();
         if viewport_resized(self.last_viewport, viewport) {
             self.fit_next_frame = true;
@@ -154,6 +156,7 @@ impl GraphView {
     }
 
     fn sync_projection(&mut self, graph: &DomainGraph) {
+        profiling::scope!("ploke-egui.graph-view.sync-projection");
         if self.cache.refresh(
             graph,
             self.view_style,

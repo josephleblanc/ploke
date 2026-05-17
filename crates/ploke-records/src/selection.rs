@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::branch::Disposition;
 use crate::evaluation::RunMetrics;
+use crate::oracle;
 
 /// Candidate coordinate considered by successor selection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,6 +37,8 @@ pub struct RunComparison {
     pub parent_metrics: Option<RunMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_metrics: Option<RunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_evaluation: Option<oracle::Evaluation>,
     pub status: String,
 }
 

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::branch::Disposition;
+use crate::oracle;
 use crate::record::{Record, RecordFamily, RecordFormat};
 
 pub const ARTIFACT_SCHEMA_V1: &str = "prototype1-branch-evaluation.v1";
@@ -138,6 +139,8 @@ pub struct InstanceComparison {
     pub baseline_metrics: Option<RunMetrics>,
     #[serde(default)]
     pub treatment_metrics: Option<RunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_evaluation: Option<oracle::Evaluation>,
     #[serde(default)]
     pub evaluation: Option<Outcome>,
     pub status: String,

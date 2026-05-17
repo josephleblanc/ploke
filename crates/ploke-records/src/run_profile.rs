@@ -30,6 +30,8 @@ pub struct RunProfileRecord {
     pub selection: Selection,
     #[serde(default)]
     pub execution: Execution,
+    #[serde(default)]
+    pub control: Control,
 }
 
 impl Record for RunProfileRecord {
@@ -123,6 +125,8 @@ pub enum GenerationSurface {
 pub struct Selection {
     pub strategy: SelectionStrategy,
     pub evidence: SelectionEvidence,
+    #[serde(default)]
+    pub oracle: Oracle,
     pub seed: u64,
 }
 
@@ -131,6 +135,7 @@ impl Default for Selection {
         Self {
             strategy: SelectionStrategy::HistoryScoreChildProp,
             evidence: SelectionEvidence::Operational,
+            oracle: Oracle::default(),
             seed: 0,
         }
     }
@@ -149,6 +154,35 @@ pub enum SelectionStrategy {
 pub enum SelectionEvidence {
     Operational,
     OperationalAndProtocol,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Oracle {
+    #[serde(default)]
+    pub mode: OracleMode,
+    #[serde(default = "default_oracle_require_evidence")]
+    pub require_evidence: bool,
+}
+
+impl Default for Oracle {
+    fn default() -> Self {
+        Self {
+            mode: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
+        }
+    }
+}
+
+fn default_oracle_require_evidence() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OracleMode {
+    #[default]
+    RecordOnly,
+    RelativeScore,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +245,31 @@ pub enum TraceJsonl {
     Off,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Control {
+    #[serde(default)]
+    pub mode: RunMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_cap: Option<u32>,
+}
+
+impl Default for Control {
+    fn default() -> Self {
+        Self {
+            mode: RunMode::Continuous,
+            parallel_cap: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RunMode {
+    #[default]
+    Continuous,
+    Step,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunProfileCommitmentRecord {
     pub schema_version: String,
@@ -269,6 +328,10 @@ strategy = "history-score-child-prop"
 evidence = "operational-and-protocol"
 seed = 0
 
+[selection.oracle]
+mode = "record-only"
+require_evidence = true
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -296,6 +359,8 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             vec!["BurntSushi__ripgrep-2209".to_string()]
         );
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
+        assert_eq!(profile.selection.oracle.mode, OracleMode::RecordOnly);
+        assert!(profile.selection.oracle.require_evidence);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -304,6 +369,34 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
 
         assert_eq!(decoded, profile);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_oracle_policy_to_record_only() {
+        let profile = PROFILE.replace(
+            "\n[selection.oracle]\nmode = \"record-only\"\nrequire_evidence = true\n",
+            "\n",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.oracle.mode, OracleMode::RecordOnly);
+        assert!(parsed.selection.oracle.require_evidence);
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_relative_oracle_policy() {
+        let profile = PROFILE
+            .replace("mode = \"record-only\"", "mode = \"relative-score\"")
+            .replace("require_evidence = true", "require_evidence = false");
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.oracle.mode, OracleMode::RelativeScore);
+        assert!(!parsed.selection.oracle.require_evidence);
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
     }
 
     #[test]

@@ -2889,6 +2889,8 @@ pub(crate) struct SealedComparedRunEvidence {
     pub(crate) baseline_protocol: Option<metric::Protocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) treatment_protocol: Option<metric::Protocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_evaluation: Option<crate::mbe::OracleEvaluation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) diagnostics: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -7162,6 +7164,7 @@ mod tests {
                 instance_id: "instance-a".to_string(),
                 parent_metrics: Some(test_metrics(false, false, 0)),
                 child_metrics: Some(test_metrics(true, true, 0)),
+                oracle_evaluation: None,
                 status: "compared".to_string(),
             }],
         );

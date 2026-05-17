@@ -689,6 +689,7 @@ impl CohortRequest {
         report_path: &Path,
     ) -> Result<Vec<OracleEvaluation>, PrepareError> {
         let final_report = FinalReport::load(report_path)?;
+        self.validate_report_coverage(&final_report)?;
         self.members
             .iter()
             .map(|member| {
@@ -702,6 +703,31 @@ impl CohortRequest {
                 OracleEvaluation::from_evidence(&member.prepared, evidence, &self.layout)
             })
             .collect()
+    }
+
+    fn validate_report_coverage(&self, report: &FinalReport) -> Result<(), PrepareError> {
+        let expected = cohort_report_ids(&self.members)?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let mut submitted = BTreeSet::new();
+        for id in &report.submitted_ids {
+            if !submitted.insert(id.clone()) {
+                return Err(PrepareError::InvalidMbeReport {
+                    detail: format!("MBE final report contains duplicate submitted id '{id}'"),
+                });
+            }
+        }
+        if let Some(unknown) = submitted.iter().find(|id| !expected.contains(*id)) {
+            return Err(PrepareError::InvalidMbeReport {
+                detail: format!("MBE final report contains unknown report id '{unknown}'"),
+            });
+        }
+        if let Some(missing) = expected.iter().find(|id| !submitted.contains(*id)) {
+            return Err(PrepareError::InvalidMbeReport {
+                detail: format!("MBE final report is missing configured report id '{missing}'"),
+            });
+        }
+        Ok(())
     }
 
     fn aggregate_submission_path(&self) -> PathBuf {
@@ -1771,6 +1797,33 @@ mod tests {
         .expect("write submission");
     }
 
+    fn cohort_request_for_2209_and_454(tmp: &Path) -> CohortRequest {
+        fs::create_dir_all(tmp.join("repos").join("BurntSushi").join("ripgrep"))
+            .expect("create repo");
+        fs::write(tmp.join("dataset.jsonl"), "{}\n").expect("write dataset");
+
+        let first_submission = tmp.join("submission-2209.jsonl");
+        let second_submission = tmp.join("submission-454.jsonl");
+        write_submission_record(&first_submission, 2209);
+        write_submission_record(&second_submission, 454);
+
+        CohortRequest::new(
+            vec![
+                CohortMember {
+                    prepared: prepared_run_for(tmp, "BurntSushi__ripgrep-2209", 2209),
+                    submission_path: first_submission,
+                },
+                CohortMember {
+                    prepared: prepared_run_for(tmp, "BurntSushi__ripgrep-454", 454),
+                    submission_path: second_submission,
+                },
+            ],
+            Layout::under(tmp.join("mbe"), tmp.join("repos")),
+            Options::default(),
+        )
+        .expect("valid cohort request")
+    }
+
     fn final_report_with_resolved_id(report_id: &str) -> FinalReport {
         FinalReport {
             total_instances: 1,
@@ -2243,6 +2296,35 @@ mod tests {
             evaluations[1].diagnostic,
             OracleDiagnostic::MissingInstanceReport
         );
+    }
+
+    #[test]
+    fn oracle_cohort_report_must_cover_configured_members_exactly() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = cohort_request_for_2209_and_454(tmp.path());
+        let written = request.write_config().expect("write config");
+
+        let missing = final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209");
+        fs::write(
+            &written.report_path,
+            serde_json::to_string_pretty(&missing).expect("serialize report"),
+        )
+        .expect("write report");
+        let err = request
+            .load_oracle_evaluations_from(&written.report_path)
+            .expect_err("missing configured report id is rejected");
+        assert!(err.to_string().contains("missing configured report id"));
+
+        let unknown = final_report_with_resolved_id("BurntSushi/ripgrep:pr-999");
+        fs::write(
+            &written.report_path,
+            serde_json::to_string_pretty(&unknown).expect("serialize report"),
+        )
+        .expect("write report");
+        let err = request
+            .load_oracle_evaluations_from(&written.report_path)
+            .expect_err("unknown report id is rejected");
+        assert!(err.to_string().contains("unknown report id"));
     }
 
     #[test]

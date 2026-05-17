@@ -76,6 +76,7 @@ impl GraphViewCache {
         mode: GraphViewMode,
         filters: ArtifactTreeFilters,
     ) -> bool {
+        profiling::scope!("ploke-egui.graph-view-cache.refresh");
         let signature = GraphSignature::from(graph);
         let projection_changed =
             self.signature != Some(signature) || self.style != style || self.filters != filters;
@@ -670,6 +671,7 @@ fn project_artifact_tree(
     style: ViewStyle,
     filters: ArtifactTreeFilters,
 ) -> ProjectedGraph {
+    profiling::scope!("ploke-egui.project-artifact-tree");
     let mut raw = RawGraph::default();
     let mut artifact_nodes = BTreeMap::new();
     let mut artifact_lookup = HashMap::new();
@@ -1174,6 +1176,7 @@ fn build_widget_graph(
     _mode: GraphViewMode,
     filters: ArtifactTreeFilters,
 ) -> BuiltWidgetGraph {
+    profiling::scope!("ploke-egui.build-widget-graph");
     let projected = project_artifact_tree(graph, style, filters);
     BuiltWidgetGraph {
         graph: to_widget_graph(&projected.raw, style),
@@ -1245,6 +1248,7 @@ fn artifact_handle_label(index: usize) -> String {
 }
 
 fn to_widget_graph(raw: &RawGraph, style: ViewStyle) -> WidgetGraph {
+    profiling::scope!("ploke-egui.to-widget-graph");
     egui_graphs::to_graph_custom(
         raw,
         |node: &mut WidgetNode| {

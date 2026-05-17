@@ -16,9 +16,8 @@ use crate::{
     closure::load_closure_state,
     intervention::{
         CompleteBaseline, Intervention, Prototype1ChildScheduleMode, Prototype1NodeRecord,
-        Prototype1NodeStatus, Prototype1RunnerRequest, Prototype1RunnerResult,
-        Prototype1SearchPolicy, RecordStore, load_node_record, load_runner_request,
-        load_runner_result,
+        Prototype1NodeStatus, Prototype1RunnerRequest, Prototype1RunnerResult, RecordStore,
+        load_node_record, load_runner_request, load_runner_result,
     },
     projection::OperatorProjectionRead,
     spec::PrepareError,
@@ -58,35 +57,10 @@ use crate::cli::prototype1_state::{
     successor,
 };
 
-const RUN_CONTROL_SCHEMA_VERSION: &str = "prototype1-run-control.v1";
-const RUN_CONTROL_FILE: &str = "run-control.toml";
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Prototype1RunMode {
-    Continuous,
-    Step,
-}
-
-impl Default for Prototype1RunMode {
-    fn default() -> Self {
-        Self::Continuous
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct Prototype1RunControl {
-    pub(crate) schema_version: String,
-    #[serde(default)]
-    pub(crate) mode: Prototype1RunMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) parallel_cap: Option<u32>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct EffectiveRunControl {
     pub(crate) path: PathBuf,
-    pub(crate) mode: Prototype1RunMode,
+    pub(crate) mode: profile::RunMode,
     pub(crate) parallel_cap: u32,
     pub(crate) defaulted_from_profile: bool,
 }
@@ -180,38 +154,6 @@ struct Diagnosis {
 enum ExecuteMode {
     Step,
     Continuous,
-}
-
-pub(crate) fn run_control_path(campaign_manifest_path: &Path) -> PathBuf {
-    campaign_manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("prototype1")
-        .join(RUN_CONTROL_FILE)
-}
-
-pub(crate) fn write_default_run_control(
-    campaign_manifest_path: &Path,
-    policy: &Prototype1SearchPolicy,
-) -> Result<Prototype1RunControl, PrepareError> {
-    let control = Prototype1RunControl {
-        schema_version: RUN_CONTROL_SCHEMA_VERSION.to_string(),
-        mode: Prototype1RunMode::Continuous,
-        parallel_cap: Some(default_parallel_cap(policy)),
-    };
-    let path = run_control_path(campaign_manifest_path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let text =
-        toml::to_string_pretty(&control).map_err(|err| PrepareError::InvalidBatchSelection {
-            detail: format!("failed to serialize run control TOML: {err}"),
-        })?;
-    fs::write(&path, text).map_err(|source| PrepareError::WriteManifest { path, source })?;
-    Ok(control)
 }
 
 pub(crate) async fn doctor(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
@@ -358,7 +300,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
                 ),
             }
         })?;
-    let effective_control = load_effective_control(&manifest_path, &admitted_profile.profile)?;
+    let effective_control = load_effective_control(&admitted_profile)?;
     Ok(RuntimeContext {
         repo_root,
         campaign_id,
@@ -371,69 +313,38 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
 }
 
 fn load_effective_control(
-    manifest_path: &Path,
-    profile: &Prototype1RunProfile,
+    admitted: &AdmittedRunProfile,
 ) -> Result<EffectiveRunControl, PrepareError> {
-    let path = run_control_path(manifest_path);
-    let derived_parallel_cap = default_parallel_cap(&profile.search_policy());
-    match fs::read_to_string(&path) {
-        Ok(text) => {
-            let control = toml::from_str::<Prototype1RunControl>(&text).map_err(|source| {
-                PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to parse run control '{}': {source}", path.display()),
-                }
-            })?;
-            if control.schema_version != RUN_CONTROL_SCHEMA_VERSION {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "unsupported run control schema '{}' at '{}'",
-                        control.schema_version,
-                        path.display()
-                    ),
-                });
-            }
-            let parallel_cap = control.parallel_cap.unwrap_or(derived_parallel_cap);
-            if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "run control parallel_cap {} widens admitted fanout {} at '{}'",
-                        parallel_cap,
-                        derived_parallel_cap,
-                        path.display()
-                    ),
-                });
-            }
-            Ok(EffectiveRunControl {
-                path,
-                mode: control.mode,
+    let path = admitted.commitment.profile_path.clone();
+    let derived_parallel_cap = admitted.profile.default_parallel_cap();
+    let parallel_cap = admitted
+        .profile
+        .control
+        .parallel_cap
+        .unwrap_or(derived_parallel_cap);
+    if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "profile control.parallel_cap {} widens admitted fanout {} at '{}'",
                 parallel_cap,
-                defaulted_from_profile: false,
-            })
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(EffectiveRunControl {
-            path,
-            mode: Prototype1RunMode::Continuous,
-            parallel_cap: derived_parallel_cap,
-            defaulted_from_profile: true,
-        }),
-        Err(source) => Err(PrepareError::ReadManifest { path, source }),
+                derived_parallel_cap,
+                path.display()
+            ),
+        });
     }
-}
-
-fn default_parallel_cap(policy: &Prototype1SearchPolicy) -> u32 {
-    match policy.child_schedule_mode {
-        Prototype1ChildScheduleMode::FullBatch => policy.child_budget.max,
-        Prototype1ChildScheduleMode::AdaptiveBatch => policy.child_budget.min,
-    }
-    .max(1)
+    Ok(EffectiveRunControl {
+        path,
+        mode: admitted.profile.control.mode,
+        parallel_cap,
+        defaulted_from_profile: admitted.profile.control.parallel_cap.is_none(),
+    })
 }
 
 fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
     let mut notes = diagnosis.notes;
     if diagnosis.context.effective_control.defaulted_from_profile {
         notes.push(
-            "run-control.toml missing; using in-memory defaults from admitted run profile"
-                .to_string(),
+            "profile [control].parallel_cap missing; using derived cap from [search]".to_string(),
         );
     }
     ActiveParentStatus {
@@ -1476,7 +1387,8 @@ mod tests {
     use super::*;
 
     use crate::cli::prototype1_state::profile::{
-        Execution, Generation, Prototype1RunProfile, Search, Selection, Storage, Target,
+        Control, Execution, Generation, Prototype1RunProfile, RunMode, Search, Selection, Storage,
+        Target,
     };
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
@@ -1498,78 +1410,71 @@ mod tests {
             generation: Generation::default(),
             selection: Selection::default(),
             execution: Execution::default(),
+            control: Control::default(),
+        }
+    }
+
+    fn admitted(profile: Prototype1RunProfile) -> AdmittedRunProfile {
+        AdmittedRunProfile {
+            commitment: RunProfileCommitment {
+                schema_version:
+                    crate::cli::prototype1_state::profile::RUN_PROFILE_COMMITMENT_SCHEMA_VERSION
+                        .to_string(),
+                profile_path: PathBuf::from("run-profile.toml"),
+                sha256: "test-sha".to_string(),
+                source_path: None,
+                admitted_at: String::new(),
+            },
+            profile,
         }
     }
 
     #[test]
-    fn default_parallel_cap_uses_full_batch_max() {
+    fn profile_default_parallel_cap_uses_full_batch_max() {
         let profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
-        assert_eq!(default_parallel_cap(&profile.search_policy()), 6);
+        assert_eq!(profile.default_parallel_cap(), 6);
     }
 
     #[test]
-    fn default_parallel_cap_uses_adaptive_min() {
+    fn profile_default_parallel_cap_uses_adaptive_min() {
         let profile = profile(Prototype1ChildScheduleMode::AdaptiveBatch, 2, 6);
-        assert_eq!(default_parallel_cap(&profile.search_policy()), 2);
+        assert_eq!(profile.default_parallel_cap(), 2);
     }
 
     #[test]
-    fn missing_run_control_defaults_from_profile() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let manifest_path = tmp.path().join("campaign.json");
+    fn missing_profile_control_parallel_cap_defaults_from_search() {
         let profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+        let admitted = admitted(profile);
 
-        let effective =
-            load_effective_control(&manifest_path, &profile).expect("load default control");
+        let effective = load_effective_control(&admitted).expect("load default control");
 
         assert!(effective.defaulted_from_profile);
-        assert_eq!(effective.mode, Prototype1RunMode::Continuous);
+        assert_eq!(effective.mode, RunMode::Continuous);
         assert_eq!(effective.parallel_cap, 6);
     }
 
     #[test]
-    fn run_control_accepts_narrowing_parallel_cap() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let manifest_path = tmp.path().join("campaign.json");
-        let path = run_control_path(&manifest_path);
-        fs::create_dir_all(path.parent().expect("parent")).expect("create control dir");
-        fs::write(
-            &path,
-            r#"
-schema_version = "prototype1-run-control.v1"
-mode = "step"
-parallel_cap = 1
-"#,
-        )
-        .expect("write control");
-        let profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+    fn profile_control_accepts_narrowing_parallel_cap() {
+        let mut profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+        profile.control = Control {
+            mode: RunMode::Step,
+            parallel_cap: Some(1),
+        };
+        let admitted = admitted(profile);
 
-        let effective =
-            load_effective_control(&manifest_path, &profile).expect("load narrowed control");
+        let effective = load_effective_control(&admitted).expect("load narrowed control");
 
         assert!(!effective.defaulted_from_profile);
-        assert_eq!(effective.mode, Prototype1RunMode::Step);
+        assert_eq!(effective.mode, RunMode::Step);
         assert_eq!(effective.parallel_cap, 1);
     }
 
     #[test]
-    fn run_control_rejects_widening_parallel_cap() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let manifest_path = tmp.path().join("campaign.json");
-        let path = run_control_path(&manifest_path);
-        fs::create_dir_all(path.parent().expect("parent")).expect("create control dir");
-        fs::write(
-            &path,
-            r#"
-schema_version = "prototype1-run-control.v1"
-mode = "continuous"
-parallel_cap = 9
-"#,
-        )
-        .expect("write control");
-        let profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+    fn profile_control_rejects_widening_parallel_cap() {
+        let mut profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+        profile.control.parallel_cap = Some(9);
 
-        let err = load_effective_control(&manifest_path, &profile).expect_err("widening rejected");
+        let err = profile.validate().expect_err("widening rejected");
         assert!(err.to_string().contains("widens admitted fanout"));
     }
 

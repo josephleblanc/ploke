@@ -538,6 +538,7 @@ fn seal_compared_run_evidence(row: &ComparedRunEvidence) -> SealedComparedRunEvi
         treatment_metrics: row.treatment_metrics.clone(),
         baseline_protocol,
         treatment_protocol,
+        oracle_evaluation: row.oracle_evaluation.clone(),
         diagnostics,
         baseline_run,
         treatment_run,
@@ -698,6 +699,8 @@ pub(crate) struct ComparedRunEvidence {
     pub(crate) treatment_run: Option<RunEvidence>,
     pub(crate) baseline_metrics: Option<OperationalRunMetrics>,
     pub(crate) treatment_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_evaluation: Option<crate::mbe::OracleEvaluation>,
     pub(crate) status: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) diagnostics: Vec<ComparedRunDiagnostic>,
@@ -1617,6 +1620,7 @@ fn project_comparisons(
             instance_id: instance_id.to_string(),
             parent_metrics: compared.baseline_metrics.clone(),
             child_metrics: compared.treatment_metrics.clone(),
+            oracle_evaluation: compared.oracle_evaluation.clone(),
             status: status.to_string(),
         });
     }
@@ -1951,6 +1955,7 @@ fn typed_evaluation_parts(
                     treatment_run,
                     baseline_metrics: instance.baseline_metrics.clone(),
                     treatment_metrics: instance.treatment_metrics.clone(),
+                    oracle_evaluation: instance.oracle_evaluation.clone(),
                     status: nonempty(instance.status.as_str()).map(ToOwned::to_owned),
                     diagnostics,
                 }

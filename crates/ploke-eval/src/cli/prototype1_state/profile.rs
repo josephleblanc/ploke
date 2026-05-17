@@ -16,6 +16,7 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1SearchPolicy},
     layout::ploke_eval_home,
     spec::PrepareError,
+    successor_selection::OracleMode,
 };
 
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
@@ -41,6 +42,8 @@ pub(crate) struct Prototype1RunProfile {
     pub(crate) selection: Selection,
     #[serde(default)]
     pub(crate) execution: Execution,
+    #[serde(default)]
+    pub(crate) control: Control,
 }
 
 impl Prototype1RunProfile {
@@ -55,6 +58,8 @@ impl Prototype1RunProfile {
         self.search.validate()?;
         self.generation.validate()?;
         self.execution.validate()?;
+        self.control.validate(&self.search)?;
+        self.selection.validate(&self.target, &self.execution)?;
         if matches!(self.generation.source, GenerationSource::Legacy)
             && self.target.eval_instances().len() > 1
         {
@@ -63,6 +68,10 @@ impl Prototype1RunProfile {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn default_parallel_cap(&self) -> u32 {
+        self.search.default_parallel_cap()
     }
 
     pub(crate) fn search_policy(&self) -> Prototype1SearchPolicy {
@@ -176,6 +185,14 @@ impl Search {
         }
         Ok(())
     }
+
+    fn default_parallel_cap(&self) -> u32 {
+        match self.schedule {
+            Prototype1ChildScheduleMode::FullBatch => self.children.max,
+            Prototype1ChildScheduleMode::AdaptiveBatch => self.children.min,
+        }
+        .max(1)
+    }
 }
 
 impl Default for Search {
@@ -236,6 +253,8 @@ pub(crate) enum GenerationSource {
 pub(crate) struct Selection {
     pub(crate) strategy: SelectionStrategy,
     pub(crate) evidence: SelectionEvidence,
+    #[serde(default)]
+    pub(crate) oracle: Oracle,
     pub(crate) seed: u64,
 }
 
@@ -260,6 +279,35 @@ impl Selection {
             }
         }
     }
+
+    pub(crate) fn oracle_mode(self) -> OracleMode {
+        self.oracle.mode
+    }
+
+    pub(crate) fn oracle_require_evidence(self) -> bool {
+        self.oracle.require_evidence
+    }
+
+    fn validate(self, target: &Target, execution: &Execution) -> Result<(), PrepareError> {
+        if execution.mbe.enabled && target.eval_instances().is_empty() {
+            return Err(profile_error(
+                "execution.mbe.enabled = true requires target.instance or target.instances",
+            ));
+        }
+        if self.oracle.mode == OracleMode::RelativeScore && self.oracle.require_evidence {
+            if !execution.mbe.enabled {
+                return Err(profile_error(
+                    "selection.oracle.mode = \"relative-score\" with require_evidence = true requires execution.mbe.enabled = true",
+                ));
+            }
+            if target.eval_instances().is_empty() {
+                return Err(profile_error(
+                    "selection.oracle.mode = \"relative-score\" with require_evidence = true requires target.instance or target.instances",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for Selection {
@@ -267,6 +315,7 @@ impl Default for Selection {
         Self {
             strategy: SelectionStrategy::HistoryScoreChildProp,
             evidence: SelectionEvidence::Operational,
+            oracle: Oracle::default(),
             seed: 0,
         }
     }
@@ -285,6 +334,27 @@ pub(crate) enum SelectionStrategy {
 pub(crate) enum SelectionEvidence {
     Operational,
     OperationalAndProtocol,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Oracle {
+    #[serde(default)]
+    pub(crate) mode: OracleMode,
+    #[serde(default = "default_oracle_require_evidence")]
+    pub(crate) require_evidence: bool,
+}
+
+impl Default for Oracle {
+    fn default() -> Self {
+        Self {
+            mode: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
+        }
+    }
+}
+
+fn default_oracle_require_evidence() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -383,6 +453,52 @@ impl Default for TraceJsonl {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Control {
+    #[serde(default)]
+    pub(crate) mode: RunMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parallel_cap: Option<u32>,
+}
+
+impl Control {
+    fn validate(self, search: &Search) -> Result<(), PrepareError> {
+        let Some(parallel_cap) = self.parallel_cap else {
+            return Ok(());
+        };
+        let derived_parallel_cap = search.default_parallel_cap();
+        if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
+            return Err(profile_error(format!(
+                "profile control.parallel_cap {} widens admitted fanout {}",
+                parallel_cap, derived_parallel_cap
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Control {
+    fn default() -> Self {
+        Self {
+            mode: RunMode::Continuous,
+            parallel_cap: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunMode {
+    Continuous,
+    Step,
+}
+
+impl Default for RunMode {
+    fn default() -> Self {
+        Self::Continuous
+    }
+}
+
 fn default_mbe_python() -> String {
     "python".to_string()
 }
@@ -404,7 +520,6 @@ pub(crate) struct RunProfileCommitment {
 #[derive(Debug, Clone)]
 pub(crate) struct OperatorRunProfile {
     pub(crate) source_path: PathBuf,
-    pub(crate) text: String,
     pub(crate) profile: Prototype1RunProfile,
 }
 
@@ -425,7 +540,6 @@ pub(crate) fn load_operator_profile(
     let profile = parse_profile(&source_path, &text)?;
     Ok(OperatorRunProfile {
         source_path,
-        text,
         profile,
     })
 }
@@ -435,22 +549,22 @@ pub(crate) fn admit_run_profile(
     operator: &OperatorRunProfile,
 ) -> Result<AdmittedRunProfile, PrepareError> {
     let profile_path = run_profile_path(campaign_manifest_path);
+    let text =
+        toml::to_string_pretty(&operator.profile).map_err(|err| profile_error(err.to_string()))?;
     if let Some(parent) = profile_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    fs::write(&profile_path, operator.text.as_bytes()).map_err(|source| {
-        PrepareError::WriteManifest {
-            path: profile_path.clone(),
-            source,
-        }
+    fs::write(&profile_path, text.as_bytes()).map_err(|source| PrepareError::WriteManifest {
+        path: profile_path.clone(),
+        source,
     })?;
     let commitment = RunProfileCommitment {
         schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
         profile_path: profile_path.clone(),
-        sha256: sha256_hex(&operator.text),
+        sha256: sha256_hex(&text),
         source_path: Some(operator.source_path.clone()),
         admitted_at: Utc::now().to_rfc3339(),
     };
@@ -618,6 +732,10 @@ strategy = "history-score-child-prop"
 evidence = "operational-and-protocol"
 seed = 0
 
+[selection.oracle]
+mode = "record-only"
+require_evidence = true
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -637,6 +755,8 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.selection.traversal_metrics(),
             Prototype1TraversalMetrics::OperationalAndProtocol
         );
+        assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
+        assert!(profile.selection.oracle_require_evidence());
         assert_eq!(
             profile.search_policy().child_budget,
             Prototype1ChildBudget { min: 6, max: 6 }
@@ -680,7 +800,6 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         let manifest_path = tmp.path().join("campaign.json");
         let operator = OperatorRunProfile {
             source_path: tmp.path().join("profiles").join("overnight.toml"),
-            text: PROFILE.to_string(),
             profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
         };
 
@@ -695,6 +814,69 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             loaded.commitment.profile_path,
             tmp.path().join("prototype1").join(RUN_PROFILE_FILE)
         );
+        let admitted_text =
+            fs::read_to_string(tmp.path().join("prototype1").join(RUN_PROFILE_FILE))
+                .expect("read admitted profile");
+        assert!(admitted_text.contains("[control]"));
+        assert!(admitted_text.contains("mode = \"continuous\""));
+    }
+
+    #[test]
+    fn run_profile_defaults_oracle_policy_to_record_only() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "\n[selection.oracle]\nmode = \"record-only\"\nrequire_evidence = true\n",
+                "\n",
+            ),
+        )
+        .expect("profile parses");
+
+        assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
+        assert!(profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn relative_oracle_selection_requires_enabled_mbe_and_targets() {
+        let disabled_mbe = PROFILE
+            .replace("mode = \"record-only\"", "mode = \"relative-score\"")
+            .replace("enabled = true", "enabled = false");
+        let err = parse_profile(Path::new("profile.toml"), &disabled_mbe)
+            .expect_err("relative oracle scoring requires MBE");
+        assert!(err.to_string().contains("execution.mbe.enabled"));
+
+        let empty_targets = PROFILE
+            .replace("mode = \"record-only\"", "mode = \"relative-score\"")
+            .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
+            .replace("instances = [\"BurntSushi__ripgrep-2209\"]\n", "");
+        let err = parse_profile(Path::new("profile.toml"), &empty_targets)
+            .expect_err("relative oracle scoring requires target set");
+        assert!(err.to_string().contains("target.instance"));
+    }
+
+    #[test]
+    fn relative_oracle_selection_can_skip_missing_evidence_requirement() {
+        let relaxed = PROFILE
+            .replace("mode = \"record-only\"", "mode = \"relative-score\"")
+            .replace("require_evidence = true", "require_evidence = false")
+            .replace("enabled = true", "enabled = false")
+            .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
+            .replace("instances = [\"BurntSushi__ripgrep-2209\"]\n", "");
+        let profile = parse_profile(Path::new("profile.toml"), &relaxed)
+            .expect("relaxed relative oracle profile parses");
+
+        assert_eq!(profile.selection.oracle_mode(), OracleMode::RelativeScore);
+        assert!(!profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn enabled_mbe_requires_target_set_for_oracle_recording() {
+        let empty_targets = PROFILE
+            .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
+            .replace("instances = [\"BurntSushi__ripgrep-2209\"]\n", "");
+        let err = parse_profile(Path::new("profile.toml"), &empty_targets)
+            .expect_err("enabled MBE requires target set");
+        assert!(err.to_string().contains("execution.mbe.enabled"));
     }
 
     #[test]

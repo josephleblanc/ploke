@@ -21,6 +21,8 @@ pub struct Run {
     pub run_picker_report: bool,
     pub artifact_connectivity_report: bool,
     #[cfg(feature = "dev")]
+    pub perf_log: bool,
+    #[cfg(feature = "dev")]
     pub artifact_edges_report: bool,
     #[cfg(feature = "dev")]
     pub inspect_node: Option<String>,
@@ -40,6 +42,7 @@ impl Run {
                 contract_report: args.contract_report,
                 run_picker_report: args.run_picker_report,
                 artifact_connectivity_report: args.artifact_connectivity_report,
+                perf_log: args.perf_log,
                 artifact_edges_report: args.artifact_edges_report,
                 inspect_node: args.inspect_node,
                 artifact_ids_report: args.artifact_ids_report,
@@ -90,6 +93,12 @@ struct Args {
         help = "Print artifact-tree connectivity for all discovered runs without opening the native UI"
     )]
     artifact_connectivity_report: bool,
+
+    #[arg(
+        long,
+        help = "Measure the current app import/projection baseline and write the rolling profiling log"
+    )]
+    perf_log: bool,
 
     #[arg(
         long,

@@ -329,7 +329,9 @@ fn render_parent_create_for_inspector(ui: &mut egui::Ui, inspector: &SelectionIn
 fn render_run_records_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
     match inspector {
         SelectionInspector::RunForestNode(run) => render_run_records(ui, run.run_records.iter()),
-        SelectionInspector::Artifact(_) => kv(ui, "run records", "not_applicable"),
+        SelectionInspector::Artifact(artifact) => {
+            render_run_records(ui, artifact.run_records.iter())
+        }
         SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
     }
 }
@@ -744,6 +746,7 @@ mod tests {
                 value: node.entity_key(),
             }),
             role_badges: Vec::new(),
+            run_records: crate::ui::inspector::RunRecordBranchInspection::empty(),
         };
         let selection = GraphSelectionDetail {
             kind: "artifact".to_owned(),

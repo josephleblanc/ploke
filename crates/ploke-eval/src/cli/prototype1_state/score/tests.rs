@@ -1791,6 +1791,7 @@ fn selection_input(
             instance_id: "instance-a".to_string(),
             parent_metrics: Some(metrics(false, false, 3)),
             child_metrics: Some(metrics(true, true, 1)),
+            oracle_evaluation: None,
             status: "compared".to_string(),
         }],
     )

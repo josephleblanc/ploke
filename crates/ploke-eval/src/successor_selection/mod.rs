@@ -34,6 +34,14 @@ pub(crate) use registry::SelectionRegistry;
 pub(crate) const PROCEDURE_ID: &str = "successor-selection:v1";
 pub(crate) const HISTORY_TRAVERSAL_PROCEDURE_ID: &str = "successor-selection:history-traversal:v1";
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum OracleMode {
+    #[default]
+    RecordOnly,
+    RelativeScore,
+}
+
 /// Build the default first-pass successor decision from available evidence.
 pub(crate) fn decide(input: SelectionInput) -> SuccessorDecision {
     SelectionRegistry::default().decide(input)
@@ -116,6 +124,7 @@ mod tests {
                 instance_id: "instance-a".to_string(),
                 parent_metrics: None,
                 child_metrics: None,
+                oracle_evaluation: None,
                 status: "missing_metrics".to_string(),
             }],
         ));
@@ -242,6 +251,7 @@ mod tests {
                 instance_id: "instance-a".to_string(),
                 parent_metrics: Some(parent),
                 child_metrics: Some(child),
+                oracle_evaluation: None,
                 status: "compared".to_string(),
             }],
         )

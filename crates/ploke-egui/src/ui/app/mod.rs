@@ -100,11 +100,13 @@ impl OperatorApp {
 
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        profiling::scope!("ploke-egui.frame");
         let top_graph_has_content = graph_has_content(&self.graph);
 
         egui::Panel::top("top_strip")
             .default_size(layout::TOP_STRIP_HEIGHT)
             .show_inside(ui, |ui| {
+                profiling::scope!("ploke-egui.frame.top-strip");
                 shell::render_top_strip(
                     ui,
                     self.view.mode(),
@@ -117,6 +119,7 @@ impl eframe::App for OperatorApp {
             .default_size(layout::LEFT_SIDEBAR_WIDTH)
             .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
             .show_inside(ui, |ui| {
+                profiling::scope!("ploke-egui.frame.run-navigation");
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -150,6 +153,7 @@ impl eframe::App for OperatorApp {
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
+                profiling::scope!("ploke-egui.frame.selection-inspector");
                 let selected_inspector = selected_detail
                     .as_ref()
                     .map(|selection| SelectionInspector::from_graph(&self.graph, selection));
@@ -163,6 +167,7 @@ impl eframe::App for OperatorApp {
         egui::Panel::bottom("timeline")
             .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
             .show_inside(ui, |ui| {
+                profiling::scope!("ploke-egui.frame.timeline");
                 shell::render_bottom_timeline(
                     ui,
                     self.view.diagnostics().as_ref(),
@@ -171,6 +176,7 @@ impl eframe::App for OperatorApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            profiling::scope!("ploke-egui.frame.central");
             if graph_has_content {
                 self.view.show(ui, &self.graph);
             } else {
@@ -184,12 +190,14 @@ impl eframe::App for OperatorApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         self.emit_diagnostics(ui.ctx());
+        profiling::finish_frame!();
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl OperatorApp {
     fn render_run_picker(&mut self, ui: &mut egui::Ui) {
+        profiling::scope!("ploke-egui.render-run-picker");
         if let Some(path) = self.run_picker.show(ui) {
             match graph_from_run_root(&path) {
                 Ok(graph) => {
@@ -211,6 +219,10 @@ impl OperatorApp {
     }
 
     fn emit_diagnostics(&mut self, ctx: &egui::Context) {
+        profiling::scope!("ploke-egui.emit-diagnostics");
+        if self.diagnostics_sink.is_none() {
+            return;
+        }
         let Some(diagnostics) = self.view.diagnostics() else {
             return;
         };

@@ -110,6 +110,9 @@ pub struct ArtifactInspection<'g> {
     pub patches: Vec<PatchInspection<'g>>,
     pub parent_create: ParentCreateLookup<'g, 'g>,
     pub role_badges: Vec<Badge<'g>>,
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub run_records: RunRecordBranchInspection<'g>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1021,7 +1024,8 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
             .entry(child.node.node_id.as_str())
             .or_insert(PatchInspection { child });
     }
-    let patches = patches.into_values().collect();
+    let patches: Vec<_> = patches.into_values().collect();
+    let run_records = artifact_run_record_inspection(graph, parent_create, &patches);
 
     SelectionInspector::Artifact(ArtifactInspection {
         sources,
@@ -1030,7 +1034,35 @@ fn artifact_inspection<'g>(graph: &'g ploke_tree::Graph, key: &str) -> Selection
         patches,
         parent_create,
         role_badges: role_badges_for_artifact_node(graph, node),
+        run_records,
     })
+}
+
+fn artifact_run_record_inspection<'g>(
+    graph: &'g ploke_tree::Graph,
+    parent_create: ParentCreateLookup<'g, 'g>,
+    patches: &[PatchInspection<'g>],
+) -> RunRecordBranchInspection<'g> {
+    if let ParentCreateLookup::Attempt(attempt) = parent_create {
+        return RunRecordBranchInspection::from_graph(
+            graph,
+            attempt.child().resolved.branch.branch_id.as_str(),
+        );
+    }
+
+    let mut branch_id = None;
+    for patch in patches {
+        let next = patch.branch_id();
+        match branch_id {
+            None => branch_id = Some(next),
+            Some(current) if current == next => {}
+            Some(_) => return RunRecordBranchInspection::empty(),
+        }
+    }
+
+    branch_id
+        .map(|branch_id| RunRecordBranchInspection::from_graph(graph, branch_id))
+        .unwrap_or_else(RunRecordBranchInspection::empty)
 }
 
 fn snapshot_run_forest<'a, 'g>(
@@ -1133,6 +1165,7 @@ where
         patches,
         parent_create,
         role_badges,
+        run_records,
     } = inspector;
     let source_refs = sources
         .iter()
@@ -1160,7 +1193,7 @@ where
         roles: role_badges,
         metrics: Some(SelectionMetrics::Artifact(artifact_metrics(&sources))),
         parent_create: Some(parent_create_snapshot(parent_create)),
-        run_records: Vec::new(),
+        run_records: run_records.iter().map(run_record_snapshot).collect(),
         incoming: incoming
             .iter()
             .map(|edge| {
@@ -2194,6 +2227,11 @@ mod tests {
         assert_eq!(snapshot.incoming[0].to, "after");
         assert_eq!(snapshot.incoming[1].relation, EdgeRelation::AppliedPatch);
         assert_eq!(snapshot.patches.len(), 1);
+        assert_eq!(snapshot.run_records.len(), 2);
+        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Baseline);
+        assert_eq!(snapshot.run_records[0].tool_call_count, 2);
+        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Treatment);
+        assert_eq!(snapshot.run_records[1].tool_call_count, 3);
         assert_eq!(
             snapshot
                 .parent_create
@@ -2618,7 +2656,75 @@ mod tests {
             },
         );
 
+        let baseline_key = "/runs/artifact-baseline/record.json.gz".to_owned();
+        let treatment_key = "/runs/artifact-treatment/record.json.gz".to_owned();
+        let baseline_record = run_record_fixture("artifact-baseline-run", "nonempty", 2, 1);
+        let treatment_record = run_record_fixture("artifact-treatment-run", "empty", 3, 0);
+        let mut passive_evidence = PassiveEvidence::default();
+        passive_evidence.run_records = Some(RunRecordEvidence {
+            summary: RunRecordSummary {
+                file_count: 2,
+                parsed_count: 2,
+                branch_ref_count: 2,
+                baseline_ref_count: 1,
+                treatment_ref_count: 1,
+                records_with_setup_count: 0,
+                records_with_packaging_count: 2,
+                total_turn_count: 2,
+                total_tool_call_count: 5,
+                failed_tool_call_count: 1,
+            },
+            index: BTreeMap::from([
+                (baseline_key.clone(), baseline_record.clone()),
+                (treatment_key.clone(), treatment_record.clone()),
+            ]),
+            stats: BTreeMap::from([
+                (
+                    baseline_key.clone(),
+                    RunRecordStats::from_record(&baseline_record),
+                ),
+                (
+                    treatment_key.clone(),
+                    RunRecordStats::from_record(&treatment_record),
+                ),
+            ]),
+            refs_by_branch: BTreeMap::from([(
+                "branch-child".to_owned(),
+                vec![
+                    BranchRunRecordRef {
+                        branch_id: "branch-child".to_owned(),
+                        instance_id: "instance-1".to_owned(),
+                        arm: ComparedRunArm::Baseline,
+                        record_key: baseline_key,
+                        record_path: PathBuf::from("/runs/artifact-baseline/record.json.gz"),
+                    },
+                    BranchRunRecordRef {
+                        branch_id: "branch-child".to_owned(),
+                        instance_id: "instance-1".to_owned(),
+                        arm: ComparedRunArm::Treatment,
+                        record_key: treatment_key,
+                        record_path: PathBuf::from("/runs/artifact-treatment/record.json.gz"),
+                    },
+                ],
+            )]),
+        });
+
         ploke_tree::Graph {
+            forest: Some(RunForest {
+                campaign: CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: Vec::new(),
+                nodes: Vec::new(),
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence,
+                diagnostics: Vec::new(),
+            }),
             artifacts: ploke_tree::graph::ArtifactIndex { artifacts },
             candidates: ploke_tree::graph::CandidateIndex {
                 candidates: vec![ploke_tree::graph::CandidateNode {

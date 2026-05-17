@@ -43,6 +43,8 @@ pub(crate) struct RunComparison {
     pub(crate) instance_id: String,
     pub(crate) parent_metrics: Option<OperationalRunMetrics>,
     pub(crate) child_metrics: Option<OperationalRunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_evaluation: Option<crate::mbe::OracleEvaluation>,
     pub(crate) status: String,
 }
 

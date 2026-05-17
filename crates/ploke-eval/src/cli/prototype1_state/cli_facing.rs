@@ -192,7 +192,6 @@ struct Prototype1SetupReport {
     branch_id: String,
     search_policy: Prototype1SearchPolicy,
     run_profile: Option<profile::RunProfileCommitment>,
-    run_control: crate::cli::prototype1_state::run::core::Prototype1RunControl,
 }
 
 fn prepare_prototype1_parent_setup(
@@ -241,10 +240,6 @@ fn prepare_prototype1_parent_setup(
     } else {
         search_policy_from_command(command)?
     };
-    let run_control = crate::cli::prototype1_state::run::core::write_default_run_control(
-        &campaign.manifest_path,
-        &search_policy,
-    )?;
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
         sanitize_batch_component(&campaign.campaign_id)
@@ -305,7 +300,6 @@ fn prepare_prototype1_parent_setup(
         branch_id: identity.branch_id().to_string(),
         search_policy,
         run_profile: admitted_profile.map(|profile| profile.commitment),
-        run_control,
     })
 }
 
@@ -343,11 +337,6 @@ fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
         println!("run_profile: {}", commitment.profile_path.display());
         println!("run_profile_sha256: {}", commitment.sha256);
     }
-    println!(
-        "run_control: {}",
-        crate::cli::prototype1_state::run::core::run_control_path(&report.campaign_manifest)
-            .display()
-    );
     println!();
     println!("next:");
     println!(
@@ -951,6 +940,8 @@ struct Prototype1StateRunShape {
     successor_selection: Prototype1SuccessorSelection,
     successor_selection_seed: u64,
     successor_selection_metrics: Prototype1TraversalMetrics,
+    successor_oracle_mode: crate::successor_selection::OracleMode,
+    successor_oracle_require_evidence: bool,
 }
 
 impl Prototype1StateRunShape {
@@ -961,6 +952,8 @@ impl Prototype1StateRunShape {
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
             successor_selection_metrics: command.successor_selection_metrics,
+            successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
+            successor_oracle_require_evidence: true,
         }
     }
 
@@ -973,6 +966,8 @@ impl Prototype1StateRunShape {
             successor_selection: profile.selection.successor_selection(),
             successor_selection_seed: profile.selection.seed,
             successor_selection_metrics: profile.selection.traversal_metrics(),
+            successor_oracle_mode: profile.selection.oracle_mode(),
+            successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
         }
     }
 
@@ -8223,19 +8218,30 @@ struct ActiveSelectionStrategy {
 }
 
 impl Prototype1SuccessorSelection {
-    fn active_strategy(self, metrics: crate::metric::Inputs) -> ActiveSelectionStrategy {
+    fn active_strategy(
+        self,
+        metrics: crate::metric::Inputs,
+        oracle: crate::successor_selection::OracleMode,
+        require_evidence: bool,
+    ) -> ActiveSelectionStrategy {
         match self {
             Prototype1SuccessorSelection::GenerationLocal => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::CurrentGeneration,
-                traversal: StrategyKind::score_child_prop().with_metrics(metrics),
+                traversal: StrategyKind::score_child_prop()
+                    .with_metrics(metrics)
+                    .with_oracle_policy(oracle, require_evidence),
             },
             Prototype1SuccessorSelection::HistoryFrontierMax => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
-                traversal: StrategyKind::default().with_metrics(metrics),
+                traversal: StrategyKind::default()
+                    .with_metrics(metrics)
+                    .with_oracle_policy(oracle, require_evidence),
             },
             Prototype1SuccessorSelection::HistoryScoreChildProp => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
-                traversal: StrategyKind::score_child_prop().with_metrics(metrics),
+                traversal: StrategyKind::score_child_prop()
+                    .with_metrics(metrics)
+                    .with_oracle_policy(oracle, require_evidence),
             },
         }
     }
@@ -8249,10 +8255,11 @@ pub(crate) fn select_successor_for_profile(
     run_profile: &profile::Prototype1RunProfile,
 ) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
     let metric_inputs = traversal_metric_inputs(run_profile.selection.traversal_metrics());
-    let strategy = run_profile
-        .selection
-        .successor_selection()
-        .active_strategy(metric_inputs);
+    let strategy = run_profile.selection.successor_selection().active_strategy(
+        metric_inputs,
+        run_profile.selection.oracle_mode(),
+        run_profile.selection.oracle_require_evidence(),
+    );
     ParentSelection::new(
         manifest_path,
         parent_identity,
@@ -8463,6 +8470,7 @@ fn current_generation_compared_run_evidence(
         treatment_metrics: row.treatment_metrics.clone(),
         baseline_protocol,
         treatment_protocol,
+        oracle_evaluation: row.oracle_evaluation.clone(),
         diagnostics,
         baseline_run: None,
         treatment_run: None,
@@ -9405,7 +9413,11 @@ impl Prototype1StateCommand {
         }
 
         let metric_inputs = traversal_metric_inputs(run_shape.successor_selection_metrics);
-        let selection_strategy = run_shape.successor_selection.active_strategy(metric_inputs);
+        let selection_strategy = run_shape.successor_selection.active_strategy(
+            metric_inputs,
+            run_shape.successor_oracle_mode,
+            run_shape.successor_oracle_require_evidence,
+        );
         let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
             && children.is_empty()
             && !rejected_surface_attempts.is_empty();
@@ -10554,6 +10566,7 @@ pub(crate) fn selection_input_from_child_report(
             instance_id: instance.instance_id.clone(),
             parent_metrics: instance.baseline_metrics.clone(),
             child_metrics: instance.treatment_metrics.clone(),
+            oracle_evaluation: instance.oracle_evaluation.clone(),
             status: instance.status.clone(),
         })
         .collect();
@@ -11282,7 +11295,6 @@ stop_after = "complete"
         parsed.validate().expect("profile validates");
         let operator = profile::OperatorRunProfile {
             source_path: tmp.path().join("source.toml"),
-            text: profile_text.to_string(),
             profile: parsed,
         };
         profile::admit_run_profile(&manifest_path, &operator).expect("profile admitted");
@@ -11300,6 +11312,11 @@ stop_after = "complete"
             Prototype1TraversalMetrics::OperationalAndProtocol
         );
         assert_eq!(shape.successor_selection_seed, 7);
+        assert_eq!(
+            shape.successor_oracle_mode,
+            crate::successor_selection::OracleMode::RecordOnly
+        );
+        assert!(shape.successor_oracle_require_evidence);
     }
 
     #[test]

@@ -288,6 +288,118 @@ mod tests {
         }
     }
 
+    fn treatment_with_instances(instance_ids: &[&str]) -> Prototype1TreatmentEvidence {
+        Prototype1TreatmentEvidence {
+            baseline_campaign_id: "baseline".to_string(),
+            branch_id: "branch-1".to_string(),
+            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_manifest: PathBuf::from("treatment/campaign.json"),
+            treatment_closure_state_path: PathBuf::from("treatment/closure-state.json"),
+            eval_policy: EvalCampaignPolicy::default(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            instances: instance_ids
+                .iter()
+                .map(|instance_id| {
+                    crate::cli::prototype1_state::cli_facing::Prototype1TreatmentInstanceEvidence {
+                        instance_id: (*instance_id).to_string(),
+                        registration_path: None,
+                        record_path: None,
+                        metrics: None,
+                        oracle_evaluation: None,
+                        status: "complete".to_string(),
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn oracle_evaluation(
+        instance_id: &str,
+        verdict: crate::mbe::Verdict,
+    ) -> crate::mbe::OracleEvaluation {
+        crate::mbe::OracleEvaluation {
+            evidence: crate::mbe::OracleEvidence {
+                report_path: PathBuf::from("mbe/final_report.json"),
+                instance_id: instance_id.to_string(),
+                report_id: format!("BurntSushi/ripgrep:pr-{instance_id}"),
+                verdict,
+            },
+            instance_report_path: PathBuf::from("mbe/report.json"),
+            instance_report: None,
+            diagnostic: crate::mbe::OracleDiagnostic::MissingInstanceReport,
+            usable_for_selection: false,
+        }
+    }
+
+    #[test]
+    fn oracle_attachment_requires_all_configured_targets() {
+        let mut treatment =
+            treatment_with_instances(&["BurntSushi__ripgrep-2209", "BurntSushi__ripgrep-454"]);
+        attach_treatment_oracle_evaluations(
+            &mut treatment,
+            &[
+                "BurntSushi__ripgrep-2209".to_string(),
+                "BurntSushi__ripgrep-454".to_string(),
+            ],
+            vec![oracle_evaluation(
+                "BurntSushi__ripgrep-2209",
+                crate::mbe::Verdict::Resolved,
+            )],
+        )
+        .expect_err("missing configured target is rejected");
+    }
+
+    #[test]
+    fn oracle_attachment_rejects_duplicate_and_unknown_targets() {
+        let mut treatment = treatment_with_instances(&["BurntSushi__ripgrep-2209"]);
+        attach_treatment_oracle_evaluations(
+            &mut treatment,
+            &["BurntSushi__ripgrep-2209".to_string()],
+            vec![
+                oracle_evaluation("BurntSushi__ripgrep-2209", crate::mbe::Verdict::Resolved),
+                oracle_evaluation("BurntSushi__ripgrep-2209", crate::mbe::Verdict::Resolved),
+            ],
+        )
+        .expect_err("duplicate oracle evaluation is rejected");
+
+        let mut treatment = treatment_with_instances(&["BurntSushi__ripgrep-2209"]);
+        attach_treatment_oracle_evaluations(
+            &mut treatment,
+            &["BurntSushi__ripgrep-2209".to_string()],
+            vec![oracle_evaluation(
+                "BurntSushi__ripgrep-454",
+                crate::mbe::Verdict::Resolved,
+            )],
+        )
+        .expect_err("unknown oracle evaluation is rejected");
+    }
+
+    #[test]
+    fn oracle_attachment_attaches_each_configured_target() {
+        let mut treatment = treatment_with_instances(&[
+            "BurntSushi__ripgrep-2209",
+            "BurntSushi__ripgrep-454",
+            "BurntSushi__ripgrep-999",
+        ]);
+        attach_treatment_oracle_evaluations(
+            &mut treatment,
+            &[
+                "BurntSushi__ripgrep-2209".to_string(),
+                "BurntSushi__ripgrep-454".to_string(),
+            ],
+            vec![
+                oracle_evaluation("BurntSushi__ripgrep-2209", crate::mbe::Verdict::Resolved),
+                oracle_evaluation("BurntSushi__ripgrep-454", crate::mbe::Verdict::Unresolved),
+            ],
+        )
+        .expect("oracle evaluations attach");
+
+        assert!(treatment.instances[0].oracle_evaluation.is_some());
+        assert!(treatment.instances[1].oracle_evaluation.is_some());
+        assert!(treatment.instances[2].oracle_evaluation.is_none());
+    }
+
     #[test]
     fn child_instance_target_cache_is_outside_artifact_worktree() {
         let tmp = tempdir().expect("tempdir");
@@ -1016,25 +1128,88 @@ fn maybe_attach_treatment_oracle(
     if !mbe.enabled {
         return Ok(());
     }
+    let target_instances = admitted.profile.target.eval_instances();
+    if target_instances.is_empty() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: "execution.mbe.enabled = true requires target.instance or target.instances"
+                .to_string(),
+        });
+    }
 
+    let target_set = target_instances
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if target_set.len() != target_instances.len() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: "MBE target instance set contains duplicate instance ids".to_string(),
+        });
+    }
+    let mut target_state = treatment_state.clone();
+    target_state
+        .instances
+        .retain(|row| target_set.contains(&row.instance_id));
+    if target_state.instances.len() != target_set.len() {
+        let present = target_state
+            .instances
+            .iter()
+            .map(|row| row.instance_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let missing = target_set
+            .iter()
+            .find(|instance_id| !present.contains(instance_id.as_str()))
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".to_string());
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: format!(
+                "treatment '{}' is missing configured MBE target instance '{}'",
+                treatment.treatment_campaign_id, missing
+            ),
+        });
+    }
     let request = crate::mbe::CohortRequest::from_treatment_state(
         node,
-        treatment_state,
+        &target_state,
         None,
         None,
         treatment_mbe_options(mbe.workers),
     )?;
     let run = request.run_harness(mbe.python)?;
-    attach_treatment_oracle_evaluations(treatment, run.evaluations)
+    attach_treatment_oracle_evaluations(treatment, &target_instances, run.evaluations)
 }
 
 fn attach_treatment_oracle_evaluations(
     treatment: &mut Prototype1TreatmentEvidence,
+    target_instances: &[String],
     evaluations: Vec<crate::mbe::OracleEvaluation>,
 ) -> Result<(), PrepareError> {
+    let target_set = target_instances
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if target_set.is_empty() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: "MBE oracle attachment requires at least one configured target instance"
+                .to_string(),
+        });
+    }
+    if target_set.len() != target_instances.len() {
+        return Err(PrepareError::InvalidMbeRequest {
+            detail: "MBE oracle attachment target set contains duplicate instance ids".to_string(),
+        });
+    }
+
     let mut evaluations_by_instance = std::collections::BTreeMap::new();
     for evaluation in evaluations {
         let instance_id = evaluation.evidence.instance_id.clone();
+        if !target_set.contains(&instance_id) {
+            return Err(PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "treatment '{}' produced oracle evaluation for unknown instance '{}'",
+                    treatment.treatment_campaign_id, instance_id
+                ),
+            });
+        }
         if evaluations_by_instance
             .insert(instance_id.clone(), evaluation)
             .is_some()
@@ -1048,15 +1223,32 @@ fn attach_treatment_oracle_evaluations(
         }
     }
 
+    let mut attached = std::collections::BTreeSet::new();
     for instance in &mut treatment.instances {
-        instance.oracle_evaluation = evaluations_by_instance.remove(&instance.instance_id);
+        if !target_set.contains(&instance.instance_id) {
+            continue;
+        }
+        let Some(evaluation) = evaluations_by_instance.remove(&instance.instance_id) else {
+            return Err(PrepareError::InvalidMbeRequest {
+                detail: format!(
+                    "treatment '{}' is missing oracle evaluation for configured instance '{}'",
+                    treatment.treatment_campaign_id, instance.instance_id
+                ),
+            });
+        };
+        instance.oracle_evaluation = Some(evaluation);
+        attached.insert(instance.instance_id.clone());
     }
 
-    if let Some(unmatched) = evaluations_by_instance.keys().next().cloned() {
+    if let Some(missing) = target_set
+        .iter()
+        .find(|instance_id| !attached.contains(*instance_id))
+        .cloned()
+    {
         return Err(PrepareError::InvalidMbeRequest {
             detail: format!(
-                "treatment '{}' produced oracle evaluation for unknown instance '{}'",
-                treatment.treatment_campaign_id, unmatched
+                "treatment '{}' is missing configured MBE target instance '{}'",
+                treatment.treatment_campaign_id, missing
             ),
         });
     }

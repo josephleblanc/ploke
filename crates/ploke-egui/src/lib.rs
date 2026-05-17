@@ -30,6 +30,8 @@ pub mod demo;
 pub mod diagnostics;
 pub mod import;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod perf;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod run_picker;
 pub mod ui;
 

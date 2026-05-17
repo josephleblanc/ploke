@@ -9,6 +9,7 @@ use crate::ids::{
     ArtifactId, BlockHash, BlockId, CandidateMembershipId, CandidateOccurrenceId, HistoryHash,
     LineageId, PatchId, RecordedAt,
 };
+use crate::oracle;
 use crate::scheduler::NodeRecord;
 use crate::selection;
 
@@ -177,6 +178,8 @@ pub struct ComparedRunEvidenceRecord {
     pub baseline_metrics: Option<RunMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub treatment_metrics: Option<RunMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_evaluation: Option<oracle::Evaluation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_protocol: Option<ProtocolMetricsRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -623,6 +626,14 @@ pub enum TraversalMetricInputsRecord {
     OperationalAndProtocol,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TraversalOracleModeRecord {
+    #[default]
+    RecordOnly,
+    RelativeScore,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TraversalStrategyRecord {
@@ -630,12 +641,20 @@ pub enum TraversalStrategyRecord {
         normalize_frontier: bool,
         #[serde(default)]
         metrics: TraversalMetricInputsRecord,
+        #[serde(default)]
+        oracle: TraversalOracleModeRecord,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
     },
     ScoreChildProp {
         top_m: usize,
         lambda_millis: u32,
         #[serde(default)]
         metrics: TraversalMetricInputsRecord,
+        #[serde(default)]
+        oracle: TraversalOracleModeRecord,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
     },
 }
 
@@ -644,8 +663,14 @@ impl Default for TraversalStrategyRecord {
         Self::FrontierMax {
             normalize_frontier: true,
             metrics: TraversalMetricInputsRecord::default(),
+            oracle: TraversalOracleModeRecord::default(),
+            require_evidence: default_oracle_require_evidence(),
         }
     }
+}
+
+fn default_oracle_require_evidence() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -692,7 +717,7 @@ mod tests {
         GeneratorSourceKindRecord, RequestPayloadHashRecord, RequestPolicyOriginRecord,
         RequestPolicyResponseFormatRecord, SelectionDecisionEntryRecord, SurfaceEvidenceRecord,
         SurfaceProposalProducerRecord, TraversalCandidateSourceRecord, TraversalEvidenceRecord,
-        TraversalMetricInputsRecord, TraversalStrategyRecord,
+        TraversalMetricInputsRecord, TraversalOracleModeRecord, TraversalStrategyRecord,
     };
 
     fn minimal_surface_evidence_value() -> Value {
@@ -754,6 +779,8 @@ mod tests {
                 top_m: 3,
                 lambda_millis: 10_000,
                 metrics: TraversalMetricInputsRecord::OperationalAndProtocol,
+                oracle: TraversalOracleModeRecord::RecordOnly,
+                require_evidence: true,
             }
         );
         assert_eq!(

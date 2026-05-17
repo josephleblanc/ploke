@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::evidence::SelectionInput;
 
 pub mod operational;
+pub mod oracle;
 
 pub(crate) trait Domain {
     fn name(&self) -> DomainName;

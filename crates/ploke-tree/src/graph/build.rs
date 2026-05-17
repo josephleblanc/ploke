@@ -364,10 +364,22 @@ mod tests {
 
         assert_eq!(history_node.entity_key(), "after");
         assert_eq!(passive_node.entity_key(), "after");
-        assert_eq!(history_node.artifact_ids(), std::slice::from_ref(&passive_id));
-        assert_eq!(passive_node.artifact_ids(), std::slice::from_ref(&passive_id));
-        assert_eq!(history_node.artifact_refs(), std::slice::from_ref(&history_ref));
-        assert_eq!(passive_node.artifact_refs(), std::slice::from_ref(&history_ref));
+        assert_eq!(
+            history_node.artifact_ids(),
+            std::slice::from_ref(&passive_id)
+        );
+        assert_eq!(
+            passive_node.artifact_ids(),
+            std::slice::from_ref(&passive_id)
+        );
+        assert_eq!(
+            history_node.artifact_refs(),
+            std::slice::from_ref(&history_ref)
+        );
+        assert_eq!(
+            passive_node.artifact_refs(),
+            std::slice::from_ref(&history_ref)
+        );
         assert_eq!(history_node.tree_keys(), std::slice::from_ref(&tree_key));
         assert_eq!(passive_node.tree_keys(), &[tree_key]);
     }
