@@ -1215,6 +1215,40 @@ mod render_cache_tests {
             assert!(!Arc::ptr_eq(&first, &expanded));
         });
     }
+
+    #[test]
+    fn patch_diff_galleys_keep_natural_height_when_repeated() {
+        use std::fmt::Write as _;
+
+        egui::__run_test_ui(|ui| {
+            let mut diff = String::new();
+            for line in 0..48 {
+                writeln!(&mut diff, "+let value_{line} = {line};").unwrap();
+            }
+            let job = egui::text::LayoutJob::simple(
+                diff,
+                egui::FontId::monospace(12.0),
+                ui.visuals().text_color(),
+                f32::INFINITY,
+            );
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            let content_height = galley.size().y;
+
+            let first = render_diff_galley(ui, ("patch-diff-height", 1), galley.clone());
+            let second = render_diff_galley(ui, ("patch-diff-height", 2), galley);
+
+            assert!(
+                first.rect.height() >= content_height,
+                "first diff frame clipped content height: frame={} content={content_height}",
+                first.rect.height()
+            );
+            assert!(
+                second.rect.height() >= content_height,
+                "second diff frame clipped content height: frame={} content={content_height}",
+                second.rect.height()
+            );
+        });
+    }
 }
 
 #[cfg(all(test, feature = "native-benchmark"))]
@@ -2035,24 +2069,37 @@ fn render_diff(
     ui: &mut egui::Ui,
     patch: PatchInspection<'_>,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
-) {
+) -> egui::Response {
+    let galley = diff_cache.highlighted_patch_galley(ui, patch);
+    render_diff_galley(
+        ui,
+        (
+            "ploke_egui.patch_debug.diff",
+            patch.child.node.node_id.as_str(),
+            patch.patch_id(),
+        ),
+        galley,
+    )
+}
+
+fn render_diff_galley(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    galley: Arc<egui::Galley>,
+) -> egui::Response {
     let width = ui.available_width().max(240.0);
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            egui::ScrollArea::both()
-                .id_salt((
-                    "ploke_egui.patch_debug.diff",
-                    patch.child.node.node_id.as_str(),
-                ))
-                .auto_shrink([false, false])
-                .max_height(320.0)
+            egui::ScrollArea::horizontal()
+                .id_salt(id_salt)
+                .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    let job = diff_cache.highlighted_patch_galley(ui, patch);
                     ui.set_min_width(width);
-                    ui.add(egui::Label::new(job).selectable(true));
+                    ui.add(egui::Label::new(galley).selectable(true));
                 });
-        });
+        })
+        .response
 }
 
 fn first_artifact_source<'g>(
