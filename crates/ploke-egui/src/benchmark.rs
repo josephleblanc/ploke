@@ -26,7 +26,7 @@ use crate::ui::view::GraphViewMode;
 pub const STANDARD_RUN_ROOT: &str =
     "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1";
 
-const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v1";
+const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v2";
 const STANDARD_FRAME_TARGET: usize = 300;
 const TOP_FRAME_LIMIT: usize = 10;
 
@@ -240,7 +240,21 @@ pub struct GitInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirtyState {
     pub dirty: Option<bool>,
+    pub classification: DirtyStateClassification,
+    pub relevant_dirty: Option<bool>,
+    pub paths: Vec<String>,
+    pub relevant_paths: Vec<String>,
+    pub unrelated_paths: Vec<String>,
     pub scope: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirtyStateClassification {
+    Clean,
+    DirtyRelevant,
+    DirtyUnrelated,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -538,12 +552,7 @@ impl BenchmarkController {
             startup: self.startup.clone(),
             scenarios: self.completed.clone(),
             puffin_artifacts,
-            notes: vec![
-                "reporting-only benchmark; no pass/fail thresholds applied".to_owned(),
-                "allocation deltas are process-wide and exclude GPU/driver memory".to_owned(),
-                "puffin captures are local ignored artifacts under crates/ploke-egui/data/"
-                    .to_owned(),
-            ],
+            notes: benchmark_notes(&self.dirty_state),
         };
 
         fs::create_dir_all(&self.config.output_dir)?;
@@ -567,6 +576,21 @@ impl BenchmarkController {
         view.write(&mut file).map_err(io::Error::other)?;
         file_artifact(&path, false)
     }
+}
+
+fn benchmark_notes(dirty_state: &DirtyState) -> Vec<String> {
+    let mut notes = vec![
+        "reporting-only benchmark; no pass/fail thresholds applied".to_owned(),
+        "allocation deltas are process-wide and exclude GPU/driver memory".to_owned(),
+        "puffin captures are local ignored artifacts under crates/ploke-egui/data/".to_owned(),
+    ];
+    if dirty_state.classification == DirtyStateClassification::DirtyUnrelated {
+        notes.push(
+            "git worktree was dirty only outside benchmark-relevant paths at benchmark start"
+                .to_owned(),
+        );
+    }
+    notes
 }
 
 #[derive(Debug)]
@@ -765,12 +789,22 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
     }
     text.push_str(&format!(
         "dirty_state: `{}`\n\n",
-        match report.dirty_state.dirty {
-            Some(true) => "dirty",
-            Some(false) => "clean",
-            None => "unknown",
-        }
+        report.dirty_state.classification.as_str()
     ));
+    if !report.dirty_state.relevant_paths.is_empty() {
+        text.push_str("benchmark-relevant dirty paths:\n");
+        for path in &report.dirty_state.relevant_paths {
+            text.push_str(&format!("- `{path}`\n"));
+        }
+        text.push('\n');
+    }
+    if !report.dirty_state.unrelated_paths.is_empty() {
+        text.push_str("unrelated dirty paths:\n");
+        for path in &report.dirty_state.unrelated_paths {
+            text.push_str(&format!("- `{path}`\n"));
+        }
+        text.push('\n');
+    }
     text.push_str("## Scenarios\n\n");
     for scenario in &report.scenarios {
         text.push_str(&format!(
@@ -822,10 +856,73 @@ fn git_info() -> GitInfo {
 }
 
 fn dirty_state() -> DirtyState {
+    let Some(status) = git_output(["status", "--short"]) else {
+        return DirtyState {
+            dirty: None,
+            classification: DirtyStateClassification::Unknown,
+            relevant_dirty: None,
+            paths: Vec::new(),
+            relevant_paths: Vec::new(),
+            unrelated_paths: Vec::new(),
+            scope: "git status --short at benchmark start".to_owned(),
+        };
+    };
+    let paths = git_status_paths(&status);
+    let relevant_paths: Vec<_> = paths
+        .iter()
+        .filter(|path| is_benchmark_relevant_dirty_path(path))
+        .cloned()
+        .collect();
+    let unrelated_paths: Vec<_> = paths
+        .iter()
+        .filter(|path| !is_benchmark_relevant_dirty_path(path))
+        .cloned()
+        .collect();
+    let dirty = !paths.is_empty();
+    let relevant_dirty = !relevant_paths.is_empty();
+    let classification = match (dirty, relevant_dirty) {
+        (false, _) => DirtyStateClassification::Clean,
+        (true, true) => DirtyStateClassification::DirtyRelevant,
+        (true, false) => DirtyStateClassification::DirtyUnrelated,
+    };
+
     DirtyState {
-        dirty: git_output(["status", "--short"]).map(|status| !status.trim().is_empty()),
-        scope: "git status --short at benchmark start".to_owned(),
+        dirty: Some(dirty),
+        classification,
+        relevant_dirty: Some(relevant_dirty),
+        paths,
+        relevant_paths,
+        unrelated_paths,
+        scope: "git status --short at benchmark start; benchmark-relevant prefixes are Cargo manifests, ploke-egui, ploke-tree, and ploke-records".to_owned(),
     }
+}
+
+impl DirtyStateClassification {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::DirtyRelevant => "dirty_relevant",
+            Self::DirtyUnrelated => "dirty_unrelated",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn git_status_paths(status: &str) -> Vec<String> {
+    status
+        .lines()
+        .filter_map(|line| line.get(3..).map(str::trim))
+        .filter(|path| !path.is_empty())
+        .map(|path| path.split(" -> ").last().unwrap_or(path).to_owned())
+        .collect()
+}
+
+fn is_benchmark_relevant_dirty_path(path: &str) -> bool {
+    path == "Cargo.lock"
+        || path == "Cargo.toml"
+        || path.starts_with("crates/ploke-egui/")
+        || path.starts_with("crates/ploke-tree/")
+        || path.starts_with("crates/ploke-records/")
 }
 
 fn git_output<const N: usize>(args: [&str; N]) -> Option<String> {
@@ -918,6 +1015,11 @@ mod tests {
             },
             dirty_state: DirtyState {
                 dirty: Some(false),
+                classification: DirtyStateClassification::Clean,
+                relevant_dirty: Some(false),
+                paths: Vec::new(),
+                relevant_paths: Vec::new(),
+                unrelated_paths: Vec::new(),
                 scope: "fixture".to_owned(),
             },
             command: "ploke-egui --benchmark-suite standard".to_owned(),
@@ -1009,6 +1111,23 @@ mod tests {
         assert_eq!(top[0].frame_index, 2);
         assert_eq!(top[1].frame_index, 3);
         assert_eq!(top[2].frame_index, 1);
+    }
+
+    #[test]
+    fn dirty_state_path_classification_keeps_docs_unrelated() {
+        let paths = git_status_paths(
+            " M docs/workflow/evalnomicon/drafts/eval/report.md\n?? crates/ploke-egui/tmp.txt\n",
+        );
+
+        assert_eq!(
+            paths,
+            vec![
+                "docs/workflow/evalnomicon/drafts/eval/report.md",
+                "crates/ploke-egui/tmp.txt"
+            ]
+        );
+        assert!(!is_benchmark_relevant_dirty_path(&paths[0]));
+        assert!(is_benchmark_relevant_dirty_path(&paths[1]));
     }
 
     #[test]

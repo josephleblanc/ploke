@@ -122,3 +122,9 @@ Each run writes `README.md` and typed `report.json`. Large `.puffin` captures
 stay local and ignored under
 `crates/ploke-egui/data/profiling/puffin/benchmarks/`; the report records their
 paths, byte sizes, and SHA-256 hashes.
+
+Reports classify git dirtiness at benchmark start as `clean`,
+`dirty_relevant`, `dirty_unrelated`, or `unknown`. `dirty_unrelated` means the
+worktree had changes outside the benchmark-relevant paths recorded in
+`dirty_state.scope`, so the run can still be compared when those unrelated paths
+are understood.
