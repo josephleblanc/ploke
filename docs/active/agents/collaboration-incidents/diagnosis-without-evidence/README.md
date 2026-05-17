@@ -63,3 +63,7 @@ re-ask for a real trace.
   The agent produced allocation benchmark data but had not yet made allocation
   churn, live bytes, top span groups, and callsite-attribution status mandatory
   gates in the reusable `ploke-egui` benchmarking workflow.
+- [`2026-05-17-ploke-egui-allocation-priorities-overclaimed.md`](2026-05-17-ploke-egui-allocation-priorities-overclaimed.md)
+  The agent ranked central graph rendering as the top allocation priority from
+  scoped group presence and code guesses before calculating per-frame byte
+  contribution or separating measured facts from inference.
