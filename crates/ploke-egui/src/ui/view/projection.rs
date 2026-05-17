@@ -8,7 +8,7 @@ use eframe::egui::{Color32, Vec2};
 use petgraph::{
     Directed,
     stable_graph::{NodeIndex, StableGraph},
-    visit::EdgeRef,
+    visit::{EdgeRef, IntoEdgeReferences},
 };
 use ploke_records::ids::ArtifactId;
 use ploke_tree::Graph as DomainGraph;
@@ -17,13 +17,14 @@ use ploke_tree::graph::{
 };
 
 use super::artifact_tree;
-use super::diagnostics::graph_diagnostics;
+use super::diagnostics::{graph_diagnostics, readability_diagnostics};
 use super::edge::GraphEdgeShape;
 use super::node::GraphNodeShape;
 use super::style::{EdgeStyle, ViewStyle};
 use super::{
-    ArtifactTreeFilters, EdgeLabelDiagnostics, GraphConnectivityDiagnostics, GraphSelectionDetail,
-    GraphSelectionRef, GraphViewDiagnostics, GraphViewMode,
+    ArtifactTreeFilters, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
+    GraphReadabilityDiagnostics, GraphSelectionDetail, GraphSelectionRef, GraphViewDiagnostics,
+    GraphViewMode,
 };
 
 pub(super) type WidgetGraph = egui_graphs::Graph<
@@ -52,6 +53,7 @@ pub(super) struct GraphViewCache {
     graph: WidgetGraph,
     connectivity: GraphConnectivityDiagnostics,
     artifact_tree: artifact_tree::Shape,
+    readability: ReadabilityCache,
 }
 
 impl Default for GraphViewCache {
@@ -64,6 +66,7 @@ impl Default for GraphViewCache {
             graph: to_widget_graph(&RawGraph::default(), ViewStyle::default()),
             connectivity: GraphConnectivityDiagnostics::default(),
             artifact_tree: artifact_tree::Shape::default(),
+            readability: ReadabilityCache::default(),
         }
     }
 }
@@ -94,9 +97,11 @@ impl GraphViewCache {
             self.graph = built.graph;
             self.connectivity = built.connectivity;
             self.artifact_tree = built.artifact_tree;
+            self.readability.clear();
         }
         self.mode = mode;
         self.apply_visibility(mode);
+        self.readability.clear();
         true
     }
 
@@ -118,11 +123,18 @@ impl GraphViewCache {
     }
 
     pub(super) fn diagnostics(
-        &self,
+        &mut self,
         viewport_size: Vec2,
         style: ViewStyle,
         edge_labels: EdgeLabelDiagnostics,
     ) -> Option<GraphViewDiagnostics> {
+        let readability = self.readability.get_or_compute(
+            &self.graph,
+            self.signature,
+            style,
+            self.mode,
+            self.filters,
+        );
         graph_diagnostics(
             &self.graph,
             viewport_size,
@@ -131,22 +143,42 @@ impl GraphViewCache {
             self.connectivity,
             self.artifact_tree,
             self.mode,
+            readability,
         )
     }
 
+    pub(super) fn selected_reference(&self) -> Option<&GraphSelectionRef> {
+        self.selected_payload().map(GraphNode::reference)
+    }
+
+    pub(super) fn selected_label(&self) -> Option<&str> {
+        self.selected_payload().map(GraphNode::label)
+    }
+
+    pub(super) fn selected_kind(&self) -> Option<&'static str> {
+        self.selected_payload().map(GraphNode::kind_name)
+    }
+
+    pub(super) fn selected_node(&self) -> Option<(&GraphSelectionRef, &str, &'static str)> {
+        let payload = self.selected_payload()?;
+        Some((payload.reference(), payload.label(), payload.kind_name()))
+    }
+
     pub(super) fn selected_node_detail(&self) -> Option<GraphSelectionDetail> {
-        let selected = self.graph.selected_nodes().first().copied()?;
-        let node = self.graph.g().node_weight(selected)?;
-        let payload = node.payload();
-        if !payload.visible() {
-            return None;
-        }
+        let payload = self.selected_payload()?;
         Some(GraphSelectionDetail {
             kind: payload.kind_name().to_owned(),
             label: payload.label().to_owned(),
             detail: payload.detail().to_owned(),
             reference: payload.reference().clone(),
         })
+    }
+
+    fn selected_payload(&self) -> Option<&GraphNode> {
+        let selected = self.graph.selected_nodes().first().copied()?;
+        let node = self.graph.g().node_weight(selected)?;
+        let payload = node.payload();
+        payload.visible().then_some(payload)
     }
 
     fn apply_visibility(&mut self, mode: GraphViewMode) {
@@ -262,6 +294,97 @@ impl GraphViewCache {
             .collect::<Vec<_>>();
         edges.sort_unstable();
         edges
+    }
+
+    #[cfg(test)]
+    fn readability_rebuilds(&self) -> usize {
+        self.readability.rebuilds
+    }
+}
+
+#[derive(Debug, Default)]
+struct ReadabilityCache {
+    key: Option<ReadabilityKey>,
+    value: GraphReadabilityDiagnostics,
+    rebuilds: usize,
+}
+
+impl ReadabilityCache {
+    fn clear(&mut self) {
+        self.key = None;
+    }
+
+    fn get_or_compute(
+        &mut self,
+        graph: &WidgetGraph,
+        signature: Option<GraphSignature>,
+        style: ViewStyle,
+        mode: GraphViewMode,
+        filters: ArtifactTreeFilters,
+    ) -> GraphReadabilityDiagnostics {
+        let key = ReadabilityKey {
+            signature,
+            style,
+            mode,
+            filters,
+            layout: readability_layout_fingerprint(graph),
+        };
+        if self.key.as_ref() != Some(&key) {
+            self.value = readability_diagnostics(graph, style);
+            self.key = Some(key);
+            self.rebuilds += 1;
+        }
+        self.value
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReadabilityKey {
+    signature: Option<GraphSignature>,
+    style: ViewStyle,
+    mode: GraphViewMode,
+    filters: ArtifactTreeFilters,
+    layout: u64,
+}
+
+fn readability_layout_fingerprint(graph: &WidgetGraph) -> u64 {
+    let mut state = DefaultHasher::new();
+    for node in graph.g().node_indices() {
+        node.index().hash(&mut state);
+        if let Some(weight) = graph.g().node_weight(node) {
+            let payload = weight.payload();
+            payload.visible().hash(&mut state);
+            payload.filter_visible().hash(&mut state);
+            let location = weight.location();
+            location.x.to_bits().hash(&mut state);
+            location.y.to_bits().hash(&mut state);
+        }
+    }
+    for edge in graph.g().edge_references() {
+        edge.source().index().hash(&mut state);
+        edge.target().index().hash(&mut state);
+        let payload = edge.weight().payload();
+        payload.visible().hash(&mut state);
+        payload.filter_visible.hash(&mut state);
+        edge_kind_id(payload.kind).hash(&mut state);
+        edge_pattern_id(payload.pattern).hash(&mut state);
+        payload.color.to_array().hash(&mut state);
+    }
+    state.finish()
+}
+
+fn edge_kind_id(kind: ViewEdgeKind) -> u8 {
+    match kind {
+        ViewEdgeKind::ArtifactPatch => 0,
+        #[cfg(test)]
+        ViewEdgeKind::HistoryArtifact => 1,
+    }
+}
+
+fn edge_pattern_id(pattern: EdgePattern) -> u8 {
+    match pattern {
+        EdgePattern::Solid => 0,
+        EdgePattern::Dotted => 1,
     }
 }
 
@@ -1727,6 +1850,38 @@ mod tests {
                 .node_weights()
                 .any(|node| { node.payload().detail().contains("artifact:old-child") })
         );
+    }
+
+    #[test]
+    fn readability_diagnostics_reuse_cache_on_stable_frames() {
+        let style = ViewStyle::default();
+        let graph = graph_with_selected_successor("artifact:parent", "artifact:child", 3);
+        let mut cache = GraphViewCache::default();
+
+        assert!(cache.refresh(
+            &graph,
+            style,
+            GraphViewMode::ArtifactTree,
+            ArtifactTreeFilters::default(),
+        ));
+        assert_eq!(cache.readability_rebuilds(), 0);
+
+        let viewport = eframe::egui::Vec2::new(800.0, 600.0);
+        let edge_labels = crate::ui::view::EdgeLabelDiagnostics::default();
+        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert_eq!(cache.readability_rebuilds(), 1);
+        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert_eq!(cache.readability_rebuilds(), 1);
+
+        let first = cache
+            .graph
+            .g()
+            .node_indices()
+            .next()
+            .expect("projected node");
+        cache.graph.g_mut()[first].set_location(eframe::egui::Pos2::new(20.0, 20.0));
+        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert_eq!(cache.readability_rebuilds(), 2);
     }
 
     fn count_nodes(projected: &super::ProjectedGraph, kind: &str) -> usize {

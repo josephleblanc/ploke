@@ -84,6 +84,27 @@ impl GraphView {
         self.cache.selected_node_detail()
     }
 
+    pub fn selected_reference(&mut self, graph: &DomainGraph) -> Option<&GraphSelectionRef> {
+        self.sync_projection(graph);
+        self.cache.selected_reference()
+    }
+
+    pub fn selected_label(&self) -> Option<&str> {
+        self.cache.selected_label()
+    }
+
+    pub fn selected_kind(&self) -> Option<&'static str> {
+        self.cache.selected_kind()
+    }
+
+    pub fn selected_node(
+        &mut self,
+        graph: &DomainGraph,
+    ) -> Option<(&GraphSelectionRef, &str, &'static str)> {
+        self.sync_projection(graph);
+        self.cache.selected_node()
+    }
+
     pub fn mode(&self) -> GraphViewMode {
         self.mode
     }

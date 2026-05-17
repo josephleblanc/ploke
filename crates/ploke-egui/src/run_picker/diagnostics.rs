@@ -47,8 +47,8 @@ impl RunPicker {
                         name: entry.name.clone(),
                         selected_label_chars: selected_label.chars().count(),
                         menu_label_chars: menu_label.chars().count(),
-                        selected_label,
-                        menu_label,
+                        selected_label: selected_label.to_owned(),
+                        menu_label: menu_label.to_owned(),
                     }
                 })
                 .collect(),

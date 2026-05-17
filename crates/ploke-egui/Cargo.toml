@@ -15,6 +15,7 @@ egui_graphs = "0.30"
 itoa = "1"
 petgraph = { version = "0.8", default-features = false, features = ["stable_graph"] }
 profiling = { version = "=1.0.17", default-features = false }
+puffin = { version = "=0.19.1", default-features = false, features = ["serialization"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 similar = "2"
@@ -38,7 +39,7 @@ web-sys = { version = "0.3.98", features = [
 [features]
 default = []
 dev = ["dep:clap"]
-profile-with-puffin = ["profiling/profile-with-puffin"]
+profile-with-puffin = ["profiling/profile-with-puffin", "dep:puffin"]
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

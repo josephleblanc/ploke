@@ -14,6 +14,16 @@ backend feature:
 cargo run -p ploke-egui --features "dev profile-with-puffin" -- --run-root <RUN_ROOT>
 ```
 
+That only enables Puffin collection while the app is running. To persist a
+Puffin capture and a text summary, use:
+
+```sh
+cargo run -p ploke-egui --features "dev profile-with-puffin" -- \
+  --run-root <RUN_ROOT> \
+  --puffin-capture-frames 300 \
+  --puffin-capture-close
+```
+
 ## Instrumented Surfaces
 
 The current first-pass scopes cover:
@@ -26,6 +36,29 @@ The current first-pass scopes cover:
 - artifact-tree projection and widget-graph conversion
 
 The frame path calls `profiling::finish_frame!()` once per egui frame.
+
+## Puffin Captures
+
+`--puffin-capture-frames <N>` turns Puffin scopes on, attaches a
+`puffin::GlobalFrameView`, waits until at least `N` frames are collected, then
+writes a rolling five-slot capture set:
+
+- `crates/ploke-egui/data/profiling/puffin/latest.puffin`
+- `crates/ploke-egui/data/profiling/puffin/latest.txt`
+- `crates/ploke-egui/data/profiling/puffin/runs/01.puffin` through `05.puffin`
+- `crates/ploke-egui/data/profiling/puffin/runs/01.txt` through `05.txt`
+
+The `.puffin` files are Puffin's own capture format. The `.txt` files are a
+small comparison summary with frame count and min/median/p95/max frame times.
+
+Current capture target:
+
+```sh
+cargo run -p ploke-egui --features "dev profile-with-puffin" -- \
+  --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 \
+  --puffin-capture-frames 300 \
+  --puffin-capture-close
+```
 
 ## Rolling Logs
 

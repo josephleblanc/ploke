@@ -1,9 +1,87 @@
 //! Render-boundary diff formatting and highlighting for patch inspection.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use eframe::egui;
 use egui::text::{LayoutJob, TextFormat};
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 use similar::TextDiff;
+
+use crate::ui::inspector::PatchInspection;
+
+#[derive(Debug, Default)]
+pub(crate) struct PatchDiffCache {
+    entries: BTreeMap<PatchDiffKey, Arc<LayoutJob>>,
+    rebuilds: usize,
+}
+
+impl PatchDiffCache {
+    pub(crate) fn highlighted_patch_job(
+        &mut self,
+        ui: &egui::Ui,
+        patch: PatchInspection<'_>,
+    ) -> Arc<LayoutJob> {
+        self.highlighted_job(
+            ui,
+            PatchDiffInput {
+                patch_id: patch.patch_id(),
+                target_relpath: patch.target_relpath(),
+                source_hash: patch.source_content_hash(),
+                proposed_hash: patch.proposed_content_hash(),
+                source_content: patch.source_content(),
+                proposed_content: patch.proposed_content(),
+            },
+        )
+    }
+
+    fn highlighted_job(&mut self, ui: &egui::Ui, input: PatchDiffInput<'_>) -> Arc<LayoutJob> {
+        let key = PatchDiffKey {
+            patch_id: input.patch_id.to_owned(),
+            target_relpath: input.target_relpath.to_owned(),
+            source_hash: input.source_hash.to_owned(),
+            proposed_hash: input.proposed_hash.to_owned(),
+            dark_mode: ui.visuals().dark_mode,
+        };
+        if let Some(job) = self.entries.get(&key) {
+            return job.clone();
+        }
+
+        let diff = unified_rust_diff(
+            input.target_relpath,
+            input.source_content,
+            input.proposed_content,
+        );
+        let job = Arc::new(highlighted_diff_job(ui, diff.as_str(), f32::INFINITY));
+        self.entries.insert(key, job.clone());
+        self.rebuilds += 1;
+        job
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rebuilds(&self) -> usize {
+        self.rebuilds
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PatchDiffInput<'a> {
+    patch_id: &'a str,
+    target_relpath: &'a str,
+    source_hash: &'a str,
+    proposed_hash: &'a str,
+    source_content: &'a str,
+    proposed_content: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PatchDiffKey {
+    patch_id: String,
+    target_relpath: String,
+    source_hash: String,
+    proposed_hash: String,
+    dark_mode: bool,
+}
 
 pub(crate) fn unified_rust_diff(path: &str, before: &str, after: &str) -> String {
     let header_a = format!("a/{path}");
@@ -153,7 +231,9 @@ fn diff_line_style(line: &str, ui: &egui::Ui) -> (egui::Color32, egui::Color32) 
 
 #[cfg(test)]
 mod tests {
-    use super::unified_rust_diff;
+    use eframe::egui;
+
+    use super::{PatchDiffCache, PatchDiffInput, unified_rust_diff};
 
     #[test]
     fn unified_rust_diff_uses_git_style_file_headers() {
@@ -164,5 +244,40 @@ mod tests {
         assert!(diff.contains("+++ b/src/lib.rs"));
         assert!(diff.contains("-fn a() {}"));
         assert!(diff.contains("+fn b() {}"));
+    }
+
+    #[test]
+    fn patch_diff_cache_invalidates_on_hash_or_theme_change() {
+        let mut cache = PatchDiffCache::default();
+
+        egui::__run_test_ui(|ui| {
+            let first = PatchDiffInput {
+                patch_id: "patch:1",
+                target_relpath: "src/lib.rs",
+                source_hash: "sha256:source-a",
+                proposed_hash: "sha256:proposed-a",
+                source_content: "fn a() {}\n",
+                proposed_content: "fn b() {}\n",
+            };
+            cache.highlighted_job(ui, first);
+            assert_eq!(cache.rebuilds(), 1);
+
+            cache.highlighted_job(ui, first);
+            assert_eq!(cache.rebuilds(), 1);
+
+            cache.highlighted_job(
+                ui,
+                PatchDiffInput {
+                    source_hash: "sha256:source-b",
+                    source_content: "fn c() {}\n",
+                    ..first
+                },
+            );
+            assert_eq!(cache.rebuilds(), 2);
+
+            ui.visuals_mut().dark_mode = !ui.visuals().dark_mode;
+            cache.highlighted_job(ui, first);
+            assert_eq!(cache.rebuilds(), 3);
+        });
     }
 }

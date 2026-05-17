@@ -73,6 +73,10 @@ impl RunPicker {
         })
     }
 
+    pub fn selected_run_name(&self) -> Option<&str> {
+        self.selected_entry().map(|entry| entry.name.as_str())
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
         let mut selected_path = None;
 
@@ -87,16 +91,15 @@ impl RunPicker {
             .selected
             .and_then(|index| self.entries.get(index))
             .map(RunEntry::selected_label)
-            .unwrap_or_else(|| "Select run".to_owned());
+            .unwrap_or("Select run");
 
         egui::ComboBox::from_id_salt("ploke-egui.run-picker")
             .width(ui.available_width().min(layout::LEFT_SIDEBAR_WIDTH))
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 for (index, entry) in self.entries.iter().enumerate() {
-                    let label = entry.menu_label();
                     if ui
-                        .selectable_label(self.selected == Some(index), label)
+                        .selectable_label(self.selected == Some(index), entry.menu_label())
                         .clicked()
                     {
                         selected_path = Some(entry.path.clone());
@@ -173,18 +176,40 @@ struct RunEntry {
     modified: Option<SystemTime>,
     summary: Option<RunSummary>,
     error: Option<String>,
+    selected_label: String,
+    menu_label: String,
 }
 
 impl RunEntry {
-    fn selected_label(&self) -> String {
-        elide_middle(&self.name, RUN_NAME_MAX_CHARS)
+    fn new(
+        name: String,
+        path: PathBuf,
+        modified: Option<SystemTime>,
+        summary: Option<RunSummary>,
+        error: Option<String>,
+    ) -> Self {
+        let selected_label = elide_middle(&name, RUN_NAME_MAX_CHARS);
+        let menu_label = match &summary {
+            Some(summary) => format!("{}  |  {}", name, summary.compact()),
+            None => format!("{name}  |  unreadable"),
+        };
+        Self {
+            name,
+            path,
+            modified,
+            summary,
+            error,
+            selected_label,
+            menu_label,
+        }
     }
 
-    fn menu_label(&self) -> String {
-        match &self.summary {
-            Some(summary) => format!("{}  |  {}", self.name, summary.compact()),
-            None => format!("{}  |  unreadable", self.name),
-        }
+    fn selected_label(&self) -> &str {
+        self.selected_label.as_str()
+    }
+
+    fn menu_label(&self) -> &str {
+        self.menu_label.as_str()
     }
 
     fn show_summary(&self, ui: &mut egui::Ui) {
@@ -205,36 +230,40 @@ impl RunEntry {
 
 #[derive(Debug, Clone)]
 struct RunSummary {
-    artifacts: usize,
-    history_blocks: usize,
-    candidates: usize,
+    primary_line: String,
+    secondary_line: String,
+    compact: String,
 }
 
 impl RunSummary {
     fn from_graph(graph: &Graph) -> Self {
+        Self::from_counts(
+            graph.artifacts.artifacts.len(),
+            graph.history.blocks.len(),
+            graph.candidates.candidates.len(),
+        )
+    }
+
+    fn from_counts(artifacts: usize, history_blocks: usize, candidates: usize) -> Self {
         Self {
-            artifacts: graph.artifacts.artifacts.len(),
-            history_blocks: graph.history.blocks.len(),
-            candidates: graph.candidates.candidates.len(),
+            primary_line: format!("{artifacts} artifacts"),
+            secondary_line: format!("{history_blocks} history | {candidates} candidates"),
+            compact: format!(
+                "{artifacts} artifacts, {history_blocks} history, {candidates} candidates"
+            ),
         }
     }
 
-    fn primary_line(&self) -> String {
-        format!("{} artifacts", self.artifacts)
+    fn primary_line(&self) -> &str {
+        self.primary_line.as_str()
     }
 
-    fn secondary_line(&self) -> String {
-        format!(
-            "{} history | {} candidates",
-            self.history_blocks, self.candidates
-        )
+    fn secondary_line(&self) -> &str {
+        self.secondary_line.as_str()
     }
 
-    fn compact(&self) -> String {
-        format!(
-            "{} artifacts, {} history, {} candidates",
-            self.artifacts, self.history_blocks, self.candidates
-        )
+    fn compact(&self) -> &str {
+        self.compact.as_str()
     }
 }
 
@@ -266,13 +295,7 @@ fn discover_runs(root: &Path) -> Result<Vec<RunEntry>, std::io::Error> {
             Err(error) => (None, Some(error.to_string())),
         };
 
-        entries.push(RunEntry {
-            name,
-            path,
-            modified,
-            summary,
-            error,
-        });
+        entries.push(RunEntry::new(name, path, modified, summary, error));
     }
 
     entries.sort_by(|left, right| {
@@ -349,17 +372,13 @@ mod tests {
 
     #[test]
     fn selected_label_keeps_sidebar_text_compact() {
-        let entry = RunEntry {
-            name: "p1-smoke-3x4-edit-surface-20260510-4".to_owned(),
-            path: PathBuf::from("prototype1"),
-            modified: None,
-            summary: Some(RunSummary {
-                artifacts: 26,
-                history_blocks: 5,
-                candidates: 0,
-            }),
-            error: None,
-        };
+        let entry = RunEntry::new(
+            "p1-smoke-3x4-edit-surface-20260510-4".to_owned(),
+            PathBuf::from("prototype1"),
+            None,
+            Some(RunSummary::from_counts(26, 5, 0)),
+            None,
+        );
 
         assert_eq!(entry.selected_label().chars().count(), RUN_NAME_MAX_CHARS);
         assert!(!entry.selected_label().contains("artifacts"));
@@ -368,15 +387,15 @@ mod tests {
 
     #[test]
     fn unreadable_menu_label_excludes_full_error() {
-        let entry = RunEntry {
-            name: "p1-error-run".to_owned(),
-            path: PathBuf::from("prototype1"),
-            modified: None,
-            summary: None,
-            error: Some(
+        let entry = RunEntry::new(
+            "p1-error-run".to_owned(),
+            PathBuf::from("prototype1"),
+            None,
+            None,
+            Some(
                 "failed to parse /very/long/path/node.json: expected struct NodeRecord".to_owned(),
             ),
-        };
+        );
 
         assert_eq!(entry.menu_label(), "p1-error-run  |  unreadable");
         assert!(!entry.menu_label().contains("/very/long/path"));

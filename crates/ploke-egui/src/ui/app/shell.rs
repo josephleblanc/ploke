@@ -2,19 +2,16 @@
 
 use eframe::egui;
 
-use crate::ui::diff;
 use crate::ui::id_display;
 use crate::ui::id_display::TraceId;
 use crate::ui::inspector::{
-    ArtifactInspection, PatchInspection, RunForestNodeInspection, RunRecordInspection,
-    SelectionEdge, SelectionInspector, SourceRef, UnavailableReason, artifact_edges,
-    artifact_metrics, artifact_source_refs, phase_label, result_class_label,
-    run_forest_artifact_edges, run_forest_incoming_edges, run_forest_node_identity,
-    run_forest_outgoing_edges, run_forest_source_refs, surface_apply_status_label,
+    ArtifactSourceSlot, BadgeSlot, IdentitySlot, InspectorSections, MetricsSlot, PatchInspection,
+    RunRecordInspection, SelectionEdge, SourceRef, UnavailableReason, find_run_forest_node,
+    phase_label, result_class_label, run_forest_node_identity, surface_apply_status_label,
     surface_check_status_label,
 };
-use crate::ui::text::decor::Badge;
-use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics, GraphViewMode};
+use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
+use ploke_tree::Graph;
 use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
 use std::path::Path;
 
@@ -41,8 +38,11 @@ pub(crate) fn render_top_strip(
 
 pub(crate) fn render_right_inspector(
     ui: &mut egui::Ui,
-    selection: Option<&GraphSelectionDetail>,
-    inspector: Option<&SelectionInspector<'_>>,
+    graph: &Graph,
+    selection_kind: Option<&str>,
+    selection_label: Option<&str>,
+    sections: Option<&InspectorSections>,
+    diff_cache: &mut crate::ui::diff::PatchDiffCache,
 ) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -51,33 +51,33 @@ pub(crate) fn render_right_inspector(
             ui.separator();
 
             ui.label("Summary");
-            if let Some(selection) = selection {
-                kv(ui, "kind", selection.kind.as_str());
-                kv(ui, "label", selection.label.as_str());
+            if let (Some(kind), Some(label)) = (selection_kind, selection_label) {
+                kv(ui, "kind", kind);
+                kv(ui, "label", label);
             } else {
                 kv(ui, "selection", "not_applicable");
             }
 
             ui.separator();
             ui.label("Identity");
-            if let Some(inspector) = inspector {
-                render_identity(ui, inspector);
+            if let Some(sections) = sections {
+                render_identity(ui, graph, sections);
             } else {
                 kv(ui, "record refs", "not_applicable");
             }
 
             ui.separator();
             ui.label("Roles");
-            if let Some(inspector) = inspector {
-                render_roles_and_metrics(ui, inspector);
+            if let Some(sections) = sections {
+                render_roles_and_metrics(ui, graph, sections);
             } else {
                 kv(ui, "roles", "not_applicable");
             }
 
             ui.separator();
             ui.label("Patch Generation");
-            if let Some(inspector) = inspector {
-                render_parent_create_for_inspector(ui, inspector);
+            if let Some(sections) = sections {
+                render_parent_create_for_inspector(ui, graph, sections);
             } else {
                 kv(ui, "attempt", "not_applicable");
             }
@@ -86,8 +86,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Run Records")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_run_records_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_run_records_for_inspector(ui, graph, sections);
                     } else {
                         kv(ui, "run records", "not_applicable");
                     }
@@ -97,8 +97,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Graph edges")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_graph_edges_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_graph_edges_for_inspector(ui, sections);
                     } else {
                         kv(ui, "edges", "not_applicable");
                     }
@@ -108,8 +108,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Artifact edges")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_artifact_edges_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_artifact_edges_for_inspector(ui, sections);
                     } else {
                         kv(ui, "artifact edges", "not_applicable");
                     }
@@ -119,8 +119,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Patch Debug")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_patches_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_patches_for_inspector(ui, graph, sections, diff_cache);
                     } else {
                         kv(ui, "patch", "not_applicable");
                     }
@@ -130,8 +130,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Source refs")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_source_refs_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_source_refs_for_inspector(ui, graph, sections);
                     } else {
                         kv(ui, "record refs", "not_applicable");
                     }
@@ -141,8 +141,8 @@ pub(crate) fn render_right_inspector(
             egui::CollapsingHeader::new("Artifact Ids")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if let Some(inspector) = inspector {
-                        render_artifact_ids_for_inspector(ui, inspector);
+                    if let Some(sections) = sections {
+                        render_artifact_ids_for_inspector(ui, graph, sections);
                     } else {
                         kv(ui, "artifact ids", "not_applicable");
                     }
@@ -153,7 +153,7 @@ pub(crate) fn render_right_inspector(
 pub(crate) fn render_bottom_timeline(
     ui: &mut egui::Ui,
     diagnostics: Option<&GraphViewDiagnostics>,
-    selection: Option<&GraphSelectionDetail>,
+    selection_synced: bool,
 ) {
     ui.horizontal(|ui| {
         ui.label("Timeline");
@@ -169,7 +169,7 @@ pub(crate) fn render_bottom_timeline(
         ui.separator();
         ui.label(format!(
             "selection={}",
-            if selection.is_some() {
+            if selection_synced {
                 "synced"
             } else {
                 "not_applicable"
@@ -196,12 +196,13 @@ fn kv_path(ui: &mut egui::Ui, key: &str, path: &Path) {
     kv(ui, key, path.to_str().unwrap_or("non_utf8_path"));
 }
 
-fn render_badges(ui: &mut egui::Ui, badges: &[Badge<'_>]) {
+fn render_badges(ui: &mut egui::Ui, badges: &[BadgeSlot]) {
     if badges.is_empty() {
         kv(ui, "none", "not_applicable");
         return;
     }
-    for badge in badges {
+    for slot in badges {
+        let badge = slot.badge();
         ui.horizontal(|ui| {
             let badge_text = badge.to_badge_text();
             let artifact_id = badge_text.artifact_id();
@@ -215,16 +216,27 @@ fn render_badges(ui: &mut egui::Ui, badges: &[Badge<'_>]) {
     }
 }
 
-fn render_identity(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => render_run_forest_identity(ui, run),
-        SelectionInspector::Artifact(artifact) => render_artifact_identity(ui, artifact),
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_identity(ui: &mut egui::Ui, graph: &Graph, sections: &InspectorSections) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
+    }
+
+    match sections.identity() {
+        Some(IdentitySlot::RunForestNode { node_key }) => {
+            if let Some(node) = find_run_forest_node(graph, node_key) {
+                render_run_forest_identity(ui, node);
+            } else {
+                kv(ui, "run forest node", "not_found");
+            }
+        }
+        Some(IdentitySlot::Artifact { sources }) => render_artifact_identity(ui, graph, sources),
+        None => kv(ui, "identity", "not_available"),
     }
 }
 
-fn render_run_forest_identity(ui: &mut egui::Ui, run: &RunForestNodeInspection<'_>) {
-    let identity = run_forest_node_identity(run.node);
+fn render_run_forest_identity(ui: &mut egui::Ui, node: &ploke_tree::TreeNode) {
+    let identity = run_forest_node_identity(node);
     kv(ui, "run forest node", identity.node_key);
     kv(ui, "candidate", identity.candidate_id);
     kv(ui, "source artifact", identity.source_artifact);
@@ -254,9 +266,8 @@ fn render_run_forest_identity(ui: &mut egui::Ui, run: &RunForestNodeInspection<'
 
 /// archaeology:artifact-identity
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
-fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
-    let identity = artifact.identity();
-    if let Some(artifact_id) = identity.primary_artifact_id() {
+fn render_artifact_identity(ui: &mut egui::Ui, graph: &Graph, sources: &[ArtifactSourceSlot]) {
+    if let Some(artifact_id) = primary_artifact_id(graph, sources) {
         render_fixed_id_row(
             ui,
             "artifact",
@@ -266,7 +277,7 @@ fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>
         return;
     }
 
-    if let Some(artifact_ref) = identity.artifact_refs().next() {
+    if let Some(artifact_ref) = primary_artifact_ref(graph, sources) {
         render_fixed_id_row(
             ui,
             "artifact",
@@ -276,64 +287,82 @@ fn render_artifact_identity(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>
         return;
     }
 
-    kv(ui, "artifact", identity.artifact());
+    kv(ui, "artifact", artifact_label(graph, sources));
 }
 
-fn render_roles_and_metrics(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => {
-            render_badges(ui, &run.role_badges);
-            render_run_forest_metrics(ui, run);
+fn render_roles_and_metrics(ui: &mut egui::Ui, graph: &Graph, sections: &InspectorSections) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
+    }
+
+    render_badges(ui, sections.roles());
+    match sections.metrics() {
+        Some(MetricsSlot::RunForestNode { node_key }) => {
+            if let Some(node) = find_run_forest_node(graph, node_key) {
+                render_run_forest_metrics(ui, node);
+            }
         }
-        SelectionInspector::Artifact(artifact) => {
-            render_badges(ui, &artifact.role_badges);
-            render_artifact_metrics(ui, artifact);
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+        Some(MetricsSlot::Artifact { sources }) => render_artifact_metrics(ui, graph, sources),
+        None => {}
     }
 }
 
-fn render_run_forest_metrics(ui: &mut egui::Ui, run: &RunForestNodeInspection<'_>) {
+fn render_run_forest_metrics(ui: &mut egui::Ui, node: &ploke_tree::TreeNode) {
     ui.horizontal(|ui| {
         ui.label("generation");
-        ui.monospace(run.node.generation.to_string());
+        ui.monospace(node.generation.to_string());
     });
     ui.horizontal(|ui| {
         ui.label("child run forest nodes");
-        ui.monospace(run.children.len().to_string());
+        ui.monospace(node.children.len().to_string());
     });
 }
 
-fn render_artifact_metrics(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
-    let metrics = artifact_metrics(&artifact.sources);
+fn render_artifact_metrics(ui: &mut egui::Ui, graph: &Graph, sources: &[ArtifactSourceSlot]) {
     ui.horizontal(|ui| {
         ui.label("source records");
-        ui.monospace(metrics.source_records.to_string());
+        ui.monospace(artifact_source_count(graph, sources).to_string());
     });
     ui.horizontal(|ui| {
         ui.label("evidence refs");
-        ui.monospace(metrics.evidence_refs.to_string());
+        ui.monospace(artifact_evidence_count(graph, sources).to_string());
     });
 }
 
-fn render_parent_create_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => render_parent_create(ui, run.parent_create),
-        SelectionInspector::Artifact(artifact) => render_parent_create(ui, artifact.parent_create),
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_parent_create_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
+    }
+    match sections.parent_create() {
+        Some(slot) => render_parent_create(ui, slot.resolve(graph)),
+        None => kv(ui, "attempt", "not_available"),
     }
 }
 
 /// archaeology:run-record-branch-output
 /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
-fn render_run_records_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => render_run_records(ui, run.run_records.iter()),
-        SelectionInspector::Artifact(artifact) => {
-            render_run_records(ui, artifact.run_records.iter())
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_run_records_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
     }
+    render_run_records(
+        ui,
+        sections
+            .run_records()
+            .iter()
+            .filter_map(|slot| slot.resolve(graph)),
+    );
 }
 
 fn render_run_records<'a>(
@@ -411,126 +440,159 @@ fn patch_projection_check_state_label(
     }
 }
 
-fn render_graph_edges_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => {
-            render_edges(ui, "in", run_forest_incoming_edges(run));
-            render_edges(ui, "out", run_forest_outgoing_edges(run));
-        }
-        SelectionInspector::Artifact(artifact) => {
-            render_edges(ui, "in", artifact_edges(&artifact.incoming));
-            render_edges(ui, "out", artifact_edges(&artifact.outgoing));
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_graph_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSections) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
     }
+    render_edges(
+        ui,
+        "in",
+        sections.graph_edges_in().iter().map(|slot| slot.edge()),
+    );
+    render_edges(
+        ui,
+        "out",
+        sections.graph_edges_out().iter().map(|slot| slot.edge()),
+    );
 }
 
-fn render_artifact_edges_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => {
-            render_edges(ui, "in", std::iter::empty());
-            render_edges(ui, "out", run_forest_artifact_edges(run.node));
-        }
-        SelectionInspector::Artifact(artifact) => {
-            render_edges(ui, "in", artifact_edges(&artifact.incoming));
-            render_edges(ui, "out", artifact_edges(&artifact.outgoing));
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_artifact_edges_for_inspector(ui: &mut egui::Ui, sections: &InspectorSections) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
     }
+    render_edges(
+        ui,
+        "in",
+        sections.artifact_edges_in().iter().map(|slot| slot.edge()),
+    );
+    render_edges(
+        ui,
+        "out",
+        sections.artifact_edges_out().iter().map(|slot| slot.edge()),
+    );
 }
 
-fn render_patches_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => render_patches(ui, run.patch.iter().copied()),
-        SelectionInspector::Artifact(artifact) => {
-            render_patches(ui, artifact.patches.iter().copied());
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_patches_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+    diff_cache: &mut crate::ui::diff::PatchDiffCache,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
     }
+    render_patches(
+        ui,
+        sections
+            .patches()
+            .iter()
+            .filter_map(|slot| slot.resolve(graph)),
+        diff_cache,
+    );
 }
 
-fn render_source_refs_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => {
-            render_source_refs(ui, run_forest_source_refs(run.node));
-        }
-        SelectionInspector::Artifact(artifact) => {
-            render_source_refs(ui, artifact_source_refs(&artifact.sources));
-        }
-        SelectionInspector::Unresolved(reason) => render_unavailable(ui, *reason),
+fn render_source_refs_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
     }
+    render_source_refs(
+        ui,
+        sections
+            .source_refs()
+            .iter()
+            .filter_map(|slot| slot.resolve(graph)),
+    );
 }
 
 /// archaeology:artifact-identity
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
-fn render_artifact_ids_for_inspector(ui: &mut egui::Ui, inspector: &SelectionInspector<'_>) {
-    match inspector {
-        SelectionInspector::RunForestNode(run) => {
+fn render_artifact_ids_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+) {
+    if let Some(reason) = sections.unavailable() {
+        let _span = tracing::trace_span!(
+            "ploke_egui.inspector.artifact_ids_section",
+            selection_kind = "unresolved",
+            state = reason.state(),
+            selection_key = reason.subject()
+        )
+        .entered();
+        render_unavailable(ui, reason);
+        return;
+    }
+
+    match sections.identity() {
+        Some(IdentitySlot::RunForestNode { node_key }) => {
             let _span = tracing::trace_span!(
                 "ploke_egui.inspector.artifact_ids_section",
                 selection_kind = "run_forest_node",
                 state = "not_applicable",
-                selection_key = run.node.key.as_str()
+                selection_key = node_key.as_str()
             )
             .entered();
             kv(ui, "artifact ids", "not_applicable");
         }
-        SelectionInspector::Artifact(artifact) => {
+        Some(IdentitySlot::Artifact { sources }) => {
             let _span = tracing::trace_span!(
                 "ploke_egui.inspector.artifact_ids_section",
                 selection_kind = "artifact",
                 state = "rendered",
-                selection_key = artifact.identity().artifact()
+                selection_key = artifact_label(graph, sources)
             )
             .entered();
-            render_artifact_ids(ui, artifact);
+            render_artifact_ids(ui, graph, sources);
         }
-        SelectionInspector::Unresolved(reason) => {
-            let _span = tracing::trace_span!(
-                "ploke_egui.inspector.artifact_ids_section",
-                selection_kind = "unresolved",
-                state = reason.state(),
-                selection_key = reason.subject()
-            )
-            .entered();
-            render_unavailable(ui, *reason);
-        }
+        None => kv(ui, "artifact ids", "not_available"),
     }
 }
 
-fn render_artifact_ids(ui: &mut egui::Ui, artifact: &ArtifactInspection<'_>) {
-    let identity = artifact.identity();
+fn render_artifact_ids(ui: &mut egui::Ui, graph: &Graph, sources: &[ArtifactSourceSlot]) {
     let _span = tracing::trace_span!(
         "ploke_egui.inspector.render_artifact_ids",
-        primary_artifact_id = identity
-            .primary_artifact_id()
+        primary_artifact_id = primary_artifact_id(graph, sources)
             .map(|artifact| artifact.0.as_str())
             .unwrap_or("not_recorded")
     )
     .entered();
 
     let mut saw_artifact_id = false;
-    for artifact_id in identity.artifact_ids() {
-        saw_artifact_id = true;
-        render_prefixed_id_row(ui, "artifact id", artifact_id);
+    if let Some(source) = first_artifact_source(graph, sources) {
+        for artifact_id in source.artifact_ids() {
+            saw_artifact_id = true;
+            render_prefixed_id_row(ui, "artifact id", artifact_id);
+        }
     }
     if !saw_artifact_id {
         kv(ui, "artifact id", "not_recorded");
     }
 
     let mut saw_artifact_ref = false;
-    for artifact_ref in identity.artifact_refs() {
-        saw_artifact_ref = true;
-        render_prefixed_id_row(ui, "artifact ref", artifact_ref);
+    if let Some(source) = first_artifact_source(graph, sources) {
+        for artifact_ref in source.artifact_refs() {
+            saw_artifact_ref = true;
+            render_prefixed_id_row(ui, "artifact ref", artifact_ref);
+        }
     }
     if !saw_artifact_ref {
         kv(ui, "artifact ref", "not_recorded");
     }
 
     let mut saw_tree_key = false;
-    for tree_key in identity.tree_keys() {
-        saw_tree_key = true;
-        render_prefixed_id_row(ui, "tree key", tree_key);
+    if let Some(source) = first_artifact_source(graph, sources) {
+        for tree_key in source.tree_keys() {
+            saw_tree_key = true;
+            render_prefixed_id_row(ui, "tree key", tree_key);
+        }
     }
     if !saw_tree_key {
         kv(ui, "tree key", "not_recorded");
@@ -571,6 +633,7 @@ fn render_prefixed_id_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::{Event, Id, Subscriber};
@@ -578,17 +641,17 @@ mod tests {
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
 
-    use crate::ui::inspector::{ArtifactInspection, SelectionInspector};
-    use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
+    use crate::ui::diff::PatchDiffCache;
+    use crate::ui::inspector::{GraphRevision, InspectorCache};
+    use crate::ui::view::GraphSelectionRef;
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
     use ploke_records::ids::{ArtifactId, HistoryHash};
     use ploke_tree::graph::{
-        ArtifactIdentity, ArtifactIds, ArtifactKey, ArtifactNode, ParentCreateLookup,
-        ParentCreateUnavailable,
+        ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode,
     };
     use ploke_tree::{
-        AuthorityLabel, Diagnostic, EvidenceRef, NodeKey, NodeKind, Phase, Progress, ResultClass,
-        Terminality, TreeNode,
+        AuthorityLabel, Diagnostic, EvidenceRef, Lanes, NodeKey, NodeKind, PassiveEvidence, Phase,
+        Progress, ResultClass, RunForest, Terminality, TreeNode,
     };
 
     #[derive(Clone, Default)]
@@ -735,33 +798,32 @@ mod tests {
             },
             evidence: Vec::new(),
         };
-        let artifact = ArtifactInspection {
-            sources: vec![&node],
-            incoming: Vec::new(),
-            outgoing: Vec::new(),
-            patches: Vec::new(),
-            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
-                record: "child_plan",
-                key: "derived_artifact",
-                value: node.entity_key(),
-            }),
-            role_badges: Vec::new(),
-            run_records: crate::ui::inspector::RunRecordBranchInspection::empty(),
+        let selection = GraphSelectionRef::Artifact {
+            key: node.entity_key().to_owned(),
         };
-        let selection = GraphSelectionDetail {
-            kind: "artifact".to_owned(),
-            label: "A1".to_owned(),
-            detail: String::new(),
-            reference: GraphSelectionRef::Artifact {
-                key: node.entity_key().to_owned(),
+        let graph = Graph {
+            artifacts: ArtifactIndex {
+                artifacts: BTreeMap::from([(node.key.clone(), node)]),
             },
+            ..Default::default()
         };
-        let inspector = SelectionInspector::Artifact(artifact);
+        let mut cache = InspectorCache::default();
+        let sections = cache
+            .sections(&graph, GraphRevision::default(), Some(&selection))
+            .expect("artifact selection cached");
+        let mut diff_cache = PatchDiffCache::default();
 
         let (_, traces) = collect_traces(|| {
             egui::__run_test_ui(|ui| {
-                render_right_inspector(ui, Some(&selection), Some(&inspector));
-                render_artifact_ids_for_inspector(ui, &inspector);
+                render_right_inspector(
+                    ui,
+                    &graph,
+                    Some("artifact"),
+                    Some("A1"),
+                    Some(sections),
+                    &mut diff_cache,
+                );
+                render_artifact_ids_for_inspector(ui, &graph, sections);
             });
         });
 
@@ -797,23 +859,35 @@ mod tests {
     #[test]
     fn artifact_id_section_traces_not_applicable_for_run_forest_selection() {
         let node = test_run_forest_node("node-f1fbab3a2bb5e7e5", "artifact:source");
-        let inspector = SelectionInspector::RunForestNode(RunForestNodeInspection {
-            node: &node,
-            parent: None,
-            children: &node.children,
-            patch: None,
-            parent_create: ParentCreateLookup::Unavailable(ParentCreateUnavailable::MissingJoin {
-                record: "child_plan",
-                key: "node_id",
-                value: node.key.as_str(),
+        let selection = GraphSelectionRef::RunForestNode {
+            key: node.key.as_str().to_owned(),
+        };
+        let graph = Graph {
+            forest: Some(RunForest {
+                campaign: ploke_tree::CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: vec![node.key.clone()],
+                nodes: vec![node],
+                lanes: Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence: PassiveEvidence::default(),
+                diagnostics: Vec::new(),
             }),
-            role_badges: Vec::new(),
-            run_records: crate::ui::inspector::RunRecordBranchInspection::empty(),
-        });
+            ..Default::default()
+        };
+        let mut cache = InspectorCache::default();
+        let sections = cache
+            .sections(&graph, GraphRevision::default(), Some(&selection))
+            .expect("run forest selection cached");
 
         let (_, traces) = collect_traces(|| {
             egui::__run_test_ui(|ui| {
-                render_artifact_ids_for_inspector(ui, &inspector);
+                render_artifact_ids_for_inspector(ui, &graph, sections);
             });
         });
 
@@ -1135,18 +1209,26 @@ fn render_source_ref(ui: &mut egui::Ui, source_ref: &SourceRef<'_>) {
     }
 }
 
-fn render_patches<'a>(ui: &mut egui::Ui, patches: impl IntoIterator<Item = PatchInspection<'a>>) {
+fn render_patches<'a>(
+    ui: &mut egui::Ui,
+    patches: impl IntoIterator<Item = PatchInspection<'a>>,
+    diff_cache: &mut crate::ui::diff::PatchDiffCache,
+) {
     let mut rendered = false;
     for patch in patches {
         rendered = true;
-        render_patch(ui, patch);
+        render_patch(ui, patch, diff_cache);
     }
     if !rendered {
         kv(ui, "patch", "not_available");
     }
 }
 
-fn render_patch(ui: &mut egui::Ui, patch: PatchInspection<'_>) {
+fn render_patch(
+    ui: &mut egui::Ui,
+    patch: PatchInspection<'_>,
+    diff_cache: &mut crate::ui::diff::PatchDiffCache,
+) {
     ui.horizontal(|ui| {
         ui.label("patch");
         id_display::expandable_id(ui, ("patch", patch.patch_id()), patch.patch_id());
@@ -1181,16 +1263,15 @@ fn render_patch(ui: &mut egui::Ui, patch: PatchInspection<'_>) {
     if !touched {
         kv(ui, "touches", "none");
     }
-    let diff = patch.unified_diff();
-    if diff.is_empty() {
-        kv(ui, "diff", "not_available");
-    } else {
-        ui.label("diff");
-        render_diff(ui, diff.as_str());
-    }
+    ui.label("diff");
+    render_diff(ui, patch, diff_cache);
 }
 
-fn render_diff(ui: &mut egui::Ui, diff: &str) {
+fn render_diff(
+    ui: &mut egui::Ui,
+    patch: PatchInspection<'_>,
+    diff_cache: &mut crate::ui::diff::PatchDiffCache,
+) {
     let width = ui.available_width().max(240.0);
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(6))
@@ -1199,9 +1280,51 @@ fn render_diff(ui: &mut egui::Ui, diff: &str) {
                 .auto_shrink([false, false])
                 .max_height(320.0)
                 .show(ui, |ui| {
-                    let job = diff::highlighted_diff_job(ui, diff, f32::INFINITY);
+                    let job = diff_cache.highlighted_patch_job(ui, patch);
                     ui.set_min_width(width);
-                    ui.add(egui::Label::new(job).selectable(true));
+                    ui.add(egui::Label::new(job.clone()).selectable(true));
                 });
         });
+}
+
+fn first_artifact_source<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_tree::graph::ArtifactNode> {
+    sources.iter().find_map(|source| source.resolve(graph))
+}
+
+fn primary_artifact_id<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_records::ids::ArtifactId> {
+    first_artifact_source(graph, sources).and_then(|source| source.artifact_ids().first())
+}
+
+fn primary_artifact_ref<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_records::history::ArtifactRefRecord> {
+    first_artifact_source(graph, sources).and_then(|source| source.artifact_refs().first())
+}
+
+fn artifact_label<'g>(graph: &'g Graph, sources: &[ArtifactSourceSlot]) -> &'g str {
+    first_artifact_source(graph, sources)
+        .map(crate::ui::inspector::artifact_node_label_for_render)
+        .unwrap_or("missing_artifact_identity")
+}
+
+fn artifact_source_count(graph: &Graph, sources: &[ArtifactSourceSlot]) -> usize {
+    sources
+        .iter()
+        .filter(|source| source.resolve(graph).is_some())
+        .count()
+}
+
+fn artifact_evidence_count(graph: &Graph, sources: &[ArtifactSourceSlot]) -> usize {
+    sources
+        .iter()
+        .filter_map(|source| source.resolve(graph))
+        .map(|source| source.evidence.len())
+        .sum()
 }

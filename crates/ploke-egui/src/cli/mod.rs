@@ -23,6 +23,10 @@ pub struct Run {
     #[cfg(feature = "dev")]
     pub perf_log: bool,
     #[cfg(feature = "dev")]
+    pub puffin_capture_frames: Option<usize>,
+    #[cfg(feature = "dev")]
+    pub puffin_capture_close: bool,
+    #[cfg(feature = "dev")]
     pub artifact_edges_report: bool,
     #[cfg(feature = "dev")]
     pub inspect_node: Option<String>,
@@ -43,6 +47,8 @@ impl Run {
                 run_picker_report: args.run_picker_report,
                 artifact_connectivity_report: args.artifact_connectivity_report,
                 perf_log: args.perf_log,
+                puffin_capture_frames: args.puffin_capture_frames,
+                puffin_capture_close: args.puffin_capture_close,
                 artifact_edges_report: args.artifact_edges_report,
                 inspect_node: args.inspect_node,
                 artifact_ids_report: args.artifact_ids_report,
@@ -76,34 +82,33 @@ struct Args {
     #[arg(long)]
     snapshot: bool,
 
-    #[arg(
-        long,
-        help = "Print a text default-view contract report without opening the native UI"
-    )]
+    #[arg(long, help = "Print a text default-view contract report")]
     contract_report: bool,
 
-    #[arg(
-        long,
-        help = "Print run-picker dropdown labels without opening the native UI"
-    )]
+    #[arg(long, help = "Print run-picker dropdown labels")]
     run_picker_report: bool,
 
-    #[arg(
-        long,
-        help = "Print artifact-tree connectivity for all discovered runs without opening the native UI"
-    )]
+    #[arg(long, help = "Print artifact-tree connectivity for discovered runs")]
     artifact_connectivity_report: bool,
 
-    #[arg(
-        long,
-        help = "Measure the current app import/projection baseline and write the rolling profiling log"
-    )]
+    #[arg(long, help = "Write the rolling import/projection profiling log")]
     perf_log: bool,
 
     #[arg(
         long,
-        help = "Print artifact-tree component edges for the loaded run without opening the native UI"
+        value_name = "FRAMES",
+        help = "Capture this many native frames to rolling Puffin files; requires profile-with-puffin"
     )]
+    puffin_capture_frames: Option<usize>,
+
+    #[arg(
+        long,
+        requires = "puffin_capture_frames",
+        help = "Close the native window after writing a Puffin capture"
+    )]
+    puffin_capture_close: bool,
+
+    #[arg(long, help = "Print artifact-tree component edges for the loaded run")]
     artifact_edges_report: bool,
 
     #[arg(

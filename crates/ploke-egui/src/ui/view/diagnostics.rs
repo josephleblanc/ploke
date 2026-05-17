@@ -23,6 +23,7 @@ pub(super) fn graph_diagnostics(
     connectivity: GraphConnectivityDiagnostics,
     artifact_tree: artifact_tree::Shape,
     mode: GraphViewMode,
+    readability: GraphReadabilityDiagnostics,
 ) -> Option<GraphViewDiagnostics> {
     let bounds = node_bounds(graph)?;
     let graph_size = bounds.size();
@@ -59,11 +60,14 @@ pub(super) fn graph_diagnostics(
         fitted_fill,
         center_offset: fitted.center() - Rect::from_min_size(Pos2::ZERO, viewport_size).center(),
         edge_labels,
-        readability: readability_diagnostics(graph, style),
+        readability,
     })
 }
 
-fn readability_diagnostics(graph: &WidgetGraph, style: ViewStyle) -> GraphReadabilityDiagnostics {
+pub(super) fn readability_diagnostics(
+    graph: &WidgetGraph,
+    style: ViewStyle,
+) -> GraphReadabilityDiagnostics {
     let edges = edge_curves(graph, style);
     let median_rank_gap = median_node_rank_gap(graph);
     let mut crossings = GraphReadabilityDiagnostics {

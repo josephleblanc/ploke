@@ -21,3 +21,10 @@ performance impact. Keep entries short and cite the verification surface.
   silently measure the sample graph or run-picker fallback graph.
 - Limitation: `--perf-log` measures import plus contract diagnostics, not native
   pointer interaction, GPU painting, or live right-panel interaction.
+- Change: added `--puffin-capture-frames` and `--puffin-capture-close` for
+  Puffin-backed native frame captures.
+- Expected positive impact: creates a profiler-owned `.puffin` capture plus a
+  small text summary, so changes can be compared by min/median/p95/max frame
+  time without building a custom profiler.
+- Limitation: capture requires the native app to run; it is not a headless test
+  surface.

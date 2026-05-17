@@ -5037,6 +5037,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+
+[[package]]
 name = "macro_rules_attribute"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6515,6 +6521,7 @@ dependencies = [
  "ploke-records",
  "ploke-tree",
  "profiling",
+ "puffin",
  "serde",
  "serde_json",
  "similar",
@@ -7167,11 +7174,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa9dae7b05c02ec1a6bc9bcf20d8bc64a7dcbf57934107902a872014899b741f"
 dependencies = [
  "anyhow",
+ "bincode",
  "byteorder",
  "cfg-if 1.0.0",
  "itertools 0.10.5",
+ "lz4_flex 0.11.6",
  "once_cell",
  "parking_lot",
+ "serde",
 ]
 
 [[package]]
@@ -8753,7 +8763,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec5f895272298fe2ed7c8f15dcee10b00ce396c8caebd602275fd10f49797d02"
 dependencies = [
  "bincode",
- "lz4_flex",
+ "lz4_flex 0.10.0",
  "miniz_oxide 0.7.4",
  "serde",
  "tempfile",

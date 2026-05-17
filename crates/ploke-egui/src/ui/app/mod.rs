@@ -13,15 +13,21 @@ use crate::diagnostics::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::import::graph_from_run_root;
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
-use crate::ui::inspector::SelectionInspector;
+use crate::ui::diff::PatchDiffCache;
+use crate::ui::inspector::{GraphRevision, InspectorCache, SelectionInspector};
 use crate::ui::view::{ArtifactTreeFilters, GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug, Default)]
 pub struct OperatorApp {
     graph: Graph,
+    graph_revision: GraphRevision,
     view: GraphView,
+    inspector_cache: InspectorCache,
+    patch_diff_cache: PatchDiffCache,
     #[cfg(not(target_arch = "wasm32"))]
     run_picker: RunPicker,
     #[cfg(not(target_arch = "wasm32"))]
@@ -32,13 +38,18 @@ pub struct OperatorApp {
     close_after_snapshot: bool,
     #[cfg(not(target_arch = "wasm32"))]
     diagnostics_error: Option<String>,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+    puffin_capture: Option<PuffinCapture>,
 }
 
 impl OperatorApp {
     pub fn new(graph: Graph) -> Self {
         Self {
             graph,
+            graph_revision: GraphRevision::default(),
             view: GraphView::default(),
+            inspector_cache: InspectorCache::default(),
+            patch_diff_cache: PatchDiffCache::default(),
             #[cfg(not(target_arch = "wasm32"))]
             run_picker: RunPicker::from_default_root(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -49,6 +60,8 @@ impl OperatorApp {
             close_after_snapshot: false,
             #[cfg(not(target_arch = "wasm32"))]
             diagnostics_error: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+            puffin_capture: None,
         }
     }
 
@@ -56,12 +69,17 @@ impl OperatorApp {
     pub fn new_with_run_picker(graph: Graph, run_picker: RunPicker) -> Self {
         Self {
             graph,
+            graph_revision: GraphRevision::default(),
             view: GraphView::default(),
+            inspector_cache: InspectorCache::default(),
+            patch_diff_cache: PatchDiffCache::default(),
             run_picker,
             run_error: None,
             diagnostics_sink: None,
             close_after_snapshot: false,
             diagnostics_error: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+            puffin_capture: None,
         }
     }
 
@@ -81,13 +99,18 @@ impl OperatorApp {
         self
     }
 
-    fn current_run_name(&self) -> Option<String> {
+    #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+    pub fn with_puffin_capture(mut self, capture: PuffinCapture) -> Self {
+        self.puffin_capture = Some(capture);
+        self
+    }
+
+    fn current_run_name(&self) -> Option<&str> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             return self
                 .run_picker
-                .selected_run()
-                .map(|run| run.name)
+                .selected_run_name()
                 .filter(|name| !name.is_empty());
         }
 
@@ -110,7 +133,7 @@ impl eframe::App for OperatorApp {
                 shell::render_top_strip(
                     ui,
                     self.view.mode(),
-                    self.current_run_name().as_deref(),
+                    self.current_run_name(),
                     top_graph_has_content,
                 );
             });
@@ -147,20 +170,27 @@ impl eframe::App for OperatorApp {
             });
 
         let graph_has_content = graph_has_content(&self.graph);
-        let selected_detail = self.view.selected_node_detail(&self.graph);
+        let selected_node = self.view.selected_node(&self.graph);
+        let selected_reference = selected_node.map(|(reference, _, _)| reference);
+        let selected_kind = selected_node.map(|(_, _, kind)| kind);
+        let selected_label = selected_node.map(|(_, label, _)| label);
+        let selected_sections =
+            self.inspector_cache
+                .sections(&self.graph, self.graph_revision, selected_reference);
+        let selection_synced = selected_reference.is_some();
 
         egui::Panel::right("selection_inspector")
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.selection-inspector");
-                let selected_inspector = selected_detail
-                    .as_ref()
-                    .map(|selection| SelectionInspector::from_graph(&self.graph, selection));
                 shell::render_right_inspector(
                     ui,
-                    selected_detail.as_ref(),
-                    selected_inspector.as_ref(),
+                    &self.graph,
+                    selected_kind,
+                    selected_label,
+                    selected_sections,
+                    &mut self.patch_diff_cache,
                 );
             });
 
@@ -171,7 +201,7 @@ impl eframe::App for OperatorApp {
                 shell::render_bottom_timeline(
                     ui,
                     self.view.diagnostics().as_ref(),
-                    selected_detail.as_ref(),
+                    selection_synced,
                 );
             });
 
@@ -191,6 +221,8 @@ impl eframe::App for OperatorApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.emit_diagnostics(ui.ctx());
         profiling::finish_frame!();
+        #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+        self.emit_puffin_capture(ui.ctx());
     }
 }
 
@@ -203,8 +235,11 @@ impl OperatorApp {
                 Ok(graph) => {
                     let mode = self.view.mode();
                     self.graph = graph;
+                    self.graph_revision = self.graph_revision.next();
                     self.view = GraphView::default();
                     self.view.set_mode(mode);
+                    self.inspector_cache = InspectorCache::default();
+                    self.patch_diff_cache = PatchDiffCache::default();
                     self.run_error = None;
                 }
                 Err(error) => {
@@ -256,6 +291,26 @@ impl OperatorApp {
             Err(error) => {
                 self.diagnostics_error = Some(format!("Diagnostics write failed: {error}"));
                 self.diagnostics_sink = None;
+            }
+        }
+    }
+
+    #[cfg(feature = "profile-with-puffin")]
+    fn emit_puffin_capture(&mut self, ctx: &egui::Context) {
+        let Some(capture) = &mut self.puffin_capture else {
+            return;
+        };
+        let diagnostics = self.view.diagnostics();
+        match capture.observe_frame(diagnostics.as_ref()) {
+            Ok(PuffinCaptureStatus::Complete { close }) => {
+                if close {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            Ok(PuffinCaptureStatus::Collecting { .. } | PuffinCaptureStatus::AlreadyComplete) => {}
+            Err(error) => {
+                self.diagnostics_error = Some(format!("Puffin capture failed: {error}"));
+                self.puffin_capture = None;
             }
         }
     }

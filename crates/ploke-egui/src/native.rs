@@ -15,6 +15,8 @@ use crate::diagnostics::{
     artifact_component_breakdown,
 };
 use crate::import::graph_from_run_root;
+#[cfg(all(feature = "dev", feature = "profile-with-puffin"))]
+use crate::perf::PuffinCapture;
 #[cfg(feature = "dev")]
 use crate::perf::{PerformanceLogSink, PerformanceRun};
 use crate::run_picker::RunPicker;
@@ -92,7 +94,30 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         print_artifact_ids_report(&graph, selector)?;
         return Ok(());
     }
+    #[cfg(all(feature = "dev", not(feature = "profile-with-puffin")))]
+    if run.puffin_capture_frames.is_some() {
+        return Err("--puffin-capture-frames requires --features profile-with-puffin".into());
+    }
+
     let app = app(graph, run.mode, run.snapshot, picker)?;
+    #[cfg(all(feature = "dev", feature = "profile-with-puffin"))]
+    let app = if let Some(frame_target) = run.puffin_capture_frames {
+        let Some(run_root) = explicit_run_root.clone() else {
+            return Err(
+                "--puffin-capture-frames requires an explicit --run-root or positional RUN_ROOT"
+                    .into(),
+            );
+        };
+        app.with_puffin_capture(PuffinCapture::new(
+            frame_target,
+            default_puffin_capture_dir(),
+            run_root,
+            run.mode,
+            run.puffin_capture_close,
+        )?)
+    } else {
+        app
+    };
     eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
     Ok(())
 }
@@ -191,4 +216,9 @@ fn default_diagnostics_dir() -> PathBuf {
 #[cfg(feature = "dev")]
 fn default_profiling_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/profiling")
+}
+
+#[cfg(all(feature = "dev", feature = "profile-with-puffin"))]
+fn default_puffin_capture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/profiling/puffin")
 }

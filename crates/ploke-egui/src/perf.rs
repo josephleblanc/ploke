@@ -7,6 +7,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+use std::{fmt, fs::File};
 
 use eframe::egui::Vec2;
 use ploke_tree::Graph;
@@ -18,6 +20,8 @@ use crate::ui::view::{GraphView, GraphViewDiagnostics, GraphViewMode};
 
 const PERFORMANCE_LOG_VERSION: &str = "ploke-egui.performance-log.v1";
 const DEFAULT_MAX_LOGS: u64 = 5;
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+const DEFAULT_MAX_PUFFIN_CAPTURES: u64 = 5;
 
 #[derive(Debug, Clone)]
 pub struct PerformanceRun {
@@ -249,6 +253,252 @@ fn load_graph(run_root: &Path) -> io::Result<(PerformanceSource, Graph)> {
     ))
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+pub struct PuffinCapture {
+    view: puffin::GlobalFrameView,
+    sink: RollingPuffinSink,
+    frame_target: usize,
+    run_root: PathBuf,
+    mode: GraphViewMode,
+    close_when_done: bool,
+    written: bool,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+impl fmt::Debug for PuffinCapture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PuffinCapture")
+            .field("frame_target", &self.frame_target)
+            .field("run_root", &self.run_root)
+            .field("mode", &self.mode)
+            .field("close_when_done", &self.close_when_done)
+            .field("written", &self.written)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+impl PuffinCapture {
+    pub fn new(
+        frame_target: usize,
+        root: impl Into<PathBuf>,
+        run_root: PathBuf,
+        mode: GraphViewMode,
+        close_when_done: bool,
+    ) -> io::Result<Self> {
+        if frame_target == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--puffin-capture-frames must be greater than zero",
+            ));
+        }
+
+        puffin::set_scopes_on(true);
+        let view = puffin::GlobalFrameView::default();
+        {
+            let mut view = view.lock();
+            view.set_max_recent(frame_target);
+            view.set_max_slow(frame_target.min(64));
+        }
+
+        Ok(Self {
+            view,
+            sink: RollingPuffinSink::new(root)?,
+            frame_target,
+            run_root,
+            mode,
+            close_when_done,
+            written: false,
+        })
+    }
+
+    pub fn observe_frame(
+        &mut self,
+        diagnostics: Option<&GraphViewDiagnostics>,
+    ) -> io::Result<PuffinCaptureStatus> {
+        profiling::scope!("ploke-egui.puffin-capture.observe-frame");
+        if self.written {
+            return Ok(PuffinCaptureStatus::AlreadyComplete);
+        }
+
+        let view = self.view.lock();
+        let frame_count = view.stats_full().frames();
+        if frame_count < self.frame_target {
+            return Ok(PuffinCaptureStatus::Collecting { frame_count });
+        }
+
+        let summary = PuffinCaptureSummary::from_view(
+            &view,
+            &self.run_root,
+            self.mode,
+            self.frame_target,
+            diagnostics,
+        );
+        self.sink.write_capture(&view, &summary)?;
+        self.written = true;
+
+        Ok(PuffinCaptureStatus::Complete {
+            close: self.close_when_done,
+        })
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PuffinCaptureStatus {
+    Collecting { frame_count: usize },
+    Complete { close: bool },
+    AlreadyComplete,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+#[derive(Debug)]
+struct RollingPuffinSink {
+    root: PathBuf,
+    max_captures: u64,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+impl RollingPuffinSink {
+    fn new(root: impl Into<PathBuf>) -> io::Result<Self> {
+        let root = root.into();
+        fs::create_dir_all(root.join("runs"))?;
+        Ok(Self {
+            root,
+            max_captures: DEFAULT_MAX_PUFFIN_CAPTURES,
+        })
+    }
+
+    fn write_capture(
+        &self,
+        view: &puffin::FrameView,
+        summary: &PuffinCaptureSummary,
+    ) -> io::Result<()> {
+        let sequence = self.latest_sequence().saturating_add(1);
+        let slot = ((sequence - 1) % self.max_captures) + 1;
+        let latest_capture = self.root.join("latest.puffin");
+        let latest_summary = self.root.join("latest.txt");
+        let run_capture = self.root.join("runs").join(format!("{slot:02}.puffin"));
+        let run_summary = self.root.join("runs").join(format!("{slot:02}.txt"));
+        let sequence_path = self.root.join("latest-sequence.txt");
+        let rendered = summary.render_text(sequence);
+
+        write_puffin_file(view, &latest_capture)?;
+        write_puffin_file(view, &run_capture)?;
+        fs::write(latest_summary, &rendered)?;
+        fs::write(run_summary, rendered)?;
+        fs::write(sequence_path, sequence.to_string())
+    }
+
+    fn latest_sequence(&self) -> u64 {
+        let Ok(text) = fs::read_to_string(self.root.join("latest-sequence.txt")) else {
+            return 0;
+        };
+        text.trim().parse().unwrap_or(0)
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+fn write_puffin_file(view: &puffin::FrameView, path: &Path) -> io::Result<()> {
+    let mut file = File::create(path)?;
+    view.write(&mut file).map_err(io::Error::other)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+#[derive(Debug)]
+struct PuffinCaptureSummary {
+    run_root: String,
+    mode: GraphViewMode,
+    target_frames: usize,
+    captured_frames: usize,
+    min_frame_ns: Option<i64>,
+    median_frame_ns: Option<i64>,
+    p95_frame_ns: Option<i64>,
+    max_frame_ns: Option<i64>,
+    graph: Option<PerformanceGraphFacts>,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+impl PuffinCaptureSummary {
+    fn from_view(
+        view: &puffin::FrameView,
+        run_root: &Path,
+        mode: GraphViewMode,
+        target_frames: usize,
+        diagnostics: Option<&GraphViewDiagnostics>,
+    ) -> Self {
+        let mut durations = view
+            .recent_frames()
+            .map(|frame| frame.duration_ns())
+            .collect::<Vec<_>>();
+        durations.sort_unstable();
+        Self {
+            run_root: run_root.display().to_string(),
+            mode,
+            target_frames,
+            captured_frames: durations.len(),
+            min_frame_ns: durations.first().copied(),
+            median_frame_ns: percentile(&durations, 50),
+            p95_frame_ns: percentile(&durations, 95),
+            max_frame_ns: durations.last().copied(),
+            graph: diagnostics.map(PerformanceGraphFacts::from_diagnostics),
+        }
+    }
+
+    fn render_text(&self, sequence: u64) -> String {
+        let mut text = String::new();
+        text.push_str("ploke-egui puffin capture\n");
+        text.push_str(&format!("sequence: {sequence}\n"));
+        text.push_str(&format!("run_root: {}\n", self.run_root));
+        text.push_str(&format!("mode: {}\n", self.mode.as_str()));
+        text.push_str(&format!("target_frames: {}\n", self.target_frames));
+        text.push_str(&format!("captured_frames: {}\n", self.captured_frames));
+        text.push_str(&format!(
+            "min_frame_ms: {}\n",
+            render_millis(self.min_frame_ns)
+        ));
+        text.push_str(&format!(
+            "median_frame_ms: {}\n",
+            render_millis(self.median_frame_ns)
+        ));
+        text.push_str(&format!(
+            "p95_frame_ms: {}\n",
+            render_millis(self.p95_frame_ns)
+        ));
+        text.push_str(&format!(
+            "max_frame_ms: {}\n",
+            render_millis(self.max_frame_ns)
+        ));
+        if let Some(graph) = &self.graph {
+            text.push_str(&format!("graph_nodes: {}\n", graph.visible_node_count));
+            text.push_str(&format!("graph_edges: {}\n", graph.visible_edge_count));
+            text.push_str(&format!(
+                "graph_size: {:.0} x {:.0}\n",
+                graph.graph_size.x, graph.graph_size.y
+            ));
+        }
+        text.push_str("capture: latest.puffin\n");
+        text
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+fn percentile(sorted: &[i64], percentile: usize) -> Option<i64> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let index = ((sorted.len() * percentile).div_ceil(100)).saturating_sub(1);
+    sorted.get(index.min(sorted.len() - 1)).copied()
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+fn render_millis(nanos: Option<i64>) -> String {
+    match nanos {
+        Some(nanos) => format!("{:.3}", nanos as f64 / 1_000_000.0),
+        None => "not_available".to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -313,5 +563,39 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("{label}-{nanos}"))
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
+    #[test]
+    fn puffin_sink_writes_capture_and_text_summary() {
+        let root = unique_temp_dir("ploke-egui-puffin-capture");
+        let sink = RollingPuffinSink::new(&root).expect("sink");
+
+        puffin::set_scopes_on(true);
+        let view = puffin::GlobalFrameView::default();
+        {
+            puffin::profile_scope!("ploke-egui.test-frame");
+        }
+        puffin::GlobalProfiler::lock().new_frame();
+
+        let view = view.lock();
+        let summary = PuffinCaptureSummary::from_view(
+            &view,
+            Path::new("/runs/p1-five-gen-1x3-20260516-1/prototype1"),
+            GraphViewMode::ArtifactTree,
+            1,
+            None,
+        );
+        sink.write_capture(&view, &summary).expect("write capture");
+
+        assert!(root.join("latest.puffin").is_file());
+        assert!(root.join("latest.txt").is_file());
+        assert!(root.join("runs/01.puffin").is_file());
+        assert!(root.join("runs/01.txt").is_file());
+        let summary = fs::read_to_string(root.join("latest.txt")).expect("summary");
+        assert!(summary.contains("ploke-egui puffin capture"));
+        assert!(summary.contains("target_frames: 1"));
+        assert!(summary.contains("capture: latest.puffin"));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 }

@@ -7,7 +7,559 @@ use serde::Serialize;
 
 use crate::ui::text::decor::Badge;
 use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
-use ploke_tree::graph::{ParentCreateAttempt, ParentCreateLookup, ParentCreateUnavailable};
+use ploke_records::ids::ArtifactId;
+use ploke_tree::graph::{
+    ArtifactKey, ParentCreateAttempt, ParentCreateLookup, ParentCreateUnavailable,
+};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct GraphRevision(u64);
+
+impl GraphRevision {
+    pub(crate) fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct InspectorCache {
+    key: Option<InspectorCacheKey>,
+    sections: InspectorSections,
+    rebuilds: usize,
+}
+
+impl InspectorCache {
+    pub(crate) fn sections(
+        &mut self,
+        graph: &ploke_tree::Graph,
+        revision: GraphRevision,
+        selection: Option<&GraphSelectionRef>,
+    ) -> Option<&InspectorSections> {
+        let Some(selection) = selection else {
+            self.key = None;
+            self.sections = InspectorSections::default();
+            return None;
+        };
+
+        if !self
+            .key
+            .as_ref()
+            .is_some_and(|key| key.revision == revision && key.selection == *selection)
+        {
+            let inspector = SelectionInspector::from_reference(graph, selection);
+            self.sections = InspectorSections::from_inspector(graph, selection, &inspector);
+            self.key = Some(InspectorCacheKey {
+                revision,
+                selection: selection.clone(),
+            });
+            self.rebuilds += 1;
+        }
+
+        Some(&self.sections)
+    }
+
+    #[cfg(test)]
+    fn rebuilds(&self) -> usize {
+        self.rebuilds
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InspectorCacheKey {
+    revision: GraphRevision,
+    selection: GraphSelectionRef,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct InspectorSections {
+    identity: Option<IdentitySlot>,
+    metrics: Option<MetricsSlot>,
+    parent_create: Option<ParentCreateSlot>,
+    roles: Vec<BadgeSlot>,
+    run_records: Vec<RunRecordSlot>,
+    incoming: Vec<ArtifactRelationSlot>,
+    outgoing: Vec<ArtifactRelationSlot>,
+    artifact_incoming: Vec<ArtifactRelationSlot>,
+    artifact_outgoing: Vec<ArtifactRelationSlot>,
+    patches: Vec<PatchSlot>,
+    source_refs: Vec<SourceRefSlot>,
+    unavailable: Option<UnavailableReason>,
+}
+
+impl InspectorSections {
+    fn from_inspector(
+        _graph: &ploke_tree::Graph,
+        selection: &GraphSelectionRef,
+        inspector: &SelectionInspector<'_>,
+    ) -> Self {
+        match inspector {
+            SelectionInspector::RunForestNode(run) => Self::from_run_forest(run),
+            SelectionInspector::Artifact(artifact) => Self::from_artifact(artifact),
+            SelectionInspector::Unresolved(reason) => Self {
+                identity: Some(IdentitySlot::from_selection(selection)),
+                metrics: None,
+                parent_create: ParentCreateSlot::from_selection(selection),
+                roles: Vec::new(),
+                run_records: Vec::new(),
+                incoming: Vec::new(),
+                outgoing: Vec::new(),
+                artifact_incoming: Vec::new(),
+                artifact_outgoing: Vec::new(),
+                patches: Vec::new(),
+                source_refs: Vec::new(),
+                unavailable: Some(*reason),
+            },
+        }
+    }
+
+    fn from_run_forest(run: &RunForestNodeInspection<'_>) -> Self {
+        let node_key = run.node.key.as_str().to_owned();
+        let incoming = run
+            .parent
+            .map(|parent| {
+                ArtifactRelationSlot::new(
+                    EdgeRelation::RunForest,
+                    parent.key.as_str(),
+                    run.node.key.as_str(),
+                    1,
+                )
+            })
+            .into_iter()
+            .collect();
+        let outgoing = run
+            .children
+            .iter()
+            .map(|child| {
+                ArtifactRelationSlot::new(
+                    EdgeRelation::RunForest,
+                    run.node.key.as_str(),
+                    child.as_str(),
+                    1,
+                )
+            })
+            .collect();
+        let artifact_outgoing = run
+            .node
+            .base_artifact_id
+            .as_deref()
+            .zip(run.node.derived_artifact_id.as_deref())
+            .into_iter()
+            .map(|(from, to)| ArtifactRelationSlot::new(EdgeRelation::AppliedPatch, from, to, 1))
+            .collect();
+
+        Self {
+            identity: Some(IdentitySlot::RunForestNode {
+                node_key: node_key.clone(),
+            }),
+            metrics: Some(MetricsSlot::RunForestNode {
+                node_key: node_key.clone(),
+            }),
+            parent_create: Some(ParentCreateSlot::RunForestNode {
+                node_key: node_key.clone(),
+            }),
+            roles: run.role_badges.iter().map(BadgeSlot::from_badge).collect(),
+            run_records: run
+                .run_records
+                .iter()
+                .map(RunRecordSlot::from_inspection)
+                .collect(),
+            incoming,
+            outgoing,
+            artifact_incoming: Vec::new(),
+            artifact_outgoing,
+            patches: run.patch.iter().map(PatchSlot::from_inspection).collect(),
+            source_refs: run_forest_source_slots(run.node),
+            unavailable: None,
+        }
+    }
+
+    fn from_artifact(artifact: &ArtifactInspection<'_>) -> Self {
+        let artifact_sources = artifact
+            .sources
+            .iter()
+            .map(|source| ArtifactSourceSlot {
+                key: source.key.clone(),
+            })
+            .collect::<Vec<_>>();
+        let incoming = artifact
+            .incoming
+            .iter()
+            .map(ArtifactRelationSlot::from_relation)
+            .collect::<Vec<_>>();
+        let outgoing = artifact
+            .outgoing
+            .iter()
+            .map(ArtifactRelationSlot::from_relation)
+            .collect::<Vec<_>>();
+
+        Self {
+            identity: Some(IdentitySlot::Artifact {
+                sources: artifact_sources.clone(),
+            }),
+            metrics: Some(MetricsSlot::Artifact {
+                sources: artifact_sources.clone(),
+            }),
+            parent_create: Some(ParentCreateSlot::Artifact {
+                key: artifact.identity().artifact().to_owned(),
+            }),
+            roles: artifact
+                .role_badges
+                .iter()
+                .map(BadgeSlot::from_badge)
+                .collect(),
+            run_records: artifact
+                .run_records
+                .iter()
+                .map(RunRecordSlot::from_inspection)
+                .collect(),
+            incoming: incoming.clone(),
+            outgoing: outgoing.clone(),
+            artifact_incoming: incoming,
+            artifact_outgoing: outgoing,
+            patches: artifact
+                .patches
+                .iter()
+                .map(PatchSlot::from_inspection)
+                .collect(),
+            source_refs: artifact_source_slots(artifact.sources.as_slice()),
+            unavailable: None,
+        }
+    }
+
+    pub(crate) fn identity(&self) -> Option<&IdentitySlot> {
+        self.identity.as_ref()
+    }
+
+    pub(crate) fn metrics(&self) -> Option<&MetricsSlot> {
+        self.metrics.as_ref()
+    }
+
+    pub(crate) fn parent_create(&self) -> Option<&ParentCreateSlot> {
+        self.parent_create.as_ref()
+    }
+
+    pub(crate) fn roles(&self) -> &[BadgeSlot] {
+        self.roles.as_slice()
+    }
+
+    pub(crate) fn run_records(&self) -> &[RunRecordSlot] {
+        self.run_records.as_slice()
+    }
+
+    pub(crate) fn graph_edges_in(&self) -> &[ArtifactRelationSlot] {
+        self.incoming.as_slice()
+    }
+
+    pub(crate) fn graph_edges_out(&self) -> &[ArtifactRelationSlot] {
+        self.outgoing.as_slice()
+    }
+
+    pub(crate) fn artifact_edges_in(&self) -> &[ArtifactRelationSlot] {
+        self.artifact_incoming.as_slice()
+    }
+
+    pub(crate) fn artifact_edges_out(&self) -> &[ArtifactRelationSlot] {
+        self.artifact_outgoing.as_slice()
+    }
+
+    pub(crate) fn patches(&self) -> &[PatchSlot] {
+        self.patches.as_slice()
+    }
+
+    pub(crate) fn source_refs(&self) -> &[SourceRefSlot] {
+        self.source_refs.as_slice()
+    }
+
+    pub(crate) fn unavailable(&self) -> Option<UnavailableReason> {
+        self.unavailable
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IdentitySlot {
+    RunForestNode { node_key: String },
+    Artifact { sources: Vec<ArtifactSourceSlot> },
+}
+
+impl IdentitySlot {
+    fn from_selection(selection: &GraphSelectionRef) -> Self {
+        match selection {
+            GraphSelectionRef::RunForestNode { key } => Self::RunForestNode {
+                node_key: key.clone(),
+            },
+            GraphSelectionRef::Artifact { key } => Self::Artifact {
+                sources: vec![ArtifactSourceSlot {
+                    key: ArtifactKey::PassiveId { value: key.clone() },
+                }],
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MetricsSlot {
+    RunForestNode { node_key: String },
+    Artifact { sources: Vec<ArtifactSourceSlot> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ParentCreateSlot {
+    RunForestNode { node_key: String },
+    Artifact { key: String },
+}
+
+impl ParentCreateSlot {
+    fn from_selection(selection: &GraphSelectionRef) -> Option<Self> {
+        match selection {
+            GraphSelectionRef::RunForestNode { key } => Some(Self::RunForestNode {
+                node_key: key.clone(),
+            }),
+            GraphSelectionRef::Artifact { key } => Some(Self::Artifact { key: key.clone() }),
+        }
+    }
+
+    pub(crate) fn resolve<'g>(&self, graph: &'g ploke_tree::Graph) -> ParentCreateLookup<'g, '_> {
+        match self {
+            Self::RunForestNode { node_key } => graph.parent_create_for_node_id(node_key.as_str()),
+            Self::Artifact { key } => graph.parent_create_for_artifact_key(key.as_str()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArtifactSourceSlot {
+    /// archaeology:artifact-identity
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+    pub(crate) key: ArtifactKey,
+}
+
+impl ArtifactSourceSlot {
+    pub(crate) fn resolve<'g>(
+        &self,
+        graph: &'g ploke_tree::Graph,
+    ) -> Option<&'g ploke_tree::graph::ArtifactNode> {
+        graph.artifacts.artifacts.get(&self.key)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BadgeRole {
+    Parent,
+    Child,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BadgeSlot {
+    /// archaeology:artifact-identity
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
+    pub(crate) artifact_id: ArtifactId,
+    pub(crate) role: BadgeRole,
+}
+
+impl BadgeSlot {
+    fn from_badge(badge: &Badge<'_>) -> Self {
+        match badge {
+            Badge::Parent(artifact_id) => Self {
+                artifact_id: (*artifact_id).clone(),
+                role: BadgeRole::Parent,
+            },
+            Badge::Child(artifact_id) => Self {
+                artifact_id: (*artifact_id).clone(),
+                role: BadgeRole::Child,
+            },
+        }
+    }
+
+    pub(crate) fn badge(&self) -> Badge<'_> {
+        match self.role {
+            BadgeRole::Parent => Badge::Parent(&self.artifact_id),
+            BadgeRole::Child => Badge::Child(&self.artifact_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArtifactRelationSlot {
+    /// archaeology:artifact-relations
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
+    pub(crate) relation: EdgeRelation,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) source_count: usize,
+}
+
+impl ArtifactRelationSlot {
+    fn new(relation: EdgeRelation, from: &str, to: &str, source_count: usize) -> Self {
+        Self {
+            relation,
+            from: from.to_owned(),
+            to: to.to_owned(),
+            source_count,
+        }
+    }
+
+    fn from_relation(relation: &ArtifactRelation<'_>) -> Self {
+        Self::new(
+            relation.kind.edge_relation(),
+            relation.from,
+            relation.to,
+            relation.source_count,
+        )
+    }
+
+    pub(crate) fn edge(&self) -> SelectionEdge<'_> {
+        SelectionEdge::new(
+            self.relation,
+            self.from.as_str(),
+            self.to.as_str(),
+            self.source_count,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PatchSlot {
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub(crate) child_node_id: String,
+}
+
+impl PatchSlot {
+    fn from_inspection(patch: &PatchInspection<'_>) -> Self {
+        Self {
+            child_node_id: patch.child.node.node_id.as_str().to_owned(),
+        }
+    }
+
+    pub(crate) fn resolve<'g>(&self, graph: &'g ploke_tree::Graph) -> Option<PatchInspection<'g>> {
+        graph
+            .child_plans
+            .child_for_node_id(self.child_node_id.as_str())
+            .map(|child| PatchInspection { child })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RunRecordSlot {
+    /// archaeology:run-record-branch-output
+    /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
+    pub(crate) branch_id: String,
+    pub(crate) record_key: String,
+}
+
+impl RunRecordSlot {
+    fn from_inspection(record: RunRecordInspection<'_>) -> Self {
+        Self {
+            branch_id: record.record_ref.branch_id.clone(),
+            record_key: record.record_ref.record_key.clone(),
+        }
+    }
+
+    pub(crate) fn resolve<'g>(
+        &self,
+        graph: &'g ploke_tree::Graph,
+    ) -> Option<RunRecordInspection<'g>> {
+        let evidence = graph.run_records()?;
+        let record_ref = evidence
+            .refs_by_branch
+            .get(self.branch_id.as_str())?
+            .iter()
+            .find(|record_ref| record_ref.record_key == self.record_key)?;
+        evidence
+            .index
+            .get(&self.record_key)
+            .zip(evidence.stats.get(&self.record_key))
+            .map(|(record, stats)| RunRecordInspection {
+                record_ref,
+                record,
+                stats,
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceRefSlot {
+    Evidence { node_key: String, index: usize },
+    Diagnostic { node_key: String, index: usize },
+    Artifact { key: ArtifactKey },
+}
+
+impl SourceRefSlot {
+    pub(crate) fn resolve<'g>(&self, graph: &'g ploke_tree::Graph) -> Option<SourceRef<'g>> {
+        match self {
+            Self::Evidence { node_key, index } => find_run_forest_node(graph, node_key)
+                .and_then(|node| node.evidence.get(*index))
+                .map(|evidence| SourceRef::Evidence {
+                    kind: evidence_kind_label(evidence.kind),
+                    authority: authority_label(evidence.authority),
+                    recorded_at: evidence.recorded_at.as_deref(),
+                }),
+            Self::Diagnostic { node_key, index } => find_run_forest_node(graph, node_key)
+                .and_then(|node| node.diagnostics.get(*index))
+                .map(|diagnostic| SourceRef::Diagnostic {
+                    severity: diagnostic_severity_label(diagnostic.severity),
+                    code: diagnostic.code.as_str(),
+                }),
+            Self::Artifact { key } => {
+                let source = graph.artifacts.artifacts.get(key)?;
+                Some(match &source.identity {
+                    ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
+                        SourceRef::ArtifactHistoryRef {
+                            artifact: artifact.as_str(),
+                        }
+                    }
+                    ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => {
+                        SourceRef::ArtifactId {
+                            artifact: artifact.0.as_str(),
+                        }
+                    }
+                })
+            }
+        }
+    }
+}
+
+fn run_forest_source_slots(node: &ploke_tree::TreeNode) -> Vec<SourceRefSlot> {
+    let node_key = node.key.as_str().to_owned();
+    node.evidence
+        .iter()
+        .enumerate()
+        .map(|(index, _)| SourceRefSlot::Evidence {
+            node_key: node_key.clone(),
+            index,
+        })
+        .chain(
+            node.diagnostics
+                .iter()
+                .enumerate()
+                .map(|(index, _)| SourceRefSlot::Diagnostic {
+                    node_key: node_key.clone(),
+                    index,
+                }),
+        )
+        .collect()
+}
+
+fn artifact_source_slots(sources: &[&ploke_tree::graph::ArtifactNode]) -> Vec<SourceRefSlot> {
+    sources
+        .iter()
+        .map(|source| SourceRefSlot::Artifact {
+            key: source.key.clone(),
+        })
+        .collect()
+}
+
+pub(crate) fn find_run_forest_node<'g>(
+    graph: &'g ploke_tree::Graph,
+    key: &str,
+) -> Option<&'g ploke_tree::TreeNode> {
+    graph
+        .forest
+        .as_ref()?
+        .nodes
+        .iter()
+        .find(|node| node.key.as_str() == key)
+}
 
 #[derive(Debug, Clone)]
 pub enum SelectionInspector<'g> {
@@ -21,7 +573,14 @@ impl<'g> SelectionInspector<'g> {
         graph: &'g ploke_tree::Graph,
         selection: &GraphSelectionDetail,
     ) -> Self {
-        match &selection.reference {
+        Self::from_reference(graph, &selection.reference)
+    }
+
+    pub(crate) fn from_reference(
+        graph: &'g ploke_tree::Graph,
+        reference: &GraphSelectionRef,
+    ) -> Self {
+        match reference {
             GraphSelectionRef::RunForestNode { key } => run_forest_node_inspection(graph, key),
             GraphSelectionRef::Artifact { key } => artifact_inspection(graph, key),
         }
@@ -189,21 +748,16 @@ impl<'a, 'g> ArtifactIdentityWitness<'a, 'g> {
         let Some(label) = self
             .sources
             .first()
-            .map(|source| artifact_node_label(source))
+            .map(|source| artifact_node_label_for_render(source))
         else {
             return "missing_artifact_identity";
         };
         debug_assert!(
             self.sources
                 .iter()
-                .all(|source| artifact_node_label(source) == label)
+                .all(|source| artifact_node_label_for_render(source) == label)
         );
         label
-    }
-
-    pub(crate) fn primary_artifact_id(self) -> Option<&'g ploke_records::ids::ArtifactId> {
-        self.bundle()
-            .and_then(|source| source.artifact_ids().first())
     }
 
     pub(crate) fn artifact_ids(
@@ -237,7 +791,7 @@ impl<'a, 'g> ArtifactIdentityWitness<'a, 'g> {
 
 /// archaeology:artifact-identity
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-identity.md
-fn artifact_node_label(source: &ploke_tree::graph::ArtifactNode) -> &str {
+pub(crate) fn artifact_node_label_for_render(source: &ploke_tree::graph::ArtifactNode) -> &str {
     source
         .artifact_ids()
         .first()
@@ -355,14 +909,6 @@ impl<'g> PatchInspection<'g> {
                     replacement: touch.replacement.as_str(),
                 })
         })
-    }
-
-    pub(crate) fn unified_diff(self) -> String {
-        crate::ui::diff::unified_rust_diff(
-            self.target_relpath(),
-            self.source_content(),
-            self.proposed_content(),
-        )
     }
 }
 
@@ -1460,6 +2006,7 @@ pub(crate) fn artifact_metrics(sources: &[&ploke_tree::graph::ArtifactNode]) -> 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn run_forest_incoming_edges<'a>(
     inspector: &'a RunForestNodeInspection<'a>,
 ) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
@@ -1474,54 +2021,6 @@ pub(crate) fn run_forest_incoming_edges<'a>(
             )
         })
         .into_iter()
-}
-
-pub(crate) fn run_forest_outgoing_edges<'a>(
-    inspector: &'a RunForestNodeInspection<'a>,
-) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
-    inspector.children.iter().map(|child| {
-        SelectionEdge::new(
-            EdgeRelation::RunForest,
-            inspector.node.key.as_str(),
-            child.as_str(),
-            1,
-        )
-    })
-}
-
-pub(crate) fn run_forest_source_refs(
-    node: &ploke_tree::TreeNode,
-) -> impl Iterator<Item = SourceRef<'_>> + '_ {
-    node.evidence
-        .iter()
-        .map(|evidence| SourceRef::Evidence {
-            kind: evidence_kind_label(evidence.kind),
-            authority: authority_label(evidence.authority),
-            recorded_at: evidence.recorded_at.as_deref(),
-        })
-        .chain(
-            node.diagnostics
-                .iter()
-                .map(|diagnostic| SourceRef::Diagnostic {
-                    severity: diagnostic_severity_label(diagnostic.severity),
-                    code: diagnostic.code.as_str(),
-                }),
-        )
-}
-
-pub(crate) fn artifact_source_refs<'a>(
-    sources: &'a [&'a ploke_tree::graph::ArtifactNode],
-) -> impl Iterator<Item = SourceRef<'a>> + 'a {
-    sources.iter().map(|source| match &source.identity {
-        ploke_tree::graph::ArtifactIdentity::HistoryRef(artifact) => {
-            SourceRef::ArtifactHistoryRef {
-                artifact: artifact.as_str(),
-            }
-        }
-        ploke_tree::graph::ArtifactIdentity::PassiveId(artifact) => SourceRef::ArtifactId {
-            artifact: artifact.0.as_str(),
-        },
-    })
 }
 
 fn artifact_identity_label(identity: &ploke_tree::graph::ArtifactIdentity) -> &str {
@@ -1544,16 +2043,7 @@ fn child_patch_id<'a>(
         .or(child.request.patch_id.as_ref())
 }
 
-pub(crate) fn run_forest_artifact_edges(
-    node: &ploke_tree::TreeNode,
-) -> impl Iterator<Item = SelectionEdge<'_>> + '_ {
-    node.base_artifact_id
-        .as_deref()
-        .zip(node.derived_artifact_id.as_deref())
-        .into_iter()
-        .map(|(from, to)| SelectionEdge::new(EdgeRelation::AppliedPatch, from, to, 1))
-}
-
+#[cfg(test)]
 pub(crate) fn artifact_edges<'a>(
     edges: &'a [ArtifactRelation<'a>],
 ) -> impl Iterator<Item = SelectionEdge<'a>> + 'a {
@@ -2572,6 +3062,77 @@ mod tests {
         assert_eq!(edges[1].relation, EdgeRelation::ProducedChild);
         assert_eq!(edges[2].relation, EdgeRelation::AppliedPatch);
         assert_eq!(edges[3].relation, EdgeRelation::HistoryOpenedFrom);
+    }
+
+    #[test]
+    fn inspector_cache_reuses_section_slices_for_stable_selection() {
+        let graph = artifact_graph_with_applied_patch_edge();
+        let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let snapshot = inspector.snapshot(&selection);
+        let mut cache = InspectorCache::default();
+        let revision = GraphRevision::default();
+
+        {
+            let sections = cache
+                .sections(&graph, revision, Some(&selection.reference))
+                .expect("cached sections");
+            let _: &[ArtifactRelationSlot] = sections.artifact_edges_in();
+            let _: &[PatchSlot] = sections.patches();
+            let _: &[RunRecordSlot] = sections.run_records();
+            assert_eq!(
+                sections.artifact_edges_in().len(),
+                snapshot.artifact_incoming.len()
+            );
+            assert_eq!(
+                sections.artifact_edges_out().len(),
+                snapshot.artifact_outgoing.len()
+            );
+            assert_eq!(sections.patches().len(), snapshot.patches.len());
+            assert_eq!(sections.run_records().len(), snapshot.run_records.len());
+        }
+        assert_eq!(cache.rebuilds(), 1);
+
+        cache.sections(&graph, revision, Some(&selection.reference));
+        assert_eq!(cache.rebuilds(), 1);
+
+        cache.sections(&graph, revision.next(), Some(&selection.reference));
+        assert_eq!(cache.rebuilds(), 2);
+
+        let other = GraphSelectionRef::Artifact {
+            key: "base".to_owned(),
+        };
+        cache.sections(&graph, revision.next(), Some(&other));
+        assert_eq!(cache.rebuilds(), 3);
+    }
+
+    #[test]
+    fn inspector_cache_slots_resolve_against_current_graph() {
+        let graph = artifact_graph_with_applied_patch_edge();
+        let (selection, _) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let mut cache = InspectorCache::default();
+        let sections = cache
+            .sections(&graph, GraphRevision::default(), Some(&selection.reference))
+            .expect("cached sections");
+
+        let patch = sections.patches()[0]
+            .resolve(&graph)
+            .expect("patch slot resolves");
+        assert_eq!(patch.patch_id(), "patch:attempt-1");
+        let record = sections.run_records()[0]
+            .resolve(&graph)
+            .expect("run-record slot resolves");
+        assert_eq!(record.record_ref.branch_id, "branch-child");
+        let source_ref = sections.source_refs()[0]
+            .resolve(&graph)
+            .expect("source slot resolves");
+        assert_eq!(
+            source_ref,
+            SourceRef::ArtifactId {
+                artifact: "artifact:after"
+            }
+        );
     }
 
     #[test]
