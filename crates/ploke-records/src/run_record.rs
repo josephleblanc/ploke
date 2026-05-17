@@ -5,8 +5,9 @@
 //! replay state, execute tools, or grant runtime authority.
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
@@ -62,11 +63,61 @@ impl RunRecord {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompressedRunRecordProfile {
+    pub path: PathBuf,
+    pub compressed_bytes: u64,
+    pub decompressed_bytes: u64,
+    pub open_read_ns: u64,
+    pub decompress_ns: u64,
+    pub deserialize_ns: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfiledRunRecord {
+    pub record: RunRecord,
+    pub profile: CompressedRunRecordProfile,
+}
+
 pub fn read_compressed_record(path: &Path) -> Result<RunRecord, io::Error> {
     let file = File::open(path)?;
     let decoder = GzDecoder::new(file);
     let record = serde_json::from_reader(decoder)?;
     Ok(record)
+}
+
+pub fn read_compressed_record_profiled(path: &Path) -> Result<ProfiledRunRecord, io::Error> {
+    let start = Instant::now();
+    let mut file = File::open(path)?;
+    let mut compressed = Vec::new();
+    file.read_to_end(&mut compressed)?;
+    let open_read_ns = elapsed_ns(start);
+
+    let start = Instant::now();
+    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    let decompress_ns = elapsed_ns(start);
+
+    let start = Instant::now();
+    let record = serde_json::from_slice::<RunRecord>(&decompressed).map_err(io::Error::other)?;
+    let deserialize_ns = elapsed_ns(start);
+
+    Ok(ProfiledRunRecord {
+        record,
+        profile: CompressedRunRecordProfile {
+            path: path.to_path_buf(),
+            compressed_bytes: compressed.len().try_into().unwrap_or(u64::MAX),
+            decompressed_bytes: decompressed.len().try_into().unwrap_or(u64::MAX),
+            open_read_ns,
+            decompress_ns,
+            deserialize_ns,
+        },
+    })
+}
+
+fn elapsed_ns(start: Instant) -> u64 {
+    start.elapsed().as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -401,4 +452,62 @@ pub struct RunTimingSummary {
     pub setup_wall_clock_secs: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_wall_clock_secs: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+
+    use super::*;
+
+    #[test]
+    fn read_compressed_record_profiled_splits_reader_phases() {
+        let root = unique_temp_dir("ploke-records-profiled-run-record");
+        fs::create_dir_all(&root).expect("temp dir");
+        let path = root.join("record.json.gz");
+        let json = r#"{
+  "schema_version": "run-record.v1",
+  "manifest_id": "manifest-fixture",
+  "metadata": {
+    "benchmark": {
+      "instance_id": "instance-fixture",
+      "repo_root": "/tmp/repo",
+      "base_sha": null
+    },
+    "agent": {},
+    "runtime": {},
+    "budget": {
+      "max_turns": 1,
+      "max_tool_calls": 1,
+      "wall_clock_secs": 1
+    }
+  },
+  "phases": {},
+  "db_time_travel_index": []
+}"#;
+        let file = fs::File::create(&path).expect("create fixture");
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        encoder.write_all(json.as_bytes()).expect("write gzip");
+        encoder.finish().expect("finish gzip");
+
+        let profiled = read_compressed_record_profiled(&path).expect("read profiled record");
+        assert_eq!(profiled.record.schema_version, RUN_RECORD_SCHEMA_VERSION);
+        assert_eq!(profiled.record.manifest_id, "manifest-fixture");
+        assert!(profiled.profile.compressed_bytes > 0);
+        assert!(profiled.profile.decompressed_bytes > profiled.profile.compressed_bytes);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{label}-{nanos}"))
+    }
 }

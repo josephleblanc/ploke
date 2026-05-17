@@ -32,6 +32,12 @@ pub struct Run {
     pub inspect_node: Option<String>,
     #[cfg(feature = "dev")]
     pub artifact_ids_report: Option<String>,
+    #[cfg(feature = "dev")]
+    pub benchmark_suite: Option<String>,
+    #[cfg(feature = "dev")]
+    pub benchmark_scenarios: Vec<String>,
+    #[cfg(feature = "dev")]
+    pub benchmark_output: Option<PathBuf>,
 }
 
 impl Run {
@@ -52,6 +58,9 @@ impl Run {
                 artifact_edges_report: args.artifact_edges_report,
                 inspect_node: args.inspect_node,
                 artifact_ids_report: args.artifact_ids_report,
+                benchmark_suite: args.benchmark_suite,
+                benchmark_scenarios: args.benchmark_scenario,
+                benchmark_output: args.benchmark_output,
             };
         }
 
@@ -127,6 +136,30 @@ struct Args {
 
     #[arg(
         long,
+        value_name = "SUITE",
+        requires = "run_root",
+        help = "Run a native benchmark suite; standard requires explicit --run-root"
+    )]
+    benchmark_suite: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "benchmark_suite",
+        help = "Filter benchmark scenarios; repeatable, defaults to all standard scenarios"
+    )]
+    benchmark_scenario: Vec<String>,
+
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "benchmark_suite",
+        help = "Write benchmark README.md and report.json to this directory"
+    )]
+    benchmark_output: Option<PathBuf>,
+
+    #[arg(
+        long,
         value_name = "MODE",
         value_parser = parse_mode,
         help = "Initial graph mode: artifact-tree, lineage, both, or none"
@@ -144,5 +177,45 @@ fn parse_mode(value: &str) -> Result<GraphViewMode, String> {
         other => Err(format!(
             "unknown graph mode '{other}' (expected artifact-tree, lineage, both, or none)"
         )),
+    }
+}
+
+#[cfg(all(test, feature = "dev"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_suite_requires_explicit_run_root() {
+        let error = Args::try_parse_from(["ploke-egui", "--benchmark-suite", "standard"])
+            .expect_err("benchmark requires explicit run-root");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn benchmark_flags_parse_with_explicit_run_root() {
+        let args = Args::try_parse_from([
+            "ploke-egui",
+            "--run-root",
+            "/tmp/prototype1",
+            "--benchmark-suite",
+            "standard",
+            "--benchmark-scenario",
+            "startup_frames_300",
+            "--benchmark-scenario",
+            "warm_idle_300",
+            "--benchmark-output",
+            "/tmp/report",
+        ])
+        .expect("parse benchmark flags");
+
+        assert_eq!(args.benchmark_suite.as_deref(), Some("standard"));
+        assert_eq!(
+            args.benchmark_scenario,
+            vec!["startup_frames_300".to_owned(), "warm_idle_300".to_owned()]
+        );
+        assert_eq!(args.benchmark_output, Some(PathBuf::from("/tmp/report")));
     }
 }

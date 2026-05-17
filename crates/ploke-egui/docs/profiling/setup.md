@@ -5,6 +5,7 @@ matching egui 0.34's profiling dependency, and exposes the feature:
 
 ```toml
 profile-with-puffin = ["profiling/profile-with-puffin"]
+native-benchmark = ["profile-with-puffin"]
 ```
 
 Normal builds keep `profiling` as a no-op shim. Profiling builds can enable the
@@ -89,3 +90,35 @@ measurement artifacts unless explicitly copied into a report.
 
 The persisted JSON shape is owned by `ploke_egui::perf::PerformanceLog`; do not
 read or write it through anonymous `serde_json::Value` field walking.
+
+## Native Benchmark Suite
+
+`native-benchmark` enables the standard rendered-window benchmark harness and a
+process-wide allocator wrapper. Allocation deltas are reported as process-wide
+counts and bytes; GPU and driver memory are outside the measured surface.
+
+The benchmark suite requires an explicit run root. Standard v1 is fixed to the
+current five-generation 1x3 run:
+
+```sh
+cargo run -p ploke-egui --features "dev native-benchmark" -- \
+  --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 \
+  --benchmark-suite standard
+```
+
+Scenario filters are repeatable:
+
+```sh
+cargo run -p ploke-egui --features "dev native-benchmark" -- \
+  --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 \
+  --benchmark-suite standard \
+  --benchmark-scenario startup_frames_300 \
+  --benchmark-scenario warm_idle_300
+```
+
+By default, small tracked summaries are written below
+`crates/ploke-egui/docs/profiling/benchmarks/<date>-<shortsha>-standard/`.
+Each run writes `README.md` and typed `report.json`. Large `.puffin` captures
+stay local and ignored under
+`crates/ploke-egui/data/profiling/puffin/benchmarks/`; the report records their
+paths, byte sizes, and SHA-256 hashes.

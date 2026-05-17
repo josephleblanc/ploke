@@ -2,7 +2,14 @@
 
 use std::error::Error;
 use std::path::PathBuf;
+#[cfg(all(feature = "dev", feature = "native-benchmark"))]
+use std::time::Instant;
 
+#[cfg(all(feature = "dev", feature = "native-benchmark"))]
+use crate::benchmark::{
+    BenchmarkConfig, BenchmarkController, BenchmarkSuite, StartupProfile,
+    load_graph_with_startup_profile, span_from_start,
+};
 use crate::cli::Run;
 #[cfg(feature = "dev")]
 use crate::cli::report::{
@@ -38,7 +45,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .with_inner_size([layout::DEFAULT_WINDOW_WIDTH, layout::DEFAULT_WINDOW_HEIGHT]),
         ..Default::default()
     };
+    #[cfg(all(feature = "dev", feature = "native-benchmark"))]
+    let run_picker_start = Instant::now();
     let mut picker = RunPicker::from_default_root();
+    #[cfg(all(feature = "dev", feature = "native-benchmark"))]
+    let run_picker_span = span_from_start("run_picker_discovery", run_picker_start);
     let initial_run_root = explicit_run_root
         .clone()
         .or_else(|| picker.first_loadable_path().map(PathBuf::from));
@@ -53,6 +64,32 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "dev")]
     if run.artifact_connectivity_report {
         print!("{}", picker.artifact_connectivity_batch().render_text());
+        return Ok(());
+    }
+    #[cfg(all(feature = "dev", not(feature = "native-benchmark")))]
+    if run.benchmark_suite.is_some() {
+        return Err("--benchmark-suite requires --features \"dev native-benchmark\"".into());
+    }
+    #[cfg(all(feature = "dev", feature = "native-benchmark"))]
+    if let Some(suite_name) = run.benchmark_suite.as_deref() {
+        let Some(run_root) = explicit_run_root.clone() else {
+            return Err("--benchmark-suite requires explicit --run-root".into());
+        };
+        let suite = BenchmarkSuite::parse(suite_name)?;
+        let config = BenchmarkConfig::new(
+            suite,
+            run_root.clone(),
+            run.benchmark_output.clone(),
+            run.benchmark_scenarios.clone(),
+        )?;
+        picker.select_path(&run_root);
+        let mut startup = StartupProfile::default();
+        startup.spans.push(run_picker_span);
+        let (graph, startup) = load_graph_with_startup_profile(&run_root, startup)?;
+        let app = OperatorApp::new_with_run_picker(graph, picker)
+            .with_mode(run.mode)
+            .with_benchmark(BenchmarkController::new(config, startup));
+        eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
         return Ok(());
     }
     #[cfg(feature = "dev")]

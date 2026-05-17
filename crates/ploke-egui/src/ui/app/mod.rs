@@ -3,9 +3,24 @@
 pub(crate) mod layout;
 mod shell;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+use std::time::Instant;
+
 use eframe::egui;
 use ploke_tree::Graph;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+use crate::benchmark::{
+    BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkWriteResult,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
     GraphIdentity, RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
@@ -18,6 +33,12 @@ use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::diff::PatchDiffCache;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+use crate::ui::inspector::default_selections;
 use crate::ui::inspector::{GraphRevision, InspectorCache, SelectionInspector};
 use crate::ui::view::{ArtifactTreeFilters, GraphView, GraphViewDiagnostics, GraphViewMode};
 
@@ -40,6 +61,18 @@ pub struct OperatorApp {
     diagnostics_error: Option<String>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
     puffin_capture: Option<PuffinCapture>,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark: Option<BenchmarkController>,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_patch_debug_open: bool,
 }
 
 impl OperatorApp {
@@ -62,6 +95,18 @@ impl OperatorApp {
             diagnostics_error: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
             puffin_capture: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_patch_debug_open: false,
         }
     }
 
@@ -80,6 +125,18 @@ impl OperatorApp {
             diagnostics_error: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
             puffin_capture: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_patch_debug_open: false,
         }
     }
 
@@ -105,6 +162,16 @@ impl OperatorApp {
         self
     }
 
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub fn with_benchmark(mut self, benchmark: BenchmarkController) -> Self {
+        self.benchmark = Some(benchmark);
+        self
+    }
+
     fn current_run_name(&self) -> Option<&str> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -124,8 +191,20 @@ impl OperatorApp {
 impl eframe::App for OperatorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         profiling::scope!("ploke-egui.frame");
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.benchmark_begin_frame();
         let top_graph_has_content = graph_has_content(&self.graph);
 
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let top_strip_start = Instant::now();
         egui::Panel::top("top_strip")
             .default_size(layout::TOP_STRIP_HEIGHT)
             .show_inside(ui, |ui| {
@@ -137,7 +216,19 @@ impl eframe::App for OperatorApp {
                     top_graph_has_content,
                 );
             });
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.record_benchmark_component("top_strip", top_strip_start);
 
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let run_navigation_start = Instant::now();
         egui::Panel::left("run_navigation")
             .default_size(layout::LEFT_SIDEBAR_WIDTH)
             .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
@@ -157,7 +248,19 @@ impl eframe::App for OperatorApp {
                             if let Some(run) = self.run_snapshot() {
                                 ui.label(format!("Run: {}", run.name));
                             }
+                            #[cfg(all(
+                                not(target_arch = "wasm32"),
+                                feature = "dev",
+                                feature = "native-benchmark"
+                            ))]
+                            let diagnostics_start = Instant::now();
                             render_diagnostics(ui, &diagnostics);
+                            #[cfg(all(
+                                not(target_arch = "wasm32"),
+                                feature = "dev",
+                                feature = "native-benchmark"
+                            ))]
+                            self.record_benchmark_component("diagnostics", diagnostics_start);
                             #[cfg(not(target_arch = "wasm32"))]
                             self.render_diagnostics_export(ui, diagnostics);
                         }
@@ -168,6 +271,12 @@ impl eframe::App for OperatorApp {
                         }
                     });
             });
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.record_benchmark_component("run_navigation", run_navigation_start);
 
         let graph_has_content = graph_has_content(&self.graph);
         let selected_node = self.view.selected_node(&self.graph);
@@ -179,11 +288,29 @@ impl eframe::App for OperatorApp {
                 .sections(&self.graph, self.graph_revision, selected_reference);
         let selection_synced = selected_reference.is_some();
 
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let inspector_start = Instant::now();
         egui::Panel::right("selection_inspector")
             .default_size(layout::RIGHT_INSPECTOR_WIDTH)
             .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
             .show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.selection-inspector");
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                ))]
+                let patch_debug_open = self.benchmark_patch_debug_open;
+                #[cfg(not(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                )))]
+                let patch_debug_open = false;
                 shell::render_right_inspector(
                     ui,
                     &self.graph,
@@ -191,9 +318,22 @@ impl eframe::App for OperatorApp {
                     selected_label,
                     selected_sections,
                     &mut self.patch_diff_cache,
+                    patch_debug_open,
                 );
             });
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.record_benchmark_component("selection_inspector", inspector_start);
 
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let timeline_start = Instant::now();
         egui::Panel::bottom("timeline")
             .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
             .show_inside(ui, |ui| {
@@ -204,7 +344,19 @@ impl eframe::App for OperatorApp {
                     selection_synced,
                 );
             });
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.record_benchmark_component("timeline", timeline_start);
 
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let central_start = Instant::now();
         egui::CentralPanel::default().show_inside(ui, |ui| {
             profiling::scope!("ploke-egui.frame.central");
             if graph_has_content {
@@ -217,12 +369,33 @@ impl eframe::App for OperatorApp {
                 });
             }
         });
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        self.record_benchmark_component("central_graph", central_start);
 
         #[cfg(not(target_arch = "wasm32"))]
         self.emit_diagnostics(ui.ctx());
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        let capture_start = Instant::now();
         profiling::finish_frame!();
         #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
         self.emit_puffin_capture(ui.ctx());
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        {
+            self.record_benchmark_component("capture_overhead", capture_start);
+            self.benchmark_end_frame(ui.ctx());
+        }
     }
 }
 
@@ -352,6 +525,155 @@ impl OperatorApp {
             path: run.path.display().to_string(),
         })
     }
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+impl OperatorApp {
+    fn benchmark_begin_frame(&mut self) {
+        let action = self
+            .benchmark
+            .as_mut()
+            .and_then(BenchmarkController::begin_frame);
+        if let Some(action) = action {
+            let report = self.apply_benchmark_action(action);
+            if let Some(benchmark) = &mut self.benchmark {
+                benchmark.record_action(report);
+            }
+        }
+    }
+
+    fn record_benchmark_component(&mut self, component: &'static str, start: Instant) {
+        if let Some(benchmark) = &mut self.benchmark {
+            benchmark.record_component(component, elapsed_ns(start));
+        }
+    }
+
+    fn benchmark_end_frame(&mut self, ctx: &egui::Context) {
+        let Some(benchmark) = &mut self.benchmark else {
+            return;
+        };
+        match benchmark.end_frame() {
+            Ok(Some(result)) => {
+                print_benchmark_result(&result);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Ok(None) => {
+                ctx.request_repaint();
+            }
+            Err(error) => {
+                self.diagnostics_error = Some(format!("Benchmark write failed: {error}"));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    fn apply_benchmark_action(&mut self, action: BenchmarkAction) -> BenchmarkActionReport {
+        let mut report = BenchmarkActionReport::for_action(action);
+        self.benchmark_patch_debug_open = false;
+        match action {
+            BenchmarkAction::None => {}
+            BenchmarkAction::SetMode(mode) => {
+                self.view.set_mode(mode);
+                report.notes.push(format!("mode={}", mode.as_str()));
+            }
+            BenchmarkAction::ToggleHideUnconsideredChildren => {
+                let current = self.view.artifact_tree_filters().hide_unconsidered_children;
+                self.view.set_hide_unconsidered_children(!current);
+                report
+                    .notes
+                    .push(format!("hide_unconsidered_children={}", !current));
+            }
+            BenchmarkAction::SelectArtifact {
+                patch_debug_open,
+                reset_patch_cache,
+            } => {
+                self.benchmark_patch_debug_open = patch_debug_open;
+                if reset_patch_cache {
+                    self.patch_diff_cache = PatchDiffCache::default();
+                    report.notes.push("patch_diff_cache_reset=true".to_owned());
+                }
+                self.apply_benchmark_selection(&mut report);
+            }
+        }
+        report
+    }
+
+    fn apply_benchmark_selection(&mut self, report: &mut BenchmarkActionReport) {
+        let selections = default_selections(&self.graph);
+        let first = selections.first().cloned();
+        let with_patch = selections.iter().find(|selection| {
+            matches!(
+                SelectionInspector::from_graph(&self.graph, selection),
+                SelectionInspector::Artifact(artifact) if !artifact.patches.is_empty()
+            )
+        });
+
+        let (selection, fallback) = if let Some(selection) = with_patch.cloned() {
+            (Some(selection), None)
+        } else {
+            (
+                first,
+                Some("no_visible_artifact_with_patch_slots".to_owned()),
+            )
+        };
+
+        let Some(selection) = selection else {
+            report.fallback = Some("no_visible_artifact_selection".to_owned());
+            return;
+        };
+
+        if let Some(fallback) = fallback {
+            report.fallback = Some(fallback);
+        }
+        report.target_label = Some(selection.label.clone());
+        report.target_key = Some(selection_key(&selection.reference));
+        if !self
+            .view
+            .select_reference(&self.graph, &selection.reference)
+        {
+            report
+                .notes
+                .push("selection_target_not_visible_in_current_mode".to_owned());
+        }
+    }
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+fn selection_key(reference: &crate::ui::view::GraphSelectionRef) -> String {
+    match reference {
+        crate::ui::view::GraphSelectionRef::Artifact { key }
+        | crate::ui::view::GraphSelectionRef::RunForestNode { key } => key.clone(),
+    }
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+fn print_benchmark_result(result: &BenchmarkWriteResult) {
+    println!("Benchmark report written: {}", result.report_path.display());
+    println!(
+        "Benchmark summary written: {}",
+        result.readme_path.display()
+    );
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+fn elapsed_ns(start: Instant) -> u64 {
+    start.elapsed().as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
 fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {

@@ -8,3 +8,6 @@ which changes helped or hurt the measured baseline.
   local performance logs.
 - [`performance-change-log.md`](performance-change-log.md)
   Short record of performance-affecting changes and their observed impact.
+- [`benchmarks/`](benchmarks/)
+  Tracked benchmark summaries, generated native benchmark reports, and short
+  benchmark notes for `ploke-egui` edits.

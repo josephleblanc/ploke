@@ -43,6 +43,7 @@ pub(crate) fn render_right_inspector(
     selection_label: Option<&str>,
     sections: Option<&InspectorSections>,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
+    patch_debug_open: bool,
 ) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -117,7 +118,7 @@ pub(crate) fn render_right_inspector(
 
             ui.separator();
             egui::CollapsingHeader::new("Patch Debug")
-                .default_open(false)
+                .default_open(patch_debug_open)
                 .show(ui, |ui| {
                     if let Some(sections) = sections {
                         render_patches_for_inspector(ui, graph, sections, diff_cache);
@@ -634,6 +635,7 @@ fn render_prefixed_id_row(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::{Event, Id, Subscriber};
@@ -641,8 +643,11 @@ mod tests {
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
 
+    use crate::benchmark::{STANDARD_RUN_ROOT, StartupProfile, load_graph_with_startup_profile};
     use crate::ui::diff::PatchDiffCache;
-    use crate::ui::inspector::{GraphRevision, InspectorCache};
+    use crate::ui::inspector::{
+        GraphRevision, InspectorCache, SelectionInspector, default_selections,
+    };
     use crate::ui::view::GraphSelectionRef;
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
     use ploke_records::ids::{ArtifactId, HistoryHash};
@@ -822,6 +827,7 @@ mod tests {
                     Some("A1"),
                     Some(sections),
                     &mut diff_cache,
+                    false,
                 );
                 render_artifact_ids_for_inspector(ui, &graph, sections);
             });
@@ -854,6 +860,56 @@ mod tests {
         assert!(traces.iter().any(|line| line.contains(
             "span:ploke_egui.id_display.show_compact full=text-file-sha256:f6f73d0a2259c38d377144ed14f53be3 compact=f6f73d0a expandable=true expanded=false"
         )));
+    }
+
+    #[test]
+    fn patch_debug_diff_scroll_areas_have_unique_ids() {
+        let run_root = Path::new(STANDARD_RUN_ROOT);
+        assert!(
+            run_root.join("scheduler.json").is_file(),
+            "standard benchmark run root missing: {}",
+            run_root.display()
+        );
+        let (graph, startup) = load_graph_with_startup_profile(run_root, StartupProfile::default())
+            .expect("load standard benchmark graph from typed records");
+        assert!(
+            !startup.compressed_run_records.is_empty(),
+            "standard benchmark should deserialize compressed run records"
+        );
+
+        let selection = default_selections(&graph)
+            .into_iter()
+            .find(|selection| {
+                matches!(
+                    SelectionInspector::from_graph(&graph, selection),
+                    SelectionInspector::Artifact(artifact) if artifact.patches.len() >= 2
+                )
+            })
+            .expect("standard benchmark graph should contain an artifact with multiple patches");
+        let mut inspector_cache = InspectorCache::default();
+        let sections = inspector_cache
+            .sections(&graph, GraphRevision::default(), Some(&selection.reference))
+            .expect("real benchmark artifact selection has inspector sections");
+        assert!(
+            sections.patches().len() >= 2,
+            "real benchmark selection should render multiple patch diffs"
+        );
+        let mut diff_cache = PatchDiffCache::default();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+
+        let output = ctx.run_ui(Default::default(), |ui| {
+            render_patches_for_inspector(ui, &graph, sections, &mut diff_cache);
+        });
+
+        let warning_texts: Vec<_> = clipped_shape_texts(&output.shapes)
+            .into_iter()
+            .filter(|text| text.contains("ScrollArea ID"))
+            .collect();
+        assert!(
+            warning_texts.is_empty(),
+            "unexpected egui ScrollArea ID clash warnings: {warning_texts:?}"
+        );
     }
 
     #[test]
@@ -894,6 +950,26 @@ mod tests {
         assert!(traces.iter().any(|line| line.contains(
             "span:ploke_egui.inspector.artifact_ids_section selection_kind=run_forest_node state=not_applicable selection_key=node-f1fbab3a2bb5e7e5"
         )));
+    }
+
+    fn clipped_shape_texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+        let mut texts = Vec::new();
+        for shape in shapes {
+            collect_shape_texts(&shape.shape, &mut texts);
+        }
+        texts
+    }
+
+    fn collect_shape_texts(shape: &egui::epaint::Shape, texts: &mut Vec<String>) {
+        match shape {
+            egui::epaint::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_shape_texts(shape, texts);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1277,6 +1353,10 @@ fn render_diff(
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             egui::ScrollArea::both()
+                .id_salt((
+                    "ploke_egui.patch_debug.diff",
+                    patch.child.node.node_id.as_str(),
+                ))
                 .auto_shrink([false, false])
                 .max_height(320.0)
                 .show(ui, |ui| {

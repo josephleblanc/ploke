@@ -105,6 +105,11 @@ impl GraphView {
         self.cache.selected_node()
     }
 
+    pub fn select_reference(&mut self, graph: &DomainGraph, reference: &GraphSelectionRef) -> bool {
+        self.sync_projection(graph);
+        self.cache.select_reference(reference)
+    }
+
     pub fn mode(&self) -> GraphViewMode {
         self.mode
     }

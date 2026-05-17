@@ -174,6 +174,35 @@ impl GraphViewCache {
         })
     }
 
+    pub(super) fn select_reference(&mut self, reference: &GraphSelectionRef) -> bool {
+        let target = self.graph.g().node_indices().find(|node| {
+            self.graph.g().node_weight(*node).is_some_and(|weight| {
+                let payload = weight.payload();
+                payload.visible() && payload.reference() == reference
+            })
+        });
+
+        let Some(target) = target else {
+            return false;
+        };
+
+        let node_indices = self.graph.g().node_indices().collect::<Vec<_>>();
+        for node in node_indices {
+            if let Some(weight) = self.graph.g_mut().node_weight_mut(node) {
+                weight.set_selected(node == target);
+            }
+        }
+        let edge_indices = self.graph.g().edge_indices().collect::<Vec<_>>();
+        for edge in edge_indices {
+            if let Some(weight) = self.graph.g_mut().edge_weight_mut(edge) {
+                weight.set_selected(false);
+            }
+        }
+        self.graph.set_selected_nodes(vec![target]);
+        self.graph.set_selected_edges(Vec::new());
+        true
+    }
+
     fn selected_payload(&self) -> Option<&GraphNode> {
         let selected = self.graph.selected_nodes().first().copied()?;
         let node = self.graph.g().node_weight(selected)?;

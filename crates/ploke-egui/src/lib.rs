@@ -24,6 +24,14 @@
 //! of this crate.
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod allocation;
+#[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: allocation::GlobalCountingAllocator = allocation::GlobalCountingAllocator;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod benchmark;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 pub mod demo;
 #[cfg(not(target_arch = "wasm32"))]

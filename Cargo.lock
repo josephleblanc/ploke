@@ -6509,6 +6509,7 @@ dependencies = [
 name = "ploke-egui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "eframe 0.34.2",
  "egui 0.34.2",
@@ -6524,6 +6525,7 @@ dependencies = [
  "puffin",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "tracing",
  "tracing-subscriber",

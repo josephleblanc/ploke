@@ -3,6 +3,19 @@
 Update this file when a `ploke-egui` change has measured or plausible
 performance impact. Keep entries short and cite the verification surface.
 
+## Native Benchmark Suite
+
+- Change: added a native-only benchmark suite behind `native-benchmark` with
+  typed `report.json` summaries, scripted rendered scenarios, process-wide
+  allocation deltas, and local ignored Puffin captures.
+- Expected positive impact: separates startup/import timing, first rendered
+  frames, warm idle, and deterministic rendered interaction windows for
+  repeatable comparison.
+- Expected negative impact: benchmark builds intentionally enable profiling and
+  allocation counting overhead.
+- Verification surface: not measured by this changelog entry; use generated
+  benchmark reports for actual numbers.
+
 ## 2026-05-16 Profiling Baseline
 
 - Change: added `profiling` scopes and the `profile-with-puffin` feature for
