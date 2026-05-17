@@ -7,25 +7,22 @@ use crate::{
     rag::tools::apply_ns_code_edit_tool,
     tools::ToolResult,
     tools::ToolRetryContext,
+    tools::ToolRetryContextValue,
     tools::validators::{validate_file_path_basic, validate_unified_diff},
 };
 
 /// Type for non-semantic file patching
 pub struct NsPatch;
 
-// Simple description of the diff format, since the mpath crate will handle the parsing for us.
-//
-// NOTE:
-// If we run into issues with the kind of input we are getting from LLMs, this is one place we
-// could try to improve/iterate.
-//
-// For example, we may want to include an example like
-// --- a/src/main.rs
-// +++ b/src/main.rs
-// @@ -1 +1 @@
-// -println!("Old");
-// +println!("New");
-const DIFF_DESCR: &str = r#"Raw Unified Diff"#;
+const DIFF_DESCR: &str = r#"One valid unified diff for exactly this file. Include ---/+++ file headers and ranged @@ hunks; bare @@ hunks are invalid.
+Example:
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -10,3 +10,4 @@
+ context line
+-old line
++new line
++added line"#;
 
 // TODO: Add a macro to take care of forming the json version automatically
 lazy_static::lazy_static! {
@@ -257,12 +254,20 @@ impl super::Tool for NsPatch {
 fn retry_hint_for_exec_message(message: &str) -> &'static str {
     if message.contains("Patch applied partially") {
         "The patch did not match the current file cleanly. Read the file again and regenerate a tighter unified diff with exact current context lines."
-    } else if message.contains("Failed to parse patch") || message.contains("missing hunk") {
-        "Provide a valid unified diff with ---/+++ headers and @@ hunks."
+    } else if message.contains("No patches were found")
+        || message.contains("Failed to parse patch")
+        || message.contains("parse_single_patch")
+        || message.contains("missing hunk")
+    {
+        NS_PATCH_DIFF_RETRY_HINT
+    } else if message.contains("File content changed since indexing") {
+        "The target file changed after this patch was prepared. Reread the file and regenerate the diff against the current contents."
     } else {
         "Use an absolute path or workspace-root-relative file path (e.g., \"crates/my-crate/Cargo.toml\")."
     }
 }
+
+const NS_PATCH_DIFF_RETRY_HINT: &str = "Reread the target file, then regenerate one unified diff per file. Include ---/+++ headers and ranged hunk headers such as @@ -10,7 +10,9 @@; do not send bare @@ hunks.";
 
 fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError> {
     if params.patches.is_empty() {
@@ -293,13 +298,30 @@ fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError
         )?;
 
         validate_unified_diff(ToolName::NsPatch, "diff", patch.diff.as_ref()).map_err(|err| {
+            let mut retry_context = ToolRetryContext::new()
+                .field("patch_index", idx)
+                .field("field", "diff");
+            if let Some(existing) = err.retry_context.as_ref() {
+                for field in &existing.fields {
+                    if field.name != "field" {
+                        retry_context =
+                            retry_context.field(field.name.clone(), field.value.clone());
+                    }
+                }
+            }
+            if retry_context.get("diff_snippet").is_none() {
+                retry_context = retry_context.field(
+                    "diff_snippet",
+                    crate::tools::error::truncate_for_error(patch.diff.as_ref(), 512),
+                );
+            }
+            if retry_context.get("parser_error").is_none() {
+                retry_context = retry_context.field("parser_error", ToolRetryContextValue::Null);
+            }
+
             ToolInvocationError::Validation(
-                err.retry_hint("Provide a unified diff with ---/+++ headers and @@ hunks.")
-                    .retry_context(
-                        ToolRetryContext::new()
-                            .field("patch_index", idx)
-                            .field("field", "diff"),
-                    ),
+                err.retry_hint(NS_PATCH_DIFF_RETRY_HINT)
+                    .retry_context(retry_context),
             )
         })?;
 
@@ -410,6 +432,77 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_rejects_bare_hunk_diff_with_repair_context() {
+        let input = serde_json::json!({
+            "patches": [{
+                "file": "crates/printer/src/util.rs",
+                "diff": "@@ -1,3 +1,3 @@\n context\n-old\n+new\n",
+                "reasoning": "Patch the current ripgrep file."
+            }]
+        })
+        .to_string();
+
+        let err = NsPatch::deserialize_params(&input).expect_err("expected malformed diff");
+
+        match err {
+            ToolInvocationError::Validation(te) => {
+                assert_eq!(te.code, ToolErrorCode::MalformedDiff);
+                assert_eq!(te.field, Some("diff"));
+                assert_eq!(te.retry_hint.as_deref(), Some(NS_PATCH_DIFF_RETRY_HINT));
+                assert_eq!(
+                    te.retry_context
+                        .as_ref()
+                        .and_then(|ctx| ctx.get("field"))
+                        .and_then(|value| value.as_str()),
+                    Some("diff")
+                );
+                assert!(matches!(
+                    te.retry_context
+                        .as_ref()
+                        .and_then(|ctx| ctx.get("patch_index")),
+                    Some(ToolRetryContextValue::Number(value)) if value == "0"
+                ));
+                assert!(
+                    te.retry_context
+                        .as_ref()
+                        .and_then(|ctx| ctx.get("parser_error"))
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| value.contains("parse")
+                            || value.contains("patch")
+                            || value.contains("Patch")),
+                    "expected parser error in retry context: {:?}",
+                    te.retry_context
+                );
+                assert!(
+                    te.retry_context
+                        .as_ref()
+                        .and_then(|ctx| ctx.get("diff_snippet"))
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| value.contains("@@ -1,3 +1,3 @@")),
+                    "expected diff snippet in retry context: {:?}",
+                    te.retry_context
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_accepts_ranged_unified_diff() {
+        let input = serde_json::json!({
+            "patches": [{
+                "file": "crates/printer/src/util.rs",
+                "diff": "--- a/crates/printer/src/util.rs\n+++ b/crates/printer/src/util.rs\n@@ -10,3 +10,3 @@\n context\n-old\n+new\n",
+                "reasoning": "Patch the current ripgrep file."
+            }]
+        })
+        .to_string();
+
+        let params = NsPatch::deserialize_params(&input).expect("valid ranged diff");
+        assert_eq!(params.patches.len(), 1);
+    }
+
+    #[test]
     fn adapt_error_reports_partial_apply_retry_hint() {
         let err = ToolInvocationError::Exec(ploke_error::Error::Domain(
             ploke_error::DomainError::Io {
@@ -424,6 +517,24 @@ mod tests {
             adapted.retry_hint.as_deref(),
             Some(
                 "The patch did not match the current file cleanly. Read the file again and regenerate a tighter unified diff with exact current context lines."
+            )
+        );
+    }
+
+    #[test]
+    fn adapt_error_reports_content_mismatch_retry_hint() {
+        let err =
+            ToolInvocationError::Exec(ploke_error::Error::Domain(ploke_error::DomainError::Io {
+                message: "File content changed since indexing: src/lib.rs".to_string(),
+            }));
+
+        let adapted = NsPatch::adapt_error(err);
+
+        assert_eq!(adapted.code, ToolErrorCode::Io);
+        assert_eq!(
+            adapted.retry_hint.as_deref(),
+            Some(
+                "The target file changed after this patch was prepared. Reread the file and regenerate the diff against the current contents."
             )
         );
     }

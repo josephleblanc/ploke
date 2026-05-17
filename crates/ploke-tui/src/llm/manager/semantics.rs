@@ -393,4 +393,52 @@ mod tests {
             .expect("diagnostic");
         assert!(diagnostic.contains("Rejected arguments: {\"search_term\":42}"));
     }
+
+    #[test]
+    fn malformed_ns_patch_preflight_maps_to_tool_args_repair() {
+        let tool_call = ploke_llm::response::ToolCall {
+            call_id: ArcStr::from("call_bare_hunk"),
+            call_type: ploke_core::tool_types::FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: crate::tools::ToolName::NsPatch,
+                arguments: serde_json::json!({
+                    "patches": [{
+                        "file": "crates/printer/src/util.rs",
+                        "diff": "@@ -1,3 +1,3 @@\n context\n-old\n+new\n",
+                        "reasoning": "Patch the current ripgrep file."
+                    }]
+                })
+                .to_string(),
+            },
+        };
+
+        let preflight_error = crate::tools::validate_and_sanitize_tool_calls(&[tool_call])
+            .expect_err("bare hunk should fail preflight");
+        let spec =
+            normalize_tool_call_preflight_error(preflight_error, None, ErrorContext::new(1, 0));
+
+        assert_eq!(spec.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(matches!(
+            spec.recovery,
+            RecoveryDecision::Repair {
+                action: RepairAction::ToolArgs,
+                ..
+            }
+        ));
+        let llm_action = spec.llm_action.as_ref().expect("llm action");
+        let action = llm_action.next_steps.first().expect("repair next step");
+        assert_eq!(action.action.as_ref(), "repair_tool_args");
+        assert!(
+            action
+                .details
+                .as_deref()
+                .is_some_and(|details| details.contains("ranged @@ hunks"))
+        );
+        assert!(
+            llm_action
+                .constraints
+                .iter()
+                .any(|constraint| constraint.contains("ranged hunk headers"))
+        );
+    }
 }

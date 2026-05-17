@@ -10271,7 +10271,7 @@ fn build_tool_call_sequence_subject(
                 .tool_calls()
                 .iter()
                 .any(|call| call.request.tool == "non_semantic_patch"),
-            patch_applied: summarize_patch_state(&turn.tool_calls()) == "yes",
+            patch_applied: summarize_patch_state(&turn.tool_calls()) == "applied",
         })
         .collect();
 
@@ -10362,7 +10362,7 @@ impl trace::NeighborhoodSource for RecordToolCallNeighborhoodAdapter<'_> {
                     .tool_calls()
                     .iter()
                     .any(|call| call.request.tool == "non_semantic_patch"),
-                patch_applied: summarize_patch_state(&turn_record.tool_calls()) == "yes",
+                patch_applied: summarize_patch_state(&turn_record.tool_calls()) == "applied",
             },
             before,
             focal,
@@ -10885,42 +10885,44 @@ fn summarize_patch_state(tool_calls: &[crate::record::ToolExecutionRecord]) -> &
         return "no";
     }
 
-    if patch_calls.iter().any(|call| {
-        matches!(
-            &call.result,
-            crate::record::ToolResult::Failed(_) | crate::record::ToolResult::Completed(_)
-        )
-    }) {
-        let completed_calls: Vec<_> = patch_calls
-            .iter()
-            .filter_map(|call| match &call.result {
-                crate::record::ToolResult::Completed(completed) => Some(completed),
-                crate::record::ToolResult::Failed(_) => None,
-            })
-            .collect();
+    let completed_calls: Vec<_> = patch_calls
+        .iter()
+        .filter_map(|call| match &call.result {
+            crate::record::ToolResult::Completed(completed) => Some(completed),
+            crate::record::ToolResult::Failed(_) => None,
+        })
+        .collect();
 
-        if completed_calls.is_empty() {
-            "no"
-        } else if completed_calls.iter().any(|completed| {
-            completed
-                .ui_payload
-                .as_ref()
-                .and_then(|ui| {
-                    ui.fields
-                        .iter()
-                        .find(|field| field.name.as_ref() == "applied")
-                        .map(|field| field.value.as_ref())
-                })
-                .map(|value| value != "0")
-                .unwrap_or(false)
-        }) {
-            "yes"
-        } else {
-            "partial"
-        }
+    if completed_calls.iter().any(|completed| {
+        tool_ui_field_usize(completed.ui_payload.as_ref(), "applied").is_some_and(|value| value > 0)
+    }) {
+        "applied"
+    } else if completed_calls.iter().any(|completed| {
+        tool_ui_field_usize(completed.ui_payload.as_ref(), "staged").is_some_and(|value| value > 0)
+    }) {
+        "staged"
+    } else if patch_calls
+        .iter()
+        .any(|call| matches!(&call.result, crate::record::ToolResult::Failed(_)))
+    {
+        "failed"
     } else {
         "no"
     }
+}
+
+fn tool_ui_field_usize(
+    ui_payload: Option<&ploke_tui::tools::ToolUiPayload>,
+    name: &str,
+) -> Option<usize> {
+    ui_payload
+        .and_then(|ui| {
+            ui.fields
+                .iter()
+                .find(|field| field.name.as_ref() == name)
+                .map(|field| field.value.as_ref())
+        })
+        .and_then(|value| value.parse().ok())
 }
 
 fn print_tool_call_detail(
@@ -12734,6 +12736,42 @@ mod tests {
             }),
             latency_ms: 31,
         }
+    }
+
+    #[test]
+    fn patch_state_summary_reports_staged_only_completion_as_staged() {
+        let tool_calls = vec![sample_tool_call_completed(
+            "non_semantic_patch",
+            r#"{"patches":[]}"#,
+            "edit staged",
+            &[("status", "pending"), ("staged", "1"), ("applied", "0")],
+        )];
+
+        assert_eq!(summarize_patch_state(&tool_calls), "staged");
+    }
+
+    #[test]
+    fn patch_state_summary_reports_actual_apply_as_applied() {
+        let tool_calls = vec![sample_tool_call_completed(
+            "non_semantic_patch",
+            r#"{"patches":[]}"#,
+            "edit applied",
+            &[("status", "applied"), ("staged", "0"), ("applied", "1")],
+        )];
+
+        assert_eq!(summarize_patch_state(&tool_calls), "applied");
+    }
+
+    #[test]
+    fn patch_state_summary_reports_failed_only_as_failed() {
+        let tool_calls = vec![sample_tool_call_failed(
+            "non_semantic_patch",
+            r#"{"patches":[]}"#,
+            "malformed diff",
+            &[("field", "diff")],
+        )];
+
+        assert_eq!(summarize_patch_state(&tool_calls), "failed");
     }
 
     #[test]

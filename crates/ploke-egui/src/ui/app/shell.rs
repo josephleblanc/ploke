@@ -15,6 +15,9 @@ use crate::ui::inspector::{
     turn_outcome_tool_count,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
+use ploke_records::tool_contracts::{
+    PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
+};
 use ploke_tree::Graph;
 use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
 use std::sync::Arc;
@@ -30,6 +33,8 @@ pub(crate) struct InspectorRenderCache {
     parent_create_row_rebuilds: usize,
     text_galleys: Vec<CachedTextGalley>,
     id_galleys: Vec<CachedIdGalley>,
+    tool_argument_decodes: Vec<ToolArgumentDecodeEntry>,
+    tool_result_decodes: Vec<ToolResultDecodeEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
 }
@@ -104,6 +109,56 @@ impl InspectorRenderCache {
         galley
     }
 
+    fn tool_arguments(
+        &mut self,
+        call_id: &str,
+        tool: &str,
+        raw_arguments: &str,
+    ) -> &PersistedToolCallArguments {
+        if let Some(index) = self.tool_argument_decodes.iter().position(|entry| {
+            entry.call_id.as_ref() == call_id
+                && entry.tool.as_ref() == tool
+                && entry.raw_arguments.as_ref() == raw_arguments
+        }) {
+            return &self.tool_argument_decodes[index].decoded;
+        }
+
+        let decoded = ploke_records::tool_contracts::decode_tool_arguments(tool, raw_arguments);
+        self.tool_argument_decodes.push(ToolArgumentDecodeEntry {
+            call_id: call_id.into(),
+            tool: tool.into(),
+            raw_arguments: raw_arguments.into(),
+            decoded,
+        });
+        let index = self.tool_argument_decodes.len() - 1;
+        &self.tool_argument_decodes[index].decoded
+    }
+
+    fn tool_result(
+        &mut self,
+        call_id: &str,
+        tool: &str,
+        raw_content: &str,
+    ) -> &PersistedToolResultContent {
+        if let Some(index) = self.tool_result_decodes.iter().position(|entry| {
+            entry.call_id.as_ref() == call_id
+                && entry.tool.as_ref() == tool
+                && entry.raw_content.as_ref() == raw_content
+        }) {
+            return &self.tool_result_decodes[index].decoded;
+        }
+
+        let decoded = ploke_records::tool_contracts::decode_tool_result_content(tool, raw_content);
+        self.tool_result_decodes.push(ToolResultDecodeEntry {
+            call_id: call_id.into(),
+            tool: tool.into(),
+            raw_content: raw_content.into(),
+            decoded,
+        });
+        let index = self.tool_result_decodes.len() - 1;
+        &self.tool_result_decodes[index].decoded
+    }
+
     #[cfg(test)]
     fn text_galley_rebuilds(&self) -> usize {
         self.text_galley_rebuilds
@@ -115,10 +170,27 @@ impl InspectorRenderCache {
     }
 }
 
+#[derive(Debug)]
+struct ToolArgumentDecodeEntry {
+    call_id: Arc<str>,
+    tool: Arc<str>,
+    raw_arguments: Arc<str>,
+    decoded: PersistedToolCallArguments,
+}
+
+#[derive(Debug)]
+struct ToolResultDecodeEntry {
+    call_id: Arc<str>,
+    tool: Arc<str>,
+    raw_content: Arc<str>,
+    decoded: PersistedToolResultContent,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CachedTextKind {
     Plain,
     Monospace,
+    MonospaceBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,10 +228,23 @@ fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<eg
     let style = ui.style();
     let text_style = match kind {
         CachedTextKind::Plain => egui::TextStyle::Body,
-        CachedTextKind::Monospace => egui::TextStyle::Monospace,
+        CachedTextKind::Monospace | CachedTextKind::MonospaceBlock => egui::TextStyle::Monospace,
     };
     let font_id = text_style.resolve(style);
-    ui.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font_id, egui::Color32::PLACEHOLDER))
+    match kind {
+        CachedTextKind::Plain | CachedTextKind::Monospace => ui.fonts_mut(|fonts| {
+            fonts.layout_no_wrap(text.to_owned(), font_id, egui::Color32::PLACEHOLDER)
+        }),
+        CachedTextKind::MonospaceBlock => {
+            let job = egui::text::LayoutJob::simple(
+                text.to_owned(),
+                font_id,
+                ui.visuals().text_color(),
+                f32::INFINITY,
+            );
+            ui.fonts_mut(|fonts| fonts.layout_job(job))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -2089,22 +2174,634 @@ fn render_run_record_tool_step(
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
+    let call_id = tool.request.call_id.as_str();
+    let header_id = ui.make_persistent_id(("run-record-tool-step", index, call_id));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
+        .show_header(ui, |ui| {
+            render_run_record_tool_step_header(ui, render_cache, index, tool);
+        })
+        .body(|ui| {
+            render_run_record_tool_step_details(ui, render_cache, index, tool);
+        });
+}
+
+fn render_run_record_tool_step_header(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
     ui.horizontal(|ui| {
         let mut step = itoa::Buffer::new();
-        let mut latency = itoa::Buffer::new();
         cached_monospace_label(ui, render_cache, step.format(index + 1));
         cached_monospace_label(ui, render_cache, tool_execution_name(tool));
-        cached_monospace_label(ui, render_cache, tool_execution_status_label(tool));
-        cached_monospace_label(ui, render_cache, latency.format(tool.latency_ms));
-        cached_monospace_label(ui, render_cache, "ms");
+        render_tool_execution_status_badge(ui, tool);
+    });
+}
+
+fn render_run_record_tool_step_details(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    let call_id = tool.request.call_id.as_str();
+    let mut latency = itoa::Buffer::new();
+
+    ui.horizontal(|ui| {
+        cached_label(ui, render_cache, "call id");
         cached_expandable_id(
             ui,
             render_cache,
-            ("run-record-tool", index, tool.request.call_id.as_str()),
-            tool.request.call_id.as_str(),
+            ("run-record-tool-call-id", index, call_id),
+            call_id,
         );
-        cached_monospace_label(ui, render_cache, tool_execution_summary(tool));
     });
+    ui.horizontal(|ui| {
+        cached_label(ui, render_cache, "latency");
+        cached_monospace_label(ui, render_cache, latency.format(tool.latency_ms));
+        cached_monospace_label(ui, render_cache, "ms");
+    });
+    cached_label(ui, render_cache, "summary");
+    ui.add(egui::Label::new(egui::RichText::new(tool_execution_summary(tool)).monospace()).wrap());
+    render_tool_arguments_section(ui, render_cache, index, tool);
+    if let Some(payload) = tool_execution_ui_payload(tool) {
+        render_tool_ui_payload(ui, payload);
+    }
+    render_tool_result_section(ui, render_cache, index, tool);
+}
+
+fn render_tool_arguments_section(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    let call_id = tool.request.call_id.as_str();
+    egui::CollapsingHeader::new("tool call arguments")
+        .id_salt(("run-record-tool-arguments", index, call_id))
+        .default_open(true)
+        .show(ui, |ui| {
+            {
+                let decoded = render_cache.tool_arguments(
+                    call_id,
+                    tool.request.tool.as_str(),
+                    tool.request.arguments.as_str(),
+                );
+                render_decoded_tool_arguments(ui, decoded);
+            }
+
+            egui::CollapsingHeader::new("raw arguments")
+                .id_salt(("run-record-tool-raw-arguments", index, call_id))
+                .default_open(false)
+                .show(ui, |ui| {
+                    render_cached_code_block(
+                        ui,
+                        render_cache,
+                        ("run-record-tool-arguments-block", index, call_id),
+                        tool.request.arguments.as_str(),
+                    );
+                });
+        });
+}
+
+fn render_tool_result_section(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    let call_id = tool.request.call_id.as_str();
+    let raw_content = tool_execution_content(tool);
+    egui::CollapsingHeader::new("tool call content")
+        .id_salt(("run-record-tool-content", index, call_id))
+        .default_open(false)
+        .show(ui, |ui| match &tool.result {
+            ploke_records::run_record::ToolResult::Completed(_) => {
+                {
+                    let decoded =
+                        render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
+                    render_decoded_tool_result(ui, decoded);
+                }
+
+                egui::CollapsingHeader::new("raw content")
+                    .id_salt(("run-record-tool-content-raw", index, call_id))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        render_cached_code_block(
+                            ui,
+                            render_cache,
+                            ("run-record-tool-content-block", index, call_id),
+                            raw_content,
+                        );
+                    });
+            }
+            ploke_records::run_record::ToolResult::Failed(_) => {
+                render_tool_failure_content(ui, tool);
+                egui::CollapsingHeader::new("raw error")
+                    .id_salt(("run-record-tool-error-raw", index, call_id))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        render_cached_code_block(
+                            ui,
+                            render_cache,
+                            ("run-record-tool-error-block", index, call_id),
+                            raw_content,
+                        );
+                    });
+            }
+        });
+}
+
+fn render_tool_execution_status_badge(
+    ui: &mut egui::Ui,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    let label = tool_execution_status_label(tool);
+    let (fill, text_color) = match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(_) => {
+            (egui::Color32::from_rgb(33, 164, 106), egui::Color32::WHITE)
+        }
+        ploke_records::run_record::ToolResult::Failed(_) => {
+            (egui::Color32::from_rgb(178, 72, 72), egui::Color32::WHITE)
+        }
+    };
+    ui.label(
+        egui::RichText::new(label)
+            .background_color(fill)
+            .color(text_color)
+            .monospace(),
+    );
+}
+
+fn tool_execution_content(tool: &ploke_records::run_record::ToolExecutionRecord) -> &str {
+    match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(result) => result.content.as_str(),
+        ploke_records::run_record::ToolResult::Failed(result) => result.error.as_str(),
+    }
+}
+
+fn tool_execution_ui_payload(
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) -> Option<&ploke_records::agent_turn::ToolUiPayloadRecord> {
+    match &tool.result {
+        ploke_records::run_record::ToolResult::Completed(result) => result.ui_payload.as_ref(),
+        ploke_records::run_record::ToolResult::Failed(result) => result.ui_payload.as_ref(),
+    }
+}
+
+fn render_tool_ui_payload(
+    ui: &mut egui::Ui,
+    payload: &ploke_records::agent_turn::ToolUiPayloadRecord,
+) {
+    egui::CollapsingHeader::new("tool ui payload")
+        .default_open(true)
+        .show(ui, |ui| {
+            tool_kv_text(ui, "tool", payload.tool.as_str());
+            tool_kv_text(ui, "call id", payload.call_id.as_str());
+            if let Some(request_id) = payload.request_id.as_deref() {
+                tool_kv_text(ui, "request id", request_id);
+            }
+            if let Some(proposal_id) = payload.proposal_id.as_deref() {
+                tool_kv_text(ui, "proposal id", proposal_id);
+            }
+            tool_kv_text(ui, "summary", payload.summary.as_str());
+            tool_kv_debug(ui, "verbosity", payload.verbosity);
+            for field in &payload.fields {
+                tool_kv_text(ui, field.name.as_str(), field.value.as_str());
+            }
+            if let Some(details) = payload.details.as_deref() {
+                egui::CollapsingHeader::new("details")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(details).monospace()).wrap());
+                    });
+            }
+            if let Some(error) = payload.error.as_ref() {
+                render_tool_error_wire(ui, error);
+            }
+        });
+}
+
+fn render_tool_error_wire(
+    ui: &mut egui::Ui,
+    error: &ploke_records::agent_turn::ToolErrorWireRecord,
+) {
+    egui::CollapsingHeader::new("typed error")
+        .default_open(true)
+        .show(ui, |ui| {
+            tool_kv_text(ui, "user", error.user.as_str());
+            tool_kv_text(ui, "system", error.system.as_str());
+            tool_kv_bool(ui, "ok", error.llm.ok);
+            tool_kv_text(ui, "tool", error.llm.tool.as_str());
+            tool_kv_debug(ui, "code", error.llm.code);
+            if let Some(field) = error.llm.field.as_deref() {
+                tool_kv_text(ui, "field", field);
+            }
+            if let Some(expected) = error.llm.expected.as_deref() {
+                tool_kv_text(ui, "expected", expected);
+            }
+            if let Some(received) = error.llm.received.as_deref() {
+                tool_kv_text(ui, "received", received);
+            }
+            tool_kv_text(ui, "message", error.llm.message.as_str());
+            if let Some(hint) = error.llm.retry_hint.as_deref() {
+                tool_kv_text(ui, "retry hint", hint);
+            }
+        });
+}
+
+fn render_tool_failure_content(
+    ui: &mut egui::Ui,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    if let ploke_records::run_record::ToolResult::Failed(result) = &tool.result {
+        tool_kv_text(ui, "status", "failed");
+        if let Some(tool_name) = result.tool.as_deref() {
+            tool_kv_text(ui, "tool", tool_name);
+        }
+        tool_kv_text(ui, "error", result.error.as_str());
+    }
+}
+
+fn render_decoded_tool_arguments(ui: &mut egui::Ui, decoded: &PersistedToolCallArguments) {
+    match decoded {
+        PersistedToolCallArguments::Decoded(arguments) => {
+            tool_kv_text(ui, "decode", "ok");
+            render_tool_call_arguments(ui, arguments);
+        }
+        PersistedToolCallArguments::ParseFailure(failure) => {
+            tool_kv_text(ui, "decode", "failed");
+            tool_kv_text(ui, "tool", failure.tool.as_str());
+            tool_kv_debug(ui, "error", &failure.error);
+        }
+    }
+}
+
+fn render_tool_call_arguments(ui: &mut egui::Ui, arguments: &ToolCallArguments) {
+    match arguments {
+        ToolCallArguments::RequestCodeContext(args) => {
+            render_optional_u32(ui, "token budget", args.token_budget);
+            render_optional_str(ui, "search term", args.search_term.as_deref());
+        }
+        ToolCallArguments::ApplyCodeEdit(args) => {
+            render_optional_f32(ui, "confidence", args.confidence);
+            tool_kv_usize(ui, "edits", args.edits.len());
+            for (index, edit) in args.edits.iter().enumerate() {
+                egui::CollapsingHeader::new(format!("edit {}", index + 1))
+                    .default_open(index == 0)
+                    .show(ui, |ui| {
+                        tool_kv_text(ui, "file", edit.file.as_str());
+                        tool_kv_text(ui, "canon", edit.canon.as_str());
+                        tool_kv_debug(ui, "node type", edit.node_type);
+                        tool_kv_owned(ui, "code", text_size_summary(edit.code.as_str()));
+                    });
+            }
+        }
+        ToolCallArguments::InsertRustItem(args) => {
+            tool_kv_text(ui, "file", args.file.as_str());
+            tool_kv_debug(ui, "container kind", args.container_kind);
+            render_optional_str(ui, "container canon", args.container_canon.as_deref());
+            tool_kv_debug(ui, "item kind", args.item_kind);
+            render_optional_f32(ui, "confidence", args.confidence);
+            tool_kv_owned(ui, "code", text_size_summary(args.code.as_str()));
+        }
+        ToolCallArguments::CreateFile(args) => {
+            tool_kv_text(ui, "file path", args.file_path.as_str());
+            render_optional_str(ui, "on exists", args.on_exists.as_deref());
+            tool_kv_bool(ui, "create parents", args.create_parents);
+            tool_kv_owned(ui, "content", text_size_summary(args.content.as_str()));
+        }
+        ToolCallArguments::NsPatch(args) => {
+            render_optional_f32(ui, "confidence", args.confidence);
+            tool_kv_usize(ui, "patches", args.patches.len());
+            for (index, patch) in args.patches.iter().enumerate() {
+                egui::CollapsingHeader::new(format!("patch {}", index + 1))
+                    .default_open(index == 0)
+                    .show(ui, |ui| {
+                        tool_kv_text(ui, "file", patch.file.as_str());
+                        tool_kv_text(ui, "reasoning", patch.reasoning.as_str());
+                        tool_kv_owned(ui, "diff", text_size_summary(patch.diff.as_str()));
+                    });
+            }
+        }
+        ToolCallArguments::NsRead(args) => {
+            tool_kv_text(ui, "file", args.file.as_str());
+            render_optional_u32(ui, "start line", args.start_line);
+            render_optional_u32(ui, "end line", args.end_line);
+            render_optional_u32(ui, "max bytes", args.max_bytes);
+        }
+        ToolCallArguments::CodeItemLookup(args) => {
+            render_code_item_query(
+                ui,
+                args.item_name.as_str(),
+                args.file_path.as_str(),
+                args.node_kind.as_str(),
+                args.module_path.as_str(),
+            );
+        }
+        ToolCallArguments::CodeItemEdges(args) => {
+            render_code_item_query(
+                ui,
+                args.item_name.as_str(),
+                args.file_path.as_str(),
+                args.node_kind.as_str(),
+                args.module_path.as_str(),
+            );
+        }
+        ToolCallArguments::Cargo(args) => {
+            tool_kv_debug(ui, "command", args.command);
+            tool_kv_debug(ui, "scope", args.scope);
+            render_optional_str(ui, "package", args.package.as_deref());
+            render_optional_string_list(ui, "features", args.features.as_deref());
+            tool_kv_bool(ui, "all features", args.all_features);
+            tool_kv_bool(ui, "no default features", args.no_default_features);
+            render_optional_str(ui, "target", args.target.as_deref());
+            render_optional_str(ui, "profile", args.profile.as_deref());
+            tool_kv_bool(ui, "release", args.release);
+            tool_kv_bool(ui, "lib", args.lib);
+            tool_kv_bool(ui, "tests", args.tests);
+            tool_kv_bool(ui, "bins", args.bins);
+            tool_kv_bool(ui, "examples", args.examples);
+            tool_kv_bool(ui, "benches", args.benches);
+            render_optional_string_list(ui, "test args", args.test_args.as_deref());
+        }
+        ToolCallArguments::ListDir(args) => {
+            tool_kv_text(ui, "dir", args.dir.as_str());
+            tool_kv_bool(ui, "include hidden", args.include_hidden);
+            render_optional_str(ui, "sort", args.sort.as_deref());
+            render_optional_u32(ui, "max entries", args.max_entries);
+        }
+        ToolCallArguments::SearchCode(args)
+        | ToolCallArguments::SearchSymbols(args)
+        | ToolCallArguments::QueryCodebase(args) => {
+            render_optional_str(ui, "search term", args.search_term.as_deref());
+            render_optional_str(ui, "query", args.query.as_deref());
+        }
+    }
+}
+
+fn render_decoded_tool_result(ui: &mut egui::Ui, decoded: &PersistedToolResultContent) {
+    match decoded {
+        PersistedToolResultContent::Decoded(result) => {
+            tool_kv_text(ui, "decode", "ok");
+            render_tool_result_content(ui, result);
+        }
+        PersistedToolResultContent::ParseFailure(failure) => {
+            tool_kv_text(ui, "decode", "failed");
+            tool_kv_text(ui, "tool", failure.tool.as_str());
+            tool_kv_debug(ui, "error", &failure.error);
+        }
+    }
+}
+
+fn render_tool_result_content(ui: &mut egui::Ui, result: &ToolResultContent) {
+    match result {
+        ToolResultContent::RequestCodeContext(result) => {
+            tool_kv_bool(ui, "ok", result.ok);
+            tool_kv_text(ui, "search term", result.search_term.as_str());
+            tool_kv_usize(ui, "top k", result.top_k);
+            tool_kv_debug(ui, "kind", result.kind);
+            render_optional_str(ui, "note", result.note.as_deref());
+            render_string_list(ui, "next steps", &result.next_steps);
+            tool_kv_usize(ui, "context items", result.context.len());
+            for (index, item) in result.context.iter().take(3).enumerate() {
+                render_concise_context(ui, index, item);
+            }
+        }
+        ToolResultContent::ApplyCodeEdit(result) | ToolResultContent::InsertRustItem(result) => {
+            render_patch_like_result(
+                ui,
+                result.ok,
+                result.staged,
+                result.applied,
+                &result.files,
+                result.preview_mode.as_str(),
+                result.auto_confirmed,
+            );
+        }
+        ToolResultContent::CreateFile(result) => {
+            render_patch_like_result(
+                ui,
+                result.ok,
+                result.staged,
+                result.applied,
+                &result.files,
+                result.preview_mode.as_str(),
+                result.auto_confirmed,
+            );
+        }
+        ToolResultContent::NsPatch(result) => {
+            render_patch_like_result(
+                ui,
+                result.ok,
+                result.staged,
+                result.applied,
+                &result.files,
+                result.preview_mode.as_str(),
+                result.auto_confirmed,
+            );
+        }
+        ToolResultContent::NsRead(result) => {
+            tool_kv_bool(ui, "ok", result.ok);
+            tool_kv_text(ui, "file path", result.file_path.as_str());
+            tool_kv_bool(ui, "exists", result.exists);
+            render_optional_u64(ui, "byte len", result.byte_len);
+            render_optional_u32(ui, "start line", result.start_line);
+            render_optional_u32(ui, "end line", result.end_line);
+            tool_kv_bool(ui, "truncated", result.truncated);
+            if let Some(hash) = result.file_hash.as_ref() {
+                tool_kv_debug(ui, "file hash", hash);
+            }
+            if let Some(content) = result.content.as_deref() {
+                tool_kv_owned(ui, "content", text_size_summary(content));
+            }
+        }
+        ToolResultContent::CodeItemLookup(result) => {
+            render_concise_context(ui, 0, result);
+        }
+        ToolResultContent::Cargo(result) => {
+            tool_kv_bool(ui, "ok", result.ok);
+            tool_kv_debug(ui, "status", result.status_reason);
+            tool_kv_debug(ui, "command", result.command);
+            tool_kv_debug(ui, "scope", result.scope);
+            tool_kv_text(ui, "manifest", result.manifest_path.as_str());
+            render_optional_i32(ui, "exit code", result.exit_code);
+            tool_kv_u64(ui, "duration ms", result.duration_ms);
+            tool_kv_u32(ui, "errors", result.summary.errors);
+            tool_kv_u32(ui, "warnings", result.summary.warnings);
+            tool_kv_u32(ui, "notes", result.summary.notes);
+            tool_kv_usize(ui, "diagnostics", result.diagnostics.len());
+            tool_kv_bool(ui, "truncated", result.raw_messages_truncated);
+        }
+        ToolResultContent::ListDir(result) => {
+            tool_kv_usize(ui, "entries", result.entries.len());
+            egui::CollapsingHeader::new("details").show(ui, |ui| {
+                tool_kv_bool(ui, "ok", result.ok);
+                tool_kv_text(ui, "dir", result.dir.as_str());
+                tool_kv_bool(ui, "exists", result.exists);
+                tool_kv_bool(ui, "truncated", result.truncated);
+            });
+            for (index, entry) in result.entries.iter().take(8).enumerate() {
+                egui::CollapsingHeader::new(entry.name.as_str())
+                    .default_open(index == 0)
+                    .show(ui, |ui| {
+                        tool_kv_text(ui, "path", entry.path.as_str());
+                        tool_kv_text(ui, "kind", entry.kind.as_str());
+                        render_optional_u64(ui, "size bytes", entry.size_bytes);
+                    });
+            }
+        }
+    }
+}
+
+fn render_patch_like_result(
+    ui: &mut egui::Ui,
+    ok: bool,
+    staged: usize,
+    applied: usize,
+    files: &[String],
+    preview_mode: &str,
+    auto_confirmed: bool,
+) {
+    tool_kv_bool(ui, "ok", ok);
+    tool_kv_usize(ui, "staged", staged);
+    tool_kv_usize(ui, "applied", applied);
+    tool_kv_text(ui, "preview mode", preview_mode);
+    tool_kv_bool(ui, "auto confirmed", auto_confirmed);
+    render_string_list(ui, "files", files);
+}
+
+fn render_code_item_query(
+    ui: &mut egui::Ui,
+    item_name: &str,
+    file_path: &str,
+    node_kind: &str,
+    module_path: &str,
+) {
+    tool_kv_text(ui, "item name", item_name);
+    tool_kv_text(ui, "file path", file_path);
+    tool_kv_text(ui, "node kind", node_kind);
+    tool_kv_text(ui, "module path", module_path);
+}
+
+fn render_concise_context(
+    ui: &mut egui::Ui,
+    index: usize,
+    context: &ploke_records::tool_contracts::ConciseContext,
+) {
+    egui::CollapsingHeader::new(format!("context {}", index + 1))
+        .default_open(index == 0)
+        .show(ui, |ui| {
+            tool_kv_text(ui, "file", context.file_path.as_ref());
+            tool_kv_text(ui, "canon", context.canon_path.as_ref());
+            tool_kv_owned(ui, "snippet", text_size_summary(context.snippet.as_str()));
+        });
+}
+
+fn render_optional_str(ui: &mut egui::Ui, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        tool_kv_text(ui, key, value);
+    }
+}
+
+fn render_optional_string_list(ui: &mut egui::Ui, key: &str, value: Option<&[String]>) {
+    if let Some(value) = value {
+        render_string_list(ui, key, value);
+    }
+}
+
+fn render_string_list(ui: &mut egui::Ui, key: &str, values: &[String]) {
+    tool_kv_usize(ui, key, values.len());
+    for (index, value) in values.iter().take(8).enumerate() {
+        tool_kv_text(ui, list_item_key(index), value.as_str());
+    }
+}
+
+fn render_optional_u32(ui: &mut egui::Ui, key: &str, value: Option<u32>) {
+    if let Some(value) = value {
+        tool_kv_u32(ui, key, value);
+    }
+}
+
+fn render_optional_u64(ui: &mut egui::Ui, key: &str, value: Option<u64>) {
+    if let Some(value) = value {
+        tool_kv_u64(ui, key, value);
+    }
+}
+
+fn render_optional_i32(ui: &mut egui::Ui, key: &str, value: Option<i32>) {
+    if let Some(value) = value {
+        tool_kv_owned(ui, key, value.to_string());
+    }
+}
+
+fn render_optional_f32(ui: &mut egui::Ui, key: &str, value: Option<f32>) {
+    if let Some(value) = value {
+        tool_kv_owned(ui, key, format!("{value:.2}"));
+    }
+}
+
+fn tool_kv_text(ui: &mut egui::Ui, key: &str, value: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(key).weak());
+        ui.monospace(value);
+    });
+}
+
+fn tool_kv_owned(ui: &mut egui::Ui, key: &str, value: String) {
+    tool_kv_text(ui, key, value.as_str());
+}
+
+fn tool_kv_bool(ui: &mut egui::Ui, key: &str, value: bool) {
+    tool_kv_text(ui, key, if value { "true" } else { "false" });
+}
+
+fn tool_kv_u32(ui: &mut egui::Ui, key: &str, value: u32) {
+    let mut buffer = itoa::Buffer::new();
+    tool_kv_text(ui, key, buffer.format(value));
+}
+
+fn tool_kv_u64(ui: &mut egui::Ui, key: &str, value: u64) {
+    let mut buffer = itoa::Buffer::new();
+    tool_kv_text(ui, key, buffer.format(value));
+}
+
+fn tool_kv_usize(ui: &mut egui::Ui, key: &str, value: usize) {
+    let mut buffer = itoa::Buffer::new();
+    tool_kv_text(ui, key, buffer.format(value));
+}
+
+fn tool_kv_debug(ui: &mut egui::Ui, key: &str, value: impl std::fmt::Debug) {
+    tool_kv_owned(ui, key, format!("{value:?}"));
+}
+
+fn text_size_summary(text: &str) -> String {
+    let line_count = text.lines().count();
+    format!("{} bytes / {} lines", text.len(), line_count)
+}
+
+fn list_item_key(index: usize) -> &'static str {
+    match index {
+        0 => "1",
+        1 => "2",
+        2 => "3",
+        3 => "4",
+        4 => "5",
+        5 => "6",
+        6 => "7",
+        _ => "8",
+    }
+}
+
+fn render_cached_code_block(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    id_salt: impl std::hash::Hash,
+    text: &str,
+) -> egui::Response {
+    let galley = render_cache.text_galley(ui, text, CachedTextKind::MonospaceBlock);
+    render_diff_galley(ui, id_salt, galley)
 }
 
 fn render_agent_turns<'a>(

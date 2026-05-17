@@ -28,19 +28,37 @@ pub fn validate_unified_diff(
     field: &'static str,
     diff: &str,
 ) -> Result<(), ToolError> {
-    let has_headers = diff.contains("---") && diff.contains("+++");
-    let has_hunk = diff.contains("@@");
-    if has_headers && has_hunk {
-        Ok(())
-    } else {
-        Err(ToolError::new(
+    match mpatch::parse_single_patch(diff) {
+        Ok(patch) if !patch.hunks.is_empty() => Ok(()),
+        Ok(_) => Err(ToolError::new(
             tool,
             ToolErrorCode::MalformedDiff,
-            "expected unified diff with ---/+++ headers and @@ hunks",
+            "expected unified diff with at least one ranged @@ hunk",
         )
         .field(field)
-        .expected("unified diff with ---/+++ and @@")
-        .snippet(super::error::truncate_for_error(diff, 512)))
+        .expected("one unified diff with ---/+++ headers and ranged @@ hunks")
+        .snippet(super::error::truncate_for_error(diff, 512))
+        .retry_context(
+            ToolRetryContext::new()
+                .field("field", field)
+                .field("parser_error", "parsed patch contained no hunks")
+                .field("diff_snippet", super::error::truncate_for_error(diff, 512)),
+        )),
+        Err(err) => Err(ToolError::new(
+            tool,
+            ToolErrorCode::MalformedDiff,
+            "expected one valid unified diff with ---/+++ headers and ranged @@ hunks",
+        )
+        .field(field)
+        .expected("one unified diff with ---/+++ headers and ranged @@ hunks")
+        .received(err.to_string())
+        .snippet(super::error::truncate_for_error(diff, 512))
+        .retry_context(
+            ToolRetryContext::new()
+                .field("field", field)
+                .field("parser_error", err.to_string())
+                .field("diff_snippet", super::error::truncate_for_error(diff, 512)),
+        )),
     }
 }
 

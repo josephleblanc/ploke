@@ -12,9 +12,9 @@
 //! persisted/replay/UI readers, not access to the TUI runtime.
 
 pub use ploke_tui::tools::{
-    ToolErrorCode, ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolName,
-    ToolRetryContext, ToolRetryContextField, ToolRetryContextValue, ToolUiField, ToolUiPayload,
-    ToolVerbosity,
+    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult, ToolErrorCode,
+    ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolName, ToolRetryContext,
+    ToolRetryContextField, ToolRetryContextValue, ToolUiField, ToolUiPayload, ToolVerbosity,
     cargo::{
         CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
         CargoToolParamsOwned, CargoToolResult,
@@ -253,6 +253,151 @@ where
     }
 }
 
+/// Typed persisted view of a tool result `content` payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", content = "record", rename_all = "snake_case")]
+pub enum PersistedToolResultContent {
+    Decoded(ToolResultContent),
+    ParseFailure(ToolResultParseFailure),
+}
+
+impl PersistedToolResultContent {
+    pub fn decoded(&self) -> Option<&ToolResultContent> {
+        match self {
+            Self::Decoded(result) => Some(result),
+            Self::ParseFailure(_) => None,
+        }
+    }
+
+    pub fn parse_failure(&self) -> Option<&ToolResultParseFailure> {
+        match self {
+            Self::Decoded(_) => None,
+            Self::ParseFailure(failure) => Some(failure),
+        }
+    }
+}
+
+/// Closed enum of currently owned tool result DTOs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "result")]
+pub enum ToolResultContent {
+    #[serde(rename = "request_code_context")]
+    RequestCodeContext(RequestCodeContextResult),
+    #[serde(rename = "apply_code_edit")]
+    ApplyCodeEdit(ApplyCodeEditResult),
+    #[serde(rename = "insert_rust_item")]
+    InsertRustItem(ApplyCodeEditResult),
+    #[serde(rename = "create_file")]
+    CreateFile(CreateFileResult),
+    #[serde(rename = "non_semantic_patch")]
+    NsPatch(ApplyNsPatchResult),
+    #[serde(rename = "read_file")]
+    NsRead(NsReadResult),
+    #[serde(rename = "code_item_lookup")]
+    CodeItemLookup(ConciseContext),
+    #[serde(rename = "cargo")]
+    Cargo(CargoToolResult),
+    #[serde(rename = "list_dir")]
+    ListDir(ListDirResult),
+}
+
+impl ToolResultContent {
+    pub fn tool_name(&self) -> ToolName {
+        match self {
+            Self::RequestCodeContext(_) => ToolName::RequestCodeContext,
+            Self::ApplyCodeEdit(_) => ToolName::ApplyCodeEdit,
+            Self::InsertRustItem(_) => ToolName::InsertRustItem,
+            Self::CreateFile(_) => ToolName::CreateFile,
+            Self::NsPatch(_) => ToolName::NsPatch,
+            Self::NsRead(_) => ToolName::NsRead,
+            Self::CodeItemLookup(_) => ToolName::CodeItemLookup,
+            Self::Cargo(_) => ToolName::Cargo,
+            Self::ListDir(_) => ToolName::ListDir,
+        }
+    }
+}
+
+/// Typed record emitted when a persisted tool result string cannot be decoded.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolResultParseFailure {
+    pub tool: String,
+    pub raw_content: String,
+    pub error: ToolResultDecodeError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolResultDecodeError {
+    UnknownTool { tool: String },
+    UnsupportedToolResult { tool: String },
+    InvalidJson { message: String },
+}
+
+pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultContent {
+    let Some(tool_name) = tool_name_from_persisted(tool) else {
+        return PersistedToolResultContent::ParseFailure(ToolResultParseFailure {
+            tool: tool.to_string(),
+            raw_content: raw.to_string(),
+            error: ToolResultDecodeError::UnknownTool {
+                tool: tool.to_string(),
+            },
+        });
+    };
+
+    match tool_name {
+        ToolName::RequestCodeContext => decode_result_as(
+            tool_name.as_str(),
+            raw,
+            ToolResultContent::RequestCodeContext,
+        ),
+        ToolName::ApplyCodeEdit => {
+            decode_result_as(tool_name.as_str(), raw, ToolResultContent::ApplyCodeEdit)
+        }
+        ToolName::InsertRustItem => {
+            decode_result_as(tool_name.as_str(), raw, ToolResultContent::InsertRustItem)
+        }
+        ToolName::CreateFile => {
+            decode_result_as(tool_name.as_str(), raw, ToolResultContent::CreateFile)
+        }
+        ToolName::NsPatch => decode_result_as(tool_name.as_str(), raw, ToolResultContent::NsPatch),
+        ToolName::NsRead => decode_result_as(tool_name.as_str(), raw, ToolResultContent::NsRead),
+        ToolName::CodeItemLookup => {
+            decode_result_as(tool_name.as_str(), raw, ToolResultContent::CodeItemLookup)
+        }
+        ToolName::CodeItemEdges => {
+            PersistedToolResultContent::ParseFailure(ToolResultParseFailure {
+                tool: tool_name.as_str().to_string(),
+                raw_content: raw.to_string(),
+                error: ToolResultDecodeError::UnsupportedToolResult {
+                    tool: tool_name.as_str().to_string(),
+                },
+            })
+        }
+        ToolName::Cargo => decode_result_as(tool_name.as_str(), raw, ToolResultContent::Cargo),
+        ToolName::ListDir => decode_result_as(tool_name.as_str(), raw, ToolResultContent::ListDir),
+    }
+}
+
+fn decode_result_as<T>(
+    tool: &str,
+    raw: &str,
+    wrap: impl FnOnce(T) -> ToolResultContent,
+) -> PersistedToolResultContent
+where
+    T: DeserializeOwned,
+{
+    match serde_json::from_str::<T>(raw) {
+        Ok(result) => PersistedToolResultContent::Decoded(wrap(result)),
+        Err(source) => PersistedToolResultContent::ParseFailure(ToolResultParseFailure {
+            tool: tool.to_string(),
+            raw_content: raw.to_string(),
+            error: ToolResultDecodeError::InvalidJson {
+                message: source.to_string(),
+            },
+        }),
+    }
+}
+
 fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
     match tool {
         "request_code_context" => Some(ToolName::RequestCodeContext),
@@ -346,6 +491,47 @@ mod tests {
                 tool: "legacy_tool".to_string()
             }
         );
+    }
+
+    #[test]
+    fn tool_result_content_decodes_ns_read() {
+        let raw = r#"{
+            "ok":true,
+            "file_path":"crates/ploke-records/src/tool_contracts.rs",
+            "exists":true,
+            "byte_len":128,
+            "start_line":1,
+            "end_line":4,
+            "truncated":false,
+            "content":"pub mod tool_contracts;",
+            "file_hash":null
+        }"#;
+        let decoded = decode_tool_result_content("read_file", raw);
+
+        let PersistedToolResultContent::Decoded(ToolResultContent::NsRead(result)) = decoded else {
+            panic!("expected decoded ns read result");
+        };
+
+        assert_eq!(
+            result.file_path,
+            "crates/ploke-records/src/tool_contracts.rs"
+        );
+        assert_eq!(result.byte_len, Some(128));
+    }
+
+    #[test]
+    fn tool_result_content_records_json_failure() {
+        let decoded = decode_tool_result_content("list_dir", "{");
+
+        let PersistedToolResultContent::ParseFailure(failure) = decoded else {
+            panic!("expected parse failure");
+        };
+
+        assert_eq!(failure.tool, "list_dir");
+        assert!(matches!(
+            failure.error,
+            ToolResultDecodeError::InvalidJson { .. }
+        ));
     }
 
     #[test]

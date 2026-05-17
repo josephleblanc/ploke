@@ -64,6 +64,9 @@ pub use error::{
     ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField, ToolRetryContextValue,
     allowed_tool_names, tool_io_error, tool_ui_error,
 };
+pub use ploke_core::rag_types::{
+    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult,
+};
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
 // NOTE:ploke-llm

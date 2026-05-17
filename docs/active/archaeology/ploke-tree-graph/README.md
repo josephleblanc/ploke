@@ -26,3 +26,6 @@ projection-only labels.
   Inspector claim for selected run-forest nodes and uniquely branch-backed
   Artifacts showing typed baseline and treatment `record.json.gz` output
   records, LLM turns, and ordered tool steps through branch-scoped graph refs.
+- [`selection-protocol-evidence.md`](selection-protocol-evidence.md)
+  Inspector claim for selection-time procedure/traversal headers and protocol
+  aggregate metrics sealed in History for a selected candidate-backed Artifact.

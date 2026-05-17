@@ -14,3 +14,7 @@ could no longer tell what concrete action was being recommended.
   The agent proposed one-edit containment for a headless TUI stale-proposal
   failure, missing that the broad harness goal is to preserve wide model edit
   freedom while adding admission and refresh barriers.
+- [`2026-05-17-ns-patch-recovery-work-became-incoherent.md`](2026-05-17-ns-patch-recovery-work-became-incoherent.md)
+  The agent resumed `non_semantic_patch` recovery work from a compacted handoff
+  without first restating the live dirty-worktree boundary, making a bounded
+  tool-lifecycle fix look like an uncontrolled mixed-surface edit.

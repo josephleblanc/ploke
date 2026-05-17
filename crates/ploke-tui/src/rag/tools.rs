@@ -924,7 +924,6 @@ pub async fn apply_ns_code_edit_tool(
                 name.as_str(),
                 call_id
             );
-            tool_call_params.tool_call_failed(msg.clone());
             chat::add_msg_immediate(
                 &state,
                 &event_bus,
@@ -951,7 +950,6 @@ pub async fn apply_ns_code_edit_tool(
         })
         .collect();
     if patches.is_empty() {
-        tool_call_params.tool_call_failed("No patches provided".to_string());
         return Err(ploke_error::Error::Domain(DomainError::Ui {
             message: "No patches provided".to_string(),
         }));
@@ -1002,7 +1000,6 @@ pub async fn apply_ns_code_edit_tool(
                 "multiple non_semantic_patch entries targeted '{}'; combine them into one unified diff per file",
                 abs_path.display()
             );
-            tool_call_params.tool_call_failed(msg.clone());
             return Err(ploke_error::Error::Domain(DomainError::Io { message: msg }));
         }
 
@@ -1032,7 +1029,6 @@ pub async fn apply_ns_code_edit_tool(
                 "failed to unwrap content for file {:?}",
                 file_path.to_string_lossy()
             );
-            tool_call_params.tool_call_failed(msg.clone());
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         })?;
 
@@ -1085,7 +1081,6 @@ pub async fn apply_ns_code_edit_tool(
                         error = %e,
                         "ns_patch staging rejected patch"
                     );
-                    tool_call_params.tool_call_failed(msg.clone());
                     ploke_error::Error::Domain(DomainError::Io { message: msg })
                 })?;
         tracing::info!(

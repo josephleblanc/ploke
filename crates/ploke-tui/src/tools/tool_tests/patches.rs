@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ploke_core::ArcStr;
@@ -45,6 +45,19 @@ beta
 +gamma-two
 delta
 "#;
+
+const BARE_HUNK_DIFF: &str = r#"@@ -1,4 +1,4 @@
+ alpha
+-beta
++beta-one
+ gamma
+ delta
+"#;
+
+fn ns_patch_event_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 fn make_ns_batch_proposal(
     request_id: Uuid,
@@ -204,7 +217,97 @@ async fn wait_for_proposal_status(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_malformed_diff_emits_one_failure_and_stages_zero_proposals() {
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db);
+
+    let state = rt.state_arc();
+    let event_bus = Arc::new(crate::EventBus::new(crate::EventBusCaps::default()));
+    let mut realtime_rx = event_bus.subscribe(EventPriority::Realtime);
+
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let call = ns_patch_tool_call(
+        "ns-patch-bare-hunk",
+        "notes.txt",
+        BARE_HUNK_DIFF,
+        "Attempt a malformed bare-hunk diff",
+    );
+    let expected_call_id = call.call_id.clone();
+
+    let ctx = crate::tools::Ctx {
+        state: Arc::clone(&state),
+        event_bus: Arc::clone(&event_bus),
+        request_id,
+        parent_id,
+        call_id: expected_call_id.clone(),
+    };
+
+    let _dispatcher_err = crate::tools::process_tool(call, ctx)
+        .await
+        .expect_err("malformed ns_patch should fail in dispatcher validation");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let mut failure_count = 0usize;
+    let mut completed_count = 0usize;
+    let mut first_error = None;
+    while let Ok(event) = realtime_rx.try_recv() {
+        match event {
+            AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                call_id,
+                error,
+                ..
+            }) if event_request_id == request_id && call_id == expected_call_id => {
+                failure_count += 1;
+                first_error.get_or_insert(error);
+            }
+            AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                call_id,
+                ..
+            }) if event_request_id == request_id && call_id == expected_call_id => {
+                completed_count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(failure_count, 1, "malformed diff should emit one failure");
+    assert_eq!(
+        completed_count, 0,
+        "malformed diff must not emit a completed event"
+    );
+    let wire = crate::tools::ToolErrorWire::parse(first_error.as_deref().expect("failure error"))
+        .expect("ToolCallFailed should carry structured error wire");
+    assert_eq!(
+        wire.llm.code,
+        crate::tools::ToolErrorCode::MalformedDiff,
+        "malformed diff should remain a validation error"
+    );
+    assert!(
+        wire.llm.retry_hint.is_some(),
+        "retry hint should be present"
+    );
+    assert_eq!(
+        wire.llm["retry_context"]
+            .as_object()
+            .and_then(|ctx| ctx.get("patch_index"))
+            .and_then(|value| value.as_u64()),
+        Some(0)
+    );
+
+    let proposals = state.proposals.read().await;
+    assert!(
+        proposals.is_empty(),
+        "malformed diff must be rejected before staging"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_approval_triggers_rescan_helper() {
+    let _guard = ns_patch_event_test_lock().lock().await;
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
     let rt = TestRuntime::new(&fixture_db)
@@ -281,6 +384,7 @@ async fn ns_patch_approval_triggers_rescan_helper() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_same_file_staged_siblings_fail_second_approval_due_to_stale_anchor() {
+    let _guard = ns_patch_event_test_lock().lock().await;
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
     let rt = TestRuntime::new(&fixture_db)
@@ -447,6 +551,7 @@ async fn ns_patch_same_file_staged_siblings_fail_second_approval_due_to_stale_an
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_same_file_batch_partially_applies_then_fails_due_to_shared_stale_anchor() {
+    let _guard = ns_patch_event_test_lock().lock().await;
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
     let rt = TestRuntime::new(&fixture_db)
