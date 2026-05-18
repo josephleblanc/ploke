@@ -12,12 +12,13 @@ run-record output claim, and not a raw `protocol-artifacts/*.json` drilldown.
 It answers: "what did the sealed selection entry say about this candidate and
 the protocol metrics available to the selector?"
 
-Status: incomplete for UI rendering. The upstream typed records exist for
-`p1-selection-metrics-3g1x3-20260517-3`, but `ploke_tree::Graph` currently
-drops the protocol aggregate fields before `ploke-egui` can borrow them.
-Second-pass status: current `ploke-egui` selection is widget selection of a
-visible Artifact or run-forest node, not selection of successor candidates. The
-successor candidate decision is made and sealed upstream in `ploke-eval`.
+Status: graph/UI read-model carrier implemented for selected Artifact
+drilldown. `ploke_tree::Graph` now stores the full typed
+`SelectionDecisionEntryRecord` once per entry and exposes
+`SelectionMetricWitnessRef<'_>` keyed by
+`(selection_entry_id, payload_index, branch_id)`. `ploke-egui` still selects a
+visible Artifact or run-forest node; the successor candidate decision is made
+and sealed upstream in `ploke-eval`, then borrowed through the graph witness.
 
 ## 2. Competing IDs and Carriers
 
@@ -29,9 +30,10 @@ successor candidate decision is made and sealed upstream in `ploke-eval`.
 | `EvaluationPayloadRecord.sealed_evidence.evaluations[].compared_runs[].{baseline_protocol,treatment_protocol}` | `ploke_records::history::ComparedRunEvidenceRecord` | typed selection evidence | chosen source for protocol aggregate metrics used by traversal scoring |
 | `EvaluationPayloadRecord.artifact.resolved.branch.derived_artifact_id` | `ploke_records::history::CandidateArtifactRecord.resolved.branch.derived_artifact_id` | Artifact identity join | ties a considered candidate to the Artifact visible in the inspector |
 | `EvaluationPayloadRecord.sealed_evidence.coordinate.branch_id` | `ploke_records::history::CandidateEvidenceRecord.coordinate.branch_id` | branch join key | ties selection evidence to branch-scoped evaluation and run-record refs |
-| `SelectionNode.{procedure_or_policy,scope,decision_outcome,metric_set_id}` | `ploke_tree::graph::SelectionNode` | graph read-model projection | currently preserves only reduced selection header facts |
+| `SelectionNode.{procedure_or_policy,scope,decision_outcome,metric_set_id}` | `ploke_tree::graph::SelectionNode` | graph read-model projection | reduced selection header facts |
 | `CandidateNode.{selection_entry_id,payload_index,branch_id,artifact_after}` | `ploke_tree::graph::CandidateNode` | graph read-model join | currently enough to find the candidate, but not its protocol metrics |
-| `MetricSetNode` / `MetricCandidateNode` | `ploke_tree::graph::{MetricSetNode,MetricCandidateNode}` | selection metric projection | preserves metric-set identity and `imp_at_k`, not protocol aggregate evidence |
+| `SelectionMetricWitnessKey` / `SelectionMetricWitnessRef<'_>` | `ploke_tree::graph::{SelectionMetricWitnessKey,SelectionMetricWitnessRef}` | graph read-model witness | primary graph witness for the Inspector section; borrows full sealed selection payload, candidate evidence, metrics, evaluations, compared runs, protocol metrics, and diagnostics |
+| `MetricSetNode` / `MetricCandidateNode` | `ploke_tree::graph::{MetricSetNode,MetricCandidateNode}` | selection metric projection | preserves metric-set identity and `imp_at_k`; detailed drilldown now borrows the full `MetricSet` through `SelectionMetricWitnessRef<'_>` |
 | `ProtocolArtifactsEvidence.index` | `ploke_tree::ProtocolArtifactsEvidence.index` | passive protocol payload inventory | full typed per-run procedure artifacts, but not currently branch or selection scoped |
 | `EvidenceSubject::ProtocolArtifact` | `ploke_tree::graph::EvidenceSubject::ProtocolArtifact` | reduced locator/provenance | summary and locator evidence only; not enough for a selection header |
 | `ploke_records::evaluation::Artifact.compared_instances` | `ploke_records::evaluation::Artifact` | evaluation source handle | owns record paths and operational comparison data; selection-time protocol metrics are sealed elsewhere |
@@ -61,9 +63,9 @@ successor candidate decision is made and sealed upstream in `ploke-eval`.
   `ploke_records::protocol::Artifact`.
 - `ploke_tree::graph::build::selection::Builder::ingest_selection` mints
   `SelectionNode`, `CandidateNode`, `CandidateBranchNode`,
-  `MetricSetNode`, and `MetricCandidateNode`, but it currently does not mint a
-  graph carrier for `ComparedRunEvidenceRecord.baseline_protocol` or
-  `ComparedRunEvidenceRecord.treatment_protocol`.
+  `MetricSetNode`, `MetricCandidateNode`, stores the full
+  `SelectionDecisionEntryRecord`, and creates `SelectionMetricWitness` bindings
+  for considered payloads with sealed branch ids.
 - `ploke-egui` does not make the successor candidate choice. The current UI
   selection path is:
   `GraphView::show -> egui_graphs::GraphView -> GraphViewCache::selected_payload
@@ -97,17 +99,17 @@ selected Artifact
   -> SelectionNode
 ```
 
-Required graph carrier before rendering:
+Graph carrier used for rendering:
 
 ```text
 ploke_records::history::ComparedRunEvidenceRecord protocol fields
-  -> ploke_tree::Graph selection/protocol witness
+  -> ploke_tree::Graph SelectionMetricWitnessRef<'_>
   -> borrowed ploke-egui Inspector witness
   -> render-only Selection section
 ```
 
-The graph carrier does not exist yet. `ploke-egui` must not recover this by
-reading History JSON or scanning protocol artifact files from the UI.
+`ploke-egui` must not recover this by reading History JSON or scanning protocol
+artifact files from the UI.
 
 Important current UI boundary:
 
@@ -245,6 +247,10 @@ Current carriers:
 - `ploke_tree::graph::MetricIndex`
 - `ploke_tree::graph::MetricSetNode`
 - `ploke_tree::graph::MetricCandidateNode`
+- `ploke_tree::graph::SelectionMetricWitnessKey`
+- `ploke_tree::graph::SelectionMetricWitness`
+- `ploke_tree::graph::SelectionMetricWitnessRef<'_>`
+- `ploke_tree::graph::SelectionWitnessLookup<'_>`
 - `ploke_tree::ProtocolArtifactsEvidence`
 - `ploke_tree::ProtocolArtifactSummary`
 - `ploke_tree::Graph::protocol_artifacts`
@@ -252,12 +258,13 @@ Current carriers:
 - `ploke_tree::Graph::run_record_refs_for_branch`
 - `ploke_tree::graph::ParentCreateAttempt`
 
-Missing graph carrier:
+Implemented graph carrier:
 
-- a selection-scoped protocol witness keyed by
-  `(selection_entry_id, payload_index)` and optionally branch id, borrowing or
-  owning the passive `ProtocolMetricsRecord` values from sealed History
-  payloads.
+- `SelectionMetricWitnessKey { selection_entry_id, payload_index, branch_id }`
+  and `SelectionMetricWitnessRef<'_>` borrow the graph-owned full
+  `SelectionDecisionEntryRecord` plus the considered payload, candidate
+  evidence, metric candidate, `imp@k`, evaluations, compared runs, run metrics,
+  protocol metrics, citations, and diagnostics.
 
 Graph invariant needed for the UI:
 
@@ -277,19 +284,21 @@ It does not yet preserve the final protocol metric values.
 
 ## 8. Downstream UI Consumers
 
-Current consumers that would need a new typed witness:
+Current consumers using the typed witness:
 
 - `crates/ploke-egui/src/ui/inspector.rs`
   - `InspectorSections`
+  - `SelectionMetricSlot`
   - `SelectionInspector`
   - `RunForestNodeInspection`
   - `ArtifactInspection`
   - `SelectionInspectorSnapshot`
+  - `SelectionSectionSnapshot`
   - `artifact_inspection`
   - `snapshot_artifact`
 - `crates/ploke-egui/src/ui/app/shell.rs`
   - `render_right_inspector`
-  - a new render-boundary helper for the `Selection` section
+  - `render_selection_for_inspector`
 
 Current right-panel sections in `render_right_inspector` are `Summary`,
 `Identity`, `Roles`, `Patch Generation`, `Run Records`, `Graph edges`,
@@ -437,9 +446,9 @@ and treatment arms.
 
 ## 10. Open Gaps and Caveats
 
-- This claim is incomplete until `ploke-tree` ingests and exposes a typed
-  selection/protocol witness. Rendering it from `ploke-egui` by reparsing
-  History JSON would violate the UI projection rule.
+- The graph/UI witness is implemented for selected Artifact drilldown. Rendering
+  it from `ploke-egui` by reparsing History JSON would still violate the UI
+  projection rule.
 - Older runs may have no `SelectionDecisionEntryRecord.metrics`, no traversal
   evidence, no protocol aggregate fields, or no per-run protocol artifacts.
   Missing evidence must render as unavailable/absent, not as zero.

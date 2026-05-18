@@ -18,3 +18,7 @@ could no longer tell what concrete action was being recommended.
   The agent resumed `non_semantic_patch` recovery work from a compacted handoff
   without first restating the live dirty-worktree boundary, making a bounded
   tool-lifecycle fix look like an uncontrolled mixed-surface edit.
+- [`2026-05-18-filepath-heavy-triage-summary.md`](2026-05-18-filepath-heavy-triage-summary.md)
+  The agent buried a Prototype 1 triage conclusion under repeated absolute
+  worktree paths, making the causal chain harder to read even though the
+  underlying evidence was relevant.

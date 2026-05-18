@@ -13,9 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use eframe::egui;
-use ploke_tree::Graph;
+use ploke_tree::{FsRunStore, Graph, RunRootSummary};
 
-use crate::import::graph_from_run_root;
 use crate::ui::app::layout;
 
 #[cfg(feature = "dev")]
@@ -41,6 +40,12 @@ impl RunPicker {
         Self::from_root(root)
     }
 
+    pub fn from_default_root_deferred() -> Self {
+        let root =
+            default_campaigns_root().unwrap_or_else(|| PathBuf::from("~/.ploke-eval/campaigns"));
+        Self::from_root_deferred(root)
+    }
+
     pub fn from_root(root: PathBuf) -> Self {
         let mut picker = Self {
             root,
@@ -50,6 +55,15 @@ impl RunPicker {
         };
         picker.refresh();
         picker
+    }
+
+    pub fn from_root_deferred(root: PathBuf) -> Self {
+        Self {
+            root,
+            entries: Vec::new(),
+            selected: None,
+            last_error: None,
+        }
     }
 
     pub fn first_loadable_path(&self) -> Option<&Path> {
@@ -64,6 +78,38 @@ impl RunPicker {
             .entries
             .iter()
             .position(|entry| same_path(entry.path.as_path(), path));
+    }
+
+    pub fn select_or_insert_path(&mut self, path: &Path) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| same_path(entry.path.as_path(), path))
+        {
+            self.selected = Some(index);
+            return;
+        }
+
+        let entry = RunEntry::new(
+            run_name(path),
+            path.to_path_buf(),
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok(),
+            None,
+            None,
+        );
+        self.entries.insert(0, entry);
+        self.selected = Some(0);
+    }
+
+    pub fn record_loaded_graph(&mut self, path: &Path, graph: &Graph) {
+        self.select_or_insert_path(path);
+        if let Some(index) = self.selected
+            && let Some(entry) = self.entries.get_mut(index)
+        {
+            entry.set_summary(Some(RunSummary::from_graph(graph)), None);
+        }
     }
 
     pub fn selected_run(&self) -> Option<SelectedRun> {
@@ -212,6 +258,15 @@ impl RunEntry {
         self.menu_label.as_str()
     }
 
+    fn set_summary(&mut self, summary: Option<RunSummary>, error: Option<String>) {
+        self.summary = summary;
+        self.error = error;
+        self.menu_label = match &self.summary {
+            Some(summary) => format!("{}  |  {}", self.name, summary.compact()),
+            None => format!("{}  |  unreadable", self.name),
+        };
+    }
+
     fn show_summary(&self, ui: &mut egui::Ui) {
         match &self.summary {
             Some(summary) => {
@@ -241,6 +296,14 @@ impl RunSummary {
             graph.artifacts.artifacts.len(),
             graph.history.blocks.len(),
             graph.candidates.candidates.len(),
+        )
+    }
+
+    fn from_run_root_summary(summary: &RunRootSummary) -> Self {
+        Self::from_counts(
+            summary.artifact_count,
+            summary.history_block_count,
+            summary.candidate_count,
         )
     }
 
@@ -290,8 +353,8 @@ fn discover_runs(root: &Path) -> Result<Vec<RunEntry>, std::io::Error> {
             .metadata()
             .and_then(|metadata| metadata.modified())
             .ok();
-        let (summary, error) = match graph_from_run_root(&path) {
-            Ok(graph) => (Some(RunSummary::from_graph(&graph)), None),
+        let (summary, error) = match FsRunStore::new(&path).load_run_root_summary() {
+            Ok(summary) => (Some(RunSummary::from_run_root_summary(&summary)), None),
             Err(error) => (None, Some(error.to_string())),
         };
 
@@ -305,6 +368,14 @@ fn discover_runs(root: &Path) -> Result<Vec<RunEntry>, std::io::Error> {
             .then_with(|| left.name.cmp(&right.name))
     });
     Ok(entries)
+}
+
+fn run_name(path: &Path) -> String {
+    path.parent()
+        .and_then(Path::file_name)
+        .or_else(|| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn default_campaigns_root() -> Option<PathBuf> {
@@ -365,6 +436,32 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "campaign-a");
         assert_eq!(entries[0].path, run_root);
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_uses_lightweight_summary_not_full_graph_import()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ploke-egui-run-picker-summary-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        let run_root = root.join("campaign-a").join("prototype1");
+        fs::create_dir_all(run_root.join("evaluations"))?;
+        fs::write(
+            run_root.join("scheduler.json"),
+            r#"{"schema_version":"prototype1-scheduler.v1","campaign_id":"campaign-a","updated_at":"2026-05-18T00:00:00Z","nodes":[]}"#,
+        )?;
+        fs::write(run_root.join("evaluations").join("bad.json"), "{")?;
+
+        let entries = discover_runs(&root)?;
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].summary.is_some());
+        assert_eq!(entries[0].error, None);
 
         let _ = fs::remove_dir_all(root);
         Ok(())

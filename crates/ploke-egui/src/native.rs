@@ -47,14 +47,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
     #[cfg(all(feature = "dev", feature = "native-benchmark"))]
     let run_picker_start = Instant::now();
-    let mut picker = RunPicker::from_default_root();
+    let mut picker = if explicit_run_root.is_some() {
+        RunPicker::from_default_root_deferred()
+    } else {
+        RunPicker::from_default_root()
+    };
     #[cfg(all(feature = "dev", feature = "native-benchmark"))]
     let run_picker_span = span_from_start("run_picker_discovery", run_picker_start);
     let initial_run_root = explicit_run_root
         .clone()
         .or_else(|| picker.first_loadable_path().map(PathBuf::from));
     if let Some(path) = initial_run_root.as_deref() {
-        picker.select_path(path);
+        picker.select_or_insert_path(path);
     }
     #[cfg(feature = "dev")]
     if run.run_picker_report {
@@ -82,7 +86,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             run.benchmark_output.clone(),
             run.benchmark_scenarios.clone(),
         )?;
-        picker.select_path(&run_root);
+        picker.select_or_insert_path(&run_root);
         let mut startup = StartupProfile::default();
         println!(
             "benchmark startup span run_picker_discovery: {} ns",
@@ -90,6 +94,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         );
         startup.spans.push(run_picker_span);
         let (graph, startup) = load_graph_with_startup_profile(&run_root, startup)?;
+        picker.record_loaded_graph(&run_root, &graph);
         let app = OperatorApp::new_with_run_picker(graph, picker)
             .with_mode(run.mode)
             .with_benchmark(BenchmarkController::new(config, startup)?);
@@ -122,6 +127,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let graph = initial_graph(initial_run_root.clone())?;
+    if let Some(path) = initial_run_root.as_deref() {
+        picker.record_loaded_graph(path, &graph);
+    }
     #[cfg(feature = "dev")]
     if run.contract_report {
         print_contract_report(&graph, run.mode, initial_run_root.as_deref())?;

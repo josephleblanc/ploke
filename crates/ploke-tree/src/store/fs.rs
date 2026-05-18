@@ -10,7 +10,7 @@ use ploke_records::branch::{BranchLogBody, BranchLogRecord, Prototype1BranchRegi
 use ploke_records::channel::{Envelope, ToChild, ToParent};
 use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
-use ploke_records::history::SealedBlockRecord;
+use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord};
 use ploke_records::identity::ParentIdentityRecord;
 use ploke_records::invocation::{
     InvocationRecord, Role, SuccessorCompletionRecord, SuccessorReadyRecord,
@@ -35,7 +35,7 @@ use super::{
     EvaluationArtifactSummary, EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord,
     PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence,
     RunAttemptSummary, RunForestInput, RunProfileEvidence, RunRecordEvidence, RunRecordSet,
-    RunRecordStats, RunRecordSummary, TransitionJournal,
+    RunRecordStats, RunRecordSummary, RunRootSummary, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -127,6 +127,84 @@ impl FsRunStore {
             forest_input: self.load()?,
             history_blocks: self.load_history_blocks()?,
             transition_journal: self.load_transition_journal()?,
+        })
+    }
+
+    pub fn load_run_root_summary(&self) -> Result<RunRootSummary, FsRunStoreError> {
+        let scheduler =
+            self.read_json::<SchedulerStateRecord>(&self.run_root.join("scheduler.json"))?;
+        let mut nodes = BTreeMap::new();
+        for node in scheduler.nodes {
+            nodes.insert(node.node_id.to_string(), node);
+        }
+
+        for node_dir in sorted_child_dirs(&self.run_root.join("nodes"))? {
+            let node_path = node_dir.join("node.json");
+            if node_path.is_file() {
+                let node = self.read_json::<NodeRecord>(&node_path)?;
+                nodes.insert(node.node_id.to_string(), node);
+            }
+        }
+
+        let mut artifact_keys = BTreeSet::new();
+        for node in nodes.values() {
+            if let Some(artifact_id) = node.base_artifact_id.as_ref() {
+                artifact_keys.insert(passive_artifact_entity_key(artifact_id.as_str()));
+            }
+            if let Some(artifact_id) = node.derived_artifact_id.as_ref() {
+                artifact_keys.insert(passive_artifact_entity_key(artifact_id.as_str()));
+            }
+        }
+
+        let mut candidate_count = 0;
+        let history_blocks = self.load_history_blocks()?;
+        for block in &history_blocks {
+            let header = &block.state.header;
+            artifact_keys.insert(
+                header
+                    .common
+                    .opened_from_artifact
+                    .graph_entity_key()
+                    .to_owned(),
+            );
+            artifact_keys.insert(header.active_artifact.graph_entity_key().to_owned());
+            artifact_keys.insert(
+                header
+                    .selected_successor
+                    .artifact
+                    .graph_entity_key()
+                    .to_owned(),
+            );
+
+            for entry in &block.entries {
+                if let EntryPayloadRecord::SelectionDecision(selection) = &entry.core.payload {
+                    candidate_count += selection.considered.len();
+                    for payload in &selection.considered {
+                        if let Some(artifact) = payload.artifact.as_ref() {
+                            if let Some(surface) = artifact.surface.as_ref() {
+                                artifact_keys.insert(passive_artifact_entity_key(
+                                    surface.base.artifact_id.as_str(),
+                                ));
+                                artifact_keys.insert(passive_artifact_entity_key(
+                                    surface.after.artifact_id.as_str(),
+                                ));
+                            }
+                            if let Some(derived) =
+                                artifact.resolved.branch.derived_artifact_id.as_ref()
+                            {
+                                artifact_keys.insert(passive_artifact_entity_key(derived.as_str()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(RunRootSummary {
+            scheduler_node_count: nodes.len(),
+            artifact_count: artifact_keys.len(),
+            history_block_count: history_blocks.len(),
+            candidate_count,
         })
     }
 
@@ -996,6 +1074,13 @@ fn run_record_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+fn passive_artifact_entity_key(artifact_id: &str) -> String {
+    artifact_id
+        .strip_prefix("artifact:")
+        .unwrap_or(artifact_id)
+        .to_owned()
+}
+
 fn run_relative_key(run_root: &Path, path: &Path) -> String {
     path.strip_prefix(run_root)
         .unwrap_or(path)
@@ -1094,6 +1179,29 @@ mod tests {
                 .summaries
                 .contains_key("nodes/child/output/agent-turn-summary.json")
         );
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
+    #[test]
+    fn load_run_root_summary_skips_passive_evidence() {
+        let root = temp_run_root("summary");
+        fs::create_dir_all(root.join("evaluations")).expect("create evaluations dir");
+        fs::write(
+            root.join("scheduler.json"),
+            minimal_scheduler_json().to_string(),
+        )
+        .expect("write scheduler");
+        fs::write(root.join("evaluations").join("bad.json"), "{").expect("write bad evaluation");
+
+        let summary = FsRunStore::new(&root)
+            .load_run_root_summary()
+            .expect("load lightweight summary");
+
+        assert_eq!(summary.scheduler_node_count, 0);
+        assert_eq!(summary.artifact_count, 0);
+        assert_eq!(summary.history_block_count, 0);
+        assert_eq!(summary.candidate_count, 0);
 
         fs::remove_dir_all(root).expect("remove temp run");
     }

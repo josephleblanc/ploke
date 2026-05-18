@@ -14,3 +14,7 @@ focused renderer tests, and live UI behavior as interchangeable.
   While validating `P_O` edge rendering, the agent treated projected edge
   counts as though they proved the edges were drawable, and missed that the
   readability/geometry path was still dropping self-loops.
+- [`2026-05-18-selection-inspector-allocation-regression.md`](2026-05-18-selection-inspector-allocation-regression.md)
+  While implementing Selection metric witness drilldown, the agent treated
+  borrowed graph records as enough allocation discipline, accepted the change
+  before native allocation gating, and regressed the live right-panel path.

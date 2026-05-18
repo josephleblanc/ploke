@@ -35,3 +35,16 @@ pub struct RunRecordSet {
     #[serde(default)]
     pub transition_journal: TransitionJournal,
 }
+
+/// Lightweight typed counts for choosing a run root before full graph import.
+///
+/// This deliberately excludes passive evidence such as compressed child
+/// `record.json.gz` payloads. It is suitable for picker labels, not for graph
+/// authority or detailed inspectors.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunRootSummary {
+    pub scheduler_node_count: usize,
+    pub artifact_count: usize,
+    pub history_block_count: usize,
+    pub candidate_count: usize,
+}
