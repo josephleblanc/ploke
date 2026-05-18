@@ -850,6 +850,7 @@ impl Database {
         options: TypeContextOptions,
         candidates: &mut BTreeMap<(Uuid, TypeContextRelation), u32>,
     ) -> Result<(), DbError> {
+        let owner_is_field = self.is_field(owner_id)?;
         for related in self.type_related_owners(owner_id)? {
             let relation = if related.origin_depth == 0 && related.related_depth == 0 {
                 TypeContextRelation::SameResolvedType
@@ -873,7 +874,7 @@ impl Database {
                     TypeContextRelation::AliasExpansion
                 };
                 relation
-            } else if target.depth == 0 {
+            } else if target.depth == 0 && !owner_is_field {
                 TypeContextRelation::TypeDefinitionImpact
             } else {
                 TypeContextRelation::UsesTypeNested
@@ -1153,6 +1154,20 @@ impl Database {
             r#"?[id] :=
                 id = $id,
                 *type_alias { id @ 'NOW' }"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        Ok(!rows.rows.is_empty())
+    }
+
+    fn is_field(&self, node_id: Uuid) -> Result<bool, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+
+        let rows = self.run_script(
+            r#"?[id] :=
+                id = $id,
+                *field { id @ 'NOW' }"#,
             params,
             ScriptMutability::Immutable,
         )?;

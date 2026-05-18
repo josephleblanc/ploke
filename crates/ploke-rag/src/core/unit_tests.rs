@@ -310,6 +310,14 @@ mod tests {
             TargetSelector::TraitInFile { file_suffix, name } => {
                 one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
             }
+            TargetSelector::TypeAlias { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *type_alias {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            TargetSelector::Union { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *union {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
             TargetSelector::GenericParamReachableByName { name } => {
                 let coordinate = resolve_matrix_coordinate(db, case.coordinate)?;
                 let root = exactly_one_matrix_root(db, owner_id, &coordinate, case)?;
@@ -1501,6 +1509,7 @@ mod tests {
                     "{}",
                     case.name
                 );
+                assert_eq!(provenance.distance, case.depth + 1, "{}", case.name);
             }
         }
 

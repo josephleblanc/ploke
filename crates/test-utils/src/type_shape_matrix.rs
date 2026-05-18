@@ -183,6 +183,12 @@ pub enum TargetSelector {
         file_suffix: &'static str,
         name: &'static str,
     },
+    TypeAlias {
+        name: &'static str,
+    },
+    Union {
+        name: &'static str,
+    },
     GenericParamReachableByName {
         name: &'static str,
     },
@@ -390,6 +396,50 @@ static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
         coverage: RAG_API,
         search_term: "SearcherKindFn Searcher PrefilterState",
         live_prompt: "Use request_code_context to find SearcherKindFn and include the Searcher type_context.",
+    },
+    TypeShapeCase {
+        name: "type_alias_field_memchr_searcher_call",
+        kind: TypeShapeKind::Named,
+        fixture: CorpusFixture::Memchr,
+        source: "BurntSushi/memchr src/memmem/searcher.rs: Searcher.call: SearcherKindFn",
+        owner: OwnerSelector::FieldByStructInModule {
+            module_path: &["crate", "memmem", "searcher"],
+            struct_name: "Searcher",
+            field_index: 0,
+        },
+        role: TypeUseRole::FieldType,
+        coordinate: CoordinateSpec::FieldSlot(0),
+        terminal: TargetSelector::TypeAlias {
+            name: "SearcherKindFn",
+        },
+        relation_kind: TypeRelationKind::Ordinary,
+        depth: 0,
+        type_context_relation: TypeContextRelation::UsesTypeNested,
+        coverage: RAG_API,
+        search_term: "Searcher call SearcherKindFn",
+        live_prompt: "Use request_code_context to find Searcher.call and include the SearcherKindFn type_context.",
+    },
+    TypeShapeCase {
+        name: "union_field_memchr_searcher_kind",
+        kind: TypeShapeKind::Named,
+        fixture: CorpusFixture::Memchr,
+        source: "BurntSushi/memchr src/memmem/searcher.rs: Searcher.kind: SearcherKind",
+        owner: OwnerSelector::FieldByStructInModule {
+            module_path: &["crate", "memmem", "searcher"],
+            struct_name: "Searcher",
+            field_index: 1,
+        },
+        role: TypeUseRole::FieldType,
+        coordinate: CoordinateSpec::FieldSlot(1),
+        terminal: TargetSelector::Union {
+            name: "SearcherKind",
+        },
+        relation_kind: TypeRelationKind::Ordinary,
+        depth: 0,
+        type_context_relation: TypeContextRelation::UsesTypeNested,
+        coverage: RAG_API,
+        search_term: "Searcher kind SearcherKind",
+        live_prompt: "Use request_code_context to find Searcher.kind and include the SearcherKind type_context.",
     },
     TypeShapeCase {
         name: "slice_static_chrono_d_fmt",

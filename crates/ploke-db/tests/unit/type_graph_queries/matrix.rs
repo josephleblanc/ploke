@@ -348,6 +348,8 @@ fn resolve_target(
         TargetSelector::TraitInFile { file_suffix, name } => {
             trait_id_by_name_in_file_suffix(db, file_suffix, name)
         }
+        TargetSelector::TypeAlias { name } => type_alias_row_by_name(db, name).map(|row| row.0),
+        TargetSelector::Union { name } => union_id_by_name(db, name),
         TargetSelector::GenericParamReachableByName { name } => {
             let reachable = db.type_targets_reachable_from_owner(owner_id)?;
             let matching = reachable
@@ -371,6 +373,17 @@ fn resolve_target(
             Ok(matching[0])
         }
     }
+}
+
+fn union_id_by_name(db: &Database, name: &str) -> Result<Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[id] :=
+                *union {{ id, name: "{name}" @ 'NOW' }}"#
+        ),
+        0,
+    )
 }
 
 fn resolve_coordinate(db: &Database, spec: CoordinateSpec) -> Result<TypeUseCoordinate, DbError> {

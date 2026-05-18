@@ -640,6 +640,14 @@ mod gat_tests {
             ploke_test_utils::TargetSelector::TraitInFile { file_suffix, name } => {
                 one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
             }
+            ploke_test_utils::TargetSelector::TypeAlias { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *type_alias {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::Union { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *union {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
             other => Err(color_eyre::eyre::eyre!(
                 "TUI matrix resolver does not materialize target selector {other:?}"
             )),
