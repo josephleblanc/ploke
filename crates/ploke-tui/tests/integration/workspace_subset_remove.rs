@@ -35,11 +35,6 @@ fn fixture_lock() -> &'static StdMutex<()> {
     LOCK.get_or_init(|| StdMutex::new(()))
 }
 
-fn config_home_lock() -> &'static StdMutex<()> {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| StdMutex::new(()))
-}
-
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
     old_snapshot_fixture_dir: Option<String>,
@@ -165,7 +160,7 @@ fn function_node_id(db: &Database, function_name: &str) -> uuid::Uuid {
 #[tokio::test]
 async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _config_lock = crate::config_home_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 
@@ -325,7 +320,7 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
 #[tokio::test]
 async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _config_lock = crate::config_home_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 
@@ -557,7 +552,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
 #[tokio::test]
 async fn workspace_load_crates_conflict_preserves_runtime_state() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = config_home_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _config_lock = crate::config_home_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 

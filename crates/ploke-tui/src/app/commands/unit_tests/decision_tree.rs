@@ -414,9 +414,10 @@ impl Drop for XdgConfigHomeGuard {
 }
 
 struct LoadRegistrySandbox {
-    _lock: tokio::sync::MutexGuard<'static, ()>,
-    _tmp_dir: TempDir,
+    // Fields drop in declaration order; restore env before releasing the lock.
     _xdg_guard: XdgConfigHomeGuard,
+    _tmp_dir: TempDir,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {
@@ -446,9 +447,9 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
         .expect("save test workspace registry");
 
     LoadRegistrySandbox {
-        _lock: lock,
-        _tmp_dir: tmp_dir,
         _xdg_guard: xdg_guard,
+        _tmp_dir: tmp_dir,
+        _lock: lock,
     }
 }
 

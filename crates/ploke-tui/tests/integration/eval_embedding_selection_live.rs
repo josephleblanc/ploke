@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -43,11 +43,6 @@ const OVERLAY_WAIT_SECS: u64 = 60;
 const DIRECT_INDEX_WAIT_SECS: u64 = 300;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const OPENROUTER_CODESTRAL_DIMS: usize = 1536;
-
-fn config_home_lock() -> &'static TokioMutex<()> {
-    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| TokioMutex::new(()))
-}
 
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
@@ -94,19 +89,20 @@ impl Drop for XdgConfigHomeGuard {
 }
 
 struct ConfigSandbox {
-    _lock: tokio::sync::MutexGuard<'static, ()>,
-    _tmp_dir: TempDir,
+    // Fields drop in declaration order; restore env before releasing the lock.
     _xdg_guard: XdgConfigHomeGuard,
+    _tmp_dir: TempDir,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn setup_config_sandbox() -> ConfigSandbox {
-    let lock = config_home_lock().lock().await;
+    let lock = crate::config_home_lock().lock().await;
     let tmp_dir = tempfile::tempdir().expect("temp xdg config dir");
     let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
     ConfigSandbox {
-        _lock: lock,
-        _tmp_dir: tmp_dir,
         _xdg_guard: xdg_guard,
+        _tmp_dir: tmp_dir,
+        _lock: lock,
     }
 }
 

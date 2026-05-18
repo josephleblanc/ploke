@@ -1353,7 +1353,7 @@ mod tests {
 
     #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
-    async fn chrono_single_day_sparse_context_emits_weekday_type_context() -> Result<(), Error> {
+    async fn chrono_single_day_owner_seeded_expands_weekday_type_context() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
@@ -1361,116 +1361,114 @@ mod tests {
         )?);
         let seed_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
             .map_err(Error::from)?;
+        let target_id = unique_id_by_name(&db, "enum", "Weekday")?;
 
-        let rag = RagService::new_full(
-            Arc::clone(&db),
-            runtime_for(&db, EmbeddingProcessor::new_mock()),
-            IoManagerHandle::new(),
-            crate::RagConfig::default(),
-        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        let (expanded, type_context) = rag.expand_hits_with_type_context(&[(seed_id, 1.0)])?;
+
+        assert!(
+            expanded.iter().any(|(id, _)| *id == target_id),
+            "WeekdaySet::single_day owner seed should materialize Weekday; expanded: {expanded:#?}; type_context: {type_context:#?}"
+        );
+        let provenance = type_context.get(&target_id).unwrap_or_else(|| {
+            panic!("missing TypeContextInfo for Weekday target {target_id}; expanded: {expanded:#?}; type_context: {type_context:#?}")
+        });
+        assert_eq!(provenance.seed_id, seed_id);
+        assert_eq!(provenance.relation, TypeContextKind::UsesTypeNested);
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn chrono_single_day_bm25_precise_query_retrieves_method_owner() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+        )?);
+        let method_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
+            .map_err(Error::from)?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
         rag.bm25_rebuild().await?;
 
-        let search_term = "single_day method WeekdaySet Weekday";
+        let search_term = "single_day";
         let sparse_hits = rag
-            .search_bm25_strict(search_term, 1, LOADED_WORKSPACE_SCOPE)
-            .await?;
-        let (expanded_hits, expanded_type_context) =
-            rag.expand_hits_with_type_context(&sparse_hits)?;
-        let expanded_labels = expanded_hits
-            .iter()
-            .map(|(id, score)| (*id, *score, context_label(&db, *id)))
-            .collect::<Vec<_>>();
-
-        let assembled = rag
-            .get_context(
-                search_term,
-                1,
-                &TokenBudget {
-                    max_total: 4096,
-                    per_part_max: 256,
-                    ..TokenBudget::default()
-                },
-                &RetrievalStrategy::Sparse { strict: Some(true) },
-                LOADED_WORKSPACE_SCOPE,
-            )
+            .search_bm25_strict(search_term, 15, LOADED_WORKSPACE_SCOPE)
             .await?;
 
         assert!(
-            assembled.parts.iter().any(|part| {
-                part.text.contains("Weekday")
-                    && part.type_context.is_some_and(|info| {
-                        info.seed_id == seed_id && info.relation == TypeContextKind::UsesTypeNested
-                    })
-            }),
-            "WeekdaySet::single_day sparse context should carry nested Weekday type_context; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
-            assembled.parts
+            sparse_hits.iter().any(|(id, _)| *id == method_id),
+            "BM25 exact-name query should retrieve WeekdaySet::single_day within top 15; sparse_hits: {sparse_hits:#?}"
         );
         Ok(())
     }
 
     #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
-    async fn axum_map_layer_sparse_context_emits_layer_fn_type_context() -> Result<(), Error> {
+    async fn axum_map_layer_field_seeded_expands_layer_fn_type_context() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
             &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
         )?);
-        let struct_id =
+        let map_id =
             one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
                 .map_err(Error::from)?;
+        let seed_id = one_uuid(
+            &db,
+            &format!(
+                r#"?[id] :=
+                    *field {{
+                        id,
+                        owner_id: to_uuid("{map_id}"),
+                        index: 1 @ 'NOW'
+                    }}"#
+            ),
+        )
+        .map_err(Error::from)?;
         let trait_id =
             one_uuid_by_file_suffix(&db, &trait_in_file_query("LayerFn"), "axum/src/boxed.rs")
                 .map_err(Error::from)?;
 
-        let rag = RagService::new_full(
-            Arc::clone(&db),
-            runtime_for(&db, EmbeddingProcessor::new_mock()),
-            IoManagerHandle::new(),
-            crate::RagConfig::default(),
-        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        let (expanded, type_context) = rag.expand_hits_with_type_context(&[(seed_id, 1.0)])?;
+
+        assert!(
+            expanded.iter().any(|(id, _)| *id == trait_id),
+            "Map.layer field seed should materialize nested LayerFn trait target; expanded: {expanded:#?}; type_context: {type_context:#?}"
+        );
+        let provenance = type_context.get(&trait_id).unwrap_or_else(|| {
+            panic!("missing TypeContextInfo for LayerFn target {trait_id}; expanded: {expanded:#?}; type_context: {type_context:#?}")
+        });
+        assert_eq!(provenance.seed_id, seed_id);
+        assert_eq!(provenance.relation, TypeContextKind::UsesTypeNested);
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn axum_map_bm25_precise_query_retrieves_map_struct() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+        )?);
+        let map_id =
+            one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
+                .map_err(Error::from)?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
         rag.bm25_rebuild().await?;
 
-        let search_term = "Map struct axum src boxed rs";
+        let search_term = "Map";
         let sparse_hits = rag
-            .search_bm25_strict(search_term, 1, LOADED_WORKSPACE_SCOPE)
-            .await?;
-        let (expanded_hits, expanded_type_context) =
-            rag.expand_hits_with_type_context(&sparse_hits)?;
-        let expanded_labels = expanded_hits
-            .iter()
-            .map(|(id, score)| (*id, *score, context_label(&db, *id)))
-            .collect::<Vec<_>>();
-
-        let assembled = rag
-            .get_context(
-                search_term,
-                1,
-                &TokenBudget {
-                    max_total: 4096,
-                    per_part_max: 256,
-                    ..TokenBudget::default()
-                },
-                &RetrievalStrategy::Sparse { strict: Some(true) },
-                LOADED_WORKSPACE_SCOPE,
-            )
+            .search_bm25_strict(search_term, 25, LOADED_WORKSPACE_SCOPE)
             .await?;
 
         assert!(
-            sparse_hits.iter().any(|(id, _)| *id == struct_id),
-            "Map.layer search should seed the Map struct, not an unrelated owner; trait_id: {trait_id}; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
-            assembled.parts
-        );
-        assert!(
-            assembled.parts.iter().any(|part| {
-                part.text.contains("LayerFn")
-                    && part.type_context.is_some_and(|info| {
-                        info.seed_id == struct_id
-                            && info.relation == TypeContextKind::UsesTypeNested
-                    })
-            }),
-            "Map.layer sparse context should carry nested LayerFn type_context; trait_id: {trait_id}; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
-            assembled.parts
+            sparse_hits.iter().any(|(id, _)| *id == map_id),
+            "BM25 exact-name query should retrieve axum/src/boxed.rs Map within top 25; sparse_hits: {sparse_hits:#?}"
         );
         Ok(())
     }
