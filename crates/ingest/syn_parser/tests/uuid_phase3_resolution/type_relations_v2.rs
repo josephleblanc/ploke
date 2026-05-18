@@ -19,7 +19,8 @@
 //! - Multiple bounds on one predicate: `where T: LocalTrait + ExtraTrait`.
 //! - Multiple predicates: `where T: LocalTrait, U: ExtraTrait`.
 //! - Repeated same-subject predicates: `where T: LocalTrait, T: ExtraTrait`.
-//! - Enum, type-alias, and impl owners with where predicates.
+//! - Enum, function, method, trait, type-alias, union, and impl owners with
+//!   where predicates.
 //! - Composite subject: `where Vec<T>: LocalTrait`.
 //! - Composite subject with multiple bounds:
 //!   `where Vec<T>: LocalTrait + ExtraTrait`.
@@ -39,9 +40,6 @@
 //!
 //! - Direct generic-param-owned where-bound roots. Those are transform/DB
 //!   projections derived only for simple direct type-param subjects.
-//! - Function, method, trait, and union owner where-predicate fixtures in this
-//!   focused crate. Transform supports these owner families; this parser file
-//!   currently pins enum, type alias, impl, and struct-like forms.
 //! - Nested recursive subject examples beyond the deepest focused fixtures:
 //!   `Vec<T>` and `<T as LocalAssocBound>::Output`. If deeper recursive
 //!   subject fixtures are added, add exact-source assertions for the deepest
@@ -290,6 +288,94 @@ type_relation_cases!(
                 root()
             ),
             ordinary_type_param(item(&["crate"], "WhereEnum", ItemKind::Enum), "T")
+        ),
+        v2_resolves_where_fn_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "where_fn", ItemKind::Function),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_fn_subject => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "where_fn", ItemKind::Function),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "where_fn", ItemKind::Function), "T")
+        ),
+        v2_resolves_where_method_bound => trait_relation(
+            trait_source(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_method_subject => ordinary_relation(
+            ordinary_source(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                "T"
+            )
+        ),
+        v2_resolves_where_trait_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "WhereTrait", ItemKind::Trait),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_trait_subject => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereTrait", ItemKind::Trait),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "WhereTrait", ItemKind::Trait), "T")
+        ),
+        v2_resolves_where_union_bound => trait_relation(
+            trait_source(
+                item(&["crate"], "WhereUnion", ItemKind::Union),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_where_union_subject => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereUnion", ItemKind::Union),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "WhereUnion", ItemKind::Union), "T")
         ),
         v2_resolves_where_type_alias_multi_bound_first_trait => trait_relation(
             trait_source(
@@ -970,6 +1056,102 @@ type_relations_exact_sources_case!(
                 root()
             ),
             trait_item(item(&["crate"], "ExtraTrait", ItemKind::Trait))
+        ),
+    ]
+);
+
+type_relations_exact_sources_case!(
+    fixture_type_resolution_v2_where_owner_family_sources_are_exact,
+    graph: &FIXTURE_TYPE_RESOLUTION_V2.0,
+    report: &FIXTURE_TYPE_RESOLUTION_V2_REPORT,
+    expected: [
+        ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "where_fn", ItemKind::Function),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "where_fn", ItemKind::Function), "T")
+        ),
+        trait_relation(
+            trait_source(
+                item(&["crate"], "where_fn", ItemKind::Function),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        ordinary_relation(
+            ordinary_source(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                "T"
+            )
+        ),
+        trait_relation(
+            trait_source(
+                method(
+                    impl_selector(&["crate"], &["WhereMethod"], None),
+                    "where_method"
+                ),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereTrait", ItemKind::Trait),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "WhereTrait", ItemKind::Trait), "T")
+        ),
+        trait_relation(
+            trait_source(
+                item(&["crate"], "WhereTrait", ItemKind::Trait),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "WhereUnion", ItemKind::Union),
+                TypeUseSourceSlot::WherePredicateSubject(0),
+                root()
+            ),
+            ordinary_type_param(item(&["crate"], "WhereUnion", ItemKind::Union), "T")
+        ),
+        trait_relation(
+            trait_source(
+                item(&["crate"], "WhereUnion", ItemKind::Union),
+                TypeUseSourceSlot::WherePredicateBound {
+                    predicate_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
         ),
     ]
 );

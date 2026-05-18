@@ -61,6 +61,35 @@ where
     Variant(T),
 }
 
+pub fn where_fn<T>()
+where
+    T: LocalTrait,
+{
+}
+
+pub struct WhereMethod;
+
+impl WhereMethod {
+    pub fn where_method<T>()
+    where
+        T: LocalTrait,
+    {
+    }
+}
+
+pub trait WhereTrait<T>
+where
+    T: LocalTrait,
+{
+}
+
+pub union WhereUnion<T>
+where
+    T: LocalTrait,
+{
+    value: *const T,
+}
+
 pub type WhereAliasMulti<T>
 where
     T: LocalTrait + ExtraTrait,
