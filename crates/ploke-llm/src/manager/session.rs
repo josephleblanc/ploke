@@ -4,10 +4,10 @@
     reason = "evolving api surface, may be useful, written 2025-12-15"
 )]
 
-use std::env;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use std::{env, fmt};
 
 use chrono::{DateTime, Utc};
 use ploke_core::ArcStr;
@@ -1128,6 +1128,99 @@ impl ChatStepError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ResponseIndex(pub usize);
+
+impl ResponseIndex {
+    pub fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for ResponseIndex {
+    fn from(index: usize) -> Self {
+        Self::new(index)
+    }
+}
+
+impl fmt::Display for ResponseIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordedResponse {
+    pub response_index: ResponseIndex,
+    pub response: OpenAiResponse,
+}
+
+impl RecordedResponse {
+    pub fn new(response_index: usize, response: OpenAiResponse) -> Self {
+        Self {
+            response_index: ResponseIndex::new(response_index),
+            response,
+        }
+    }
+
+    pub fn index(&self) -> usize {
+        self.response_index.get()
+    }
+}
+
+/// Provider-response replay tape.
+///
+/// This replays provider envelopes through the same parser as live responses.
+/// It deliberately does not replay tool results or session events.
+#[derive(Debug, Clone)]
+pub struct RecordedResponseTape {
+    responses: Vec<RecordedResponse>,
+    cursor: usize,
+}
+
+impl RecordedResponseTape {
+    pub fn new(mut responses: Vec<RecordedResponse>) -> Self {
+        responses.sort_by_key(|response| response.response_index);
+        Self {
+            responses,
+            cursor: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.responses.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.responses.is_empty()
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.responses.len().saturating_sub(self.cursor)
+    }
+
+    pub fn next_chat_step(&mut self) -> Result<ChatStepData, ChatStepError> {
+        let Some(record) = self.responses.get(self.cursor) else {
+            return Err(ChatStepError::new(LlmError::ChatStep(
+                "recorded provider response tape exhausted".to_string(),
+            )));
+        };
+        self.cursor += 1;
+        let body = serde_json::to_string(&record.response).map_err(|source| {
+            ChatStepError::new(LlmError::Serialization(format!(
+                "failed to serialize recorded provider response {}: {source}",
+                record.response_index
+            )))
+        })?;
+        parse_chat_outcome(&body).map_err(ChatStepError::new)
+    }
+}
+
 /// Parse a (non-streaming) OpenAI/OpenRouter-style response body into a normalized outcome.
 ///
 /// This function is used by the *driver* (session/tool loop) to decide what to do next:
@@ -1404,6 +1497,40 @@ mod tests {
             } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
         }
+    }
+
+    #[test]
+    fn recorded_response_tape_replays_provider_envelopes_through_parser() {
+        let response: OpenAiResponse = serde_json::from_str(
+            r#"{
+                "id": "recorded-1",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "from tape"}
+                    }
+                ],
+                "created": 0,
+                "model": "test/model",
+                "object": "chat.completion"
+            }"#,
+        )
+        .expect("response envelope");
+        let mut tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        let step = tape.next_chat_step().expect("recorded chat step");
+
+        match step.outcome {
+            ChatStepOutcome::Content {
+                content: Some(content),
+                ..
+            } => assert_eq!(content.as_ref(), "from tape"),
+            other => panic!("expected content response, got {other:?}"),
+        }
+        assert_eq!(step.full_response.id, "recorded-1");
+        assert_eq!(tape.remaining(), 0);
+        assert!(tape.next_chat_step().is_err());
     }
 
     #[test]

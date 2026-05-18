@@ -7,6 +7,8 @@ pub use manager::events::{
 pub use manager::{
     ChatEvt, LlmEvent, Prototype1TraceContext, RequestMessage, set_prototype1_trace_context,
 };
+#[cfg(feature = "test_harness")]
+pub use manager::{clear_recorded_response_tape, install_recorded_response_tape};
 
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;

@@ -6727,6 +6727,7 @@ name = "ploke-records"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "ploke-llm",
  "ploke-protocol",
  "ploke-tui",
  "serde",
@@ -6734,6 +6735,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "toml 0.9.5",
+ "uuid",
 ]
 
 [[package]]

@@ -21,6 +21,8 @@ pub mod identity;
 pub mod ids;
 pub mod invocation;
 pub mod journal;
+#[cfg(feature = "llm-response")]
+pub mod llm_response;
 pub mod oracle;
 pub mod playback;
 #[cfg(feature = "protocol")]

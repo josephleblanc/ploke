@@ -11,6 +11,10 @@ mod session;
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
+#[cfg(feature = "test_harness")]
+pub use crate::llm::manager::session::{
+    clear_recorded_response_tape, install_recorded_response_tape,
+};
 pub use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
@@ -632,6 +636,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let chat_session = session::ChatSession {
         client,
         req,
+        chat_step_source: session::take_recorded_chat_step_source(),
         parent_id,
         assistant_message_id,
         event_bus,

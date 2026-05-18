@@ -3,10 +3,10 @@ use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use chrono::DateTime;
 use ploke_llm::ChatStepOutcome;
-use ploke_llm::manager::ChatStepData;
+use ploke_llm::manager::{ChatStepData, RecordedResponse, RecordedResponseTape};
 use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
 use ploke_llm::response::ToolCall;
-use ploke_llm::{ChatHttpConfig, ProviderAttempt, ProviderRetryDecision};
+use ploke_llm::{ChatHttpConfig, ChatStepError, ProviderAttempt, ProviderRetryDecision};
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -55,8 +55,8 @@ const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
-    response_index: usize,
-    response: OpenAiResponse,
+    #[serde(flatten)]
+    recorded_response: RecordedResponse,
 }
 
 fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> String {
@@ -585,9 +585,83 @@ pub enum CancelChatToken {
     Close,
 }
 
+#[derive(Debug)]
+pub enum ChatStepSource {
+    Live,
+    Recorded(RecordedResponseTape),
+}
+
+impl ChatStepSource {
+    pub fn live() -> Self {
+        Self::Live
+    }
+
+    pub fn recorded(tape: RecordedResponseTape) -> Self {
+        Self::Recorded(tape)
+    }
+
+    async fn next_step<R: Router>(
+        &mut self,
+        client: &Client,
+        req: &ChatCompRequest<R>,
+        cfg: &ChatHttpConfig,
+    ) -> Result<ChatStepData, ChatStepError> {
+        match self {
+            Self::Live => ploke_llm::chat_step_with_attempts(client, req, cfg).await,
+            Self::Recorded(tape) => tape.next_chat_step(),
+        }
+    }
+}
+
+impl Default for ChatStepSource {
+    fn default() -> Self {
+        Self::Live
+    }
+}
+
+#[cfg(feature = "test_harness")]
+static RECORDED_RESPONSE_TAPE: std::sync::OnceLock<std::sync::Mutex<Option<RecordedResponseTape>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_tape(tape: RecordedResponseTape) {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(tape);
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_recorded_response_tape() {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
+pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    guard
+        .take()
+        .map(ChatStepSource::recorded)
+        .unwrap_or_else(ChatStepSource::live)
+}
+
+#[cfg(not(feature = "test_harness"))]
+pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
+    ChatStepSource::live()
+}
+
 pub struct ChatSession<R: Router> {
     pub client: Client,
     pub req: ChatCompRequest<R>,
+    pub chat_step_source: ChatStepSource,
     pub parent_id: Uuid,
     pub assistant_message_id: Uuid,
     pub event_bus: Arc<EventBus>,
@@ -655,6 +729,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let ChatSession {
         client,
         mut req,
+        mut chat_step_source,
         parent_id,
         assistant_message_id,
         event_bus,
@@ -720,7 +795,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             full_response,
             provider_attempts,
         } = match tokio::select! {
-            res = ploke_llm::chat_step_with_attempts(&client, &req, &cfg) => res,
+            res = chat_step_source.next_step(&client, &req, &cfg) => res,
             _ = wait_for_cancel_signal(&mut cancel_rx) => {
                 return abort_for_user_cancel(
                     &mut report,
@@ -867,6 +942,14 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             }
         };
         report.record_chat_step(chain_index, provider_timing, provider_attempts);
+        emit_full_response_trace(
+            session_id,
+            parent_id,
+            assistant_message_id,
+            &model_key,
+            chain_index,
+            &full_response,
+        );
 
         let token_usage = full_response.usage;
         if let Some(resp_tokens) = token_usage {
@@ -1149,29 +1232,6 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             model_key: &model_key,
         };
 
-        let trace_record = FullResponseTraceRecord {
-            assistant_message_id,
-            response_index: chain_index,
-            response: full_response.clone(),
-        };
-
-        match serde_json::to_string(&trace_record) {
-            Ok(response_json) => {
-                tracing::info!(target: FULL_RESPONSE_TARGET, "{response_json}");
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "ploke_tui",
-                    session_id = %session_id,
-                    parent_id = %parent_id,
-                    assistant_message_id = %assistant_message_id,
-                    model = ?model_key,
-                    %error,
-                    "Failed to serialize full_response for tracing"
-                );
-            }
-        }
-
         match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state)
         {
             FinishDecision::Continue(continue_info) => {
@@ -1324,6 +1384,37 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     report.commit_phase = commit_phase;
     report.attempts = attempts;
     report
+}
+
+fn emit_full_response_trace(
+    session_id: Uuid,
+    parent_id: Uuid,
+    assistant_message_id: Uuid,
+    model_key: &Option<ploke_llm::ModelKey>,
+    chain_index: usize,
+    full_response: &OpenAiResponse,
+) {
+    let trace_record = FullResponseTraceRecord {
+        assistant_message_id,
+        recorded_response: RecordedResponse::new(chain_index, full_response.clone()),
+    };
+
+    match serde_json::to_string(&trace_record) {
+        Ok(response_json) => {
+            tracing::info!(target: FULL_RESPONSE_TARGET, "{response_json}");
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "ploke_tui",
+                session_id = %session_id,
+                parent_id = %parent_id,
+                assistant_message_id = %assistant_message_id,
+                model = ?model_key,
+                %error,
+                "Failed to serialize full_response for tracing"
+            );
+        }
+    }
 }
 
 async fn add_or_update_assistant_message(
@@ -1723,11 +1814,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
     use std::time::Duration;
 
     use once_cell::sync::Lazy;
     use ploke_llm::ProviderSlug;
-    use ploke_llm::manager::{ApproxCharTokenizer, Role, TokenCounter, parse_chat_outcome};
+    use ploke_llm::manager::{
+        ApproxCharTokenizer, RecordedResponse, Role, TokenCounter, parse_chat_outcome,
+    };
     use ploke_llm::registry::calibration::{AttemptTimeout, ProviderTiming, RouterCalibration};
     use ploke_llm::router_only::ChatCompRequest;
     use ploke_llm::router_only::Router;
@@ -1737,6 +1831,11 @@ mod tests {
     use ploke_llm::router_only::openrouter::ProviderPreferences;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
+    use tracing::Event;
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
 
     use super::*;
     use crate::EventBus;
@@ -1752,6 +1851,75 @@ mod tests {
 
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    #[derive(Clone, Default)]
+    struct TraceLines(StdArc<StdMutex<Vec<String>>>);
+
+    impl TraceLines {
+        fn push(&self, line: String) {
+            self.0.lock().expect("trace lock").push(line);
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.0.lock().expect("trace lock").clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct TraceFields {
+        values: Vec<String>,
+    }
+
+    impl TraceFields {
+        fn push(&mut self, field: &Field, value: impl Into<String>) {
+            self.values
+                .push(format!("{}={}", field.name(), value.into()));
+        }
+
+        fn finish(self) -> String {
+            self.values.join(" ")
+        }
+    }
+
+    impl Visit for TraceFields {
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.push(field, format!("{value:?}"));
+        }
+    }
+
+    struct TraceLayer {
+        lines: TraceLines,
+    }
+
+    impl<S> Layer<S> for TraceLayer
+    where
+        S: tracing::Subscriber + for<'span> LookupSpan<'span>,
+    {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            if event.metadata().target() != FULL_RESPONSE_TARGET {
+                return;
+            }
+            let mut fields = TraceFields::default();
+            event.record(&mut fields);
+            self.lines.push(fields.finish());
+        }
+    }
 
     #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
     struct TestRouter;
@@ -2010,6 +2178,27 @@ mod tests {
         .to_string()
     }
 
+    #[test]
+    fn full_response_trace_record_serializes_recorded_response_in_sidecar_shape() {
+        let assistant_message_id = Uuid::from_u128(0x8e32b33b_6de5_4e1c_9fa1_14bc2059913f);
+        let response = serde_json::from_str(&content_response("final answer"))
+            .expect("content response envelope");
+        let record = FullResponseTraceRecord {
+            assistant_message_id,
+            recorded_response: RecordedResponse::new(3, response),
+        };
+
+        let value = serde_json::to_value(&record).expect("trace record json");
+
+        assert_eq!(
+            value["assistant_message_id"],
+            assistant_message_id.to_string()
+        );
+        assert_eq!(value["response_index"], 3);
+        assert_eq!(value["response"]["id"], "final");
+        assert!(value.get("recorded_response").is_none());
+    }
+
     async fn run_calibrated_test_router_session() -> ChatSessionReport {
         let responses = vec![content_response("final answer")];
         let request_count = std::sync::Arc::new(AtomicUsize::new(0));
@@ -2031,6 +2220,7 @@ mod tests {
             ChatSession {
                 client: Client::new(),
                 req,
+                chat_step_source: ChatStepSource::live(),
                 parent_id: Uuid::new_v4(),
                 assistant_message_id: Uuid::new_v4(),
                 event_bus,
@@ -2051,6 +2241,153 @@ mod tests {
             "report={report:#?}"
         );
         report
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_replays_recorded_response_without_provider_http() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let response = serde_json::from_str(&content_response("recorded final answer"))
+            .expect("recorded response parses");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            1,
+        )
+        .await;
+
+        let mut assistant_update = None;
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            if let StateCommand::UpdateMessage { id, update } = command
+                && id == assistant_message_id
+                && let Some(content) = update.content
+            {
+                assistant_update = Some(content);
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.errors.len(), 0);
+        assert_eq!(report.attempts, 1);
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert_eq!(assistant_update.as_deref(), Some("recorded final answer"));
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_replays_recorded_tool_arg_repair_without_provider_http() {
+        let trace_lines = TraceLines::default();
+        let subscriber = Registry::default().with(TraceLayer {
+            lines: trace_lines.clone(),
+        });
+        let trace_guard = tracing::subscriber::set_default(subscriber);
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let final_response = serde_json::from_str(&content_response("recovered after repair"))
+            .expect("recorded final response parses");
+        let tape = RecordedResponseTape::new(vec![
+            RecordedResponse::new(0, malformed_response),
+            RecordedResponse::new(1, final_response),
+        ]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+        drop(trace_guard);
+
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 2);
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .any(|content| content.contains("recovered after repair")),
+            "expected final assistant update after recorded repair, got {assistant_updates:?}"
+        );
+        let traces = trace_lines.snapshot();
+        assert_eq!(
+            traces.len(),
+            2,
+            "recorded repair replay should trace both provider envelopes, got {traces:?}"
+        );
+        assert!(
+            traces
+                .iter()
+                .any(|line| line.contains("\"id\":\"repair-1\"")),
+            "expected malformed tool-call provider envelope in full-response trace, got {traces:?}"
+        );
+        assert!(
+            traces.iter().any(|line| line.contains("\"id\":\"final\"")),
+            "expected final provider envelope in full-response trace, got {traces:?}"
+        );
     }
 
     #[test]
@@ -2307,6 +2644,7 @@ mod tests {
             ChatSession {
                 client: Client::new(),
                 req,
+                chat_step_source: ChatStepSource::live(),
                 parent_id: Uuid::new_v4(),
                 assistant_message_id: Uuid::new_v4(),
                 event_bus,
@@ -2389,6 +2727,7 @@ mod tests {
             ChatSession {
                 client: Client::new(),
                 req,
+                chat_step_source: ChatStepSource::live(),
                 parent_id: Uuid::new_v4(),
                 assistant_message_id: Uuid::new_v4(),
                 event_bus,
@@ -2471,6 +2810,7 @@ mod tests {
             ChatSession {
                 client: Client::new(),
                 req,
+                chat_step_source: ChatStepSource::live(),
                 parent_id: Uuid::new_v4(),
                 assistant_message_id,
                 event_bus,
@@ -2553,6 +2893,7 @@ mod tests {
             ChatSession {
                 client: Client::new(),
                 req,
+                chat_step_source: ChatStepSource::live(),
                 parent_id: Uuid::new_v4(),
                 assistant_message_id: Uuid::new_v4(),
                 event_bus,

@@ -1,6 +1,6 @@
 # Prototype 1 Typed Data Coverage Report
 
-Updated: 2026-05-10
+Updated: 2026-05-18
 
 ## Scope
 
@@ -39,7 +39,7 @@ to that graph.
 | Protocol artifacts | `ploke-records::protocol` converts implemented tool-call payloads and the six current writer procedures into named writer-side DTO/artifact shapes, and returns `ArtifactDecodeFailureRecord` for malformed payloads. `ploke-eval` tolerant listing now surfaces loaded artifacts plus typed decode/unsupported/future/malformed and identity-failure rows per visible `.json`; protocol aggregation consumes decoded tool-call variants, skips decoded non-tool-call variants, reports decoded tool-call payload-shape skips, and preserves typed unloaded rows. | Covered for current tool-call aggregate output; graph playback joins remain future work. |
 | Sealed History blocks | `ploke-records` has typed `SealedBlockRecord`; `ploke-tree` loads those for playback; legacy `ploke-eval` stored-block loader now uses typed stored entry DTOs. | Covered on shared-record path and eval reload path. |
 | History index projections | `history/index/by-hash.jsonl`, `by-lineage-height.jsonl`, and `heads.json` use typed store structures in `ploke-eval`, but are projections. | Covered by append-store projection deserialize/rebuildability test. |
-| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. Tool-call request arguments now use `ToolArgumentsJson` and decode through `ToolCallArguments` or typed parse-failure records for eval replay/projection paths. Tool-result failure/truncation summaries, turn-trace/observation replay, provider error/timeout rows, and provider-attempt timelines now use named typed projection records. | Foundation-covered for tool-call arguments, result/trace projection, and provider observation projection; partial graph landing exists in `ploke-tree` / `ploke-egui`, while full History-spined join coverage and evidence attachment remain future work. Provider DTO/tool bridge remains future work. |
+| Run metadata | `RunRecord`, `LastRunRecord`, and `SnapshotStatusRecord` are typed. Tool-call request arguments now use `ToolArgumentsJson` and decode through `ToolCallArguments` or typed parse-failure records for eval replay/projection paths. Tool-result failure/truncation summaries, turn-trace/observation replay, provider error/timeout rows, provider-attempt timelines, and `llm-full-responses.jsonl` sidecar lines now use named typed records/projections. The full-response sidecar keeps only the record envelope in `ploke-records`; assistant ids are UUIDs and provider response payload/sequence use `ploke-llm` replay types. | Foundation-covered for tool-call arguments, result/trace projection, provider observation projection, and raw provider-response sidecar replay; partial graph landing exists in `ploke-tree` / `ploke-egui`, while full History-spined join coverage and evidence attachment remain future work. Provider DTO/tool bridge remains future work. |
 | Browser playback model | `PlaybackBrowserModel` and nested snapshots are typed. | Serialization/projection plus deserialize roundtrip coverage; `ploke_tree::browser::RunExecutionGraph` now provides a partial generative execution graph projection. Next work is consolidating the canonical read-side graph/index in `ploke-tree` and attaching complete evidence joins, not treating the browser DTO as the semantic center. |
 | Child-plan manifests | `ChildPlanFiles` and nested `ChildFiles` in `crates/ploke-eval/src/cli/prototype1_state/parent.rs` define the parent-owned message-box body. | Covered as a typed parent transition message; not a scheduler projection. |
 | Streams/logs | `nodes/*/streams/*/*.log`. | Plain text logs; outside the owned JSON/JSONL typed-persistence target. |
@@ -64,8 +64,8 @@ itself a blocking typed-persistence gap.
    - Evidence: `crates/ploke-eval/src/cli.rs` `load_latest_segmented_sequence` uses `serde_json::from_value(entry.stored.output)`.
    - This is outside the aggregate-side slice but remains a production typed-persistence violation.
 
-3. Provider DTO/tool bridge projections still include raw/stringly JSON outside the provider-observation projection slice.
-   - Evidence: response DTO metadata/logprobs and tool-bridge rows remain assigned to `llm-attempts.dto-tool-bridge`.
+3. Provider DTO/tool bridge projections still include raw/stringly JSON outside the provider-observation and full-response sidecar slices.
+   - Evidence: response DTO metadata/logprobs and tool-bridge rows remain assigned to `llm-attempts.dto-tool-bridge`; `llm-full-responses.jsonl` line ownership is now in `ploke-records::llm_response`.
    - Replace those provider-side DTO/tool-bridge projections in the queued slice.
 
 4. A partial generative execution graph exists, but the canonical read-side
@@ -101,6 +101,8 @@ itself a blocking typed-persistence gap.
   all six current `write_protocol_artifact` procedures now have named writer-side DTO/artifact shapes. Tolerant listing/load-result behavior is covered; remaining protocol work is tool-call-only aggregation, not current writer DTO coverage.
 - Tool result and trace projection:
   `tool.result.trace.projection` now reads `agent-turn-trace.json` through `AgentTurnTraceProjection`, reads Prototype 1 observation JSONL through `ObservationTraceRecord`, and derives tool-result failure/truncation display summaries through named projections instead of anonymous JSON field walking.
+- Raw full-response sidecar:
+  `llm-full-responses.jsonl` lines are now owned by `ploke-records::llm_response::RawFullResponseRecord`; the record envelope carries a UUID assistant id and flattens the native `ploke_llm::manager::RecordedResponse` payload, while `ploke-eval` imports that shared record for CLI inspectors and replay loading instead of defining the sidecar shape locally.
 
 ## Documentation Coverage
 

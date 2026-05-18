@@ -27,8 +27,9 @@ pub use wire::WireRequest;
 
 pub use manager::{
     ChatHttpConfig, ChatStepError, ChatStepOutcome, ProviderAttempt, ProviderAttemptOutcome,
-    ProviderAttemptTimeline, ProviderFailurePhase, ProviderRetryDecision, RequestMessage,
-    chat_step, chat_step_with_attempts, handle_endpoint_request_async,
+    ProviderAttemptTimeline, ProviderFailurePhase, ProviderRetryDecision, RecordedResponse,
+    RecordedResponseTape, RequestMessage, ResponseIndex, chat_step, chat_step_with_attempts,
+    handle_endpoint_request_async,
 };
 pub use registry::calibration::{
     AttemptTimeout, CalibrationInput, OpenRouterCalibrationKey, ProviderTiming, RetryTuning,

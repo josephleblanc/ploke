@@ -7,8 +7,8 @@ pub use builders::attempt::{
     ProviderRetryDecision,
 };
 pub use session::{
-    ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, chat_step,
-    chat_step_with_attempts, parse_chat_outcome,
+    ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, RecordedResponse,
+    RecordedResponseTape, ResponseIndex, chat_step, chat_step_with_attempts, parse_chat_outcome,
 };
 
 use crate::error::LlmError;

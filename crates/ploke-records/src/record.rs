@@ -19,6 +19,7 @@ pub enum RecordFamily {
     RunProfileCommitment,
     AgentTurnTrace,
     AgentTurnSummary,
+    LlmFullResponseTrace,
     RunRecord,
 }
 
