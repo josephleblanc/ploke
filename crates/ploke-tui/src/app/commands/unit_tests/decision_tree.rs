@@ -418,7 +418,10 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
             workspace_id: fixture_crate.id.uuid().to_string(),
             workspace_name: fixture_crate.name.clone(),
             workspace_root: fixture_crate_root.clone(),
-            snapshot_file: FIXTURE_NODES_CANONICAL.path(),
+            snapshot_file: FIXTURE_NODES_CANONICAL
+                .checked_path()
+                .expect("fixture_nodes snapshot should validate")
+                .into_path(),
             focused_root: Some(fixture_crate_root.clone()),
             member_roots: vec![fixture_crate_root],
             active_embedding_set_rel: None,

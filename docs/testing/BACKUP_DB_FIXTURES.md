@@ -1,12 +1,25 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-04-03
-Last updated: 2026-04-03
+Last reviewed: 2026-05-18
+Last updated: 2026-05-18
 
 This document is the current inventory for backup database fixtures under
 `tests/backup_dbs/`. It records which source targets produced each fixture,
 which tests consume it, whether those tests expect mutable or immutable access,
 and the DB-level assumptions that make those tests valid.
+
+Backup DB fixture identity has two parts:
+
+- the registry entry in
+  [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
+- the fixture path scope
+
+Checkout-local fixtures may contain absolute source roots, so registry loads
+prefer a generated root-scoped file under `tests/backup_dbs/local/` when one
+exists. Their committed registered path is a fallback and compatibility anchor,
+not proof that the DB is valid for every worktree. Operational path-only
+consumers must call `FixtureDb::checked_path()` so the effective path is loaded
+and validated before it is copied or staged.
 
 ## Review cadence
 
@@ -26,8 +39,10 @@ recreation guidance:
 - `cargo xtask verify-backup-dbs --fixture <id>`
   - scopes validation to one fixture
 - `cargo xtask recreate-backup-db --fixture <id>`
-  - recreates automated fixtures to a new dated filename under
+  - recreates automated registered-path fixtures to a new dated filename under
     `tests/backup_dbs/`
+  - recreates automated checkout-local fixtures to a deterministic root-scoped
+    filename under `tests/backup_dbs/local/`
   - prints exact manual recreation steps for fixtures that are not hermetic yet
 - `cargo xtask repair-backup-db-schema --fixture <id>`
   - repairs a stale legacy backup in place when it is missing the current
@@ -50,6 +65,11 @@ helpers in
   - creates a fresh in-memory `Database` from a registered fixture while still
     enforcing the registry’s import mode, embedding expectations, and index
     setup
+- `load_backup_fixture_db(&FIXTURE_...)`
+  - returns both the checked effective path and the loaded `Database`
+- `FIXTURE_....checked_path()`
+  - validates the effective backup path for path-only consumers such as fixture
+    staging or test registry snapshots
 
 The registry file is the source of truth for fixture metadata. Test code should
 reference fixture constants there instead of hard-coding backup paths.
@@ -58,7 +78,7 @@ One exception currently remains for `ploke-db` lib-unit tests: because
 `ploke-test-utils` depends on `ploke-db`, those unit-test modules cannot consume
 `shared_backup_fixture_db(...)` directly without hitting a duplicate-crate type
 split for `Database`. In that case, use the shared registry constant (for
-example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
+example `FIXTURE_NODES_CANONICAL.checked_path()?`) with a crate-local loader.
 
 Test isolation note:
 
@@ -73,13 +93,13 @@ Test isolation note:
 
 | Fixture | Parsed target(s) | Primary usage | Last update |
 | --- | --- | --- | --- |
-| `fixture_nodes_canonical_2026-04-01.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-04-01 |
-| `fixture_nodes_local_embeddings_2026-04-01.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-04-01 |
-| `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
-| `ploke_db_primary_2026-03-21.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-21 |
-| `ws_fixture_01_canonical_2026-03-21.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
-| `ws_fixture_01_member_single_2026-04-03.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-04-03 |
-| `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+| `fixture_nodes_canonical` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-04-01 |
+| `fixture_nodes_local_embeddings` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-04-01 |
+| `fixture_nodes_multi_embedding_schema_v1_legacy` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
+| `ploke_db_primary` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-22 |
+| `ws_fixture_01_canonical` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-03-21 |
+| `ws_fixture_01_member_single` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-04-03 |
+| `ploke_db_orphaned` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## `fixture_nodes_canonical_2026-04-01.sqlite`
 
@@ -145,9 +165,9 @@ Test isolation note:
   - only a commented-out reference remains in [crates/ploke-rag/src/core/unit_tests.rs](../../crates/ploke-rag/src/core/unit_tests.rs)
   - keep under review until explicitly removed or reintroduced
 
-## `ploke_db_primary_2026-03-21.sqlite`
+## `ploke_db_primary_2026-03-22.sqlite`
 
-- File: `tests/backup_dbs/ploke_db_primary_2026-03-21.sqlite`
+- File: `tests/backup_dbs/ploke_db_primary_2026-03-22.sqlite`
 - Parsed target(s): `crates/ploke-db`
 - Expected DB config:
   - plain backup import

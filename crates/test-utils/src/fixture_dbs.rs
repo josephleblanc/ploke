@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -10,6 +10,7 @@ use ploke_core::embeddings::{
 };
 use ploke_db::{Database, DbError, create_index_primary, multi_embedding::db_ext::EmbeddingExt};
 use ploke_error::Error;
+use uuid::Uuid;
 
 use once_cell::sync::Lazy;
 
@@ -33,6 +34,79 @@ pub enum FixtureStatus {
     Active,
     Legacy,
     Orphaned,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixturePathScope {
+    /// The backup contains checkout-specific absolute roots and should prefer a
+    /// root-scoped local copy when one has been generated.
+    CheckoutLocal,
+    /// Historical backup retained only until its remaining consumers are
+    /// confirmed or deleted.
+    LegacyAbsolute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixturePathOrigin {
+    CheckoutLocal,
+    Registered,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedFixturePath {
+    path: PathBuf,
+    registered_path: PathBuf,
+    origin: FixturePathOrigin,
+}
+
+impl CheckedFixturePath {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn registered_path(&self) -> &Path {
+        &self.registered_path
+    }
+
+    pub fn into_path(self) -> PathBuf {
+        self.path
+    }
+}
+
+pub struct LoadedBackupFixture {
+    path: CheckedFixturePath,
+    db: Database,
+}
+
+impl LoadedBackupFixture {
+    pub fn path(&self) -> &CheckedFixturePath {
+        &self.path
+    }
+
+    pub fn into_db(self) -> Database {
+        self.db
+    }
+
+    pub fn into_parts(self) -> (CheckedFixturePath, Database) {
+        (self.path, self.db)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FixturePathCandidate {
+    path: PathBuf,
+    registered_path: PathBuf,
+    origin: FixturePathOrigin,
+}
+
+impl FixturePathCandidate {
+    fn checked(self) -> CheckedFixturePath {
+        CheckedFixturePath {
+            path: self.path,
+            registered_path: self.registered_path,
+            origin: self.origin,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +167,7 @@ pub struct FixtureDb {
     pub parsed_targets: &'static [&'static str],
     pub status: FixtureStatus,
     pub creation: FixtureCreationStrategy,
+    pub path_scope: FixturePathScope,
     pub default_access: FixtureAccess,
     pub import_mode: FixtureImportMode,
     pub requires_primary_index: bool,
@@ -103,8 +178,52 @@ pub struct FixtureDb {
 }
 
 impl FixtureDb {
+    /// Returns the current candidate path without validating that the backup
+    /// contents match this checkout. Operational consumers should use
+    /// [`FixtureDb::checked_path`] or [`load_backup_fixture_db`].
     pub fn path(&self) -> PathBuf {
+        self.path_candidate().path
+    }
+
+    pub fn checked_path(&self) -> Result<CheckedFixturePath, Error> {
+        Ok(load_backup_fixture_db(self)?.path)
+    }
+
+    pub fn registered_path(&self) -> PathBuf {
         workspace_root().join(self.rel_path)
+    }
+
+    pub fn checkout_local_path(&self) -> Option<PathBuf> {
+        match self.path_scope {
+            FixturePathScope::CheckoutLocal => Some(
+                workspace_root()
+                    .join("tests/backup_dbs/local")
+                    .join(format!(
+                        "{}__root-{}.sqlite",
+                        self.output_stem(),
+                        workspace_root_key()
+                    )),
+            ),
+            FixturePathScope::LegacyAbsolute => None,
+        }
+    }
+
+    fn path_candidate(&self) -> FixturePathCandidate {
+        let registered_path = self.registered_path();
+        if let Some(path) = self.checkout_local_path()
+            && path.exists()
+        {
+            return FixturePathCandidate {
+                path,
+                registered_path,
+                origin: FixturePathOrigin::CheckoutLocal,
+            };
+        }
+        FixturePathCandidate {
+            path: registered_path.clone(),
+            registered_path,
+            origin: FixturePathOrigin::Registered,
+        }
     }
 
     pub fn filename(&self) -> &'static str {
@@ -147,6 +266,14 @@ impl FixtureDb {
     }
 }
 
+fn workspace_root_key() -> String {
+    let root = workspace_root();
+    let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, root.display().to_string().as_bytes());
+    let mut simple = id.simple().to_string();
+    simple.truncate(12);
+    simple
+}
+
 impl FixtureEmbeddingExpectation {
     pub fn embedding_set(self) -> EmbeddingSet {
         let dtype = match self.dtype {
@@ -171,6 +298,7 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_canonical",
     }),
+    path_scope: FixturePathScope::CheckoutLocal,
     default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: true,
@@ -189,6 +317,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
         fixture_name: "fixture_nodes",
         output_stem: "fixture_nodes_local_embeddings",
     }),
+    path_scope: FixturePathScope::CheckoutLocal,
     default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::BackupWithEmbeddings,
     requires_primary_index: true,
@@ -218,6 +347,7 @@ pub const FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1: FixtureDb = FixtureDb {
             "If it is still needed, capture the exact schema/version requirements in docs before regenerating it.",
         ],
     }),
+    path_scope: FixturePathScope::LegacyAbsolute,
     default_access: FixtureAccess::FreshMutable,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: false,
@@ -236,6 +366,7 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
         crate_name: "ploke-db",
         output_stem: "ploke_db_primary",
     }),
+    path_scope: FixturePathScope::CheckoutLocal,
     default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: true,
@@ -254,6 +385,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
         fixture_name: "ws_fixture_01",
         output_stem: "ws_fixture_01_canonical",
     }),
+    path_scope: FixturePathScope::CheckoutLocal,
     default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: true,
@@ -276,6 +408,7 @@ pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
         member_crate: "member_root",
         output_stem: "ws_fixture_01_member_single",
     }),
+    path_scope: FixturePathScope::CheckoutLocal,
     default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: true,
@@ -297,6 +430,7 @@ pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
             "Do not regenerate this fixture until a concrete consumer has been identified and documented.",
         ],
     }),
+    path_scope: FixturePathScope::LegacyAbsolute,
     default_access: FixtureAccess::FreshMutable,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: false,
@@ -334,16 +468,30 @@ pub fn backup_db_fixture(id: &str) -> Option<&'static FixtureDb> {
         .find(|fixture| fixture.id == id)
 }
 
-pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, Error> {
-    let fixture_path = fixture.path();
-    if !fixture_path.exists() {
+pub fn load_backup_fixture_db(fixture: &FixtureDb) -> Result<LoadedBackupFixture, Error> {
+    let candidate = fixture.path_candidate();
+    if !candidate.path.exists() {
         return Err(Error::from(DbError::Cozo(format!(
             "Backup fixture {} is missing at {}",
             fixture.id,
-            fixture_path.display()
+            candidate.path.display()
         ))));
     }
 
+    let db = import_backup_fixture_db(fixture, &candidate.path)?;
+    validate_backup_fixture_contract(fixture, &db)?;
+
+    Ok(LoadedBackupFixture {
+        path: candidate.checked(),
+        db,
+    })
+}
+
+pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, Error> {
+    Ok(load_backup_fixture_db(fixture)?.into_db())
+}
+
+fn import_backup_fixture_db(fixture: &FixtureDb, fixture_path: &Path) -> Result<Database, Error> {
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
@@ -358,8 +506,6 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
     }
 
     db.ensure_compilation_unit_relations()?;
-
-    validate_backup_fixture_contract(fixture, &db)?;
     Ok(db)
 }
 
@@ -407,7 +553,85 @@ pub fn validate_backup_fixture_contract(fixture: &FixtureDb, db: &Database) -> R
         create_index_primary(db).map_err(Error::from)?;
     }
 
+    validate_fixture_path_scope(fixture, db)?;
     Ok(())
+}
+
+fn validate_fixture_path_scope(fixture: &FixtureDb, db: &Database) -> Result<(), Error> {
+    if fixture.path_scope != FixturePathScope::CheckoutLocal || fixture.parsed_targets.is_empty() {
+        return Ok(());
+    }
+
+    let expected_roots = fixture
+        .parsed_targets
+        .iter()
+        .map(|target| workspace_root().join(target))
+        .collect::<Vec<_>>();
+    let expected_roots_display = expected_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let crate_rows = db
+        .raw_query("?[root_path] := *crate_context { root_path }")
+        .map_err(Error::from)?;
+    for row in crate_rows.rows {
+        let Some(root_path) = row.first().and_then(data_value_str) else {
+            continue;
+        };
+        let root_path = Path::new(root_path);
+        if !expected_roots
+            .iter()
+            .any(|expected| root_path.starts_with(expected))
+        {
+            return Err(Error::from(DbError::Cozo(format!(
+                "Fixture {} is path-bound to another checkout: crate root '{}' does not start with any registered target root [{}]. Regenerate a checkout-local copy with `cargo xtask recreate-backup-db --fixture {}`.",
+                fixture.id,
+                root_path.display(),
+                expected_roots_display,
+                fixture.id
+            ))));
+        }
+    }
+
+    let workspace_rows = db
+        .raw_query("?[root_path] := *workspace_metadata { root_path }")
+        .unwrap_or_else(|_| {
+            cozo::NamedRows {
+                headers: vec![],
+                rows: vec![],
+                next: None,
+            }
+            .into()
+        });
+    for row in workspace_rows.rows {
+        let Some(root_path) = row.first().and_then(data_value_str) else {
+            continue;
+        };
+        let root_path = Path::new(root_path);
+        if !expected_roots
+            .iter()
+            .any(|expected| root_path.starts_with(expected) || expected.starts_with(root_path))
+        {
+            return Err(Error::from(DbError::Cozo(format!(
+                "Fixture {} is path-bound to another checkout: workspace root '{}' is not compatible with registered target root [{}]. Regenerate a checkout-local copy with `cargo xtask recreate-backup-db --fixture {}`.",
+                fixture.id,
+                root_path.display(),
+                expected_roots_display,
+                fixture.id
+            ))));
+        }
+    }
+
+    Ok(())
+}
+
+fn data_value_str(value: &cozo::DataValue) -> Option<&str> {
+    match value {
+        cozo::DataValue::Str(value) => Some(value.as_ref()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +665,7 @@ mod tests {
             "fixture_nodes_canonical_2026-04-01.sqlite"
         );
         assert_eq!(fixture.status, FixtureStatus::Active);
+        assert_eq!(fixture.path_scope, FixturePathScope::CheckoutLocal);
     }
 
     #[test]
@@ -458,6 +683,36 @@ mod tests {
         );
         assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
         assert_eq!(fixture.status, FixtureStatus::Active);
+        assert_eq!(fixture.path_scope, FixturePathScope::CheckoutLocal);
+    }
+
+    #[test]
+    fn checkout_local_path_is_root_scoped_and_ignored_by_default() {
+        let scoped = WS_FIXTURE_01_CANONICAL
+            .checkout_local_path()
+            .expect("workspace fixture should have checkout-local path");
+
+        assert!(scoped.starts_with(workspace_root().join("tests/backup_dbs/local")));
+        assert!(
+            scoped
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("scoped path should have filename")
+                .starts_with("ws_fixture_01_canonical__root-")
+        );
+    }
+
+    #[test]
+    fn checked_path_validates_effective_fixture_path() {
+        let checked = WS_FIXTURE_01_CANONICAL
+            .checked_path()
+            .expect("workspace fixture path should validate");
+
+        assert_eq!(checked.path(), WS_FIXTURE_01_CANONICAL.path());
+        assert_eq!(
+            checked.registered_path(),
+            WS_FIXTURE_01_CANONICAL.registered_path()
+        );
     }
 
     #[test]

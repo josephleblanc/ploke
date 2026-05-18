@@ -310,8 +310,11 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
             .expect("workspace snapshot parent should exist"),
     )
     .expect("create snapshot dir");
-    std::fs::copy(WS_FIXTURE_01_CANONICAL.path(), &registry_snapshot)
-        .expect("copy canonical workspace snapshot");
+    let fixture_path = WS_FIXTURE_01_CANONICAL
+        .checked_path()
+        .expect("canonical workspace snapshot should validate")
+        .into_path();
+    std::fs::copy(&fixture_path, &registry_snapshot).expect("copy canonical workspace snapshot");
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,
@@ -363,8 +366,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
         .await
         .expect("workspace remove should succeed");
 
-    std::fs::copy(WS_FIXTURE_01_CANONICAL.path(), &registry_snapshot)
-        .expect("restore canonical workspace snapshot");
+    std::fs::copy(&fixture_path, &registry_snapshot).expect("restore canonical workspace snapshot");
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,
@@ -550,8 +552,11 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
             .expect("workspace snapshot parent should exist"),
     )
     .expect("create snapshot dir");
-    std::fs::copy(WS_FIXTURE_01_CANONICAL.path(), &registry_snapshot)
-        .expect("copy canonical workspace snapshot");
+    let fixture_path = WS_FIXTURE_01_CANONICAL
+        .checked_path()
+        .expect("canonical workspace snapshot should validate")
+        .into_path();
+    std::fs::copy(&fixture_path, &registry_snapshot).expect("copy canonical workspace snapshot");
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,

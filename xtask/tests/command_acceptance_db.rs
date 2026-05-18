@@ -15,7 +15,11 @@ fn isolated_fixture_copy(
 ) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().expect("TempDir");
     let dst = dir.path().join("fixture.sqlite");
-    std::fs::copy(fixture.path(), &dst).expect("copy fixture db");
+    let fixture_path = fixture
+        .checked_path()
+        .expect("fixture path should validate")
+        .into_path();
+    std::fs::copy(fixture_path, &dst).expect("copy fixture db");
     (dir, dst)
 }
 

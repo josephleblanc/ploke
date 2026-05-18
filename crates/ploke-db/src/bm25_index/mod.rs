@@ -831,7 +831,7 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
-            let target_file = FIXTURE_NODES_CANONICAL.path();
+            let target_file = FIXTURE_NODES_CANONICAL.checked_path()?.into_path();
             let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)

@@ -676,7 +676,7 @@ mod tests {
 
     fn load_workspace_fixture_db() -> Result<Database, Error> {
         let db = Database::init_with_schema()?;
-        let target_file = WS_FIXTURE_01_CANONICAL.path();
+        let target_file = WS_FIXTURE_01_CANONICAL.checked_path()?.into_path();
         let prior_rels = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels)
             .map_err(DbError::from)?;

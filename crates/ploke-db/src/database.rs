@@ -3494,7 +3494,7 @@ mod tests {
 
     fn fresh_local_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, PlokeError> {
         let db = Database::init_with_schema()?;
-        let fixture_path = fixture.path();
+        let fixture_path = fixture.checked_path()?.into_path();
         match fixture.import_mode {
             ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
                 let prior_rels = db.prior_rels_for_plain_backup_import()?;

@@ -52,22 +52,43 @@ Use:
 cargo xtask recreate-backup-db --fixture <id>
 ```
 
-The command has two modes:
+The command has three output modes:
 
-- automated: writes a new dated backup under `tests/backup_dbs/`
+- automated registered-path fixtures: writes a new dated backup under
+  `tests/backup_dbs/`
+- automated checkout-local fixtures: writes a root-scoped backup under
+  `tests/backup_dbs/local/`
 - manual: prints exact fixture-specific steps when the fixture is not
   hermetically reproducible yet
 
-New outputs use dated names like:
+Registered-path outputs use dated names like:
 
 ```text
 tests/backup_dbs/<stem>_2026-03-20.sqlite
 ```
 
-After generating a new dated backup, update:
+Checkout-local outputs use names like:
+
+```text
+tests/backup_dbs/local/<stem>__root-<workspace-root-hash>.sqlite
+```
+
+These files are local to the checkout/worktree because the DB rows may contain
+absolute crate or workspace roots. Registry loads prefer the checkout-local
+file when it exists, otherwise they fall back to the committed registered path
+and `verify-backup-dbs` reports root-mismatch failures with a regeneration
+hint. Path-only consumers such as `setup-rag-fixtures` use
+`FixtureDb::checked_path()` so that the fallback path is still imported and
+validated before it is copied elsewhere.
+
+After generating a new registered-path dated backup, update:
 
 - [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
 - [docs/testing/BACKUP_DB_FIXTURES.md](../testing/BACKUP_DB_FIXTURES.md)
+
+For checkout-local outputs, do not update the committed registry path just to
+make the current worktree pass. The root-scoped local filename is the active
+path for that checkout.
 
 ## Repair a stale legacy backup in place
 
@@ -169,6 +190,9 @@ cargo xtask setup-rag-fixtures
 Notes:
 
 - `verify-backup-dbs` shows which registered fixtures are missing or invalid.
+- A path-bound fixture can be structurally valid but still fail validation if
+  its stored roots point at another checkout. Regenerate that fixture in the
+  current worktree instead of copying a backup from another path.
 - `setup-rag-fixtures` is needed after recreating the local-embedding fixture so
   the config-dir copy used by some RAG/TUI paths is refreshed.
 - Re-run `cargo xtask verify-backup-dbs` after recreation to confirm the active

@@ -10,10 +10,11 @@ use ploke_embed::{
 use ploke_io::IoManagerHandle;
 use ploke_test_utils::fixture_dbs::{active_backup_db_fixtures, all_backup_db_fixtures};
 use ploke_test_utils::{
-    FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
-    FixtureImportMode, FixtureManualRecreation, backup_db_fixture, fresh_backup_fixture_db,
-    setup_db_full_crate, setup_db_full_multi_embedding, setup_db_full_workspace_fixture,
-    setup_db_full_workspace_member_fixture, validate_backup_fixture_contract,
+    CheckedFixturePath, FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy,
+    FixtureDb, FixtureImportMode, FixtureManualRecreation, FixturePathScope, backup_db_fixture,
+    load_backup_fixture_db, setup_db_full_crate, setup_db_full_multi_embedding,
+    setup_db_full_workspace_fixture, setup_db_full_workspace_member_fixture,
+    validate_backup_fixture_contract,
 };
 use ploke_transform::schema::crate_node::WorkspaceMetadataSchema;
 use reqwest::blocking::Client;
@@ -394,19 +395,28 @@ fn verify_backup_dbs(args: Vec<String>) -> Result<(), XtaskError> {
     for fixture in fixtures {
         match verify_registered_backup_fixture(fixture) {
             Ok(summary) => {
+                let path_note =
+                    fixture_path_note(summary.path.path(), summary.path.registered_path(), &root);
                 println!(
-                    "✔ {:<32} {} | relations={} | roundtrip={}",
+                    "✔ {:<32} {}{} | scope={} | relations={} | roundtrip={}",
                     fixture.id,
-                    display_relative(&fixture.path(), &root),
+                    display_relative(summary.path.path(), &root),
+                    path_note,
+                    fixture_scope_label(fixture.path_scope),
                     summary.relation_count,
                     if summary.roundtrip_ok { "ok" } else { "failed" }
                 );
             }
             Err(err) => {
+                let path = fixture.path();
+                let registered_path = fixture.registered_path();
+                let path_note = fixture_path_note(&path, &registered_path, &root);
                 println!(
-                    "✘ {:<32} {}",
+                    "✘ {:<32} {}{} | scope={}",
                     fixture.id,
-                    display_relative(&fixture.path(), &root)
+                    display_relative(&path, &root),
+                    path_note,
+                    fixture_scope_label(fixture.path_scope)
                 );
                 failures.push((fixture, err));
             }
@@ -430,9 +440,7 @@ fn recreate_backup_db(args: Vec<String>) -> Result<(), XtaskError> {
     let fixture = resolve_fixture(&fixture_id)?;
 
     let root = workspace_root();
-    let output_path = root
-        .join("tests/backup_dbs")
-        .join(dated_output_filename(fixture));
+    let output_path = recreation_output_path(fixture, &root);
 
     let fixture_db_path = "crates/test-utils/src/fixture_dbs.rs";
     let fixture_db_doc_path = "docs/testing/BACKUP_DB_FIXTURES.md";
@@ -446,10 +454,20 @@ fn recreate_backup_db(args: Vec<String>) -> Result<(), XtaskError> {
                 fixture.id,
                 display_relative(&output_path, &root)
             );
-            println!(
-                "Next: update {fixture_db_path} and {fixture_db_doc_path} \
-                if you intend tests to use this new dated fixture."
-            );
+            match fixture.path_scope {
+                FixturePathScope::CheckoutLocal => {
+                    println!(
+                        "This checkout-local fixture is now the effective path for \
+                        registry loads in this workspace."
+                    );
+                }
+                FixturePathScope::LegacyAbsolute => {
+                    println!(
+                        "Next: update {fixture_db_path} and {fixture_db_doc_path} \
+                        if you intend tests to use this new dated fixture."
+                    );
+                }
+            }
             Ok(())
         }
         FixtureCreationStrategy::Manual(help) => {
@@ -462,19 +480,20 @@ fn repair_backup_db_schema(args: Vec<String>) -> Result<(), XtaskError> {
     let fixture_id = parse_required_fixture_arg(&args, "repair-backup-db-schema")?;
     let fixture = resolve_fixture(&fixture_id)?;
 
-    repair_workspace_metadata_relation(fixture)
+    let repaired_path = repair_workspace_metadata_relation(fixture)
         .map_err(|err| XtaskError::new(format!("Failed to repair {}: {err}", fixture.id)))?;
 
     let root = workspace_root();
     println!(
         "Repaired {} in place by adding the workspace_metadata relation.\n  path: {}",
         fixture.id,
-        display_relative(&fixture.path(), &root)
+        display_relative(&repaired_path, &root)
     );
     Ok(())
 }
 
 struct BackupFixtureVerification {
+    path: CheckedFixturePath,
     relation_count: usize,
     roundtrip_ok: bool,
 }
@@ -482,7 +501,8 @@ struct BackupFixtureVerification {
 fn verify_registered_backup_fixture(
     fixture: &'static FixtureDb,
 ) -> Result<BackupFixtureVerification, String> {
-    let db = fresh_backup_fixture_db(fixture).map_err(|err| err.to_string())?;
+    let loaded = load_backup_fixture_db(fixture).map_err(|err| err.to_string())?;
+    let (path, db) = loaded.into_parts();
     let relation_count = db.relations_vec().map_err(|err| err.to_string())?.len();
     if relation_count == 0 {
         return Err("imported fixture has zero relations".to_string());
@@ -516,6 +536,7 @@ fn verify_registered_backup_fixture(
         .map_err(|err| format!("roundtrip fixture validation: {err}"))?;
 
     Ok(BackupFixtureVerification {
+        path,
         relation_count,
         roundtrip_ok: true,
     })
@@ -684,8 +705,15 @@ fn print_manual_recreation_help(
     XtaskError::new(message)
 }
 
-fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<(), String> {
-    let fixture_path = fixture.path();
+fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<PathBuf, String> {
+    if fixture.path_scope == FixturePathScope::CheckoutLocal {
+        return Err(format!(
+            "{} is checkout-local; recreate it with `cargo xtask recreate-backup-db --fixture {}` instead of repairing the registered fallback in place",
+            fixture.id, fixture.id
+        ));
+    }
+
+    let fixture_path = fixture.registered_path();
     if !fixture_path.exists() {
         return Err(format!(
             "Backup fixture {} is missing at {}",
@@ -706,7 +734,7 @@ fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<(),
 
     db.backup_db(&fixture_path)
         .map_err(|err| format!("write repaired backup: {err}"))?;
-    Ok(())
+    Ok(fixture_path)
 }
 
 fn parse_fixture_arg(args: &[String], command: &str) -> Result<Option<String>, String> {
@@ -774,12 +802,37 @@ fn available_fixture_ids() -> String {
         .join(", ")
 }
 
+fn recreation_output_path(fixture: &'static FixtureDb, root: &Path) -> PathBuf {
+    match fixture.path_scope {
+        FixturePathScope::CheckoutLocal => fixture
+            .checkout_local_path()
+            .expect("checkout-local fixtures should resolve a scoped output path"),
+        FixturePathScope::LegacyAbsolute => root
+            .join("tests/backup_dbs")
+            .join(dated_output_filename(fixture)),
+    }
+}
+
 fn dated_output_filename(fixture: &'static FixtureDb) -> String {
     format!(
         "{}_{}.sqlite",
         fixture.output_stem(),
         Utc::now().format("%Y-%m-%d")
     )
+}
+
+fn fixture_scope_label(scope: FixturePathScope) -> &'static str {
+    match scope {
+        FixturePathScope::CheckoutLocal => "checkout-local",
+        FixturePathScope::LegacyAbsolute => "legacy-absolute",
+    }
+}
+
+fn fixture_path_note(path: &Path, registered_path: &Path, root: &Path) -> String {
+    if path == registered_path {
+        return String::new();
+    }
+    format!(" (registered: {})", display_relative(registered_path, root))
 }
 
 fn recreation_hint(fixture: &'static FixtureDb) -> String {
@@ -791,11 +844,12 @@ fn recreation_hint(fixture: &'static FixtureDb) -> String {
 
 fn setup_rag_fixtures() -> Result<(), XtaskError> {
     let root = workspace_root();
-    let source = FIXTURE_NODES_LOCAL_EMBEDDINGS.path();
+    let checked_source = FIXTURE_NODES_LOCAL_EMBEDDINGS.checked_path()?;
+    let source = checked_source.path();
     if !source.exists() {
         return Err(XtaskError::new(format!(
             "Canonical RAG fixture backup is missing: {}",
-            display_relative(&source, &root)
+            display_relative(source, &root)
         )));
     }
 
@@ -874,7 +928,7 @@ fn setup_rag_fixtures() -> Result<(), XtaskError> {
     }
 
     let dest = data_dir.join(&canonical_name);
-    let source_hash = compute_file_hash(&source)
+    let source_hash = compute_file_hash(source)
         .map_err(|err| XtaskError::new(format!("Failed to hash {}: {err}", source.display())))?;
 
     let needs_copy = if dest.exists() {
@@ -891,7 +945,7 @@ fn setup_rag_fixtures() -> Result<(), XtaskError> {
         true
     };
 
-    if needs_copy && let Err(err) = fs::copy(&source, &dest) {
+    if needs_copy && let Err(err) = fs::copy(source, &dest) {
         return Err(XtaskError::new(format!(
             "Failed to copy fixture from {} to {}: {err}",
             source.display(),
@@ -901,7 +955,7 @@ fn setup_rag_fixtures() -> Result<(), XtaskError> {
 
     println!(
         "Prepared RAG fixture backup for config-dir loads.\n  source: {}\n  staged: {}",
-        display_relative(&source, &root),
+        display_relative(source, &root),
         dest.display()
     );
     if moved_conflicts.is_empty() {
