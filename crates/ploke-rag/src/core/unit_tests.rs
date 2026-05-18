@@ -1,19 +1,36 @@
 #[cfg(test)]
 mod tests {
+    //! RAG test coverage boundary for typed type context:
+    //!
+    //! - Covered: generic type-context expansion plumbing and the shared
+    //!   corpus-backed `TypeShapeCase` matrix rows marked for RAG API coverage.
+    //!   Matrix rows assert source-pinned owners, terminal targets, and
+    //!   structured `TypeContextInfo` provenance.
+    //! - Not covered here: token-budget behavior for where-derived neighbors
+    //!   or live model/tool behavior. DB tests below
+    //!   `ploke-db/tests/unit/type_graph_queries` own exact source coordinates
+    //!   and containment depth; TUI tests own model-facing tool payloads.
+    //! - Recursive/nested behavior is inherited from DB fixtures; this RAG layer
+    //!   does not add independent recursive type traversal assertions.
+
     use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
+    #[cfg(feature = "typed_type_graph")]
+    use cozo::DataValue;
     use itertools::Itertools;
     use lazy_static::lazy_static;
     #[cfg(feature = "typed_type_graph")]
     use ploke_core::rag_types::TypeContextKind;
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     #[cfg(feature = "typed_type_graph")]
-    use ploke_db::to_uuid;
+    use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
     use ploke_db::{
         Database, create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
     };
+    #[cfg(feature = "typed_type_graph")]
+    use ploke_db::{DbError, TypeContextSeed, to_uuid};
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
@@ -22,7 +39,10 @@ mod tests {
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     #[cfg(feature = "typed_type_graph")]
-    use ploke_test_utils::setup_db_full_multi_embedding;
+    use ploke_test_utils::{
+        ContainingOwnerSelector, OwnerSelector, ShapePipelineCoverage, TargetSelector,
+        TypeShapeCase, positive_type_shape_cases, setup_db_full_multi_embedding,
+    };
     use ploke_test_utils::{
         FIXTURE_NODES_LOCAL_EMBEDDINGS, WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db,
         shared_backup_fixture_db,
@@ -62,6 +82,15 @@ mod tests {
         let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
             EmbeddingProcessor::new(source),
+        ));
+        RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn init_test_rag_mock(db: Arc<Database>) -> RagService {
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
         ));
         RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
     }
@@ -140,6 +169,348 @@ mod tests {
             rows.rows
         );
         to_uuid(&rows.rows[0][0]).map_err(Error::from)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn covers(case: &TypeShapeCase, coverage: ShapePipelineCoverage) -> bool {
+        case.coverage.iter().any(|candidate| *candidate == coverage)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn resolve_matrix_owner(db: &Database, selector: OwnerSelector) -> Result<Uuid, DbError> {
+        match selector {
+            OwnerSelector::FunctionInModule { module_path, name } => {
+                one_uuid(db, &function_in_module_query(module_path, name))
+            }
+            OwnerSelector::FunctionInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &function_in_file_query(name), file_suffix)
+            }
+            OwnerSelector::MethodByImplSelf { self_type, method } => {
+                one_uuid(db, &method_by_impl_self_query(self_type, method))
+            }
+            OwnerSelector::MethodByImplTraitAndSelf {
+                trait_name,
+                self_type,
+                method,
+            } => one_uuid(
+                db,
+                &method_by_impl_trait_self_query(trait_name, self_type, method),
+            ),
+            OwnerSelector::FieldByStructInModule {
+                module_path,
+                struct_name,
+                field_index,
+            } => {
+                let struct_id = one_uuid(db, &struct_in_module_query(module_path, struct_name))?;
+                one_uuid(
+                    db,
+                    &format!(
+                        r#"?[id] :=
+                            *field {{
+                                id,
+                                owner_id: to_uuid("{struct_id}"),
+                                index: {field_index} @ 'NOW'
+                            }}"#
+                    ),
+                )
+            }
+            OwnerSelector::FieldByStructInFile {
+                file_suffix,
+                struct_name,
+                field_index,
+            } => {
+                let struct_id =
+                    one_uuid_by_file_suffix(db, &struct_in_file_query(struct_name), file_suffix)?;
+                one_uuid(
+                    db,
+                    &format!(
+                        r#"?[id] :=
+                            *field {{
+                                id,
+                                owner_id: to_uuid("{struct_id}"),
+                                index: {field_index} @ 'NOW'
+                            }}"#
+                    ),
+                )
+            }
+            OwnerSelector::TypeAlias { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *type_alias {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            OwnerSelector::StaticInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &item_in_file_query("static", name), file_suffix)
+            }
+            OwnerSelector::StructByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            OwnerSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))
+            }
+            OwnerSelector::ImplByTraitInFile {
+                file_suffix,
+                trait_name,
+            } => one_uuid_by_file_suffix(db, &impl_by_trait_query(trait_name), file_suffix),
+            other => Err(DbError::QueryExecution(format!(
+                "RAG matrix resolver does not materialize owner selector {other:?}"
+            ))),
+        }
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn resolve_matrix_target(db: &Database, selector: TargetSelector) -> Result<Uuid, DbError> {
+        match selector {
+            TargetSelector::StructByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            TargetSelector::StructInModule { module_path, name } => {
+                one_uuid(db, &struct_in_module_query(module_path, name))
+            }
+            TargetSelector::EnumByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *enum {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            TargetSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))
+            }
+            TargetSelector::TraitInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
+            }
+            other => Err(DbError::QueryExecution(format!(
+                "RAG matrix resolver does not materialize target selector {other:?}"
+            ))),
+        }
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn resolve_containing_owner(
+        db: &Database,
+        selector: ContainingOwnerSelector,
+    ) -> Result<Uuid, DbError> {
+        match selector {
+            ContainingOwnerSelector::StructByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ContainingOwnerSelector::StructInModule { module_path, name } => {
+                one_uuid(db, &struct_in_module_query(module_path, name))
+            }
+            ContainingOwnerSelector::MethodByImplSelf { self_type, method } => {
+                one_uuid(db, &method_by_impl_self_query(self_type, method))
+            }
+            ContainingOwnerSelector::MethodByImplTraitAndSelf {
+                trait_name,
+                self_type,
+                method,
+            } => one_uuid(
+                db,
+                &method_by_impl_trait_self_query(trait_name, self_type, method),
+            ),
+            ContainingOwnerSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))
+            }
+            ContainingOwnerSelector::ImplByTraitInFile {
+                file_suffix,
+                trait_name,
+            } => one_uuid_by_file_suffix(db, &impl_by_trait_query(trait_name), file_suffix),
+        }
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn one_uuid(db: &Database, script: &str) -> Result<Uuid, DbError> {
+        let rows = db.raw_query(script)?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected exactly one UUID for query:\n{script}\nrows: {:#?}",
+            rows.rows
+        );
+        to_uuid(&rows.rows[0][0])
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn one_uuid_by_file_suffix(
+        db: &Database,
+        script: &str,
+        file_suffix: &str,
+    ) -> Result<Uuid, DbError> {
+        let rows = db.raw_query(script)?;
+        let matching = rows
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let file_path = match &row[1] {
+                    DataValue::Str(path) => path.as_str(),
+                    _ => return None,
+                };
+                file_path.ends_with(file_suffix).then(|| row[0].clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "expected exactly one row in file suffix {file_suffix}; rows: {:#?}",
+            rows.rows
+        );
+        to_uuid(&matching[0])
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn module_path(items: &[&str]) -> String {
+        format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|item| format!("\"{item}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn function_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *function {{ id, name: "{name}", module_id @ 'NOW' }},
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn function_in_file_query(name: &str) -> String {
+        item_in_file_query("function", name)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn item_in_file_query(relation: &str, name: &str) -> String {
+        format!(
+            r#"?[id, file_path] :=
+                *{relation} {{ id, name: "{name}" @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn struct_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *struct {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn struct_in_file_query(name: &str) -> String {
+        item_in_file_query("struct", name)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *trait {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn trait_in_file_query(name: &str) -> String {
+        item_in_file_query("trait", name)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn method_by_impl_trait_self_query(trait_name: &str, self_type: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type}" @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn impl_by_trait_query(trait_name: &str) -> String {
+        format!(
+            r#"?[impl_id, file_path] :=
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: impl_id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+        )
     }
 
     #[tokio::test]
@@ -826,6 +1197,291 @@ mod tests {
         assert_eq!(provenance.seed_id, seed);
         assert_eq!(provenance.relation, TypeContextKind::TypeDefinitionImpact);
         Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn corpus_type_shape_matrix_expands_db_and_rag_type_context() -> Result<(), Error> {
+        init_tracing_once();
+
+        for case in positive_type_shape_cases()
+            .iter()
+            .filter(|case| covers(case, ShapePipelineCoverage::RagApi))
+        {
+            let db = Arc::new(fresh_backup_fixture_db(case.fixture.searchable_fixture())?);
+            let owner_id = resolve_matrix_owner(&db, case.owner).map_err(Error::from)?;
+            let target_id = resolve_matrix_target(&db, case.terminal).map_err(Error::from)?;
+
+            let candidates = db
+                .expand_type_context(TypeContextSeed::Owner(owner_id), Default::default())
+                .map_err(Error::from)?;
+            assert!(
+                candidates.iter().any(|candidate| {
+                    candidate.node_id == target_id
+                        && candidate.relation == case.type_context_relation
+                }),
+                "{} should expand from owner to terminal target with {:?}; source: {}; candidates: {candidates:#?}",
+                case.name,
+                case.type_context_relation,
+                case.source
+            );
+
+            if covers(case, ShapePipelineCoverage::TuiTool) {
+                let rag = init_test_rag_mock(Arc::clone(&db));
+                let (expanded, type_context) = rag
+                    .expand_hits_with_type_context(&[(owner_id, 1.0)])
+                    .map_err(Error::from)?;
+                assert!(
+                    expanded.iter().any(|(id, _)| *id == target_id),
+                    "{} should materialize target through RagService hit expansion; expanded: {expanded:#?}",
+                    case.name
+                );
+                let provenance = type_context.get(&target_id).unwrap_or_else(|| {
+                    panic!("{} missing TypeContextInfo for {target_id}", case.name)
+                });
+                assert_eq!(provenance.seed_id, owner_id, "{}", case.name);
+                assert_eq!(
+                    provenance.relation,
+                    super::super::type_context_kind(case.type_context_relation),
+                    "{}",
+                    case.name
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn axum_struct_seed_materializes_nested_trait_object_target() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+        )?);
+        let seed_id = one_uuid_by_file_suffix(
+            &db,
+            &struct_in_file_query("BoxedIntoRoute"),
+            "axum/src/boxed.rs",
+        )
+        .map_err(Error::from)?;
+        let target_id = one_uuid_by_file_suffix(
+            &db,
+            &trait_in_file_query("ErasedIntoRoute"),
+            "axum/src/boxed.rs",
+        )
+        .map_err(Error::from)?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        let (expanded, type_context) = rag
+            .expand_hits_with_type_context(&[(seed_id, 1.0)])
+            .map_err(Error::from)?;
+
+        assert!(
+            expanded.iter().any(|(id, _)| *id == target_id),
+            "BoxedIntoRoute target seed should materialize nested ErasedIntoRoute trait target; expanded: {expanded:#?}; type_context: {type_context:#?}"
+        );
+        let provenance = type_context.get(&target_id).unwrap_or_else(|| {
+            panic!("missing TypeContextInfo for ErasedIntoRoute target {target_id}; expanded: {expanded:#?}; type_context: {type_context:#?}")
+        });
+        assert_eq!(provenance.seed_id, seed_id);
+        assert_eq!(provenance.relation, TypeContextKind::UsesTypeNested);
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn axum_boxed_into_route_sparse_context_emits_nested_trait_type_context()
+    -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+        )?);
+        let seed_id = one_uuid_by_file_suffix(
+            &db,
+            &struct_in_file_query("BoxedIntoRoute"),
+            "axum/src/boxed.rs",
+        )
+        .map_err(Error::from)?;
+
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            crate::RagConfig::default(),
+        )?;
+        rag.bm25_rebuild().await?;
+
+        let sparse_hits = rag
+            .search_bm25_strict("BoxedIntoRoute struct", 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        let (expanded_hits, expanded_type_context) =
+            rag.expand_hits_with_type_context(&sparse_hits)?;
+        let expanded_labels = expanded_hits
+            .iter()
+            .map(|(id, score)| (*id, *score, context_label(&db, *id)))
+            .collect::<Vec<_>>();
+
+        let assembled = rag
+            .get_context(
+                "BoxedIntoRoute struct",
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_part_max: 256,
+                    ..TokenBudget::default()
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        assert!(
+            assembled.parts.iter().any(|part| {
+                part.text.contains("ErasedIntoRoute")
+                    && part.type_context.is_some_and(|info| {
+                        info.seed_id == seed_id && info.relation == TypeContextKind::UsesTypeNested
+                    })
+            }),
+            "BoxedIntoRoute sparse context should carry nested ErasedIntoRoute type_context; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
+            assembled.parts
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn chrono_single_day_sparse_context_emits_weekday_type_context() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+        )?);
+        let seed_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
+            .map_err(Error::from)?;
+
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            crate::RagConfig::default(),
+        )?;
+        rag.bm25_rebuild().await?;
+
+        let search_term = "single_day method WeekdaySet Weekday";
+        let sparse_hits = rag
+            .search_bm25_strict(search_term, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        let (expanded_hits, expanded_type_context) =
+            rag.expand_hits_with_type_context(&sparse_hits)?;
+        let expanded_labels = expanded_hits
+            .iter()
+            .map(|(id, score)| (*id, *score, context_label(&db, *id)))
+            .collect::<Vec<_>>();
+
+        let assembled = rag
+            .get_context(
+                search_term,
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_part_max: 256,
+                    ..TokenBudget::default()
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        assert!(
+            assembled.parts.iter().any(|part| {
+                part.text.contains("Weekday")
+                    && part.type_context.is_some_and(|info| {
+                        info.seed_id == seed_id && info.relation == TypeContextKind::UsesTypeNested
+                    })
+            }),
+            "WeekdaySet::single_day sparse context should carry nested Weekday type_context; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
+            assembled.parts
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn axum_map_layer_sparse_context_emits_layer_fn_type_context() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = Arc::new(fresh_backup_fixture_db(
+            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+        )?);
+        let struct_id =
+            one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
+                .map_err(Error::from)?;
+        let trait_id =
+            one_uuid_by_file_suffix(&db, &trait_in_file_query("LayerFn"), "axum/src/boxed.rs")
+                .map_err(Error::from)?;
+
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            crate::RagConfig::default(),
+        )?;
+        rag.bm25_rebuild().await?;
+
+        let search_term = "Map struct axum src boxed rs";
+        let sparse_hits = rag
+            .search_bm25_strict(search_term, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        let (expanded_hits, expanded_type_context) =
+            rag.expand_hits_with_type_context(&sparse_hits)?;
+        let expanded_labels = expanded_hits
+            .iter()
+            .map(|(id, score)| (*id, *score, context_label(&db, *id)))
+            .collect::<Vec<_>>();
+
+        let assembled = rag
+            .get_context(
+                search_term,
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_part_max: 256,
+                    ..TokenBudget::default()
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        assert!(
+            sparse_hits.iter().any(|(id, _)| *id == struct_id),
+            "Map.layer search should seed the Map struct, not an unrelated owner; trait_id: {trait_id}; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
+            assembled.parts
+        );
+        assert!(
+            assembled.parts.iter().any(|part| {
+                part.text.contains("LayerFn")
+                    && part.type_context.is_some_and(|info| {
+                        info.seed_id == struct_id
+                            && info.relation == TypeContextKind::UsesTypeNested
+                    })
+            }),
+            "Map.layer sparse context should carry nested LayerFn type_context; trait_id: {trait_id}; sparse_hits: {sparse_hits:#?}; expanded_hits: {expanded_hits:#?}; expanded_labels: {expanded_labels:#?}; expanded_type_context: {expanded_type_context:#?}; parts: {:#?}",
+            assembled.parts
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn context_label(db: &Database, id: Uuid) -> String {
+        db.paths_from_id(id)
+            .ok()
+            .and_then(|rows| NodePaths::try_from(rows).ok())
+            .map(|paths| paths.canon)
+            .unwrap_or_else(|| format!("{id}"))
     }
 
     #[tokio::test]

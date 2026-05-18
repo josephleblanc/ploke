@@ -43,6 +43,19 @@ pub struct TypeWherePredicate {
     pub bounds: Vec<TraitTypeUseId>,
 }
 
+/// A trait-position bound declared on an associated type item.
+///
+/// This keeps `trait X { type A: Y + Z; type B: W; }` lossless enough for
+/// downstream type-use coordinates without making associated type declarations
+/// first-class graph owners yet.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct AssociatedTypeBound {
+    pub associated_type_index: usize,
+    pub associated_type_name: String,
+    pub bound_index: usize,
+    pub bound_type_id: TraitTypeUseId,
+}
+
 impl GenericParamNode {
     pub fn name_if_type_id(&self, ty_id: TypeId) -> Option<&str> {
         match &self.kind {

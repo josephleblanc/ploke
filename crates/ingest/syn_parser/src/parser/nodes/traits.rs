@@ -2,7 +2,7 @@
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
 use crate::parser::type_slots::TraitTypeUseId;
-use crate::parser::types::{GenericParamNode, TypeWherePredicate};
+use crate::parser::types::{AssociatedTypeBound, GenericParamNode, TypeWherePredicate};
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
 use ploke_core::TrackingHash;
@@ -31,7 +31,7 @@ pub struct TraitNode {
     /// Trait-position bounds declared on associated types, e.g.
     /// `trait TimeZone { type Offset: Offset; }`.
     #[serde(default)]
-    pub associated_type_bounds: Vec<TraitTypeUseId>,
+    pub associated_type_bounds: Vec<AssociatedTypeBound>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,

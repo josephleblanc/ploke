@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-15
-Last updated: 2026-05-15
+Last reviewed: 2026-05-17
+Last updated: 2026-05-17
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -119,24 +119,34 @@ Test isolation note:
 
 | Fixture | Parsed target(s) | Primary usage | Last update |
 | --- | --- | --- | --- |
-| `fixture_nodes_canonical_2026-05-06.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-05-06 |
-| `fixture_nodes_local_embeddings_2026-05-06.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-05-06 |
+| `fixture_nodes_canonical_2026-05-17.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-05-17 |
+| `fixture_nodes_local_embeddings_2026-05-17.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-05-17 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
 | `ploke_db_primary_2026-05-06.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-05-06 |
-| `ws_fixture_01_canonical_2026-05-10.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-05-10 |
+| `ws_fixture_01_canonical_2026-05-17.sqlite` | `tests/fixture_workspace/ws_fixture_01` | canonical plain backup of committed multi-member workspace fixture | 2026-05-17 |
 | `ws_fixture_01_member_single_2026-05-06.sqlite` | `tests/fixture_workspace/ws_fixture_01/member_root` | single-member slice of workspace fixture | 2026-05-06 |
-| `corpus_semver_type_graph_2026-05-06.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-06 |
-| `corpus_memchr_type_graph_2026-05-06.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-06 |
-| `corpus_generic_array_type_graph_2026-05-10.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-10 |
-| `corpus_chrono_type_graph_2026-05-10.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-10 |
+| `corpus_semver_type_graph_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_semver_openrouter_embeddings_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_memchr_type_graph_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_generic_array_type_graph_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
-## `fixture_nodes_canonical_2026-05-06.sqlite`
+## `fixture_nodes_canonical_2026-05-17.sqlite`
 
-- File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-06.sqlite`
+- File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
+  - normal type-resolution profile fixture; under `typed_type_graph` workspace
+    builds, active fixture loaders import the same code graph while leaving
+    typed graph relations empty rather than treating this as typed graph corpus
+    coverage
   - primary HNSW index must be created after import by the caller
   - no embedding model contract is assumed by default
   - used as the canonical parsed graph fixture for `fixture_nodes`
@@ -154,11 +164,11 @@ Test isolation note:
     - [crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs): shared mutable DB for live-tool scaffolding
     - [crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs): fixture dependency note, immutable expectations
 - Notes:
-  - older backups remain on disk (for example `fixture_nodes_canonical_2026-04-01.sqlite`) but the active registry entry points at the 2026-05-06 snapshot
+  - older backups remain on disk (for example `fixture_nodes_canonical_2026-05-06.sqlite`) but the active registry entry points at the 2026-05-17 snapshot
 
-## `fixture_nodes_local_embeddings_2026-05-06.sqlite`
+## `fixture_nodes_local_embeddings_2026-05-17.sqlite`
 
-- File: `tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-06.sqlite`
+- File: `tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-17.sqlite`
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - import with `Database::import_backup_with_embeddings`
@@ -180,7 +190,7 @@ Test isolation note:
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via harness
     - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
 - Notes:
-  - older backups remain on disk (for example `fixture_nodes_local_embeddings_2026-04-01.sqlite`) but the active registry entry points at the 2026-05-06 snapshot
+  - older backups remain on disk (for example `fixture_nodes_local_embeddings_2026-05-06.sqlite`) but the active registry entry points at the 2026-05-17 snapshot
 
 ## `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
 
@@ -210,9 +220,9 @@ Test isolation note:
   - `ploke-tui`
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
 
-## `ws_fixture_01_canonical_2026-05-10.sqlite`
+## `ws_fixture_01_canonical_2026-05-17.sqlite`
 
-- File: `tests/backup_dbs/ws_fixture_01_canonical_2026-05-10.sqlite`
+- File: `tests/backup_dbs/ws_fixture_01_canonical_2026-05-17.sqlite`
 - Parsed target(s): `tests/fixture_workspace/ws_fixture_01`
 - Expected DB config:
   - plain backup import
@@ -226,7 +236,7 @@ Test isolation note:
 - Notes:
   - this fixture is the canonical plain workspace backup required by the
     workspace rollout readiness gate
-  - the filename is dated `2026-05-10` because `cargo xtask recreate-backup-db`
+  - the filename is dated `2026-05-17` because `cargo xtask recreate-backup-db`
     stamps outputs with UTC date
 
 ## `ws_fixture_01_member_single_2026-05-06.sqlite`
@@ -262,67 +272,210 @@ commit, parse and transform the crate with typed type graph relations enabled,
 write the dated backup under `tests/backup_dbs/`, and verify that the generated
 backup imports with the current schema.
 
-### `corpus_semver_type_graph_2026-05-06.sqlite`
+The `corpus_*_openrouter_embeddings` variants use the same source-pinned
+checkouts, then run the OpenRouter embedding indexer before backup. They are
+intended for RAG and TUI tests that must exercise production search fixtures
+without parsing or embedding during normal test execution.
+
+Expected searchable corpus embedding config:
+
+- import with `Database::import_backup_with_embeddings`
+- provider: `openrouter`
+- model: `mistralai/codestral-embed-2505`
+- dims: `1536`
+- dtype: `f32`
+- vectors must be present and the active embedding set metadata must match the
+  registry entry
+- regeneration requires `OPENROUTER_API_KEY`; ordinary tests load the saved
+  backup and do not call the remote provider
+- regeneration batches corpus snippets in groups of `16` to stay below
+  OpenRouter request-level token limits for large real crates
+
+### `corpus_semver_type_graph_2026-05-17.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_semver_type_graph_2026-05-06.sqlite`
+- File: `tests/backup_dbs/corpus_semver_type_graph_2026-05-17.sqlite`
 - Parsed target: `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90`
 - Checkout slug: `tests/fixture_github_clones/corpus/dtolnay__semver`
 - Expected DB config:
   - plain backup import
   - no embedding model contract
   - no primary vector index required by the type graph query contracts
+  - current typed type-use coordinate schema, including deterministic
+    `type_use.id` and role-specific coordinate relations
 - Tests using this fixture:
   - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - shared `TypeShapeCase` matrix coverage in DB/RAG/TUI tests
   - graphRAG traversal from `matches_req` to `VersionReq` and `Version`
   - traversal from `VersionReq.comparators: Vec<Comparator>` to `Comparator`
 
-### `corpus_memchr_type_graph_2026-05-06.sqlite`
+### `corpus_semver_openrouter_embeddings_2026-05-17.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_memchr_type_graph_2026-05-06.sqlite`
+- File: `tests/backup_dbs/corpus_semver_openrouter_embeddings_2026-05-17.sqlite`
+- Parsed target: `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90`
+- Checkout slug: `tests/fixture_github_clones/corpus/dtolnay__semver`
+- Expected DB config:
+  - backup import with embeddings
+  - OpenRouter searchable corpus embedding config described above
+- Tests using this fixture:
+  - shared `TypeShapeCase` RAG and TUI coverage for named paths, references,
+    and semver model targets
+
+### `corpus_memchr_type_graph_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_memchr_type_graph_2026-05-17.sqlite`
 - Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
 - Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
 - Expected DB config:
   - plain backup import
   - no embedding model contract
   - no primary vector index required by the type graph query contracts
+  - current typed type-use coordinate schema, including deterministic
+    `type_use.id` and role-specific coordinate relations
 - Tests using this fixture:
   - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - shared `TypeShapeCase` matrix coverage in DB/RAG/TUI tests
   - traversal from `memchr_iter` return types to iterator structs such as
     `Memchr`
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
-### `corpus_generic_array_type_graph_2026-05-10.sqlite`
+### `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_generic_array_type_graph_2026-05-10.sqlite`
+- File: `tests/backup_dbs/corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
+- Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
+- Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
+- Expected DB config:
+  - backup import with embeddings
+  - OpenRouter searchable corpus embedding config described above
+- Tests using this fixture:
+  - shared `TypeShapeCase` RAG and TUI coverage for references and function
+    pointer alias targets
+
+### `corpus_generic_array_type_graph_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_generic_array_type_graph_2026-05-17.sqlite`
 - Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
 - Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
 - Expected DB config:
   - plain backup import
   - no embedding model contract
   - no primary vector index required by the type graph query contracts
+  - current typed type-use coordinate schema, including deterministic
+    `type_use.id` and role-specific coordinate relations
 - Tests using this fixture:
   - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - shared `TypeShapeCase` matrix coverage in DB/RAG/TUI tests
   - traversal from const-generic aliases to `GenericArray`
+  - `ArrayBuilder::extend(..., source: impl Iterator<Item = T>)` reaches the
+    local generic parameter `T`
   - later traversal through const-generic bounds and associated impls
 
-### `corpus_chrono_type_graph_2026-05-10.sqlite`
+### `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite`
 
 - Status: typed type graph
-- File: `tests/backup_dbs/corpus_chrono_type_graph_2026-05-10.sqlite`
+- File: `tests/backup_dbs/corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite`
+- Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
+- Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
+- Expected DB config:
+  - backup import with embeddings
+  - OpenRouter searchable corpus embedding config described above
+- Tests using this fixture:
+  - shared `TypeShapeCase` RAG and TUI coverage for const-generic aliases,
+    raw pointers, trait bounds, trait supers, generic parameter bounds, and
+    where-clause owners
+  - generic-array `ArrayBuilder::extend` impl-trait parameter coverage is
+    DB-only because its terminal target is a generic parameter, not a RAG/TUI
+    materialized target selector
+
+### `corpus_chrono_type_graph_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_chrono_type_graph_2026-05-17.sqlite`
 - Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
 - Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
 - Expected DB config:
   - plain backup import
   - no embedding model contract
   - no primary vector index required by the type graph query contracts
+  - current typed type-use coordinate schema, including deterministic
+    `type_use.id` and role-specific coordinate relations
 - Tests using this fixture:
   - [crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs](../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs)
+  - shared `TypeShapeCase` matrix coverage in DB/RAG/TUI tests
   - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
   - later traversal from timezone API owners into their generic result model
+
+### `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_chrono_openrouter_embeddings_2026-05-17.sqlite`
+- Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
+- Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
+- Expected DB config:
+  - backup import with embeddings
+  - OpenRouter searchable corpus embedding config described above
+- Tests using this fixture:
+  - shared `TypeShapeCase` RAG and TUI coverage for named generic arguments,
+    slices, arrays, tuples, associated type bounds, and where-bound type
+    contexts
+
+### `corpus_axum_type_graph_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_axum_type_graph_2026-05-17.sqlite`
+- Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
+- Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
+- Selected workspace members:
+  - `axum`
+  - `axum-core`
+  - `axum-macros`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by the type graph query contracts
+  - current typed type-use coordinate schema, including deterministic
+    `type_use.id` and role-specific coordinate relations
+- Tests using this fixture:
+  - shared `TypeShapeCase` DB matrix coverage for trait object, impl trait,
+    nested paren no-target, and nested macro no-target structures
+  - `BoxedIntoRoute<S, E>(Box<dyn ErasedIntoRoute<S, E>>)` reaches
+    `ErasedIntoRoute`
+  - `Map.layer: Box<dyn LayerFn<E, E2>>` reaches `LayerFn`
+  - `MakeErasedHandler::clone_box() -> Box<dyn ErasedIntoRoute<S, Infallible>>`
+    reaches `ErasedIntoRoute`
+  - `zip_longest(...) -> impl Iterator<Item = Item<I::Item>>` reaches the
+    local `Item` enum
+  - `StripPrefix::layer(...) -> impl Layer<S, Service = Self> + Clone` reaches
+    `StripPrefix` through the associated type bound
+  - `Option<&(dyn StdError + 'static)>` retains its nested `paren_type` without
+    fabricating a terminal target for the paren wrapper
+  - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
+    macro type without fabricating a terminal target
+
+### `corpus_axum_openrouter_embeddings_2026-05-17.sqlite`
+
+- Status: typed type graph
+- File: `tests/backup_dbs/corpus_axum_openrouter_embeddings_2026-05-17.sqlite`
+- Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
+- Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
+- Selected workspace members:
+  - `axum`
+  - `axum-core`
+  - `axum-macros`
+- Expected DB config:
+  - backup import with embeddings
+  - OpenRouter searchable corpus embedding config described above
+- Tests using this fixture:
+  - shared `TypeShapeCase` RAG and TUI coverage for axum trait-object and
+    impl-trait type contexts, including `BoxedIntoRoute`, `Map.layer`,
+    `MakeErasedHandler::clone_box`, `zip_longest`, and `StripPrefix::layer`
+  - parenthesized no-target coverage is DB-only because the paren wrapper is a
+    nested structural node rather than a materializable search result
 
 ## `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45`
 
@@ -345,6 +498,9 @@ backup imports with the current schema.
 - Run `cargo xtask verify-backup-dbs` after schema or fixture changes.
 - Use `cargo xtask recreate-backup-db --fixture <id>` instead of ad hoc copying
   whenever the registry already defines a recreation path.
+- `tests/backup_dbs/` is ignored by default. Reviewed seed snapshots that
+  should travel with a branch must be added explicitly rather than relying on
+  normal `git status` output.
 - If validation fails on a legacy backup only because `workspace_metadata` is
   missing, use `cargo xtask repair-backup-db-schema --fixture <id>` as the
   explicit schema repair path.

@@ -1210,13 +1210,13 @@ impl Iterator for DirectTypeUseIter<'_> {
                     *super_idx += 1;
                     return Some(trait_type_use_site(owner.into(), *module, type_id));
                 }
-                if let Some(type_id) = node
-                    .associated_type_bounds
-                    .get(*associated_type_bound_idx)
-                    .copied()
-                {
+                if let Some(bound) = node.associated_type_bounds.get(*associated_type_bound_idx) {
                     *associated_type_bound_idx += 1;
-                    return Some(trait_type_use_site(owner.into(), *module, type_id));
+                    return Some(trait_type_use_site(
+                        owner.into(),
+                        *module,
+                        bound.bound_type_id,
+                    ));
                 }
                 loop {
                     let method = node.methods.get(*method_idx)?;

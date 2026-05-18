@@ -1,4 +1,4 @@
-use ploke_db::{DbError, TypeRelationKind, TypeTargetPath, TypeUseRole};
+use ploke_db::{DbError, TypeRelationKind, TypeTargetPath, TypeUseCoordinate, TypeUseRole};
 
 use super::common::{
     TypePathDepth, assert_type_use_reaches_target, exactly_one_uuid, function_id_by_name,
@@ -21,9 +21,19 @@ fn reachable_targets_include_direct_param_struct_target() -> Result<(), DbError>
     let target_id = struct_id_by_name(&db, "T")?;
 
     let reachable = db.type_targets_reachable_from_owner(owner_id)?;
+    let type_use_id = db
+        .type_uses_for_owner(owner_id)?
+        .into_iter()
+        .find(|root| {
+            root.role == TypeUseRole::FunctionParam
+                && root.coordinate == (TypeUseCoordinate::ParamSlot { param_index: 0 })
+        })
+        .expect("concrete function param root")
+        .id;
 
     assert!(
         reachable.contains(&TypeTargetPath {
+            type_use_id,
             owner_id,
             root_type_id,
             terminal_type_id: root_type_id,
@@ -53,7 +63,7 @@ fn reachable_targets_walk_reference_trait_object_to_trait_definition() -> Result
         &db,
         owner_id,
         TypeUseRole::FunctionParam,
-        Some(0),
+        TypeUseCoordinate::ParamSlot { param_index: 0 },
         target_id,
         TypeRelationKind::Trait,
         TypePathDepth::Min(1),
@@ -78,7 +88,7 @@ fn reachable_targets_preserve_positive_depth_for_nested_ordinary_type() -> Resul
         &db,
         owner_id,
         TypeUseRole::FunctionParam,
-        Some(0),
+        TypeUseCoordinate::ParamSlot { param_index: 0 },
         target_id,
         TypeRelationKind::Ordinary,
         TypePathDepth::Min(1),
@@ -110,7 +120,7 @@ fn reachable_targets_include_multiple_terminals_from_one_root() -> Result<(), Db
             &db,
             owner_id,
             TypeUseRole::FunctionReturn,
-            None,
+            TypeUseCoordinate::None,
             target_id,
             TypeRelationKind::Ordinary,
             TypePathDepth::Min(1),
@@ -133,7 +143,10 @@ fn reachable_targets_include_generic_declaration_bound_trait() -> Result<(), DbE
         &db,
         owner_id,
         TypeUseRole::GenericBound,
-        Some(0),
+        TypeUseCoordinate::GenericBoundSlot {
+            generic_param_index: 0,
+            bound_index: 0,
+        },
         trait_id,
         TypeRelationKind::Trait,
         TypePathDepth::Exact(0),
@@ -143,7 +156,11 @@ fn reachable_targets_include_generic_declaration_bound_trait() -> Result<(), DbE
         &db,
         generic_param_id,
         TypeUseRole::GenericParamBound,
-        Some(0),
+        TypeUseCoordinate::GenericParamBoundSlot {
+            containing_owner_id: owner_id,
+            generic_param_index: 0,
+            bound_index: 0,
+        },
         trait_id,
         TypeRelationKind::Trait,
         TypePathDepth::Exact(0),
@@ -167,7 +184,10 @@ fn reachable_targets_include_where_direct_type_param_bound_trait() -> Result<(),
         &db,
         owner_id,
         TypeUseRole::WherePredicateBound,
-        Some(0),
+        TypeUseCoordinate::WhereBoundSlot {
+            predicate_index: 0,
+            bound_index: 0,
+        },
         trait_id,
         TypeRelationKind::Trait,
         TypePathDepth::Exact(0),
@@ -177,12 +197,108 @@ fn reachable_targets_include_where_direct_type_param_bound_trait() -> Result<(),
         &db,
         generic_param_id,
         TypeUseRole::WhereGenericParamBound,
-        Some(0),
+        TypeUseCoordinate::WhereGenericParamBoundSlot {
+            containing_owner_id: owner_id,
+            predicate_index: 0,
+            bound_index: 0,
+        },
         trait_id,
         TypeRelationKind::Trait,
         TypePathDepth::Exact(0),
         "expected WhereLocal::T to reach LocalTrait through where-clause bound",
     )?;
+
+    Ok(())
+}
+
+/// Multiple trait bounds in one where predicate should each be independently
+/// reachable from both the containing owner and the direct generic-param owner.
+#[test]
+fn reachable_targets_include_each_multi_bound_where_trait() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereMultiBound")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+    let local_trait_id = trait_id_by_name_in_module(&db, &["crate"], "LocalTrait")?;
+    let extra_trait_id = trait_id_by_name_in_module(&db, &["crate"], "ExtraTrait")?;
+
+    for (bound_index, target_id, target_name) in [
+        (0, local_trait_id, "LocalTrait"),
+        (1, extra_trait_id, "ExtraTrait"),
+    ] {
+        assert_type_use_reaches_target(
+            &db,
+            owner_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index: 0,
+                bound_index,
+            },
+            target_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            &format!("expected WhereMultiBound to reach {target_name}"),
+        )?;
+        assert_type_use_reaches_target(
+            &db,
+            generic_param_id,
+            TypeUseRole::WhereGenericParamBound,
+            TypeUseCoordinate::WhereGenericParamBoundSlot {
+                containing_owner_id: owner_id,
+                predicate_index: 0,
+                bound_index,
+            },
+            target_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            &format!("expected WhereMultiBound::T to reach {target_name}"),
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Repeated where predicates on the same subject should keep each predicate's
+/// bound independently reachable through the generic-param owner.
+#[test]
+fn reachable_targets_include_repeated_subject_where_traits() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let owner_id = struct_id_by_name(&db, "WhereRepeatedSubject")?;
+    let generic_param_id = generic_type_param_id_by_owner_name(&db, owner_id, "T")?;
+    let local_trait_id = trait_id_by_name_in_module(&db, &["crate"], "LocalTrait")?;
+    let extra_trait_id = trait_id_by_name_in_module(&db, &["crate"], "ExtraTrait")?;
+
+    for (predicate_index, target_id, target_name) in [
+        (0, local_trait_id, "LocalTrait"),
+        (1, extra_trait_id, "ExtraTrait"),
+    ] {
+        assert_type_use_reaches_target(
+            &db,
+            owner_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index,
+                bound_index: 0,
+            },
+            target_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            &format!("expected WhereRepeatedSubject to reach {target_name}"),
+        )?;
+        assert_type_use_reaches_target(
+            &db,
+            generic_param_id,
+            TypeUseRole::WhereGenericParamBound,
+            TypeUseCoordinate::WhereGenericParamBoundSlot {
+                containing_owner_id: owner_id,
+                predicate_index,
+                bound_index: 0,
+            },
+            target_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            &format!("expected WhereRepeatedSubject::T to reach {target_name}"),
+        )?;
+    }
 
     Ok(())
 }
@@ -199,7 +315,7 @@ fn reachable_targets_include_where_composite_subject_nested_type_param() -> Resu
         &db,
         owner_id,
         TypeUseRole::WherePredicateSubject,
-        Some(0),
+        TypeUseCoordinate::WhereSubjectSlot { predicate_index: 0 },
         generic_param_id,
         TypeRelationKind::Ordinary,
         TypePathDepth::Min(1),

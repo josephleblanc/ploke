@@ -13,5 +13,7 @@ This directory tracks restart context for the `tt-expr-core` type-resolution wor
   Starting-point summary for revisiting the current branch: recent commit sequence, active feature-gated v2 architecture, cross-crate data flow, known docs, current uncommitted state, and likely next work.
 - [`2026-05-10_current-type-resolution-workflow.md`](2026-05-10_current-type-resolution-workflow.md)
   Current workflow for continuing typed graph work: strict tests first, document red buckets, implement one semantic surface at a time, and keep `KL-008` in sync.
+- [`2026-05-17_corpus-type-shape-matrix-handoff.md`](2026-05-17_corpus-type-shape-matrix-handoff.md)
+  Cold-restart summary for the corpus-backed TypeNode matrix, OpenRouter searchable fixtures, focused DB/RAG/TUI verification, full workspace verification, and manual ignored live OpenRouter matrix verification.
 - [`type-graph-tightening-review/`](type-graph-tightening-review/)
   Multi-reviewer audit of recent typed graph work for lax owner/context typing, DB projection contracts, and test hardening tasks.

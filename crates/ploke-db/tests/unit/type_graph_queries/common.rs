@@ -1,5 +1,5 @@
 use cozo::{DataValue, Db, MemStorage};
-use ploke_db::{Database, DbError, TypeRelationKind, TypeUseRole, to_uuid};
+use ploke_db::{Database, DbError, TypeRelationKind, TypeUseCoordinate, TypeUseRole, to_uuid};
 use ploke_transform::{schema::create_schema_all, transform::transform_parsed_graph};
 use uuid::Uuid;
 
@@ -492,7 +492,7 @@ pub(super) fn assert_type_use_reaches_target(
     db: &Database,
     owner_id: Uuid,
     role: TypeUseRole,
-    slot_index: Option<u32>,
+    coordinate: TypeUseCoordinate,
     target_id: Uuid,
     relation_kind: TypeRelationKind,
     depth: TypePathDepth,
@@ -501,20 +501,21 @@ pub(super) fn assert_type_use_reaches_target(
     let roots = db.type_uses_for_owner(owner_id)?;
     let matching_roots = roots
         .iter()
-        .filter(|root| root.role == role && root.slot_index == slot_index)
-        .copied()
+        .filter(|root| root.role == role && root.coordinate == coordinate)
+        .cloned()
         .collect::<Vec<_>>();
     assert_eq!(
         matching_roots.len(),
         1,
-        "{message}; expected exactly one root for owner {owner_id}, role {role:?}, slot {slot_index:?}; roots: {roots:#?}",
+        "{message}; expected exactly one root for owner {owner_id}, role {role:?}, coordinate {coordinate:?}; roots: {roots:#?}",
     );
 
-    let root = matching_roots[0];
+    let root = &matching_roots[0];
     let reachable = db.type_targets_reachable_from_owner(owner_id)?;
     assert!(
         reachable.iter().any(|path| {
             path.owner_id == owner_id
+                && path.type_use_id == root.id
                 && path.root_type_id == root.root_type_id
                 && path.target_id == target_id
                 && path.relation_kind == relation_kind

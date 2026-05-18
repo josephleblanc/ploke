@@ -75,6 +75,37 @@ pub enum FixtureAutomation {
         rev: &'static str,
         output_stem: &'static str,
     },
+    /// Clone or reuse a pinned GitHub corpus checkout, parse it with typed
+    /// graph relations, and run the OpenRouter embedding indexer before backup.
+    GithubCorpusCrateOpenRouterEmbeddings {
+        normalized_repo: &'static str,
+        checkout_slug: &'static str,
+        clone_url: &'static str,
+        rev: &'static str,
+        output_stem: &'static str,
+    },
+    /// Clone or reuse a pinned GitHub corpus checkout, parse selected member
+    /// crates from its Cargo workspace, and transform them into a plain graph
+    /// backup. Use this when the source-pinned corpus shape crosses local
+    /// workspace crates or the repository root is a virtual manifest.
+    GithubCorpusWorkspaceTargets {
+        normalized_repo: &'static str,
+        checkout_slug: &'static str,
+        clone_url: &'static str,
+        rev: &'static str,
+        target_relative_paths: &'static [&'static str],
+        output_stem: &'static str,
+    },
+    /// Clone or reuse a pinned GitHub corpus workspace checkout, parse selected
+    /// member crates, and run the OpenRouter embedding indexer before backup.
+    GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+        normalized_repo: &'static str,
+        checkout_slug: &'static str,
+        clone_url: &'static str,
+        rev: &'static str,
+        target_relative_paths: &'static [&'static str],
+        output_stem: &'static str,
+    },
     /// Extract a single member crate from a workspace fixture.
     /// This creates a DB with only one crate's graph plus workspace metadata,
     /// simulating the "focused crate" scenario in a workspace.
@@ -160,6 +191,18 @@ impl FixtureDb {
                 output_stem,
                 ..
             })
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings { output_stem, .. },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargets { output_stem, .. },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+                    output_stem,
+                    ..
+                },
+            )
             | FixtureCreationStrategy::Automated(FixtureAutomation::FixtureWorkspaceMember {
                 output_stem,
                 ..
@@ -209,7 +252,7 @@ impl FixtureEmbeddingExpectation {
 
 pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     id: "fixture_nodes_canonical",
-    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
@@ -221,13 +264,13 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
-    notes: "Canonical current-schema fixture_nodes backup. It is imported as a plain backup, but regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
+    last_updated: "2026-05-17",
+    notes: "Canonical current-schema fixture_nodes backup for the normal type-resolution profile. It is imported as a plain active fixture; typed_type_graph workspace builds import the same code graph without claiming typed graph fixture coverage. Regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
 };
 
 pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "fixture_nodes_local_embeddings",
-    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/fixture_nodes_local_embeddings_2026-05-17.sqlite",
     parsed_targets: &["tests/fixture_crates/fixture_nodes"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateLocalEmbeddings {
@@ -246,7 +289,7 @@ pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
         vectors_present: true,
         active_set_expected: true,
     }),
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-17",
     notes: "Local-embedding fixture_nodes backup used by ploke-rag and the headless TUI harness. Regeneration seeds the multi-embedding schema from repo fixture code, forces CPU local indexing, and rejects outputs that leave nodes unembedded before backing up the DB.",
 };
 
@@ -292,7 +335,7 @@ pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
 
 pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     id: "ws_fixture_01_canonical",
-    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-05-10.sqlite",
+    rel_path: "tests/backup_dbs/ws_fixture_01_canonical_2026-05-17.sqlite",
     parsed_targets: &["tests/fixture_workspace/ws_fixture_01"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceFixture {
@@ -304,7 +347,7 @@ pub const WS_FIXTURE_01_CANONICAL: FixtureDb = FixtureDb {
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-10",
+    last_updated: "2026-05-17",
     notes: "Canonical plain backup for the committed multi-member workspace fixture `tests/fixture_workspace/ws_fixture_01`. Regeneration parses the on-disk workspace fixture, transforms `workspace_metadata` plus crate graphs into a fresh DB, and writes a strict plain-backup snapshot without assuming any embedding model contract.",
 };
 
@@ -332,7 +375,7 @@ pub const WS_FIXTURE_01_MEMBER_SINGLE: FixtureDb = FixtureDb {
 
 pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_semver_type_graph",
-    rel_path: "tests/backup_dbs/corpus_semver_type_graph_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/corpus_semver_type_graph_2026-05-17.sqlite",
     parsed_targets: &["github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -347,13 +390,43 @@ pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask --features ploke-db/typed_type_graph,ploke-transform/typed_type_graph,syn_parser/typed_type_graph -- recreate-backup-db --fixture corpus_semver_type_graph`.",
+};
+
+pub const CORPUS_SEMVER_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
+    id: "corpus_semver_openrouter_embeddings",
+    rel_path: "tests/backup_dbs/corpus_semver_openrouter_embeddings_2026-05-17.sqlite",
+    parsed_targets: &["github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo: "dtolnay/semver",
+            checkout_slug: "dtolnay__semver",
+            clone_url: "https://github.com/dtolnay/semver.git",
+            rev: "8591f2344b52b31d85b538de58b76a676fe9ff90",
+            output_stem: "corpus_semver_openrouter_embeddings",
+        },
+    ),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::BackupWithEmbeddings,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: Some(FixtureEmbeddingExpectation {
+        provider: "openrouter",
+        model: "mistralai/codestral-embed-2505",
+        dims: 1536,
+        dtype: "f32",
+        vectors_present: true,
+        active_set_expected: true,
+    }),
+    last_updated: "2026-05-17",
+    notes: "Source-pinned semver corpus backup with OpenRouter vectors for RAG/TUI matrix materialization. It is generated from the same pinned checkout as corpus_semver_type_graph and keeps dense-vector fixture requirements out of plain DB traversal tests.",
 };
 
 pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_memchr_type_graph",
-    rel_path: "tests/backup_dbs/corpus_memchr_type_graph_2026-05-06.sqlite",
+    rel_path: "tests/backup_dbs/corpus_memchr_type_graph_2026-05-17.sqlite",
     parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -368,13 +441,43 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-06",
+    last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for iterator-return and trait-impl graphRAG traversal over memchr.",
+};
+
+pub const CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
+    id: "corpus_memchr_openrouter_embeddings",
+    rel_path: "tests/backup_dbs/corpus_memchr_openrouter_embeddings_2026-05-17.sqlite",
+    parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo: "BurntSushi/memchr",
+            checkout_slug: "BurntSushi__memchr",
+            clone_url: "https://github.com/BurntSushi/memchr.git",
+            rev: "24f5daa5257e00e87007c936761600e034827905",
+            output_stem: "corpus_memchr_openrouter_embeddings",
+        },
+    ),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::BackupWithEmbeddings,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: Some(FixtureEmbeddingExpectation {
+        provider: "openrouter",
+        model: "mistralai/codestral-embed-2505",
+        dims: 1536,
+        dtype: "f32",
+        vectors_present: true,
+        active_set_expected: true,
+    }),
+    last_updated: "2026-05-17",
+    notes: "Source-pinned memchr corpus backup with OpenRouter vectors for RAG/TUI matrix materialization, including direct request_code_context coverage for memchr iterator return types.",
 };
 
 pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_generic_array_type_graph",
-    rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-10.sqlite",
+    rel_path: "tests/backup_dbs/corpus_generic_array_type_graph_2026-05-17.sqlite",
     parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -389,13 +492,43 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-10",
+    last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for const-generic alias and GenericArray traversal.",
+};
+
+pub const CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
+    id: "corpus_generic_array_openrouter_embeddings",
+    rel_path: "tests/backup_dbs/corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite",
+    parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo: "fizyk20/generic-array",
+            checkout_slug: "fizyk20__generic-array",
+            clone_url: "https://github.com/fizyk20/generic-array.git",
+            rev: "80bab87431c2e29823dc551a3311324812838a23",
+            output_stem: "corpus_generic_array_openrouter_embeddings",
+        },
+    ),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::BackupWithEmbeddings,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: Some(FixtureEmbeddingExpectation {
+        provider: "openrouter",
+        model: "mistralai/codestral-embed-2505",
+        dims: 1536,
+        dtype: "f32",
+        vectors_present: true,
+        active_set_expected: true,
+    }),
+    last_updated: "2026-05-17",
+    notes: "Source-pinned generic-array corpus backup with OpenRouter vectors for RAG matrix materialization over const-generic aliases, trait bounds, trait supers, and where-clause owners.",
 };
 
 pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_chrono_type_graph",
-    rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-10.sqlite",
+    rel_path: "tests/backup_dbs/corpus_chrono_type_graph_2026-05-17.sqlite",
     parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
     status: FixtureStatus::TypedTypeGraph,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -410,8 +543,91 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-05-10",
+    last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for LocalResult/MappedLocalTime and timezone generic traversal.",
+};
+
+pub const CORPUS_CHRONO_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
+    id: "corpus_chrono_openrouter_embeddings",
+    rel_path: "tests/backup_dbs/corpus_chrono_openrouter_embeddings_2026-05-17.sqlite",
+    parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo: "chronotope/chrono",
+            checkout_slug: "chronotope__chrono",
+            clone_url: "https://github.com/chronotope/chrono.git",
+            rev: "120686c82c5da90377e815edb82c9a80b6b4f2be",
+            output_stem: "corpus_chrono_openrouter_embeddings",
+        },
+    ),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::BackupWithEmbeddings,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: Some(FixtureEmbeddingExpectation {
+        provider: "openrouter",
+        model: "mistralai/codestral-embed-2505",
+        dims: 1536,
+        dtype: "f32",
+        vectors_present: true,
+        active_set_expected: true,
+    }),
+    last_updated: "2026-05-17",
+    notes: "Source-pinned chrono corpus backup with OpenRouter vectors for RAG matrix materialization over slice, array, tuple, associated-type-bound, and where-bound type contexts.",
+};
+
+pub const CORPUS_AXUM_TYPE_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_axum_type_graph",
+    rel_path: "tests/backup_dbs/corpus_axum_type_graph_2026-05-17.sqlite",
+    parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusWorkspaceTargets {
+        normalized_repo: "tokio-rs/axum",
+        checkout_slug: "tokio-rs__axum",
+        clone_url: "https://github.com/tokio-rs/axum.git",
+        rev: "a3446d68bc03d61fb8e7513052bad2825d0c0db1",
+        target_relative_paths: &["axum", "axum-core", "axum-macros"],
+        output_stem: "corpus_axum_type_graph",
+    }),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-05-17",
+    notes: "Source-pinned axum workspace backup for TypeNode matrix coverage over trait objects, impl Trait, and nested parenthesized no-target rows.",
+};
+
+pub const CORPUS_AXUM_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
+    id: "corpus_axum_openrouter_embeddings",
+    rel_path: "tests/backup_dbs/corpus_axum_openrouter_embeddings_2026-05-17.sqlite",
+    parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
+    status: FixtureStatus::TypedTypeGraph,
+    creation: FixtureCreationStrategy::Automated(
+        FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+            normalized_repo: "tokio-rs/axum",
+            checkout_slug: "tokio-rs__axum",
+            clone_url: "https://github.com/tokio-rs/axum.git",
+            rev: "a3446d68bc03d61fb8e7513052bad2825d0c0db1",
+            target_relative_paths: &["axum", "axum-core", "axum-macros"],
+            output_stem: "corpus_axum_openrouter_embeddings",
+        },
+    ),
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::BackupWithEmbeddings,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: Some(FixtureEmbeddingExpectation {
+        provider: "openrouter",
+        model: "mistralai/codestral-embed-2505",
+        dims: 1536,
+        dtype: "f32",
+        vectors_present: true,
+        active_set_expected: true,
+    }),
+    last_updated: "2026-05-17",
+    notes: "Source-pinned axum workspace backup with OpenRouter vectors for RAG/TUI matrix materialization of trait object and impl Trait cases, plus DB no-target coverage for nested parenthesized types.",
 };
 
 pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
@@ -443,9 +659,15 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &WS_FIXTURE_01_CANONICAL,
     &WS_FIXTURE_01_MEMBER_SINGLE,
     &CORPUS_SEMVER_TYPE_GRAPH,
+    &CORPUS_SEMVER_OPENROUTER_EMBEDDINGS,
     &CORPUS_MEMCHR_TYPE_GRAPH,
+    &CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS,
     &CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    &CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS,
     &CORPUS_CHRONO_TYPE_GRAPH,
+    &CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+    &CORPUS_AXUM_TYPE_GRAPH,
+    &CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
     &PLOKE_DB_ORPHANED,
 ];
 
@@ -468,27 +690,17 @@ pub fn backup_db_fixture(id: &str) -> Option<&'static FixtureDb> {
 }
 
 pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, Error> {
-    let fixture_path = fixture.path();
-    if !fixture_path.exists() {
-        return Err(Error::from(DbError::Cozo(format!(
-            "Backup fixture {} is missing at {}. Stage shared fixtures with `cargo xtask fixtures ensure --snapshots` or set {}. Committed seed path: {}",
-            fixture.id,
-            fixture_path.display(),
-            PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV,
-            fixture.repo_path().display()
-        ))));
-    }
+    let fixture_path = backup_fixture_path_or_seed(fixture)?;
 
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let prior_rels = db.prior_rels_for_plain_backup_import()?;
+            let prior_rels = plain_backup_import_relations(fixture, &db)?;
             db.import_from_backup(&fixture_path, &prior_rels)
                 .map_err(DbError::from)?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            db.import_backup_with_embeddings(&fixture_path)
-                .map_err(Error::from)?;
+            import_backup_with_embeddings_for_fixture(fixture, &db, &fixture_path)?;
         }
     }
 
@@ -496,6 +708,72 @@ pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, 
 
     validate_backup_fixture_contract(fixture, &db)?;
     Ok(db)
+}
+
+pub fn plain_backup_import_relations(
+    fixture: &'static FixtureDb,
+    db: &Database,
+) -> Result<Vec<String>, Error> {
+    match fixture.status {
+        FixtureStatus::TypedTypeGraph => db
+            .prior_rels_for_typed_type_graph_backup_import()
+            .map_err(Error::from),
+        _ => db.prior_rels_for_plain_backup_import().map_err(Error::from),
+    }
+}
+
+pub fn import_backup_with_embeddings_for_fixture(
+    fixture: &'static FixtureDb,
+    db: &Database,
+    fixture_path: &std::path::Path,
+) -> Result<(), Error> {
+    match fixture.status {
+        FixtureStatus::TypedTypeGraph => db
+            .import_backup_with_embeddings(fixture_path)
+            .map_err(Error::from),
+        _ => db
+            .import_plain_fixture_backup_with_embeddings(fixture_path)
+            .map_err(Error::from),
+    }
+}
+
+pub fn backup_fixture_path_or_seed(fixture: &'static FixtureDb) -> Result<PathBuf, Error> {
+    let fixture_path = fixture.path();
+    if fixture_path.exists() {
+        return Ok(fixture_path);
+    }
+
+    if env::var_os(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).is_none() {
+        if let Some(path) = home_config_snapshot_fixture_path(fixture) {
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
+    let seed_path = fixture.repo_path();
+    if seed_path.exists() {
+        return Ok(seed_path);
+    }
+
+    Err(Error::from(DbError::Cozo(format!(
+        "Backup fixture {} is missing at {}. Stage shared fixtures with `cargo xtask fixtures ensure --snapshots` or set {}. Committed seed path: {}",
+        fixture.id,
+        fixture_path.display(),
+        PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV,
+        seed_path.display()
+    ))))
+}
+
+fn home_config_snapshot_fixture_path(fixture: &'static FixtureDb) -> Option<PathBuf> {
+    let home = env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join("ploke")
+            .join("db_snapshot_fixtures")
+            .join(fixture.filename()),
+    )
 }
 
 pub fn shared_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Arc<Database>, Error> {
@@ -573,7 +851,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "fixture_nodes_canonical_2026-05-06.sqlite"
+            "fixture_nodes_canonical_2026-05-17.sqlite"
         );
         assert_eq!(fixture.status, FixtureStatus::Active);
     }
@@ -585,7 +863,7 @@ mod tests {
 
         assert_eq!(
             fixture.filename(),
-            "ws_fixture_01_canonical_2026-05-10.sqlite"
+            "ws_fixture_01_canonical_2026-05-17.sqlite"
         );
         assert_eq!(
             fixture.parsed_targets,
@@ -613,6 +891,36 @@ mod tests {
                 checkout_slug: "dtolnay__semver",
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn searchable_corpus_fixture_uses_openrouter_embedding_contract() {
+        let fixture = backup_db_fixture("corpus_memchr_openrouter_embeddings")
+            .expect("memchr searchable corpus fixture should be registered");
+
+        assert_eq!(fixture.status, FixtureStatus::TypedTypeGraph);
+        assert_eq!(fixture.import_mode, FixtureImportMode::BackupWithEmbeddings);
+        assert_eq!(
+            fixture.parsed_targets,
+            &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"]
+        );
+        let embedding = fixture
+            .embedding
+            .expect("searchable corpus fixture should declare embedding expectations");
+        assert_eq!(embedding.provider, "openrouter");
+        assert_eq!(embedding.model, "mistralai/codestral-embed-2505");
+        assert_eq!(embedding.dims, 1536);
+        assert!(embedding.vectors_present);
+        assert!(matches!(
+            fixture.creation,
+            FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+                    normalized_repo: "BurntSushi/memchr",
+                    checkout_slug: "BurntSushi__memchr",
+                    ..
+                }
+            )
         ));
     }
 

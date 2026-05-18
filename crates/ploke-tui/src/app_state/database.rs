@@ -2019,6 +2019,7 @@ mod tests {
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
     use ploke_db::multi_embedding::debug::DebugAll;
     use ploke_embed::indexer::EmbeddingProcessor;
+    use ploke_test_utils::{PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, backup_db_snapshot_fixture_dir};
     use ploke_transform::schema::crate_node::CrateContextSchema;
     use tempfile::TempDir;
 
@@ -2027,21 +2028,37 @@ mod tests {
 
     struct XdgConfigHomeGuard {
         old_xdg: Option<String>,
+        old_snapshot_fixture_dir: Option<String>,
     }
 
     impl XdgConfigHomeGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+            let snapshot_fixture_dir = backup_db_snapshot_fixture_dir();
             unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
                 std::env::set_var("XDG_CONFIG_HOME", path);
             }
-            Self { old_xdg }
+            Self {
+                old_xdg,
+                old_snapshot_fixture_dir,
+            }
         }
     }
 
     impl Drop for XdgConfigHomeGuard {
         fn drop(&mut self) {
             restore_xdg_config_home(self.old_xdg.take());
+            if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+                unsafe {
+                    std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+                }
+            }
         }
     }
 

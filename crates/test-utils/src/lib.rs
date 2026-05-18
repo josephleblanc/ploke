@@ -7,16 +7,25 @@
 
 pub mod fixture_dbs;
 pub mod nodes;
+pub mod type_shape_matrix;
 
 pub use fixture_dbs::{
-    BACKUP_DB_FIXTURES, CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
-    CORPUS_MEMCHR_TYPE_GRAPH, CORPUS_SEMVER_TYPE_GRAPH, FIXTURE_NODES_CANONICAL,
+    BACKUP_DB_FIXTURES, CORPUS_AXUM_OPENROUTER_EMBEDDINGS, CORPUS_AXUM_TYPE_GRAPH,
+    CORPUS_CHRONO_OPENROUTER_EMBEDDINGS, CORPUS_CHRONO_TYPE_GRAPH,
+    CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS, CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS, CORPUS_MEMCHR_TYPE_GRAPH,
+    CORPUS_SEMVER_OPENROUTER_EMBEDDINGS, CORPUS_SEMVER_TYPE_GRAPH, FIXTURE_NODES_CANONICAL,
     FIXTURE_NODES_LOCAL_EMBEDDINGS, FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation,
     FixtureCreationStrategy, FixtureDb, FixtureEmbeddingExpectation, FixtureImportMode,
     FixtureManualRecreation, FixtureStatus, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
     PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
-    backup_db_fixture, backup_db_snapshot_fixture_dir, fresh_backup_fixture_db,
-    shared_backup_fixture_db, validate_backup_fixture_contract,
+    backup_db_fixture, backup_db_snapshot_fixture_dir, backup_fixture_path_or_seed,
+    fresh_backup_fixture_db, shared_backup_fixture_db, validate_backup_fixture_contract,
+};
+pub use type_shape_matrix::{
+    ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,
+    TargetSelector, TypeShapeCase, TypeShapeKind, TypeShapeNoTargetCase, absent_type_shape_cases,
+    no_target_type_shape_cases, positive_type_shape_cases,
 };
 
 use std::path::{Path, PathBuf};

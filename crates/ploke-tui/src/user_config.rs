@@ -481,7 +481,9 @@ impl WorkspaceRegistry {
     }
 
     pub fn default_registry_path() -> std::path::PathBuf {
-        dirs::config_local_dir()
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(dirs::config_local_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("ploke")
             .join("workspaces.toml")

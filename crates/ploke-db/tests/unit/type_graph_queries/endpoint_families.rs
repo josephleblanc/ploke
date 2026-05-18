@@ -1,5 +1,5 @@
 use cozo::{DataValue, UuidWrapper};
-use ploke_db::{Database, DbError, TypeRelationKind, TypeUseRole};
+use ploke_db::{Database, DbError, TypeRelationKind, TypeUseCoordinate, TypeUseRole};
 use uuid::Uuid;
 
 use super::common::{
@@ -126,8 +126,16 @@ fn associated_type_bound_root(db: &Database, owner_id: Uuid) -> Result<Uuid, DbE
     let roots = db.type_uses_for_owner(owner_id)?;
     let root = roots
         .iter()
-        .find(|root| root.role == TypeUseRole::AssociatedTypeBound && root.slot_index == Some(0))
-        .copied()
+        .find(|root| {
+            root.role == TypeUseRole::AssociatedTypeBound
+                && root.coordinate
+                    == (TypeUseCoordinate::AssociatedTypeBoundSlot {
+                        associated_type_index: 0,
+                        associated_type_name: "Output".to_string(),
+                        bound_index: 0,
+                    })
+        })
+        .cloned()
         .unwrap_or_else(|| {
             panic!("expected AssociatedTypeBound root for owner {owner_id}; roots: {roots:#?}")
         });

@@ -368,6 +368,19 @@ fn build_context_plan(
 
 #[cfg(test)]
 mod tests {
+    //! Prompt-formatting coverage boundary for typed type context:
+    //!
+    //! - Covered: a `ContextPart` carrying `TypeContextInfo` renders stable
+    //!   model-facing provenance text, and context-plan summaries preserve the
+    //!   type-context carrier.
+    //! - Not covered: whether the provenance came from a where clause, whether
+    //!   RAG selected the right where-derived neighbor, or whether exact
+    //!   `TypeUseCoordinate` values survive into the prompt. Current prompt
+    //!   output intentionally carries relation, seed, and distance only.
+    //! - A future where-specific TUI test should start from the
+    //!   `fixture_type_resolution_v2` DB/RAG path rather than constructing
+    //!   `TypeContextInfo` by hand.
+
     use super::*;
     use crate::chat_history::{
         ChatHistory, ContextStatus, MessageKind, MessageStatus, RetentionClass, TurnsToLive,

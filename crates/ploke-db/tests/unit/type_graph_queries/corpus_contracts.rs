@@ -22,24 +22,43 @@
 //! | Function return roots | Passing | `memchr_iter(...) -> Memchr<'h>` reaches `Memchr`. |
 //! | Field roots | Passing | `VersionReq.comparators: Vec<Comparator>` reaches nested `Comparator`. |
 //! | Type alias target roots | Passing | `MappedLocalTime<T> = LocalResult<T>` reaches `LocalResult`; `ConstGenericArray` reaches `GenericArray`. |
-//! | Method parameter roots | New coverage | `VersionReq::matches(&self, version: &Version)` should reach `Version`. |
-//! | Method return roots | New coverage | `Parsed::to_datetime(...) -> ParseResult<DateTime<FixedOffset>>` should reach nested return targets. |
-//! | Impl self roots | New coverage | `impl GenericSequence<T> for GenericArray<T, N>` should reach `GenericArray`. |
-//! | Impl trait roots | New coverage | `impl GenericSequence<T> for GenericArray<T, N>` should reach `GenericSequence`. |
-//! | Const/static roots | New coverage | `MIN_DATE: NaiveDate` and `D_FMT: &[Item<'static>]` should reach local targets. |
+//! | Method parameter roots | Passing | `VersionReq::matches(&self, version: &Version)` reaches `Version`. |
+//! | Method return roots | Passing | `Parsed::to_datetime(...) -> ParseResult<DateTime<FixedOffset>>` reaches nested return targets. |
+//! | Impl self roots | Passing | `impl GenericSequence<T> for GenericArray<T, N>` reaches `GenericArray`. |
+//! | Impl trait roots | Passing | `impl GenericSequence<T> for GenericArray<T, N>` reaches `GenericSequence`. |
+//! | Const/static roots | Passing | `MIN_DATE: NaiveDate` and `D_FMT: &[Item<'static>]` reach local targets. |
 //! | Reference containment | Passing | `&VersionReq` / `&Version` traverses through the referenced child type. |
 //! | Named generic-argument containment | Passing | `Vec<Comparator>` and `GenericArray<T, ConstArrayLength<N>>` expose nested named targets. |
-//! | Array containment | New coverage | `WeekdaySet::from_array(days: [Weekday; C])` should reach the array element enum. |
-//! | Tuple containment | Source-only ignored | `watch::channel(...) -> (Sender, Receiver)` has an ignored Hyper source contract, but no backup fixture contract yet. |
+//! | Array containment | Passing | `WeekdaySet::from_array(days: [Weekday; C])` reaches the array element enum. |
+//! | Tuple containment | Passing in shared matrix | `WeekdaySet::split_at(...) -> (Self, Self)` reaches `WeekdaySet`; the older ignored Hyper source contract remains a broader future fixture. |
 //! | Generic declaration bounds | Passing | `GenericArray<T, N: ArrayLength>` and `Date<Tz: TimeZone>` reach their trait bounds. |
 //! | Generic-param-owned bound roots | Passing | `DateTime::Tz` reaches `TimeZone` from the generic parameter owner. |
+//! | Where-clause owner bound roots | Passing | `SubsecRound for T where T: Timelike + ...` and `Concat where N: ArrayLength + Add<M>, M: ArrayLength, Sum<N, M>: ArrayLength` pin exact coordinates. |
+//! | Where-clause repeated subjects | Passing | `FunctionalSequence::zip` has repeated `Rhs:` predicates that reach distinct local traits. |
+//! | Where-clause nested bound terminals | Passing | `Date::format_with_items` reaches local `Item` through `B: Borrow<Item<'a>>`. |
+//! | Where-clause composite subjects | Passing | `where GenericArray<U, N>: GenericSequence<...>` reaches `GenericArray` through the subject root. |
 //! | Qualified associated type projections | Passing | `<Const<N> as IntoArrayLength>::ArrayLength` reaches `IntoArrayLength`. |
 //! | Associated type bounds | Passing | `trait TimeZone { type Offset: Offset; }` reaches the `Offset` trait. |
-//! | Trait super roots | Not covered | Need real corpus `trait Child: Parent` backup contract. |
-//! | Slice/raw pointer/function pointer/paren/never/inferred/macro/unknown type vertices | Not covered | These structural node families are parser/DB-fixture covered only, if at all. |
+//! | Trait super roots | Passing in shared matrix | `Concat: GenericSequence<T>` pins `TraitSuperSlot(0)`. |
+//! | Slice/raw pointer/never vertices | Passing or no-target in shared matrix | `D_FMT: &[Item]`, memchr raw-pointer `Pointer::distance`, and `from_iter_length_fail() -> !`. |
+//! | Function pointer vertices | Passing in shared matrix | `SearcherKindFn = unsafe fn(&Searcher, ...)` reaches `Searcher` through function pointer containment. |
+//! | Trait object/impl trait vertices | Passing in shared matrix | Axum pins `Box<dyn ErasedIntoRoute>`, `Map.layer: Box<dyn LayerFn<...>>`, `MakeErasedHandler::clone_box -> Box<dyn ErasedIntoRoute<...>>`, `StripPrefix::layer -> impl Layer<...>`, and `zip_longest(...) -> impl Iterator<Item = Item<...>>`; generic-array pins `ArrayBuilder::extend(source: impl Iterator<Item = T>)`. |
+//! | Never/macro/paren no-target vertices | No-target in shared matrix | `from_iter_length_fail() -> !`, axum's `Token![,]` nested macro type, and `&(dyn StdError + 'static)` nested paren assert retained structure without bogus terminal relations. |
+//! | Inferred/unknown type vertices | Explicitly absent in current corpus matrix | Valid source-pinned backups currently have no rows for these fallback relations. |
 //! | Union/type-alias/generic-param targets | Not covered | Real corpus contracts currently hit struct, enum, and trait targets. |
 //! | Import path stress | Not covered | Need renamed import, glob import, re-export chain, `crate::`/`self::`/`super::`, and file-module boundary contracts. |
-//! | RAG-facing expansion/ranking | Mostly wishlist | Low-level reachability is asserted here; `expand_type_context` corpus behavior is covered separately as wishlist/API contracts. |
+//! | RAG-facing expansion/ranking | Covered by shared matrix | Low-level reachability is asserted here and matrix rows marked for RAG assert structured `TypeContextInfo`. |
+//!
+//! These corpus contracts still deliberately stop at DB traversal. The shared
+//! matrix is the cross-pipeline carrier: DB matrix tests assert exact roots and
+//! terminals, RAG matrix tests assert structured `TypeContextInfo`, and the TUI
+//! direct tool test asserts `request_code_context` emits that carrier in
+//! `ConciseContext.type_context`.
+//!
+//! Recursive/nested coverage is example-bounded: each test follows the deepest
+//! nesting present in the selected corpus expression, for example
+//! `Borrow<Item<'a>>` and `GenericArray<U, N>`. The suite does not attempt to
+//! exhaust the unbounded recursive grammar of Rust types.
 //!
 //! Examples of the grep-to-graph replacement we want:
 //!
@@ -62,20 +81,21 @@
 //!   should become alias and generic traversal from public API names into the
 //!   real enum/generic timezone model.
 
-use ploke_db::{Database, DbError, TypeRelationKind};
+use cozo::DataValue;
+use ploke_db::{Database, DbError, TypeRelationKind, TypeUseCoordinate, TypeUseRole, to_uuid};
 use ploke_test_utils::{
     CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_TYPE_GRAPH, CORPUS_MEMCHR_TYPE_GRAPH,
     CORPUS_SEMVER_TYPE_GRAPH,
 };
 
 use super::common::{
-    assert_owner_reaches_target, const_id_by_name_in_file_suffix, enum_id_by_name,
-    exactly_one_uuid, field_id_by_owner_index, function_id_by_name_in_file_suffix,
-    function_id_by_name_in_module, impl_id_by_trait_and_self_type_names,
-    method_id_by_impl_self_type_name, method_id_by_impl_trait_and_self_type_names,
-    setup_typed_backup_db, setup_typed_corpus_db, static_id_by_name_in_file_suffix,
-    struct_id_by_name, struct_id_by_name_in_file_suffix, struct_id_by_name_in_module,
-    trait_id_by_name_in_module, type_alias_row_by_name,
+    TypePathDepth, assert_owner_reaches_target, assert_type_use_reaches_target,
+    const_id_by_name_in_file_suffix, enum_id_by_name, exactly_one_uuid, field_id_by_owner_index,
+    function_id_by_name_in_file_suffix, function_id_by_name_in_module,
+    impl_id_by_trait_and_self_type_names, method_id_by_impl_self_type_name,
+    method_id_by_impl_trait_and_self_type_names, setup_typed_backup_db, setup_typed_corpus_db,
+    static_id_by_name_in_file_suffix, struct_id_by_name, struct_id_by_name_in_file_suffix,
+    struct_id_by_name_in_module, trait_id_by_name_in_module, type_alias_row_by_name,
 };
 
 mod ordinary_reachability {
@@ -610,6 +630,173 @@ mod generic_bounds {
     }
 }
 
+mod where_clause_bounds {
+    use super::*;
+
+    #[test]
+    fn chrono_backup_subsec_round_impl_where_bound_reaches_timelike_trait() -> Result<(), DbError> {
+        let db = setup_typed_backup_db(&CORPUS_CHRONO_TYPE_GRAPH)?;
+        let impl_id = impl_id_by_trait_name_in_file_suffix(&db, "src/round.rs", "SubsecRound")?;
+        let timelike_id = trait_id_by_name_in_module(&db, &["crate", "traits"], "Timelike")?;
+
+        // Source: `impl<T> SubsecRound for T where
+        // T: Timelike + Add<TimeDelta, Output = T> + Sub<TimeDelta, Output = T>`.
+        //
+        // We assert the local trait target only. `Add` and `Sub` are external
+        // std/core traits and do not have local DB target nodes in this corpus.
+        assert_type_use_reaches_target(
+            &db,
+            impl_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index: 0,
+                bound_index: 0,
+            },
+            timelike_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            "SubsecRound blanket impl should reach Timelike through its first where bound",
+        )
+    }
+
+    #[test]
+    fn generic_array_backup_concat_impl_where_bounds_reach_array_length_trait()
+    -> Result<(), DbError> {
+        let db = setup_typed_backup_db(&CORPUS_GENERIC_ARRAY_TYPE_GRAPH)?;
+        let impl_id = impl_id_by_trait_name_in_file_suffix(&db, "src/sequence.rs", "Concat")?;
+        let array_length_id = trait_id_by_name_in_module(&db, &["crate"], "ArrayLength")?;
+
+        // Source: `unsafe impl<T, N, M> Concat<T, M> for GenericArray<T, N>
+        // where N: ArrayLength + Add<M>, M: ArrayLength, Sum<N, M>: ArrayLength`.
+        //
+        // This pins both a multi-bound predicate (`N`) and later predicates on
+        // `M` and `Sum<N, M>`. `Add` is external, so the local `ArrayLength`
+        // bound is the strict target for each asserted slot.
+        for (predicate_index, bound_index) in [(0, 0), (1, 0), (2, 0)] {
+            assert_type_use_reaches_target(
+                &db,
+                impl_id,
+                TypeUseRole::WherePredicateBound,
+                TypeUseCoordinate::WhereBoundSlot {
+                    predicate_index,
+                    bound_index,
+                },
+                array_length_id,
+                TypeRelationKind::Trait,
+                TypePathDepth::Exact(0),
+                &format!(
+                    "Concat impl should reach ArrayLength from where-bound coordinate ({predicate_index}, {bound_index})"
+                ),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn chrono_backup_format_with_items_where_bound_reaches_nested_item_enum() -> Result<(), DbError>
+    {
+        let db = setup_typed_backup_db(&CORPUS_CHRONO_TYPE_GRAPH)?;
+        let method_id = method_id_by_impl_self_type_name(&db, "Date", "format_with_items")?;
+        let item_id = enum_id_by_name(&db, "Item")?;
+
+        // Source: `B: Borrow<Item<'a>>`.
+        //
+        // `Borrow` is external, but the bound's generic argument is the local
+        // `format::Item` enum. The where-bound root should still expose that
+        // nested local terminal through containment.
+        assert_type_use_reaches_target(
+            &db,
+            method_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index: 1,
+                bound_index: 0,
+            },
+            item_id,
+            TypeRelationKind::Ordinary,
+            TypePathDepth::Min(1),
+            "Date::format_with_items should reach Item through B: Borrow<Item<'a>>",
+        )
+    }
+
+    #[test]
+    fn generic_array_backup_zip_repeated_rhs_where_bounds_reach_both_local_traits()
+    -> Result<(), DbError> {
+        let db = setup_typed_backup_db(&CORPUS_GENERIC_ARRAY_TYPE_GRAPH)?;
+        let method_id = method_id_by_impl_trait_and_self_type_names(
+            &db,
+            "FunctionalSequence",
+            "GenericArray",
+            "zip",
+        )?;
+        let mapped_sequence_id =
+            trait_id_by_name_in_module(&db, &["crate", "functional"], "MappedGenericSequence")?;
+        let generic_sequence_id =
+            trait_id_by_name_in_module(&db, &["crate", "sequence"], "GenericSequence")?;
+
+        // Source:
+        // `Rhs: MappedGenericSequence<B, U, Mapped = MappedSequence<Self, T, U>>`
+        // `Rhs: GenericSequence<B, Length = Self::Length>`.
+        //
+        // These repeated-subject predicates should be independently reachable
+        // as owner where-bound slots.
+        assert_type_use_reaches_target(
+            &db,
+            method_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index: 1,
+                bound_index: 0,
+            },
+            mapped_sequence_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            "FunctionalSequence::zip should reach MappedGenericSequence from the first Rhs where predicate",
+        )?;
+        assert_type_use_reaches_target(
+            &db,
+            method_id,
+            TypeUseRole::WherePredicateBound,
+            TypeUseCoordinate::WhereBoundSlot {
+                predicate_index: 2,
+                bound_index: 0,
+            },
+            generic_sequence_id,
+            TypeRelationKind::Trait,
+            TypePathDepth::Exact(0),
+            "FunctionalSequence::zip should reach GenericSequence from the second Rhs where predicate",
+        )
+    }
+
+    #[test]
+    fn generic_array_backup_mapped_sequence_impl_composite_where_subject_reaches_generic_array()
+    -> Result<(), DbError> {
+        let db = setup_typed_backup_db(&CORPUS_GENERIC_ARRAY_TYPE_GRAPH)?;
+        let impl_id =
+            impl_id_by_trait_name_in_file_suffix(&db, "src/lib.rs", "MappedGenericSequence")?;
+        let generic_array_id = struct_id_by_name(&db, "GenericArray")?;
+
+        // Source: `impl<T, U, N: ArrayLength> MappedGenericSequence<T, U>
+        // for GenericArray<T, N> where GenericArray<U, N>:
+        // GenericSequence<U, Length = N>`.
+        //
+        // The bound trait is local too, but this assertion specifically pins
+        // the composite where subject root so graph traversal can reach the
+        // local `GenericArray` definition before following the bound.
+        assert_type_use_reaches_target(
+            &db,
+            impl_id,
+            TypeUseRole::WherePredicateSubject,
+            TypeUseCoordinate::WhereSubjectSlot { predicate_index: 0 },
+            generic_array_id,
+            TypeRelationKind::Ordinary,
+            TypePathDepth::Exact(0),
+            "MappedGenericSequence impl should reach GenericArray through its composite where subject",
+        )
+    }
+}
+
 mod qualified_projections {
     use super::*;
 
@@ -690,4 +877,57 @@ fn generic_type_param_id_by_owner_name(
         ),
         0,
     )
+}
+
+fn impl_id_by_trait_name_in_file_suffix(
+    db: &Database,
+    file_suffix: &str,
+    trait_name: &str,
+) -> Result<uuid::Uuid, DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[impl_id, file_path] :=
+            *impl {{ id: impl_id @ 'NOW' }},
+            *type_use {{
+                owner_id: impl_id,
+                root_type_id: trait_type_id,
+                role: "ImplTrait" @ 'NOW'
+            }},
+            *type_relation {{
+                source_id: trait_type_id,
+                target_id: trait_target_id,
+                relation_kind: "Trait" @ 'NOW'
+            }},
+            *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }},
+            *syntax_edge {{
+                source_id: module_id,
+                target_id: impl_id,
+                relation_kind: "Contains" @ 'NOW'
+            }},
+            *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+    ))?;
+    exactly_one_id_matching_file_suffix(rows.rows, "impl", trait_name, file_suffix)
+}
+
+fn exactly_one_id_matching_file_suffix(
+    rows: Vec<Vec<DataValue>>,
+    item_kind: &str,
+    item_name: &str,
+    file_suffix: &str,
+) -> Result<uuid::Uuid, DbError> {
+    let matching: Vec<_> = rows
+        .iter()
+        .filter_map(|row| {
+            let file_path = match &row[1] {
+                DataValue::Str(path) => path.as_str(),
+                _ => return None,
+            };
+            file_path.ends_with(file_suffix).then(|| row[0].clone())
+        })
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one {item_kind} for {item_name} in file suffix {file_suffix}; rows: {rows:#?}"
+    );
+    to_uuid(&matching[0])
 }

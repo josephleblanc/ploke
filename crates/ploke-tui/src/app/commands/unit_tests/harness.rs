@@ -929,6 +929,10 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         Arc::clone(&self.inner.state)
     }
 
+    pub fn event_bus_arc(&self) -> Arc<EventBus> {
+        Arc::clone(&self.inner.event_bus)
+    }
+
     /// Convenience wrapper that returns the app wrapped in `Arc<Mutex<App>>`.
     pub fn into_app_arc(self, pwd: PathBuf) -> Arc<Mutex<App>> {
         Arc::new(Mutex::new(self.into_app(pwd)))

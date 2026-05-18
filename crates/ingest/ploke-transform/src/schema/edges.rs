@@ -59,47 +59,312 @@ impl TypeUseSchema {
     pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
         db.run_script(
             r#":create type_use {
+                id: Uuid,
+                at: Validity =>
                 owner_id: Uuid,
                 root_type_id: Uuid,
-                role: String,
-                slot_index: Int,
-                at: Validity
+                role: String
             }"#,
             BTreeMap::new(),
             cozo::ScriptMutability::Mutable,
         )?;
+        create_type_use_coordinate_schema(db)?;
         Ok(())
     }
 
     pub fn insert_relation(
         db: &Db<MemStorage>,
+        id: cozo::DataValue,
         owner_id: cozo::DataValue,
         root_type_id: cozo::DataValue,
         role: &'static str,
-        slot_index: Option<usize>,
     ) -> Result<(), TransformError> {
         let mut params = BTreeMap::new();
+        params.insert("id".to_string(), id);
         params.insert("owner_id".to_string(), owner_id);
         params.insert("root_type_id".to_string(), root_type_id);
         params.insert("role".to_string(), cozo::DataValue::from(role));
-        params.insert(
-            "slot_index".to_string(),
-            cozo::DataValue::from(slot_index.map_or(-1_i64, |idx| idx as i64)),
-        );
 
         db.run_script(
-            r#"?[owner_id, root_type_id, role, slot_index, at] :=
+            r#"?[id, at, owner_id, root_type_id, role] :=
+                id = $id,
                 owner_id = $owner_id,
                 root_type_id = $root_type_id,
                 role = $role,
-                slot_index = $slot_index,
                 at = 'ASSERT'
-            :put type_use { owner_id, root_type_id, role, slot_index, at }"#,
+            :put type_use { id, at => owner_id, root_type_id, role }"#,
             params,
             cozo::ScriptMutability::Mutable,
         )?;
         Ok(())
     }
+
+    pub fn insert_param_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        param_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_param_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("param_index", int(param_index)),
+            ],
+            "param_index",
+        )
+    }
+
+    pub fn insert_field_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        field_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_field_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("field_index", int(field_index)),
+            ],
+            "field_index",
+        )
+    }
+
+    pub fn insert_trait_super_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        supertrait_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_trait_super_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("supertrait_index", int(supertrait_index)),
+            ],
+            "supertrait_index",
+        )
+    }
+
+    pub fn insert_generic_bound_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        generic_param_index: usize,
+        bound_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_generic_bound_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("generic_param_index", int(generic_param_index)),
+                ("bound_index", int(bound_index)),
+            ],
+            "generic_param_index, bound_index",
+        )
+    }
+
+    pub fn insert_generic_param_bound_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        containing_owner_id: cozo::DataValue,
+        generic_param_index: usize,
+        bound_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_generic_param_bound_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("containing_owner_id", containing_owner_id),
+                ("generic_param_index", int(generic_param_index)),
+                ("bound_index", int(bound_index)),
+            ],
+            "containing_owner_id, generic_param_index, bound_index",
+        )
+    }
+
+    pub fn insert_where_subject_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        predicate_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_where_subject_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("predicate_index", int(predicate_index)),
+            ],
+            "predicate_index",
+        )
+    }
+
+    pub fn insert_where_bound_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        predicate_index: usize,
+        bound_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_where_bound_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("predicate_index", int(predicate_index)),
+                ("bound_index", int(bound_index)),
+            ],
+            "predicate_index, bound_index",
+        )
+    }
+
+    pub fn insert_where_generic_param_bound_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        containing_owner_id: cozo::DataValue,
+        predicate_index: usize,
+        bound_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_where_generic_param_bound_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("containing_owner_id", containing_owner_id),
+                ("predicate_index", int(predicate_index)),
+                ("bound_index", int(bound_index)),
+            ],
+            "containing_owner_id, predicate_index, bound_index",
+        )
+    }
+
+    pub fn insert_associated_type_bound_slot(
+        db: &Db<MemStorage>,
+        type_use_id: cozo::DataValue,
+        associated_type_index: usize,
+        associated_type_name: &str,
+        bound_index: usize,
+    ) -> Result<(), TransformError> {
+        insert_coordinate_relation(
+            db,
+            "type_use_associated_type_bound_slot",
+            &["type_use_id", "at"],
+            &[
+                ("type_use_id", type_use_id),
+                ("associated_type_index", int(associated_type_index)),
+                (
+                    "associated_type_name",
+                    cozo::DataValue::from(associated_type_name),
+                ),
+                ("bound_index", int(bound_index)),
+            ],
+            "associated_type_index, associated_type_name, bound_index",
+        )
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn create_type_use_coordinate_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+    for script in [
+        r#":create type_use_param_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            param_index: Int
+        }"#,
+        r#":create type_use_field_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            field_index: Int
+        }"#,
+        r#":create type_use_trait_super_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            supertrait_index: Int
+        }"#,
+        r#":create type_use_generic_bound_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            generic_param_index: Int,
+            bound_index: Int
+        }"#,
+        r#":create type_use_generic_param_bound_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            containing_owner_id: Uuid,
+            generic_param_index: Int,
+            bound_index: Int
+        }"#,
+        r#":create type_use_where_subject_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            predicate_index: Int
+        }"#,
+        r#":create type_use_where_bound_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            predicate_index: Int,
+            bound_index: Int
+        }"#,
+        r#":create type_use_where_generic_param_bound_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            containing_owner_id: Uuid,
+            predicate_index: Int,
+            bound_index: Int
+        }"#,
+        r#":create type_use_associated_type_bound_slot {
+            type_use_id: Uuid,
+            at: Validity =>
+            associated_type_index: Int,
+            associated_type_name: String,
+            bound_index: Int
+        }"#,
+    ] {
+        db.run_script(script, BTreeMap::new(), cozo::ScriptMutability::Mutable)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn insert_coordinate_relation(
+    db: &Db<MemStorage>,
+    relation: &str,
+    key_fields: &[&str],
+    values: &[(&str, cozo::DataValue)],
+    value_fields: &str,
+) -> Result<(), TransformError> {
+    let mut params = BTreeMap::new();
+    let mut assignments = Vec::with_capacity(values.len() + 1);
+    for (name, value) in values {
+        params.insert((*name).to_string(), value.clone());
+        assignments.push(format!("{name} = ${name}"));
+    }
+    assignments.push("at = 'ASSERT'".to_string());
+
+    let key_fields = key_fields.join(", ");
+    let assignments = assignments.join(",\n                ");
+    let script = format!(
+        r#"?[{key_fields}, {value_fields}] :=
+                {assignments}
+            :put {relation} {{ {key_fields} => {value_fields} }}"#
+    );
+
+    db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+    Ok(())
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn int(value: usize) -> cozo::DataValue {
+    cozo::DataValue::from(value as i64)
 }
 
 #[cfg(feature = "typed_type_graph")]

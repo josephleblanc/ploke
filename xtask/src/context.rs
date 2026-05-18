@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 use ploke_db::{Database, create_index_primary};
-use ploke_test_utils::fixture_dbs::{FixtureDb, FixtureImportMode};
+use ploke_test_utils::fixture_dbs::{
+    FixtureDb, FixtureImportMode, import_backup_with_embeddings_for_fixture,
+    plain_backup_import_relations,
+};
 
 use crate::error::XtaskError;
 
@@ -176,7 +179,7 @@ impl DatabasePool {
 
     fn load_plain_backup(path: &Path) -> Result<Arc<Database>, XtaskError> {
         let db = Database::init_with_schema()?;
-        let prior = db.prior_rels_for_plain_backup_import()?;
+        let prior = db.prior_rels_for_current_schema_backup_import()?;
         db.import_from_backup(path, &prior)
             .map_err(|e| XtaskError::Database(e.to_string()))?;
         db.ensure_compilation_unit_relations()
@@ -214,8 +217,10 @@ impl DatabasePool {
         }
 
         let db_arc = match fixture.import_mode {
-            FixtureImportMode::PlainBackup => Self::load_plain_backup(&key)?,
-            FixtureImportMode::BackupWithEmbeddings => Self::load_backup_with_embeddings(&key)?,
+            FixtureImportMode::PlainBackup => Self::load_plain_backup_for_fixture(fixture, &key)?,
+            FixtureImportMode::BackupWithEmbeddings => {
+                Self::load_backup_with_embeddings_for_fixture(fixture, &key)?
+            }
         };
 
         let mut guard = self.by_path.write().unwrap();
@@ -224,6 +229,32 @@ impl DatabasePool {
         }
         guard.insert(key, Arc::clone(&db_arc));
         Ok(db_arc)
+    }
+
+    fn load_plain_backup_for_fixture(
+        fixture: &'static FixtureDb,
+        path: &Path,
+    ) -> Result<Arc<Database>, XtaskError> {
+        let db = Database::init_with_schema()?;
+        let prior = plain_backup_import_relations(fixture, &db)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        db.import_from_backup(path, &prior)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        db.ensure_compilation_unit_relations()
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        create_index_primary(&db)?;
+        Ok(Arc::new(db))
+    }
+
+    fn load_backup_with_embeddings_for_fixture(
+        fixture: &'static FixtureDb,
+        path: &Path,
+    ) -> Result<Arc<Database>, XtaskError> {
+        let db = Database::init_with_schema()?;
+        import_backup_with_embeddings_for_fixture(fixture, &db, path)
+            .map_err(|e| XtaskError::Database(e.to_string()))?;
+        create_index_primary(&db)?;
+        Ok(Arc::new(db))
     }
 
     /// In-memory schema (empty) or import from a Cozo backup file on disk.

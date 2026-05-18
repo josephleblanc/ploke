@@ -3,12 +3,17 @@ use cozo::ScriptMutability;
 use ploke_db::Database;
 use ploke_embed::{
     cancel_token::CancellationToken,
+    config::OpenRouterConfig,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexerTask},
     local::{DevicePreference, EmbeddingConfig, LocalEmbedder},
+    providers::openrouter::OpenRouterBackend,
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
-use ploke_test_utils::fixture_dbs::{active_backup_db_fixtures, all_backup_db_fixtures};
+use ploke_test_utils::fixture_dbs::{
+    active_backup_db_fixtures, all_backup_db_fixtures, import_backup_with_embeddings_for_fixture,
+    plain_backup_import_relations,
+};
 use ploke_test_utils::{
     FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
     FixtureImportMode, FixtureManualRecreation, FixtureStatus, backup_db_fixture,
@@ -756,7 +761,34 @@ fn ensure_typed_fixture_sources() -> Result<(), XtaskError> {
                 clone_url,
                 rev,
                 ..
-            }) => Some((fixture, normalized_repo, checkout_slug, clone_url, rev)),
+            })
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargets {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            ) => Some((fixture, normalized_repo, checkout_slug, clone_url, rev)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -867,9 +899,8 @@ fn verify_registered_backup_fixture(
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded
-                .prior_rels_for_plain_backup_import()
-                .map_err(|err| err.to_string())?;
+            let relations =
+                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(&backup_path, &relations)
                 .map_err(|err| format!("roundtrip import: {err}"))?;
@@ -878,8 +909,7 @@ fn verify_registered_backup_fixture(
                 .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            reloaded
-                .import_backup_with_embeddings(&backup_path)
+            import_backup_with_embeddings_for_fixture(fixture, &reloaded, &backup_path)
                 .map_err(|err| format!("roundtrip import with embeddings: {err}"))?;
         }
     }
@@ -943,6 +973,68 @@ fn recreate_automated_fixture(
             })?;
             Arc::new(Database::new(cozo_db))
         }
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            recreate_openrouter_embedding_corpus_db(fixture, &checkout_path)?
+        }
+        FixtureAutomation::GithubCorpusWorkspaceTargets {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            target_relative_paths,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            let cozo_db =
+                setup_db_full_parse_workspace_targets(&checkout_path, target_relative_paths)
+                    .map_err(|err| {
+                        format!(
+                            "build corpus workspace fixture database from {}: {err}",
+                            display_relative(&checkout_path, &workspace_root())
+                        )
+                    })?;
+            Arc::new(Database::new(cozo_db))
+        }
+        FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            target_relative_paths,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            recreate_openrouter_embedding_corpus_workspace_db(
+                fixture,
+                &checkout_path,
+                target_relative_paths,
+            )?
+        }
         FixtureAutomation::FixtureWorkspaceMember {
             fixture_name,
             member_crate,
@@ -988,6 +1080,36 @@ fn setup_db_full_parse_target(target: &Path) -> Result<cozo::Db<cozo::MemStorage
 
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)
         .map_err(|err| format!("transform parsed graph: {err}"))?;
+    Ok(db)
+}
+
+fn setup_db_full_parse_workspace_targets(
+    workspace_path: &Path,
+    target_relative_paths: &[&str],
+) -> Result<cozo::Db<cozo::MemStorage>, String> {
+    let db = cozo::Db::new(cozo::MemStorage::default())
+        .map_err(|err| format!("create in-memory cozo db: {err}"))?;
+    db.initialize()
+        .map_err(|err| format!("initialize in-memory cozo db: {err}"))?;
+    ploke_transform::schema::create_schema_all(&db)
+        .map_err(|err| format!("create transform schema: {err}"))?;
+
+    let selected = target_relative_paths
+        .iter()
+        .map(|relative| workspace_path.join(relative))
+        .collect::<Vec<_>>();
+    let selected_refs = selected.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    let parsed_workspace = syn_parser::parse_workspace(workspace_path, Some(&selected_refs))
+        .map_err(|err| {
+            format!(
+                "parse workspace {} with targets {:?}: {err}",
+                workspace_path.display(),
+                target_relative_paths
+            )
+        })?;
+
+    ploke_transform::transform::transform_parsed_workspace(&db, parsed_workspace)
+        .map_err(|err| format!("transform parsed workspace: {err}"))?;
     Ok(db)
 }
 
@@ -1283,9 +1405,8 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded
-                .prior_rels_for_plain_backup_import()
-                .map_err(|err| err.to_string())?;
+            let relations =
+                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(output_path, &relations)
                 .map_err(|err| format!("validate generated backup import: {err}"))?;
@@ -1294,11 +1415,9 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
                 .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            reloaded
-                .import_backup_with_embeddings(output_path)
-                .map_err(|err| {
-                    format!("validate generated backup import with embeddings: {err}")
-                })?;
+            import_backup_with_embeddings_for_fixture(fixture, &reloaded, output_path).map_err(
+                |err| format!("validate generated backup import with embeddings: {err}"),
+            )?;
         }
     }
     validate_backup_fixture_contract(fixture, &reloaded)
@@ -1310,6 +1429,80 @@ fn recreate_local_embedding_fixture_db(
     fixture: &'static FixtureDb,
     fixture_name: &'static str,
 ) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_multi_embedding(fixture_name)
+        .map_err(|err| format!("build source fixture database: {err}"))?;
+    let local_embedder = LocalEmbedder::new(EmbeddingConfig {
+        device_preference: DevicePreference::ForceCpu,
+        ..EmbeddingConfig::default()
+    })
+    .map_err(|err| format!("initialize local embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::Local(local_embedder));
+    recreate_embedding_db_with_processor(fixture, fixture_name, cozo_db, processor, "local")
+}
+
+fn recreate_openrouter_embedding_corpus_db(
+    fixture: &'static FixtureDb,
+    checkout_path: &Path,
+) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_parse_target(checkout_path).map_err(|err| {
+        format!(
+            "build corpus fixture database from {}: {err}",
+            display_relative(checkout_path, &workspace_root())
+        )
+    })?;
+    let expected_set = fixture
+        .expected_embedding_set()
+        .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
+    let or_cfg = OpenRouterConfig {
+        model: expected_set.model.to_string(),
+        dimensions: Some(expected_set.dims() as usize),
+        request_dimensions: None,
+        snippet_batch_size: 16,
+        input_type: Some("code-snippet".into()),
+        ..Default::default()
+    };
+    let backend = OpenRouterBackend::new(&or_cfg)
+        .map_err(|err| format!("initialize OpenRouter embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend));
+    recreate_embedding_db_with_processor(fixture, fixture.id, cozo_db, processor, "OpenRouter")
+}
+
+fn recreate_openrouter_embedding_corpus_workspace_db(
+    fixture: &'static FixtureDb,
+    checkout_path: &Path,
+    target_relative_paths: &[&str],
+) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_parse_workspace_targets(checkout_path, target_relative_paths)
+        .map_err(|err| {
+            format!(
+                "build corpus workspace fixture database from {}: {err}",
+                display_relative(checkout_path, &workspace_root())
+            )
+        })?;
+    let expected_set = fixture
+        .expected_embedding_set()
+        .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
+    let or_cfg = OpenRouterConfig {
+        model: expected_set.model.to_string(),
+        dimensions: Some(expected_set.dims() as usize),
+        request_dimensions: None,
+        snippet_batch_size: 16,
+        input_type: Some("code-snippet".into()),
+        ..Default::default()
+    };
+    let backend = OpenRouterBackend::new(&or_cfg)
+        .map_err(|err| format!("initialize OpenRouter embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend));
+    recreate_embedding_db_with_processor(fixture, fixture.id, cozo_db, processor, "OpenRouter")
+}
+
+fn recreate_embedding_db_with_processor(
+    fixture: &'static FixtureDb,
+    active_set_owner: &str,
+    cozo_db: cozo::Db<cozo::MemStorage>,
+    processor: EmbeddingProcessor,
+    backend_label: &str,
+) -> Result<Arc<Database>, String> {
     let expected_set = fixture
         .expected_embedding_set()
         .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
@@ -1317,22 +1510,14 @@ fn recreate_local_embedding_fixture_db(
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|err| format!("build tokio runtime for local fixture recreation: {err}"))?;
+        .map_err(|err| format!("build tokio runtime for embedding fixture recreation: {err}"))?;
 
     runtime.block_on(async move {
-        let cozo_db = setup_db_full_multi_embedding(fixture_name)
-            .map_err(|err| format!("build source fixture database: {err}"))?;
         let db = Arc::new(Database::new(cozo_db));
 
         db.set_active_set(expected_set)
             .map_err(|err| format!("set active embedding set: {err}"))?;
 
-        let local_embedder = LocalEmbedder::new(EmbeddingConfig {
-            device_preference: DevicePreference::ForceCpu,
-            ..EmbeddingConfig::default()
-        })
-        .map_err(|err| format!("initialize local embedder: {err}"))?;
-        let processor = EmbeddingProcessor::new(EmbeddingSource::Local(local_embedder));
         let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
             processor,
@@ -1351,21 +1536,21 @@ fn recreate_local_embedding_fixture_db(
         indexer
             .run(Arc::new(progress_tx), control_rx)
             .await
-            .map_err(|err| format!("run local embedding indexer: {err}"))?;
+            .map_err(|err| format!("run {backend_label} embedding indexer: {err}"))?;
 
         let remaining_unembedded = db
             .count_unembedded_nonfiles()
             .map_err(|err| format!("count remaining unembedded nodes: {err}"))?;
         if remaining_unembedded != 0 {
             return Err(format!(
-                "local embedding recreation left {remaining_unembedded} unembedded nodes"
+                "{backend_label} embedding recreation left {remaining_unembedded} unembedded nodes"
             ));
         }
 
         let active_set = db
             .with_active_set(|set| set.clone())
             .map_err(|err| format!("read active embedding set after indexing: {err}"))?;
-        db.put_active_embedding_set_meta(fixture_name, &active_set)
+        db.put_active_embedding_set_meta(active_set_owner, &active_set)
             .map_err(|err| format!("persist active embedding set metadata: {err}"))?;
 
         Ok(db)

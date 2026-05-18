@@ -208,6 +208,7 @@ pub async fn assemble_context_with_type_context(
     let nodes: Vec<EmbeddingData> = db
         .get_nodes_ordered(dedup_ids.clone())
         .map_err(|e| RagError::Embed(e.to_string()))?;
+    let node_ids: Vec<Uuid> = nodes.iter().map(|node| node.id).collect();
 
     let node_paths: Vec<Result<NodePaths, ploke_db::DbError>> = nodes
         .iter()
@@ -229,7 +230,7 @@ pub async fn assemble_context_with_type_context(
     // Build preliminary parts (with placeholder file path and no ranges for now).
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
     for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
-        let id = dedup_ids
+        let id = node_ids
             .get(i)
             .copied()
             .ok_or_else(|| RagError::Search(format!("mismatched batch index {}", i)))?;

@@ -1,3 +1,16 @@
+//! TUI tool-carrier coverage boundary:
+//!
+//! - Covered: serde roundtrips for `request_code_context` arguments/results
+//!   and the optional `type_context` carrier on context parts.
+//! - Covered elsewhere: the direct `request_code_context` production tool path
+//!   is exercised in `tools::request_code_context::gat_tests` against the shared
+//!   corpus-backed `TypeShapeCase` matrix. That test observes
+//!   `ToolCallCompleted` and asserts structured `ConciseContext.type_context`.
+//! - Not covered here: live model/tool selection. Ignored live tests should use
+//!   the same matrix prompts and assert tool payloads, not final model wording.
+//! - Recursive/nested type behavior is matrix-bounded by the deepest real corpus
+//!   examples selected for DB and RAG coverage.
+
 use ploke_core::rag_types::{
     ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
     NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult,

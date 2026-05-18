@@ -8,21 +8,37 @@
 //!
 //! These tests pin `Database::expand_type_context(...)` as the application-
 //! facing retrieval API layered over the lower-level type graph relations.
+//!
+//! Coverage boundary:
+//!
+//! - Covered: owner seeds, target seeds, direct and nested users, trait impl
+//!   junctions, trait-object bound users, alias expansion, iterator surfaces,
+//!   and selected corpus-backed type-context candidates.
+//! - Not yet covered: a seed whose relevant relationship is specifically a
+//!   where-clause coordinate such as `WherePredicateBound` or
+//!   `WherePredicateSubject`.
+//! - Consequence: lower-level tests prove where-clause roots and reachability;
+//!   this file does not yet prove the application-facing relation label,
+//!   ranking, or distance chosen for where-derived candidates.
+//! - Recursive/nested type behavior is tested only to the depth available in
+//!   the fixture/corpus examples used by the lower-level tests.
 
+use cozo::DataValue;
 use ploke_db::{
     Database, DbError, TypeContextCandidate, TypeContextOptions, TypeContextRelation,
     TypeContextSeed,
 };
 use ploke_test_utils::{
-    CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_TYPE_GRAPH, CORPUS_MEMCHR_TYPE_GRAPH,
-    CORPUS_SEMVER_TYPE_GRAPH,
+    CORPUS_AXUM_TYPE_GRAPH, CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    CORPUS_MEMCHR_TYPE_GRAPH, CORPUS_SEMVER_TYPE_GRAPH,
 };
 use uuid::Uuid;
 
 use super::common::{
     enum_id_by_name, field_id_by_owner_index, function_id_by_name, function_id_by_name_in_module,
-    setup_typed_backup_db, setup_typed_fixture_db, struct_id_by_name, struct_id_by_name_in_module,
-    trait_id_by_name_in_module, type_alias_row_by_name,
+    setup_typed_backup_db, setup_typed_fixture_db, struct_id_by_name,
+    struct_id_by_name_in_file_suffix, struct_id_by_name_in_module, trait_id_by_name_in_module,
+    type_alias_row_by_name,
 };
 
 #[test]
@@ -214,6 +230,32 @@ fn semver_version_req_seed_returns_matching_and_comparator_context() -> Result<(
 }
 
 #[test]
+fn axum_struct_seed_includes_nested_trait_object_field_targets_with_rag_distance()
+-> Result<(), DbError> {
+    let db = setup_typed_backup_db(&CORPUS_AXUM_TYPE_GRAPH)?;
+    let boxed_into_route_id =
+        struct_id_by_name_in_file_suffix(&db, "axum/src/boxed.rs", "BoxedIntoRoute")?;
+    let erased_into_route_id =
+        trait_id_by_name_in_file_suffix(&db, "axum/src/boxed.rs", "ErasedIntoRoute")?;
+
+    let candidates = db.expand_type_context(
+        TypeContextSeed::Target(boxed_into_route_id),
+        TypeContextOptions {
+            max_distance: 4,
+            ..TypeContextOptions::default()
+        },
+    )?;
+
+    assert_candidate(
+        &candidates,
+        erased_into_route_id,
+        TypeContextRelation::UsesTypeNested,
+        "BoxedIntoRoute should expose its nested Box<dyn ErasedIntoRoute<...>> field target within the RAG distance budget",
+    );
+    Ok(())
+}
+
+#[test]
 fn memchr_iterator_seed_returns_constructor_and_iterator_surface() -> Result<(), DbError> {
     let db = setup_typed_backup_db(&CORPUS_MEMCHR_TYPE_GRAPH)?;
     let memchr_id = struct_id_by_name(&db, "Memchr")?;
@@ -308,6 +350,41 @@ fn candidate_distance(candidates: &[TypeContextCandidate], node_id: Uuid) -> Opt
         .filter(|candidate| candidate.node_id == node_id)
         .map(|candidate| candidate.distance)
         .min()
+}
+
+fn trait_id_by_name_in_file_suffix(
+    db: &Database,
+    file_suffix: &str,
+    trait_name: &str,
+) -> Result<Uuid, DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[trait_id, file_path] :=
+            *trait {{ id: trait_id, name: "{trait_name}" @ 'NOW' }},
+            *syntax_edge {{
+                source_id: module_id,
+                target_id: trait_id,
+                relation_kind: "Contains" @ 'NOW'
+            }},
+            *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+    ))?;
+    let matching: Vec<_> = rows
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let file_path = match &row[1] {
+                DataValue::Str(path) => path.as_str(),
+                _ => return None,
+            };
+            file_path.ends_with(file_suffix).then(|| row[0].clone())
+        })
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one trait named {trait_name} in file suffix {file_suffix}; rows: {:#?}",
+        rows.rows
+    );
+    ploke_db::to_uuid(&matching[0])
 }
 
 fn impl_id_with_trait_and_self_type_names(

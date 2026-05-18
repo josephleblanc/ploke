@@ -748,7 +748,7 @@ impl<'a> FixtureGraphView<'a> {
                     .find(|trait_node| trait_node.id == id)
                     .expect("trait owner should exist");
                 Ok(SourceSlotRoot::Trait(
-                    trait_node.associated_type_bounds[index],
+                    trait_node.associated_type_bounds[index].bound_type_id,
                 ))
             }
             TypeUseSourceSlot::WherePredicateSubject(index) => {

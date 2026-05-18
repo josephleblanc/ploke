@@ -21,7 +21,9 @@ use ploke_embed::{
 };
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{
+    PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, backup_db_snapshot_fixture_dir, workspace_root,
+};
 use ploke_tui::AppEvent;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app_state::handlers::indexing::index_workspace;
@@ -49,15 +51,22 @@ fn config_home_lock() -> &'static TokioMutex<()> {
 
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
+    old_snapshot_fixture_dir: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+        let snapshot_fixture_dir = backup_db_snapshot_fixture_dir();
         unsafe {
+            std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             std::env::set_var("XDG_CONFIG_HOME", path);
         }
-        Self { old_xdg }
+        Self {
+            old_xdg,
+            old_snapshot_fixture_dir,
+        }
     }
 }
 
@@ -70,6 +79,15 @@ impl Drop for XdgConfigHomeGuard {
         } else {
             unsafe {
                 std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+            unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
             }
         }
     }

@@ -48,8 +48,8 @@ use crate::test_support::config_home_lock;
 use crate::user_config::{CommandStyle, WorkspaceRegistry, WorkspaceRegistryEntry};
 use ploke_core::WorkspaceInfo;
 use ploke_test_utils::{
-    FIXTURE_NODES_CANONICAL, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
-    fresh_backup_fixture_db,
+    FIXTURE_NODES_CANONICAL, PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, WS_FIXTURE_01_CANONICAL,
+    WS_FIXTURE_01_MEMBER_SINGLE, backup_db_snapshot_fixture_dir, fresh_backup_fixture_db,
 };
 use tempfile::{TempDir, tempdir};
 use tokio::time::timeout;
@@ -371,15 +371,22 @@ pub type NoDbTestCase = TestCase;
 
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
+    old_snapshot_fixture_dir: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &std::path::Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+        let snapshot_fixture_dir = backup_db_snapshot_fixture_dir();
         unsafe {
+            std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             std::env::set_var("XDG_CONFIG_HOME", path);
         }
-        Self { old_xdg }
+        Self {
+            old_xdg,
+            old_snapshot_fixture_dir,
+        }
     }
 }
 
@@ -392,6 +399,15 @@ impl Drop for XdgConfigHomeGuard {
         } else {
             unsafe {
                 std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+            unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
             }
         }
     }
@@ -424,8 +440,9 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
             active_embedding_set_rel: None,
         }],
     };
+    let registry_path = tmp_dir.path().join("ploke").join("workspaces.toml");
     registry
-        .save_to_path(&WorkspaceRegistry::default_registry_path())
+        .save_to_path(&registry_path)
         .expect("save test workspace registry");
 
     LoadRegistrySandbox {

@@ -615,37 +615,46 @@ impl RagService {
 
         let mut expanded_scores: HashMap<Uuid, f32> = HashMap::new();
         let mut expanded_context: HashMap<Uuid, TypeContextInfo> = HashMap::new();
+        let mut owner_terminal_targets: HashSet<Uuid> = HashSet::new();
         for &(seed_id, seed_score) in hits.iter().take(cfg.max_seed_hits) {
-            for candidate in self
-                .db
-                .expand_type_context(TypeContextSeed::Owner(seed_id), cfg.options)?
-            {
-                if candidate.node_id == seed_id || scores.contains_key(&candidate.node_id) {
-                    continue;
-                }
+            owner_terminal_targets.extend(
+                self.db
+                    .type_targets_reachable_from_owner(seed_id)?
+                    .into_iter()
+                    .map(|target| target.target_id),
+            );
+            for seed in [
+                TypeContextSeed::Owner(seed_id),
+                TypeContextSeed::Target(seed_id),
+            ] {
+                for candidate in self.db.expand_type_context(seed, cfg.options)? {
+                    if candidate.node_id == seed_id || scores.contains_key(&candidate.node_id) {
+                        continue;
+                    }
 
-                let distance = candidate.distance.max(1) as f32;
-                let derived_score = seed_score * cfg.score_factor / distance;
-                expanded_scores
-                    .entry(candidate.node_id)
-                    .and_modify(|score| *score = score.max(derived_score))
-                    .or_insert(derived_score);
-                expanded_context
-                    .entry(candidate.node_id)
-                    .and_modify(|existing| {
-                        if candidate.distance < existing.distance {
-                            *existing = TypeContextInfo {
-                                seed_id,
-                                relation: type_context_kind(candidate.relation),
-                                distance: candidate.distance,
-                            };
-                        }
-                    })
-                    .or_insert(TypeContextInfo {
-                        seed_id,
-                        relation: type_context_kind(candidate.relation),
-                        distance: candidate.distance,
-                    });
+                    let distance = candidate.distance.max(1) as f32;
+                    let derived_score = seed_score * cfg.score_factor / distance;
+                    expanded_scores
+                        .entry(candidate.node_id)
+                        .and_modify(|score| *score = score.max(derived_score))
+                        .or_insert(derived_score);
+                    expanded_context
+                        .entry(candidate.node_id)
+                        .and_modify(|existing| {
+                            if candidate.distance < existing.distance {
+                                *existing = TypeContextInfo {
+                                    seed_id,
+                                    relation: type_context_kind(candidate.relation),
+                                    distance: candidate.distance,
+                                };
+                            }
+                        })
+                        .or_insert(TypeContextInfo {
+                            seed_id,
+                            relation: type_context_kind(candidate.relation),
+                            distance: candidate.distance,
+                        });
+                }
             }
         }
 
@@ -655,11 +664,17 @@ impl RagService {
 
         let mut expanded: Vec<(Uuid, f32)> = expanded_scores.into_iter().collect();
         expanded.sort_by(|(left_id, left_score), (right_id, right_score)| {
-            match right_score
-                .partial_cmp(left_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            match owner_terminal_targets
+                .contains(right_id)
+                .cmp(&owner_terminal_targets.contains(left_id))
             {
-                std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                std::cmp::Ordering::Equal => match right_score
+                    .partial_cmp(left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
+                    std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                    other => other,
+                },
                 other => other,
             }
         });

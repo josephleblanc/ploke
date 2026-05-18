@@ -10,6 +10,8 @@ use crate::{
     database::{to_string, to_uuid},
 };
 
+pub(crate) mod fixed_rules;
+
 /// Role of a root type use on a code-graph owner.
 ///
 /// This is the DB-facing analogue of the parser-side type-use slots. It is
@@ -83,14 +85,56 @@ impl TypeUseRole {
     }
 }
 
+/// Source coordinate for a direct root type use.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TypeUseCoordinate {
+    None,
+    ParamSlot {
+        param_index: u32,
+    },
+    FieldSlot {
+        field_index: u32,
+    },
+    TraitSuperSlot {
+        supertrait_index: u32,
+    },
+    GenericBoundSlot {
+        generic_param_index: u32,
+        bound_index: u32,
+    },
+    GenericParamBoundSlot {
+        containing_owner_id: Uuid,
+        generic_param_index: u32,
+        bound_index: u32,
+    },
+    WhereSubjectSlot {
+        predicate_index: u32,
+    },
+    WhereBoundSlot {
+        predicate_index: u32,
+        bound_index: u32,
+    },
+    WhereGenericParamBoundSlot {
+        containing_owner_id: Uuid,
+        predicate_index: u32,
+        bound_index: u32,
+    },
+    AssociatedTypeBoundSlot {
+        associated_type_index: u32,
+        associated_type_name: String,
+        bound_index: u32,
+    },
+}
+
 /// A direct edge from a code-graph owner to the root structural type used in a
-/// syntactic slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// syntactic source coordinate.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeUseRoot {
+    pub id: Uuid,
     pub owner_id: Uuid,
     pub root_type_id: Uuid,
     pub role: TypeUseRole,
-    pub slot_index: Option<u32>,
+    pub coordinate: TypeUseCoordinate,
 }
 
 /// Structural containment edge between two type-graph vertices.
@@ -160,6 +204,7 @@ impl TypeRelationKind {
 /// use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeTargetPath {
+    pub type_use_id: Uuid,
     pub owner_id: Uuid,
     pub root_type_id: Uuid,
     pub terminal_type_id: Uuid,
@@ -251,9 +296,9 @@ impl Database {
         );
 
         let rows = self.run_script(
-            r#"?[owner_id, root_type_id, role, slot_index] :=
+            r#"?[type_use_id, owner_id, root_type_id, role] :=
                 owner_id = $owner_id,
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }"#,
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' }"#,
             params,
             ScriptMutability::Immutable,
         )?;
@@ -261,14 +306,168 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| {
+                let id = to_uuid(&row[0])?;
+                let role = TypeUseRole::from_str(&to_string(&row[3])?)?;
                 Ok(TypeUseRoot {
-                    owner_id: to_uuid(&row[0])?,
-                    root_type_id: to_uuid(&row[1])?,
-                    role: TypeUseRole::from_str(&to_string(&row[2])?)?,
-                    slot_index: optional_index(&row[3])?,
+                    id,
+                    owner_id: to_uuid(&row[1])?,
+                    root_type_id: to_uuid(&row[2])?,
+                    role,
+                    coordinate: self.type_use_coordinate(id, role)?,
                 })
             })
             .collect()
+    }
+
+    fn type_use_coordinate(
+        &self,
+        type_use_id: Uuid,
+        role: TypeUseRole,
+    ) -> Result<TypeUseCoordinate, DbError> {
+        match role {
+            TypeUseRole::FunctionParam | TypeUseRole::MethodParam => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_param_slot",
+                    "param_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::ParamSlot {
+                    param_index: required_index(&row[0])?,
+                })
+            }
+            TypeUseRole::FieldType => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_field_slot",
+                    "field_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::FieldSlot {
+                    field_index: required_index(&row[0])?,
+                })
+            }
+            TypeUseRole::TraitSuper => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_trait_super_slot",
+                    "supertrait_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::TraitSuperSlot {
+                    supertrait_index: required_index(&row[0])?,
+                })
+            }
+            TypeUseRole::GenericBound => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_generic_bound_slot",
+                    "generic_param_index, bound_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::GenericBoundSlot {
+                    generic_param_index: required_index(&row[0])?,
+                    bound_index: required_index(&row[1])?,
+                })
+            }
+            TypeUseRole::GenericParamBound => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_generic_param_bound_slot",
+                    "containing_owner_id, generic_param_index, bound_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::GenericParamBoundSlot {
+                    containing_owner_id: to_uuid(&row[0])?,
+                    generic_param_index: required_index(&row[1])?,
+                    bound_index: required_index(&row[2])?,
+                })
+            }
+            TypeUseRole::WherePredicateSubject => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_where_subject_slot",
+                    "predicate_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::WhereSubjectSlot {
+                    predicate_index: required_index(&row[0])?,
+                })
+            }
+            TypeUseRole::WherePredicateBound => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_where_bound_slot",
+                    "predicate_index, bound_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::WhereBoundSlot {
+                    predicate_index: required_index(&row[0])?,
+                    bound_index: required_index(&row[1])?,
+                })
+            }
+            TypeUseRole::WhereGenericParamBound => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_where_generic_param_bound_slot",
+                    "containing_owner_id, predicate_index, bound_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::WhereGenericParamBoundSlot {
+                    containing_owner_id: to_uuid(&row[0])?,
+                    predicate_index: required_index(&row[1])?,
+                    bound_index: required_index(&row[2])?,
+                })
+            }
+            TypeUseRole::AssociatedTypeBound => {
+                let row = self.one_coordinate_row(
+                    type_use_id,
+                    "type_use_associated_type_bound_slot",
+                    "associated_type_index, associated_type_name, bound_index",
+                    role,
+                )?;
+                Ok(TypeUseCoordinate::AssociatedTypeBoundSlot {
+                    associated_type_index: required_index(&row[0])?,
+                    associated_type_name: to_string(&row[1])?,
+                    bound_index: required_index(&row[2])?,
+                })
+            }
+            TypeUseRole::FunctionReturn
+            | TypeUseRole::MethodReturn
+            | TypeUseRole::TypeAliasTarget
+            | TypeUseRole::ImplSelf
+            | TypeUseRole::ImplTrait
+            | TypeUseRole::ConstType
+            | TypeUseRole::StaticType => Ok(TypeUseCoordinate::None),
+        }
+    }
+
+    fn one_coordinate_row(
+        &self,
+        type_use_id: Uuid,
+        relation: &str,
+        fields: &str,
+        role: TypeUseRole,
+    ) -> Result<Vec<DataValue>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "type_use_id".to_string(),
+            DataValue::Uuid(UuidWrapper(type_use_id)),
+        );
+
+        let script = format!(
+            r#"?[{fields}] :=
+                type_use_id = $type_use_id,
+                *{relation} {{ type_use_id, {fields} @ 'NOW' }}"#
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+        if rows.rows.len() != 1 {
+            return Err(DbError::Cozo(format!(
+                "expected exactly one coordinate row in {relation} for type_use {type_use_id} role {role:?}, found {}",
+                rows.rows.len()
+            )));
+        }
+        Ok(rows.rows[0].clone())
     }
 
     /// Returns direct structural containment edges for `root_type_id`.
@@ -310,16 +509,10 @@ impl Database {
         &self,
         owner_id: Uuid,
     ) -> Result<Vec<TypeTargetPath>, DbError> {
-        const MAX_TYPE_DEPTH: u32 = 32;
-
         let mut params = BTreeMap::new();
         params.insert(
             "owner_id".to_string(),
             DataValue::Uuid(UuidWrapper(owner_id)),
-        );
-        params.insert(
-            "max_depth".to_string(),
-            DataValue::Num(Num::Int(i64::from(MAX_TYPE_DEPTH))),
         );
 
         let rows = self.run_script(
@@ -345,29 +538,27 @@ impl Database {
                 trait_source[source_id],
                 *trait { id: target_id @ 'NOW' }
 
-            roots[owner_id, root_type_id] :=
+            roots[type_use_id, owner_id, root_type_id] :=
                 owner_id = $owner_id,
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' }
 
-            reachable[owner_id, root_type_id, terminal_type_id, depth] :=
-                roots[owner_id, root_type_id],
-                terminal_type_id = root_type_id,
-                depth = 0
-
-            reachable[owner_id, root_type_id, terminal_type_id, depth] :=
-                reachable[owner_id, root_type_id, parent_type_id, previous_depth],
-                previous_depth < $max_depth,
+            contains[parent_type_id, child_type_id] :=
                 *type_contains {
                     parent_type_id,
-                    child_type_id: terminal_type_id,
+                    child_type_id,
                     kind,
                     position @ 'NOW'
-                },
-                depth = previous_depth + 1
+                }
 
-            ?[owner_id, root_type_id, terminal_type_id, target_id, relation_kind, depth] :=
-                reachable[owner_id, root_type_id, terminal_type_id, depth],
-                valid_type_relation[terminal_type_id, target_id, relation_kind]
+            ?[
+                type_use_id,
+                owner_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
             "#,
             params,
             ScriptMutability::Immutable,
@@ -377,12 +568,13 @@ impl Database {
             .iter()
             .map(|row| {
                 Ok(TypeTargetPath {
-                    owner_id: to_uuid(&row[0])?,
-                    root_type_id: to_uuid(&row[1])?,
-                    terminal_type_id: to_uuid(&row[2])?,
-                    target_id: to_uuid(&row[3])?,
-                    relation_kind: TypeRelationKind::from_str(&to_string(&row[4])?)?,
-                    depth: required_index(&row[5])?,
+                    type_use_id: to_uuid(&row[0])?,
+                    owner_id: to_uuid(&row[1])?,
+                    root_type_id: to_uuid(&row[2])?,
+                    terminal_type_id: to_uuid(&row[3])?,
+                    target_id: to_uuid(&row[4])?,
+                    relation_kind: TypeRelationKind::from_str(&to_string(&row[5])?)?,
+                    depth: required_index(&row[6])?,
                 })
             })
             .collect()
@@ -396,16 +588,10 @@ impl Database {
     /// impls, and other owners that mention it directly or through nested type
     /// structure.
     pub fn type_owners_for_target(&self, target_id: Uuid) -> Result<Vec<TypeTargetPath>, DbError> {
-        const MAX_TYPE_DEPTH: u32 = 32;
-
         let mut params = BTreeMap::new();
         params.insert(
             "target_id".to_string(),
             DataValue::Uuid(UuidWrapper(target_id)),
-        );
-        params.insert(
-            "max_depth".to_string(),
-            DataValue::Num(Num::Int(i64::from(MAX_TYPE_DEPTH))),
         );
 
         let rows = self.run_script(
@@ -431,29 +617,46 @@ impl Database {
                 trait_source[source_id],
                 *trait { id: target_id @ 'NOW' }
 
-            roots[owner_id, root_type_id] :=
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
+            roots[type_use_id, owner_id, root_type_id] :=
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' }
 
-            reachable[owner_id, root_type_id, terminal_type_id, depth] :=
-                roots[owner_id, root_type_id],
-                terminal_type_id = root_type_id,
-                depth = 0
-
-            reachable[owner_id, root_type_id, terminal_type_id, depth] :=
-                reachable[owner_id, root_type_id, parent_type_id, previous_depth],
-                previous_depth < $max_depth,
+            contains[parent_type_id, child_type_id] :=
                 *type_contains {
                     parent_type_id,
-                    child_type_id: terminal_type_id,
+                    child_type_id,
                     kind,
                     position @ 'NOW'
-                },
-                depth = previous_depth + 1
+                }
 
-            ?[owner_id, root_type_id, terminal_type_id, target_id, relation_kind, depth] :=
+            target_paths[
+                type_use_id,
+                owner_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
+
+            ?[
+                type_use_id,
+                owner_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] :=
                 target_id = $target_id,
-                reachable[owner_id, root_type_id, terminal_type_id, depth],
-                valid_type_relation[terminal_type_id, target_id, relation_kind]
+                target_paths[
+                    type_use_id,
+                    owner_id,
+                    root_type_id,
+                    terminal_type_id,
+                    target_id,
+                    relation_kind,
+                    depth
+                ]
 
             :sort depth, owner_id, root_type_id, terminal_type_id
             "#,
@@ -465,12 +668,13 @@ impl Database {
             .iter()
             .map(|row| {
                 Ok(TypeTargetPath {
-                    owner_id: to_uuid(&row[0])?,
-                    root_type_id: to_uuid(&row[1])?,
-                    terminal_type_id: to_uuid(&row[2])?,
-                    target_id: to_uuid(&row[3])?,
-                    relation_kind: TypeRelationKind::from_str(&to_string(&row[4])?)?,
-                    depth: required_index(&row[5])?,
+                    type_use_id: to_uuid(&row[0])?,
+                    owner_id: to_uuid(&row[1])?,
+                    root_type_id: to_uuid(&row[2])?,
+                    terminal_type_id: to_uuid(&row[3])?,
+                    target_id: to_uuid(&row[4])?,
+                    relation_kind: TypeRelationKind::from_str(&to_string(&row[5])?)?,
+                    depth: required_index(&row[6])?,
                 })
             })
             .collect()
@@ -485,16 +689,10 @@ impl Database {
     /// enough depth information to rank exact/root matches ahead of nested
     /// terminal matches.
     pub fn type_related_owners(&self, owner_id: Uuid) -> Result<Vec<TypeRelatedOwner>, DbError> {
-        const MAX_TYPE_DEPTH: u32 = 32;
-
         let mut params = BTreeMap::new();
         params.insert(
             "owner_id".to_string(),
             DataValue::Uuid(UuidWrapper(owner_id)),
-        );
-        params.insert(
-            "max_depth".to_string(),
-            DataValue::Num(Num::Int(i64::from(MAX_TYPE_DEPTH))),
         );
 
         let rows = self.run_script(
@@ -520,58 +718,50 @@ impl Database {
                 trait_source[source_id],
                 *trait { id: target_id @ 'NOW' }
 
-            origin_roots[root_type_id] :=
-                owner_id = $owner_id,
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' }
+            roots[type_use_id, owner_id, root_type_id] :=
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' }
 
-            origin_reachable[terminal_type_id, depth] :=
-                origin_roots[root_type_id],
-                terminal_type_id = root_type_id,
-                depth = 0
-
-            origin_reachable[terminal_type_id, depth] :=
-                origin_reachable[parent_type_id, previous_depth],
-                previous_depth < $max_depth,
+            contains[parent_type_id, child_type_id] :=
                 *type_contains {
                     parent_type_id,
-                    child_type_id: terminal_type_id,
+                    child_type_id,
                     kind,
                     position @ 'NOW'
-                },
-                depth = previous_depth + 1
+                }
+
+            target_paths[
+                type_use_id,
+                owner_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
 
             origin_targets[target_id, relation_kind, origin_depth] :=
-                origin_reachable[source_id, origin_depth],
-                valid_type_relation[source_id, target_id, relation_kind]
-
-            related_roots[related_owner_id, root_type_id] :=
-                *type_use {
-                    owner_id: related_owner_id,
+                owner_id = $owner_id,
+                target_paths[
+                    type_use_id,
+                    owner_id,
                     root_type_id,
-                    role,
-                    slot_index @ 'NOW'
-                },
-                related_owner_id != $owner_id
-
-            related_reachable[related_owner_id, terminal_type_id, depth] :=
-                related_roots[related_owner_id, root_type_id],
-                terminal_type_id = root_type_id,
-                depth = 0
-
-            related_reachable[related_owner_id, terminal_type_id, depth] :=
-                related_reachable[related_owner_id, parent_type_id, previous_depth],
-                previous_depth < $max_depth,
-                *type_contains {
-                    parent_type_id,
-                    child_type_id: terminal_type_id,
-                    kind,
-                    position @ 'NOW'
-                },
-                depth = previous_depth + 1
+                    terminal_type_id,
+                    target_id,
+                    relation_kind,
+                    origin_depth
+                ]
 
             related_targets[related_owner_id, target_id, relation_kind, related_depth] :=
-                related_reachable[related_owner_id, source_id, related_depth],
-                valid_type_relation[source_id, target_id, relation_kind]
+                target_paths[
+                    type_use_id,
+                    related_owner_id,
+                    root_type_id,
+                    terminal_type_id,
+                    target_id,
+                    relation_kind,
+                    related_depth
+                ],
+                related_owner_id != $owner_id
 
             ?[
                 origin_owner_id,
@@ -762,7 +952,7 @@ impl Database {
                 ordinary_target[target_id]
 
             transparent_child[owner_id, child_type_id] :=
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' },
                 *type_contains {
                     parent_type_id: root_type_id,
                     child_type_id,
@@ -771,7 +961,7 @@ impl Database {
                 }
 
             transparent_child[owner_id, child_type_id] :=
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' },
                 *type_contains {
                     parent_type_id: root_type_id,
                     child_type_id,
@@ -780,7 +970,7 @@ impl Database {
                 }
 
             transparent_child[owner_id, child_type_id] :=
-                *type_use { owner_id, root_type_id, role, slot_index @ 'NOW' },
+                *type_use { id: type_use_id, owner_id, root_type_id, role @ 'NOW' },
                 *type_contains {
                     parent_type_id: root_type_id,
                     child_type_id,
@@ -848,7 +1038,7 @@ impl Database {
                     candidates,
                     target.target_id,
                     TypeContextRelation::UsesTypeNested,
-                    target.depth + 2,
+                    target.depth + 1,
                     options,
                 );
             }
@@ -1005,8 +1195,6 @@ impl Database {
         target_id: Uuid,
         relation_kind: TypeRelationKind,
     ) -> Result<Vec<ImplTypeMatch>, DbError> {
-        const MAX_TYPE_DEPTH: u32 = 32;
-
         let relation_kind = match relation_kind {
             TypeRelationKind::Ordinary => "Ordinary",
             TypeRelationKind::Trait => "Trait",
@@ -1019,10 +1207,6 @@ impl Database {
         );
         params.insert("role".to_string(), DataValue::from(role));
         params.insert("relation_kind".to_string(), DataValue::from(relation_kind));
-        params.insert(
-            "max_depth".to_string(),
-            DataValue::Num(Num::Int(i64::from(MAX_TYPE_DEPTH))),
-        );
 
         let rows = self.run_script(
             r#"
@@ -1047,36 +1231,45 @@ impl Database {
                 trait_source[source_id],
                 *trait { id: target_id @ 'NOW' }
 
-            roots[impl_id, root_type_id] :=
+            roots[type_use_id, impl_id, root_type_id] :=
                 *impl { id: impl_id @ 'NOW' },
                 *type_use {
+                    id: type_use_id,
                     owner_id: impl_id,
                     root_type_id,
-                    role: $role,
-                    slot_index @ 'NOW'
+                    role: $role @ 'NOW'
                 }
 
-            reachable[impl_id, terminal_type_id, depth] :=
-                roots[impl_id, root_type_id],
-                terminal_type_id = root_type_id,
-                depth = 0
-
-            reachable[impl_id, terminal_type_id, depth] :=
-                reachable[impl_id, parent_type_id, previous_depth],
-                previous_depth < $max_depth,
+            contains[parent_type_id, child_type_id] :=
                 *type_contains {
                     parent_type_id,
-                    child_type_id: terminal_type_id,
+                    child_type_id,
                     kind,
                     position @ 'NOW'
-                },
-                depth = previous_depth + 1
+                }
+
+            target_paths[
+                type_use_id,
+                impl_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
 
             ?[impl_id, depth] :=
                 target_id = $target_id,
                 relation_kind = $relation_kind,
-                reachable[impl_id, source_id, depth],
-                valid_type_relation[source_id, target_id, relation_kind]
+                target_paths[
+                    type_use_id,
+                    impl_id,
+                    root_type_id,
+                    terminal_type_id,
+                    target_id,
+                    relation_kind,
+                    depth
+                ]
 
             :sort depth, impl_id
             "#,

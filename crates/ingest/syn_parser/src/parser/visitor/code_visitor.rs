@@ -1953,23 +1953,37 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Placeholder for other associated items (consts, types)
         let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
         let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
-        let associated_type_bounds: Vec<TraitTypeUseId> = item_trait
+        let mut next_associated_type_index = 0;
+        let associated_type_bounds: Vec<crate::parser::types::AssociatedTypeBound> = item_trait
             .items
             .iter()
-            .filter_map(|item| match item {
-                syn::TraitItem::Type(assoc_type) => Some(
+            .filter_map(|item| {
+                let syn::TraitItem::Type(assoc_type) = item else {
+                    return None;
+                };
+                let associated_type_index = next_associated_type_index;
+                next_associated_type_index += 1;
+                Some(
                     assoc_type
                         .bounds
                         .iter()
-                        .filter_map(|bound| match bound {
+                        .enumerate()
+                        .filter_map(|(bound_index, bound)| match bound {
                             syn::TypeParamBound::Trait(trait_bound) => {
-                                Some(get_or_create_trait_bound_type(self.state, trait_bound))
+                                Some(crate::parser::types::AssociatedTypeBound {
+                                    associated_type_index,
+                                    associated_type_name: assoc_type.ident.to_string(),
+                                    bound_index,
+                                    bound_type_id: get_or_create_trait_bound_type(
+                                        self.state,
+                                        trait_bound,
+                                    ),
+                                })
                             }
                             _ => None,
                         })
                         .collect::<Vec<_>>(),
-                ),
-                _ => None,
+                )
             })
             .flatten()
             .collect();
