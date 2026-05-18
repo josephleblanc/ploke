@@ -138,6 +138,36 @@ Patch Generation `LLM calls` drilldown, not the Run Records section, and they
 can decode tool arguments/results if opened (`src/ui/app/shell.rs:2025-2298`,
 `src/ui/app/shell.rs:113-155`).
 
+Follow-up measured answer: native interactive window benchmarking with focused
+Run Records spans supports the first half of that guess, but narrows the second
+half. The focused report is
+`benchmarks/20260518-run-records-focused-spans/report.json`. In the primary Run
+Records sequence, selected/collapsed idle was `1216` allocations/frame and
+`906001` object bytes/frame, while expanded idle was `1446`
+allocations/frame and `1085188` object bytes/frame. The steady expanded section
+therefore still adds about `+230` allocations/frame and `+179187` object
+bytes/frame.
+
+The top-level Run Records body is not decoding nested tool payloads in this
+scenario. No `inspector_tool_*` or `inspector_run_record_tool_step` groups appear
+in the Run Records-focused heap profiles. The new Run Records subspans attribute
+the body work mostly to text galley/cache work and widget rows:
+`inspector_run_records_text_galley` allocated `1250086` object bytes in the
+primary sequence (`235106` in alternate), and
+`inspector_run_records_widget_row` allocated `312000` object bytes in both
+primary and alternate. The resolve and row wrapper spans were negligible or
+absent, so the evidence does not point to projection rebuilding as the measured
+body cost.
+
+However, the body subspans do not explain the full phase delta. They account for
+the named Run Records body group, but the process-wide expanded-vs-collapsed
+increase remains much larger than the body-specific attribution. That leaves
+egui/root/layout allocations or other frame work outside the current Run
+Records body spans as an active attribution gap. Standard mode still captured no
+callsite backtraces, so the result is grounded enough to deprioritize nested
+tool payloads and projection rebuilding, but not enough to close the accounting
+on widgets/layout versus root churn.
+
 ### 11. Would callsite attribution change the priority order?
 
 Best guess: it might change the exact fix order but probably not the section

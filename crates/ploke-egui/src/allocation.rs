@@ -676,6 +676,13 @@ mod tracking {
         "inspector_parent_create_llm_calls",
         "inspector_parent_create_source_status",
         "inspector_run_records",
+        "inspector_run_records_resolve_slot",
+        "inspector_run_records_row",
+        "inspector_run_records_widget_row",
+        "inspector_run_records_text_galley",
+        "inspector_run_records_label_widget",
+        "inspector_run_records_id_galley",
+        "inspector_run_records_id_widget",
         "inspector_run_record_arm",
         "inspector_run_record_tool_step",
         "inspector_tool_arguments",
@@ -754,6 +761,41 @@ mod tracking {
 
             let snapshot = tracker.snapshot();
             assert!(snapshot.callsites.is_empty());
+        }
+
+        #[test]
+        fn run_record_measurement_scopes_are_registered() {
+            let tracker = HeapProfileTracker::default();
+            for scope in [
+                "inspector_run_records_resolve_slot",
+                "inspector_run_records_row",
+                "inspector_run_records_widget_row",
+                "inspector_run_records_text_galley",
+                "inspector_run_records_label_widget",
+                "inspector_run_records_id_galley",
+                "inspector_run_records_id_widget",
+            ] {
+                tracker.record_synthetic_allocated(1, 1, scope);
+            }
+
+            let snapshot = tracker.snapshot();
+            for scope in [
+                "inspector_run_records_resolve_slot",
+                "inspector_run_records_row",
+                "inspector_run_records_widget_row",
+                "inspector_run_records_text_galley",
+                "inspector_run_records_label_widget",
+                "inspector_run_records_id_galley",
+                "inspector_run_records_id_widget",
+            ] {
+                assert!(
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.name.as_deref() == Some(scope)),
+                    "{scope} should be tracked"
+                );
+            }
         }
     }
 }

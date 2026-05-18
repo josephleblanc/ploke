@@ -912,10 +912,10 @@ fn render_run_records_for_inspector(
     render_run_records(
         ui,
         render_cache,
-        sections
-            .run_records()
-            .iter()
-            .filter_map(|slot| slot.resolve(graph)),
+        sections.run_records().iter().filter_map(|slot| {
+            let _span = tracing::trace_span!("inspector_run_records_resolve_slot").entered();
+            slot.resolve(graph)
+        }),
     );
 }
 
@@ -926,21 +926,22 @@ fn render_run_records<'a>(
 ) {
     let mut rendered = false;
     for record in records {
+        let _span = tracing::trace_span!("inspector_run_records_row").entered();
         rendered = true;
         ui.separator();
-        cached_kv_id(
+        run_record_kv_id(
             ui,
             render_cache,
             "arm",
             compared_run_arm_label(record.record_ref.arm),
         );
-        cached_kv_id(
+        run_record_kv_id(
             ui,
             render_cache,
             "instance",
             record.record_ref.instance_id.as_str(),
         );
-        cached_kv_id(
+        run_record_kv_id(
             ui,
             render_cache,
             "record",
@@ -950,19 +951,19 @@ fn render_run_records<'a>(
                 .to_str()
                 .unwrap_or("non_utf8_path"),
         );
-        cached_kv_id(
+        run_record_kv_id(
             ui,
             render_cache,
             "manifest",
             record.record.manifest_id.as_str(),
         );
         if let Some(model) = record.record.metadata.agent.model_id.as_deref() {
-            cached_kv_id(ui, render_cache, "model", model);
+            run_record_kv_id(ui, render_cache, "model", model);
         }
         if let Some(provider) = record.record.metadata.agent.provider.as_deref() {
-            cached_kv_id(ui, render_cache, "provider", provider);
+            run_record_kv_id(ui, render_cache, "provider", provider);
         }
-        cached_kv_id(
+        run_record_kv_id(
             ui,
             render_cache,
             "repo root",
@@ -974,22 +975,22 @@ fn render_run_records<'a>(
                 .to_str()
                 .unwrap_or("non_utf8_path"),
         );
-        cached_kv_usize(ui, render_cache, "turns", record.stats.turn_count);
-        cached_kv_usize(ui, render_cache, "tool calls", record.stats.tool_call_count);
-        cached_kv_usize(
+        run_record_kv_usize(ui, render_cache, "turns", record.stats.turn_count);
+        run_record_kv_usize(ui, render_cache, "tool calls", record.stats.tool_call_count);
+        run_record_kv_usize(
             ui,
             render_cache,
             "failed tool calls",
             record.stats.failed_tool_call_count,
         );
         if let Some(packaging) = record.record.phases.packaging.as_ref() {
-            cached_kv_id(
+            run_record_kv_id(
                 ui,
                 render_cache,
                 "submission",
                 submission_artifact_state_label(packaging.submission_artifact_state),
             );
-            cached_kv_id(
+            run_record_kv_id(
                 ui,
                 render_cache,
                 "patch projection",
@@ -1000,6 +1001,92 @@ fn render_run_records<'a>(
     if !rendered {
         kv(ui, "run records", "none");
     }
+}
+
+fn run_record_kv_id(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: &str,
+) {
+    let _span = tracing::trace_span!("inspector_run_records_widget_row").entered();
+    ui.horizontal(|ui| {
+        run_record_label(ui, render_cache, key);
+        run_record_expandable_id(ui, render_cache, ("kv", key, value), value);
+    });
+}
+
+fn run_record_kv_usize(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: usize,
+) {
+    let mut buffer = itoa::Buffer::new();
+    run_record_kv_id(ui, render_cache, key, buffer.format(value));
+}
+
+fn run_record_label(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+) -> egui::Response {
+    let galley = {
+        let _span = tracing::trace_span!("inspector_run_records_text_galley").entered();
+        render_cache.text_galley(ui, text, CachedTextKind::Plain)
+    };
+    let _span = tracing::trace_span!("inspector_run_records_label_widget").entered();
+    ui.add(egui::Label::new(galley))
+}
+
+fn run_record_expandable_id(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    id_source: impl std::hash::Hash,
+    full: &str,
+) -> egui::Response {
+    let Some(_) = ShortId::new(full) else {
+        return run_record_monospace_label(ui, render_cache, full);
+    };
+
+    let id = ui.make_persistent_id(("ploke-egui.short-id", id_source));
+    let mut expanded = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+    let galley = {
+        let _span = tracing::trace_span!("inspector_run_records_id_galley").entered();
+        render_cache.id_galley(ui, full, expanded)
+    };
+    let response = {
+        let _span = tracing::trace_span!("inspector_run_records_id_widget").entered();
+        ui.add(egui::Label::new(galley).sense(egui::Sense::click()))
+            .on_hover_text("Click to expand. Right click to copy the full id.")
+    };
+
+    if response.clicked() {
+        expanded = !expanded;
+        ui.data_mut(|data| data.insert_temp(id, expanded));
+    }
+
+    response.context_menu(|ui| {
+        if ui.button("Copy full id").clicked() {
+            ui.ctx().copy_text(full.to_owned());
+            ui.close();
+        }
+    });
+
+    response
+}
+
+fn run_record_monospace_label(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+) -> egui::Response {
+    let galley = {
+        let _span = tracing::trace_span!("inspector_run_records_text_galley").entered();
+        render_cache.text_galley(ui, text, CachedTextKind::Monospace)
+    };
+    let _span = tracing::trace_span!("inspector_run_records_label_widget").entered();
+    ui.add(egui::Label::new(galley))
 }
 
 fn compared_run_arm_label(arm: ploke_tree::ComparedRunArm) -> &'static str {
