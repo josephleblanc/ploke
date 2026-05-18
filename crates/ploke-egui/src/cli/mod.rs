@@ -42,6 +42,8 @@ pub struct Run {
     #[cfg(feature = "dev")]
     pub benchmark_output: Option<PathBuf>,
     #[cfg(feature = "dev")]
+    pub benchmark_callsite_sample_every: Option<u64>,
+    #[cfg(feature = "dev")]
     pub bench: Option<BenchRun>,
 }
 
@@ -66,6 +68,7 @@ impl Run {
                 benchmark_suite: args.benchmark_suite,
                 benchmark_scenarios: args.benchmark_scenario,
                 benchmark_output: args.benchmark_output,
+                benchmark_callsite_sample_every: args.benchmark_callsite_sample_every,
                 bench: args.command.map(Command::into_run),
             };
         }
@@ -163,6 +166,14 @@ struct Args {
         help = "Write benchmark README.md and report.json to this directory"
     )]
     benchmark_output: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "benchmark_suite",
+        help = "Capture focused sampled heap callsites every N matching allocations"
+    )]
+    benchmark_callsite_sample_every: Option<u64>,
 
     #[arg(
         long,

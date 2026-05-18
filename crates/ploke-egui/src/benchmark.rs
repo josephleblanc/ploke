@@ -36,7 +36,7 @@ pub fn with_benchmark_tracing_subscriber<R>(f: impl FnOnce() -> R) -> R {
 pub const STANDARD_RUN_ROOT: &str =
     "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1";
 
-const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v3";
+const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v4";
 const STANDARD_FRAME_TARGET: usize = 300;
 const INSPECTOR_SEQUENCE_WARMUP_FRAMES: usize = 100;
 const INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES: usize = 30;
@@ -45,6 +45,12 @@ const INSPECTOR_SECTION_PHASE_FRAMES: usize = 30;
 const TOP_FRAME_LIMIT: usize = 10;
 const TOP_HEAP_LIMIT: usize = 32;
 const RUN_PICKER_DISCOVERY_WARNING_NS: u64 = 250_000_000;
+const FOCUSED_CALLSITE_SCOPES: &[&str] = &[
+    "eframe_run_native",
+    "selection_inspector",
+    "central_graph_widget_add",
+    "inspector_run_record_tool_step",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BenchmarkSuite {
@@ -588,6 +594,7 @@ pub struct BenchmarkConfig {
     pub scenarios: Vec<BenchmarkScenario>,
     pub command: String,
     pub run_readiness: Option<BenchmarkRunReadiness>,
+    pub callsite_sampling: Option<BenchmarkCallsiteSampling>,
 }
 
 impl BenchmarkConfig {
@@ -596,6 +603,7 @@ impl BenchmarkConfig {
         run_root: PathBuf,
         output_dir: Option<PathBuf>,
         scenario_filters: Vec<String>,
+        callsite_sample_every: Option<u64>,
     ) -> Result<Self, String> {
         if suite == BenchmarkSuite::Standard && run_root != Path::new(STANDARD_RUN_ROOT) {
             return Err(format!(
@@ -627,6 +635,9 @@ impl BenchmarkConfig {
                 Some(readiness)
             }
         };
+        let callsite_sampling = callsite_sample_every
+            .map(BenchmarkCallsiteSampling::focused)
+            .transpose()?;
 
         Ok(Self {
             suite,
@@ -635,7 +646,36 @@ impl BenchmarkConfig {
             scenarios,
             command: std::env::args().collect::<Vec<_>>().join(" "),
             run_readiness,
+            callsite_sampling,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkCallsiteSampling {
+    pub sample_every: u64,
+    pub scopes: Vec<String>,
+    pub accounting: String,
+}
+
+impl BenchmarkCallsiteSampling {
+    fn focused(sample_every: u64) -> Result<Self, String> {
+        if sample_every == 0 {
+            return Err("--benchmark-callsite-sample-every must be greater than zero".to_owned());
+        }
+        Ok(Self {
+            sample_every,
+            scopes: FOCUSED_CALLSITE_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_owned())
+                .collect(),
+            accounting: "scaled sampled estimates; callsite totals are not exact allocator totals"
+                .to_owned(),
+        })
+    }
+
+    fn scope_names(&self) -> Vec<&str> {
+        self.scopes.iter().map(String::as_str).collect()
     }
 }
 
@@ -785,6 +825,8 @@ pub struct BenchmarkReport {
     pub run_root: String,
     pub feature_set: Vec<String>,
     pub scenarios_requested: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callsite_sampling: Option<BenchmarkCallsiteSampling>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_readiness: Option<BenchmarkRunReadiness>,
     pub startup: StartupProfile,
@@ -1256,6 +1298,18 @@ impl BenchmarkController {
             view
         };
         let heap_tracker = allocation::install_global_tracker()?;
+        if let Some(sampling) = &config.callsite_sampling {
+            let scopes = sampling.scope_names();
+            allocation::configure_callsite_sampling(
+                &heap_tracker,
+                Some(sampling.sample_every),
+                &scopes,
+            )
+            .map_err(io::Error::other)?;
+        } else {
+            allocation::configure_callsite_sampling(&heap_tracker, None, &[])
+                .map_err(io::Error::other)?;
+        }
         annotate_startup_profile(&mut startup);
         if let Some(readiness) = &config.run_readiness {
             startup.notes.push(format!(
@@ -1401,12 +1455,13 @@ impl BenchmarkController {
                 .iter()
                 .map(|scenario| scenario.name())
                 .collect(),
+            callsite_sampling: self.config.callsite_sampling.clone(),
             run_readiness: self.config.run_readiness.clone(),
             startup: self.startup.clone(),
             scenarios: self.completed.clone(),
             puffin_artifacts,
             heap_artifacts,
-            notes: benchmark_notes(&self.dirty_state),
+            notes: benchmark_notes(&self.dirty_state, self.config.callsite_sampling.as_ref()),
         };
 
         fs::create_dir_all(&self.config.output_dir)?;
@@ -1445,15 +1500,28 @@ impl BenchmarkController {
     }
 }
 
-fn benchmark_notes(dirty_state: &DirtyState) -> Vec<String> {
+fn benchmark_notes(
+    dirty_state: &DirtyState,
+    callsite_sampling: Option<&BenchmarkCallsiteSampling>,
+) -> Vec<String> {
     let mut notes = vec![
         "reporting-only benchmark; no pass/fail thresholds applied".to_owned(),
         "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface".to_owned(),
-        "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode".to_owned(),
         "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence".to_owned(),
         "puffin captures are local ignored artifacts under crates/ploke-egui/data/".to_owned(),
         "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/".to_owned(),
     ];
+    if let Some(sampling) = callsite_sampling {
+        notes.push(format!(
+            "focused callsite sampling enabled every {} matching allocations for scopes: {}; callsite totals are scaled estimates",
+            sampling.sample_every,
+            sampling.scopes.join(", ")
+        ));
+    } else {
+        notes.push(
+            "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode".to_owned(),
+        );
+    }
     if dirty_state.classification == DirtyStateClassification::DirtyUnrelated {
         notes.push(
             "git worktree was dirty only outside benchmark-relevant paths at benchmark start"
@@ -1826,6 +1894,19 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
         }
         text.push('\n');
     }
+    if let Some(sampling) = &report.callsite_sampling {
+        text.push_str("## Callsite Sampling\n\n");
+        text.push_str(&format!(
+            "- sample every: `{}` matching allocations\n",
+            sampling.sample_every
+        ));
+        text.push_str(&format!("- accounting: `{}`\n", sampling.accounting));
+        text.push_str("- scopes:\n");
+        for scope in &sampling.scopes {
+            text.push_str(&format!("  - `{scope}`\n"));
+        }
+        text.push('\n');
+    }
     if let Some(readiness) = &report.run_readiness {
         text.push_str("## Run Readiness\n\n");
         text.push_str(&format!("- ready: `{}`\n", readiness.ready));
@@ -2160,6 +2241,7 @@ mod tests {
             run_root: STANDARD_RUN_ROOT.to_owned(),
             feature_set: vec!["dev".to_owned(), "native-benchmark".to_owned()],
             scenarios_requested: vec!["startup_frames_300".to_owned()],
+            callsite_sampling: Some(BenchmarkCallsiteSampling::focused(32).expect("sampling")),
             run_readiness: Some(BenchmarkRunReadiness::from_counts(
                 5,
                 1,
@@ -2620,6 +2702,7 @@ mod tests {
                 19,
                 18,
             )),
+            callsite_sampling: None,
         };
         let heap_dir = default_heap_benchmark_dir(&config.output_dir);
         let mut controller =

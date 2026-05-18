@@ -54,6 +54,7 @@ pub(super) struct GraphViewCache {
     connectivity: GraphConnectivityDiagnostics,
     artifact_tree: artifact_tree::Shape,
     readability: ReadabilityCache,
+    diagnostics: DiagnosticsCache,
 }
 
 impl Default for GraphViewCache {
@@ -67,6 +68,7 @@ impl Default for GraphViewCache {
             connectivity: GraphConnectivityDiagnostics::default(),
             artifact_tree: artifact_tree::Shape::default(),
             readability: ReadabilityCache::default(),
+            diagnostics: DiagnosticsCache::default(),
         }
     }
 }
@@ -102,10 +104,12 @@ impl GraphViewCache {
             self.connectivity = built.connectivity;
             self.artifact_tree = built.artifact_tree;
             self.readability.clear();
+            self.diagnostics.clear();
         }
         self.mode = mode;
         self.apply_visibility(mode);
         self.readability.clear();
+        self.diagnostics.clear();
         true
     }
 
@@ -132,22 +136,27 @@ impl GraphViewCache {
         style: ViewStyle,
         edge_labels: EdgeLabelDiagnostics,
     ) -> Option<GraphViewDiagnostics> {
+        let layout = readability_layout_fingerprint(&self.graph);
         let readability = self.readability.get_or_compute(
             &self.graph,
             self.signature,
             style,
             self.mode,
             self.filters,
+            layout,
         );
-        graph_diagnostics(
-            &self.graph,
+        self.diagnostics.get_or_compute(
             viewport_size,
             style,
             edge_labels,
             self.connectivity,
             self.artifact_tree,
             self.mode,
+            self.signature,
+            self.filters,
+            layout,
             readability,
+            &self.graph,
         )
     }
 
@@ -346,6 +355,11 @@ impl GraphViewCache {
     fn readability_rebuilds(&self) -> usize {
         self.readability.rebuilds
     }
+
+    #[cfg(test)]
+    fn diagnostics_rebuilds(&self) -> usize {
+        self.diagnostics.rebuilds
+    }
 }
 
 #[derive(Debug, Default)]
@@ -367,13 +381,14 @@ impl ReadabilityCache {
         style: ViewStyle,
         mode: GraphViewMode,
         filters: ArtifactTreeFilters,
+        layout: u64,
     ) -> GraphReadabilityDiagnostics {
         let key = ReadabilityKey {
             signature,
             style,
             mode,
             filters,
-            layout: readability_layout_fingerprint(graph),
+            layout,
         };
         if self.key.as_ref() != Some(&key) {
             self.value = readability_diagnostics(graph, style);
@@ -391,6 +406,80 @@ struct ReadabilityKey {
     mode: GraphViewMode,
     filters: ArtifactTreeFilters,
     layout: u64,
+}
+
+#[derive(Debug, Default)]
+struct DiagnosticsCache {
+    key: Option<DiagnosticsKey>,
+    value: Option<GraphViewDiagnostics>,
+    rebuilds: usize,
+}
+
+impl DiagnosticsCache {
+    fn clear(&mut self) {
+        self.key = None;
+        self.value = None;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn get_or_compute(
+        &mut self,
+        viewport_size: Vec2,
+        style: ViewStyle,
+        edge_labels: EdgeLabelDiagnostics,
+        connectivity: GraphConnectivityDiagnostics,
+        artifact_tree: artifact_tree::Shape,
+        mode: GraphViewMode,
+        signature: Option<GraphSignature>,
+        filters: ArtifactTreeFilters,
+        layout: u64,
+        readability: GraphReadabilityDiagnostics,
+        graph: &WidgetGraph,
+    ) -> Option<GraphViewDiagnostics> {
+        let key = DiagnosticsKey {
+            signature,
+            style,
+            mode,
+            filters,
+            viewport_x: viewport_size.x.to_bits(),
+            viewport_y: viewport_size.y.to_bits(),
+            edge_labels,
+            connectivity,
+            artifact_tree,
+            layout,
+            readability,
+        };
+        if self.key.as_ref() != Some(&key) {
+            self.value = graph_diagnostics(
+                graph,
+                viewport_size,
+                style,
+                edge_labels,
+                connectivity,
+                artifact_tree,
+                mode,
+                readability,
+            );
+            self.key = Some(key);
+            self.rebuilds += 1;
+        }
+        self.value.clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DiagnosticsKey {
+    signature: Option<GraphSignature>,
+    style: ViewStyle,
+    mode: GraphViewMode,
+    filters: ArtifactTreeFilters,
+    viewport_x: u32,
+    viewport_y: u32,
+    edge_labels: EdgeLabelDiagnostics,
+    connectivity: GraphConnectivityDiagnostics,
+    artifact_tree: artifact_tree::Shape,
+    layout: u64,
+    readability: GraphReadabilityDiagnostics,
 }
 
 fn readability_layout_fingerprint(graph: &WidgetGraph) -> u64 {
@@ -1915,10 +2004,13 @@ mod tests {
 
         let viewport = eframe::egui::Vec2::new(800.0, 600.0);
         let edge_labels = crate::ui::view::EdgeLabelDiagnostics::default();
+        assert_eq!(cache.diagnostics_rebuilds(), 0);
         assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
         assert_eq!(cache.readability_rebuilds(), 1);
+        assert_eq!(cache.diagnostics_rebuilds(), 1);
         assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
         assert_eq!(cache.readability_rebuilds(), 1);
+        assert_eq!(cache.diagnostics_rebuilds(), 1);
 
         let first = cache
             .graph
@@ -1929,6 +2021,7 @@ mod tests {
         cache.graph.g_mut()[first].set_location(eframe::egui::Pos2::new(20.0, 20.0));
         assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
         assert_eq!(cache.readability_rebuilds(), 2);
+        assert_eq!(cache.diagnostics_rebuilds(), 2);
     }
 
     fn count_nodes(projected: &super::ProjectedGraph, kind: &str) -> usize {

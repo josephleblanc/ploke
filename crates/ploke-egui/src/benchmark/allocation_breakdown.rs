@@ -924,6 +924,7 @@ mod tests {
             run_root: "/tmp/prototype1".to_owned(),
             feature_set: vec!["dev".to_owned(), "native-benchmark".to_owned()],
             scenarios_requested: vec!["warm_idle_300".to_owned()],
+            callsite_sampling: None,
             run_readiness: None,
             startup: StartupProfile {
                 spans: vec![BenchmarkSpan {

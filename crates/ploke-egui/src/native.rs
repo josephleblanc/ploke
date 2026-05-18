@@ -113,6 +113,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             run_root.clone(),
             run.benchmark_output.clone(),
             run.benchmark_scenarios.clone(),
+            run.benchmark_callsite_sample_every,
         )?;
         picker.select_or_insert_path(&run_root);
         let mut startup = StartupProfile::default();

@@ -78,6 +78,23 @@ impl HeapProfileTotals {
         self.live_wrapped_bytes = self.live_wrapped_bytes.saturating_add(wrapped_size as u64);
     }
 
+    pub fn add_allocated_scaled(&mut self, object_size: usize, wrapped_size: usize, scale: u64) {
+        let scale = scale.max(1);
+        self.allocation_count = self.allocation_count.saturating_add(scale);
+        self.allocated_object_bytes = self
+            .allocated_object_bytes
+            .saturating_add((object_size as u64).saturating_mul(scale));
+        self.allocated_wrapped_bytes = self
+            .allocated_wrapped_bytes
+            .saturating_add((wrapped_size as u64).saturating_mul(scale));
+        self.live_object_bytes = self
+            .live_object_bytes
+            .saturating_add((object_size as u64).saturating_mul(scale));
+        self.live_wrapped_bytes = self
+            .live_wrapped_bytes
+            .saturating_add((wrapped_size as u64).saturating_mul(scale));
+    }
+
     pub fn add_deallocated(&mut self, object_size: usize, wrapped_size: usize) {
         self.deallocation_count = self.deallocation_count.saturating_add(1);
         self.deallocated_object_bytes = self
@@ -88,6 +105,23 @@ impl HeapProfileTotals {
             .saturating_add(wrapped_size as u64);
         self.live_object_bytes = self.live_object_bytes.saturating_sub(object_size as u64);
         self.live_wrapped_bytes = self.live_wrapped_bytes.saturating_sub(wrapped_size as u64);
+    }
+
+    pub fn add_deallocated_scaled(&mut self, object_size: usize, wrapped_size: usize, scale: u64) {
+        let scale = scale.max(1);
+        self.deallocation_count = self.deallocation_count.saturating_add(scale);
+        self.deallocated_object_bytes = self
+            .deallocated_object_bytes
+            .saturating_add((object_size as u64).saturating_mul(scale));
+        self.deallocated_wrapped_bytes = self
+            .deallocated_wrapped_bytes
+            .saturating_add((wrapped_size as u64).saturating_mul(scale));
+        self.live_object_bytes = self
+            .live_object_bytes
+            .saturating_sub((object_size as u64).saturating_mul(scale));
+        self.live_wrapped_bytes = self
+            .live_wrapped_bytes
+            .saturating_sub((wrapped_size as u64).saturating_mul(scale));
     }
 
     pub fn has_activity(self) -> bool {
@@ -283,10 +317,11 @@ fn top_by<T>(mut values: Vec<T>, limit: usize, value: impl Fn(&T) -> u64) -> Vec
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
 mod tracking {
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
     use std::error::Error;
-    use std::sync::Arc;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     use tracing::{Id, Subscriber};
@@ -299,8 +334,8 @@ mod tracking {
     };
 
     use super::{
-        AllocationSnapshot, HeapCallsiteProfile, HeapGroupProfile, HeapProfileSnapshot,
-        HeapProfileTotals,
+        AllocationSnapshot, HeapCallsiteKey, HeapCallsiteProfile, HeapGroupProfile,
+        HeapProfileSnapshot, HeapProfileTotals,
     };
 
     static GLOBAL_TRACKER: OnceLock<HeapProfileTracker> = OnceLock::new();
@@ -319,6 +354,7 @@ mod tracking {
         enabled: AtomicBool,
         totals: AtomicHeapTotals,
         scopes: Box<[ScopeCounter]>,
+        callsite_sampling: CallsiteSamplingState,
         unmatched_deallocations: AtomicU64,
     }
 
@@ -335,9 +371,137 @@ mod tracking {
                     })
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
+                callsite_sampling: CallsiteSamplingState::new(SCOPE_NAMES.len()),
                 unmatched_deallocations: AtomicU64::new(0),
             }
         }
+    }
+
+    #[derive(Debug)]
+    struct CallsiteSamplingState {
+        enabled: AtomicBool,
+        sample_every: AtomicU64,
+        sequence: AtomicU64,
+        scopes: Box<[AtomicBool]>,
+        callsites: Mutex<BTreeMap<HeapCallsiteKey, HeapProfileTotals>>,
+        sampled_allocations: Mutex<BTreeMap<usize, SampledAllocation>>,
+    }
+
+    impl CallsiteSamplingState {
+        fn new(scope_count: usize) -> Self {
+            Self {
+                enabled: AtomicBool::new(false),
+                sample_every: AtomicU64::new(1),
+                sequence: AtomicU64::new(0),
+                scopes: (0..scope_count)
+                    .map(|_| AtomicBool::new(false))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                callsites: Mutex::new(BTreeMap::new()),
+                sampled_allocations: Mutex::new(BTreeMap::new()),
+            }
+        }
+
+        fn configure(&self, sample_every: Option<u64>, scope_indices: &[usize]) {
+            self.enabled.store(false, Ordering::Relaxed);
+            for scope in self.scopes.iter() {
+                scope.store(false, Ordering::Relaxed);
+            }
+            self.reset_window();
+            let Some(sample_every) = sample_every else {
+                return;
+            };
+            self.sample_every
+                .store(sample_every.max(1), Ordering::Relaxed);
+            for index in scope_indices {
+                if let Some(scope) = self.scopes.get(*index) {
+                    scope.store(true, Ordering::Relaxed);
+                }
+            }
+            self.enabled.store(true, Ordering::Relaxed);
+        }
+
+        fn reset_window(&self) {
+            self.sequence.store(0, Ordering::Relaxed);
+            if let Ok(mut callsites) = self.callsites.lock() {
+                callsites.clear();
+            }
+            if let Ok(mut sampled_allocations) = self.sampled_allocations.lock() {
+                sampled_allocations.clear();
+            }
+        }
+
+        fn sample_scale(&self, scope_index: usize) -> Option<u64> {
+            if !self.enabled.load(Ordering::Relaxed) {
+                return None;
+            }
+            if !self
+                .scopes
+                .get(scope_index)
+                .is_some_and(|scope| scope.load(Ordering::Relaxed))
+            {
+                return None;
+            }
+            let sample_every = self.sample_every.load(Ordering::Relaxed).max(1);
+            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+            (sequence % sample_every == 0).then_some(sample_every)
+        }
+
+        fn record_allocated(
+            &self,
+            addr: usize,
+            object_size: usize,
+            wrapped_size: usize,
+            scale: u64,
+            callsite: HeapCallsiteKey,
+        ) {
+            if let Ok(mut callsites) = self.callsites.lock() {
+                callsites
+                    .entry(callsite.clone())
+                    .or_default()
+                    .add_allocated_scaled(object_size, wrapped_size, scale);
+            }
+            if let Ok(mut sampled_allocations) = self.sampled_allocations.lock() {
+                sampled_allocations.insert(addr, SampledAllocation { callsite, scale });
+            }
+        }
+
+        fn record_deallocated(&self, addr: usize, object_size: usize, wrapped_size: usize) {
+            let sampled = self
+                .sampled_allocations
+                .lock()
+                .ok()
+                .and_then(|mut sampled_allocations| sampled_allocations.remove(&addr));
+            let Some(sampled) = sampled else {
+                return;
+            };
+            if let Ok(mut callsites) = self.callsites.lock() {
+                if let Some(totals) = callsites.get_mut(&sampled.callsite) {
+                    totals.add_deallocated_scaled(object_size, wrapped_size, sampled.scale);
+                }
+            }
+        }
+
+        fn snapshot(&self) -> Vec<HeapCallsiteProfile> {
+            self.callsites
+                .lock()
+                .map(|callsites| {
+                    callsites
+                        .iter()
+                        .map(|(callsite, totals)| HeapCallsiteProfile {
+                            callsite: callsite.clone(),
+                            totals: *totals,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct SampledAllocation {
+        callsite: HeapCallsiteKey,
+        scale: u64,
     }
 
     #[derive(Debug)]
@@ -421,6 +585,7 @@ mod tracking {
                 for scope in self.inner.scopes.iter() {
                     scope.totals.reset();
                 }
+                self.inner.callsite_sampling.reset_window();
                 self.inner
                     .unmatched_deallocations
                     .store(0, Ordering::Relaxed);
@@ -447,12 +612,13 @@ mod tracking {
                         })
                     })
                     .collect::<Vec<_>>();
+                let callsites = self.inner.callsite_sampling.snapshot();
 
                 HeapProfileSnapshot {
                     enabled: self.inner.enabled.load(Ordering::Relaxed),
                     totals: self.inner.totals.snapshot(),
                     groups,
-                    callsites: Vec::<HeapCallsiteProfile>::new(),
+                    callsites,
                     unmatched_deallocations: self
                         .inner
                         .unmatched_deallocations
@@ -471,17 +637,43 @@ mod tracking {
             })
         }
 
-        fn record_allocated(&self, object_size: usize, wrapped_size: usize, group_id: usize) {
+        pub fn configure_callsite_sampling(
+            &self,
+            sample_every: Option<u64>,
+            scope_names: &[&str],
+        ) -> Result<(), String> {
+            let mut scope_indices = Vec::with_capacity(scope_names.len());
+            for name in scope_names {
+                let Some(index) = scope_index(name) else {
+                    return Err(format!("unknown allocation sampling scope '{name}'"));
+                };
+                scope_indices.push(index);
+            }
+            self.inner
+                .callsite_sampling
+                .configure(sample_every, &scope_indices);
+            Ok(())
+        }
+
+        fn record_allocated(
+            &self,
+            addr: usize,
+            object_size: usize,
+            wrapped_size: usize,
+            group_id: usize,
+        ) {
             self.inner.totals.add_allocated(object_size, wrapped_size);
             if let Some(scope_index) = current_window_scope_index(group_id) {
                 self.inner.scopes[scope_index]
                     .totals
                     .add_allocated(object_size, wrapped_size);
+                self.record_callsite_allocated(addr, object_size, wrapped_size, scope_index);
             }
         }
 
         fn record_deallocated(
             &self,
+            addr: usize,
             object_size: usize,
             wrapped_size: usize,
             source_group_id: usize,
@@ -501,6 +693,29 @@ mod tracking {
                     .unmatched_deallocations
                     .fetch_add(1, Ordering::Relaxed);
             }
+            self.inner
+                .callsite_sampling
+                .record_deallocated(addr, object_size, wrapped_size);
+        }
+
+        fn record_callsite_allocated(
+            &self,
+            addr: usize,
+            object_size: usize,
+            wrapped_size: usize,
+            scope_index: usize,
+        ) {
+            let Some(scale) = self.inner.callsite_sampling.sample_scale(scope_index) else {
+                return;
+            };
+            let callsite = capture_heap_callsite(SCOPE_NAMES[scope_index]);
+            self.inner.callsite_sampling.record_allocated(
+                addr,
+                object_size,
+                wrapped_size,
+                scale,
+                callsite,
+            );
         }
 
         #[cfg(test)]
@@ -537,23 +752,28 @@ mod tracking {
     impl AllocationTracker for HeapProfileTracker {
         fn allocated(
             &self,
-            _addr: usize,
+            addr: usize,
             object_size: usize,
             wrapped_size: usize,
             group_id: AllocationGroupId,
         ) {
-            self.record_allocated(object_size, wrapped_size, group_id.as_usize().get());
+            self.record_allocated(addr, object_size, wrapped_size, group_id.as_usize().get());
         }
 
         fn deallocated(
             &self,
-            _addr: usize,
+            addr: usize,
             object_size: usize,
             wrapped_size: usize,
             source_group_id: AllocationGroupId,
             _current_group_id: AllocationGroupId,
         ) {
-            self.record_deallocated(object_size, wrapped_size, source_group_id.as_usize().get());
+            self.record_deallocated(
+                addr,
+                object_size,
+                wrapped_size,
+                source_group_id.as_usize().get(),
+            );
         }
     }
 
@@ -576,6 +796,14 @@ mod tracking {
                 .cloned()
                 .ok_or_else(|| Box::new(error) as Box<dyn Error>),
         }
+    }
+
+    pub fn configure_callsite_sampling(
+        tracker: &HeapProfileTracker,
+        sample_every: Option<u64>,
+        scope_names: &[&str],
+    ) -> Result<(), String> {
+        tracker.configure_callsite_sampling(sample_every, scope_names)
     }
 
     pub fn with_tracing_subscriber<R>(f: impl FnOnce() -> R) -> R {
@@ -861,6 +1089,53 @@ mod tracking {
         }
     }
 
+    fn capture_heap_callsite(scope_name: &'static str) -> HeapCallsiteKey {
+        let backtrace = backtrace::Backtrace::new();
+        for frame in backtrace.frames() {
+            for symbol in frame.symbols() {
+                let symbol_name = symbol
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "<unknown>".to_owned());
+                let file = symbol.filename().map(|path| path.display().to_string());
+                if is_internal_allocation_frame(&symbol_name, file.as_deref()) {
+                    continue;
+                }
+                return HeapCallsiteKey {
+                    symbol: format!("{scope_name} -> {symbol_name}"),
+                    file,
+                    line: symbol.lineno(),
+                };
+            }
+        }
+        HeapCallsiteKey::synthetic(format!("{scope_name} -> <unknown>"))
+    }
+
+    fn is_internal_allocation_frame(symbol: &str, file: Option<&str>) -> bool {
+        let file = file.unwrap_or_default();
+        file.contains("crates/ploke-egui/src/allocation.rs")
+            || file.contains("tracking-allocator")
+            || file.contains("/backtrace-")
+            || symbol.contains("ploke_egui::allocation")
+            || symbol.contains("tracking_allocator")
+            || symbol.contains("backtrace::")
+            || symbol.contains("__rust_alloc")
+            || symbol.contains("__rust_realloc")
+            || symbol.contains("__rust_dealloc")
+            || symbol.contains("__rdl_alloc")
+            || symbol.contains("__rdl_realloc")
+            || symbol.contains("__rdl_dealloc")
+            || symbol.contains("std::alloc")
+            || symbol == "alloc"
+            || file.ends_with("/rust/library/alloc/src/alloc.rs")
+            || symbol.contains("alloc::alloc")
+            || symbol.contains("alloc::raw_vec")
+            || symbol.contains("alloc::boxed")
+            || symbol.contains("alloc::sync")
+            || symbol.contains("alloc::vec")
+            || symbol.contains("alloc::string")
+    }
+
     pub fn process_snapshot() -> AllocationSnapshot {
         GLOBAL_TRACKER
             .get()
@@ -1096,8 +1371,8 @@ mod tracking {
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
 pub use tracking::{
-    HeapProfileTracker, begin_tracking_window, finish_tracking_window, install_global_tracker,
-    profile_snapshot as heap_profile_snapshot, with_tracing_subscriber,
+    HeapProfileTracker, begin_tracking_window, configure_callsite_sampling, finish_tracking_window,
+    install_global_tracker, profile_snapshot as heap_profile_snapshot, with_tracing_subscriber,
 };
 
 #[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
@@ -1111,6 +1386,15 @@ pub fn install_global_tracker() -> Result<HeapProfileTracker, Box<dyn std::error
 
 #[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
 pub fn begin_tracking_window(_tracker: &HeapProfileTracker) {}
+
+#[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
+pub fn configure_callsite_sampling(
+    _tracker: &HeapProfileTracker,
+    _sample_every: Option<u64>,
+    _scope_names: &[&str],
+) -> Result<(), String> {
+    Ok(())
+}
 
 #[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
 pub fn finish_tracking_window(_tracker: &HeapProfileTracker) -> HeapProfileSnapshot {
