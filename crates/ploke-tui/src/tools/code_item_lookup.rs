@@ -229,6 +229,7 @@ for a more fuzzy search."#
                 )));
             }
         };
+        let resolved_item_id = resolved_item[0].id;
         let tool_results = ctx
             .state
             .io_handle
@@ -251,6 +252,7 @@ for a more fuzzy search."#
             )))
         })?;
         let concise_context = ConciseContext {
+            id: resolved_item_id,
             file_path: NodeFilepath::new(rel_path.display().to_string()),
             canon_path: CanonPath::new(params.module_path.to_string()),
             snippet,

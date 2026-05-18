@@ -13,7 +13,8 @@
 
 use ploke_core::rag_types::{
     ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
-    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult,
+    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult, TypeContextInfo,
+    TypeContextKind,
 };
 use uuid::Uuid;
 
@@ -30,10 +31,15 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(args_back.search_term, "SimpleStruct");
 
     let part = ConciseContext {
+        id: Uuid::from_u128(2),
         file_path: NodeFilepath("id://dummy".to_string()),
         canon_path: CanonPath("some::module::dummy".to_string()),
         snippet: "fn foo() {}".to_string(),
-        type_context: None,
+        type_context: Some(TypeContextInfo {
+            seed_id: Uuid::from_u128(1),
+            relation: TypeContextKind::TypeDefinitionImpact,
+            distance: 1,
+        }),
     };
     let result = RequestCodeContextResult {
         ok: true,
@@ -50,6 +56,17 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(res_back.top_k, 3);
     assert_eq!(res_back.context, vec![part]);
     assert_eq!(res_back.kind, ContextPartKind::Code);
+
+    let missing_id_json = r#"{
+        "file_path": "id://dummy",
+        "canon_path": "some::module::dummy",
+        "snippet": "fn foo() {}",
+        "type_context": null
+    }"#;
+    assert!(
+        serde_json::from_str::<ConciseContext>(missing_id_json).is_err(),
+        "ConciseContext.id is a required tool payload identity"
+    );
 }
 
 #[test]

@@ -321,6 +321,7 @@ mod gat_tests {
             let owner_id = resolve_matrix_owner(&state.db, case.owner)?;
             let expected_seed_ids =
                 resolve_matrix_expected_type_context_seed_ids(&state.db, case, owner_id)?;
+            let expected_target_id = resolve_matrix_target(&state.db, case.terminal)?;
             let event_bus = std::sync::Arc::new(EventBus::new(EventBusCaps::default()));
             let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
             let request_id = Uuid::new_v4();
@@ -334,7 +335,7 @@ mod gat_tests {
                 call_id: call_id.clone(),
             };
             let tool_call = ToolCall {
-                call_id,
+                call_id: call_id.clone(),
                 call_type: FunctionMarker,
                 function: FunctionCall {
                     name: ToolName::RequestCodeContext,
@@ -352,11 +353,19 @@ mod gat_tests {
                 loop {
                     match event_rx.recv().await {
                         Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            content, ..
-                        })) => {
+                            request_id: event_request_id,
+                            call_id: event_call_id,
+                            content,
+                            ..
+                        })) if event_request_id == request_id && event_call_id == call_id => {
                             break content;
                         }
-                        Ok(AppEvent::System(SystemEvent::ToolCallFailed { error, .. })) => {
+                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                            request_id: event_request_id,
+                            call_id: event_call_id,
+                            error,
+                            ..
+                        })) if event_request_id == request_id && event_call_id == call_id => {
                             panic!("request_code_context failed for {}: {error}", case.name);
                         }
                         Ok(_) => {}
@@ -373,7 +382,12 @@ mod gat_tests {
             });
 
             let result: RequestCodeContextResult = serde_json::from_str(&completed)?;
-            assert_matrix_payload_has_type_context(case, &expected_seed_ids, &result);
+            assert_matrix_payload_has_type_context(
+                case,
+                expected_target_id,
+                &expected_seed_ids,
+                &result,
+            );
         }
         Ok(())
     }
@@ -441,6 +455,7 @@ mod gat_tests {
             let owner_id = resolve_matrix_owner(&state.db, case.owner)?;
             let expected_seed_ids =
                 resolve_matrix_expected_type_context_seed_ids(&state.db, case, owner_id)?;
+            let expected_target_id = resolve_matrix_target(&state.db, case.terminal)?;
 
             let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
             let user_msg_id = Uuid::new_v4();
@@ -481,31 +496,61 @@ mod gat_tests {
                 request_msg_id,
             })));
 
-            let mut saw_requested = false;
+            let mut requested_tool_ids = None;
             let mut completed_payload = None;
             let mut saw_finished = false;
             timeout(Duration::from_secs(120), async {
-                while !(saw_requested && completed_payload.is_some() && saw_finished) {
+                while !(requested_tool_ids.is_some() && completed_payload.is_some() && saw_finished)
+                {
                     match event_rx.recv().await {
                         Ok(AppEvent::System(SystemEvent::ToolCallRequested {
-                            tool_call, ..
+                            request_id,
+                            tool_call,
+                            ..
                         })) if tool_call.function.name == ToolName::RequestCodeContext => {
-                            saw_requested = true;
+                            if requested_tool_ids.is_none() {
+                                requested_tool_ids = Some((request_id, tool_call.call_id.clone()));
+                            }
                         }
                         Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            content, ..
-                        })) => {
+                            request_id,
+                            call_id,
+                            content,
+                            ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, expected_call_id)| {
+                                request_id == *expected_request_id
+                                    && call_id.as_ref() == expected_call_id.as_ref()
+                            },
+                        ) =>
+                        {
                             if serde_json::from_str::<RequestCodeContextResult>(&content).is_ok() {
                                 completed_payload = Some(content);
                             }
                         }
-                        Ok(AppEvent::System(SystemEvent::ToolCallFailed { error, .. })) => {
+                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                            request_id,
+                            call_id,
+                            error,
+                            ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, expected_call_id)| {
+                                request_id == *expected_request_id
+                                    && call_id.as_ref() == expected_call_id.as_ref()
+                            },
+                        ) =>
+                        {
                             panic!(
                                 "request_code_context failed in live matrix test for {}: {error}",
                                 case.name
                             );
                         }
-                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished { .. })) => {
+                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished {
+                            request_id, ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, _)| request_id == *expected_request_id,
+                        ) =>
+                        {
                             saw_finished = true;
                         }
                         Ok(_) => {}
@@ -526,7 +571,12 @@ mod gat_tests {
 
             let result: RequestCodeContextResult =
                 serde_json::from_str(&completed_payload.expect("tool payload"))?;
-            assert_matrix_payload_has_type_context(case, &expected_seed_ids, &result);
+            assert_matrix_payload_has_type_context(
+                case,
+                expected_target_id,
+                &expected_seed_ids,
+                &result,
+            );
         }
         Ok(())
     }
@@ -534,10 +584,10 @@ mod gat_tests {
     #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
     fn assert_matrix_payload_has_type_context(
         case: &ploke_test_utils::TypeShapeCase,
+        expected_target_id: uuid::Uuid,
         expected_seed_ids: &[uuid::Uuid],
         result: &ploke_core::rag_types::RequestCodeContextResult,
     ) {
-        let target_label = target_label(case.terminal);
         let expected_relation = type_context_kind(case.type_context_relation);
         assert!(
             result.ok,
@@ -546,16 +596,16 @@ mod gat_tests {
         );
         assert!(
             result.context.iter().any(|context| {
-                let names_target = context.canon_path.as_ref().contains(target_label)
-                    || context.snippet.contains(target_label);
-                names_target
+                context.id == expected_target_id
                     && context.type_context.is_some_and(|info| {
-                        expected_seed_ids.contains(&info.seed_id)
-                            && info.relation == expected_relation
+                        info.relation == expected_relation
+                            && expected_seed_ids.contains(&info.seed_id)
+                            && info.distance == case.depth
                     })
             }),
-            "{} should expose traversal-derived type_context for target {target_label} in request_code_context payload; result: {result:#?}",
-            case.name
+            "{} should expose traversal-derived type_context for target {expected_target_id} with distance {} in request_code_context payload; result: {result:#?}",
+            case.name,
+            case.depth
         );
     }
 
@@ -568,14 +618,31 @@ mod gat_tests {
     }
 
     #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
-    fn target_label(selector: ploke_test_utils::TargetSelector) -> &'static str {
+    fn resolve_matrix_target(
+        db: &ploke_db::Database,
+        selector: ploke_test_utils::TargetSelector,
+    ) -> color_eyre::Result<uuid::Uuid> {
         match selector {
-            ploke_test_utils::TargetSelector::StructByName { name }
-            | ploke_test_utils::TargetSelector::StructInModule { name, .. }
-            | ploke_test_utils::TargetSelector::EnumByName { name }
-            | ploke_test_utils::TargetSelector::TraitInModule { name, .. }
-            | ploke_test_utils::TargetSelector::TraitInFile { name, .. }
-            | ploke_test_utils::TargetSelector::GenericParamReachableByName { name } => name,
+            ploke_test_utils::TargetSelector::StructByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::StructInModule { module_path, name } => {
+                one_uuid(db, &struct_in_module_query(module_path, name))
+            }
+            ploke_test_utils::TargetSelector::EnumByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *enum {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))
+            }
+            ploke_test_utils::TargetSelector::TraitInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
+            }
+            other => Err(color_eyre::eyre::eyre!(
+                "TUI matrix resolver does not materialize target selector {other:?}"
+            )),
         }
     }
 
@@ -813,6 +880,26 @@ mod gat_tests {
                     relation_kind: "Contains" @ 'NOW'
                 }},
                 *struct {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn trait_in_file_query(name: &str) -> String {
+        item_in_file_query("trait", name)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *trait {{ id, name: "{name}" @ 'NOW' }}"#
         )
     }
 

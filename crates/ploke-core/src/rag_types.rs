@@ -159,6 +159,7 @@ impl RequestCodeContextResult {
 impl From<ContextPart> for ConciseContext {
     fn from(value: ContextPart) -> Self {
         Self {
+            id: value.id,
             file_path: value.file_path.clone(),
             canon_path: value.canon_path.clone(),
             snippet: value.text,
@@ -201,6 +202,7 @@ impl CanonPath {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ConciseContext {
+    pub id: Uuid,
     pub file_path: NodeFilepath,
     pub canon_path: CanonPath,
     pub snippet: String,
