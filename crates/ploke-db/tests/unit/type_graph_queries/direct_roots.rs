@@ -1,9 +1,15 @@
-use ploke_db::{DbError, TypeUseCoordinate, TypeUseRole, TypeUseRoot};
+use ploke_core::IdTrait;
+use ploke_db::{Database, DbError, TypeUseCoordinate, TypeUseRole, TypeUseRoot};
+use syn_parser::parser::{graph::GraphAccess, nodes::AsAnyNodeId};
 
 use super::common::{
+    const_id_by_name_in_file_suffix, exactly_one_uuid, field_id_by_owner_index,
     function_id_by_name, function_id_by_name_in_module, function_param_type_by_name,
     function_return_type_by_name_in_module, generic_type_param_id_by_owner_name,
-    setup_typed_fixture_db, struct_id_by_name, trait_id_by_name_in_module, type_alias_row_by_name,
+    impl_id_by_trait_and_self_type_names, method_id_by_impl_self_type_name,
+    method_id_by_impl_trait_and_self_type_names, setup_typed_fixture_db,
+    static_id_by_name_in_file_suffix, struct_id_by_name, struct_id_by_name_in_module,
+    trait_id_by_name_in_module, type_alias_row_by_name,
 };
 
 fn has_root(
@@ -19,6 +25,193 @@ fn has_root(
             && root.role == role
             && root.coordinate == coordinate
     })
+}
+
+fn assert_exact_root(
+    roots: &[TypeUseRoot],
+    owner_id: uuid::Uuid,
+    root_type_id: uuid::Uuid,
+    role: TypeUseRole,
+    coordinate: TypeUseCoordinate,
+    message: &str,
+) {
+    let matching = roots
+        .iter()
+        .filter(|root| {
+            root.owner_id == owner_id
+                && root.root_type_id == root_type_id
+                && root.role == role
+                && root.coordinate == coordinate
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        matching.len(),
+        1,
+        "{message}; expected exactly one root for owner {owner_id}, root {root_type_id}, role {role:?}, coordinate {coordinate:?}; roots: {roots:#?}"
+    );
+}
+
+fn fixture_graph() -> Result<syn_parser::parser::ParsedCodeGraph, DbError> {
+    syn_parser::parser::ParsedCodeGraph::merge_new(ploke_test_utils::test_run_phases_and_collect(
+        "fixture_nodes",
+    ))
+    .map_err(|err| DbError::QueryExecution(err.to_string()))
+}
+
+fn fixture_method_param_type_by_slot(
+    owner_id: uuid::Uuid,
+    param_index: u32,
+) -> Result<uuid::Uuid, DbError> {
+    let graph = fixture_graph()?;
+    let method = graph
+        .impls()
+        .iter()
+        .flat_map(|impl_node| impl_node.methods.iter())
+        .chain(
+            graph
+                .traits()
+                .iter()
+                .flat_map(|trait_node| trait_node.methods.iter()),
+        )
+        .find(|method| method.id.as_any().uuid() == owner_id)
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture method {owner_id} missing from source graph"
+            ))
+        })?;
+    method
+        .parameters
+        .get(param_index as usize)
+        .map(|param| param.type_id.uuid())
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture method {owner_id} missing source param slot {param_index}"
+            ))
+        })
+}
+
+fn fixture_method_return_type_by_id(owner_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    let graph = fixture_graph()?;
+    let method = graph
+        .impls()
+        .iter()
+        .flat_map(|impl_node| impl_node.methods.iter())
+        .chain(
+            graph
+                .traits()
+                .iter()
+                .flat_map(|trait_node| trait_node.methods.iter()),
+        )
+        .find(|method| method.id.as_any().uuid() == owner_id)
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture method {owner_id} missing from source graph"
+            ))
+        })?;
+    method
+        .return_type
+        .map(|type_id| type_id.uuid())
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture method {owner_id} missing source return type"
+            ))
+        })
+}
+
+fn impl_self_type_by_id(db: &Database, impl_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[self_type] :=
+                *impl {{
+                    id: to_uuid("{impl_id}"),
+                    self_type @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
+}
+
+fn impl_trait_type_by_id(db: &Database, impl_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[trait_type] :=
+                *impl {{
+                    id: to_uuid("{impl_id}"),
+                    trait_type @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
+}
+
+fn field_type_by_id(db: &Database, field_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[type_id] :=
+                *field {{
+                    id: to_uuid("{field_id}"),
+                    type_id @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
+}
+
+fn fixture_trait_super_type_by_slot(
+    owner_id: uuid::Uuid,
+    supertrait_index: u32,
+) -> Result<uuid::Uuid, DbError> {
+    let graph = fixture_graph()?;
+    let trait_node = graph
+        .traits()
+        .iter()
+        .find(|trait_node| trait_node.id.as_any().uuid() == owner_id)
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture trait {owner_id} missing from source graph"
+            ))
+        })?;
+    trait_node
+        .super_traits
+        .get(supertrait_index as usize)
+        .map(|type_id| type_id.uuid())
+        .ok_or_else(|| {
+            DbError::QueryExecution(format!(
+                "fixture trait {owner_id} missing source supertrait slot {supertrait_index}"
+            ))
+        })
+}
+
+fn const_type_by_id(db: &Database, const_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[ty_id] :=
+                *const {{
+                    id: to_uuid("{const_id}"),
+                    ty_id @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
+}
+
+fn static_type_by_id(db: &Database, static_id: uuid::Uuid) -> Result<uuid::Uuid, DbError> {
+    exactly_one_uuid(
+        db,
+        &format!(
+            r#"?[ty_id] :=
+                *static {{
+                    id: to_uuid("{static_id}"),
+                    ty_id @ 'NOW'
+                }}"#
+        ),
+        0,
+    )
 }
 
 /// Elementary contract: the DB API should expose direct owner-to-root type-use
@@ -358,5 +551,156 @@ fn composite_where_predicate_subject_is_not_a_generic_param_bound() -> Result<()
         "composite subject Vec<T> should not be collapsed into a WhereGenericParamBound root; roots: {generic_param_roots:#?}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn method_param_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id = method_id_by_impl_trait_and_self_type_names(
+        &db,
+        "GenericTrait",
+        "GenericStruct",
+        "generic_trait_method",
+    )?;
+    let root_type_id = fixture_method_param_type_by_slot(owner_id, 1)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::MethodParam,
+        TypeUseCoordinate::ParamSlot { param_index: 1 },
+        "expected GenericTrait for GenericStruct::generic_trait_method value parameter root",
+    );
+    Ok(())
+}
+
+#[test]
+fn method_return_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id = method_id_by_impl_self_type_name(&db, "SimpleStruct", "new")?;
+    let root_type_id = fixture_method_return_type_by_id(owner_id)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::MethodReturn,
+        TypeUseCoordinate::None,
+        "expected SimpleStruct::new return root",
+    );
+    Ok(())
+}
+
+#[test]
+fn field_type_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let struct_id = struct_id_by_name_in_module(&db, &["crate", "structs"], "SampleStruct")?;
+    let owner_id = field_id_by_owner_index(&db, struct_id, 0)?;
+    let root_type_id = field_type_by_id(&db, owner_id)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::FieldType,
+        TypeUseCoordinate::FieldSlot { field_index: 0 },
+        "expected SampleStruct field 0 root",
+    );
+    Ok(())
+}
+
+#[test]
+fn impl_self_and_trait_root_type_uses_are_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id = impl_id_by_trait_and_self_type_names(&db, "SimpleTrait", "SimpleStruct")?;
+    let self_root_type_id = impl_self_type_by_id(&db, owner_id)?;
+    let trait_root_type_id = impl_trait_type_by_id(&db, owner_id)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        self_root_type_id,
+        TypeUseRole::ImplSelf,
+        TypeUseCoordinate::None,
+        "expected impl SimpleTrait for SimpleStruct self root",
+    );
+    assert_exact_root(
+        &roots,
+        owner_id,
+        trait_root_type_id,
+        TypeUseRole::ImplTrait,
+        TypeUseCoordinate::None,
+        "expected impl SimpleTrait for SimpleStruct trait root",
+    );
+    Ok(())
+}
+
+#[test]
+fn trait_super_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id = trait_id_by_name_in_module(&db, &["crate", "traits"], "SuperTrait")?;
+    let root_type_id = fixture_trait_super_type_by_slot(owner_id, 0)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::TraitSuper,
+        TypeUseCoordinate::TraitSuperSlot {
+            supertrait_index: 0,
+        },
+        "expected SuperTrait supertrait root",
+    );
+    Ok(())
+}
+
+#[test]
+fn const_type_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id = const_id_by_name_in_file_suffix(&db, "src/const_static.rs", "STRUCT_CONST")?;
+    let root_type_id = const_type_by_id(&db, owner_id)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::ConstType,
+        TypeUseCoordinate::None,
+        "expected STRUCT_CONST type root",
+    );
+    Ok(())
+}
+
+#[test]
+fn static_type_root_type_use_is_queryable() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_nodes")?;
+    let owner_id =
+        static_id_by_name_in_file_suffix(&db, "src/const_static.rs", "TOP_LEVEL_COUNTER")?;
+    let root_type_id = static_type_by_id(&db, owner_id)?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::StaticType,
+        TypeUseCoordinate::None,
+        "expected TOP_LEVEL_COUNTER type root",
+    );
     Ok(())
 }
