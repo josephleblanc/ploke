@@ -138,35 +138,22 @@ Patch Generation `LLM calls` drilldown, not the Run Records section, and they
 can decode tool arguments/results if opened (`src/ui/app/shell.rs:2025-2298`,
 `src/ui/app/shell.rs:113-155`).
 
-Follow-up measured answer: native interactive window benchmarking with focused
-Run Records spans supports the first half of that guess, but narrows the second
-half. The focused report is
-`benchmarks/20260518-run-records-focused-spans/report.json`. In the primary Run
-Records sequence, selected/collapsed idle was `1216` allocations/frame and
-`906001` object bytes/frame, while expanded idle was `1446`
-allocations/frame and `1085188` object bytes/frame. The steady expanded section
-therefore still adds about `+230` allocations/frame and `+179187` object
-bytes/frame.
+Measured answer: native interactive window benchmarking with focused Run Records
+spans says this is mostly row rendering and text galley/cache churn in the
+top-level Run Records body. It is not nested tool payload decoding, and it is not
+material projection rebuilding. The focused report is
+`benchmarks/20260518-run-records-focused-spans/report.json`.
 
-The top-level Run Records body is not decoding nested tool payloads in this
-scenario. No `inspector_tool_*` or `inspector_run_record_tool_step` groups appear
-in the Run Records-focused heap profiles. The new Run Records subspans attribute
-the body work mostly to text galley/cache work and widget rows:
-`inspector_run_records_text_galley` allocated `1250086` object bytes in the
-primary sequence (`235106` in alternate), and
-`inspector_run_records_widget_row` allocated `312000` object bytes in both
-primary and alternate. The resolve and row wrapper spans were negligible or
-absent, so the evidence does not point to projection rebuilding as the measured
-body cost.
+| Suspect | Record evidence | Code evidence | Conclusion |
+| --- | --- | --- | --- |
+| Nested tool payload decoding | No `inspector_tool_*` or `inspector_run_record_tool_step` groups appear in either focused Run Records heap profile. | The top-level `render_run_records` path only renders record summary rows (`src/ui/app/shell.rs:922-999`). Tool argument/result decoding is under the LLM/tool drilldown path (`src/ui/app/shell.rs:2616-2850`) and the render cache decode helpers (`src/ui/app/shell.rs:113-155`). | Ruled out for this measured top-level Run Records scenario. |
+| Projection rebuilding | `graph_projection_cache_refresh` is small: primary `181339` object bytes, alternate `91224`. Run Records slot resolution is absent/negligible in top groups. | `InspectorCache` rebuilds sections only when graph revision or selection changes (`src/ui/inspector.rs:31-58`). `RunRecordSlot::resolve` is a borrowed lookup into graph evidence (`src/ui/inspector.rs:473-491`). | Not the measured cost. |
+| Text galley/cache work | `inspector_run_records_text_galley` allocated primary `1250086` object bytes / `2154` allocs; alternate `235106` object bytes / `101` allocs. | Run Records labels and non-short ids route through `run_record_label` / `run_record_monospace_label`, which call `render_cache.text_galley` (`src/ui/app/shell.rs:1029-1089`). | Proven contributor inside the Run Records body. |
+| Row widget construction | `inspector_run_records_widget_row` allocated `312000` object bytes / `3120` allocs in both primary and alternate. | Every key/value row goes through `run_record_kv_id`, which creates an egui horizontal row and label widgets (`src/ui/app/shell.rs:1006-1017`). | Proven contributor inside the Run Records body. |
+| Whole-frame/root/layout overhead | Expanded idle vs selected-collapsed idle adds primary `+230` allocs/frame and `+179187` object bytes/frame; alternate adds `+233` allocs/frame and `+179963` object bytes/frame. Top total heap groups are still `root`, `central_graph`, `selection_inspector`, and navigation groups, with no callsites captured. | The focused spans only cover Run Records body subparts registered in `src/allocation.rs:666-685`; they do not split egui/root/layout internals. | Real remaining attribution gap. Needs phase-scoped root/layout or callsite sampling before assigning it to app code. |
 
-However, the body subspans do not explain the full phase delta. They account for
-the named Run Records body group, but the process-wide expanded-vs-collapsed
-increase remains much larger than the body-specific attribution. That leaves
-egui/root/layout allocations or other frame work outside the current Run
-Records body spans as an active attribution gap. Standard mode still captured no
-callsite backtraces, so the result is grounded enough to deprioritize nested
-tool payloads and projection rebuilding, but not enough to close the accounting
-on widgets/layout versus root churn.
+Priority from this pass: cache or reduce Run Records text/row rendering first;
+do not spend the next slice on nested tool payloads or projection rebuilding.
 
 ### 11. Would callsite attribution change the priority order?
 

@@ -23,6 +23,7 @@ use crate::{
     app_state::{AppState, events::SystemEvent},
     rag::utils::ToolCallParams,
 };
+use color_eyre::eyre::eyre;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use ploke_core::{
@@ -262,7 +263,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|err| {
                     let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
                     request_code_context::RequestCodeContextGat::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -278,7 +279,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                         ToolInvocationError::Exec(e),
                     );
                     RequestCodeContextGat::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -291,7 +292,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = code_edit::GatCodeEdit::deserialize_params(&args).map_err(|err| {
                 let terr = code_edit::GatCodeEdit::adapt_error(err);
                 code_edit::GatCodeEdit::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -305,7 +306,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
                     GatCodeEdit::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -319,7 +320,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 insert_rust_item::InsertRustItem::deserialize_params(&args).map_err(|err| {
                     let terr = insert_rust_item::InsertRustItem::adapt_error(err);
                     insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -334,7 +335,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                     let terr =
                         insert_rust_item::InsertRustItem::adapt_error(ToolInvocationError::Exec(e));
                     insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -347,7 +348,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = create_file::CreateFile::deserialize_params(&args).map_err(|err| {
                 let terr = create_file::CreateFile::adapt_error(err);
                 create_file::CreateFile::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -361,7 +362,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
                     create_file::CreateFile::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -374,7 +375,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = ns_patch::NsPatch::deserialize_params(&args).map_err(|err| {
                 let terr = ns_patch::NsPatch::adapt_error(err);
                 ns_patch::NsPatch::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -388,7 +389,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
                     ns_patch::NsPatch::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -401,7 +402,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = ns_read::NsRead::deserialize_params(&args).map_err(|err| {
                 let terr = ns_read::NsRead::adapt_error(err);
                 ns_read::NsRead::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -415,7 +416,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
                     ns_read::NsRead::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -429,7 +430,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 code_item_lookup::CodeItemLookup::deserialize_params(&args).map_err(|err| {
                     let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
                     code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -444,7 +445,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                     let terr =
                         code_item_lookup::CodeItemLookup::adapt_error(ToolInvocationError::Exec(e));
                     code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -458,7 +459,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 get_code_edges::CodeItemEdges::deserialize_params(&args).map_err(|err| {
                     let terr = get_code_edges::CodeItemEdges::adapt_error(err);
                     get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -473,7 +474,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                     let terr =
                         get_code_edges::CodeItemEdges::adapt_error(ToolInvocationError::Exec(e));
                     get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -486,7 +487,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = list_dir::ListDir::deserialize_params(&args).map_err(|err| {
                 let terr = list_dir::ListDir::adapt_error(err);
                 list_dir::ListDir::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -500,7 +501,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = list_dir::ListDir::adapt_error(ToolInvocationError::Exec(e));
                     list_dir::ListDir::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -513,7 +514,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = cargo::CargoTool::deserialize_params(&args).map_err(|err| {
                 let terr = cargo::CargoTool::adapt_error(err);
                 cargo::CargoTool::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -527,7 +528,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = cargo::CargoTool::adapt_error(ToolInvocationError::Exec(e));
                     cargo::CargoTool::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
