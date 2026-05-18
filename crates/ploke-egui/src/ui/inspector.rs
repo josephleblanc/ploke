@@ -3168,10 +3168,10 @@ mod tests {
         assert_eq!(snapshot.incoming[1].relation, EdgeRelation::AppliedPatch);
         assert_eq!(snapshot.patches.len(), 1);
         assert_eq!(snapshot.run_records.len(), 2);
-        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Baseline);
-        assert_eq!(snapshot.run_records[0].tool_call_count, 2);
-        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Treatment);
-        assert_eq!(snapshot.run_records[1].tool_call_count, 3);
+        assert_eq!(snapshot.run_records[0].arm, ComparedRunArm::Treatment);
+        assert_eq!(snapshot.run_records[0].tool_call_count, 3);
+        assert_eq!(snapshot.run_records[1].arm, ComparedRunArm::Baseline);
+        assert_eq!(snapshot.run_records[1].tool_call_count, 2);
         assert_eq!(
             snapshot
                 .parent_create

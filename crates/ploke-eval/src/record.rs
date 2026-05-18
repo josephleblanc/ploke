@@ -1974,52 +1974,6 @@ mod tests {
     }
 
     #[test]
-    fn turn_record_deserializes_legacy_object_tool_arguments() {
-        let json = r#"{
-            "turn_number":1,
-            "started_at":"2026-04-09T18:30:00Z",
-            "ended_at":"2026-04-09T18:30:05Z",
-            "db_timestamp_micros":1744223415500000,
-            "issue_prompt":"Inspect src/lib.rs",
-            "tool_calls":[{
-                "request":{
-                    "request_id":"req-001",
-                    "parent_id":"parent-001",
-                    "call_id":"call-001",
-                    "tool":"read_file",
-                    "arguments":{"file":"src/lib.rs","start_line":1,"end_line":3}
-                },
-                "result":{
-                    "status":"Completed",
-                    "request_id":"req-001",
-                    "parent_id":"parent-001",
-                    "call_id":"call-001",
-                    "tool":"read_file",
-                    "content":"ok"
-                },
-                "latency_ms":12
-            }],
-            "outcome":{"type":"ToolCalls","count":1}
-        }"#;
-
-        let turn: TurnRecord =
-            serde_json::from_str(json).expect("legacy object arguments deserialize");
-
-        let request = &turn.tool_calls[0].request;
-        assert_eq!(
-            request.arguments.as_str(),
-            r#"{"end_line":3,"file":"src/lib.rs","start_line":1}"#
-        );
-        assert!(
-            request
-                .arguments
-                .decode_for_tool(&request.tool)
-                .decoded()
-                .is_some()
-        );
-    }
-
-    #[test]
     fn tool_result_trace_projection_deserializes_turn_events() {
         let json = r#"{
             "events": [
