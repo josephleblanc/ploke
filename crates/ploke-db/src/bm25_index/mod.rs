@@ -7,7 +7,7 @@
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 
@@ -16,13 +16,11 @@ use cozo::{DataValue, UuidWrapper};
 use ploke_core::{CrateId, EmbeddingData, RetrievalScope, TrackingHash};
 use uuid::Uuid;
 
-use crate::{Database, DbError, NodeType, QueryResult, to_uuid};
+use crate::{Database, DbError, NodeType};
 
 pub mod bm25_service;
-use crate::multi_embedding::{db_ext::EmbeddingExt, schema::EmbeddingSetExt};
 
 pub const TOKENIZER_VERSION: &str = "code_version_v1";
-const ITEM_NAME_REPETITIONS: usize = 6;
 
 // ------------------------- Code-aware tokenizer -------------------------
 // Implements bm25::Tokenizer by producing a Vec<String> of tokens from code.
@@ -288,8 +286,38 @@ impl CodeTokenizer {
 
     /// Count subtokens for an identifier (snake_case, camelCase, PascalCase, digits, acronyms)
     fn split_identifier_count(ident: &str) -> usize {
-        let split_count = Self::split_identifier(ident).len();
-        split_count + usize::from(Self::is_composite_identifier(ident, split_count))
+        let mut total = 0usize;
+        for chunk in ident.split('_') {
+            if chunk.is_empty() {
+                continue;
+            }
+            let chars: Vec<char> = chunk.chars().collect();
+            if chars.is_empty() {
+                continue;
+            }
+            let mut part_len = 0usize;
+            for i in 0..chars.len() {
+                if i > 0 {
+                    let prev = chars[i - 1];
+                    let next = chars.get(i + 1).copied();
+                    let ch = chars[i];
+                    let lower_to_upper = prev.is_lowercase() && ch.is_uppercase();
+                    let upper_seq_then_lower = prev.is_uppercase()
+                        && ch.is_uppercase()
+                        && next.map_or_else(|| false, |n| n.is_lowercase());
+                    // Do not split at letter<->digit boundaries; keep tokens like "v2" intact.
+                    if (lower_to_upper || upper_seq_then_lower) && part_len > 0 {
+                        total += 1;
+                        part_len = 0;
+                    }
+                }
+                part_len += 1;
+            }
+            if part_len > 0 {
+                total += 1;
+            }
+        }
+        total
     }
 
     fn tokenize_code_part(line: &str, out: &mut Vec<String>) {
@@ -301,11 +329,7 @@ impl CodeTokenizer {
                 return;
             }
             if *cur_is_id {
-                let split = Self::split_identifier(cur);
-                if Self::is_composite_identifier(cur, split.len()) {
-                    out.push(cur.to_lowercase());
-                }
-                for sub in split {
+                for sub in Self::split_identifier(cur) {
                     out.push(sub);
                 }
             } else {
@@ -333,10 +357,6 @@ impl CodeTokenizer {
             }
         }
         push_cur(out, &mut cur, &mut cur_is_id);
-    }
-
-    fn is_composite_identifier(ident: &str, split_count: usize) -> bool {
-        split_count > 1 || ident.contains('_')
     }
 }
 
@@ -478,8 +498,8 @@ impl Bm25Indexer {
     ///
     /// This scans all primary node relations for (id, name, tracking_hash), computes a corpus
     /// average document length using the code-aware tokenizer, builds a new embedder with the
-    /// fitted avgdl, and indexes each document using a compact name/context document.
-    /// The item's own name is boosted ahead of supplemental owner/type context.
+    /// fitted avgdl, and indexes each document using a light-weight representation of the snippet
+    /// (the identifier name doubled to provide a small boost).
     ///
     /// The rebuild does not depend on preexisting BM25 metadata and will work on any database
     /// containing the primary node relations with `id`, `name` and `tracking_hash` attributes.
@@ -513,7 +533,8 @@ impl Bm25Indexer {
                     tracking_hash: th,
                     namespace,
                 };
-                let combined = name;
+                // Combined text: boost the identifier by doubling it
+                let combined = format!("{0} {0}", name);
                 (id, meta, combined)
             })
             .fold(
@@ -660,16 +681,6 @@ impl Bm25Indexer {
                     .is_some_and(|meta| meta.namespace == namespace)
             });
         }
-        matches.sort_by(|left, right| {
-            match right
-                .score
-                .partial_cmp(&left.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-            {
-                std::cmp::Ordering::Equal => left.id.as_bytes().cmp(right.id.as_bytes()),
-                other => other,
-            }
-        });
         if matches.len() > top_k {
             matches.truncate(top_k);
         }
@@ -725,27 +736,8 @@ pub(crate) fn collect_rebuild_sources(
     use crate::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 
     let mut out: Vec<(Uuid, String, TrackingHash, Uuid)> = Vec::new();
-    let method_contexts = method_rebuild_contexts(db)?;
-    let struct_contexts = struct_rebuild_contexts(db)?;
-    let active_set = db.with_active_set(|set| set.clone())?;
-    let active_embedding_join = if db.is_relation_registered(active_set.rel_name())? {
-        let embed_rel = active_set.rel_name().as_ref().replace('-', "_");
-        let set_id = active_set.hash_id().into_inner() as i64;
-        format!(
-            r#"
-    *{embed_rel}{{ node_id: id, embedding_set_id: set_id @ 'NOW' }},
-    set_id = {set_id},"#
-        )
-    } else {
-        String::new()
-    };
     for node in NodeType::primary_and_assoc_nodes().iter() {
         let rel = node.relation_str();
-        let active_embedding_join = if node == &NodeType::Method {
-            ""
-        } else {
-            active_embedding_join.as_str()
-        };
 
         // For Method nodes, include METHOD_NODE_ANCESTOR_RULE to connect methods
         // to their impl/trait owners and eventually to root modules (Option B)
@@ -760,20 +752,18 @@ pub(crate) fn collect_rebuild_sources(
 {ancestor_rules}
 is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
 
-?[id, name, tracking_hash, namespace, file_path] :=
+?[id, name, tracking_hash, namespace] :=
     *{rel}{{ id, name, tracking_hash @ 'NOW' }},
-{active_embedding_join}
     ancestor[id, mod_id],
     is_root_module[mod_id],
-    *file_mod{{ owner_id: mod_id, namespace, file_path @ 'NOW' }}
+    *file_mod{{ owner_id: mod_id, namespace @ 'NOW' }}
 "#,
             ancestor_rules = ancestor_rules,
-            active_embedding_join = active_embedding_join,
             rel = rel,
         );
         let res = db.raw_query(&script)?;
         for row in res.rows.iter() {
-            if row.len() < 5 {
+            if row.len() < 4 {
                 continue;
             }
             let id = match &row[0] {
@@ -792,171 +782,10 @@ is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
                 DataValue::Uuid(UuidWrapper(u)) => *u,
                 _ => continue,
             };
-            let file_path = match &row[4] {
-                DataValue::Str(s) if !s.is_empty() => s.clone(),
-                _ => continue,
-            };
-            let name_boost = boosted_item_name(&name);
-            let indexed_name = if node == &NodeType::Method {
-                method_contexts
-                    .get(&id)
-                    .filter(|context| !context.is_empty())
-                    .map(|context| format!("{name_boost} method {context}"))
-                    .unwrap_or(name_boost)
-            } else if node == &NodeType::Struct {
-                struct_contexts
-                    .get(&id)
-                    .filter(|context| !context.is_empty())
-                    .map(|context| format!("{name_boost} struct {file_path} {context}"))
-                    .unwrap_or_else(|| format!("{name_boost} struct {file_path}"))
-            } else {
-                name_boost
-            };
-            out.push((id, indexed_name, th, namespace));
+            out.push((id, name.to_string(), th, namespace));
         }
     }
     Ok(out)
-}
-
-fn boosted_item_name(name: &str) -> String {
-    std::iter::repeat(name)
-        .take(ITEM_NAME_REPETITIONS)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn struct_rebuild_contexts(db: &Database) -> Result<HashMap<Uuid, String>, DbError> {
-    let rows = db.raw_query(
-        r#"
-        ordinary_target[target_id, context] := *struct { id: target_id, name: context @ 'NOW' }
-        ordinary_target[target_id, context] := *enum { id: target_id, name: context @ 'NOW' }
-        ordinary_target[target_id, context] := *union { id: target_id, name: context @ 'NOW' }
-        ordinary_target[target_id, context] := *type_alias { id: target_id, name: context @ 'NOW' }
-        ordinary_target[target_id, context] := *generic_type { id: target_id, name: context @ 'NOW' }
-
-        trait_source[source_id] := *named_type { type_id: source_id @ 'NOW' }
-        trait_source[source_id] := *trait_bound_type { type_id: source_id @ 'NOW' }
-
-        valid_type_relation[source_id, target_id, relation_kind] :=
-            *type_relation { source_id, target_id, relation_kind @ 'NOW' },
-            relation_kind = "Ordinary",
-            *named_type { type_id: source_id @ 'NOW' },
-            ordinary_target[target_id, context]
-
-        valid_type_relation[source_id, target_id, relation_kind] :=
-            *type_relation { source_id, target_id, relation_kind @ 'NOW' },
-            relation_kind = "Trait",
-            trait_source[source_id],
-            *trait { id: target_id @ 'NOW' }
-
-        target_name[target_id, context] := ordinary_target[target_id, context]
-        target_name[target_id, context] := *trait { id: target_id, name: context @ 'NOW' }
-
-        roots[type_use_id, struct_id, root_type_id] :=
-            *field { id: field_id, owner_id: struct_id @ 'NOW' },
-            *type_use { id: type_use_id, owner_id: field_id, root_type_id, role @ 'NOW' }
-
-        contains[parent_type_id, child_type_id] :=
-            *type_contains {
-                parent_type_id,
-                child_type_id,
-                kind,
-                position @ 'NOW'
-            }
-
-        target_paths[
-            type_use_id,
-            struct_id,
-            root_type_id,
-            terminal_type_id,
-            target_id,
-            relation_kind,
-            depth
-        ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
-
-        ?[struct_id, context] :=
-            target_paths[
-                type_use_id,
-                struct_id,
-                root_type_id,
-                terminal_type_id,
-                target_id,
-                relation_kind,
-                depth
-            ],
-            target_name[target_id, context]
-
-        :sort struct_id, context
-        "#,
-    )?;
-
-    grouped_contexts(rows)
-}
-
-fn method_rebuild_contexts(db: &Database) -> Result<HashMap<Uuid, String>, DbError> {
-    let rows = db.raw_query(
-        r#"
-        method_context[method_id, context] :=
-            *method { id: method_id, owner_id: impl_id @ 'NOW' },
-            *impl { id: impl_id @ 'NOW' },
-            *type_use {
-                owner_id: impl_id,
-                root_type_id,
-                role: "ImplSelf" @ 'NOW'
-            },
-            *type_relation {
-                source_id: root_type_id,
-                target_id,
-                relation_kind: "Ordinary" @ 'NOW'
-            },
-            *struct { id: target_id, name: context @ 'NOW' }
-
-        method_context[method_id, context] :=
-            *method { id: method_id, owner_id: impl_id @ 'NOW' },
-            *impl { id: impl_id @ 'NOW' },
-            *type_use {
-                owner_id: impl_id,
-                root_type_id,
-                role: "ImplTrait" @ 'NOW'
-            },
-            *type_relation {
-                source_id: root_type_id,
-                target_id,
-                relation_kind: "Trait" @ 'NOW'
-            },
-            *trait { id: target_id, name: context @ 'NOW' }
-
-        method_context[method_id, context] :=
-            *method { id: method_id, owner_id: trait_id @ 'NOW' },
-            *trait { id: trait_id, name: context @ 'NOW' }
-
-        ?[method_id, context] := method_context[method_id, context]
-        :sort method_id, context
-        "#,
-    )?;
-
-    grouped_contexts(rows)
-}
-
-fn grouped_contexts(rows: QueryResult) -> Result<HashMap<Uuid, String>, DbError> {
-    let mut grouped = BTreeMap::<Uuid, Vec<String>>::new();
-    for row in rows.rows {
-        let id = to_uuid(&row[0])?;
-        let context = match &row[1] {
-            DataValue::Str(value) if !value.is_empty() => value.to_string(),
-            _ => continue,
-        };
-        grouped.entry(id).or_default().push(context);
-    }
-
-    Ok(grouped
-        .into_iter()
-        .map(|(id, mut contexts)| {
-            contexts.sort();
-            contexts.dedup();
-            (id, contexts.join(" "))
-        })
-        .collect())
 }
 
 // ------------------------- Tests -------------------------
@@ -969,7 +798,7 @@ mod tests {
     use crate::{DbError, create_index_primary};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
-    use ploke_test_utils::{FIXTURE_NODES_CANONICAL, backup_fixture_path_or_seed};
+    use ploke_test_utils::FIXTURE_NODES_CANONICAL;
     use std::collections::HashMap;
 
     struct MockCozo {
@@ -1002,7 +831,7 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
-            let target_file = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
+            let target_file = FIXTURE_NODES_CANONICAL.path();
             let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)
@@ -1026,7 +855,6 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
         assert!(toks.iter().any(|s| s == "foo"));
         assert!(toks.iter().any(|s| s == "bar"));
         assert!(toks.iter().any(|s| s == "baz"));
-        assert!(toks.iter().any(|s| s == "foobar_baz"));
     }
 
     #[test]
@@ -1406,7 +1234,7 @@ fn hello() { println!(\"hi\"); }",
         // This will FAIL initially because collect_rebuild_sources doesn't process methods
         let method_triples: Vec<_> = triples
             .iter()
-            .filter(|(id, _name, _th, _ns)| {
+            .filter(|(id, name, _th, _ns)| {
                 // Check if this ID exists in the method relation
                 let check_script = format!(
                     r#"?[id] := *method {{ id, name @ 'NOW' }}, id == {}"#,
