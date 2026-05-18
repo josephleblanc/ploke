@@ -76,6 +76,7 @@ pub enum BenchmarkScenario {
     InspectorGraphEdgesExpanded300,
     InspectorArtifactEdgesExpanded300,
     InspectorPatchDebugExpanded300,
+    InspectorLlmCallsExpanded300,
     InspectorSourceRefsExpanded300,
     InspectorArtifactIdsExpanded300,
     InspectorSectionsSequence30,
@@ -103,6 +104,7 @@ impl BenchmarkScenario {
             "inspector_graph_edges_expanded_300" => Ok(Self::InspectorGraphEdgesExpanded300),
             "inspector_artifact_edges_expanded_300" => Ok(Self::InspectorArtifactEdgesExpanded300),
             "inspector_patch_debug_expanded_300" => Ok(Self::InspectorPatchDebugExpanded300),
+            "inspector_llm_calls_expanded_300" => Ok(Self::InspectorLlmCallsExpanded300),
             "inspector_source_refs_expanded_300" => Ok(Self::InspectorSourceRefsExpanded300),
             "inspector_artifact_ids_expanded_300" => Ok(Self::InspectorArtifactIdsExpanded300),
             "inspector_sections_sequence_30" => Ok(Self::InspectorSectionsSequence30),
@@ -124,6 +126,7 @@ impl BenchmarkScenario {
             Self::InspectorGraphEdgesExpanded300,
             Self::InspectorArtifactEdgesExpanded300,
             Self::InspectorPatchDebugExpanded300,
+            Self::InspectorLlmCallsExpanded300,
             Self::InspectorSourceRefsExpanded300,
             Self::InspectorArtifactIdsExpanded300,
             Self::PatchDebugCold300,
@@ -145,6 +148,7 @@ impl BenchmarkScenario {
                 "inspector_artifact_edges_expanded_300".to_owned()
             }
             Self::InspectorPatchDebugExpanded300 => "inspector_patch_debug_expanded_300".to_owned(),
+            Self::InspectorLlmCallsExpanded300 => "inspector_llm_calls_expanded_300".to_owned(),
             Self::InspectorSourceRefsExpanded300 => "inspector_source_refs_expanded_300".to_owned(),
             Self::InspectorArtifactIdsExpanded300 => {
                 "inspector_artifact_ids_expanded_300".to_owned()
@@ -203,6 +207,10 @@ impl BenchmarkScenario {
             },
             Self::InspectorPatchDebugExpanded300 => BenchmarkAction::SelectArtifact {
                 inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
+                reset_patch_cache: false,
+            },
+            Self::InspectorLlmCallsExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::LlmCalls),
                 reset_patch_cache: false,
             },
             Self::InspectorSourceRefsExpanded300 => BenchmarkAction::SelectArtifact {
@@ -463,6 +471,7 @@ impl InspectorSectionPhaseSequence {
                     frame_start: window.frame_start,
                     frame_end: window.frame_end,
                     stats: window.stats,
+                    heap_profile_delta: HeapScenarioProfile::default(),
                 }
             })
             .collect()
@@ -489,6 +498,7 @@ impl InspectorSequenceStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BenchmarkInspectorSection {
+    LlmCalls,
     RunRecords,
     GraphEdges,
     ArtifactEdges,
@@ -500,6 +510,7 @@ pub enum BenchmarkInspectorSection {
 impl BenchmarkInspectorSection {
     pub fn sequence() -> &'static [Self] {
         &[
+            Self::LlmCalls,
             Self::RunRecords,
             Self::GraphEdges,
             Self::ArtifactEdges,
@@ -511,6 +522,7 @@ impl BenchmarkInspectorSection {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::LlmCalls => "llm_calls",
             Self::RunRecords => "run_records",
             Self::GraphEdges => "graph_edges",
             Self::ArtifactEdges => "artifact_edges",
@@ -522,6 +534,7 @@ impl BenchmarkInspectorSection {
 
     fn parse(value: &str) -> Option<Self> {
         match value {
+            "llm_calls" => Some(Self::LlmCalls),
             "run_records" => Some(Self::RunRecords),
             "graph_edges" => Some(Self::GraphEdges),
             "artifact_edges" => Some(Self::ArtifactEdges),
@@ -534,6 +547,7 @@ impl BenchmarkInspectorSection {
 
     fn action_label(self) -> &'static str {
         match self {
+            Self::LlmCalls => "inspector_llm_calls_expanded",
             Self::RunRecords => "inspector_run_records_expanded",
             Self::GraphEdges => "inspector_graph_edges_expanded",
             Self::ArtifactEdges => "inspector_artifact_edges_expanded",
@@ -1093,6 +1107,8 @@ pub struct ScenarioPhaseWindow {
     pub frame_start: usize,
     pub frame_end: usize,
     pub stats: AllocationFrameStats,
+    #[serde(default)]
+    pub heap_profile_delta: HeapScenarioProfile,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1279,8 +1295,11 @@ impl BenchmarkController {
             let scenario = *self.config.scenarios.get(self.scenario_index)?;
             self.scenario_index += 1;
             allocation::begin_tracking_window(&self.heap_tracker);
-            self.last_heap_snapshot = allocation::heap_totals_snapshot(&self.heap_tracker);
-            self.current = Some(ScenarioCapture::new(scenario, allocation::snapshot()));
+            let heap_start = allocation::heap_profile_snapshot(&self.heap_tracker);
+            self.last_heap_snapshot = heap_start.clone();
+            self.current = Some(allocation::untracked(|| {
+                ScenarioCapture::new(scenario, allocation::snapshot(), heap_start)
+            }));
             return scenario.action_for_completed_frames(0);
         }
 
@@ -1319,10 +1338,10 @@ impl BenchmarkController {
         };
         let frame_duration = elapsed_ns(frame_start);
         let components = std::mem::take(&mut self.current_components);
-        let heap_snapshot = allocation::heap_totals_snapshot(&self.heap_tracker);
+        let heap_snapshot = allocation::heap_profile_snapshot(&self.heap_tracker);
         let frame_allocations =
             FrameAllocationSample::from_snapshots(&self.last_heap_snapshot, &heap_snapshot);
-        self.last_heap_snapshot = heap_snapshot;
+        self.last_heap_snapshot = heap_snapshot.clone();
         let Some(current) = &mut self.current else {
             return Ok(None);
         };
@@ -1332,6 +1351,7 @@ impl BenchmarkController {
             components,
             allocations: frame_allocations,
         });
+        current.heap_snapshots.push(heap_snapshot);
 
         if current.frames.len() < current.scenario.frame_target() {
             return Ok(None);
@@ -1445,15 +1465,23 @@ fn benchmark_notes(dirty_state: &DirtyState) -> Vec<String> {
 struct ScenarioCapture {
     scenario: BenchmarkScenario,
     frames: Vec<FrameSample>,
+    heap_snapshots: Vec<HeapProfileSnapshot>,
     action: BenchmarkActionReport,
     allocation_start: AllocationSnapshot,
 }
 
 impl ScenarioCapture {
-    fn new(scenario: BenchmarkScenario, allocation_start: AllocationSnapshot) -> Self {
+    fn new(
+        scenario: BenchmarkScenario,
+        allocation_start: AllocationSnapshot,
+        heap_start: HeapProfileSnapshot,
+    ) -> Self {
+        let mut heap_snapshots = Vec::with_capacity(scenario.frame_target().saturating_add(1));
+        heap_snapshots.push(heap_start);
         Self {
             scenario,
-            frames: Vec::new(),
+            frames: Vec::with_capacity(scenario.frame_target()),
+            heap_snapshots,
             action: BenchmarkActionReport::for_action(scenario.action()),
             allocation_start,
         }
@@ -1477,7 +1505,10 @@ impl ScenarioCapture {
             top_frames: top_frames(&self.frames),
             component_timings: component_reports(&self.frames, frame_stats.median_ns),
             allocation_frames: allocation_frame_report(&self.frames),
-            phase_windows: self.scenario.phase_windows(&self.frames),
+            phase_windows: phase_windows_with_heap_profiles(
+                self.scenario.phase_windows(&self.frames),
+                &self.heap_snapshots,
+            ),
             heap_profile: heap_summary(&heap_profile),
             allocations: allocation_end.delta_since(self.allocation_start),
             action: self.action,
@@ -1663,6 +1694,23 @@ fn allocation_frame_report(frames: &[FrameSample]) -> AllocationFrameReport {
         last_50: last_50.clone(),
         slope: classify_heap_slope(&first_50, &last_50),
     }
+}
+
+fn phase_windows_with_heap_profiles(
+    mut windows: Vec<ScenarioPhaseWindow>,
+    heap_snapshots: &[HeapProfileSnapshot],
+) -> Vec<ScenarioPhaseWindow> {
+    for window in &mut windows {
+        let start_index = window.frame_start.saturating_sub(1);
+        let end_index = window.frame_end;
+        if let (Some(start), Some(end)) = (
+            heap_snapshots.get(start_index),
+            heap_snapshots.get(end_index),
+        ) {
+            window.heap_profile_delta = heap_summary(&end.delta_since(start));
+        }
+    }
+    windows
 }
 
 fn frame_window(frames: &[FrameSample], start: usize, end: usize) -> AllocationFrameWindow {
@@ -2270,7 +2318,7 @@ mod tests {
                 INSPECTOR_SEQUENCE_WARMUP_FRAMES + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES
             ),
             Some(BenchmarkAction::InspectorSequence {
-                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::RunRecords)
+                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::LlmCalls)
             })
         );
         assert_eq!(
@@ -2280,7 +2328,7 @@ mod tests {
                     + INSPECTOR_SEQUENCE_SECTION_FRAMES
             ),
             Some(BenchmarkAction::InspectorSequence {
-                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::GraphEdges)
+                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::RunRecords)
             })
         );
         assert_eq!(scenario.action_for_completed_frames(101), None);
@@ -2299,6 +2347,13 @@ mod tests {
         assert_eq!(
             BenchmarkScenario::parse("inspector_patch_debug_phase_sequence_alternate_30"),
             Ok(scenario)
+        );
+        assert_eq!(
+            BenchmarkScenario::parse("inspector_llm_calls_phase_sequence_30"),
+            Ok(BenchmarkScenario::InspectorSectionPhaseSequence30 {
+                section: BenchmarkInspectorSection::LlmCalls,
+                target: BenchmarkSelectionTarget::Primary,
+            })
         );
         assert_eq!(
             scenario.frame_target(),
@@ -2367,6 +2422,38 @@ mod tests {
         assert_eq!(
             windows[8].selection_target.as_deref(),
             Some(BenchmarkSelectionTarget::Alternate.as_str())
+        );
+    }
+
+    #[test]
+    fn inspector_section_phase_windows_include_heap_profile_delta() {
+        let scenario = BenchmarkScenario::InspectorSectionPhaseSequence30 {
+            section: BenchmarkInspectorSection::RunRecords,
+            target: BenchmarkSelectionTarget::Primary,
+        };
+        let frames = frame_samples_with_live_bytes(42, scenario.frame_target());
+        let mut heap_snapshots = vec![HeapProfileSnapshot::default(); scenario.frame_target() + 1];
+        heap_snapshots[0] = heap_profile_snapshot_with_groups(&[]);
+        heap_snapshots[30] = heap_profile_snapshot_with_groups(&[("root", 7, 700)]);
+        heap_snapshots[60] =
+            heap_profile_snapshot_with_groups(&[("root", 7, 700), ("selection_inspector", 4, 200)]);
+
+        let windows =
+            phase_windows_with_heap_profiles(scenario.phase_windows(&frames), &heap_snapshots);
+
+        assert_eq!(windows[0].heap_profile_delta.totals.allocation_count, 7);
+        assert_eq!(
+            windows[0].heap_profile_delta.top_groups_by_allocation_count[0]
+                .name
+                .as_deref(),
+            Some("root")
+        );
+        assert_eq!(windows[1].heap_profile_delta.totals.allocation_count, 4);
+        assert_eq!(
+            windows[1].heap_profile_delta.top_groups_by_allocated_bytes[0]
+                .name
+                .as_deref(),
+            Some("selection_inspector")
         );
     }
 
@@ -2455,6 +2542,43 @@ mod tests {
                 },
             })
             .collect()
+    }
+
+    fn heap_profile_snapshot_with_groups(groups: &[(&str, u64, u64)]) -> HeapProfileSnapshot {
+        let mut totals = HeapProfileTotals::default();
+        let groups = groups
+            .iter()
+            .enumerate()
+            .map(
+                |(index, (name, allocation_count, allocated_object_bytes))| {
+                    let group_totals = HeapProfileTotals {
+                        allocation_count: *allocation_count,
+                        allocated_object_bytes: *allocated_object_bytes,
+                        allocated_wrapped_bytes: *allocated_object_bytes,
+                        live_object_bytes: *allocated_object_bytes,
+                        live_wrapped_bytes: *allocated_object_bytes,
+                        ..HeapProfileTotals::default()
+                    };
+                    totals.allocation_count += group_totals.allocation_count;
+                    totals.allocated_object_bytes += group_totals.allocated_object_bytes;
+                    totals.allocated_wrapped_bytes += group_totals.allocated_wrapped_bytes;
+                    totals.live_object_bytes += group_totals.live_object_bytes;
+                    totals.live_wrapped_bytes += group_totals.live_wrapped_bytes;
+                    HeapGroupProfile {
+                        group_id: index + 1,
+                        name: Some((*name).to_owned()),
+                        totals: group_totals,
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+        HeapProfileSnapshot {
+            enabled: true,
+            totals,
+            groups,
+            callsites: Vec::new(),
+            unmatched_deallocations: 0,
+        }
     }
 
     #[test]

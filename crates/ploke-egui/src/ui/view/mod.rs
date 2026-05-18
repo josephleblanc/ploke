@@ -183,7 +183,10 @@ impl GraphView {
             .with_styles(&self.style);
 
         label::reset_edge_label_diagnostics(ui.ctx());
-        let response = ui.add(&mut widget);
+        let response = {
+            let _span = tracing::trace_span!("central_graph_widget_add").entered();
+            ui.add(&mut widget)
+        };
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
         self.diagnostics =
             self.cache

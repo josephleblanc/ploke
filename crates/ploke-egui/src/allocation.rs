@@ -1,5 +1,7 @@
 //! Heap attribution used by native benchmark reports.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +100,33 @@ impl HeapProfileTotals {
             || self.live_object_bytes > 0
             || self.live_wrapped_bytes > 0
     }
+
+    pub fn delta_since(self, start: Self) -> Self {
+        Self {
+            allocation_count: self.allocation_count.saturating_sub(start.allocation_count),
+            deallocation_count: self
+                .deallocation_count
+                .saturating_sub(start.deallocation_count),
+            allocated_object_bytes: self
+                .allocated_object_bytes
+                .saturating_sub(start.allocated_object_bytes),
+            deallocated_object_bytes: self
+                .deallocated_object_bytes
+                .saturating_sub(start.deallocated_object_bytes),
+            allocated_wrapped_bytes: self
+                .allocated_wrapped_bytes
+                .saturating_sub(start.allocated_wrapped_bytes),
+            deallocated_wrapped_bytes: self
+                .deallocated_wrapped_bytes
+                .saturating_sub(start.deallocated_wrapped_bytes),
+            live_object_bytes: self
+                .live_object_bytes
+                .saturating_sub(start.live_object_bytes),
+            live_wrapped_bytes: self
+                .live_wrapped_bytes
+                .saturating_sub(start.live_wrapped_bytes),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +182,61 @@ impl HeapProfileSnapshot {
         }
     }
 
+    pub fn delta_since(&self, start: &Self) -> Self {
+        let start_groups = start
+            .groups
+            .iter()
+            .map(|group| (group.group_id, group.totals))
+            .collect::<BTreeMap<_, _>>();
+        let groups = self
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let start_totals = start_groups
+                    .get(&group.group_id)
+                    .copied()
+                    .unwrap_or_default();
+                let totals = group.totals.delta_since(start_totals);
+                totals.has_activity().then(|| HeapGroupProfile {
+                    group_id: group.group_id,
+                    name: group.name.clone(),
+                    totals,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let start_callsites = start
+            .callsites
+            .iter()
+            .map(|callsite| (callsite.callsite.clone(), callsite.totals))
+            .collect::<BTreeMap<_, _>>();
+        let callsites = self
+            .callsites
+            .iter()
+            .filter_map(|callsite| {
+                let start_totals = start_callsites
+                    .get(&callsite.callsite)
+                    .copied()
+                    .unwrap_or_default();
+                let totals = callsite.totals.delta_since(start_totals);
+                totals.has_activity().then(|| HeapCallsiteProfile {
+                    callsite: callsite.callsite.clone(),
+                    totals,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            enabled: self.enabled && start.enabled,
+            totals: self.totals.delta_since(start.totals),
+            groups,
+            callsites,
+            unmatched_deallocations: self
+                .unmatched_deallocations
+                .saturating_sub(start.unmatched_deallocations),
+        }
+    }
+
     pub fn top_groups_by_allocated_bytes(&self, limit: usize) -> Vec<HeapGroupProfile> {
         top_by(self.groups.clone(), limit, |group| {
             group.totals.allocated_wrapped_bytes
@@ -203,6 +287,7 @@ mod tracking {
     use std::sync::Arc;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::thread;
 
     use tracing::{Id, Subscriber};
     use tracing_subscriber::Layer;
@@ -220,6 +305,7 @@ mod tracking {
 
     static GLOBAL_TRACKER: OnceLock<HeapProfileTracker> = OnceLock::new();
     static GROUP_SCOPE_MAP: OnceLock<GroupScopeMap> = OnceLock::new();
+    static UI_THREAD_ID: OnceLock<thread::ThreadId> = OnceLock::new();
     static CURRENT_GENERATION: AtomicU64 = AtomicU64::new(0);
     const GROUP_SCOPE_MAP_CAPACITY: usize = 1 << 20;
 
@@ -500,6 +586,7 @@ mod tracking {
     pub fn begin_tracking_window(tracker: &HeapProfileTracker) {
         AllocationRegistry::disable_tracking();
         tracker.reset();
+        let _ = UI_THREAD_ID.get_or_init(|| thread::current().id());
         let generation = CURRENT_GENERATION
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
@@ -515,8 +602,8 @@ mod tracking {
         snapshot
     }
 
-    pub fn totals_snapshot(tracker: &HeapProfileTracker) -> HeapProfileSnapshot {
-        tracker.totals_snapshot()
+    pub fn profile_snapshot(tracker: &HeapProfileTracker) -> HeapProfileSnapshot {
+        tracker.snapshot()
     }
 
     struct AllocationScopeLayer;
@@ -638,7 +725,7 @@ mod tracking {
 
         fn current_scope_index(&self, group_id: usize, generation: u64) -> Option<usize> {
             if group_id == AllocationGroupId::ROOT.as_usize().get() {
-                return Some(ROOT_SCOPE_INDEX);
+                return Some(root_scope_index());
             }
             if group_id >= self.scopes.len() {
                 return None;
@@ -663,16 +750,22 @@ mod tracking {
     }
 
     const ROOT_SCOPE_INDEX: usize = 0;
+    const ROOT_UI_THREAD_SCOPE_INDEX: usize = 1;
+    const ROOT_OTHER_THREAD_SCOPE_INDEX: usize = 2;
     const SCOPE_NAMES: &[&str] = &[
         "root",
+        "root_ui_thread",
+        "root_other_thread",
         "frame_update",
         "top_strip",
         "run_navigation",
         "diagnostics",
         "selection_inspector",
         "central_graph",
+        "central_graph_widget_add",
         "timeline",
         "graph_projection_cache_refresh",
+        "egui_text_font_layout",
         "inspector_parent_create_llm_calls",
         "inspector_parent_create_source_status",
         "inspector_run_records",
@@ -680,8 +773,18 @@ mod tracking {
         "inspector_run_records_row",
         "inspector_run_records_widget_row",
         "inspector_run_records_text_galley",
+        "inspector_run_records_text_cache_lookup",
+        "inspector_run_records_text_cache_hit",
+        "inspector_run_records_text_layout_owned_string",
+        "inspector_run_records_text_egui_layout",
+        "inspector_run_records_text_cache_store",
         "inspector_run_records_label_widget",
         "inspector_run_records_id_galley",
+        "inspector_run_records_id_cache_lookup",
+        "inspector_run_records_id_cache_hit",
+        "inspector_run_records_id_label_prep",
+        "inspector_run_records_id_egui_layout",
+        "inspector_run_records_id_cache_store",
         "inspector_run_records_id_widget",
         "inspector_run_record_arm",
         "inspector_run_record_tool_step",
@@ -721,6 +824,15 @@ mod tracking {
 
     fn scope_index(name: &str) -> Option<usize> {
         SCOPE_NAMES.iter().position(|scope| *scope == name)
+    }
+
+    fn root_scope_index() -> usize {
+        let current = thread::current().id();
+        match UI_THREAD_ID.get() {
+            Some(ui_thread) if ui_thread == &current => ROOT_UI_THREAD_SCOPE_INDEX,
+            Some(_) => ROOT_OTHER_THREAD_SCOPE_INDEX,
+            None => ROOT_SCOPE_INDEX,
+        }
     }
 
     pub fn process_snapshot() -> AllocationSnapshot {
@@ -764,6 +876,38 @@ mod tracking {
         }
 
         #[test]
+        fn heap_profile_snapshot_delta_preserves_group_attribution() {
+            let tracker = HeapProfileTracker::default();
+            tracker.record_synthetic_allocated(64, 96, "selection_inspector");
+            let start = tracker.snapshot();
+
+            tracker.record_synthetic_allocated(11, 32, "top_strip");
+            tracker.record_synthetic_allocated(19, 48, "selection_inspector");
+            let end = tracker.snapshot();
+
+            let delta = end.delta_since(&start);
+            assert_eq!(delta.totals.allocation_count, 2);
+            assert_eq!(delta.totals.allocated_object_bytes, 30);
+            assert_eq!(delta.totals.live_wrapped_bytes, 80);
+
+            let top_strip = delta
+                .groups
+                .iter()
+                .find(|group| group.name.as_deref() == Some("top_strip"))
+                .expect("top strip delta group");
+            assert_eq!(top_strip.totals.allocation_count, 1);
+            assert_eq!(top_strip.totals.allocated_wrapped_bytes, 32);
+
+            let selection = delta
+                .groups
+                .iter()
+                .find(|group| group.name.as_deref() == Some("selection_inspector"))
+                .expect("selection inspector delta group");
+            assert_eq!(selection.totals.allocation_count, 1);
+            assert_eq!(selection.totals.allocated_object_bytes, 19);
+        }
+
+        #[test]
         fn run_record_measurement_scopes_are_registered() {
             let tracker = HeapProfileTracker::default();
             for scope in [
@@ -771,8 +915,18 @@ mod tracking {
                 "inspector_run_records_row",
                 "inspector_run_records_widget_row",
                 "inspector_run_records_text_galley",
+                "inspector_run_records_text_cache_lookup",
+                "inspector_run_records_text_cache_hit",
+                "inspector_run_records_text_layout_owned_string",
+                "inspector_run_records_text_egui_layout",
+                "inspector_run_records_text_cache_store",
                 "inspector_run_records_label_widget",
                 "inspector_run_records_id_galley",
+                "inspector_run_records_id_cache_lookup",
+                "inspector_run_records_id_cache_hit",
+                "inspector_run_records_id_label_prep",
+                "inspector_run_records_id_egui_layout",
+                "inspector_run_records_id_cache_store",
                 "inspector_run_records_id_widget",
             ] {
                 tracker.record_synthetic_allocated(1, 1, scope);
@@ -784,9 +938,50 @@ mod tracking {
                 "inspector_run_records_row",
                 "inspector_run_records_widget_row",
                 "inspector_run_records_text_galley",
+                "inspector_run_records_text_cache_lookup",
+                "inspector_run_records_text_cache_hit",
+                "inspector_run_records_text_layout_owned_string",
+                "inspector_run_records_text_egui_layout",
+                "inspector_run_records_text_cache_store",
                 "inspector_run_records_label_widget",
                 "inspector_run_records_id_galley",
+                "inspector_run_records_id_cache_lookup",
+                "inspector_run_records_id_cache_hit",
+                "inspector_run_records_id_label_prep",
+                "inspector_run_records_id_egui_layout",
+                "inspector_run_records_id_cache_store",
                 "inspector_run_records_id_widget",
+            ] {
+                assert!(
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.name.as_deref() == Some(scope)),
+                    "{scope} should be tracked"
+                );
+            }
+        }
+
+        #[test]
+        fn root_investigation_scopes_are_registered() {
+            let tracker = HeapProfileTracker::default();
+            for scope in [
+                "root",
+                "root_ui_thread",
+                "root_other_thread",
+                "egui_text_font_layout",
+                "central_graph_widget_add",
+            ] {
+                tracker.record_synthetic_allocated(1, 1, scope);
+            }
+
+            let snapshot = tracker.snapshot();
+            for scope in [
+                "root",
+                "root_ui_thread",
+                "root_other_thread",
+                "egui_text_font_layout",
+                "central_graph_widget_add",
             ] {
                 assert!(
                     snapshot
@@ -803,7 +998,7 @@ mod tracking {
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
 pub use tracking::{
     HeapProfileTracker, begin_tracking_window, finish_tracking_window, install_global_tracker,
-    totals_snapshot as heap_totals_snapshot, with_tracing_subscriber,
+    profile_snapshot as heap_profile_snapshot, with_tracing_subscriber,
 };
 
 #[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
@@ -824,7 +1019,7 @@ pub fn finish_tracking_window(_tracker: &HeapProfileTracker) -> HeapProfileSnaps
 }
 
 #[cfg(any(target_arch = "wasm32", not(feature = "native-benchmark")))]
-pub fn heap_totals_snapshot(_tracker: &HeapProfileTracker) -> HeapProfileSnapshot {
+pub fn heap_profile_snapshot(_tracker: &HeapProfileTracker) -> HeapProfileSnapshot {
     HeapProfileSnapshot::default()
 }
 

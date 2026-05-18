@@ -13,7 +13,8 @@ Records span attribution.
 
 ## Verification
 
-- `cargo test -p ploke-egui allocation 2>&1 | tail -n 120`
+- `cargo test -p ploke-egui allocation 2>&1 | tail -n 120` (matched 0 tests;
+  compile-only check)
 - `cargo test -p ploke-egui --features "dev native-benchmark" inspector_section_phase_sequence 2>&1 | tail -n 120`
 - `cargo test -p ploke-egui --features "dev native-benchmark" run_record_measurement_scopes_are_registered 2>&1 | tail -n 120`
 - `cargo check -p ploke-egui --features "dev native-benchmark" 2>&1 | tail -n 120`
@@ -71,3 +72,31 @@ Both scenarios remain above the current allocation tripwires. The next
 measurement should either add phase-scoped group summaries or split egui/root
 work around the expanded Run Records phase so the remaining delta can be
 assigned without guessing.
+
+## Follow-Up Measurement Split
+
+`20260518-run-records-measurement-split/report.json` split the Run Records text
+and id cache paths into cache lookup, cache hit, owned string/id prep, egui text
+layout, and cache store spans. The split confirms that the broad
+`inspector_run_records_text_galley` bucket was mostly egui text layout, not
+app-owned string/cache-store churn.
+
+- primary `inspector_run_records_text_egui_layout`: `2099` allocations,
+  `1245424` object bytes, `235240` live object bytes.
+- primary app-owned text prep/store combined:
+  `inspector_run_records_text_layout_owned_string` `1051` object bytes and
+  `inspector_run_records_text_cache_store` `3611` object bytes.
+- alternate `inspector_run_records_text_egui_layout`: `87` allocations,
+  `233376` object bytes, `164552` live object bytes.
+- alternate app-owned text prep/store combined:
+  `inspector_run_records_text_layout_owned_string` `865` object bytes and
+  `inspector_run_records_text_cache_store` `865` object bytes.
+- `inspector_run_records_widget_row` remains material: primary `312000` object
+  bytes, alternate `307200` object bytes.
+- Standard mode still captured no callsite attribution. Root/layout work outside
+  the Run Records body spans remains unattributed.
+
+The split run adds measurement overhead versus this report: primary median frame
+allocation moved from `1216` to `1232` allocations/frame and from `905990` to
+`952865` object bytes/frame. Treat it as an attribution run, not an optimization
+result.

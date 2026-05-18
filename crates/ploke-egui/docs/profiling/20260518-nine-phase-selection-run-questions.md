@@ -139,21 +139,25 @@ can decode tool arguments/results if opened (`src/ui/app/shell.rs:2025-2298`,
 `src/ui/app/shell.rs:113-155`).
 
 Measured answer: native interactive window benchmarking with focused Run Records
-spans says this is mostly row rendering and text galley/cache churn in the
-top-level Run Records body. It is not nested tool payload decoding, and it is not
-material projection rebuilding. The focused report is
-`benchmarks/20260518-run-records-focused-spans/report.json`.
+spans says this is mostly row rendering and egui text layout in the top-level
+Run Records body. It is not nested tool payload decoding, it is not material
+projection rebuilding, and app-owned string/cache-store allocations are tiny in
+this scenario. The reports are
+`benchmarks/20260518-run-records-focused-spans/report.json` and
+`benchmarks/20260518-run-records-measurement-split/report.json`.
 
 | Suspect | Record evidence | Code evidence | Conclusion |
 | --- | --- | --- | --- |
-| Nested tool payload decoding | No `inspector_tool_*` or `inspector_run_record_tool_step` groups appear in either focused Run Records heap profile. | The top-level `render_run_records` path only renders record summary rows (`src/ui/app/shell.rs:922-999`). Tool argument/result decoding is under the LLM/tool drilldown path (`src/ui/app/shell.rs:2616-2850`) and the render cache decode helpers (`src/ui/app/shell.rs:113-155`). | Ruled out for this measured top-level Run Records scenario. |
+| Nested tool payload decoding | No `inspector_tool_*` or `inspector_run_record_tool_step` groups appear in either focused Run Records heap profile. | The top-level `render_run_records` path only renders record summary rows (`src/ui/app/shell.rs:1015-1097`). Tool argument/result decoding is under the LLM/tool drilldown path (`src/ui/app/shell.rs:2709-2880`) and the render cache decode helpers (`src/ui/app/shell.rs:198-240`). | Ruled out for this measured top-level Run Records scenario. |
 | Projection rebuilding | `graph_projection_cache_refresh` is small: primary `181339` object bytes, alternate `91224`. Run Records slot resolution is absent/negligible in top groups. | `InspectorCache` rebuilds sections only when graph revision or selection changes (`src/ui/inspector.rs:31-58`). `RunRecordSlot::resolve` is a borrowed lookup into graph evidence (`src/ui/inspector.rs:473-491`). | Not the measured cost. |
-| Text galley/cache work | `inspector_run_records_text_galley` allocated primary `1250086` object bytes / `2154` allocs; alternate `235106` object bytes / `101` allocs. | Run Records labels and non-short ids route through `run_record_label` / `run_record_monospace_label`, which call `render_cache.text_galley` (`src/ui/app/shell.rs:1029-1089`). | Proven contributor inside the Run Records body. |
-| Row widget construction | `inspector_run_records_widget_row` allocated `312000` object bytes / `3120` allocs in both primary and alternate. | Every key/value row goes through `run_record_kv_id`, which creates an egui horizontal row and label widgets (`src/ui/app/shell.rs:1006-1017`). | Proven contributor inside the Run Records body. |
-| Whole-frame/root/layout overhead | Expanded idle vs selected-collapsed idle adds primary `+230` allocs/frame and `+179187` object bytes/frame; alternate adds `+233` allocs/frame and `+179963` object bytes/frame. Top total heap groups are still `root`, `central_graph`, `selection_inspector`, and navigation groups, with no callsites captured. | The focused spans only cover Run Records body subparts registered in `src/allocation.rs:666-685`; they do not split egui/root/layout internals. | Real remaining attribution gap. Needs phase-scoped root/layout or callsite sampling before assigning it to app code. |
+| App-owned string/cache-store work | In the split run, primary text owned-string prep is `1051` object bytes / `27` allocs and text cache store is `3611` object bytes / `28` allocs. Alternate is `865` object bytes / `7` allocs for each. No `inspector_run_records_id_*` group reports meaningful allocation. | Run Records-specific cache methods split lookup, hit, owned string prep, egui layout, and cache store (`src/ui/app/shell.rs:85-122`, `src/ui/app/shell.rs:152-194`). | Present but not the main Run Records allocator source in this scenario. |
+| egui text layout | `inspector_run_records_text_egui_layout` allocated primary `1245424` object bytes / `2099` allocs; alternate `233376` object bytes / `87` allocs. | Run Records text layout now calls `layout_owned_cached_text` under the egui-layout span (`src/ui/app/shell.rs:313-340`). | Proven largest named Run Records body contributor. |
+| Row widget construction | `inspector_run_records_widget_row` allocated primary `312000` object bytes / `3120` allocs and alternate `307200` object bytes / `3072` allocs. | Every key/value row goes through `run_record_kv_id`, which creates an egui horizontal row and label widgets (`src/ui/app/shell.rs:1099-1110`). | Proven contributor inside the Run Records body. |
+| Whole-frame/root/layout overhead | Expanded idle vs selected-collapsed idle adds primary `+230` allocs/frame and `+179189` object bytes/frame; alternate adds `+233` allocs/frame and `+179975` object bytes/frame. Top total heap groups are still `root`, `central_graph`, `selection_inspector`, and navigation groups, with no callsites captured. | The focused split covers only Run Records body subparts registered in `src/allocation.rs:666-695`; it does not split egui/root/layout internals outside those spans. | Real remaining attribution gap. Needs phase-scoped root/layout or callsite sampling before assigning it to app code. |
 
-Priority from this pass: cache or reduce Run Records text/row rendering first;
-do not spend the next slice on nested tool payloads or projection rebuilding.
+Priority from this pass: reduce Run Records egui text layout and row rendering
+first. Do not spend the next slice on nested tool payloads, projection
+rebuilding, or generic app-owned `String`/`Vec` churn in this section.
 
 ### 11. Would callsite attribution change the priority order?
 

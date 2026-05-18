@@ -82,6 +82,45 @@ impl InspectorRenderCache {
         galley
     }
 
+    fn run_record_text_galley(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        kind: CachedTextKind,
+    ) -> Arc<egui::Galley> {
+        let style_key = CachedTextStyleKey::from_ui(ui);
+        {
+            let _span = tracing::trace_span!("inspector_run_records_text_cache_lookup").entered();
+            if let Some(entry) = self.text_galleys.iter().find(|entry| {
+                entry.kind == kind && entry.style_key == style_key && entry.text.as_ref() == text
+            }) {
+                let _span = tracing::trace_span!("inspector_run_records_text_cache_hit").entered();
+                return entry.galley.clone();
+            }
+        }
+
+        let layout_text = {
+            let _span =
+                tracing::trace_span!("inspector_run_records_text_layout_owned_string").entered();
+            text.to_owned()
+        };
+        let galley = {
+            let _span = tracing::trace_span!("inspector_run_records_text_egui_layout").entered();
+            layout_owned_cached_text(ui, layout_text, kind)
+        };
+        {
+            let _span = tracing::trace_span!("inspector_run_records_text_cache_store").entered();
+            self.text_galleys.push(CachedTextGalley {
+                kind,
+                style_key,
+                text: text.into(),
+                galley: galley.clone(),
+            });
+            self.text_galley_rebuilds += 1;
+        }
+        galley
+    }
+
     fn id_galley(&mut self, ui: &egui::Ui, full: &str, expanded: bool) -> Arc<egui::Galley> {
         let style_key = CachedTextStyleKey::from_ui(ui);
         if let Some(entry) = self.id_galleys.iter().find(|entry| {
@@ -107,6 +146,52 @@ impl InspectorRenderCache {
             galley: galley.clone(),
         });
         self.id_galley_rebuilds += 1;
+        galley
+    }
+
+    fn run_record_id_galley(
+        &mut self,
+        ui: &egui::Ui,
+        full: &str,
+        expanded: bool,
+    ) -> Arc<egui::Galley> {
+        let style_key = CachedTextStyleKey::from_ui(ui);
+        {
+            let _span = tracing::trace_span!("inspector_run_records_id_cache_lookup").entered();
+            if let Some(entry) = self.id_galleys.iter().find(|entry| {
+                entry.expanded == expanded
+                    && entry.style_key == style_key
+                    && entry.full.as_ref() == full
+            }) {
+                let _span = tracing::trace_span!("inspector_run_records_id_cache_hit").entered();
+                return entry.galley.clone();
+            }
+        }
+
+        let label = {
+            let _span = tracing::trace_span!("inspector_run_records_id_label_prep").entered();
+            if expanded {
+                full.to_owned()
+            } else {
+                ShortId::new(full)
+                    .map(|short| short.to_string())
+                    .unwrap_or_else(|| full.to_owned())
+            }
+        };
+        let galley = {
+            let _span = tracing::trace_span!("inspector_run_records_id_egui_layout").entered();
+            layout_owned_cached_text(ui, label, CachedTextKind::Monospace)
+        };
+        {
+            let _span = tracing::trace_span!("inspector_run_records_id_cache_store").entered();
+            self.id_galleys.push(CachedIdGalley {
+                expanded,
+                style_key,
+                full: full.into(),
+                galley: galley.clone(),
+            });
+            self.id_galley_rebuilds += 1;
+        }
         galley
     }
 
@@ -226,19 +311,28 @@ struct CachedIdGalley {
 }
 
 fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<egui::Galley> {
+    layout_owned_cached_text(ui, text.to_owned(), kind)
+}
+
+fn layout_owned_cached_text(
+    ui: &egui::Ui,
+    text: String,
+    kind: CachedTextKind,
+) -> Arc<egui::Galley> {
     let style = ui.style();
     let text_style = match kind {
         CachedTextKind::Plain => egui::TextStyle::Body,
         CachedTextKind::Monospace | CachedTextKind::MonospaceBlock => egui::TextStyle::Monospace,
     };
     let font_id = text_style.resolve(style);
+    let _span = tracing::trace_span!("egui_text_font_layout").entered();
     match kind {
-        CachedTextKind::Plain | CachedTextKind::Monospace => ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(text.to_owned(), font_id, egui::Color32::PLACEHOLDER)
-        }),
+        CachedTextKind::Plain | CachedTextKind::Monospace => {
+            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, egui::Color32::PLACEHOLDER))
+        }
         CachedTextKind::MonospaceBlock => {
             let job = egui::text::LayoutJob::simple(
-                text.to_owned(),
+                text,
                 font_id,
                 ui.visuals().text_color(),
                 f32::INFINITY,
@@ -321,6 +415,7 @@ impl InspectorOpenState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InspectorPanelSection {
+    LlmCalls,
     RunRecords,
     GraphEdges,
     ArtifactEdges,
@@ -337,6 +432,7 @@ impl InspectorPanelSection {
     ))]
     fn from_benchmark(section: crate::benchmark::BenchmarkInspectorSection) -> Self {
         match section {
+            crate::benchmark::BenchmarkInspectorSection::LlmCalls => Self::LlmCalls,
             crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::RunRecords,
             crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::GraphEdges,
             crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::ArtifactEdges,
@@ -419,7 +515,7 @@ pub(crate) fn render_right_inspector(
             ui.separator();
             ui.label("Patch Generation");
             if let Some(sections) = sections {
-                render_parent_create_for_inspector(ui, graph, sections, render_cache);
+                render_parent_create_for_inspector(ui, graph, sections, render_cache, open_state);
             } else {
                 kv(ui, "attempt", "not_applicable");
             }
@@ -876,6 +972,7 @@ fn render_parent_create_for_inspector(
     graph: &Graph,
     sections: &InspectorSections,
     render_cache: &mut InspectorRenderCache,
+    open_state: InspectorOpenState,
 ) {
     if let Some(reason) = sections.unavailable() {
         render_unavailable(ui, reason);
@@ -888,6 +985,7 @@ fn render_parent_create_for_inspector(
             slot.resolve(graph),
             sections.run_records(),
             render_cache,
+            open_state,
         ),
         None => kv(ui, "attempt", "not_available"),
     }
@@ -1033,7 +1131,7 @@ fn run_record_label(
 ) -> egui::Response {
     let galley = {
         let _span = tracing::trace_span!("inspector_run_records_text_galley").entered();
-        render_cache.text_galley(ui, text, CachedTextKind::Plain)
+        render_cache.run_record_text_galley(ui, text, CachedTextKind::Plain)
     };
     let _span = tracing::trace_span!("inspector_run_records_label_widget").entered();
     ui.add(egui::Label::new(galley))
@@ -1053,7 +1151,7 @@ fn run_record_expandable_id(
     let mut expanded = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
     let galley = {
         let _span = tracing::trace_span!("inspector_run_records_id_galley").entered();
-        render_cache.id_galley(ui, full, expanded)
+        render_cache.run_record_id_galley(ui, full, expanded)
     };
     let response = {
         let _span = tracing::trace_span!("inspector_run_records_id_widget").entered();
@@ -1083,7 +1181,7 @@ fn run_record_monospace_label(
 ) -> egui::Response {
     let galley = {
         let _span = tracing::trace_span!("inspector_run_records_text_galley").entered();
-        render_cache.text_galley(ui, text, CachedTextKind::Monospace)
+        render_cache.run_record_text_galley(ui, text, CachedTextKind::Monospace)
     };
     let _span = tracing::trace_span!("inspector_run_records_label_widget").entered();
     ui.add(egui::Label::new(galley))
@@ -1702,6 +1800,7 @@ mod tests {
         );
 
         assert_eq!(state.open(InspectorPanelSection::GraphEdges), Some(true));
+        assert_eq!(state.open(InspectorPanelSection::LlmCalls), None);
         assert_eq!(state.open(InspectorPanelSection::RunRecords), None);
         assert_eq!(state.open(InspectorPanelSection::PatchDebug), None);
     }
@@ -1714,6 +1813,7 @@ mod tests {
         );
 
         assert_eq!(state.open(InspectorPanelSection::GraphEdges), Some(true));
+        assert_eq!(state.open(InspectorPanelSection::LlmCalls), Some(false));
         assert_eq!(state.open(InspectorPanelSection::RunRecords), Some(false));
         assert_eq!(state.open(InspectorPanelSection::PatchDebug), Some(false));
     }
@@ -1837,10 +1937,18 @@ fn render_parent_create(
     lookup: ParentCreateLookup<'_, '_>,
     run_record_slots: &[RunRecordSlot],
     render_cache: &mut InspectorRenderCache,
+    open_state: InspectorOpenState,
 ) {
     match lookup {
         ParentCreateLookup::Attempt(attempt) => {
-            render_parent_create_attempt(ui, graph, attempt, run_record_slots, render_cache);
+            render_parent_create_attempt(
+                ui,
+                graph,
+                attempt,
+                run_record_slots,
+                render_cache,
+                open_state,
+            );
         }
         ParentCreateLookup::Unavailable(reason) => {
             cached_kv_id(ui, render_cache, "attempt", "missing");
@@ -1860,6 +1968,7 @@ fn render_parent_create_attempt(
     attempt: ParentCreateAttempt<'_>,
     run_record_slots: &[RunRecordSlot],
     render_cache: &mut InspectorRenderCache,
+    open_state: InspectorOpenState,
 ) {
     let child = attempt.child();
     let surface = attempt.surface();
@@ -1916,7 +2025,14 @@ fn render_parent_create_attempt(
     cached_kv_text(ui, render_cache, "llm proposal", rows.llm_proposal.as_ref());
     cached_kv_text(ui, render_cache, "child eval", rows.child_eval.as_ref());
 
-    render_parent_create_llm_calls(ui, graph, &attempt, run_record_slots, render_cache);
+    render_parent_create_llm_calls(
+        ui,
+        graph,
+        &attempt,
+        run_record_slots,
+        render_cache,
+        open_state,
+    );
     render_parent_create_source_status(ui, &attempt, render_cache);
 }
 
@@ -1926,9 +2042,11 @@ fn render_parent_create_llm_calls(
     attempt: &ParentCreateAttempt<'_>,
     run_record_slots: &[RunRecordSlot],
     render_cache: &mut InspectorRenderCache,
+    open_state: InspectorOpenState,
 ) {
     egui::CollapsingHeader::new("LLM calls")
         .default_open(false)
+        .open(open_state.open(InspectorPanelSection::LlmCalls))
         .show(ui, |ui| {
             let _span = tracing::trace_span!("inspector_parent_create_llm_calls").entered();
             if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
