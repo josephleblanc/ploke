@@ -1,10 +1,8 @@
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use ploke_core::{EmbeddingData, TrackingHash};
 use ploke_db::NodeType;
-use ploke_llm::{ModelId, ProviderKey};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use tokio::sync::oneshot;
 use tokio::time::{Duration, Instant, sleep, timeout};
@@ -1882,8 +1880,6 @@ async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
     use ploke_tui::app_state::events::SystemEvent;
 
     const TEST_NAME: &str = "live_tui_router_staged_proposal_lowers_to_checked_artifact_delta";
-    const MODEL_ID: &str = "x-ai/grok-4-fast";
-    const PROVIDER: &str = "xai";
 
     if live_openrouter_env_or_skip(TEST_NAME).is_none() {
         return;
@@ -1902,8 +1898,14 @@ async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
         .setup_loaded_standalone_crate(fixture_root.clone())
         .await;
     let state = runtime.state_arc();
-    let model_id = ModelId::from_str(MODEL_ID).expect("live model id");
-    let provider_key = ProviderKey::new(PROVIDER).expect("provider key");
+    let model_id = crate::model_registry::load_active_model()
+        .expect("load active eval model config")
+        .model_id;
+    let provider_key = crate::provider_prefs::load_provider_for_model(&model_id)
+        .expect("load eval provider preferences")
+        .unwrap_or_else(|| {
+            panic!("active eval model {model_id} has no selected provider in provider preferences")
+        });
     {
         let mut cfg = state.config.write().await;
         cfg.active_model = model_id.clone();

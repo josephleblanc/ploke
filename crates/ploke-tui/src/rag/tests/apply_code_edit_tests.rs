@@ -12,7 +12,7 @@ use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
 use similar::TextDiff;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use uuid::Uuid;
 // ============================================================================
@@ -59,12 +59,37 @@ fn restore_fixture() {
     });
 }
 
-struct FixtureRestoreGuard;
+struct FixtureRestoreGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+fn fixture_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+impl FixtureRestoreGuard {
+    fn new() -> Self {
+        let lock = fixture_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        restore_fixture();
+        Self { _lock: lock }
+    }
+}
 
 impl Drop for FixtureRestoreGuard {
     fn drop(&mut self) {
         restore_fixture();
     }
+}
+
+async fn spawn_fixture_harness() -> (FixtureRestoreGuard, AppHarness) {
+    let guard = FixtureRestoreGuard::new();
+    let harness = AppHarness::spawn_fresh_fixture_nodes()
+        .await
+        .expect("spawn fresh fixture harness");
+    (guard, harness)
 }
 
 // Helper functions for test setup
@@ -120,7 +145,7 @@ fn test_proposal_id(request_id: Uuid) -> Uuid {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "test_harness")]
 async fn test_duplicate_request_detection() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Create a valid edit request using known fixture data
@@ -207,7 +232,7 @@ async fn test_duplicate_request_detection() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_empty_edits_validation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
@@ -261,7 +286,7 @@ async fn test_empty_edits_validation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_malformed_json_handling() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     use crate::{AppEvent, EventPriority};
@@ -339,9 +364,7 @@ async fn test_malformed_json_handling() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_success() {
-    let harness = AppHarness::spawn()
-        .await
-        .expect("spawn harness - requires database backup");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use known struct from fixture_nodes (must exist in database backup)
@@ -392,9 +415,7 @@ async fn test_canonical_resolution_success() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resolve_code_edit_request_returns_write_data_without_staging() {
-    let harness = AppHarness::spawn()
-        .await
-        .expect("spawn harness - requires database backup");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     let edit_request = create_canonical_edit_request(
         "src/structs.rs",
@@ -429,7 +450,7 @@ async fn resolve_code_edit_request_returns_write_data_without_staging() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resolve_code_edit_request_returns_splice_write_data_without_staging() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let expected_file_hash = TrackingHash(Uuid::new_v4());
     let edit_request = ApplyCodeEditRequest {
         edits: vec![Edit::Splice {
@@ -469,7 +490,7 @@ async fn resolve_code_edit_request_returns_splice_write_data_without_staging() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resolve_code_edit_request_rejects_outside_tool_path_without_staging() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let edit_request = create_canonical_edit_request(
         "../fixture_nodes_copy/src/structs.rs",
         "crate::structs::SampleStruct",
@@ -496,7 +517,7 @@ async fn resolve_code_edit_request_rejects_outside_tool_path_without_staging() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resolve_code_edit_request_returns_ambiguity_error_without_staging() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let edit_request = create_canonical_edit_request(
         "src/impls.rs",
         "crate::impls::SimpleStruct::trait_method",
@@ -523,7 +544,7 @@ async fn resolve_code_edit_request_returns_ambiguity_error_without_staging() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_not_found() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use non-existent canonical path
@@ -555,7 +576,7 @@ async fn test_canonical_resolution_not_found() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_wrong_node_type() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Try to resolve SampleStruct as a Function (wrong type)
@@ -587,7 +608,7 @@ async fn test_canonical_resolution_wrong_node_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_fallback_resolver() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use a canonical path that might not match exactly due to path resolution
@@ -625,7 +646,7 @@ async fn test_canonical_fallback_resolver() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unified_diff_preview_generation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set preview mode to Diff
     {
@@ -672,7 +693,7 @@ async fn test_unified_diff_preview_generation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_codeblock_preview_generation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set preview mode to CodeBlock
     {
@@ -727,7 +748,7 @@ async fn test_codeblock_preview_generation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_preview_truncation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set low preview line limit
     {
@@ -805,7 +826,7 @@ async fn test_preview_truncation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_proposal_creation_and_storage() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -849,7 +870,7 @@ async fn test_proposal_creation_and_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_auto_confirm_workflow() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Enable auto-confirm
     {
@@ -899,7 +920,7 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
     use std::{fs, path::PathBuf};
     use tempfile::tempdir;
 
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
     let tmp = tempdir().expect("tempdir");
     let file_path = tmp.path().join("staged_semantic_edit.rs");
@@ -968,7 +989,7 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tool_result_structure() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -1037,10 +1058,7 @@ async fn test_tool_result_structure() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn semantic_approval_refreshes_file_hash_before_returning() {
-    restore_fixture();
-    let _restore_guard = FixtureRestoreGuard;
-
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -1091,7 +1109,7 @@ async fn semantic_approval_refreshes_file_hash_before_returning() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_files_batch_processing() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Create edit request with multiple files (structs and enums from fixture_nodes)
@@ -1166,7 +1184,7 @@ async fn test_multiple_files_batch_processing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unsupported_node_type() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
@@ -1227,7 +1245,7 @@ async fn test_unsupported_node_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invalid_canonical_path_format() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -1262,9 +1280,7 @@ async fn test_invalid_canonical_path_format() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_complete_canonical_edit_flow_integration() {
-    let harness = AppHarness::spawn()
-        .await
-        .expect("spawn harness - this test requires the complete fixture database backup");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up configuration

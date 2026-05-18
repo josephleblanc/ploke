@@ -481,7 +481,16 @@ impl WorkspaceRegistry {
     }
 
     pub fn default_registry_path() -> std::path::PathBuf {
-        dirs::config_dir()
+        if let Some(path) =
+            std::env::var_os("PLOKE_WORKSPACE_REGISTRY_PATH").filter(|path| !path.is_empty())
+        {
+            return std::path::PathBuf::from(path);
+        }
+
+        std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(dirs::config_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("ploke")
             .join("workspaces.toml")

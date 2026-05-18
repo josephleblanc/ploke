@@ -851,7 +851,7 @@ explicitly allowed and expected, gated by the repo's live-test controls.
 7.6 first live adapter slice is closed:
 
 ```text
-live ploke-tui TestRuntime + OpenRouter x-ai/grok-4-fast / xai
+live ploke-tui TestRuntime + OpenRouter active ploke-eval model/provider config
   -> real model/tool loop stages apply_code_edit proposal
   -> staged WriteSnippetData lowers into eval touches
   -> eval Grant::check

@@ -369,29 +369,29 @@ impl Default for ValidationExpectation {
 // Backwards compatibility alias - all NoDbTestCase usages should work
 pub type NoDbTestCase = TestCase;
 
-struct XdgConfigHomeGuard {
-    old_xdg: Option<String>,
+struct WorkspaceRegistryPathGuard {
+    old_path: Option<String>,
 }
 
-impl XdgConfigHomeGuard {
+impl WorkspaceRegistryPathGuard {
     fn set_to(path: &std::path::Path) -> Self {
-        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", path);
+            std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", path);
         }
-        Self { old_xdg }
+        Self { old_path }
     }
 }
 
-impl Drop for XdgConfigHomeGuard {
+impl Drop for WorkspaceRegistryPathGuard {
     fn drop(&mut self) {
-        if let Some(old_xdg) = self.old_xdg.take() {
+        if let Some(old_path) = self.old_path.take() {
             unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old_xdg);
+                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_path);
             }
         } else {
             unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
+                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
             }
         }
     }
@@ -400,13 +400,14 @@ impl Drop for XdgConfigHomeGuard {
 struct LoadRegistrySandbox {
     _lock: tokio::sync::MutexGuard<'static, ()>,
     _tmp_dir: TempDir,
-    _xdg_guard: XdgConfigHomeGuard,
+    _registry_guard: WorkspaceRegistryPathGuard,
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {
     let lock = config_home_lock().lock().await;
     let tmp_dir = tempdir().expect("temp xdg config dir");
-    let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
+    let registry_path = tmp_dir.path().join("workspaces.toml");
+    let registry_guard = WorkspaceRegistryPathGuard::set_to(&registry_path);
 
     let repo_root = ploke_test_utils::workspace_root();
     let fixture_crate_root = repo_root.join("tests/fixture_crates/fixture_nodes");
@@ -428,13 +429,13 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
         }],
     };
     registry
-        .save_to_path(&WorkspaceRegistry::default_registry_path())
+        .save_to_path(&registry_path)
         .expect("save test workspace registry");
 
     LoadRegistrySandbox {
         _lock: lock,
         _tmp_dir: tmp_dir,
-        _xdg_guard: xdg_guard,
+        _registry_guard: registry_guard,
     }
 }
 

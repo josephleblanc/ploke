@@ -4,8 +4,8 @@
 //! real eval run data from the BurntSushi/ripgrep benchmark.
 //!
 //! Test Data Location:
-//! - Record: ~/.ploke-eval/runs/BurntSushi__ripgrep-2209/record.json.gz
-//! - DB: ~/.ploke-eval/runs/BurntSushi__ripgrep-2209/final-snapshot.db
+//! - Record: ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/runs/<run-id>/record.json.gz
+//! - DB: ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/runs/<run-id>/final-snapshot.db
 //! - Source: ~/.ploke-eval/repos/BurntSushi/ripgrep
 //!
 //! Ground Truth Verification:
@@ -13,16 +13,66 @@
 //! - Crate count: 9 (grep, grep-cli, grep-pcre2, globset, grep-searcher, ignore, grep-printer, grep-regex, grep-matcher)
 
 use ploke_eval::record::{RunRecord, read_compressed_record};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const INSTANCE_ID: &str = "BurntSushi__ripgrep-2209";
+
+fn eval_home() -> PathBuf {
+    std::env::var_os("PLOKE_EVAL_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".ploke-eval"))
+        })
+        .unwrap_or_else(|| PathBuf::from("/home/brasides/.ploke-eval"))
+}
+
+fn has_introspection_artifacts(run_dir: &Path) -> bool {
+    run_dir.join("record.json.gz").is_file() && run_dir.join("final-snapshot.db").is_file()
+}
+
+fn latest_run_with_introspection_artifacts(runs_dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(runs_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && has_introspection_artifacts(path))
+        .collect();
+    candidates.sort();
+    candidates.pop()
+}
+
+fn test_run_dir() -> PathBuf {
+    if let Some(run_dir) = std::env::var_os("PLOKE_EVAL_INTROSPECTION_RUN_DIR") {
+        return PathBuf::from(run_dir);
+    }
+
+    let home = eval_home();
+    let legacy = home.join("runs").join(INSTANCE_ID);
+    if has_introspection_artifacts(&legacy) {
+        return legacy;
+    }
+
+    latest_run_with_introspection_artifacts(&home.join("instances").join(INSTANCE_ID).join("runs"))
+        .unwrap_or_else(|| {
+            panic!(
+                "No introspection fixture run found for {INSTANCE_ID}. Looked for legacy \
+                 {legacy:?} and current instances/{INSTANCE_ID}/runs/<run-id>. Set \
+                 PLOKE_EVAL_INTROSPECTION_RUN_DIR to a run dir with record.json.gz and \
+                 final-snapshot.db."
+            )
+        })
+}
 
 /// Path to the test run record
 fn test_record_path() -> PathBuf {
-    PathBuf::from("/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-2209/record.json.gz")
+    test_run_dir().join("record.json.gz")
 }
 
 /// Path to the test database
 fn test_db_path() -> PathBuf {
-    PathBuf::from("/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-2209/final-snapshot.db")
+    test_run_dir().join("final-snapshot.db")
 }
 
 /// Helper to load the test record

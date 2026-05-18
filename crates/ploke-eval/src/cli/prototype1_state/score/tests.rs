@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::sync::MutexGuard;
@@ -976,12 +977,34 @@ fn score_build_aborts_on_malformed_declared_typed_record() {
     }
 }
 
-fn eval_home_guard(root: &Path) -> MutexGuard<'static, ()> {
-    let guard = crate::test_support::env_lock().lock().expect("env lock");
+struct EvalHomeGuard {
+    _lock: MutexGuard<'static, ()>,
+    previous: Option<OsString>,
+}
+
+impl Drop for EvalHomeGuard {
+    fn drop(&mut self) {
+        match self.previous.as_ref() {
+            Some(previous) => unsafe {
+                std::env::set_var("PLOKE_EVAL_HOME", previous);
+            },
+            None => unsafe {
+                std::env::remove_var("PLOKE_EVAL_HOME");
+            },
+        }
+    }
+}
+
+fn eval_home_guard(root: &Path) -> EvalHomeGuard {
+    let lock = crate::test_support::env_lock().lock().expect("env lock");
+    let previous = std::env::var_os("PLOKE_EVAL_HOME");
     unsafe {
         std::env::set_var("PLOKE_EVAL_HOME", root);
     }
-    guard
+    EvalHomeGuard {
+        _lock: lock,
+        previous,
+    }
 }
 
 fn write_protocol_scoring_registrations(root: &Path) -> (RunRegistration, RunRegistration) {

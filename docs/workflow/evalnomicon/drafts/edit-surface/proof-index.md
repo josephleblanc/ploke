@@ -1074,7 +1074,7 @@ Live gate:
 feature: live_api_tests
 credential lookup: ploke_tui::test_harness::openrouter_env()
 strict mode: PLOKE_RUN_LIVE_TESTS=1 requires credentials
-model/provider: x-ai/grok-4-fast / xai
+model/provider: ploke-eval active model + provider preferences
 ```
 
 Local splice:

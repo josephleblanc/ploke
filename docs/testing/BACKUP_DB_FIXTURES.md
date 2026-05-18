@@ -82,6 +82,49 @@ example `FIXTURE_NODES_CANONICAL.checked_path()?`) with a crate-local loader.
 
 Test isolation note:
 
+- Tests that mutate DB state loaded from a backup fixture must use
+  `fresh_backup_fixture_db(&FIXTURE_...)` or a harness built on top of it.
+  Do not use `shared_backup_fixture_db(...)` for tests that approve edits,
+  refresh file hashes, write embeddings, update indexes, or otherwise change
+  fixture-backed DB relations. Shared fixtures are for read-only consumers.
+- Tests that mutate checked-in source fixtures associated with a backup DB
+  also need a restore guard around the source file or tree. The DB and source
+  isolation are separate: a fresh DB prevents cross-test database state leaks,
+  while the restore guard prevents concurrent source-file edits from racing.
+  A module-local pattern that has worked is:
+
+```rust
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+struct FixtureRestoreGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+fn fixture_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+impl FixtureRestoreGuard {
+    fn new() -> Self {
+        let lock = fixture_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        restore_fixture();
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for FixtureRestoreGuard {
+    fn drop(&mut self) {
+        restore_fixture();
+    }
+}
+```
+
+  Keep this guard scoped to the test duration. If multiple modules or test
+  binaries mutate the same checked-in fixture tree, move the lock helper to a
+  shared test utility instead of duplicating per-module locks.
 - Tests that temporarily override `XDG_CONFIG_HOME` to point
   `WorkspaceRegistry::default_registry_path()` at a temp directory must
   serialize that mutation across the full workspace test run.
@@ -146,7 +189,7 @@ Test isolation note:
     - [crates/ploke-rag/src/core/unit_tests.rs](../../crates/ploke-rag/src/core/unit_tests.rs): shared immutable DB plus fresh immutable imports via `fresh_backup_fixture_db`
     - [crates/ploke-rag/tests/integration_tests.rs](../../crates/ploke-rag/tests/integration_tests.rs): shared immutable DB via `shared_backup_fixture_db`
   - `ploke-tui`
-    - [crates/ploke-tui/src/test_utils/new_test_harness.rs](../../crates/ploke-tui/src/test_utils/new_test_harness.rs): shared immutable headless harness DB via `shared_backup_fixture_db`
+    - [crates/ploke-tui/src/test_utils/new_test_harness.rs](../../crates/ploke-tui/src/test_utils/new_test_harness.rs): shared immutable headless harness DB via `shared_backup_fixture_db`; mutating edit tests use a fresh harness DB via `fresh_backup_fixture_db`
     - [crates/ploke-tui/tests/get_code_edges_regression.rs](../../crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via harness
     - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](../../crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
 - Notes:

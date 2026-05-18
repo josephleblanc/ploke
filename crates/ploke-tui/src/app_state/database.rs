@@ -709,12 +709,13 @@ async fn current_workspace_registry_entry(
 fn default_snapshot_file_for_entry(
     entry: &WorkspaceRegistryEntry,
 ) -> Result<PathBuf, ploke_error::Error> {
-    let config_dir = dirs::config_local_dir().ok_or_else(|| {
+    let registry_path = WorkspaceRegistry::default_registry_path();
+    let registry_dir = registry_path.parent().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-            msg: "Could not locate default config directory on system",
+            msg: "Could not locate workspace registry parent directory",
         })
     })?;
-    Ok(config_dir.join("ploke").join("data").join(format!(
+    Ok(registry_dir.join("data").join(format!(
         "{}_{}.sqlite",
         entry.workspace_name, entry.workspace_id
     )))
@@ -2099,20 +2100,27 @@ mod tests {
 
     struct XdgConfigHomeGuard {
         old_xdg: Option<String>,
+        old_registry_path: Option<String>,
     }
 
     impl XdgConfigHomeGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
             unsafe {
                 std::env::set_var("XDG_CONFIG_HOME", path);
+                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
             }
-            Self { old_xdg }
+            Self {
+                old_xdg,
+                old_registry_path,
+            }
         }
     }
 
     impl Drop for XdgConfigHomeGuard {
         fn drop(&mut self) {
+            restore_workspace_registry_path(self.old_registry_path.take());
             restore_xdg_config_home(self.old_xdg.take());
         }
     }
@@ -2160,13 +2168,25 @@ mod tests {
         }
     }
 
+    fn restore_workspace_registry_path(old_path: Option<String>) {
+        if let Some(old) = old_path {
+            unsafe {
+                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
-        let crate_name = "fixture_crate";
+        let crate_name = "fixture_crate_restore_embeddings";
         let crate_root = tmp_config.path().join(crate_name);
         std::fs::create_dir_all(&crate_root).expect("crate root dir");
 
@@ -2303,9 +2323,12 @@ mod tests {
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
+        let workspace_name = "fixture_crate_missing_registry";
         let data_dir = tmp_config.path().join("ploke/data");
         std::fs::create_dir_all(&data_dir).expect("create data dir");
-        let stale_backup = data_dir.join("fixture_crate_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        let stale_backup = data_dir.join(format!(
+            "{workspace_name}_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        ));
         std::fs::write(&stale_backup, "not-a-real-backup").expect("write stale backup");
 
         let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
@@ -2317,7 +2340,7 @@ mod tests {
         let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
-        let err = load_db(&fresh_state, &bus, "fixture_crate".to_string())
+        let err = load_db(&fresh_state, &bus, workspace_name.to_string())
             .await
             .expect_err("missing registry entry should fail");
         assert!(
@@ -2332,7 +2355,7 @@ mod tests {
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_first_populated_fallback";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
@@ -2422,7 +2445,7 @@ mod tests {
         let tmp_config = TempDir::new().expect("temp config dir");
         let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_metadata_mismatch";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());

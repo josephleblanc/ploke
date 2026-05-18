@@ -18,3 +18,8 @@ focused renderer tests, and live UI behavior as interchangeable.
   While implementing Selection metric witness drilldown, the agent treated
   borrowed graph records as enough allocation discipline, accepted the change
   before native allocation gating, and regressed the live right-panel path.
+- [`2026-05-18-ploke-egui-allocation-cache-layout-regression.md`](2026-05-18-ploke-egui-allocation-cache-layout-regression.md)
+  While trying to reduce `ploke-egui` allocation churn, the agent cached
+  left-panel diagnostic text as no-wrap galleys and shrank the central graph
+  viewport, treating allocation measurements as insufficiently coupled to
+  visible UI layout acceptance.

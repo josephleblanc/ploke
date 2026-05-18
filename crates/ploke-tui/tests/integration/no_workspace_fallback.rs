@@ -264,7 +264,8 @@ async fn conversation_only_prompt_names_loaded_workspace_when_context_off() {
                     if dbg.contains("PromptConstructed") && dbg.contains(&user_msg_id.to_string())
                     {
                         assert!(
-                            dbg.contains("Context mode is Off; workspace loaded at "),
+                            dbg.contains("Context mode is Off:")
+                                && dbg.contains("workspace loaded "),
                             "expected loaded-workspace system note in PromptConstructed payload. got: {}",
                             dbg
                         );

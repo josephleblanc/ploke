@@ -29,13 +29,6 @@ pub struct RawFullResponseRecord {
 }
 
 impl RawFullResponseRecord {
-    pub fn new(assistant_message_id: Uuid, recorded_response: RecordedResponse) -> Self {
-        Self {
-            assistant_message_id,
-            recorded_response,
-        }
-    }
-
     pub fn matches_assistant_message(&self, assistant_message_id: Uuid) -> bool {
         self.assistant_message_id == assistant_message_id
     }

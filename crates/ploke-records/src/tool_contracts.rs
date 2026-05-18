@@ -59,10 +59,6 @@ impl<'de> Deserialize<'de> for ToolArgumentsJson {
 }
 
 impl ToolArgumentsJson {
-    pub fn new(raw: impl Into<String>) -> Self {
-        Self { raw: raw.into() }
-    }
-
     pub fn as_str(&self) -> &str {
         &self.raw
     }
@@ -74,13 +70,15 @@ impl ToolArgumentsJson {
 
 impl From<String> for ToolArgumentsJson {
     fn from(raw: String) -> Self {
-        Self::new(raw)
+        Self { raw }
     }
 }
 
 impl From<&str> for ToolArgumentsJson {
     fn from(raw: &str) -> Self {
-        Self::new(raw)
+        Self {
+            raw: raw.to_string(),
+        }
     }
 }
 
@@ -536,7 +534,7 @@ mod tests {
 
     #[test]
     fn tool_call_arguments_json_keeps_legacy_wire_shape() {
-        let captured = ToolArgumentsJson::new(r#"{"dir":"crates"}"#);
+        let captured = ToolArgumentsJson::from(r#"{"dir":"crates"}"#);
         let serialized = serde_json::to_string(&captured).expect("serialize");
         assert_eq!(serialized, r#""{\"dir\":\"crates\"}""#);
 
