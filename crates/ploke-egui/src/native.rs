@@ -39,6 +39,19 @@ use ploke_tree::Graph;
 pub fn run() -> Result<(), Box<dyn Error>> {
     profiling::register_thread!("ploke-egui.main");
     let run = Run::from_env();
+    #[cfg(feature = "dev")]
+    if let Some(bench) = run.bench.as_ref() {
+        match bench {
+            crate::cli::bench::BenchRun::AllocationBreakdown { report_or_dir } => {
+                let breakdown =
+                    crate::benchmark::allocation_breakdown::BenchmarkAllocationBreakdown::load(
+                        report_or_dir.as_deref(),
+                    )?;
+                print!("{}", breakdown.render_text());
+                return Ok(());
+            }
+        }
+    }
     let explicit_run_root = run.run_root.clone();
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()

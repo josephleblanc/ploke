@@ -3,6 +3,8 @@
 //! The CLI selects a benchmark run; this module owns interpretation, timing,
 //! and report persistence.
 
+pub mod allocation_breakdown;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;

@@ -762,7 +762,24 @@ mod tracking {
         "diagnostics",
         "selection_inspector",
         "central_graph",
+        "egui_panel_top_strip_layout",
+        "egui_panel_run_navigation_layout",
+        "egui_panel_selection_inspector_layout",
+        "egui_panel_timeline_layout",
+        "egui_panel_central_layout",
+        "inspector_scroll_area_layout",
+        "inspector_collapsing_header_layout",
+        "central_graph_layout_state_restore",
+        "central_graph_navigation_prepare",
+        "central_graph_widget_build",
         "central_graph_widget_add",
+        "central_graph_diagnostics_update",
+        "egui_graphs_node_update",
+        "egui_graphs_node_shape_layout",
+        "egui_graphs_edge_update",
+        "egui_graphs_edge_shape_layout",
+        "egui_graphs_edge_curve_layout",
+        "egui_graphs_edge_label_layout",
         "timeline",
         "graph_projection_cache_refresh",
         "egui_text_font_layout",
@@ -982,6 +999,61 @@ mod tracking {
                 "root_other_thread",
                 "egui_text_font_layout",
                 "central_graph_widget_add",
+            ] {
+                assert!(
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.name.as_deref() == Some(scope)),
+                    "{scope} should be tracked"
+                );
+            }
+        }
+
+        #[test]
+        fn layout_investigation_scopes_are_registered() {
+            let tracker = HeapProfileTracker::default();
+            for scope in [
+                "egui_panel_top_strip_layout",
+                "egui_panel_run_navigation_layout",
+                "egui_panel_selection_inspector_layout",
+                "egui_panel_timeline_layout",
+                "egui_panel_central_layout",
+                "inspector_scroll_area_layout",
+                "inspector_collapsing_header_layout",
+                "central_graph_layout_state_restore",
+                "central_graph_navigation_prepare",
+                "central_graph_widget_build",
+                "central_graph_diagnostics_update",
+                "egui_graphs_node_update",
+                "egui_graphs_node_shape_layout",
+                "egui_graphs_edge_update",
+                "egui_graphs_edge_shape_layout",
+                "egui_graphs_edge_curve_layout",
+                "egui_graphs_edge_label_layout",
+            ] {
+                tracker.record_synthetic_allocated(1, 1, scope);
+            }
+
+            let snapshot = tracker.snapshot();
+            for scope in [
+                "egui_panel_top_strip_layout",
+                "egui_panel_run_navigation_layout",
+                "egui_panel_selection_inspector_layout",
+                "egui_panel_timeline_layout",
+                "egui_panel_central_layout",
+                "inspector_scroll_area_layout",
+                "inspector_collapsing_header_layout",
+                "central_graph_layout_state_restore",
+                "central_graph_navigation_prepare",
+                "central_graph_widget_build",
+                "central_graph_diagnostics_update",
+                "egui_graphs_node_update",
+                "egui_graphs_node_shape_layout",
+                "egui_graphs_edge_update",
+                "egui_graphs_edge_shape_layout",
+                "egui_graphs_edge_curve_layout",
+                "egui_graphs_edge_label_layout",
             ] {
                 assert!(
                     snapshot

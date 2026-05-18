@@ -163,6 +163,7 @@ impl GraphView {
 
         self.sync_projection(graph);
         if std::mem::take(&mut self.layout_state_pending) {
+            let _span = tracing::trace_span!("central_graph_layout_state_restore").entered();
             egui_graphs::set_layout_state(
                 ui,
                 self.cache.layout_state(self.view_style),
@@ -171,16 +172,21 @@ impl GraphView {
         }
 
         let fit_now = std::mem::take(&mut self.fit_next_frame);
-        self.navigation = navigation(self.view_style.layout.fit_padding, fit_now);
+        {
+            let _span = tracing::trace_span!("central_graph_navigation_prepare").entered();
+            self.navigation = navigation(self.view_style.layout.fit_padding, fit_now);
+        }
 
-        let mut widget =
+        let mut widget = {
+            let _span = tracing::trace_span!("central_graph_widget_build").entered();
             egui_graphs::GraphView::<_, _, _, _, _, _, layout::State, layout::Lineage>::new(
                 self.cache.graph_mut(),
             )
             .with_id(Some(self.id.clone()))
             .with_interactions(&self.interaction)
             .with_navigations(&self.navigation)
-            .with_styles(&self.style);
+            .with_styles(&self.style)
+        };
 
         label::reset_edge_label_diagnostics(ui.ctx());
         let response = {
@@ -188,9 +194,12 @@ impl GraphView {
             ui.add(&mut widget)
         };
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
-        self.diagnostics =
-            self.cache
-                .diagnostics(response.rect.size(), self.view_style, edge_labels);
+        {
+            let _span = tracing::trace_span!("central_graph_diagnostics_update").entered();
+            self.diagnostics =
+                self.cache
+                    .diagnostics(response.rect.size(), self.view_style, edge_labels);
+        }
     }
 
     #[cfg_attr(

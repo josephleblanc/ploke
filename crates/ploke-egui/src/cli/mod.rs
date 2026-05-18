@@ -3,13 +3,16 @@
 //! This module only parses startup options. Runtime graph loading, UI state, and
 //! diagnostic interpretation live in the surrounding library modules.
 
+pub mod bench;
 pub mod report;
 
 use std::path::PathBuf;
 
 #[cfg(feature = "dev")]
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
+#[cfg(feature = "dev")]
+use self::bench::{BenchArgs, BenchRun};
 use crate::ui::view::GraphViewMode;
 
 #[derive(Debug)]
@@ -38,6 +41,8 @@ pub struct Run {
     pub benchmark_scenarios: Vec<String>,
     #[cfg(feature = "dev")]
     pub benchmark_output: Option<PathBuf>,
+    #[cfg(feature = "dev")]
+    pub bench: Option<BenchRun>,
 }
 
 impl Run {
@@ -61,6 +66,7 @@ impl Run {
                 benchmark_suite: args.benchmark_suite,
                 benchmark_scenarios: args.benchmark_scenario,
                 benchmark_output: args.benchmark_output,
+                bench: args.command.map(Command::into_run),
             };
         }
 
@@ -165,6 +171,25 @@ struct Args {
         help = "Initial graph mode: artifact-tree, lineage, both, or none"
     )]
     mode: Option<GraphViewMode>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[cfg(feature = "dev")]
+#[derive(Debug, Subcommand)]
+enum Command {
+    #[command(about = "Inspect and render benchmark reports and artifacts")]
+    Bench(BenchArgs),
+}
+
+#[cfg(feature = "dev")]
+impl Command {
+    fn into_run(self) -> BenchRun {
+        match self {
+            Self::Bench(args) => args.into_run(),
+        }
+    }
 }
 
 #[cfg(feature = "dev")]
@@ -217,5 +242,50 @@ mod tests {
             vec!["startup_frames_300".to_owned(), "warm_idle_300".to_owned()]
         );
         assert_eq!(args.benchmark_output, Some(PathBuf::from("/tmp/report")));
+    }
+
+    #[test]
+    fn bench_breakdown_accepts_optional_path_and_alias() {
+        let latest = Args::try_parse_from(["ploke-egui", "bench", "--breakdown"])
+            .expect("parse latest allocation breakdown");
+        assert!(matches!(
+            latest.command.map(Command::into_run),
+            Some(BenchRun::AllocationBreakdown {
+                report_or_dir: None
+            })
+        ));
+
+        let explicit =
+            Args::try_parse_from(["ploke-egui", "bench", "--breakdown", "/tmp/report.json"])
+                .expect("parse explicit allocation breakdown");
+        assert!(matches!(
+            explicit.command.map(Command::into_run),
+            Some(BenchRun::AllocationBreakdown {
+                report_or_dir: Some(path)
+            }) if path == PathBuf::from("/tmp/report.json")
+        ));
+
+        let alias = Args::try_parse_from(["ploke-egui", "bench", "--bd", "/tmp/report.json"])
+            .expect("parse allocation breakdown alias");
+        assert!(matches!(
+            alias.command.map(Command::into_run),
+            Some(BenchRun::AllocationBreakdown {
+                report_or_dir: Some(path)
+            }) if path == PathBuf::from("/tmp/report.json")
+        ));
+    }
+
+    #[test]
+    fn bench_help_describes_breakdown_flags() {
+        let mut command = <Args as clap::CommandFactory>::command();
+        let bench = command
+            .find_subcommand_mut("bench")
+            .expect("bench subcommand exists");
+        let mut help = Vec::new();
+        bench.write_long_help(&mut help).expect("write help");
+        let help = String::from_utf8(help).expect("help is utf8");
+        assert!(help.contains("--breakdown [<REPORT_OR_DIR>]"));
+        assert!(help.contains("--bd [<REPORT_OR_DIR>]"));
+        assert!(help.contains("Print allocation-span breakdown"));
     }
 }

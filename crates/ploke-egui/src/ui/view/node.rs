@@ -30,6 +30,7 @@ where
     }
 
     fn shapes(&mut self, ctx: &egui_graphs::DrawContext) -> Vec<Shape> {
+        let _span = tracing::trace_span!("egui_graphs_node_shape_layout").entered();
         if self.visible {
             <egui_graphs::DefaultNodeShape as egui_graphs::DisplayNode<GraphNode, E, Ty, Ix>>::shapes(&mut self.inner, ctx)
         } else {
@@ -38,6 +39,7 @@ where
     }
 
     fn update(&mut self, state: &egui_graphs::NodeProps<GraphNode>) {
+        let _span = tracing::trace_span!("egui_graphs_node_update").entered();
         self.visible = state.payload.visible();
         <egui_graphs::DefaultNodeShape as egui_graphs::DisplayNode<GraphNode, E, Ty, Ix>>::update(
             &mut self.inner,

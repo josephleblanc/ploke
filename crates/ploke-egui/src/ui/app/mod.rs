@@ -274,17 +274,20 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let top_strip_start = Instant::now();
-        egui::Panel::top("top_strip")
-            .default_size(layout::TOP_STRIP_HEIGHT)
-            .show_inside(ui, |ui| {
-                profiling::scope!("ploke-egui.frame.top-strip");
-                shell::render_top_strip(
-                    ui,
-                    self.view.mode(),
-                    self.current_run_name(),
-                    top_graph_has_content,
-                );
-            });
+        {
+            let _span = tracing::trace_span!("egui_panel_top_strip_layout").entered();
+            egui::Panel::top("top_strip")
+                .default_size(layout::TOP_STRIP_HEIGHT)
+                .show_inside(ui, |ui| {
+                    profiling::scope!("ploke-egui.frame.top-strip");
+                    shell::render_top_strip(
+                        ui,
+                        self.view.mode(),
+                        self.current_run_name(),
+                        top_graph_has_content,
+                    );
+                });
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -298,13 +301,16 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let run_navigation_start = Instant::now();
-        egui::Panel::left("run_navigation")
-            .default_size(layout::LEFT_SIDEBAR_WIDTH)
-            .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
-            .show_inside(ui, |ui| {
-                profiling::scope!("ploke-egui.frame.run-navigation");
-                self.render_run_navigation_panel(ui);
-            });
+        {
+            let _span = tracing::trace_span!("egui_panel_run_navigation_layout").entered();
+            egui::Panel::left("run_navigation")
+                .default_size(layout::LEFT_SIDEBAR_WIDTH)
+                .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
+                .show_inside(ui, |ui| {
+                    profiling::scope!("ploke-egui.frame.run-navigation");
+                    self.render_run_navigation_panel(ui);
+                });
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -328,37 +334,40 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let inspector_start = Instant::now();
-        egui::Panel::right("selection_inspector")
-            .default_size(layout::RIGHT_INSPECTOR_WIDTH)
-            .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
-            .show_inside(ui, |ui| {
-                profiling::scope!("ploke-egui.frame.selection-inspector");
-                #[cfg(all(
-                    not(target_arch = "wasm32"),
-                    feature = "dev",
-                    feature = "native-benchmark"
-                ))]
-                let inspector_open_state = shell::InspectorOpenState::benchmark(
-                    self.benchmark_inspector_section,
-                    self.benchmark_inspector_exclusive,
-                );
-                #[cfg(not(all(
-                    not(target_arch = "wasm32"),
-                    feature = "dev",
-                    feature = "native-benchmark"
-                )))]
-                let inspector_open_state = shell::InspectorOpenState::default();
-                shell::render_right_inspector(
-                    ui,
-                    &self.graph,
-                    selected_kind,
-                    selected_label,
-                    selected_sections,
-                    &mut self.inspector_render_cache,
-                    &mut self.patch_diff_cache,
-                    inspector_open_state,
-                );
-            });
+        {
+            let _span = tracing::trace_span!("egui_panel_selection_inspector_layout").entered();
+            egui::Panel::right("selection_inspector")
+                .default_size(layout::RIGHT_INSPECTOR_WIDTH)
+                .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
+                .show_inside(ui, |ui| {
+                    profiling::scope!("ploke-egui.frame.selection-inspector");
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    let inspector_open_state = shell::InspectorOpenState::benchmark(
+                        self.benchmark_inspector_section,
+                        self.benchmark_inspector_exclusive,
+                    );
+                    #[cfg(not(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    )))]
+                    let inspector_open_state = shell::InspectorOpenState::default();
+                    shell::render_right_inspector(
+                        ui,
+                        &self.graph,
+                        selected_kind,
+                        selected_label,
+                        selected_sections,
+                        &mut self.inspector_render_cache,
+                        &mut self.patch_diff_cache,
+                        inspector_open_state,
+                    );
+                });
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -372,16 +381,19 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let timeline_start = Instant::now();
-        egui::Panel::bottom("timeline")
-            .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
-            .show_inside(ui, |ui| {
-                profiling::scope!("ploke-egui.frame.timeline");
-                shell::render_bottom_timeline(
-                    ui,
-                    self.view.diagnostics().as_ref(),
-                    selection_synced,
-                );
-            });
+        {
+            let _span = tracing::trace_span!("egui_panel_timeline_layout").entered();
+            egui::Panel::bottom("timeline")
+                .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
+                .show_inside(ui, |ui| {
+                    profiling::scope!("ploke-egui.frame.timeline");
+                    shell::render_bottom_timeline(
+                        ui,
+                        self.view.diagnostics().as_ref(),
+                        selection_synced,
+                    );
+                });
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -395,18 +407,21 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let central_start = Instant::now();
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            profiling::scope!("ploke-egui.frame.central");
-            if graph_has_content {
-                self.view.show(ui, &self.graph);
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        "No graph records loaded. Pass --run-root with a Prototype 1 record root.",
-                    );
-                });
-            }
-        });
+        {
+            let _span = tracing::trace_span!("egui_panel_central_layout").entered();
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                profiling::scope!("ploke-egui.frame.central");
+                if graph_has_content {
+                    self.view.show(ui, &self.graph);
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(
+                            "No graph records loaded. Pass --run-root with a Prototype 1 record root.",
+                        );
+                    });
+                }
+            });
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",

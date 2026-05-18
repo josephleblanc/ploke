@@ -468,6 +468,15 @@ pub(crate) fn render_top_strip(
     });
 }
 
+fn show_inspector_collapsing<R>(
+    ui: &mut egui::Ui,
+    header: egui::CollapsingHeader,
+    add_body: impl FnOnce(&mut egui::Ui) -> R,
+) {
+    let _span = tracing::trace_span!("inspector_collapsing_header_layout").entered();
+    header.show(ui, add_body);
+}
+
 #[cfg_attr(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "selection_inspector")
@@ -482,110 +491,143 @@ pub(crate) fn render_right_inspector(
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
     open_state: InspectorOpenState,
 ) {
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.heading("Inspector");
-            ui.separator();
+    {
+        let _span = tracing::trace_span!("inspector_scroll_area_layout").entered();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.heading("Inspector");
+                ui.separator();
 
-            ui.label("Summary");
-            if let (Some(kind), Some(label)) = (selection_kind, selection_label) {
-                cached_kv_id(ui, render_cache, "kind", kind);
-                cached_kv_id(ui, render_cache, "label", label);
-            } else {
-                kv(ui, "selection", "not_applicable");
-            }
+                ui.label("Summary");
+                if let (Some(kind), Some(label)) = (selection_kind, selection_label) {
+                    cached_kv_id(ui, render_cache, "kind", kind);
+                    cached_kv_id(ui, render_cache, "label", label);
+                } else {
+                    kv(ui, "selection", "not_applicable");
+                }
 
-            ui.separator();
-            ui.label("Identity");
-            if let Some(sections) = sections {
-                render_identity(ui, graph, sections, render_cache);
-            } else {
-                kv(ui, "record refs", "not_applicable");
-            }
+                ui.separator();
+                ui.label("Identity");
+                if let Some(sections) = sections {
+                    render_identity(ui, graph, sections, render_cache);
+                } else {
+                    kv(ui, "record refs", "not_applicable");
+                }
 
-            ui.separator();
-            ui.label("Roles");
-            if let Some(sections) = sections {
-                render_roles_and_metrics(ui, graph, sections, render_cache);
-            } else {
-                kv(ui, "roles", "not_applicable");
-            }
+                ui.separator();
+                ui.label("Roles");
+                if let Some(sections) = sections {
+                    render_roles_and_metrics(ui, graph, sections, render_cache);
+                } else {
+                    kv(ui, "roles", "not_applicable");
+                }
 
-            ui.separator();
-            ui.label("Patch Generation");
-            if let Some(sections) = sections {
-                render_parent_create_for_inspector(ui, graph, sections, render_cache, open_state);
-            } else {
-                kv(ui, "attempt", "not_applicable");
-            }
+                ui.separator();
+                ui.label("Patch Generation");
+                if let Some(sections) = sections {
+                    render_parent_create_for_inspector(
+                        ui,
+                        graph,
+                        sections,
+                        render_cache,
+                        open_state,
+                    );
+                } else {
+                    kv(ui, "attempt", "not_applicable");
+                }
 
-            ui.separator();
-            egui::CollapsingHeader::new("Run Records")
-                .open(open_state.open(InspectorPanelSection::RunRecords))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_run_records_for_inspector(ui, graph, sections, render_cache);
-                    } else {
-                        kv(ui, "run records", "not_applicable");
-                    }
-                });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Run Records")
+                        .open(open_state.open(InspectorPanelSection::RunRecords)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_run_records_for_inspector(ui, graph, sections, render_cache);
+                        } else {
+                            kv(ui, "run records", "not_applicable");
+                        }
+                    },
+                );
 
-            ui.separator();
-            egui::CollapsingHeader::new("Graph edges")
-                .open(open_state.open(InspectorPanelSection::GraphEdges))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_graph_edges_for_inspector(ui, sections, render_cache);
-                    } else {
-                        kv(ui, "edges", "not_applicable");
-                    }
-                });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Graph edges")
+                        .open(open_state.open(InspectorPanelSection::GraphEdges)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_graph_edges_for_inspector(ui, sections, render_cache);
+                        } else {
+                            kv(ui, "edges", "not_applicable");
+                        }
+                    },
+                );
 
-            ui.separator();
-            egui::CollapsingHeader::new("Artifact edges")
-                .open(open_state.open(InspectorPanelSection::ArtifactEdges))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_artifact_edges_for_inspector(ui, sections, render_cache);
-                    } else {
-                        kv(ui, "artifact edges", "not_applicable");
-                    }
-                });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Artifact edges")
+                        .open(open_state.open(InspectorPanelSection::ArtifactEdges)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_artifact_edges_for_inspector(ui, sections, render_cache);
+                        } else {
+                            kv(ui, "artifact edges", "not_applicable");
+                        }
+                    },
+                );
 
-            ui.separator();
-            egui::CollapsingHeader::new("Patch Debug")
-                .open(open_state.open(InspectorPanelSection::PatchDebug))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_patches_for_inspector(ui, graph, sections, render_cache, diff_cache);
-                    } else {
-                        kv(ui, "patch", "not_applicable");
-                    }
-                });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Patch Debug")
+                        .open(open_state.open(InspectorPanelSection::PatchDebug)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_patches_for_inspector(
+                                ui,
+                                graph,
+                                sections,
+                                render_cache,
+                                diff_cache,
+                            );
+                        } else {
+                            kv(ui, "patch", "not_applicable");
+                        }
+                    },
+                );
 
-            ui.separator();
-            egui::CollapsingHeader::new("Source refs")
-                .open(open_state.open(InspectorPanelSection::SourceRefs))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_source_refs_for_inspector(ui, graph, sections, render_cache);
-                    } else {
-                        kv(ui, "record refs", "not_applicable");
-                    }
-                });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Source refs")
+                        .open(open_state.open(InspectorPanelSection::SourceRefs)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_source_refs_for_inspector(ui, graph, sections, render_cache);
+                        } else {
+                            kv(ui, "record refs", "not_applicable");
+                        }
+                    },
+                );
 
-            ui.separator();
-            egui::CollapsingHeader::new("Artifact Ids")
-                .open(open_state.open(InspectorPanelSection::ArtifactIds))
-                .show(ui, |ui| {
-                    if let Some(sections) = sections {
-                        render_artifact_ids_for_inspector(ui, graph, sections, render_cache);
-                    } else {
-                        kv(ui, "artifact ids", "not_applicable");
-                    }
-                });
-        });
+                ui.separator();
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("Artifact Ids")
+                        .open(open_state.open(InspectorPanelSection::ArtifactIds)),
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_artifact_ids_for_inspector(ui, graph, sections, render_cache);
+                        } else {
+                            kv(ui, "artifact ids", "not_applicable");
+                        }
+                    },
+                );
+            });
+    }
 }
 
 #[cfg_attr(
@@ -2044,17 +2086,20 @@ fn render_parent_create_llm_calls(
     render_cache: &mut InspectorRenderCache,
     open_state: InspectorOpenState,
 ) {
-    egui::CollapsingHeader::new("LLM calls")
-        .default_open(false)
-        .open(open_state.open(InspectorPanelSection::LlmCalls))
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("LLM calls")
+            .default_open(false)
+            .open(open_state.open(InspectorPanelSection::LlmCalls)),
+        |ui| {
             let _span = tracing::trace_span!("inspector_parent_create_llm_calls").entered();
             if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
                 return;
             }
             cached_kv_id(ui, render_cache, "evidence", "agent_turn_sidecar_fallback");
             render_agent_turns(ui, render_cache, attempt.agent_turns());
-        });
+        },
+    );
 }
 
 fn render_parent_create_source_status(
@@ -2063,9 +2108,10 @@ fn render_parent_create_source_status(
     render_cache: &mut InspectorRenderCache,
 ) {
     let child = attempt.child();
-    egui::CollapsingHeader::new("Source status")
-        .default_open(false)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Source status").default_open(false),
+        |ui| {
             let _span = tracing::trace_span!("inspector_parent_create_source_status").entered();
             ui.horizontal(|ui| {
                 cached_label(ui, render_cache, "child");
@@ -2101,7 +2147,8 @@ fn render_parent_create_source_status(
                 );
             });
             cached_kv_usize(ui, render_cache, "record refs", attempt.source_ref_count());
-        });
+        },
+    );
 }
 
 fn render_parent_create_unavailable(
@@ -2239,9 +2286,10 @@ fn render_run_record_arm_turns(
         return false;
     }
 
-    egui::CollapsingHeader::new(compared_run_arm_label(arm))
-        .default_open(default_open)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new(compared_run_arm_label(arm)).default_open(default_open),
+        |ui| {
             cached_kv_id(ui, render_cache, "evidence", "branch_run_record");
             for record in run_record_slots
                 .iter()
@@ -2252,7 +2300,8 @@ fn render_run_record_arm_turns(
                     render_run_record_turn(ui, render_cache, turn);
                 }
             }
-        });
+        },
+    );
     true
 }
 
@@ -2498,10 +2547,12 @@ fn render_tool_arguments_section(
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let call_id = tool.request.call_id.as_str();
-    egui::CollapsingHeader::new("tool call arguments")
-        .id_salt(("run-record-tool-arguments", index, call_id))
-        .default_open(true)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("tool call arguments")
+            .id_salt(("run-record-tool-arguments", index, call_id))
+            .default_open(true),
+        |ui| {
             {
                 let decoded = render_cache.tool_arguments(
                     call_id,
@@ -2511,13 +2562,17 @@ fn render_tool_arguments_section(
                 render_decoded_tool_arguments(ui, decoded);
             }
 
-            egui::CollapsingHeader::new("raw arguments")
-                .id_salt(("run-record-tool-raw-arguments", index, call_id))
-                .default_open(false)
-                .show(ui, |ui| {
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("raw arguments")
+                    .id_salt(("run-record-tool-raw-arguments", index, call_id))
+                    .default_open(false),
+                |ui| {
                     render_tool_raw_arguments_section(ui, render_cache, index, call_id, tool);
-                });
-        });
+                },
+            );
+        },
+    );
 }
 
 #[cfg_attr(
@@ -2551,10 +2606,12 @@ fn render_tool_result_section(
 ) {
     let call_id = tool.request.call_id.as_str();
     let raw_content = tool_execution_content(tool);
-    egui::CollapsingHeader::new("tool call content")
-        .id_salt(("run-record-tool-content", index, call_id))
-        .default_open(false)
-        .show(ui, |ui| match &tool.result {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("tool call content")
+            .id_salt(("run-record-tool-content", index, call_id))
+            .default_open(false),
+        |ui| match &tool.result {
             ploke_records::run_record::ToolResult::Completed(_) => {
                 {
                     let decoded =
@@ -2562,33 +2619,40 @@ fn render_tool_result_section(
                     render_decoded_tool_result(ui, decoded);
                 }
 
-                egui::CollapsingHeader::new("raw content")
-                    .id_salt(("run-record-tool-content-raw", index, call_id))
-                    .default_open(false)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("raw content")
+                        .id_salt(("run-record-tool-content-raw", index, call_id))
+                        .default_open(false),
+                    |ui| {
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
                             ("run-record-tool-content-block", index, call_id),
                             raw_content,
                         );
-                    });
+                    },
+                );
             }
             ploke_records::run_record::ToolResult::Failed(_) => {
                 render_tool_failure_content(ui, tool);
-                egui::CollapsingHeader::new("raw error")
-                    .id_salt(("run-record-tool-error-raw", index, call_id))
-                    .default_open(false)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("raw error")
+                        .id_salt(("run-record-tool-error-raw", index, call_id))
+                        .default_open(false),
+                    |ui| {
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
                             ("run-record-tool-error-block", index, call_id),
                             raw_content,
                         );
-                    });
+                    },
+                );
             }
-        });
+        },
+    );
 }
 
 #[cfg_attr(
@@ -2649,9 +2713,10 @@ fn render_tool_ui_payload(
     ui: &mut egui::Ui,
     payload: &ploke_records::agent_turn::ToolUiPayloadRecord,
 ) {
-    egui::CollapsingHeader::new("tool ui payload")
-        .default_open(true)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("tool ui payload").default_open(true),
+        |ui| {
             tool_kv_text(ui, "tool", payload.tool.as_str());
             tool_kv_text(ui, "call id", payload.call_id.as_str());
             if let Some(request_id) = payload.request_id.as_deref() {
@@ -2666,16 +2731,19 @@ fn render_tool_ui_payload(
                 tool_kv_text(ui, field.name.as_str(), field.value.as_str());
             }
             if let Some(details) = payload.details.as_deref() {
-                egui::CollapsingHeader::new("details")
-                    .default_open(false)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new("details").default_open(false),
+                    |ui| {
                         render_tool_ui_payload_details(ui, details);
-                    });
+                    },
+                );
             }
             if let Some(error) = payload.error.as_ref() {
                 render_tool_error_wire(ui, error);
             }
-        });
+        },
+    );
 }
 
 #[cfg_attr(
@@ -2694,9 +2762,10 @@ fn render_tool_error_wire(
     ui: &mut egui::Ui,
     error: &ploke_records::agent_turn::ToolErrorWireRecord,
 ) {
-    egui::CollapsingHeader::new("typed error")
-        .default_open(true)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("typed error").default_open(true),
+        |ui| {
             tool_kv_text(ui, "user", error.user.as_str());
             tool_kv_text(ui, "system", error.system.as_str());
             tool_kv_bool(ui, "ok", error.llm.ok);
@@ -2715,7 +2784,8 @@ fn render_tool_error_wire(
             if let Some(hint) = error.llm.retry_hint.as_deref() {
                 tool_kv_text(ui, "retry hint", hint);
             }
-        });
+        },
+    );
 }
 
 fn render_tool_failure_content(
@@ -2755,15 +2825,18 @@ fn render_tool_call_arguments(ui: &mut egui::Ui, arguments: &ToolCallArguments) 
             render_optional_f32(ui, "confidence", args.confidence);
             tool_kv_usize(ui, "edits", args.edits.len());
             for (index, edit) in args.edits.iter().enumerate() {
-                egui::CollapsingHeader::new(format!("edit {}", index + 1))
-                    .default_open(index == 0)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new(format!("edit {}", index + 1))
+                        .default_open(index == 0),
+                    |ui| {
                         let _span = tracing::trace_span!("inspector_tool_argument_edit").entered();
                         tool_kv_text(ui, "file", edit.file.as_str());
                         tool_kv_text(ui, "canon", edit.canon.as_str());
                         tool_kv_debug(ui, "node type", edit.node_type);
                         tool_kv_owned(ui, "code", text_size_summary(edit.code.as_str()));
-                    });
+                    },
+                );
             }
         }
         ToolCallArguments::InsertRustItem(args) => {
@@ -2784,14 +2857,17 @@ fn render_tool_call_arguments(ui: &mut egui::Ui, arguments: &ToolCallArguments) 
             render_optional_f32(ui, "confidence", args.confidence);
             tool_kv_usize(ui, "patches", args.patches.len());
             for (index, patch) in args.patches.iter().enumerate() {
-                egui::CollapsingHeader::new(format!("patch {}", index + 1))
-                    .default_open(index == 0)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new(format!("patch {}", index + 1))
+                        .default_open(index == 0),
+                    |ui| {
                         let _span = tracing::trace_span!("inspector_tool_argument_patch").entered();
                         tool_kv_text(ui, "file", patch.file.as_str());
                         tool_kv_text(ui, "reasoning", patch.reasoning.as_str());
                         tool_kv_owned(ui, "diff", text_size_summary(patch.diff.as_str()));
-                    });
+                    },
+                );
             }
         }
         ToolCallArguments::NsRead(args) => {
@@ -2945,7 +3021,7 @@ fn render_tool_result_content(ui: &mut egui::Ui, result: &ToolResultContent) {
         }
         ToolResultContent::ListDir(result) => {
             tool_kv_usize(ui, "entries", result.entries.len());
-            egui::CollapsingHeader::new("details").show(ui, |ui| {
+            show_inspector_collapsing(ui, egui::CollapsingHeader::new("details"), |ui| {
                 let _span =
                     tracing::trace_span!("inspector_tool_result_list_dir_details").entered();
                 tool_kv_bool(ui, "ok", result.ok);
@@ -2954,15 +3030,17 @@ fn render_tool_result_content(ui: &mut egui::Ui, result: &ToolResultContent) {
                 tool_kv_bool(ui, "truncated", result.truncated);
             });
             for (index, entry) in result.entries.iter().take(8).enumerate() {
-                egui::CollapsingHeader::new(entry.name.as_str())
-                    .default_open(index == 0)
-                    .show(ui, |ui| {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new(entry.name.as_str()).default_open(index == 0),
+                    |ui| {
                         let _span =
                             tracing::trace_span!("inspector_tool_result_list_dir_entry").entered();
                         tool_kv_text(ui, "path", entry.path.as_str());
                         tool_kv_text(ui, "kind", entry.kind.as_str());
                         render_optional_u64(ui, "size bytes", entry.size_bytes);
-                    });
+                    },
+                );
             }
         }
     }
@@ -3003,14 +3081,16 @@ fn render_concise_context(
     index: usize,
     context: &ploke_records::tool_contracts::ConciseContext,
 ) {
-    egui::CollapsingHeader::new(format!("context {}", index + 1))
-        .default_open(index == 0)
-        .show(ui, |ui| {
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new(format!("context {}", index + 1)).default_open(index == 0),
+        |ui| {
             let _span = tracing::trace_span!("inspector_context").entered();
             tool_kv_text(ui, "file", context.file_path.as_ref());
             tool_kv_text(ui, "canon", context.canon_path.as_ref());
             tool_kv_owned(ui, "snippet", text_size_summary(context.snippet.as_str()));
-        });
+        },
+    );
 }
 
 fn render_optional_str(ui: &mut egui::Ui, key: &str, value: Option<&str>) {
@@ -3126,9 +3206,10 @@ fn render_agent_turns<'a>(
     let mut rendered = false;
     for (index, turn) in turns.into_iter().enumerate() {
         rendered = true;
-        egui::CollapsingHeader::new(format!("turn {}", index + 1))
-            .default_open(index == 0)
-            .show(ui, |ui| {
+        show_inspector_collapsing(
+            ui,
+            egui::CollapsingHeader::new(format!("turn {}", index + 1)).default_open(index == 0),
+            |ui| {
                 let _span = tracing::trace_span!("inspector_agent_turn").entered();
                 cached_kv_id(ui, render_cache, "model", turn.selected_model.as_str());
                 if let Some(outcome) = turn.terminal_outcome.as_deref() {
@@ -3158,7 +3239,8 @@ fn render_agent_turns<'a>(
                     ("agent-turn", turn.task_id.as_str()),
                     turn.task_id.as_str(),
                 );
-            });
+            },
+        );
     }
     if !rendered {
         kv(ui, "llm", "not_recorded");

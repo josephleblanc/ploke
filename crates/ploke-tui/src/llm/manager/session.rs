@@ -606,6 +606,7 @@ impl ChatStepSource {
         req: &ChatCompRequest<R>,
         cfg: &ChatHttpConfig,
     ) -> Result<ChatStepData, ChatStepError> {
+        capture_request_for_tap(req);
         match self {
             Self::Live => ploke_llm::chat_step_with_attempts(client, req, cfg).await,
             Self::Recorded(tape) => tape.next_chat_step(),
@@ -624,6 +625,21 @@ static RECORDED_RESPONSE_TAPE: std::sync::OnceLock<std::sync::Mutex<Option<Recor
     std::sync::OnceLock::new();
 
 #[cfg(feature = "test_harness")]
+static REQUEST_TAP: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<Vec<RequestMessage>>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+pub struct RequestTapGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for RequestTapGuard {
+    fn drop(&mut self) {
+        clear_request_tap();
+    }
+}
+
+#[cfg(feature = "test_harness")]
 pub fn install_recorded_response_tape(tape: RecordedResponseTape) {
     let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
     let mut guard = lock
@@ -640,6 +656,35 @@ pub fn clear_recorded_response_tape() {
         .expect("recorded response tape lock should not be poisoned");
     *guard = None;
 }
+
+#[cfg(feature = "test_harness")]
+pub fn install_request_tap(
+    sender: std::sync::mpsc::Sender<Vec<RequestMessage>>,
+) -> RequestTapGuard {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock.lock().expect("request tap lock should not be poisoned");
+    *guard = Some(sender);
+    RequestTapGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_request_tap() {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock.lock().expect("request tap lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
+fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = lock.lock().expect("request tap lock should not be poisoned");
+    if let Some(sender) = guard.as_ref() {
+        let _ = sender.send(req.core.messages.clone());
+    }
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn capture_request_for_tap<R: Router>(_req: &ChatCompRequest<R>) {}
 
 #[cfg(feature = "test_harness")]
 pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
