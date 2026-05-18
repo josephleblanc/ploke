@@ -750,6 +750,72 @@ type_relation_cases!(
             ),
             ordinary_item(item(&["crate", "type_alias"], "SimpleId", ItemKind::TypeAlias))
         ),
+        fixture_nodes_v2_renamed_local_struct_import_param => ordinary_relation(
+            ordinary_source(
+                item(
+                    &["crate", "imports"],
+                    "renamed_local_struct_import_param",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::FunctionParam(0),
+                root()
+            ),
+            ordinary_item(item(&["crate", "structs"], "SampleStruct", ItemKind::Struct))
+        ),
+        fixture_nodes_v2_glob_imported_documented_trait_bound => trait_relation(
+            trait_source(
+                item(
+                    &["crate", "imports"],
+                    "glob_imported_documented_trait_bound",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::GenericParamBound {
+                    param_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate", "traits"], "DocumentedTrait", ItemKind::Trait))
+        ),
+        fixture_nodes_v2_multi_hop_reexport_trait_bound => trait_relation(
+            trait_source(
+                item(
+                    &["crate", "imports"],
+                    "multi_hop_reexport_trait_bound",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::GenericParamBound {
+                    param_index: 0,
+                    bound_index: 0
+                },
+                root()
+            ),
+            trait_item(item(&["crate", "traits"], "SimpleTrait", ItemKind::Trait))
+        ),
+        fixture_nodes_v2_crate_boundary_type_alias_import_param => ordinary_relation(
+            ordinary_source(
+                item(
+                    &["crate", "imports"],
+                    "crate_boundary_type_alias_param",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::FunctionParam(0),
+                root()
+            ),
+            ordinary_item(item(&["crate", "type_alias"], "SimpleId", ItemKind::TypeAlias))
+        ),
+        fixture_nodes_v2_nested_super_super_tuple_struct_import_param => ordinary_relation(
+            ordinary_source(
+                item(
+                    &["crate", "imports", "sub_imports"],
+                    "tuple_struct_from_grandparent_import",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::FunctionParam(0),
+                root()
+            ),
+            ordinary_item(item(&["crate", "structs"], "TupleStruct", ItemKind::Struct))
+        ),
         fixture_nodes_v2_inner_outer_point_type_alias_target => ordinary_relation(
             ordinary_source(
                 item(&["crate", "type_alias", "inner"], "OuterPoint", ItemKind::TypeAlias),
