@@ -25,6 +25,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct InspectorOpenState {
     force_open: Option<InspectorPanelSection>,
+    force_exclusive: bool,
 }
 
 #[derive(Debug, Default)]
@@ -299,14 +300,22 @@ impl InspectorOpenState {
         feature = "dev",
         feature = "native-benchmark"
     ))]
-    pub(crate) fn benchmark(section: Option<crate::benchmark::BenchmarkInspectorSection>) -> Self {
+    pub(crate) fn benchmark(
+        section: Option<crate::benchmark::BenchmarkInspectorSection>,
+        exclusive: bool,
+    ) -> Self {
         Self {
             force_open: section.map(InspectorPanelSection::from_benchmark),
+            force_exclusive: exclusive,
         }
     }
 
     fn open(self, section: InspectorPanelSection) -> Option<bool> {
-        (self.force_open == Some(section)).then_some(true)
+        if self.force_exclusive {
+            Some(self.force_open == Some(section))
+        } else {
+            (self.force_open == Some(section)).then_some(true)
+        }
     }
 }
 
@@ -1600,13 +1609,26 @@ mod tests {
 
     #[test]
     fn benchmark_inspector_open_state_forces_target_section() {
-        let state = InspectorOpenState::benchmark(Some(
-            crate::benchmark::BenchmarkInspectorSection::GraphEdges,
-        ));
+        let state = InspectorOpenState::benchmark(
+            Some(crate::benchmark::BenchmarkInspectorSection::GraphEdges),
+            false,
+        );
 
         assert_eq!(state.open(InspectorPanelSection::GraphEdges), Some(true));
         assert_eq!(state.open(InspectorPanelSection::RunRecords), None);
         assert_eq!(state.open(InspectorPanelSection::PatchDebug), None);
+    }
+
+    #[test]
+    fn benchmark_inspector_open_state_can_force_only_target_section() {
+        let state = InspectorOpenState::benchmark(
+            Some(crate::benchmark::BenchmarkInspectorSection::GraphEdges),
+            true,
+        );
+
+        assert_eq!(state.open(InspectorPanelSection::GraphEdges), Some(true));
+        assert_eq!(state.open(InspectorPanelSection::RunRecords), Some(false));
+        assert_eq!(state.open(InspectorPanelSection::PatchDebug), Some(false));
     }
 
     #[test]
@@ -1807,18 +1829,39 @@ fn render_parent_create_attempt(
     cached_kv_text(ui, render_cache, "llm proposal", rows.llm_proposal.as_ref());
     cached_kv_text(ui, render_cache, "child eval", rows.child_eval.as_ref());
 
+    render_parent_create_llm_calls(ui, graph, &attempt, run_record_slots, render_cache);
+    render_parent_create_source_status(ui, &attempt, render_cache);
+}
+
+fn render_parent_create_llm_calls(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    attempt: &ParentCreateAttempt<'_>,
+    run_record_slots: &[RunRecordSlot],
+    render_cache: &mut InspectorRenderCache,
+) {
     egui::CollapsingHeader::new("LLM calls")
         .default_open(false)
         .show(ui, |ui| {
+            let _span = tracing::trace_span!("inspector_parent_create_llm_calls").entered();
             if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
                 return;
             }
             cached_kv_id(ui, render_cache, "evidence", "agent_turn_sidecar_fallback");
             render_agent_turns(ui, render_cache, attempt.agent_turns());
         });
+}
+
+fn render_parent_create_source_status(
+    ui: &mut egui::Ui,
+    attempt: &ParentCreateAttempt<'_>,
+    render_cache: &mut InspectorRenderCache,
+) {
+    let child = attempt.child();
     egui::CollapsingHeader::new("Source status")
         .default_open(false)
         .show(ui, |ui| {
+            let _span = tracing::trace_span!("inspector_parent_create_source_status").entered();
             ui.horizontal(|ui| {
                 cached_label(ui, render_cache, "child");
                 cached_expandable_id(
@@ -1975,6 +2018,10 @@ fn has_run_record_arm_turns(
         .any(|record| record.record_ref.arm == arm && record.record.turn_count() > 0)
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_run_record_arm")
+)]
 fn render_run_record_arm_turns(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -2168,6 +2215,10 @@ fn render_run_record_tool_steps(
     }
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_run_record_tool_step")
+)]
 fn render_run_record_tool_step(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -2231,6 +2282,10 @@ fn render_run_record_tool_step_details(
     render_tool_result_section(ui, render_cache, index, tool);
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_arguments")
+)]
 fn render_tool_arguments_section(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -2255,16 +2310,34 @@ fn render_tool_arguments_section(
                 .id_salt(("run-record-tool-raw-arguments", index, call_id))
                 .default_open(false)
                 .show(ui, |ui| {
-                    render_cached_code_block(
-                        ui,
-                        render_cache,
-                        ("run-record-tool-arguments-block", index, call_id),
-                        tool.request.arguments.as_str(),
-                    );
+                    render_tool_raw_arguments_section(ui, render_cache, index, call_id, tool);
                 });
         });
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_raw_arguments")
+)]
+fn render_tool_raw_arguments_section(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    index: usize,
+    call_id: &str,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+) {
+    render_cached_code_block(
+        ui,
+        render_cache,
+        ("run-record-tool-arguments-block", index, call_id),
+        tool.request.arguments.as_str(),
+    );
+}
+
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_result")
+)]
 fn render_tool_result_section(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -2288,7 +2361,7 @@ fn render_tool_result_section(
                     .id_salt(("run-record-tool-content-raw", index, call_id))
                     .default_open(false)
                     .show(ui, |ui| {
-                        render_cached_code_block(
+                        render_tool_raw_result_section(
                             ui,
                             render_cache,
                             ("run-record-tool-content-block", index, call_id),
@@ -2302,7 +2375,7 @@ fn render_tool_result_section(
                     .id_salt(("run-record-tool-error-raw", index, call_id))
                     .default_open(false)
                     .show(ui, |ui| {
-                        render_cached_code_block(
+                        render_tool_raw_result_section(
                             ui,
                             render_cache,
                             ("run-record-tool-error-block", index, call_id),
@@ -2311,6 +2384,19 @@ fn render_tool_result_section(
                     });
             }
         });
+}
+
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_raw_result")
+)]
+fn render_tool_raw_result_section(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    id_salt: impl std::hash::Hash,
+    raw_content: &str,
+) {
+    render_cached_code_block(ui, render_cache, id_salt, raw_content);
 }
 
 fn render_tool_execution_status_badge(
@@ -2350,6 +2436,10 @@ fn tool_execution_ui_payload(
     }
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_ui_payload")
+)]
 fn render_tool_ui_payload(
     ui: &mut egui::Ui,
     payload: &ploke_records::agent_turn::ToolUiPayloadRecord,
@@ -2374,7 +2464,7 @@ fn render_tool_ui_payload(
                 egui::CollapsingHeader::new("details")
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(details).monospace()).wrap());
+                        render_tool_ui_payload_details(ui, details);
                     });
             }
             if let Some(error) = payload.error.as_ref() {
@@ -2383,6 +2473,18 @@ fn render_tool_ui_payload(
         });
 }
 
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_ui_details")
+)]
+fn render_tool_ui_payload_details(ui: &mut egui::Ui, details: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(details).monospace()).wrap());
+}
+
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_tool_error")
+)]
 fn render_tool_error_wire(
     ui: &mut egui::Ui,
     error: &ploke_records::agent_turn::ToolErrorWireRecord,
@@ -2451,6 +2553,7 @@ fn render_tool_call_arguments(ui: &mut egui::Ui, arguments: &ToolCallArguments) 
                 egui::CollapsingHeader::new(format!("edit {}", index + 1))
                     .default_open(index == 0)
                     .show(ui, |ui| {
+                        let _span = tracing::trace_span!("inspector_tool_argument_edit").entered();
                         tool_kv_text(ui, "file", edit.file.as_str());
                         tool_kv_text(ui, "canon", edit.canon.as_str());
                         tool_kv_debug(ui, "node type", edit.node_type);
@@ -2479,6 +2582,7 @@ fn render_tool_call_arguments(ui: &mut egui::Ui, arguments: &ToolCallArguments) 
                 egui::CollapsingHeader::new(format!("patch {}", index + 1))
                     .default_open(index == 0)
                     .show(ui, |ui| {
+                        let _span = tracing::trace_span!("inspector_tool_argument_patch").entered();
                         tool_kv_text(ui, "file", patch.file.as_str());
                         tool_kv_text(ui, "reasoning", patch.reasoning.as_str());
                         tool_kv_owned(ui, "diff", text_size_summary(patch.diff.as_str()));
@@ -2637,6 +2741,8 @@ fn render_tool_result_content(ui: &mut egui::Ui, result: &ToolResultContent) {
         ToolResultContent::ListDir(result) => {
             tool_kv_usize(ui, "entries", result.entries.len());
             egui::CollapsingHeader::new("details").show(ui, |ui| {
+                let _span =
+                    tracing::trace_span!("inspector_tool_result_list_dir_details").entered();
                 tool_kv_bool(ui, "ok", result.ok);
                 tool_kv_text(ui, "dir", result.dir.as_str());
                 tool_kv_bool(ui, "exists", result.exists);
@@ -2646,6 +2752,8 @@ fn render_tool_result_content(ui: &mut egui::Ui, result: &ToolResultContent) {
                 egui::CollapsingHeader::new(entry.name.as_str())
                     .default_open(index == 0)
                     .show(ui, |ui| {
+                        let _span =
+                            tracing::trace_span!("inspector_tool_result_list_dir_entry").entered();
                         tool_kv_text(ui, "path", entry.path.as_str());
                         tool_kv_text(ui, "kind", entry.kind.as_str());
                         render_optional_u64(ui, "size bytes", entry.size_bytes);
@@ -2693,6 +2801,7 @@ fn render_concise_context(
     egui::CollapsingHeader::new(format!("context {}", index + 1))
         .default_open(index == 0)
         .show(ui, |ui| {
+            let _span = tracing::trace_span!("inspector_context").entered();
             tool_kv_text(ui, "file", context.file_path.as_ref());
             tool_kv_text(ui, "canon", context.canon_path.as_ref());
             tool_kv_owned(ui, "snippet", text_size_summary(context.snippet.as_str()));
@@ -2815,6 +2924,7 @@ fn render_agent_turns<'a>(
         egui::CollapsingHeader::new(format!("turn {}", index + 1))
             .default_open(index == 0)
             .show(ui, |ui| {
+                let _span = tracing::trace_span!("inspector_agent_turn").entered();
                 cached_kv_id(ui, render_cache, "model", turn.selected_model.as_str());
                 if let Some(outcome) = turn.terminal_outcome.as_deref() {
                     cached_kv_id(ui, render_cache, "outcome", outcome);
@@ -2919,6 +3029,7 @@ fn render_source_refs<'a>(
     render_cache: &mut InspectorRenderCache,
     source_refs: impl IntoIterator<Item = SourceRef<'a>>,
 ) {
+    let _span = tracing::trace_span!("inspector_source_refs_iter").entered();
     let mut total = 0;
     for source_ref in source_refs {
         if total < 8 {
@@ -2940,6 +3051,7 @@ fn render_source_ref(
     render_cache: &mut InspectorRenderCache,
     source_ref: &SourceRef<'_>,
 ) {
+    let _span = tracing::trace_span!("inspector_source_refs_row").entered();
     match source_ref {
         SourceRef::Evidence {
             kind,
@@ -3003,24 +3115,32 @@ fn render_patch(
     patch: PatchInspection<'_>,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
 ) {
-    ui.horizontal(|ui| {
-        cached_label(ui, render_cache, "patch");
-        cached_expandable_id(
-            ui,
-            render_cache,
-            ("patch", patch.patch_id()),
-            patch.patch_id(),
-        );
-    });
-    cached_label(ui, render_cache, "diff");
+    let _span = tracing::trace_span!("inspector_patch_debug_patch").entered();
+    {
+        let _span = tracing::trace_span!("inspector_patch_debug_header").entered();
+        ui.horizontal(|ui| {
+            cached_label(ui, render_cache, "patch");
+            cached_expandable_id(
+                ui,
+                render_cache,
+                ("patch", patch.patch_id()),
+                patch.patch_id(),
+            );
+        });
+        cached_label(ui, render_cache, "diff");
+    }
     render_diff(ui, patch, diff_cache);
 
-    egui::CollapsingHeader::new("Details")
-        .id_salt(("patch-details", patch.patch_id()))
-        .default_open(false)
-        .show(ui, |ui| {
-            render_patch_details(ui, render_cache, patch);
-        });
+    {
+        let _span = tracing::trace_span!("inspector_patch_debug_details_header").entered();
+        egui::CollapsingHeader::new("Details")
+            .id_salt(("patch-details", patch.patch_id()))
+            .default_open(false)
+            .show(ui, |ui| {
+                let _span = tracing::trace_span!("inspector_patch_details").entered();
+                render_patch_details(ui, render_cache, patch);
+            });
+    }
 }
 
 fn render_patch_details(
@@ -3053,6 +3173,7 @@ fn render_patch_details(
 
     let mut touched = false;
     for touch in patch.touches() {
+        let _span = tracing::trace_span!("inspector_patch_debug_touch").entered();
         touched = true;
         render_patch_touch_label(ui, render_cache, touch);
         ui.add(egui::Label::new(egui::RichText::new(touch.replacement).monospace()).wrap());
@@ -3094,7 +3215,10 @@ fn render_diff(
     patch: PatchInspection<'_>,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
 ) -> egui::Response {
-    let galley = diff_cache.highlighted_patch_galley(ui, patch);
+    let galley = {
+        let _span = tracing::trace_span!("inspector_patch_debug_diff_cache").entered();
+        diff_cache.highlighted_patch_galley(ui, patch)
+    };
     render_diff_galley(
         ui,
         (
@@ -3111,6 +3235,7 @@ fn render_diff_galley(
     id_salt: impl std::hash::Hash,
     galley: Arc<egui::Galley>,
 ) -> egui::Response {
+    let _span = tracing::trace_span!("inspector_patch_debug_diff_widget").entered();
     let width = ui.available_width().max(240.0);
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(6))

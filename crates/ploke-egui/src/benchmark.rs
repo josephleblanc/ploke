@@ -36,8 +36,12 @@ pub const STANDARD_RUN_ROOT: &str =
 
 const BENCHMARK_REPORT_VERSION: &str = "ploke-egui.native-benchmark-report.v3";
 const STANDARD_FRAME_TARGET: usize = 300;
+const INSPECTOR_SEQUENCE_WARMUP_FRAMES: usize = 100;
+const INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES: usize = 30;
+const INSPECTOR_SEQUENCE_SECTION_FRAMES: usize = 30;
+const INSPECTOR_SECTION_PHASE_FRAMES: usize = 30;
 const TOP_FRAME_LIMIT: usize = 10;
-const TOP_HEAP_LIMIT: usize = 10;
+const TOP_HEAP_LIMIT: usize = 32;
 const RUN_PICKER_DISCOVERY_WARNING_NS: u64 = 250_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +78,11 @@ pub enum BenchmarkScenario {
     InspectorPatchDebugExpanded300,
     InspectorSourceRefsExpanded300,
     InspectorArtifactIdsExpanded300,
+    InspectorSectionsSequence30,
+    InspectorSectionPhaseSequence30 {
+        section: BenchmarkInspectorSection,
+        target: BenchmarkSelectionTarget,
+    },
     PatchDebugCold300,
     PatchDebugWarm300,
     ModeLineage300,
@@ -83,6 +92,9 @@ pub enum BenchmarkScenario {
 
 impl BenchmarkScenario {
     pub fn parse(value: &str) -> Result<Self, String> {
+        if let Some(scenario) = parse_inspector_section_phase_sequence(value) {
+            return Ok(scenario);
+        }
         match value {
             "startup_frames_300" => Ok(Self::StartupFrames300),
             "warm_idle_300" => Ok(Self::WarmIdle300),
@@ -93,6 +105,7 @@ impl BenchmarkScenario {
             "inspector_patch_debug_expanded_300" => Ok(Self::InspectorPatchDebugExpanded300),
             "inspector_source_refs_expanded_300" => Ok(Self::InspectorSourceRefsExpanded300),
             "inspector_artifact_ids_expanded_300" => Ok(Self::InspectorArtifactIdsExpanded300),
+            "inspector_sections_sequence_30" => Ok(Self::InspectorSectionsSequence30),
             "patch_debug_cold_300" => Ok(Self::PatchDebugCold300),
             "patch_debug_warm_300" => Ok(Self::PatchDebugWarm300),
             "mode_lineage_300" => Ok(Self::ModeLineage300),
@@ -121,27 +134,52 @@ impl BenchmarkScenario {
         ]
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Self::StartupFrames300 => "startup_frames_300",
-            Self::WarmIdle300 => "warm_idle_300",
-            Self::SelectArtifactInspector300 => "select_artifact_inspector_300",
-            Self::InspectorRunRecordsExpanded300 => "inspector_run_records_expanded_300",
-            Self::InspectorGraphEdgesExpanded300 => "inspector_graph_edges_expanded_300",
-            Self::InspectorArtifactEdgesExpanded300 => "inspector_artifact_edges_expanded_300",
-            Self::InspectorPatchDebugExpanded300 => "inspector_patch_debug_expanded_300",
-            Self::InspectorSourceRefsExpanded300 => "inspector_source_refs_expanded_300",
-            Self::InspectorArtifactIdsExpanded300 => "inspector_artifact_ids_expanded_300",
-            Self::PatchDebugCold300 => "patch_debug_cold_300",
-            Self::PatchDebugWarm300 => "patch_debug_warm_300",
-            Self::ModeLineage300 => "mode_lineage_300",
-            Self::ModeArtifactTree300 => "mode_artifact_tree_300",
-            Self::ToggleHideUnconsideredChildren300 => "toggle_hide_unconsidered_children_300",
+            Self::StartupFrames300 => "startup_frames_300".to_owned(),
+            Self::WarmIdle300 => "warm_idle_300".to_owned(),
+            Self::SelectArtifactInspector300 => "select_artifact_inspector_300".to_owned(),
+            Self::InspectorRunRecordsExpanded300 => "inspector_run_records_expanded_300".to_owned(),
+            Self::InspectorGraphEdgesExpanded300 => "inspector_graph_edges_expanded_300".to_owned(),
+            Self::InspectorArtifactEdgesExpanded300 => {
+                "inspector_artifact_edges_expanded_300".to_owned()
+            }
+            Self::InspectorPatchDebugExpanded300 => "inspector_patch_debug_expanded_300".to_owned(),
+            Self::InspectorSourceRefsExpanded300 => "inspector_source_refs_expanded_300".to_owned(),
+            Self::InspectorArtifactIdsExpanded300 => {
+                "inspector_artifact_ids_expanded_300".to_owned()
+            }
+            Self::InspectorSectionsSequence30 => "inspector_sections_sequence_30".to_owned(),
+            Self::InspectorSectionPhaseSequence30 { section, target } => {
+                let suffix = match target {
+                    BenchmarkSelectionTarget::Primary => "30",
+                    BenchmarkSelectionTarget::Alternate => "alternate_30",
+                };
+                format!("inspector_{}_phase_sequence_{suffix}", section.as_str())
+            }
+            Self::PatchDebugCold300 => "patch_debug_cold_300".to_owned(),
+            Self::PatchDebugWarm300 => "patch_debug_warm_300".to_owned(),
+            Self::ModeLineage300 => "mode_lineage_300".to_owned(),
+            Self::ModeArtifactTree300 => "mode_artifact_tree_300".to_owned(),
+            Self::ToggleHideUnconsideredChildren300 => {
+                "toggle_hide_unconsidered_children_300".to_owned()
+            }
         }
     }
 
     fn frame_target(self) -> usize {
-        STANDARD_FRAME_TARGET
+        if let Some(sequence) = self.inspector_section_phase_sequence() {
+            return sequence.frame_target();
+        }
+        match self {
+            Self::InspectorSectionsSequence30 => {
+                INSPECTOR_SEQUENCE_WARMUP_FRAMES
+                    + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES
+                    + BenchmarkInspectorSection::sequence().len()
+                        * INSPECTOR_SEQUENCE_SECTION_FRAMES
+            }
+            _ => STANDARD_FRAME_TARGET,
+        }
     }
 
     pub fn action(self) -> BenchmarkAction {
@@ -175,6 +213,16 @@ impl BenchmarkScenario {
                 inspector_section: Some(BenchmarkInspectorSection::ArtifactIds),
                 reset_patch_cache: false,
             },
+            Self::InspectorSectionsSequence30 => BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::Warmup,
+            },
+            Self::InspectorSectionPhaseSequence30 { section, target } => {
+                BenchmarkAction::InspectorSectionPhase {
+                    section,
+                    target,
+                    phase: InspectorSectionPhase::IdleBeforeSelection,
+                }
+            }
             Self::PatchDebugCold300 => BenchmarkAction::SelectArtifact {
                 inspector_section: Some(BenchmarkInspectorSection::PatchDebug),
                 reset_patch_cache: true,
@@ -190,6 +238,64 @@ impl BenchmarkScenario {
             }
         }
     }
+
+    fn action_for_completed_frames(self, completed_frames: usize) -> Option<BenchmarkAction> {
+        if let Some(sequence) = self.inspector_section_phase_sequence() {
+            return sequence.action_for_completed_frames(completed_frames);
+        }
+
+        if self != Self::InspectorSectionsSequence30 {
+            return (completed_frames == 0).then(|| self.action());
+        }
+
+        if completed_frames == 0 {
+            return Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::Warmup,
+            });
+        }
+
+        if completed_frames == INSPECTOR_SEQUENCE_WARMUP_FRAMES {
+            return Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::SelectArtifact,
+            });
+        }
+
+        let section_start =
+            INSPECTOR_SEQUENCE_WARMUP_FRAMES + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES;
+        if completed_frames < section_start {
+            return None;
+        }
+        let section_offset = completed_frames - section_start;
+        if section_offset % INSPECTOR_SEQUENCE_SECTION_FRAMES != 0 {
+            return None;
+        }
+        BenchmarkInspectorSection::sequence()
+            .get(section_offset / INSPECTOR_SEQUENCE_SECTION_FRAMES)
+            .copied()
+            .map(|section| BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::OpenSection(section),
+            })
+    }
+
+    fn has_staged_actions(self) -> bool {
+        self == Self::InspectorSectionsSequence30
+            || self.inspector_section_phase_sequence().is_some()
+    }
+
+    fn inspector_section_phase_sequence(self) -> Option<InspectorSectionPhaseSequence> {
+        match self {
+            Self::InspectorSectionPhaseSequence30 { section, target } => {
+                Some(InspectorSectionPhaseSequence { section, target })
+            }
+            _ => None,
+        }
+    }
+
+    fn phase_windows(self, frames: &[FrameSample]) -> Vec<ScenarioPhaseWindow> {
+        self.inspector_section_phase_sequence()
+            .map(|sequence| sequence.phase_windows(frames))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +304,14 @@ pub enum BenchmarkAction {
     SelectArtifact {
         inspector_section: Option<BenchmarkInspectorSection>,
         reset_patch_cache: bool,
+    },
+    InspectorSequence {
+        stage: InspectorSequenceStage,
+    },
+    InspectorSectionPhase {
+        section: BenchmarkInspectorSection,
+        target: BenchmarkSelectionTarget,
+        phase: InspectorSectionPhase,
     },
     SetMode(GraphViewMode),
     ToggleHideUnconsideredChildren,
@@ -223,11 +337,151 @@ impl BenchmarkAction {
                 inspector_section: Some(section),
                 ..
             } => section.action_label(),
+            Self::InspectorSequence { .. } => "inspector_sections_sequence",
+            Self::InspectorSectionPhase { .. } => "inspector_section_phase_sequence",
             Self::SetMode(GraphViewMode::Lineage) => "set_mode_lineage",
             Self::SetMode(GraphViewMode::ArtifactTree) => "set_mode_artifact_tree",
             Self::SetMode(GraphViewMode::ArtifactAndLineage) => "set_mode_artifact_and_lineage",
             Self::SetMode(GraphViewMode::Empty) => "set_mode_empty",
             Self::ToggleHideUnconsideredChildren => "toggle_hide_unconsidered_children",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkSelectionTarget {
+    Primary,
+    Alternate,
+}
+
+impl BenchmarkSelectionTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Alternate => "alternate",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectorSectionPhase {
+    IdleBeforeSelection,
+    SelectNode,
+    IdleSelectedCollapsed,
+    ExpandSection,
+    IdleExpanded,
+    CollapseSection,
+    IdleCollapsed,
+    UnselectNode,
+    IdleAfterUnselect,
+}
+
+impl InspectorSectionPhase {
+    pub fn sequence() -> &'static [Self] {
+        &[
+            Self::IdleBeforeSelection,
+            Self::SelectNode,
+            Self::IdleSelectedCollapsed,
+            Self::ExpandSection,
+            Self::IdleExpanded,
+            Self::CollapseSection,
+            Self::IdleCollapsed,
+            Self::UnselectNode,
+            Self::IdleAfterUnselect,
+        ]
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::IdleBeforeSelection => "idle_before_selection",
+            Self::SelectNode => "select_node",
+            Self::IdleSelectedCollapsed => "idle_selected_collapsed",
+            Self::ExpandSection => "expand_section",
+            Self::IdleExpanded => "idle_expanded",
+            Self::CollapseSection => "collapse_section",
+            Self::IdleCollapsed => "idle_collapsed",
+            Self::UnselectNode => "unselect_node",
+            Self::IdleAfterUnselect => "idle_after_unselect",
+        }
+    }
+
+    fn action_required(self) -> bool {
+        matches!(
+            self,
+            Self::IdleBeforeSelection
+                | Self::SelectNode
+                | Self::ExpandSection
+                | Self::CollapseSection
+                | Self::UnselectNode
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InspectorSectionPhaseSequence {
+    section: BenchmarkInspectorSection,
+    target: BenchmarkSelectionTarget,
+}
+
+impl InspectorSectionPhaseSequence {
+    fn frame_target(self) -> usize {
+        InspectorSectionPhase::sequence().len() * INSPECTOR_SECTION_PHASE_FRAMES
+    }
+
+    fn action_for_completed_frames(self, completed_frames: usize) -> Option<BenchmarkAction> {
+        if completed_frames >= self.frame_target()
+            || completed_frames % INSPECTOR_SECTION_PHASE_FRAMES != 0
+        {
+            return None;
+        }
+        let phase = *InspectorSectionPhase::sequence()
+            .get(completed_frames / INSPECTOR_SECTION_PHASE_FRAMES)?;
+        phase
+            .action_required()
+            .then_some(BenchmarkAction::InspectorSectionPhase {
+                section: self.section,
+                target: self.target,
+                phase,
+            })
+    }
+
+    fn phase_windows(self, frames: &[FrameSample]) -> Vec<ScenarioPhaseWindow> {
+        InspectorSectionPhase::sequence()
+            .iter()
+            .enumerate()
+            .map(|(index, phase)| {
+                let start = index * INSPECTOR_SECTION_PHASE_FRAMES;
+                let end = start + INSPECTOR_SECTION_PHASE_FRAMES;
+                let window = frame_window(frames, start, end);
+                ScenarioPhaseWindow {
+                    phase_index: index + 1,
+                    phase: phase.as_str().to_owned(),
+                    inspector_section: Some(self.section.as_str().to_owned()),
+                    selection_target: Some(self.target.as_str().to_owned()),
+                    frame_start: window.frame_start,
+                    frame_end: window.frame_end,
+                    stats: window.stats,
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectorSequenceStage {
+    Warmup,
+    SelectArtifact,
+    OpenSection(BenchmarkInspectorSection),
+}
+
+impl InspectorSequenceStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Warmup => "warmup",
+            Self::SelectArtifact => "select_artifact",
+            Self::OpenSection(section) => section.as_str(),
         }
     }
 }
@@ -244,6 +498,17 @@ pub enum BenchmarkInspectorSection {
 }
 
 impl BenchmarkInspectorSection {
+    pub fn sequence() -> &'static [Self] {
+        &[
+            Self::RunRecords,
+            Self::GraphEdges,
+            Self::ArtifactEdges,
+            Self::PatchDebug,
+            Self::SourceRefs,
+            Self::ArtifactIds,
+        ]
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RunRecords => "run_records",
@@ -252,6 +517,18 @@ impl BenchmarkInspectorSection {
             Self::PatchDebug => "patch_debug",
             Self::SourceRefs => "source_refs",
             Self::ArtifactIds => "artifact_ids",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "run_records" => Some(Self::RunRecords),
+            "graph_edges" => Some(Self::GraphEdges),
+            "artifact_edges" => Some(Self::ArtifactEdges),
+            "patch_debug" => Some(Self::PatchDebug),
+            "source_refs" => Some(Self::SourceRefs),
+            "artifact_ids" => Some(Self::ArtifactIds),
+            _ => None,
         }
     }
 
@@ -265,6 +542,26 @@ impl BenchmarkInspectorSection {
             Self::ArtifactIds => "inspector_artifact_ids_expanded",
         }
     }
+}
+
+fn parse_inspector_section_phase_sequence(value: &str) -> Option<BenchmarkScenario> {
+    let body = value.strip_prefix("inspector_")?;
+    for (suffix, target) in [
+        (
+            "_phase_sequence_alternate_30",
+            BenchmarkSelectionTarget::Alternate,
+        ),
+        ("_phase_sequence_30", BenchmarkSelectionTarget::Primary),
+    ] {
+        let Some(section) = body.strip_suffix(suffix) else {
+            continue;
+        };
+        return Some(BenchmarkScenario::InspectorSectionPhaseSequence30 {
+            section: BenchmarkInspectorSection::parse(section)?,
+            target,
+        });
+    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -567,6 +864,8 @@ pub struct ScenarioReport {
     pub top_frames: Vec<TopFrame>,
     pub component_timings: Vec<ComponentTimingReport>,
     pub allocation_frames: AllocationFrameReport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub phase_windows: Vec<ScenarioPhaseWindow>,
     pub heap_profile: HeapScenarioProfile,
     pub allocations: AllocationDelta,
     pub action: BenchmarkActionReport,
@@ -599,10 +898,72 @@ impl BenchmarkActionReport {
                     inspector_section: Some(section),
                     ..
                 } => Some(section.as_str().to_owned()),
+                BenchmarkAction::InspectorSequence {
+                    stage: InspectorSequenceStage::OpenSection(section),
+                } => Some(section.as_str().to_owned()),
+                BenchmarkAction::InspectorSectionPhase { section, .. } => {
+                    Some(section.as_str().to_owned())
+                }
                 _ => None,
             },
-            notes: Vec::new(),
+            notes: action_notes(action),
         }
+    }
+
+    fn merge_stage(&mut self, mut stage: BenchmarkActionReport) {
+        if let Some(target_label) = stage.target_label.take() {
+            self.target_label = Some(target_label);
+        }
+        if let Some(target_key) = stage.target_key.take() {
+            self.target_key = Some(target_key);
+        }
+        if let Some(fallback) = stage.fallback.take() {
+            self.fallback = Some(fallback);
+        }
+        if let Some(inspector_section) = stage.inspector_section.take() {
+            self.inspector_section = Some(inspector_section);
+        }
+        self.notes.append(&mut stage.notes);
+    }
+}
+
+fn action_notes(action: BenchmarkAction) -> Vec<String> {
+    match action {
+        BenchmarkAction::InspectorSequence { stage } => {
+            let mut notes = Vec::new();
+            if stage == InspectorSequenceStage::Warmup {
+                notes.push(format!(
+                    "sequence_warmup_frames={INSPECTOR_SEQUENCE_WARMUP_FRAMES}"
+                ));
+                notes.push(format!(
+                    "sequence_select_settle_frames={INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES}"
+                ));
+                notes.push(format!(
+                    "sequence_section_frames={INSPECTOR_SEQUENCE_SECTION_FRAMES}"
+                ));
+                notes.push(format!(
+                    "sequence_sections={}",
+                    BenchmarkInspectorSection::sequence()
+                        .iter()
+                        .map(|section| section.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ));
+            }
+            notes.push(format!("sequence_stage={}", stage.as_str()));
+            notes
+        }
+        BenchmarkAction::InspectorSectionPhase {
+            section,
+            target,
+            phase,
+        } => vec![
+            format!("phase_sequence_section={}", section.as_str()),
+            format!("phase_sequence_target={}", target.as_str()),
+            format!("phase_sequence_phase={}", phase.as_str()),
+            format!("phase_sequence_frames={INSPECTOR_SECTION_PHASE_FRAMES}"),
+        ],
+        _ => Vec::new(),
     }
 }
 
@@ -716,6 +1077,19 @@ pub struct AllocationFrameStats {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllocationFrameWindow {
+    pub frame_start: usize,
+    pub frame_end: usize,
+    pub stats: AllocationFrameStats,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioPhaseWindow {
+    pub phase_index: usize,
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_section: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_target: Option<String>,
     pub frame_start: usize,
     pub frame_end: usize,
     pub stats: AllocationFrameStats,
@@ -853,7 +1227,11 @@ impl BenchmarkController {
             let view = puffin::GlobalFrameView::default();
             {
                 let mut locked = view.lock();
-                let frames = config.scenarios.len() * STANDARD_FRAME_TARGET;
+                let frames = config
+                    .scenarios
+                    .iter()
+                    .map(|scenario| scenario.frame_target())
+                    .sum::<usize>();
                 locked.set_max_recent(frames.saturating_add(64));
                 locked.set_max_slow(128);
             }
@@ -900,19 +1278,26 @@ impl BenchmarkController {
         if self.current.is_none() {
             let scenario = *self.config.scenarios.get(self.scenario_index)?;
             self.scenario_index += 1;
-            let action = scenario.action();
             allocation::begin_tracking_window(&self.heap_tracker);
             self.last_heap_snapshot = allocation::heap_totals_snapshot(&self.heap_tracker);
             self.current = Some(ScenarioCapture::new(scenario, allocation::snapshot()));
-            return Some(action);
+            return scenario.action_for_completed_frames(0);
         }
 
-        None
+        self.current.as_ref().and_then(|current| {
+            current
+                .scenario
+                .action_for_completed_frames(current.frames.len())
+        })
     }
 
     pub fn record_action(&mut self, report: BenchmarkActionReport) {
         if let Some(current) = &mut self.current {
-            current.action = report;
+            if current.scenario.has_staged_actions() && !current.frames.is_empty() {
+                current.action.merge_stage(report);
+            } else {
+                current.action = report;
+            }
         }
     }
 
@@ -992,7 +1377,7 @@ impl BenchmarkController {
                 .config
                 .scenarios
                 .iter()
-                .map(|scenario| scenario.as_str().to_owned())
+                .map(|scenario| scenario.name())
                 .collect(),
             run_readiness: self.config.run_readiness.clone(),
             startup: self.startup.clone(),
@@ -1086,12 +1471,13 @@ impl ScenarioCapture {
             .collect::<Vec<_>>();
         let frame_stats = DurationStats::from_durations(&durations);
         let report = ScenarioReport {
-            name: self.scenario.as_str().to_owned(),
+            name: self.scenario.name(),
             target_frames: self.scenario.frame_target(),
             frame_stats: frame_stats.clone(),
             top_frames: top_frames(&self.frames),
             component_timings: component_reports(&self.frames, frame_stats.median_ns),
             allocation_frames: allocation_frame_report(&self.frames),
+            phase_windows: self.scenario.phase_windows(&self.frames),
             heap_profile: heap_summary(&heap_profile),
             allocations: allocation_end.delta_since(self.allocation_start),
             action: self.action,
@@ -1446,6 +1832,19 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
                 ));
             }
         }
+        for phase in &scenario.phase_windows {
+            text.push_str(&format!(
+                "  - phase {} `{}`: frames={}..{}, median_allocs={}, median_object_bytes={}, median_wrapped_bytes={}, median_live_object_bytes={}\n",
+                phase.phase_index,
+                phase.phase,
+                phase.frame_start,
+                phase.frame_end,
+                render_optional_value(phase.stats.allocation_count.median),
+                render_optional_value(phase.stats.allocated_object_bytes.median),
+                render_optional_value(phase.stats.allocated_wrapped_bytes.median),
+                render_optional_value(phase.stats.live_object_bytes.median),
+            ));
+        }
         if let Some(callsite) = scenario
             .heap_profile
             .top_callsites_by_allocated_bytes
@@ -1484,6 +1883,12 @@ fn render_benchmark_readme(report: &BenchmarkReport) -> String {
 }
 
 fn render_optional_ns(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_owned())
+}
+
+fn render_optional_value(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n/a".to_owned())
@@ -1742,6 +2147,7 @@ mod tests {
                     nested_under: None,
                 }],
                 allocation_frames: AllocationFrameReport::default(),
+                phase_windows: Vec::new(),
                 heap_profile: HeapScenarioProfile::default(),
                 allocations: AllocationSnapshot {
                     enabled: true,
@@ -1835,6 +2241,153 @@ mod tests {
             classify_heap_slope(&inconclusive.0, &inconclusive.1),
             HeapSlope::Inconclusive
         );
+    }
+
+    #[test]
+    fn inspector_section_sequence_uses_short_staged_windows() {
+        let scenario = BenchmarkScenario::InspectorSectionsSequence30;
+        assert_eq!(scenario.name(), "inspector_sections_sequence_30");
+        assert_eq!(
+            scenario.frame_target(),
+            INSPECTOR_SEQUENCE_WARMUP_FRAMES
+                + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES
+                + BenchmarkInspectorSection::sequence().len() * INSPECTOR_SEQUENCE_SECTION_FRAMES
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(0),
+            Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::Warmup
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SEQUENCE_WARMUP_FRAMES),
+            Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::SelectArtifact
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(
+                INSPECTOR_SEQUENCE_WARMUP_FRAMES + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES
+            ),
+            Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::RunRecords)
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(
+                INSPECTOR_SEQUENCE_WARMUP_FRAMES
+                    + INSPECTOR_SEQUENCE_SELECT_SETTLE_FRAMES
+                    + INSPECTOR_SEQUENCE_SECTION_FRAMES
+            ),
+            Some(BenchmarkAction::InspectorSequence {
+                stage: InspectorSequenceStage::OpenSection(BenchmarkInspectorSection::GraphEdges)
+            })
+        );
+        assert_eq!(scenario.action_for_completed_frames(101), None);
+    }
+
+    #[test]
+    fn inspector_section_phase_sequence_tracks_nine_thirty_frame_windows() {
+        let scenario = BenchmarkScenario::InspectorSectionPhaseSequence30 {
+            section: BenchmarkInspectorSection::PatchDebug,
+            target: BenchmarkSelectionTarget::Alternate,
+        };
+        assert_eq!(
+            scenario.name(),
+            "inspector_patch_debug_phase_sequence_alternate_30"
+        );
+        assert_eq!(
+            BenchmarkScenario::parse("inspector_patch_debug_phase_sequence_alternate_30"),
+            Ok(scenario)
+        );
+        assert_eq!(
+            scenario.frame_target(),
+            InspectorSectionPhase::sequence().len() * INSPECTOR_SECTION_PHASE_FRAMES
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(0),
+            Some(BenchmarkAction::InspectorSectionPhase {
+                section: BenchmarkInspectorSection::PatchDebug,
+                target: BenchmarkSelectionTarget::Alternate,
+                phase: InspectorSectionPhase::IdleBeforeSelection
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES),
+            Some(BenchmarkAction::InspectorSectionPhase {
+                section: BenchmarkInspectorSection::PatchDebug,
+                target: BenchmarkSelectionTarget::Alternate,
+                phase: InspectorSectionPhase::SelectNode
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES * 2),
+            None
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES * 3),
+            Some(BenchmarkAction::InspectorSectionPhase {
+                section: BenchmarkInspectorSection::PatchDebug,
+                target: BenchmarkSelectionTarget::Alternate,
+                phase: InspectorSectionPhase::ExpandSection
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES * 5),
+            Some(BenchmarkAction::InspectorSectionPhase {
+                section: BenchmarkInspectorSection::PatchDebug,
+                target: BenchmarkSelectionTarget::Alternate,
+                phase: InspectorSectionPhase::CollapseSection
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES * 7),
+            Some(BenchmarkAction::InspectorSectionPhase {
+                section: BenchmarkInspectorSection::PatchDebug,
+                target: BenchmarkSelectionTarget::Alternate,
+                phase: InspectorSectionPhase::UnselectNode
+            })
+        );
+        assert_eq!(
+            scenario.action_for_completed_frames(INSPECTOR_SECTION_PHASE_FRAMES * 9),
+            None
+        );
+
+        let frames = frame_samples_with_live_bytes(42, scenario.frame_target());
+        let windows = scenario.phase_windows(&frames);
+        assert_eq!(windows.len(), 9);
+        assert_eq!(windows[0].phase_index, 1);
+        assert_eq!(windows[0].phase, "idle_before_selection");
+        assert_eq!(windows[0].frame_start, 1);
+        assert_eq!(windows[0].frame_end, 30);
+        assert_eq!(windows[8].phase_index, 9);
+        assert_eq!(windows[8].phase, "idle_after_unselect");
+        assert_eq!(windows[8].frame_start, 241);
+        assert_eq!(windows[8].frame_end, 270);
+        assert_eq!(
+            windows[8].selection_target.as_deref(),
+            Some(BenchmarkSelectionTarget::Alternate.as_str())
+        );
+    }
+
+    #[test]
+    fn inspector_section_phase_sequence_scenarios_cover_collapsible_sections() {
+        for section in BenchmarkInspectorSection::sequence() {
+            for target in [
+                BenchmarkSelectionTarget::Primary,
+                BenchmarkSelectionTarget::Alternate,
+            ] {
+                let scenario = BenchmarkScenario::InspectorSectionPhaseSequence30 {
+                    section: *section,
+                    target,
+                };
+                assert_eq!(BenchmarkScenario::parse(&scenario.name()), Ok(scenario));
+                assert_eq!(
+                    scenario.frame_target(),
+                    InspectorSectionPhase::sequence().len() * INSPECTOR_SECTION_PHASE_FRAMES
+                );
+            }
+        }
     }
 
     #[test]

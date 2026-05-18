@@ -207,6 +207,19 @@ impl GraphViewCache {
         true
     }
 
+    pub(super) fn clear_selection(&mut self) {
+        for node in self.graph.g_mut().node_weights_mut() {
+            node.set_selected(false);
+            node.set_hovered(false);
+            node.set_dragged(false);
+        }
+        for edge in self.graph.g_mut().edge_weights_mut() {
+            edge.set_selected(false);
+        }
+        self.graph.set_selected_nodes(Vec::new());
+        self.graph.set_selected_edges(Vec::new());
+    }
+
     fn selected_payload(&self) -> Option<&GraphNode> {
         let selected = self.graph.selected_nodes().first().copied()?;
         let node = self.graph.g().node_weight(selected)?;

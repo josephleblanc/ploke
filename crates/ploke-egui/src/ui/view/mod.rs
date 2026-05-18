@@ -110,6 +110,11 @@ impl GraphView {
         self.cache.select_reference(reference)
     }
 
+    pub fn clear_selection(&mut self, graph: &DomainGraph) {
+        self.sync_projection(graph);
+        self.cache.clear_selection();
+    }
+
     pub fn mode(&self) -> GraphViewMode {
         self.mode
     }

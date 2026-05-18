@@ -20,7 +20,7 @@ use ploke_tree::Graph;
 ))]
 use crate::benchmark::{
     BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkInspectorSection,
-    BenchmarkWriteResult,
+    BenchmarkSelectionTarget, BenchmarkWriteResult, InspectorSectionPhase, InspectorSequenceStage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
@@ -75,6 +75,12 @@ pub struct OperatorApp {
         feature = "native-benchmark"
     ))]
     benchmark_inspector_section: Option<BenchmarkInspectorSection>,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_inspector_exclusive: bool,
 }
 
 impl OperatorApp {
@@ -110,6 +116,12 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_section: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_inspector_exclusive: false,
         }
     }
 
@@ -141,6 +153,12 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_section: None,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_inspector_exclusive: false,
         }
     }
 
@@ -320,8 +338,10 @@ impl eframe::App for OperatorApp {
                     feature = "dev",
                     feature = "native-benchmark"
                 ))]
-                let inspector_open_state =
-                    shell::InspectorOpenState::benchmark(self.benchmark_inspector_section);
+                let inspector_open_state = shell::InspectorOpenState::benchmark(
+                    self.benchmark_inspector_section,
+                    self.benchmark_inspector_exclusive,
+                );
                 #[cfg(not(all(
                     not(target_arch = "wasm32"),
                     feature = "dev",
@@ -593,6 +613,7 @@ impl OperatorApp {
     fn apply_benchmark_action(&mut self, action: BenchmarkAction) -> BenchmarkActionReport {
         let mut report = BenchmarkActionReport::for_action(action);
         self.benchmark_inspector_section = None;
+        self.benchmark_inspector_exclusive = false;
         match action {
             BenchmarkAction::None => {}
             BenchmarkAction::SetMode(mode) => {
@@ -622,27 +643,120 @@ impl OperatorApp {
                 }
                 self.apply_benchmark_selection(&mut report);
             }
+            BenchmarkAction::InspectorSequence { stage } => match stage {
+                InspectorSequenceStage::Warmup => {
+                    report
+                        .notes
+                        .push("sequence_stage_action=warmup_idle".to_owned());
+                }
+                InspectorSequenceStage::SelectArtifact => {
+                    report
+                        .notes
+                        .push("sequence_stage_action=select_artifact".to_owned());
+                    self.apply_benchmark_selection(&mut report);
+                }
+                InspectorSequenceStage::OpenSection(section) => {
+                    self.benchmark_inspector_section = Some(section);
+                    self.benchmark_inspector_exclusive = true;
+                    report.notes.push(format!(
+                        "sequence_stage_action=force_only_{}",
+                        section.as_str()
+                    ));
+                }
+            },
+            BenchmarkAction::InspectorSectionPhase {
+                section,
+                target,
+                phase,
+            } => match phase {
+                InspectorSectionPhase::IdleBeforeSelection => {
+                    self.view.clear_selection(&self.graph);
+                    if section == BenchmarkInspectorSection::PatchDebug {
+                        self.patch_diff_cache = PatchDiffCache::default();
+                        report.notes.push("patch_diff_cache_reset=true".to_owned());
+                    }
+                    report
+                        .notes
+                        .push("phase_sequence_action=idle_unselected".to_owned());
+                }
+                InspectorSectionPhase::SelectNode => {
+                    self.benchmark_inspector_exclusive = true;
+                    self.apply_benchmark_selection_target(target, &mut report);
+                    report
+                        .notes
+                        .push(format!("phase_sequence_action=select_{}", target.as_str()));
+                }
+                InspectorSectionPhase::ExpandSection => {
+                    self.benchmark_inspector_section = Some(section);
+                    self.benchmark_inspector_exclusive = true;
+                    report
+                        .notes
+                        .push(format!("phase_sequence_action=expand_{}", section.as_str()));
+                }
+                InspectorSectionPhase::CollapseSection => {
+                    self.benchmark_inspector_exclusive = true;
+                    report.notes.push(format!(
+                        "phase_sequence_action=collapse_{}",
+                        section.as_str()
+                    ));
+                }
+                InspectorSectionPhase::UnselectNode => {
+                    self.view.clear_selection(&self.graph);
+                    report
+                        .notes
+                        .push("phase_sequence_action=unselect_node".to_owned());
+                }
+                InspectorSectionPhase::IdleSelectedCollapsed
+                | InspectorSectionPhase::IdleExpanded
+                | InspectorSectionPhase::IdleCollapsed
+                | InspectorSectionPhase::IdleAfterUnselect => {}
+            },
         }
         report
     }
 
     fn apply_benchmark_selection(&mut self, report: &mut BenchmarkActionReport) {
-        let selections = default_selections(&self.graph);
-        let first = selections.first().cloned();
-        let with_patch = selections.iter().find(|selection| {
-            matches!(
-                SelectionInspector::from_graph(&self.graph, selection),
-                SelectionInspector::Artifact(artifact) if !artifact.patches.is_empty()
-            )
-        });
+        self.apply_benchmark_selection_target(BenchmarkSelectionTarget::Primary, report);
+    }
 
-        let (selection, fallback) = if let Some(selection) = with_patch.cloned() {
-            (Some(selection), None)
-        } else {
-            (
-                first,
-                Some("no_visible_artifact_with_patch_slots".to_owned()),
-            )
+    fn apply_benchmark_selection_target(
+        &mut self,
+        target: BenchmarkSelectionTarget,
+        report: &mut BenchmarkActionReport,
+    ) {
+        let selections = default_selections(&self.graph);
+        let primary = preferred_benchmark_selection(&self.graph, &selections);
+        let alternate = primary
+            .as_ref()
+            .and_then(|primary| {
+                selections.iter().find(|selection| {
+                    selection_key(&selection.reference) != selection_key(&primary.reference)
+                        && matches!(
+                            SelectionInspector::from_graph(&self.graph, selection),
+                            SelectionInspector::Artifact(artifact) if !artifact.patches.is_empty()
+                        )
+                })
+            })
+            .cloned()
+            .or_else(|| {
+                primary.as_ref().and_then(|primary| {
+                    selections
+                        .iter()
+                        .find(|selection| {
+                            selection_key(&selection.reference) != selection_key(&primary.reference)
+                        })
+                        .cloned()
+                })
+            });
+
+        let (selection, fallback) = match target {
+            BenchmarkSelectionTarget::Primary => (primary, None),
+            BenchmarkSelectionTarget::Alternate => {
+                let fallback = alternate
+                    .is_none()
+                    .then(|| "no_alternate_visible_artifact_selection".to_owned());
+                (alternate.or(primary), fallback)
+            }
         };
 
         let Some(selection) = selection else {
@@ -653,6 +767,9 @@ impl OperatorApp {
         if let Some(fallback) = fallback {
             report.fallback = Some(fallback);
         }
+        report
+            .notes
+            .push(format!("selection_target={}", target.as_str()));
         report.target_label = Some(selection.label.clone());
         report.target_key = Some(selection_key(&selection.reference));
         if !self
@@ -664,6 +781,28 @@ impl OperatorApp {
                 .push("selection_target_not_visible_in_current_mode".to_owned());
         }
     }
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+fn preferred_benchmark_selection(
+    graph: &Graph,
+    selections: &[crate::ui::view::GraphSelectionDetail],
+) -> Option<crate::ui::view::GraphSelectionDetail> {
+    let first = selections.first().cloned();
+    selections
+        .iter()
+        .find(|selection| {
+            matches!(
+                SelectionInspector::from_graph(graph, selection),
+                SelectionInspector::Artifact(artifact) if !artifact.patches.is_empty()
+            )
+        })
+        .cloned()
+        .or(first)
 }
 
 #[cfg(all(

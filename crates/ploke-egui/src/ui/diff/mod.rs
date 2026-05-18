@@ -45,20 +45,33 @@ impl PatchDiffCache {
             .iter()
             .find(|entry| entry.key.matches(input, dark_mode))
         {
+            let _span = tracing::trace_span!("inspector_patch_debug_diff_cache_hit").entered();
             return entry.galley.clone();
         }
 
-        let diff = unified_rust_diff(
-            input.target_relpath,
-            input.source_content,
-            input.proposed_content,
-        );
-        let job = highlighted_diff_job(ui, diff.as_str(), f32::INFINITY);
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        self.entries.push(PatchDiffEntry {
-            key: PatchDiffKey::from_input(input, dark_mode),
-            galley: galley.clone(),
-        });
+        let diff = {
+            let _span = tracing::trace_span!("inspector_patch_debug_diff_build_text").entered();
+            unified_rust_diff(
+                input.target_relpath,
+                input.source_content,
+                input.proposed_content,
+            )
+        };
+        let job = {
+            let _span = tracing::trace_span!("inspector_patch_debug_diff_highlight").entered();
+            highlighted_diff_job(ui, diff.as_str(), f32::INFINITY)
+        };
+        let galley = {
+            let _span = tracing::trace_span!("inspector_patch_debug_diff_layout").entered();
+            ui.fonts_mut(|fonts| fonts.layout_job(job))
+        };
+        {
+            let _span = tracing::trace_span!("inspector_patch_debug_diff_store").entered();
+            self.entries.push(PatchDiffEntry {
+                key: PatchDiffKey::from_input(input, dark_mode),
+                galley: galley.clone(),
+            });
+        }
         self.rebuilds += 1;
         galley
     }
