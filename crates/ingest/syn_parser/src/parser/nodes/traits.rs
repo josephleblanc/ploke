@@ -36,9 +36,7 @@ pub struct TraitNode {
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
     pub cfgs: Vec<String>,
-    // TODO: Add fields for associated consts and types if needed
-    // pub associated_consts: Vec<ConstNode>,
-    // pub associated_types: Vec<TypeAliasNode>,
+    // Associated const/type ownership is represented by TraitAssociatedItem relations.
 }
 
 impl TraitNode {

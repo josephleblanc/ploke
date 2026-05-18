@@ -534,14 +534,13 @@ impl<'a> TypeRelationResolver<'a> {
             return None;
         }
         let name = path[0].as_str();
-        let owner = context.resolution_context_owner.generic_owner()?;
 
-        self.resolve_type_generic_param_in_owner(owner, name)
+        context
+            .resolution_context_owner
+            .generic_owner()
+            .and_then(|owner| self.resolve_type_generic_param_in_owner(owner, name))
             .or_else(|| {
-                let GenericParamOwnerId::Method(method_id) = owner else {
-                    return None;
-                };
-                self.associated_owner_for_method(method_id)
+                self.associated_owner_for_scope_owner(context.resolution_context_owner)
                     .map(|associated_owner| {
                         self.generic_owner_for_associated_owner(associated_owner)
                     })
@@ -570,7 +569,33 @@ impl<'a> TypeRelationResolver<'a> {
         &self,
         method_id: MethodNodeId,
     ) -> Option<AssociatedItemOwnerId> {
-        let target = AssociatedItemNodeId::from(method_id);
+        self.associated_owner_for_item(AssociatedItemNodeId::from(method_id))
+    }
+
+    fn associated_owner_for_scope_owner(
+        &self,
+        owner: TypeResolutionScopeOwnerId,
+    ) -> Option<AssociatedItemOwnerId> {
+        let target = match owner {
+            TypeResolutionScopeOwnerId::Generic(GenericParamOwnerId::Method(id)) => {
+                AssociatedItemNodeId::from(id)
+            }
+            TypeResolutionScopeOwnerId::Generic(GenericParamOwnerId::TypeAlias(id)) => {
+                AssociatedItemNodeId::from(id)
+            }
+            TypeResolutionScopeOwnerId::Const(id) => AssociatedItemNodeId::from(id),
+            TypeResolutionScopeOwnerId::Generic(_) | TypeResolutionScopeOwnerId::Static(_) => {
+                return None;
+            }
+        };
+
+        self.associated_owner_for_item(target)
+    }
+
+    fn associated_owner_for_item(
+        &self,
+        target: AssociatedItemNodeId,
+    ) -> Option<AssociatedItemOwnerId> {
         self.tree
             .get_iter_relations_to(&target.as_any())
             .find_map(|relation| match relation.rel() {
@@ -861,6 +886,7 @@ impl MethodIterState {
 struct GenericBoundIterState {
     param_idx: usize,
     bound_idx: usize,
+    yielded_value_type: bool,
 }
 
 impl GenericBoundIterState {
@@ -868,6 +894,7 @@ impl GenericBoundIterState {
         Self {
             param_idx: 0,
             bound_idx: 0,
+            yielded_value_type: false,
         }
     }
 }
@@ -1410,18 +1437,44 @@ fn next_generic_bound_type_use(
 ) -> Option<TypeUseSite> {
     loop {
         let param = generic_params.get(state.param_idx)?;
-        if let GenericParamKind::Type { bounds, .. } = &param.kind {
-            if let Some(type_id) = bounds.get(state.bound_idx).copied() {
-                state.bound_idx += 1;
-                return Some(trait_type_use_site(
-                    resolution_context_owner.into(),
-                    module,
-                    type_id,
-                ));
+        match &param.kind {
+            GenericParamKind::Type {
+                bounds, default, ..
+            } => {
+                if let Some(type_id) = bounds.get(state.bound_idx).copied() {
+                    state.bound_idx += 1;
+                    return Some(trait_type_use_site(
+                        resolution_context_owner.into(),
+                        module,
+                        type_id,
+                    ));
+                }
+                if !state.yielded_value_type {
+                    state.yielded_value_type = true;
+                    if let Some(type_id) = *default {
+                        return Some(ordinary_type_use_site(
+                            resolution_context_owner.into(),
+                            module,
+                            type_id,
+                        ));
+                    }
+                }
             }
+            GenericParamKind::Const { type_id, .. } => {
+                if !state.yielded_value_type {
+                    state.yielded_value_type = true;
+                    return Some(ordinary_type_use_site(
+                        resolution_context_owner.into(),
+                        module,
+                        *type_id,
+                    ));
+                }
+            }
+            GenericParamKind::Lifetime { .. } => {}
         }
         state.param_idx += 1;
         state.bound_idx = 0;
+        state.yielded_value_type = false;
     }
 }
 

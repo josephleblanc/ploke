@@ -60,9 +60,11 @@ use syn_parser::{
 
 use crate::common::build_tree_for_tests;
 use crate::common::type_relation_resolution::{
-    FieldSelector, TypeUseSourceSlot, enum_variant_field, impl_block, impl_selector, item, method,
-    named, ordinary_item, ordinary_relation, ordinary_source, ordinary_type_param, root,
-    struct_field, trait_item, trait_relation, trait_source, union_field,
+    FieldSelector, TypeUseSourceSlot, enum_variant_field, impl_associated_const,
+    impl_associated_type, impl_block, impl_selector, item, method, named, ordinary_item,
+    ordinary_relation, ordinary_source, ordinary_type_param, root, struct_field,
+    trait_associated_const, trait_associated_type, trait_item, trait_relation, trait_source,
+    union_field,
 };
 use crate::{type_relation_cases, type_relations_exact_sources_case};
 
@@ -129,6 +131,22 @@ type_relation_cases!(
             ),
             trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
         ),
+        v2_resolves_generic_type_parameter_default => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "GenericDefault", ItemKind::Struct),
+                TypeUseSourceSlot::GenericParamDefault(0),
+                root()
+            ),
+            ordinary_item(item(&["crate"], "LocalType", ItemKind::Struct))
+        ),
+        v2_resolves_const_generic_parameter_type_annotation => ordinary_relation(
+            ordinary_source(
+                item(&["crate"], "ConstGenericAnnotated", ItemKind::Struct),
+                TypeUseSourceSlot::ConstGenericParamType(0),
+                root()
+            ),
+            ordinary_item(item(&["crate"], "AliasOrPrimitive", ItemKind::TypeAlias))
+        ),
         v2_resolves_qualified_projection_trait_qualifier => trait_relation(
             trait_source(
                 item(&["crate"], "ProjectedArrayLength", ItemKind::TypeAlias),
@@ -144,6 +162,110 @@ type_relation_cases!(
                 root()
             ),
             trait_item(item(&["crate"], "LocalTrait", ItemKind::Trait))
+        ),
+        v2_resolves_trait_associated_type_default => ordinary_relation(
+            ordinary_source(
+                trait_associated_type(&["crate"], "AssociatedDefaults", "Defaulted"),
+                TypeUseSourceSlot::TypeAliasTarget,
+                root()
+            ),
+            ordinary_item(item(&["crate"], "LocalType", ItemKind::Struct))
+        ),
+        v2_resolves_impl_associated_type_definition => ordinary_relation(
+            ordinary_source(
+                impl_associated_type(
+                    impl_selector(&["crate"], &["AssociatedImpl"], Some(&["AssociatedDefaults"])),
+                    "Defaulted"
+                ),
+                TypeUseSourceSlot::TypeAliasTarget,
+                root()
+            ),
+            ordinary_item(item(&["crate"], "LocalType", ItemKind::Struct))
+        ),
+        v2_resolves_trait_associated_const_type_annotation => ordinary_relation(
+            ordinary_source(
+                trait_associated_const(&["crate"], "AssociatedDefaults", "TRAIT_CONST"),
+                TypeUseSourceSlot::ConstType,
+                root()
+            ),
+            ordinary_item(item(&["crate"], "AliasOrPrimitive", ItemKind::TypeAlias))
+        ),
+        v2_resolves_impl_associated_const_type_annotation => ordinary_relation(
+            ordinary_source(
+                impl_associated_const(
+                    impl_selector(&["crate"], &["AssociatedImpl"], Some(&["AssociatedDefaults"])),
+                    "TRAIT_CONST"
+                ),
+                TypeUseSourceSlot::ConstType,
+                root()
+            ),
+            ordinary_item(item(&["crate"], "AliasOrPrimitive", ItemKind::TypeAlias))
+        ),
+        v2_resolves_trait_associated_type_default_to_enclosing_generic_param => ordinary_relation(
+            ordinary_source(
+                trait_associated_type(&["crate"], "AssociatedGenericDefaults", "Defaulted"),
+                TypeUseSourceSlot::TypeAliasTarget,
+                root()
+            ),
+            ordinary_type_param(
+                item(&["crate"], "AssociatedGenericDefaults", ItemKind::Trait),
+                "T"
+            )
+        ),
+        v2_resolves_impl_associated_type_definition_to_enclosing_generic_param => ordinary_relation(
+            ordinary_source(
+                impl_associated_type(
+                    impl_selector(
+                        &["crate"],
+                        &["GenericAssociatedImpl"],
+                        Some(&["AssociatedGenericDefaults"])
+                    ),
+                    "Defaulted"
+                ),
+                TypeUseSourceSlot::TypeAliasTarget,
+                root()
+            ),
+            ordinary_type_param(
+                impl_block(
+                    &["crate"],
+                    &["GenericAssociatedImpl"],
+                    Some(&["AssociatedGenericDefaults"])
+                ),
+                "T"
+            )
+        ),
+        v2_resolves_trait_associated_const_type_to_enclosing_generic_param => ordinary_relation(
+            ordinary_source(
+                trait_associated_const(&["crate"], "AssociatedGenericDefaults", "TRAIT_CONST"),
+                TypeUseSourceSlot::ConstType,
+                root()
+            ),
+            ordinary_type_param(
+                item(&["crate"], "AssociatedGenericDefaults", ItemKind::Trait),
+                "T"
+            )
+        ),
+        v2_resolves_impl_associated_const_type_to_enclosing_generic_param => ordinary_relation(
+            ordinary_source(
+                impl_associated_const(
+                    impl_selector(
+                        &["crate"],
+                        &["GenericAssociatedImpl"],
+                        Some(&["AssociatedGenericDefaults"])
+                    ),
+                    "TRAIT_CONST"
+                ),
+                TypeUseSourceSlot::ConstType,
+                root()
+            ),
+            ordinary_type_param(
+                impl_block(
+                    &["crate"],
+                    &["GenericAssociatedImpl"],
+                    Some(&["AssociatedGenericDefaults"])
+                ),
+                "T"
+            )
         ),
         v2_resolves_where_direct_type_param_bound => trait_relation(
             trait_source(

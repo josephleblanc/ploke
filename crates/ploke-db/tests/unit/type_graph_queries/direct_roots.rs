@@ -3,6 +3,7 @@ use ploke_db::{Database, DbError, TypeUseCoordinate, TypeUseRole, TypeUseRoot};
 use syn_parser::parser::{graph::GraphAccess, nodes::AsAnyNodeId};
 
 use super::common::{
+    associated_const_row_by_owner_name, associated_type_alias_row_by_owner_name,
     const_id_by_name_in_file_suffix, exactly_one_uuid, field_id_by_owner_index,
     function_id_by_name, function_id_by_name_in_module, function_param_type_by_name,
     function_return_type_by_name_in_module, generic_type_param_id_by_owner_name,
@@ -353,6 +354,76 @@ fn associated_type_bound_root_is_queryable_from_containing_trait() -> Result<(),
         }),
         "expected LocalAssocBound to expose an AssociatedTypeBound root; roots: {roots:#?}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn associated_type_default_root_is_queryable_from_precise_trait_item_owner() -> Result<(), DbError>
+{
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let trait_id = trait_id_by_name_in_module(&db, &["crate"], "AssociatedDefaults")?;
+    let (owner_id, root_type_id) =
+        associated_type_alias_row_by_owner_name(&db, trait_id, "TraitAssociatedItem", "Defaulted")?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::TypeAliasTarget,
+        TypeUseCoordinate::None,
+        "expected trait associated type default root on associated type owner",
+    );
+    Ok(())
+}
+
+#[test]
+fn impl_associated_type_definition_root_is_queryable_from_precise_item_owner() -> Result<(), DbError>
+{
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let impl_id =
+        impl_id_by_trait_and_self_type_names(&db, "AssociatedDefaults", "AssociatedImpl")?;
+    let (owner_id, root_type_id) =
+        associated_type_alias_row_by_owner_name(&db, impl_id, "ImplAssociatedItem", "Defaulted")?;
+
+    let roots = db.type_uses_for_owner(owner_id)?;
+
+    assert_exact_root(
+        &roots,
+        owner_id,
+        root_type_id,
+        TypeUseRole::TypeAliasTarget,
+        TypeUseCoordinate::None,
+        "expected impl associated type definition root on associated type owner",
+    );
+    Ok(())
+}
+
+#[test]
+fn associated_const_type_roots_are_queryable_from_precise_item_owners() -> Result<(), DbError> {
+    let db = setup_typed_fixture_db("fixture_type_resolution_v2")?;
+    let trait_id = trait_id_by_name_in_module(&db, &["crate"], "AssociatedDefaults")?;
+    let impl_id =
+        impl_id_by_trait_and_self_type_names(&db, "AssociatedDefaults", "AssociatedImpl")?;
+
+    for (owner_id, root_type_id, label) in [
+        associated_const_row_by_owner_name(&db, trait_id, "TraitAssociatedItem", "TRAIT_CONST")
+            .map(|(owner_id, root_type_id)| (owner_id, root_type_id, "trait associated const"))?,
+        associated_const_row_by_owner_name(&db, impl_id, "ImplAssociatedItem", "TRAIT_CONST")
+            .map(|(owner_id, root_type_id)| (owner_id, root_type_id, "impl associated const"))?,
+    ] {
+        let roots = db.type_uses_for_owner(owner_id)?;
+        assert_exact_root(
+            &roots,
+            owner_id,
+            root_type_id,
+            TypeUseRole::ConstType,
+            TypeUseCoordinate::None,
+            label,
+        );
+    }
 
     Ok(())
 }

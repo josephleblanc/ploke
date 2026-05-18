@@ -17,8 +17,8 @@ use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
 use crate::parser::nodes::{
-    EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, MethodNodeId, ModuleNodeId, StaticNodeId,
-    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
+    ConstNodeId, EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, MethodNodeId, ModuleNodeId,
+    StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // Wrapper enums for catogories of individual node id wrapper types.
 use crate::parser::nodes::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
@@ -74,6 +74,200 @@ impl<'a> CodeVisitor<'a> {
     // Update return type to use SyntacticRelation
     pub(crate) fn relations(&self) -> &[SyntacticRelation] {
         self.state.code_graph.relations()
+    }
+
+    fn trait_associated_const_node(
+        &mut self,
+        item_const: &syn::TraitItemConst,
+        inherited_visibility: VisibilityKind,
+    ) -> ConstNode {
+        let const_name = item_const.ident.to_string();
+        let item_cfgs = extract_cfg_strings(&item_const.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+        let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+        let any_id = self.state.generate_synthetic_node_id(
+            &const_name,
+            ItemKind::Const,
+            cfg_bytes.as_deref(),
+        );
+        self.debug_new_id(&const_name, any_id);
+
+        let const_id: ConstNodeId = any_id.try_into().unwrap();
+        self.push_assoc_scope(
+            &const_name,
+            AssociatedItemNodeId::from(const_id),
+            &self.state.current_scope_cfgs.clone(),
+        );
+        let type_id = get_or_create_type(self.state, &item_const.ty);
+        self.pop_assoc_scope(&const_name);
+
+        ConstNode {
+            id: const_id,
+            name: const_name,
+            span: item_const.extract_span_bytes(),
+            visibility: inherited_visibility,
+            type_id,
+            value: item_const
+                .default
+                .as_ref()
+                .map(|(_, expr)| expr.to_token_stream().to_string()),
+            attributes: extract_attributes(&item_const.attrs),
+            docstring: extract_docstring(&item_const.attrs),
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_const.to_token_stream()),
+            ),
+            cfgs: item_cfgs,
+        }
+    }
+
+    fn impl_associated_const_node(&mut self, item_const: &syn::ImplItemConst) -> ConstNode {
+        let const_name = item_const.ident.to_string();
+        let item_cfgs = extract_cfg_strings(&item_const.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+        let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+        let any_id = self.state.generate_synthetic_node_id(
+            &const_name,
+            ItemKind::Const,
+            cfg_bytes.as_deref(),
+        );
+        self.debug_new_id(&const_name, any_id);
+
+        let const_id: ConstNodeId = any_id.try_into().unwrap();
+        self.push_assoc_scope(
+            &const_name,
+            AssociatedItemNodeId::from(const_id),
+            &self.state.current_scope_cfgs.clone(),
+        );
+        let type_id = get_or_create_type(self.state, &item_const.ty);
+        self.pop_assoc_scope(&const_name);
+
+        ConstNode {
+            id: const_id,
+            name: const_name,
+            span: item_const.extract_span_bytes(),
+            visibility: self.state.convert_visibility(&item_const.vis),
+            type_id,
+            value: Some(item_const.expr.to_token_stream().to_string()),
+            attributes: extract_attributes(&item_const.attrs),
+            docstring: extract_docstring(&item_const.attrs),
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_const.to_token_stream()),
+            ),
+            cfgs: item_cfgs,
+        }
+    }
+
+    fn trait_associated_type_node(
+        &mut self,
+        item_type: &syn::TraitItemType,
+        inherited_visibility: VisibilityKind,
+    ) -> Option<TypeAliasNode> {
+        let (_, default_type) = item_type.default.as_ref()?;
+        let type_name = item_type.ident.to_string();
+        let item_cfgs = extract_cfg_strings(&item_type.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+        let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+        let any_id = self.state.generate_synthetic_node_id(
+            &type_name,
+            ItemKind::TypeAlias,
+            cfg_bytes.as_deref(),
+        );
+        self.debug_new_id(&type_name, any_id);
+
+        let type_alias_id: TypeAliasNodeId = any_id.try_into().unwrap();
+        self.push_assoc_scope(
+            &type_name,
+            AssociatedItemNodeId::from(type_alias_id),
+            &self.state.current_scope_cfgs.clone(),
+        );
+        let type_id = get_or_create_type(self.state, default_type);
+        let generic_params = self.state.process_generics(&item_type.generics);
+        let where_predicates = self.state.process_where_predicates(&item_type.generics);
+        self.pop_assoc_scope(&type_name);
+
+        Some(TypeAliasNode {
+            id: type_alias_id,
+            name: type_name,
+            span: item_type.extract_span_bytes(),
+            visibility: inherited_visibility,
+            type_id,
+            generic_params,
+            where_predicates,
+            attributes: extract_attributes(&item_type.attrs),
+            docstring: extract_docstring(&item_type.attrs),
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_type.to_token_stream()),
+            ),
+            cfgs: item_cfgs,
+        })
+    }
+
+    fn impl_associated_type_node(&mut self, item_type: &syn::ImplItemType) -> TypeAliasNode {
+        let type_name = item_type.ident.to_string();
+        let item_cfgs = extract_cfg_strings(&item_type.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+        let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+        let any_id = self.state.generate_synthetic_node_id(
+            &type_name,
+            ItemKind::TypeAlias,
+            cfg_bytes.as_deref(),
+        );
+        self.debug_new_id(&type_name, any_id);
+
+        let type_alias_id: TypeAliasNodeId = any_id.try_into().unwrap();
+        self.push_assoc_scope(
+            &type_name,
+            AssociatedItemNodeId::from(type_alias_id),
+            &self.state.current_scope_cfgs.clone(),
+        );
+        let type_id = get_or_create_type(self.state, &item_type.ty);
+        let generic_params = self.state.process_generics(&item_type.generics);
+        let where_predicates = self.state.process_where_predicates(&item_type.generics);
+        self.pop_assoc_scope(&type_name);
+
+        TypeAliasNode {
+            id: type_alias_id,
+            name: type_name,
+            span: item_type.extract_span_bytes(),
+            visibility: self.state.convert_visibility(&item_type.vis),
+            type_id,
+            generic_params,
+            where_predicates,
+            attributes: extract_attributes(&item_type.attrs),
+            docstring: extract_docstring(&item_type.attrs),
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_type.to_token_stream()),
+            ),
+            cfgs: item_cfgs,
+        }
     }
 
     // Helper method to extract path segments from a use tree
@@ -1618,126 +1812,137 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             get_or_create_trait_type(self.state, &ty)
         });
 
-        // Process methods
+        // Process associated items
         let mut methods = Vec::new();
+        let mut associated_consts = Vec::new();
+        let mut associated_types = Vec::new();
         for item in &item_impl.items {
             // for (item, i) in item_impl.items.iter().zip(u8::MIN..u8::MAX) {
             //     // NOTE: There are NO other match arms or if-let chains here
             //     //       to handle syn::ImplItem::Const or syn::ImplItem::Type
-            if let syn::ImplItem::Fn(method) = item {
-                let method_name = method.sig.ident.to_string();
-                // NOTE: We may not actually want to change this to the above enumerated loop,
-                // since we shouldn't ever have a situation in which the same impl block has the
-                // same name repeat for each method.
-                // let method_name = method.sig.ident.to_string();
-                // let mut method_name: String = method
-                //     .sig
-                //     .ident
-                //     .to_string()
-                //     .chars()
-                //     .chain("unnamed_method".chars())
-                //     .chain(impl_name.as_str().chars())
-                //     .collect();
-                // method_name.push(i.into());
+            match item {
+                syn::ImplItem::Fn(method) => {
+                    let method_name = method.sig.ident.to_string();
+                    // NOTE: We may not actually want to change this to the above enumerated loop,
+                    // since we shouldn't ever have a situation in which the same impl block has the
+                    // same name repeat for each method.
+                    // let method_name = method.sig.ident.to_string();
+                    // let mut method_name: String = method
+                    //     .sig
+                    //     .ident
+                    //     .to_string()
+                    //     .chars()
+                    //     .chain("unnamed_method".chars())
+                    //     .chain(impl_name.as_str().chars())
+                    //     .collect();
+                    // method_name.push(i.into());
 
-                // --- CFG Handling for Method (Raw Strings) ---
-                let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
-                let method_item_cfgs =
-                    super::attribute_processing::extract_cfg_strings(&method.attrs);
-                let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
-                    .iter()
-                    .cloned()
-                    .chain(method_item_cfgs.iter().cloned())
-                    .collect();
-                let method_cfg_bytes = calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
-                // --- End CFG Handling ---
+                    // --- CFG Handling for Method (Raw Strings) ---
+                    let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+                    let method_item_cfgs =
+                        super::attribute_processing::extract_cfg_strings(&method.attrs);
+                    let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
+                        .iter()
+                        .cloned()
+                        .chain(method_item_cfgs.iter().cloned())
+                        .collect();
+                    let method_cfg_bytes =
+                        calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
+                    // --- End CFG Handling ---
 
-                // Generate base ID for the method
-                // Methods are contained within the impl, not directly in the module.
-                // ANCHOR: method_from_impl_node
-                let method_any_id = self.state.generate_synthetic_node_id(
-                    &method_name,
-                    ItemKind::Method, // Use Method kind
-                    method_cfg_bytes.as_deref(),
-                );
+                    // Generate base ID for the method
+                    // Methods are contained within the impl, not directly in the module.
+                    // ANCHOR: method_from_impl_node
+                    let method_any_id = self.state.generate_synthetic_node_id(
+                        &method_name,
+                        ItemKind::Method, // Use Method kind
+                        method_cfg_bytes.as_deref(),
+                    );
 
-                self.debug_new_id(&method_name, method_any_id); // Now uses trace!
+                    self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
-                // Convert method ID and push scope
-                let method_typed_id: MethodNodeId = method_any_id.try_into().unwrap();
-                self.push_assoc_scope(
-                    &method_name,
-                    AssociatedItemNodeId::from(method_typed_id), // Use AssociatedItemNodeId for scope
-                    &self.state.current_scope_cfgs.clone(),
-                );
+                    // Convert method ID and push scope
+                    let method_typed_id: MethodNodeId = method_any_id.try_into().unwrap();
+                    self.push_assoc_scope(
+                        &method_name,
+                        AssociatedItemNodeId::from(method_typed_id), // Use AssociatedItemNodeId for scope
+                        &self.state.current_scope_cfgs.clone(),
+                    );
 
-                // Process method parameters
-                let mut parameters = Vec::new();
-                for arg in &method.sig.inputs {
-                    if let Some(param) = self.state.process_fn_arg(arg) {
-                        // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
-                        parameters.push(param);
+                    // Process method parameters
+                    let mut parameters = Vec::new();
+                    for arg in &method.sig.inputs {
+                        if let Some(param) = self.state.process_fn_arg(arg) {
+                            // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
+                            parameters.push(param);
+                        }
                     }
+
+                    // Extract return type if it exists
+                    let return_type = match &method.sig.output {
+                        ReturnType::Default => None,
+                        ReturnType::Type(_, ty) => {
+                            let type_id = get_or_create_type(self.state, ty);
+                            // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
+                            Some(type_id)
+                        }
+                    };
+                    // RelationKind::Method removed. Replaced by AssociatedItem below.
+
+                    // Process generic parameters for methods
+                    let generic_params = self.state.process_generics(&method.sig.generics);
+                    let where_predicates =
+                        self.state.process_where_predicates(&method.sig.generics);
+
+                    // Pop the method's ID from the scope stack AFTER processing its types/generics
+                    // Use helper function for logging
+                    self.pop_assoc_scope(&method_name);
+
+                    // Extract doc comments and other attributes for methods
+                    let docstring = extract_docstring(&method.attrs);
+                    let attributes = extract_attributes(&method.attrs);
+
+                    // Extract method body as a string
+                    let body = Some(method.block.to_token_stream().to_string());
+
+                    // Create info struct and then the node
+                    let method_node_id = method_any_id.try_into().unwrap();
+                    let method_node = MethodNode {
+                        id: method_node_id,
+                        name: method_name.clone(),
+                        span: method.extract_span_bytes(),
+                        visibility: self.state.convert_visibility(&method.vis),
+                        parameters,
+                        return_type,
+                        generic_params,
+                        where_predicates,
+                        attributes,
+                        docstring,
+                        body,
+                        tracking_hash: Some(
+                            self.state.generate_tracking_hash(&method.to_token_stream()),
+                        ),
+                        cfgs: method_item_cfgs,
+                    };
+                    methods.push(method_node);
+                    // ANCHOR_END: method_from_impl_node
                 }
-
-                // Extract return type if it exists
-                let return_type = match &method.sig.output {
-                    ReturnType::Default => None,
-                    ReturnType::Type(_, ty) => {
-                        let type_id = get_or_create_type(self.state, ty);
-                        // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
-                        Some(type_id)
-                    }
-                };
-                // RelationKind::Method removed. Replaced by AssociatedItem below.
-
-                // Process generic parameters for methods
-                let generic_params = self.state.process_generics(&method.sig.generics);
-                let where_predicates = self.state.process_where_predicates(&method.sig.generics);
-
-                // Pop the method's ID from the scope stack AFTER processing its types/generics
-                // Use helper function for logging
-                self.pop_assoc_scope(&method_name);
-
-                // Extract doc comments and other attributes for methods
-                let docstring = extract_docstring(&method.attrs);
-                let attributes = extract_attributes(&method.attrs);
-
-                // Extract method body as a string
-                let body = Some(method.block.to_token_stream().to_string());
-
-                // Create info struct and then the node
-                let method_node_id = method_any_id.try_into().unwrap();
-                let method_node = MethodNode {
-                    id: method_node_id,
-                    name: method_name.clone(),
-                    span: method.extract_span_bytes(),
-                    visibility: self.state.convert_visibility(&method.vis),
-                    parameters,
-                    return_type,
-                    generic_params,
-                    where_predicates,
-                    attributes,
-                    docstring,
-                    body,
-                    tracking_hash: Some(
-                        self.state.generate_tracking_hash(&method.to_token_stream()),
-                    ),
-                    cfgs: method_item_cfgs,
-                };
-                methods.push(method_node);
-                // ANCHOR_END: method_from_impl_node
+                syn::ImplItem::Const(item_const) => {
+                    let const_node = self.impl_associated_const_node(item_const);
+                    self.state.code_graph.consts.push(const_node.clone());
+                    associated_consts.push(const_node);
+                }
+                syn::ImplItem::Type(item_type) => {
+                    let type_node = self.impl_associated_type_node(item_type);
+                    self.state
+                        .code_graph
+                        .defined_types
+                        .push(TypeDefNode::TypeAlias(type_node.clone()));
+                    associated_types.push(type_node);
+                }
+                _ => {}
             }
-            // TODO: Handle syn::ImplItem::Const and syn::ImplItem::Type here
-            // 1. Generate base ID for ConstNode/TypeAliasNode
-            // 2. Create the ConstNode/TypeAliasNode
-            // 3. Store the node (e.g., in separate Vecs or a shared collection)
-            // 4. Add the node's typed ID to a list of associated items for this impl
         }
-
-        // Placeholder for other associated items (consts, types)
-        let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
-        let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
 
         // Process generic parameters for impl block
         let generic_params = self.state.process_generics(&item_impl.generics);
@@ -1771,7 +1976,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.code_graph.relations.push(relation);
         }
         for const_node in &associated_consts {
-            // TODO: Populate associated_consts
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
                 target: AssociatedItemNodeId::from(const_node.const_id()),
@@ -1779,7 +1983,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.code_graph.relations.push(relation);
         }
         for type_node in &associated_types {
-            // TODO: Populate associated_types
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
                 target: AssociatedItemNodeId::from(type_node.type_alias_id()),
@@ -1843,116 +2046,134 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             &provisional_effective_cfgs,
         );
 
-        // Process methods
+        // Process associated items
         let mut methods = Vec::new();
+        let mut associated_consts = Vec::new();
+        let mut associated_types = Vec::new();
         for item in &item_trait.items {
-            if let syn::TraitItem::Fn(method) = item {
-                let method_name = method.sig.ident.to_string();
+            match item {
+                syn::TraitItem::Fn(method) => {
+                    let method_name = method.sig.ident.to_string();
 
-                // --- CFG Handling for Trait Method (Raw Strings) ---
-                let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
-                let method_item_cfgs =
-                    super::attribute_processing::extract_cfg_strings(&method.attrs);
-                let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
-                    .iter()
-                    .cloned()
-                    .chain(method_item_cfgs.iter().cloned())
-                    .collect();
-                let method_cfg_bytes = calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
-                // --- End CFG Handling ---
+                    // --- CFG Handling for Trait Method (Raw Strings) ---
+                    let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+                    let method_item_cfgs =
+                        super::attribute_processing::extract_cfg_strings(&method.attrs);
+                    let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
+                        .iter()
+                        .cloned()
+                        .chain(method_item_cfgs.iter().cloned())
+                        .collect();
+                    let method_cfg_bytes =
+                        calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
+                    // --- End CFG Handling ---
 
-                // Generate base ID for the method definition within the trait
-                // ANCHOR: method_from_trait_node
-                let method_any_id = self.state.generate_synthetic_node_id(
-                    &method_name,
-                    ItemKind::Method, // Use Method kind
-                    method_cfg_bytes.as_deref(),
-                );
+                    // Generate base ID for the method definition within the trait
+                    // ANCHOR: method_from_trait_node
+                    let method_any_id = self.state.generate_synthetic_node_id(
+                        &method_name,
+                        ItemKind::Method, // Use Method kind
+                        method_cfg_bytes.as_deref(),
+                    );
 
-                self.debug_new_id(&method_name, method_any_id); // Now uses trace!
+                    self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
-                let method_node_id: MethodNodeId = method_any_id.try_into().unwrap();
-                // Push the method's base ID onto the scope stack BEFORE processing its types/generics
-                // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
-                self.push_assoc_scope(
-                    // TODO: Update the `CodeVisitor` to have another field for associated node id
-                    // for scope management. See comment on `&variant_name,` for more info on how
-                    // to update.
-                    &method_name,
-                    AssociatedItemNodeId::from(method_node_id),
-                    &self.state.current_scope_cfgs.clone(),
-                );
+                    let method_node_id: MethodNodeId = method_any_id.try_into().unwrap();
+                    // Push the method's base ID onto the scope stack BEFORE processing its types/generics
+                    // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
+                    self.push_assoc_scope(
+                        // TODO: Update the `CodeVisitor` to have another field for associated node id
+                        // for scope management. See comment on `&variant_name,` for more info on how
+                        // to update.
+                        &method_name,
+                        AssociatedItemNodeId::from(method_node_id),
+                        &self.state.current_scope_cfgs.clone(),
+                    );
 
-                // Process method parameters
-                let mut parameters = Vec::new();
-                for arg in &method.sig.inputs {
-                    if let Some(param) = self.state.process_fn_arg(arg) {
-                        // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
-                        parameters.push(param);
+                    // Process method parameters
+                    let mut parameters = Vec::new();
+                    for arg in &method.sig.inputs {
+                        if let Some(param) = self.state.process_fn_arg(arg) {
+                            // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
+                            parameters.push(param);
+                        }
+                    }
+
+                    // Extract return type if it exists
+                    let return_type = match &method.sig.output {
+                        ReturnType::Default => None,
+                        ReturnType::Type(_, ty) => {
+                            let type_id = get_or_create_type(self.state, ty);
+                            // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
+                            Some(type_id)
+                        }
+                    };
+
+                    // Process generic parameters for methods
+                    let generic_params = self.state.process_generics(&method.sig.generics);
+                    let where_predicates =
+                        self.state.process_where_predicates(&method.sig.generics);
+
+                    // Pop the method's ID from the scope stack AFTER processing its types/generics
+                    // Use helper function for logging
+                    self.pop_assoc_scope(&method_name);
+
+                    // Extract doc comments and other attributes for methods
+                    let docstring = extract_docstring(&method.attrs);
+                    let attributes = extract_attributes(&method.attrs);
+
+                    // Extract method body if available (trait methods may have default implementations)
+                    let body = method
+                        .default
+                        .as_ref()
+                        .map(|block| block.to_token_stream().to_string());
+
+                    let method_node_id = method_any_id.try_into().unwrap();
+                    // Construct MethodNode directly
+                    let method_node = MethodNode {
+                        id: method_node_id, // Use typed ID (assuming method_typed_id is defined earlier)
+                        name: method_name,
+                        span: method.extract_span_bytes(),
+                        visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
+                        parameters,
+                        return_type,
+                        generic_params,
+                        where_predicates,
+                        attributes,
+                        docstring,
+                        body,
+                        tracking_hash: Some(
+                            self.state
+                                .generate_tracking_hash(&method.clone().to_token_stream()),
+                        ),
+                        cfgs: method_item_cfgs,
+                    };
+                    methods.push(method_node);
+                    // ANCHOR_END: method_from_trait_node
+                }
+                syn::TraitItem::Const(item_const) => {
+                    let const_node = self.trait_associated_const_node(
+                        item_const,
+                        self.state.convert_visibility(&item_trait.vis),
+                    );
+                    self.state.code_graph.consts.push(const_node.clone());
+                    associated_consts.push(const_node);
+                }
+                syn::TraitItem::Type(item_type) => {
+                    if let Some(type_node) = self.trait_associated_type_node(
+                        item_type,
+                        self.state.convert_visibility(&item_trait.vis),
+                    ) {
+                        self.state
+                            .code_graph
+                            .defined_types
+                            .push(TypeDefNode::TypeAlias(type_node.clone()));
+                        associated_types.push(type_node);
                     }
                 }
-
-                // Extract return type if it exists
-                let return_type = match &method.sig.output {
-                    ReturnType::Default => None,
-                    ReturnType::Type(_, ty) => {
-                        let type_id = get_or_create_type(self.state, ty);
-                        // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
-                        Some(type_id)
-                    }
-                };
-
-                // Process generic parameters for methods
-                let generic_params = self.state.process_generics(&method.sig.generics);
-                let where_predicates = self.state.process_where_predicates(&method.sig.generics);
-
-                // Pop the method's ID from the scope stack AFTER processing its types/generics
-                // Use helper function for logging
-                self.pop_assoc_scope(&method_name);
-
-                // Extract doc comments and other attributes for methods
-                let docstring = extract_docstring(&method.attrs);
-                let attributes = extract_attributes(&method.attrs);
-
-                // Extract method body if available (trait methods may have default implementations)
-                let body = method
-                    .default
-                    .as_ref()
-                    .map(|block| block.to_token_stream().to_string());
-
-                let method_node_id = method_any_id.try_into().unwrap();
-                // Construct MethodNode directly
-                let method_node = MethodNode {
-                    id: method_node_id, // Use typed ID (assuming method_typed_id is defined earlier)
-                    name: method_name,
-                    span: method.extract_span_bytes(),
-                    visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
-                    parameters,
-                    return_type,
-                    generic_params,
-                    where_predicates,
-                    attributes,
-                    docstring,
-                    body,
-                    tracking_hash: Some(
-                        self.state
-                            .generate_tracking_hash(&method.clone().to_token_stream()),
-                    ),
-                    cfgs: method_item_cfgs,
-                };
-                methods.push(method_node);
-                // ANCHOR_END: method_from_trait_node
+                _ => {}
             }
-            // TODO: Handle syn::TraitItem::Const and syn::TraitItem::Type here
-            // 1. Generate base ID for ConstNode/TypeAliasNode
-            // 2. Create the ConstNode/TypeAliasNode
-            // 3. Store the node
-            // 4. Add the node's typed ID to a list of associated items for this trait
         }
-
-        // Placeholder for other associated items (consts, types)
-        let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
-        let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
         let mut next_associated_type_index = 0;
         let associated_type_bounds: Vec<crate::parser::types::AssociatedTypeBound> = item_trait
             .items
@@ -2054,7 +2275,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.code_graph.relations.push(relation);
         }
         for const_node in &associated_consts {
-            // TODO: Populate associated_consts
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
                 target: AssociatedItemNodeId::from(const_node.const_id()),
@@ -2062,7 +2282,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.code_graph.relations.push(relation);
         }
         for type_node in &associated_types {
-            // TODO: Populate associated_types
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
                 target: AssociatedItemNodeId::from(type_node.type_alias_id()),

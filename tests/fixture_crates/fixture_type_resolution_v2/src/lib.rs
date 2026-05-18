@@ -2,6 +2,8 @@
 
 pub struct T;
 pub struct U;
+pub struct LocalType;
+pub type AliasOrPrimitive = usize;
 
 pub fn concrete(value: T) {}
 pub fn also_concrete(value: T) {}
@@ -17,6 +19,10 @@ pub trait ExtraTrait {}
 pub trait AnotherTrait {}
 
 pub struct LocallyBound<T: LocalTrait>(T);
+
+pub struct GenericDefault<T = LocalType>(T);
+
+pub struct ConstGenericAnnotated<const N: AliasOrPrimitive>;
 
 pub struct UsesTrait;
 
@@ -34,6 +40,30 @@ pub type ProjectedArrayLength<const N: usize> = <Const<N> as IntoArrayLength>::A
 
 pub trait LocalAssocBound {
     type Output: LocalTrait;
+}
+
+pub trait AssociatedDefaults {
+    type Defaulted = LocalType;
+    const TRAIT_CONST: AliasOrPrimitive;
+}
+
+pub struct AssociatedImpl;
+
+impl AssociatedDefaults for AssociatedImpl {
+    type Defaulted = LocalType;
+    const TRAIT_CONST: AliasOrPrimitive = 0;
+}
+
+pub trait AssociatedGenericDefaults<T> {
+    type Defaulted = T;
+    const TRAIT_CONST: T;
+}
+
+pub struct GenericAssociatedImpl<T>(T);
+
+impl<T> AssociatedGenericDefaults<T> for GenericAssociatedImpl<T> {
+    type Defaulted = T;
+    const TRAIT_CONST: T = panic!("fixture associated const is not evaluated");
 }
 
 pub struct WhereLocal<T>(T)

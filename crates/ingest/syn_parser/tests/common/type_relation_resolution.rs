@@ -23,7 +23,7 @@ use syn_parser::parser::nodes::{
     AnyNodeId, AnyTypeId, AsAnyNodeId, FieldNode, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
     OrdinaryTypeUseId, TraitTypeSourceId, TraitTypeTargetId, TypeDefNode, TypeGenericParamNodeId,
 };
-use syn_parser::parser::relations::TypeRelation;
+use syn_parser::parser::relations::{SyntacticRelation, TypeRelation};
 use syn_parser::parser::types::{GenericParamNode, TypeNode, TypeWherePredicate};
 use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
 
@@ -76,6 +76,24 @@ pub enum TypeUseOwnerSelector<'a> {
         variant_name: &'a str,
         field: FieldSelector<'a>,
     },
+    TraitAssociatedType {
+        module_path: &'a [&'a str],
+        trait_name: &'a str,
+        name: &'a str,
+    },
+    ImplAssociatedType {
+        impl_selector: ImplSelector<'a>,
+        name: &'a str,
+    },
+    TraitAssociatedConst {
+        module_path: &'a [&'a str],
+        trait_name: &'a str,
+        name: &'a str,
+    },
+    ImplAssociatedConst {
+        impl_selector: ImplSelector<'a>,
+        name: &'a str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +119,8 @@ pub enum TypeUseSourceSlot {
         param_index: usize,
         bound_index: usize,
     },
+    GenericParamDefault(usize),
+    ConstGenericParamType(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +260,50 @@ pub fn union_field<'a>(
         module_path,
         type_name,
         field,
+    }
+}
+
+pub fn trait_associated_type<'a>(
+    module_path: &'a [&'a str],
+    trait_name: &'a str,
+    name: &'a str,
+) -> TypeUseOwnerSelector<'a> {
+    TypeUseOwnerSelector::TraitAssociatedType {
+        module_path,
+        trait_name,
+        name,
+    }
+}
+
+pub fn impl_associated_type<'a>(
+    impl_selector: ImplSelector<'a>,
+    name: &'a str,
+) -> TypeUseOwnerSelector<'a> {
+    TypeUseOwnerSelector::ImplAssociatedType {
+        impl_selector,
+        name,
+    }
+}
+
+pub fn trait_associated_const<'a>(
+    module_path: &'a [&'a str],
+    trait_name: &'a str,
+    name: &'a str,
+) -> TypeUseOwnerSelector<'a> {
+    TypeUseOwnerSelector::TraitAssociatedConst {
+        module_path,
+        trait_name,
+        name,
+    }
+}
+
+pub fn impl_associated_const<'a>(
+    impl_selector: ImplSelector<'a>,
+    name: &'a str,
+) -> TypeUseOwnerSelector<'a> {
+    TypeUseOwnerSelector::ImplAssociatedConst {
+        impl_selector,
+        name,
     }
 }
 
@@ -625,7 +689,83 @@ impl<'a> FixtureGraphView<'a> {
                         .as_any(),
                 )
             }
+            TypeUseOwnerSelector::TraitAssociatedType {
+                module_path,
+                trait_name,
+                name,
+            } => {
+                let trait_id = find_item_id_by_path_name_kind_checked(
+                    self.graph,
+                    module_path,
+                    trait_name,
+                    ItemKind::Trait,
+                )?;
+                self.associated_item_by_owner(trait_id, name, ItemKind::TypeAlias)
+            }
+            TypeUseOwnerSelector::ImplAssociatedType {
+                impl_selector,
+                name,
+            } => self.associated_item_by_owner(
+                self.impl_node(impl_selector)?.id.as_any(),
+                name,
+                ItemKind::TypeAlias,
+            ),
+            TypeUseOwnerSelector::TraitAssociatedConst {
+                module_path,
+                trait_name,
+                name,
+            } => {
+                let trait_id = find_item_id_by_path_name_kind_checked(
+                    self.graph,
+                    module_path,
+                    trait_name,
+                    ItemKind::Trait,
+                )?;
+                self.associated_item_by_owner(trait_id, name, ItemKind::Const)
+            }
+            TypeUseOwnerSelector::ImplAssociatedConst {
+                impl_selector,
+                name,
+            } => self.associated_item_by_owner(
+                self.impl_node(impl_selector)?.id.as_any(),
+                name,
+                ItemKind::Const,
+            ),
         }
+    }
+
+    fn associated_item_by_owner(
+        self,
+        owner: AnyNodeId,
+        name: &str,
+        kind: ItemKind,
+    ) -> Result<AnyNodeId, SynParserError> {
+        let matches = self
+            .graph
+            .relations()
+            .iter()
+            .filter_map(|relation| match relation {
+                SyntacticRelation::TraitAssociatedItem { source, target }
+                    if source.as_any() == owner =>
+                {
+                    Some(target.as_any())
+                }
+                SyntacticRelation::ImplAssociatedItem { source, target }
+                    if source.as_any() == owner =>
+                {
+                    Some(target.as_any())
+                }
+                _ => None,
+            })
+            .filter_map(|target| {
+                let node = self.graph.find_node_unique(target).ok()?;
+                (node.name() == name && node.kind_matches(kind)).then_some(target)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(exactly_one_or_panic(matches.into_iter(), || {
+            format!("associated item `{name}` kind {kind:?} for owner {owner:?}")
+        }))
     }
 
     fn source_slot_root(
@@ -824,6 +964,50 @@ impl<'a> FixtureGraphView<'a> {
                         bounds.len()
                     )
                 })))
+            }
+            TypeUseSourceSlot::GenericParamDefault(param_index) => {
+                let generic_params = self.generic_params_for_owner(owner);
+                let generic_param = generic_params.get(param_index).unwrap_or_else(|| {
+                    panic!(
+                        "generic param index {param_index} out of bounds for owner {owner:?}; param count {}",
+                        generic_params.len()
+                    )
+                });
+                let TypeNode::Named(_) = self
+                    .graph
+                    .type_graph()
+                    .iter()
+                    .find(|type_node| {
+                        generic_param
+                            .kind
+                            .default()
+                            .is_some_and(|type_id| type_node.id() == AnyTypeId::from(*type_id))
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("generic param {generic_param:?} does not have a default type")
+                    })
+                else {
+                    panic!("generic param default was not a named ordinary type");
+                };
+                Ok(SourceSlotRoot::Ordinary(
+                    *generic_param
+                        .kind
+                        .default()
+                        .expect("generic param default checked above"),
+                ))
+            }
+            TypeUseSourceSlot::ConstGenericParamType(param_index) => {
+                let generic_params = self.generic_params_for_owner(owner);
+                let generic_param = generic_params.get(param_index).unwrap_or_else(|| {
+                    panic!(
+                        "generic param index {param_index} out of bounds for owner {owner:?}; param count {}",
+                        generic_params.len()
+                    )
+                });
+                let Some(type_id) = generic_param.kind.const_type_id().copied() else {
+                    panic!("generic param {generic_param:?} is not a const generic parameter")
+                };
+                Ok(SourceSlotRoot::Ordinary(type_id))
             }
         }
     }
@@ -1272,6 +1456,32 @@ impl TypeUseOwnerSelector<'_> {
                 enum_name,
                 variant_name
             ),
+            TypeUseOwnerSelector::TraitAssociatedType {
+                module_path,
+                trait_name,
+                name,
+            } => format!(
+                "trait associated type {}::{}::{name}",
+                module_path.join("::"),
+                trait_name
+            ),
+            TypeUseOwnerSelector::ImplAssociatedType {
+                impl_selector,
+                name,
+            } => format!("impl associated type {}::{name}", impl_selector.describe()),
+            TypeUseOwnerSelector::TraitAssociatedConst {
+                module_path,
+                trait_name,
+                name,
+            } => format!(
+                "trait associated const {}::{}::{name}",
+                module_path.join("::"),
+                trait_name
+            ),
+            TypeUseOwnerSelector::ImplAssociatedConst {
+                impl_selector,
+                name,
+            } => format!("impl associated const {}::{name}", impl_selector.describe()),
         }
     }
 }

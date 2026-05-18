@@ -195,6 +195,54 @@ pub(super) fn type_alias_row_by_name(db: &Database, name: &str) -> Result<(Uuid,
     Ok((to_uuid(&rows.rows[0][0])?, to_uuid(&rows.rows[0][1])?))
 }
 
+pub(super) fn associated_type_alias_row_by_owner_name(
+    db: &Database,
+    owner_id: Uuid,
+    relation_kind: &str,
+    name: &str,
+) -> Result<(Uuid, Uuid), DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[id, type_id] :=
+            *type_alias {{ id, name: "{name}", ty_id: type_id @ 'NOW' }},
+            *syntax_edge {{
+                source_id: to_uuid("{owner_id}"),
+                target_id: id,
+                relation_kind: "{relation_kind}" @ 'NOW'
+            }}"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one associated type alias named {name} for owner {owner_id}, rows: {:#?}",
+        rows.rows
+    );
+    Ok((to_uuid(&rows.rows[0][0])?, to_uuid(&rows.rows[0][1])?))
+}
+
+pub(super) fn associated_const_row_by_owner_name(
+    db: &Database,
+    owner_id: Uuid,
+    relation_kind: &str,
+    name: &str,
+) -> Result<(Uuid, Uuid), DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[id, type_id] :=
+            *const {{ id, name: "{name}", ty_id: type_id @ 'NOW' }},
+            *syntax_edge {{
+                source_id: to_uuid("{owner_id}"),
+                target_id: id,
+                relation_kind: "{relation_kind}" @ 'NOW'
+            }}"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one associated const named {name} for owner {owner_id}, rows: {:#?}",
+        rows.rows
+    );
+    Ok((to_uuid(&rows.rows[0][0])?, to_uuid(&rows.rows[0][1])?))
+}
+
 pub(super) fn struct_id_by_name(db: &Database, name: &str) -> Result<Uuid, DbError> {
     exactly_one_uuid(
         db,

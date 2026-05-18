@@ -21,9 +21,7 @@ pub struct ImplNode {
     #[serde(default)]
     pub where_predicates: Vec<TypeWherePredicate>,
     pub cfgs: Vec<String>,
-    // TODO: Add fields for associated consts and types once we are processing them.
-    // pub associated_consts: Vec<ConstNodeId>,
-    // pub associated_types: Vec<TypeAliasNodeId>,
+    // Associated const/type ownership is represented by ImplAssociatedItem relations.
 }
 
 impl ImplNode {
