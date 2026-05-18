@@ -10,9 +10,10 @@
 //! -> other owners that use the same exact/root/terminal type
 //! ```
 //!
-//! Source-parse variants are ignored by default because they parse and transform
-//! a full GitHub fixture crate. Backup variants are ordinary executable
-//! contracts over committed typed graph fixture databases.
+//! Source-parse variants are mostly ignored because they parse and transform a
+//! full GitHub fixture crate. `memchr_iter_return_reaches_iterator_struct` is a
+//! small non-ignored source-parse counterweight; backup variants are ordinary
+//! executable contracts over committed typed graph fixture databases.
 //!
 //! Coverage table:
 //!
@@ -148,7 +149,6 @@ mod ordinary_reachability {
     }
 
     #[test]
-    #[ignore = "corpus graphRAG contract: parses and transforms BurntSushi__memchr"]
     fn memchr_iter_return_reaches_iterator_struct() -> Result<(), DbError> {
         let db = setup_typed_corpus_db("BurntSushi__memchr")?;
         assert_memchr_iter_return_reaches_iterator_struct(&db)
