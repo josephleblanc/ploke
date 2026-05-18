@@ -287,7 +287,6 @@ const PIPELINE: &[ShapePipelineCoverage] = &[
 ];
 const RAG_API: &[ShapePipelineCoverage] =
     &[ShapePipelineCoverage::DbOnly, ShapePipelineCoverage::RagApi];
-const DB_ONLY: &[ShapePipelineCoverage] = &[ShapePipelineCoverage::DbOnly];
 
 static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
     TypeShapeCase {
@@ -466,7 +465,7 @@ static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
         relation_kind: TypeRelationKind::Ordinary,
         depth: 1,
         type_context_relation: TypeContextRelation::UsesTypeNested,
-        coverage: DB_ONLY,
+        coverage: RAG_API,
         search_term: "Pointer distance raw pointer T",
         live_prompt: "Use request_code_context to find Pointer::distance and include the raw pointer type_context.",
     },
@@ -594,7 +593,7 @@ static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
         relation_kind: TypeRelationKind::Ordinary,
         depth: 2,
         type_context_relation: TypeContextRelation::UsesTypeNested,
-        coverage: DB_ONLY,
+        coverage: RAG_API,
         search_term: "ArrayBuilder extend Iterator Item T",
         live_prompt: "Use request_code_context to find ArrayBuilder::extend and include the Iterator item type_context.",
     },
@@ -692,7 +691,7 @@ static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
         relation_kind: TypeRelationKind::Trait,
         depth: 0,
         type_context_relation: TypeContextRelation::TypeDefinitionImpact,
-        coverage: DB_ONLY,
+        coverage: RAG_API,
         search_term: "DateTime Tz TimeZone",
         live_prompt: "Use request_code_context to find DateTime<Tz> and include the TimeZone type_context.",
     },
@@ -777,7 +776,7 @@ static POSITIVE_TYPE_SHAPE_CASES: &[TypeShapeCase] = &[
         relation_kind: TypeRelationKind::Trait,
         depth: 0,
         type_context_relation: TypeContextRelation::TypeDefinitionImpact,
-        coverage: DB_ONLY,
+        coverage: RAG_API,
         search_term: "FunctionalSequence zip Rhs GenericSequence",
         live_prompt: "Use request_code_context to find FunctionalSequence::zip and include the GenericSequence type_context.",
     },

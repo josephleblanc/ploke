@@ -30,7 +30,7 @@ mod tests {
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
     };
     #[cfg(feature = "typed_type_graph")]
-    use ploke_db::{DbError, TypeContextSeed, to_uuid};
+    use ploke_db::{DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid};
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
@@ -40,8 +40,8 @@ mod tests {
     use ploke_io::IoManagerHandle;
     #[cfg(feature = "typed_type_graph")]
     use ploke_test_utils::{
-        ContainingOwnerSelector, OwnerSelector, ShapePipelineCoverage, TargetSelector,
-        TypeShapeCase, positive_type_shape_cases, setup_db_full_multi_embedding,
+        ContainingOwnerSelector, CoordinateSpec, OwnerSelector, ShapePipelineCoverage,
+        TargetSelector, TypeShapeCase, positive_type_shape_cases, setup_db_full_multi_embedding,
     };
     use ploke_test_utils::{
         FIXTURE_NODES_LOCAL_EMBEDDINGS, WS_FIXTURE_01_CANONICAL, fresh_backup_fixture_db,
@@ -196,6 +196,16 @@ mod tests {
                 db,
                 &method_by_impl_trait_self_query(trait_name, self_type, method),
             ),
+            OwnerSelector::MethodByRawPointerImpl {
+                file_suffix,
+                trait_name,
+                mutable,
+                method,
+            } => one_uuid_by_file_suffix(
+                db,
+                &method_by_raw_pointer_impl_query(trait_name, mutable, method),
+                file_suffix,
+            ),
             OwnerSelector::FieldByStructInModule {
                 module_path,
                 struct_name,
@@ -247,10 +257,29 @@ mod tests {
             OwnerSelector::TraitInModule { module_path, name } => {
                 one_uuid(db, &trait_in_module_query(module_path, name))
             }
+            OwnerSelector::GenericTypeParamByContainingOwner {
+                containing_owner,
+                param_name,
+            } => {
+                let owner_id = resolve_containing_owner(db, containing_owner)?;
+                generic_type_param_id_by_owner_name(db, owner_id, param_name)
+            }
             OwnerSelector::ImplByTraitInFile {
                 file_suffix,
                 trait_name,
             } => one_uuid_by_file_suffix(db, &impl_by_trait_query(trait_name), file_suffix),
+            OwnerSelector::WhereGenericParamBoundOwner {
+                containing_owner,
+                predicate_index,
+                bound_index,
+                target_trait,
+            } => where_generic_param_bound_owner(
+                db,
+                resolve_containing_owner(db, containing_owner)?,
+                predicate_index,
+                bound_index,
+                target_trait,
+            ),
             other => Err(DbError::QueryExecution(format!(
                 "RAG matrix resolver does not materialize owner selector {other:?}"
             ))),
@@ -258,8 +287,12 @@ mod tests {
     }
 
     #[cfg(feature = "typed_type_graph")]
-    fn resolve_matrix_target(db: &Database, selector: TargetSelector) -> Result<Uuid, DbError> {
-        match selector {
+    fn resolve_matrix_target(
+        db: &Database,
+        owner_id: Uuid,
+        case: &TypeShapeCase,
+    ) -> Result<Uuid, DbError> {
+        match case.terminal {
             TargetSelector::StructByName { name } => one_uuid(
                 db,
                 &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
@@ -277,9 +310,30 @@ mod tests {
             TargetSelector::TraitInFile { file_suffix, name } => {
                 one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
             }
-            other => Err(DbError::QueryExecution(format!(
-                "RAG matrix resolver does not materialize target selector {other:?}"
-            ))),
+            TargetSelector::GenericParamReachableByName { name } => {
+                let coordinate = resolve_matrix_coordinate(db, case.coordinate)?;
+                let root = exactly_one_matrix_root(db, owner_id, &coordinate, case)?;
+                let reachable = db.type_targets_reachable_from_owner(owner_id)?;
+                let matching = reachable
+                    .iter()
+                    .filter(|path| {
+                        path.type_use_id == root.id && path.root_type_id == root.root_type_id
+                    })
+                    .filter_map(|path| {
+                        generic_type_name(db, path.target_id)
+                            .ok()
+                            .filter(|candidate| candidate == name)
+                            .map(|_| path.target_id)
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    matching.len(),
+                    1,
+                    "{} expected exactly one reachable generic type parameter named {name}; root: {root:#?}; reachable: {reachable:#?}",
+                    case.name
+                );
+                Ok(matching[0])
+            }
         }
     }
 
@@ -315,6 +369,88 @@ mod tests {
                 trait_name,
             } => one_uuid_by_file_suffix(db, &impl_by_trait_query(trait_name), file_suffix),
         }
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn resolve_matrix_coordinate(
+        db: &Database,
+        spec: CoordinateSpec,
+    ) -> Result<TypeUseCoordinate, DbError> {
+        Ok(match spec {
+            CoordinateSpec::None => TypeUseCoordinate::None,
+            CoordinateSpec::ParamSlot(param_index) => TypeUseCoordinate::ParamSlot { param_index },
+            CoordinateSpec::FieldSlot(field_index) => TypeUseCoordinate::FieldSlot { field_index },
+            CoordinateSpec::TraitSuperSlot(supertrait_index) => {
+                TypeUseCoordinate::TraitSuperSlot { supertrait_index }
+            }
+            CoordinateSpec::GenericBoundSlot {
+                generic_param_index,
+                bound_index,
+            } => TypeUseCoordinate::GenericBoundSlot {
+                generic_param_index,
+                bound_index,
+            },
+            CoordinateSpec::GenericParamBoundSlot {
+                containing_owner,
+                generic_param_index,
+                bound_index,
+            } => TypeUseCoordinate::GenericParamBoundSlot {
+                containing_owner_id: resolve_containing_owner(db, containing_owner)?,
+                generic_param_index,
+                bound_index,
+            },
+            CoordinateSpec::WhereSubjectSlot { predicate_index } => {
+                TypeUseCoordinate::WhereSubjectSlot { predicate_index }
+            }
+            CoordinateSpec::WhereBoundSlot {
+                predicate_index,
+                bound_index,
+            } => TypeUseCoordinate::WhereBoundSlot {
+                predicate_index,
+                bound_index,
+            },
+            CoordinateSpec::WhereGenericParamBoundSlot {
+                containing_owner,
+                predicate_index,
+                bound_index,
+            } => TypeUseCoordinate::WhereGenericParamBoundSlot {
+                containing_owner_id: resolve_containing_owner(db, containing_owner)?,
+                predicate_index,
+                bound_index,
+            },
+            CoordinateSpec::AssociatedTypeBoundSlot {
+                associated_type_index,
+                associated_type_name,
+                bound_index,
+            } => TypeUseCoordinate::AssociatedTypeBoundSlot {
+                associated_type_index,
+                associated_type_name: associated_type_name.to_string(),
+                bound_index,
+            },
+        })
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn exactly_one_matrix_root(
+        db: &Database,
+        owner_id: Uuid,
+        coordinate: &TypeUseCoordinate,
+        case: &TypeShapeCase,
+    ) -> Result<TypeUseRoot, DbError> {
+        let roots = db.type_uses_for_owner(owner_id)?;
+        let matching = roots
+            .iter()
+            .filter(|root| root.role == case.role && &root.coordinate == coordinate)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{} expected exactly one root for owner {owner_id}, role {:?}, coordinate {coordinate:?}; roots: {roots:#?}",
+            case.name,
+            case.role
+        );
+        Ok(matching[0].clone())
     }
 
     #[cfg(feature = "typed_type_graph")]
@@ -489,6 +625,40 @@ mod tests {
     }
 
     #[cfg(feature = "typed_type_graph")]
+    fn method_by_raw_pointer_impl_query(trait_name: &str, mutable: bool, method: &str) -> String {
+        format!(
+            r#"?[method_id, file_path] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *raw_pointer_type {{
+                    type_id: self_type_id,
+                    is_mutable: {mutable} @ 'NOW'
+                }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: impl_id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
     fn impl_by_trait_query(trait_name: &str) -> String {
         format!(
             r#"?[impl_id, file_path] :=
@@ -511,6 +681,91 @@ mod tests {
                 }},
                 *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
         )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn generic_type_param_id_by_owner_name(
+        db: &Database,
+        owner_id: Uuid,
+        name: &str,
+    ) -> Result<Uuid, DbError> {
+        one_uuid(
+            db,
+            &format!(
+                r#"?[generic_id] :=
+                    *generic_type {{
+                        id: generic_id,
+                        owner_id: to_uuid("{owner_id}"),
+                        name: "{name}" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn where_generic_param_bound_owner(
+        db: &Database,
+        containing_owner_id: Uuid,
+        predicate_index: u32,
+        bound_index: u32,
+        target_trait: TargetSelector,
+    ) -> Result<Uuid, DbError> {
+        let target_id = match target_trait {
+            TargetSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))?
+            }
+            other => {
+                return Err(DbError::QueryExecution(format!(
+                    "WhereGenericParamBoundOwner target must be a trait, got {other:?}"
+                )));
+            }
+        };
+        one_uuid(
+            db,
+            &format!(
+                r#"?[owner_id] :=
+                    *type_use {{
+                        id: type_use_id,
+                        owner_id,
+                        root_type_id,
+                        role: "WhereGenericParamBound" @ 'NOW'
+                    }},
+                    *type_use_where_generic_param_bound_slot {{
+                        type_use_id,
+                        containing_owner_id: to_uuid("{containing_owner_id}"),
+                        predicate_index: {predicate_index},
+                        bound_index: {bound_index} @ 'NOW'
+                    }},
+                    *type_relation {{
+                        source_id: root_type_id,
+                        target_id: to_uuid("{target_id}"),
+                        relation_kind: "Trait" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn generic_type_name(db: &Database, target_id: Uuid) -> Result<String, DbError> {
+        let rows = db.raw_query(&format!(
+            r#"?[name] :=
+                *generic_type {{
+                    id: to_uuid("{target_id}"),
+                    name @ 'NOW'
+                }}"#
+        ))?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected generic_type row for {target_id}; rows: {:#?}",
+            rows.rows
+        );
+        match &rows.rows[0][0] {
+            DataValue::Str(name) => Ok(name.to_string()),
+            other => Err(DbError::QueryExecution(format!(
+                "expected generic_type name string for {target_id}, got {other:?}"
+            ))),
+        }
     }
 
     #[tokio::test]
@@ -1210,7 +1465,7 @@ mod tests {
         {
             let db = Arc::new(fresh_backup_fixture_db(case.fixture.searchable_fixture())?);
             let owner_id = resolve_matrix_owner(&db, case.owner).map_err(Error::from)?;
-            let target_id = resolve_matrix_target(&db, case.terminal).map_err(Error::from)?;
+            let target_id = resolve_matrix_target(&db, owner_id, case).map_err(Error::from)?;
 
             let candidates = db
                 .expand_type_context(TypeContextSeed::Owner(owner_id), Default::default())
