@@ -662,7 +662,9 @@ pub fn install_request_tap(
     sender: std::sync::mpsc::Sender<Vec<RequestMessage>>,
 ) -> RequestTapGuard {
     let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
-    let mut guard = lock.lock().expect("request tap lock should not be poisoned");
+    let mut guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
     *guard = Some(sender);
     RequestTapGuard
 }
@@ -670,14 +672,18 @@ pub fn install_request_tap(
 #[cfg(feature = "test_harness")]
 pub fn clear_request_tap() {
     let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
-    let mut guard = lock.lock().expect("request tap lock should not be poisoned");
+    let mut guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
     *guard = None;
 }
 
 #[cfg(feature = "test_harness")]
 fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
     let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
-    let guard = lock.lock().expect("request tap lock should not be poisoned");
+    let guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
     if let Some(sender) = guard.as_ref() {
         let _ = sender.send(req.core.messages.clone());
     }

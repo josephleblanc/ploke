@@ -250,9 +250,9 @@ mod tests {
             .expect("parse latest allocation breakdown");
         assert!(matches!(
             latest.command.map(Command::into_run),
-            Some(BenchRun::AllocationBreakdown {
-                report_or_dir: None
-            })
+            Some(BenchRun::AllocationBreakdown(args)) if args.report_or_dir.is_none()
+                && !args.short
+                && !args.fast_only
         ));
 
         let explicit =
@@ -260,19 +260,82 @@ mod tests {
                 .expect("parse explicit allocation breakdown");
         assert!(matches!(
             explicit.command.map(Command::into_run),
-            Some(BenchRun::AllocationBreakdown {
-                report_or_dir: Some(path)
-            }) if path == PathBuf::from("/tmp/report.json")
+            Some(BenchRun::AllocationBreakdown(args))
+                if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
         ));
 
         let alias = Args::try_parse_from(["ploke-egui", "bench", "--bd", "/tmp/report.json"])
             .expect("parse allocation breakdown alias");
         assert!(matches!(
             alias.command.map(Command::into_run),
-            Some(BenchRun::AllocationBreakdown {
-                report_or_dir: Some(path)
-            }) if path == PathBuf::from("/tmp/report.json")
+            Some(BenchRun::AllocationBreakdown(args))
+                if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
         ));
+    }
+
+    #[test]
+    fn bench_breakdown_accepts_short_and_fast_filters() {
+        let args = Args::try_parse_from([
+            "ploke-egui",
+            "bench",
+            "--bd",
+            "/tmp/report.json",
+            "--short",
+            "--fast-only",
+        ])
+        .expect("parse allocation breakdown filters");
+        assert!(matches!(
+            args.command.map(Command::into_run),
+            Some(BenchRun::AllocationBreakdown(args))
+                if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
+                    && args.short
+                    && args.fast_only
+        ));
+    }
+
+    #[test]
+    fn bench_delta_accepts_breakdown_flags_and_diff_alias() {
+        let delta = Args::try_parse_from([
+            "ploke-egui",
+            "bench",
+            "delta",
+            "--bd",
+            "/tmp/report.json",
+            "--short",
+            "--fast-only",
+        ])
+        .expect("parse allocation delta");
+        assert!(matches!(
+            delta.command.map(Command::into_run),
+            Some(BenchRun::AllocationDelta(args))
+                if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
+                    && args.short
+                    && args.fast_only
+        ));
+
+        let diff = Args::try_parse_from(["ploke-egui", "bench", "diff", "--bd"])
+            .expect("parse allocation delta alias");
+        assert!(matches!(
+            diff.command.map(Command::into_run),
+            Some(BenchRun::AllocationDelta(args)) if args.report_or_dir.is_none()
+        ));
+    }
+
+    #[test]
+    fn bench_filters_require_breakdown_action() {
+        let top_level = Args::try_parse_from(["ploke-egui", "bench", "--short"])
+            .expect_err("top-level filter is only a breakdown modifier");
+        assert_eq!(
+            top_level.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+
+        let delta = Args::try_parse_from(["ploke-egui", "bench", "delta", "--short"])
+            .expect_err("delta filter is only a breakdown modifier");
+        assert_eq!(
+            delta.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
     }
 
     #[test]
@@ -286,6 +349,8 @@ mod tests {
         let help = String::from_utf8(help).expect("help is utf8");
         assert!(help.contains("--breakdown [<REPORT_OR_DIR>]"));
         assert!(help.contains("--bd [<REPORT_OR_DIR>]"));
+        assert!(help.contains("--short"));
+        assert!(help.contains("--fast-only"));
         assert!(help.contains("Print allocation-span breakdown"));
     }
 }

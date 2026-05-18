@@ -222,22 +222,28 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     }
 
     // Resolve absolute path against workspace root when relative
-    let (primary_root, policy) = match state.with_system_read(|sys| sys.tool_path_context()).await {
-        Some(ctx) => ctx,
-        None => {
-            let tool_error = tool_call_params
-                .tool_error_from_message(
-                    "no workspace is loaded; load a workspace before creating files",
-                )
-                .field("file_path")
-                .retry_hint("Load a workspace, then provide a workspace-root-relative path.");
-            tool_call_params.tool_call_failed_error(tool_error);
-            return;
-        }
-    };
+    let (primary_root, policy, scope) =
+        match state.with_system_read(|sys| sys.write_path_context()).await {
+            Some(ctx) => ctx,
+            None => {
+                let tool_error = tool_call_params
+                    .tool_error_from_message(
+                        "no workspace is loaded; load a workspace before creating files",
+                    )
+                    .field("file_path")
+                    .retry_hint("Load a workspace, then provide a workspace-root-relative path.");
+                tool_call_params.tool_call_failed_error(tool_error);
+                return;
+            }
+        };
     let abs_path = {
         let p = std::path::PathBuf::from(&params.file_path);
-        match crate::utils::path_scoping::resolve_tool_path(p.as_path(), &primary_root, &policy) {
+        match crate::utils::path_scoping::resolve_write_path(
+            p.as_path(),
+            &primary_root,
+            &policy,
+            scope.as_ref(),
+        ) {
             Ok(pb) => pb,
             Err(err) => {
                 let tool_error = tool_call_params

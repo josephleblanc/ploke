@@ -318,15 +318,25 @@ impl eframe::App for OperatorApp {
         ))]
         self.record_benchmark_component("run_navigation", run_navigation_start);
 
-        let graph_has_content = graph_has_content(&self.graph);
-        let selected_node = self.view.selected_node(&self.graph);
-        let selected_reference = selected_node.map(|(reference, _, _)| reference);
-        let selected_kind = selected_node.map(|(_, _, kind)| kind);
-        let selected_label = selected_node.map(|(_, label, _)| label);
-        let selected_sections =
-            self.inspector_cache
-                .sections(&self.graph, self.graph_revision, selected_reference);
-        let selection_synced = selected_reference.is_some();
+        let (graph_has_content, selected_kind, selected_label, selected_sections, selection_synced) = {
+            let _span = tracing::trace_span!("frame_prepare_selection").entered();
+            let graph_has_content = graph_has_content(&self.graph);
+            let selected_node = self.view.selected_node(&self.graph);
+            let selected_reference = selected_node.map(|(reference, _, _)| reference);
+            let selected_kind = selected_node.map(|(_, _, kind)| kind);
+            let selected_label = selected_node.map(|(_, label, _)| label);
+            let selected_sections =
+                self.inspector_cache
+                    .sections(&self.graph, self.graph_revision, selected_reference);
+            let selection_synced = selected_reference.is_some();
+            (
+                graph_has_content,
+                selected_kind,
+                selected_label,
+                selected_sections,
+                selection_synced,
+            )
+        };
 
         #[cfg(all(
             not(target_arch = "wasm32"),
@@ -430,16 +440,25 @@ impl eframe::App for OperatorApp {
         self.record_benchmark_component("central_graph", central_start);
 
         #[cfg(not(target_arch = "wasm32"))]
-        self.emit_diagnostics(ui.ctx());
+        {
+            let _span = tracing::trace_span!("emit_diagnostics").entered();
+            self.emit_diagnostics(ui.ctx());
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
             feature = "native-benchmark"
         ))]
         let capture_start = Instant::now();
-        profiling::finish_frame!();
+        {
+            let _span = tracing::trace_span!("benchmark_finish_frame").entered();
+            profiling::finish_frame!();
+        }
         #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
-        self.emit_puffin_capture(ui.ctx());
+        {
+            let _span = tracing::trace_span!("puffin_capture").entered();
+            self.emit_puffin_capture(ui.ctx());
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -588,6 +607,7 @@ impl OperatorApp {
 ))]
 impl OperatorApp {
     fn benchmark_begin_frame(&mut self) {
+        let _span = tracing::trace_span!("benchmark_frame_begin").entered();
         let action = self
             .benchmark
             .as_mut()
@@ -607,9 +627,11 @@ impl OperatorApp {
     }
 
     fn benchmark_end_frame(&mut self, ctx: &egui::Context) {
+        let _span = tracing::trace_span!("benchmark_frame_end").entered();
         let Some(benchmark) = &mut self.benchmark else {
             return;
         };
+        let _end_frame_span = tracing::trace_span!("benchmark_end_frame").entered();
         match benchmark.end_frame() {
             Ok(Some(result)) => {
                 print_benchmark_result(&result);
@@ -626,6 +648,7 @@ impl OperatorApp {
     }
 
     fn apply_benchmark_action(&mut self, action: BenchmarkAction) -> BenchmarkActionReport {
+        let _span = tracing::trace_span!("benchmark_apply_action").entered();
         let mut report = BenchmarkActionReport::for_action(action);
         self.benchmark_inspector_section = None;
         self.benchmark_inspector_exclusive = false;

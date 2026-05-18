@@ -756,7 +756,16 @@ mod tracking {
         "root",
         "root_ui_thread",
         "root_other_thread",
+        "eframe_run_native",
         "frame_update",
+        "benchmark_frame_begin",
+        "benchmark_apply_action",
+        "frame_prepare_selection",
+        "emit_diagnostics",
+        "puffin_capture",
+        "benchmark_frame_end",
+        "benchmark_finish_frame",
+        "benchmark_end_frame",
         "top_strip",
         "run_navigation",
         "diagnostics",
@@ -986,6 +995,7 @@ mod tracking {
                 "root",
                 "root_ui_thread",
                 "root_other_thread",
+                "eframe_run_native",
                 "egui_text_font_layout",
                 "central_graph_widget_add",
             ] {
@@ -997,6 +1007,7 @@ mod tracking {
                 "root",
                 "root_ui_thread",
                 "root_other_thread",
+                "eframe_run_native",
                 "egui_text_font_layout",
                 "central_graph_widget_add",
             ] {
@@ -1014,6 +1025,14 @@ mod tracking {
         fn layout_investigation_scopes_are_registered() {
             let tracker = HeapProfileTracker::default();
             for scope in [
+                "benchmark_frame_begin",
+                "benchmark_apply_action",
+                "frame_prepare_selection",
+                "emit_diagnostics",
+                "puffin_capture",
+                "benchmark_frame_end",
+                "benchmark_finish_frame",
+                "benchmark_end_frame",
                 "egui_panel_top_strip_layout",
                 "egui_panel_run_navigation_layout",
                 "egui_panel_selection_inspector_layout",
@@ -1037,6 +1056,14 @@ mod tracking {
 
             let snapshot = tracker.snapshot();
             for scope in [
+                "benchmark_frame_begin",
+                "benchmark_apply_action",
+                "frame_prepare_selection",
+                "emit_diagnostics",
+                "puffin_capture",
+                "benchmark_frame_end",
+                "benchmark_finish_frame",
+                "benchmark_end_frame",
                 "egui_panel_top_strip_layout",
                 "egui_panel_run_navigation_layout",
                 "egui_panel_selection_inspector_layout",

@@ -678,22 +678,23 @@ pub async fn resolve_code_edit_request(
 
     let tool_paths = state
         .with_system_read(|sys| {
-            sys.tool_path_context()
-                .map(|(p, pol)| (p.clone(), pol.clone()))
+            sys.write_path_context()
+                .map(|(p, pol, scope)| (p, pol, scope))
         })
         .await;
     let resolve_path = |path: &str| -> Result<(PathBuf, bool), ToolError> {
         let p = PathBuf::from(path);
         let file_was_relative = !p.is_absolute();
         let abs_path = match &tool_paths {
-            Some((primary, policy)) => {
-                path_scoping::resolve_tool_path(p.as_path(), primary, policy).map_err(|err| {
-                    ToolError::new(
-                        tool,
-                        ToolErrorCode::InvalidFormat,
-                        format!("invalid path: {err}"),
-                    )
-                })?
+            Some((primary, policy, scope)) => {
+                path_scoping::resolve_write_path(p.as_path(), primary, policy, scope.as_ref())
+                    .map_err(|err| {
+                        ToolError::new(
+                            tool,
+                            ToolErrorCode::InvalidFormat,
+                            format!("invalid path: {err}"),
+                        )
+                    })?
             }
             None => {
                 if p.is_absolute() {
@@ -955,10 +956,10 @@ pub async fn apply_ns_code_edit_tool(
         }));
     }
 
-    let (primary_root, policy) = state
+    let (primary_root, policy, scope) = state
         .with_system_read(|sys| {
-            sys.tool_path_context()
-                .map(|(p, pol)| (p.clone(), pol.clone()))
+            sys.write_path_context()
+                .map(|(p, pol, scope)| (p, pol, scope))
         })
         .await
         .ok_or_else(|| {
@@ -983,10 +984,11 @@ pub async fn apply_ns_code_edit_tool(
         let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);
 
         let requested_path = PathBuf::from(file.as_str());
-        let abs_path = path_scoping::resolve_tool_path(
+        let abs_path = path_scoping::resolve_write_path(
             requested_path.as_path(),
             &primary_root,
             &policy,
+            scope.as_ref(),
         )
         .map_err(|err| {
             ploke_error::Error::Domain(DomainError::Io {

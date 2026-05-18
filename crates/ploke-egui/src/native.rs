@@ -42,12 +42,27 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "dev")]
     if let Some(bench) = run.bench.as_ref() {
         match bench {
-            crate::cli::bench::BenchRun::AllocationBreakdown { report_or_dir } => {
+            crate::cli::bench::BenchRun::AllocationBreakdown(args) => {
+                let options = crate::benchmark::allocation_breakdown::BreakdownRenderOptions::new(
+                    args.short,
+                    args.fast_only,
+                );
                 let breakdown =
                     crate::benchmark::allocation_breakdown::BenchmarkAllocationBreakdown::load(
-                        report_or_dir.as_deref(),
+                        args.report_or_dir.as_deref(),
                     )?;
-                print!("{}", breakdown.render_text());
+                print!("{}", breakdown.render_text_with_options(options));
+                return Ok(());
+            }
+            crate::cli::bench::BenchRun::AllocationDelta(args) => {
+                let options = crate::benchmark::allocation_breakdown::BreakdownRenderOptions::new(
+                    args.short,
+                    args.fast_only,
+                );
+                let delta = crate::benchmark::allocation_breakdown::BenchmarkAllocationDelta::load(
+                    args.report_or_dir.as_deref(),
+                )?;
+                print!("{}", delta.render_text_with_options(options));
                 return Ok(());
             }
         }
@@ -112,6 +127,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .with_mode(run.mode)
             .with_benchmark(BenchmarkController::new(config, startup)?);
         with_benchmark_tracing_subscriber(|| {
+            let _span = tracing::trace_span!("eframe_run_native").entered();
             eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))
         })?;
         return Ok(());

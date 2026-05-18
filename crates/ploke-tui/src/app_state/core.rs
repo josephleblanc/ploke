@@ -17,6 +17,7 @@ use crate::user_config::{
     MessageVerbosityProfile, MessageVerbosityProfiles, RagUserConfig, UserConfig,
 };
 use crate::utils::parse_errors::FlattenedParserDiagnostic;
+use crate::utils::path_scoping::WriteScope;
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
@@ -598,6 +599,7 @@ pub struct SystemStatus {
     pub(crate) last_parse_success_ms: Option<i64>,
     pub(crate) pwd: PathBuf,
     pub(crate) extra_read_roots: Vec<PathBuf>,
+    pub(crate) write_scope: Option<WriteScope>,
 }
 
 #[derive(Debug, Clone)]
@@ -738,6 +740,10 @@ impl SystemStatus {
 
     pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
         self.extra_read_roots = roots;
+    }
+
+    pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
+        self.write_scope = scope;
     }
 
     /// Registers a crate root into loaded state. If the root is already a member
@@ -947,6 +953,11 @@ impl SystemStatus {
         let policy = self.derive_path_policy(&[])?;
         Some((primary_root, policy))
     }
+
+    pub fn write_path_context(&self) -> Option<(PathBuf, PathPolicy, Option<WriteScope>)> {
+        let (primary_root, policy) = self.tool_path_context()?;
+        Some((primary_root, policy, self.write_scope.clone()))
+    }
 }
 
 /// Effects that must be dispatched after a transaction commits (lock released).
@@ -1151,6 +1162,10 @@ impl<'a> SystemTxn<'a> {
 
     pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
         self.state.set_extra_read_roots(roots);
+    }
+
+    pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
+        self.state.set_write_scope(scope);
     }
 
     /// Derive the path policy from the current workspace state.

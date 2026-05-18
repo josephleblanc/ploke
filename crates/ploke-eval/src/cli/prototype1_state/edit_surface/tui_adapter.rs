@@ -126,6 +126,7 @@ pub(crate) async fn run_headless_with_model(
                 workspace_path,
                 &extra_read_roots,
                 next_prompt.clone(),
+                edit_policy,
                 model.as_ref(),
             )
             .await?;
@@ -220,6 +221,7 @@ async fn start_attempt_runtime(
     workspace_path: &Path,
     extra_read_roots: &[PathBuf],
     prompt: String,
+    edit_policy: BroadEditPolicy,
     model: Option<&ModelSelection>,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
     let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
@@ -228,6 +230,12 @@ async fn start_attempt_runtime(
     )
     .await
     .map_err(|source| Error::HeadlessStart(source.to_string()))?;
+
+    let write_scope = write_scope_for_policy(edit_policy);
+    runtime
+        .state
+        .with_system_txn(|txn| txn.set_write_scope(Some(write_scope)))
+        .await;
 
     let cmd_tx = runtime.app.state_cmd_tx();
     send_state(
@@ -246,6 +254,30 @@ async fn start_attempt_runtime(
     }
     let parent_id = submit_prompt(&runtime.app, prompt).await?;
     Ok((runtime, parent_id))
+}
+
+fn write_scope_for_policy(
+    edit_policy: BroadEditPolicy,
+) -> ploke_tui::utils::path_scoping::WriteScope {
+    use crate::cli::prototype1_state::backend::{
+        WORKSPACE_EXCEPT_AUTHORITY_FILENAMES, WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
+    };
+
+    match edit_policy {
+        BroadEditPolicy::WorkspaceExceptPlokeEval => {
+            ploke_tui::utils::path_scoping::WriteScope::new()
+                .deny_prefixes(
+                    WORKSPACE_EXCEPT_AUTHORITY_PREFIXES
+                        .iter()
+                        .map(PathBuf::from),
+                )
+                .deny_filenames(
+                    WORKSPACE_EXCEPT_AUTHORITY_FILENAMES
+                        .iter()
+                        .map(|name| (*name).to_string()),
+                )
+        }
+    }
 }
 
 enum AttemptEnd {
@@ -3515,6 +3547,234 @@ mod tests {
             diagnostic.context_unavailable_reason().is_none(),
             "broad harness intentionally disables automatic prompt context"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn recorded_replay_rejects_protected_ns_patch_before_staged_success_reaches_model() {
+        let fixture = prepare_live_canary(
+            "recorded-protected-ns-patch-replay",
+            "Use non_semantic_patch to edit crates/ploke-eval/src/lib.rs.",
+        )
+        .expect("prepare recorded replay fixture");
+        let protected_rel = Path::new("crates/ploke-eval/src/lib.rs");
+        let protected_abs = fixture.workspace.join(protected_rel);
+        fs::create_dir_all(protected_abs.parent().expect("protected file parent"))
+            .expect("create protected file parent");
+        fs::write(
+            &protected_abs,
+            r#"pub fn protected_replay_canary() -> &'static str {
+    "before"
+}
+"#,
+        )
+        .expect("write protected file");
+
+        let call_id = "call_protected_ns_patch";
+        let tape = recorded_protected_ns_patch_tape(call_id, protected_rel);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
+        let (mut runtime, parent_id) = start_attempt_runtime(
+            &fixture.workspace,
+            &[],
+            fixture.prompt.clone(),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            None,
+        )
+        .await
+        .expect("start recorded replay runtime");
+
+        let mut snapshots = Vec::new();
+        let mut failed_tool = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while tokio::time::Instant::now() < deadline {
+            runtime.app.pump_pending_events().await;
+            collect_request_snapshots(&request_rx, &mut snapshots);
+            if snapshots.len() >= 2 && failed_tool.is_some() {
+                break;
+            }
+
+            let event =
+                match tokio::time::timeout(Duration::from_millis(100), next_event(&mut runtime))
+                    .await
+                {
+                    Ok(Ok(event)) => event,
+                    Ok(Err(err)) => panic!("recorded replay event stream failed: {err}"),
+                    Err(_) => continue,
+                };
+
+            if let ploke_tui::AppEvent::System(
+                ploke_tui::app_state::events::SystemEvent::ToolCallFailed {
+                    parent_id: event_parent_id,
+                    call_id: event_call_id,
+                    error,
+                    ..
+                },
+            ) = event
+                && event_parent_id == parent_id
+                && event_call_id.as_ref() == call_id
+            {
+                let wire = ploke_tui::tools::ToolErrorWire::parse(&error)
+                    .expect("protected ns_patch failure should use tool error wire");
+                assert!(!wire.llm.ok);
+                assert!(
+                    wire.llm.message.contains("protected"),
+                    "expected protected-path failure, got {error}"
+                );
+                failed_tool = Some(error);
+            }
+        }
+        collect_request_snapshots(&request_rx, &mut snapshots);
+        let proposals = runtime.state.proposals.read().await;
+        assert!(
+            proposals.is_empty(),
+            "protected ns_patch should fail before staging a proposal, got {:?}",
+            proposals.keys().collect::<Vec<_>>()
+        );
+        drop(proposals);
+
+        let second_request = snapshots.get(1).unwrap_or_else(|| {
+            panic!(
+                "expected replay to capture the second provider request; captured {} requests",
+                snapshots.len()
+            )
+        });
+        assert!(
+            model_request_contains_tool_rejection(second_request, call_id),
+            "expected second request to contain a tool rejection for protected call {call_id}; request={second_request:#?}"
+        );
+        assert!(
+            !model_request_contains_staged_success(second_request, call_id),
+            "protected tool failure must not be replayed as staged success; request={second_request:#?}"
+        );
+        assert!(
+            failed_tool.is_some(),
+            "expected protected tool failure before assertion"
+        );
+    }
+
+    struct ClearRecordedTapeOnDrop;
+
+    impl Drop for ClearRecordedTapeOnDrop {
+        fn drop(&mut self) {
+            ploke_tui::llm::clear_recorded_response_tape();
+        }
+    }
+
+    fn collect_request_snapshots(
+        request_rx: &std::sync::mpsc::Receiver<Vec<ploke_tui::llm::RequestMessage>>,
+        snapshots: &mut Vec<Vec<ploke_tui::llm::RequestMessage>>,
+    ) {
+        loop {
+            match request_rx.try_recv() {
+                Ok(snapshot) => snapshots.push(snapshot),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+    }
+
+    fn recorded_protected_ns_patch_tape(
+        call_id: &str,
+        protected_rel: &Path,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        let arguments = serde_json::json!({
+            "patches": [{
+                "file": protected_rel.display().to_string(),
+                "diff": protected_ns_patch_diff(protected_rel),
+                "reasoning": "exercise protected-path staged proposal replay",
+            }],
+            "confidence": 0.9,
+        });
+        let tool_response = serde_json::from_value(serde_json::json!({
+            "id": "recorded-protected-ns-patch",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "non_semantic_patch",
+                            "arguments": arguments.to_string(),
+                        }
+                    }]
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        }))
+        .expect("recorded ns_patch provider response should parse");
+        let final_response = serde_json::from_value(serde_json::json!({
+            "id": "recorded-final",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "done"
+                }
+            }],
+            "created": 1,
+            "model": "test/model",
+            "object": "chat.completion"
+        }))
+        .expect("recorded final provider response should parse");
+        ploke_llm::manager::RecordedResponseTape::new(vec![
+            ploke_llm::manager::RecordedResponse::new(0, tool_response),
+            ploke_llm::manager::RecordedResponse::new(1, final_response),
+        ])
+    }
+
+    fn protected_ns_patch_diff(protected_rel: &Path) -> String {
+        let path = protected_rel.display();
+        format!(
+            r#"--- a/{path}
++++ b/{path}
+@@ -1,3 +1,3 @@
+ pub fn protected_replay_canary() -> &'static str {{
+-    "before"
++    "after"
+ }}
+"#
+        )
+    }
+
+    fn model_request_contains_staged_success(
+        messages: &[ploke_tui::llm::RequestMessage],
+        call_id: &str,
+    ) -> bool {
+        messages.iter().any(|message| {
+            message.role == ploke_llm::manager::Role::Tool
+                && message
+                    .tool_call_id
+                    .as_ref()
+                    .is_some_and(|tool_call_id| tool_call_id.as_ref() == call_id)
+                && message.content.contains(r#""ok":true"#)
+                && message.content.contains(r#""staged":1"#)
+                && message.content.contains(r#""applied":0"#)
+        })
+    }
+
+    fn model_request_contains_tool_rejection(
+        messages: &[ploke_tui::llm::RequestMessage],
+        call_id: &str,
+    ) -> bool {
+        messages.iter().any(|message| {
+            message.role == ploke_llm::manager::Role::Tool
+                && message
+                    .tool_call_id
+                    .as_ref()
+                    .is_some_and(|tool_call_id| tool_call_id.as_ref() == call_id)
+                && message.content.contains(r#""ok":false"#)
+                && message.content.contains(r#""tool":"non_semantic_patch""#)
+                && message.content.contains("protected")
+        })
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
