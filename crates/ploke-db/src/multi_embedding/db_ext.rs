@@ -30,20 +30,21 @@ ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 "#;
 
-/// METHOD_NODE_ANCESTOR_RULE - extends `parent_of` / `ancestor` for method nodes.
+/// METHOD_NODE_ANCESTOR_RULE - extends `parent_of` / `ancestor` for associated items.
 ///
-/// This rule connects method IDs to their parent impl/trait owners via syntax_edge
-/// relations, allowing methods to reach root modules (and thus `file_mod`).
+/// This rule connects associated item IDs to their parent impl/trait owners via syntax_edge
+/// relations, allowing associated items to reach root modules (and thus `file_mod`).
 ///
-/// Methods use `ImplAssociatedItem` / `TraitAssociatedItem` edges from the parser.
+/// Methods, associated consts, and associated type aliases use `ImplAssociatedItem` /
+/// `TraitAssociatedItem` edges from the parser.
 /// The rule composes with existing ANCESTOR_RULES_NOW by extending `parent_of`.
 ///
-/// Connection path: method → impl/trait → module → file_mod
+/// Connection path: associated item -> impl/trait -> module -> file_mod
 pub const METHOD_NODE_ANCESTOR_RULE: &str = r#"
-# Method parent relations: connect methods to their impl/trait owners
-# Note: In syntax_edge, source is parent (impl/trait), target is child (method)
-parent_of[method_id, impl_id] := *syntax_edge{source_id: impl_id, target_id: method_id, relation_kind: "ImplAssociatedItem" @ 'NOW'}
-parent_of[method_id, trait_id] := *syntax_edge{source_id: trait_id, target_id: method_id, relation_kind: "TraitAssociatedItem" @ 'NOW'}
+# Associated item parent relations: connect associated items to their impl/trait owners
+# Note: In syntax_edge, source is parent (impl/trait), target is child (associated item)
+parent_of[item_id, impl_id] := *syntax_edge{source_id: impl_id, target_id: item_id, relation_kind: "ImplAssociatedItem" @ 'NOW'}
+parent_of[item_id, trait_id] := *syntax_edge{source_id: trait_id, target_id: item_id, relation_kind: "TraitAssociatedItem" @ 'NOW'}
 "#;
 
 const ROOT_MODULE_RULE: &str = r#"
@@ -765,7 +766,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         let embed_rel = embedding_set.vector_relation_name();
         let script = format!(
             r#"
-    parent_of[child, parent] := *syntax_edge{{ source_id: parent, target_id: child, relation_kind: "Contains" }}
+    parent_of[child, parent] := *syntax_edge{{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+    {method_ancestor_rule}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
@@ -790,7 +792,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         batch[id, name, file_path, file_hash, hash, span, namespace]
         :sort id
         :limit $limit
-     "#
+     "#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
         );
 
         // Create parameters map
@@ -1463,6 +1466,11 @@ mod tests {
         },
     };
 
+    const EXPECTED_FIXTURE_NODES_COMMON_NODE_COUNT: usize = 152;
+    const EXPECTED_FIXTURE_NODES_UNEMBEDDED_FILE_COUNT: usize = 10;
+    const EXPECTED_FIXTURE_NODES_UNEMBEDDED_NONFILE_COUNT: usize =
+        EXPECTED_FIXTURE_NODES_COMMON_NODE_COUNT - EXPECTED_FIXTURE_NODES_UNEMBEDDED_FILE_COUNT;
+
     lazy_static! {
         /// Convenience/speed struct for a test db that can be used in tests that do not require
         /// mutable access to the underlying database.
@@ -2002,7 +2010,7 @@ mod tests {
         let count_common_nodes = common_nodes_result.rows.len();
 
         assert_eq!(
-            140, count_common_nodes,
+            EXPECTED_FIXTURE_NODES_COMMON_NODE_COUNT, count_common_nodes,
             r#"
 Should match the number of expected nodes (more means the syn_parser has likely become more
 sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
@@ -2182,7 +2190,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             "{}: {}",
             "count_pending_embeddings".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
         assert_eq!(
-            140, count_all_embeddable,
+            common_nodes_count, count_all_embeddable,
             "Expect all nodes present (flaky, add better count later)"
         );
 
@@ -2191,14 +2199,20 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         info!(target: "cozo-script",
             "{}: {}",
             "count_unembedded_files".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
-        assert_eq!(10, count_unembedded_files, "Expect all nodes present");
+        assert_eq!(
+            EXPECTED_FIXTURE_NODES_UNEMBEDDED_FILE_COUNT, count_unembedded_files,
+            "Expect all file nodes present"
+        );
 
         let count_unembedded_nonfiles =
             <cozo::Db<MemStorage> as EmbeddingExt>::count_unembedded_nonfiles(&db, &embedding_set)?;
         info!(target: "cozo-script",
             "{}: {}",
             "count_unembedded_nonfiles".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
-        assert_eq!(130, count_unembedded_nonfiles, "Expect all nodes present");
+        assert_eq!(
+            EXPECTED_FIXTURE_NODES_UNEMBEDDED_NONFILE_COUNT, count_unembedded_nonfiles,
+            "Expect all non-file nodes present"
+        );
 
         assert!(
             count_all_embeddable == (count_unembedded_nonfiles + count_unembedded_files),

@@ -49,7 +49,8 @@ use crate::user_config::{CommandStyle, WorkspaceRegistry, WorkspaceRegistryEntry
 use ploke_core::WorkspaceInfo;
 use ploke_test_utils::{
     FIXTURE_NODES_CANONICAL, PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, WS_FIXTURE_01_CANONICAL,
-    WS_FIXTURE_01_MEMBER_SINGLE, backup_db_snapshot_fixture_dir, fresh_backup_fixture_db,
+    WS_FIXTURE_01_MEMBER_SINGLE, backup_db_snapshot_fixture_dir, backup_fixture_path_or_seed,
+    fresh_backup_fixture_db,
 };
 use tempfile::{TempDir, tempdir};
 use tokio::time::timeout;
@@ -435,7 +436,8 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
             workspace_id: fixture_crate.id.uuid().to_string(),
             workspace_name: fixture_crate.name.clone(),
             workspace_root: fixture_crate_root.clone(),
-            snapshot_file: FIXTURE_NODES_CANONICAL.path(),
+            snapshot_file: backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)
+                .expect("load fixture_nodes_canonical path"),
             focused_root: Some(fixture_crate_root.clone()),
             member_roots: vec![fixture_crate_root],
             active_embedding_set_rel: None,

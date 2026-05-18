@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
-    env,
-    path::PathBuf,
+    env, fs,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -691,7 +691,6 @@ pub fn backup_db_fixture(id: &str) -> Option<&'static FixtureDb> {
 
 pub fn fresh_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, Error> {
     let fixture_path = backup_fixture_path_or_seed(fixture)?;
-
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
@@ -739,19 +738,25 @@ pub fn import_backup_with_embeddings_for_fixture(
 
 pub fn backup_fixture_path_or_seed(fixture: &'static FixtureDb) -> Result<PathBuf, Error> {
     let fixture_path = fixture.path();
+    let seed_path = fixture.repo_path();
+    let explicit_fixture_dir = env::var_os(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).is_some();
+    let explicit_fixture_dir_uses_default_cache =
+        explicit_fixture_dir && is_default_home_snapshot_fixture_path(fixture, &fixture_path);
     if fixture_path.exists() {
-        return Ok(fixture_path);
+        if explicit_fixture_dir && !explicit_fixture_dir_uses_default_cache {
+            return Ok(fixture_path);
+        }
+        return default_fixture_path_or_matching_seed(fixture_path, &seed_path);
     }
 
-    if env::var_os(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).is_none() {
+    if !explicit_fixture_dir {
         if let Some(path) = home_config_snapshot_fixture_path(fixture) {
             if path.exists() {
-                return Ok(path);
+                return default_fixture_path_or_matching_seed(path, &seed_path);
             }
         }
     }
 
-    let seed_path = fixture.repo_path();
     if seed_path.exists() {
         return Ok(seed_path);
     }
@@ -763,6 +768,56 @@ pub fn backup_fixture_path_or_seed(fixture: &'static FixtureDb) -> Result<PathBu
         PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV,
         seed_path.display()
     ))))
+}
+
+fn default_fixture_path_or_matching_seed(
+    fixture_path: PathBuf,
+    seed_path: &Path,
+) -> Result<PathBuf, Error> {
+    // The shared snapshot dir is global across local worktrees. If it contains
+    // a same-named file from a different worktree, prefer this worktree's seed.
+    if seed_path.exists() && !fixture_files_match(&fixture_path, seed_path)? {
+        return Ok(seed_path.to_path_buf());
+    }
+    Ok(fixture_path)
+}
+
+fn fixture_files_match(left: &Path, right: &Path) -> Result<bool, Error> {
+    if left == right {
+        return Ok(true);
+    }
+
+    let left_metadata = fixture_file_metadata(left)?;
+    let right_metadata = fixture_file_metadata(right)?;
+    if left_metadata.len() != right_metadata.len() {
+        return Ok(false);
+    }
+
+    let left_bytes = read_fixture_file(left)?;
+    let right_bytes = read_fixture_file(right)?;
+    Ok(left_bytes == right_bytes)
+}
+
+fn fixture_file_metadata(path: &Path) -> Result<fs::Metadata, Error> {
+    fs::metadata(path).map_err(|err| {
+        Error::from(DbError::Cozo(format!(
+            "Could not inspect backup fixture file {}: {err}",
+            path.display()
+        )))
+    })
+}
+
+fn read_fixture_file(path: &Path) -> Result<Vec<u8>, Error> {
+    fs::read(path).map_err(|err| {
+        Error::from(DbError::Cozo(format!(
+            "Could not read backup fixture file {}: {err}",
+            path.display()
+        )))
+    })
+}
+
+fn is_default_home_snapshot_fixture_path(fixture: &'static FixtureDb, path: &Path) -> bool {
+    home_config_snapshot_fixture_path(fixture).is_some_and(|default_path| default_path == path)
 }
 
 fn home_config_snapshot_fixture_path(fixture: &'static FixtureDb) -> Option<PathBuf> {
@@ -871,6 +926,64 @@ mod tests {
         );
         assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
         assert_eq!(fixture.status, FixtureStatus::Active);
+    }
+
+    #[test]
+    fn default_fixture_path_or_matching_seed_prefers_seed_when_candidate_differs() {
+        let temp_dir = unique_fixture_test_dir("fixture-path-differs");
+        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
+        std::fs::write(&candidate_path, b"not this worktree's fixture")
+            .expect("write differing fixture candidate");
+
+        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
+        let resolved = default_fixture_path_or_matching_seed(candidate_path, &seed_path)
+            .expect("resolve fixture candidate");
+
+        assert_eq!(resolved, seed_path);
+        std::fs::remove_dir_all(temp_dir).expect("remove fixture temp dir");
+    }
+
+    #[test]
+    fn default_fixture_path_or_matching_seed_keeps_candidate_when_seed_matches() {
+        let temp_dir = unique_fixture_test_dir("fixture-path-matches");
+        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
+        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
+        std::fs::copy(&seed_path, &candidate_path).expect("copy matching fixture candidate");
+
+        let resolved = default_fixture_path_or_matching_seed(candidate_path.clone(), &seed_path)
+            .expect("resolve fixture candidate");
+
+        assert_eq!(resolved, candidate_path);
+        std::fs::remove_dir_all(temp_dir).expect("remove fixture temp dir");
+    }
+
+    #[test]
+    fn default_home_snapshot_fixture_path_is_detected_without_xdg() {
+        let default_path = home_config_snapshot_fixture_path(&FIXTURE_NODES_CANONICAL)
+            .expect("HOME should be available in tests");
+        let custom_path = std::env::temp_dir().join(FIXTURE_NODES_CANONICAL.filename());
+
+        assert!(is_default_home_snapshot_fixture_path(
+            &FIXTURE_NODES_CANONICAL,
+            &default_path
+        ));
+        assert!(!is_default_home_snapshot_fixture_path(
+            &FIXTURE_NODES_CANONICAL,
+            &custom_path
+        ));
+    }
+
+    fn unique_fixture_test_dir(label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ploke-test-utils-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("create fixture temp dir");
+        path
     }
 
     #[test]

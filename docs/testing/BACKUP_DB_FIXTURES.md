@@ -84,6 +84,15 @@ The registry file is the source of truth for fixture metadata and filenames.
 Test code should reference fixture constants there instead of hard-coding backup
 paths.
 
+Because the default shared snapshot directory is global across local worktrees,
+the registry helper compares a same-named default shared snapshot with the
+committed seed in the current worktree when that seed exists. If the bytes
+differ, the helper loads the worktree seed instead of importing a stale snapshot
+produced by another checkout. The same protection applies when
+`PLOKE_DB_SNAPSHOT_FIXTURE_DIR` is explicitly pinned to that default home cache,
+which some tests do while moving `XDG_CONFIG_HOME`. A non-default
+`PLOKE_DB_SNAPSHOT_FIXTURE_DIR` remains authoritative.
+
 Registry status note:
 
 - `Active` fixtures are expected to exist on disk and are validated by
