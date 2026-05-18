@@ -121,7 +121,7 @@ use crate::{
     protocol::load_protocol_aggregate,
     provider_prefs::load_provider_for_model,
     recompute_closure_state,
-    record::{AgentTurnTraceProjection, RawFullResponseRecord, RunRecord, read_compressed_record},
+    record::{AgentTurnTraceProjection, RunRecord, read_compressed_record},
     repos_dir, resolve_campaign_config, save_campaign_manifest,
     selection::{
         ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
@@ -133,6 +133,7 @@ use crate::{
         traversal::{self as traversal_selection, StrategyKind},
     },
 };
+use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
 
 impl Prototype1LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
@@ -5419,7 +5420,7 @@ impl ResponseSidecar {
     fn token_count(&self) -> u32 {
         self.records
             .iter()
-            .filter_map(|record| record.response.usage.as_ref())
+            .filter_map(|record| record.response().usage.as_ref())
             .map(|usage| usage.total_tokens)
             .sum()
     }
@@ -5510,13 +5511,13 @@ fn tool_span(call: &crate::record::ToolExecutionRecord) -> Span {
 }
 
 fn response_span(record: &RawFullResponseRecord) -> Span {
-    let usage = record.response.usage.as_ref();
-    let mut span = Span::new(format!("response {}", record.response_index), None)
+    let response = record.response();
+    let usage = response.usage.as_ref();
+    let mut span = Span::new(format!("response {}", record.response_index()), None)
         .missing_elapsed("provider_latency_not_recorded")
         .field(
             "finish",
-            record
-                .response
+            response
                 .choices
                 .first()
                 .and_then(|choice| choice.finish_reason.as_ref())
@@ -5526,10 +5527,10 @@ fn response_span(record: &RawFullResponseRecord) -> Span {
     if let Some(usage) = usage {
         span = span.field("tokens", format_token_count(usage.total_tokens));
     }
-    if !record.response.model.is_empty() {
-        span = span.field("model", record.response.model.clone());
+    if !response.model.is_empty() {
+        span = span.field("model", response.model.clone());
     }
-    if let Some(provider) = &record.response.provider {
+    if let Some(provider) = &response.provider {
         span = span.field("provider", format!("{provider:?}"));
     }
     span
@@ -5748,7 +5749,7 @@ fn load_run_artifact(record_path: PathBuf) -> Result<RunArtifacts, PrepareError>
     let run_dir = record_path
         .parent()
         .ok_or_else(|| PrepareError::MissingRunManifest(record_path.clone()))?;
-    let response_path = run_dir.join("llm-full-responses.jsonl");
+    let response_path = run_dir.join(FULL_RESPONSE_TRACE_FILE);
     let responses = if response_path.exists() {
         Some(ResponseSidecar {
             records: load_run_responses(&response_path)?,
@@ -5783,7 +5784,7 @@ fn load_run_responses(path: &Path) -> Result<Vec<RawFullResponseRecord>, Prepare
             }
         })?);
     }
-    responses.sort_by_key(|record: &RawFullResponseRecord| record.response_index);
+    responses.sort_by_key(|record: &RawFullResponseRecord| record.response_index());
     Ok(responses)
 }
 

@@ -7,6 +7,7 @@ use std::{
 };
 
 use ploke_db::{Database, NodeType};
+use ploke_records::agent_turn::{AgentTurnTraceRecord, ObservedTurnEventRecord};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
@@ -25,9 +26,10 @@ use uuid::Uuid;
 
 use crate::{
     PreparedSingleRun,
+    replay::llm::LoadedResponseTape,
     runner::{
-        AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RunMsbSingleRequest,
-        ToolRequestRecord, setup_replay_runtime,
+        AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RepoStateArtifact,
+        RunMsbSingleRequest, ToolRequestRecord, setup_replay_runtime,
     },
     spec::PrepareError,
 };
@@ -121,6 +123,11 @@ fn load_agent_turn_artifact(path: &Path) -> AgentTurnArtifact {
     serde_json::from_str(&text).expect("historical agent turn artifact must parse")
 }
 
+fn load_agent_turn_trace_record(path: &Path) -> AgentTurnTraceRecord {
+    let text = std::fs::read_to_string(path).expect("read historical agent turn trace");
+    serde_json::from_str(&text).expect("historical agent turn trace must parse")
+}
+
 fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequestRecord {
     artifact
         .events
@@ -132,6 +139,90 @@ fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequest
             _ => None,
         })
         .unwrap_or_else(|| panic!("missing ToolRequested record for call_id {call_id}"))
+}
+
+#[test]
+#[ignore = "real-run replay completeness check for p1-broad-batch-admission-20260518-1"]
+fn test_real_run_full_response_sidecar_exposes_missing_malformed_tool_arg_response() {
+    const RUN_DIR: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-broad-batch-admission-20260518-1/BurntSushi__ripgrep-2209/runs/run-1779088559136-structured-current-policy-6d8a8756";
+    const ASSISTANT_MESSAGE_ID: &str = "9a1a7000-dc4e-4c50-b00f-cb2fdc60f77d";
+    const REPAIR_CALL_ID: &str = "chatcmpl-tool-981ea94a5aab5a0d";
+
+    let run_dir = Path::new(RUN_DIR);
+    assert!(run_dir.exists(), "expected real run dir at {RUN_DIR}");
+    let repo_state_path = run_dir.join("repo-state.json");
+    let checkpoint_db_path = run_dir.join("indexing-checkpoint.db");
+    let trace_path = run_dir.join("agent-turn-trace.json");
+    assert!(
+        checkpoint_db_path.exists(),
+        "expected starting DB snapshot at {}",
+        checkpoint_db_path.display()
+    );
+
+    let repo_state: RepoStateArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&repo_state_path).expect("read repo-state.json"),
+    )
+    .expect("repo-state.json must parse");
+    assert!(
+        repo_state.repo_root.exists(),
+        "expected recorded repo root to exist at {}",
+        repo_state.repo_root.display()
+    );
+
+    let trace = load_agent_turn_trace_record(&trace_path);
+    let repair_debug = trace.0.events.iter().any(|event| match event {
+        ObservedTurnEventRecord::DebugCommand(message) => {
+            message.contains("Provider emitted invalid arguments")
+                && message.contains("request_code_context")
+                && message.contains("WrongType")
+        }
+        _ => false,
+    });
+    assert!(
+        repair_debug,
+        "agent-turn trace should contain the malformed request_code_context repair message"
+    );
+
+    let corrected_tool_requested = trace.0.events.iter().any(|event| match event {
+        ObservedTurnEventRecord::ToolRequested(request) => {
+            request.call_id == REPAIR_CALL_ID && request.tool == "request_code_context"
+        }
+        _ => false,
+    });
+    assert!(
+        corrected_tool_requested,
+        "agent-turn trace should contain the corrected request_code_context call"
+    );
+
+    let strict_error = LoadedResponseTape::load(run_dir, ASSISTANT_MESSAGE_ID)
+        .expect_err("default replay admission should reject this incomplete sidecar");
+    let strict_message = strict_error.to_string();
+    assert!(
+        strict_message.contains("missing response_index values: 34"),
+        "strict replay admission should name the missing malformed response, got {strict_message}"
+    );
+
+    let loaded = LoadedResponseTape::load_for_inspection(run_dir, ASSISTANT_MESSAGE_ID)
+        .expect("inspection load should allow incomplete historical sidecar");
+    let response_indexes = loaded
+        .records()
+        .iter()
+        .map(|record| record.response_index().get())
+        .collect::<Vec<_>>();
+    assert!(
+        response_indexes.contains(&33) && response_indexes.contains(&35),
+        "expected sidecar to surround the missing malformed response, got {response_indexes:?}"
+    );
+    let missing = loaded
+        .missing_response_indices()
+        .into_iter()
+        .map(|index| index.get())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        missing,
+        vec![34],
+        "current sidecar cannot faithfully replay the malformed-provider repair turn"
+    );
 }
 
 fn run_git(repo_root: &Path, args: &[&str], label: &str) {

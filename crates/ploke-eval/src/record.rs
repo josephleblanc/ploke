@@ -1220,22 +1220,6 @@ pub struct LlmResponseRecord {
     pub metadata: Option<LLMMetadata>,
 }
 
-/// Raw full-response trace record captured from the `llm-full-response` target.
-///
-/// This preserves the full normalized provider response envelope for later
-/// inspection without forcing that payload into the main `RunRecord` schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawFullResponseRecord {
-    /// Assistant message node being updated by this response.
-    pub assistant_message_id: String,
-
-    /// Ordinal within the turn's response chain.
-    pub response_index: usize,
-
-    /// Full normalized provider response payload.
-    pub response: OpenAiResponse,
-}
-
 /// Typed projection over `agent-turn-trace.json` for replay/UI summaries.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentTurnTraceProjection {

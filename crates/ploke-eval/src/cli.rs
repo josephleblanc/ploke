@@ -20,6 +20,7 @@ use ploke_protocol::procedure::{
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
+use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
 use ploke_records::protocol::{InterventionApplyArtifact, InterventionIssueDetectionArtifact};
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
@@ -29,6 +30,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use uuid::Uuid;
 
 mod prototype1_process;
 /// Prototype 1 typed state model and persisted artifact map.
@@ -96,7 +98,7 @@ use crate::protocol_triage_report::{
 use crate::provider_prefs::{
     clear_provider_for_model, load_provider_for_model, set_provider_for_model,
 };
-use crate::record::{RawFullResponseRecord, read_compressed_record};
+use crate::record::read_compressed_record;
 use crate::registry::{builtin_dataset_registry_entries, builtin_dataset_registry_entry};
 use crate::run_history::{
     RunDirPreference, list_finished_record_paths_in_instances_root, preferred_run_dir_for_instance,
@@ -10716,7 +10718,7 @@ fn resolve_full_response_trace_path(
     let run_dir = record_path
         .parent()
         .ok_or_else(|| PrepareError::MissingRunManifest(record_path.to_path_buf()))?;
-    let path = run_dir.join("llm-full-responses.jsonl");
+    let path = run_dir.join(FULL_RESPONSE_TRACE_FILE);
     if path.exists() {
         Ok(path)
     } else if record.metadata.run_arm.execution == "agent-single-turn" {
@@ -10733,6 +10735,7 @@ fn load_full_response_records_for_turn(
     path: &std::path::Path,
     assistant_message_id: &str,
 ) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let assistant_message_id = parse_full_response_assistant_message_id(assistant_message_id)?;
     let text = std::fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
         path: path.to_path_buf(),
         source,
@@ -10748,11 +10751,11 @@ fn load_full_response_records_for_turn(
                 path: path.to_path_buf(),
                 source,
             })?;
-        if record.assistant_message_id == assistant_message_id {
+        if record.matches_assistant_message(assistant_message_id) {
             responses.push(record);
         }
     }
-    responses.sort_by_key(|record| record.response_index);
+    responses.sort_by_key(|record| record.response_index());
     Ok(responses)
 }
 
@@ -10776,8 +10779,17 @@ fn load_all_full_response_records(
             })?;
         responses.push(record);
     }
-    responses.sort_by_key(|record| record.response_index);
+    responses.sort_by_key(|record| record.response_index());
     Ok(responses)
+}
+
+fn parse_full_response_assistant_message_id(
+    assistant_message_id: &str,
+) -> Result<Uuid, PrepareError> {
+    Uuid::parse_str(assistant_message_id).map_err(|source| PrepareError::DatabaseSetup {
+        phase: "inspect_turn",
+        detail: format!("invalid assistant_message_id '{assistant_message_id}': {source}"),
+    })
 }
 
 fn aggregate_full_response_usage(
@@ -10792,7 +10804,7 @@ fn aggregate_full_response_usage(
         total_tokens: 0,
     };
     for record in responses {
-        if let Some(usage) = record.response.usage.as_ref() {
+        if let Some(usage) = record.response().usage.as_ref() {
             total.prompt_tokens += usage.prompt_tokens;
             total.completion_tokens += usage.completion_tokens;
             total.total_tokens += usage.total_tokens;
@@ -10836,16 +10848,17 @@ fn render_full_response_table(turn: u32, responses: &[RawFullResponseRecord]) ->
     ));
     out.push_str(&format!("{}\n", "-".repeat(80)));
     for record in responses {
-        let response_id = truncate_for_table(&record.response.id, 38);
+        let response = record.response();
+        let response_id = truncate_for_table(&response.id, 38);
         let finish = record
-            .response
+            .response()
             .choices
             .first()
             .and_then(|choice| choice.finish_reason.as_ref())
             .map(|reason| format!("{reason:?}").to_lowercase())
             .unwrap_or_else(|| "-".to_string());
         let usage = record
-            .response
+            .response()
             .usage
             .as_ref()
             .map(|usage| {
@@ -10857,7 +10870,10 @@ fn render_full_response_table(turn: u32, responses: &[RawFullResponseRecord]) ->
             .unwrap_or_else(|| "-".to_string());
         out.push_str(&format!(
             "{:<5} {:<40} {:<14} {}\n",
-            record.response_index, response_id, finish, usage
+            record.response_index(),
+            response_id,
+            finish,
+            usage
         ));
     }
     out.push_str(&format!("{}\n", "-".repeat(80)));
