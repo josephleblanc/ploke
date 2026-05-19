@@ -369,29 +369,44 @@ impl Default for ValidationExpectation {
 // Backwards compatibility alias - all NoDbTestCase usages should work
 pub type NoDbTestCase = TestCase;
 
-struct WorkspaceRegistryPathGuard {
-    old_path: Option<String>,
+struct WorkspaceRegistryEnvGuard {
+    old_registry_path: Option<String>,
+    old_xdg_config_home: Option<String>,
 }
 
-impl WorkspaceRegistryPathGuard {
-    fn set_to(path: &std::path::Path) -> Self {
-        let old_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+impl WorkspaceRegistryEnvGuard {
+    fn set_registry_path(path: &std::path::Path) -> Self {
+        let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+        let old_xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
         unsafe {
             std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", path);
+            std::env::remove_var("XDG_CONFIG_HOME");
         }
-        Self { old_path }
+        Self {
+            old_registry_path,
+            old_xdg_config_home,
+        }
     }
 }
 
-impl Drop for WorkspaceRegistryPathGuard {
+impl Drop for WorkspaceRegistryEnvGuard {
     fn drop(&mut self) {
-        if let Some(old_path) = self.old_path.take() {
+        if let Some(old_registry_path) = self.old_registry_path.take() {
             unsafe {
-                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_path);
+                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_registry_path);
             }
         } else {
             unsafe {
                 std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+            }
+        }
+        if let Some(old_xdg_config_home) = self.old_xdg_config_home.take() {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old_xdg_config_home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
             }
         }
     }
@@ -400,14 +415,14 @@ impl Drop for WorkspaceRegistryPathGuard {
 struct LoadRegistrySandbox {
     _lock: tokio::sync::MutexGuard<'static, ()>,
     _tmp_dir: TempDir,
-    _registry_guard: WorkspaceRegistryPathGuard,
+    _registry_guard: WorkspaceRegistryEnvGuard,
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {
     let lock = config_home_lock().lock().await;
     let tmp_dir = tempdir().expect("temp xdg config dir");
     let registry_path = tmp_dir.path().join("workspaces.toml");
-    let registry_guard = WorkspaceRegistryPathGuard::set_to(&registry_path);
+    let registry_guard = WorkspaceRegistryEnvGuard::set_registry_path(&registry_path);
 
     let repo_root = ploke_test_utils::workspace_root();
     let fixture_crate_root = repo_root.join("tests/fixture_crates/fixture_nodes");

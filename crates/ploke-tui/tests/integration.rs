@@ -1,3 +1,12 @@
+use std::sync::OnceLock;
+
+use tokio::sync::Mutex as TokioMutex;
+
+pub(crate) fn workspace_registry_env_lock() -> &'static TokioMutex<()> {
+    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| TokioMutex::new(()))
+}
+
 #[path = "integration/approvals_overlay_keys.rs"]
 mod approvals_overlay_keys;
 

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -32,7 +32,6 @@ use ploke_tui::app_state::{
 };
 use ratatui::{Terminal, backend::TestBackend};
 use tempfile::TempDir;
-use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Instant, sleep, timeout};
@@ -43,27 +42,37 @@ const DIRECT_INDEX_WAIT_SECS: u64 = 300;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const OPENROUTER_SEARCH_PROBE: &str = "test for dims";
 
-fn config_home_lock() -> &'static TokioMutex<()> {
-    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| TokioMutex::new(()))
-}
-
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
+    old_registry_path: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", path);
+            std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
         }
-        Self { old_xdg }
+        Self {
+            old_xdg,
+            old_registry_path,
+        }
     }
 }
 
 impl Drop for XdgConfigHomeGuard {
     fn drop(&mut self) {
+        if let Some(old_registry_path) = self.old_registry_path.take() {
+            unsafe {
+                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_registry_path);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+            }
+        }
         if let Some(old_xdg) = self.old_xdg.take() {
             unsafe {
                 std::env::set_var("XDG_CONFIG_HOME", old_xdg);
@@ -83,7 +92,7 @@ struct ConfigSandbox {
 }
 
 async fn setup_config_sandbox() -> ConfigSandbox {
-    let lock = config_home_lock().lock().await;
+    let lock = crate::workspace_registry_env_lock().lock().await;
     let tmp_dir = tempfile::tempdir().expect("temp xdg config dir");
     let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
     ConfigSandbox {
