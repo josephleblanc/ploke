@@ -8,7 +8,7 @@ description = "egui run playback browser for Ploke"
 [dependencies]
 ploke-records = { workspace = true }
 ploke-tree = { workspace = true }
-eframe = "0.34"
+eframe = { version = "0.34", features = ["persistence"] }
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["syntect"] }
 egui_graphs = "0.30"

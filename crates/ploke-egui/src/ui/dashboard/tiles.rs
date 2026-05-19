@@ -1,0 +1,251 @@
+use eframe::egui;
+use egui_tiles::{Behavior, TileId, UiResponse};
+use ploke_tree::Graph;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, PartialEq, Debug, Deserialize, Serialize, Default)]
+pub enum Pane {
+    #[default]
+    Graph,
+    Inspector,
+    PinnedInspector(crate::ui::view::GraphSelectionRef),
+    ArtifactDistribution,
+    RecentActivity,
+    StatsSummary,
+    Diagnostics,
+}
+
+impl Pane {
+    pub fn title(&self) -> String {
+        match self {
+            Self::Graph => "🌐 Graph".to_owned(),
+            Self::Inspector => "🔍 Inspector".to_owned(),
+            Self::PinnedInspector(_) => "📌 Inspector".to_owned(),
+            Self::ArtifactDistribution => "📊 Artifact Distribution".to_owned(),
+            Self::RecentActivity => "📋 Recent Activity".to_owned(),
+            Self::StatsSummary => "🔢 Stats Summary".to_owned(),
+            Self::Diagnostics => "🩺 Diagnostics".to_owned(),
+        }
+    }
+}
+
+pub(crate) enum TreeAction {
+    Pin(crate::ui::view::GraphSelectionRef),
+    Remove(TileId),
+}
+
+pub(crate) struct TreeBehavior<'a> {
+    pub(crate) graph: &'a Graph,
+    pub(crate) view: &'a mut crate::ui::view::GraphView,
+    pub(crate) inspector_cache: &'a mut crate::ui::inspector::InspectorCache,
+    pub(crate) inspector_render_cache: &'a mut crate::ui::app::shell::InspectorRenderCache,
+    pub(crate) patch_diff_cache: &'a mut crate::ui::diff::PatchDiffCache,
+    pub(crate) graph_revision: crate::ui::inspector::GraphRevision,
+    pub(crate) actions: &'a mut Vec<TreeAction>,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) benchmark_inspector_section: Option<crate::benchmark::BenchmarkInspectorSection>,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) benchmark_inspector_exclusive: bool,
+}
+
+impl<'a> Behavior<Pane> for TreeBehavior<'a> {
+    fn pane_ui(&mut self, ui: &mut egui::Ui, _tile_id: TileId, pane: &mut Pane) -> UiResponse {
+        let response = UiResponse::None;
+
+        ui.vertical(|ui| match pane {
+            Pane::Graph => {
+                self.view.show(ui, self.graph);
+            }
+            Pane::Inspector => {
+                ui.horizontal(|ui| {
+                    if let Some(detail) = self.view.selected_node_detail(self.graph) {
+                        if ui
+                            .button("📌 Pin")
+                            .on_hover_text("Pin this inspector as a new pane")
+                            .clicked()
+                        {
+                            self.actions.push(TreeAction::Pin(detail.reference));
+                        }
+                    }
+                });
+                ui.separator();
+
+                let selected_node = self.view.selected_node(self.graph);
+                let selected_reference = selected_node.map(|(reference, _, _)| reference);
+                let selected_kind = selected_node.map(|(_, _, kind)| kind);
+                let selected_label = selected_node.map(|(_, label, _)| label);
+                let selected_sections = self.inspector_cache.sections(
+                    self.graph,
+                    self.graph_revision,
+                    selected_reference,
+                );
+
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                ))]
+                let inspector_open_state = crate::ui::app::shell::InspectorOpenState::benchmark(
+                    self.benchmark_inspector_section,
+                    self.benchmark_inspector_exclusive,
+                );
+                #[cfg(not(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                )))]
+                let inspector_open_state = crate::ui::app::shell::InspectorOpenState::default();
+
+                crate::ui::app::shell::render_right_inspector(
+                    ui,
+                    self.graph,
+                    selected_kind,
+                    selected_label,
+                    selected_sections,
+                    self.inspector_render_cache,
+                    self.patch_diff_cache,
+                    inspector_open_state,
+                );
+            }
+            Pane::PinnedInspector(reference) => {
+                let sections =
+                    self.inspector_cache
+                        .sections(self.graph, self.graph_revision, Some(reference));
+
+                let inspector =
+                    crate::ui::inspector::SelectionInspector::from_reference(self.graph, reference);
+                let (kind, label) = match &inspector {
+                    crate::ui::inspector::SelectionInspector::RunForestNode(node) => {
+                        (Some("run-forest-node"), Some(node.node.key.as_str()))
+                    }
+                    crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
+                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
+                            (Some("artifact"), Some(key.as_str()))
+                        }
+                        _ => (Some("artifact"), None),
+                    },
+                    crate::ui::inspector::SelectionInspector::Unresolved(_) => (None, None),
+                };
+
+                crate::ui::app::shell::render_right_inspector(
+                    ui,
+                    self.graph,
+                    kind,
+                    label,
+                    sections,
+                    self.inspector_render_cache,
+                    self.patch_diff_cache,
+                    crate::ui::app::shell::InspectorOpenState::default(),
+                );
+            }
+            Pane::ArtifactDistribution => {
+                crate::ui::dashboard::charts::horizontal_bar_chart(
+                    ui,
+                    "Artifacts by Kind",
+                    &[
+                        ("History", self.graph.history.blocks.len() as f32),
+                        ("Artifacts", self.graph.artifacts.artifacts.len() as f32),
+                        ("Operations", self.graph.operations.operations.len() as f32),
+                    ],
+                );
+            }
+            Pane::RecentActivity => {
+                ui.label("Recent activity log would go here...");
+            }
+            Pane::StatsSummary => {
+                ui.label(format!(
+                    "Total Artifacts: {}",
+                    self.graph.artifacts.artifacts.len()
+                ));
+                ui.label(format!(
+                    "Total Operations: {}",
+                    self.graph.operations.operations.len()
+                ));
+            }
+            Pane::Diagnostics => {
+                if let Some(diagnostics) = self.view.diagnostics() {
+                    crate::ui::app::render_diagnostics(ui, &diagnostics);
+                } else {
+                    ui.label("No diagnostics available for current view.");
+                }
+            }
+        });
+        response
+    }
+
+    fn top_bar_right_ui(
+        &mut self,
+        _tiles: &egui_tiles::Tiles<Pane>,
+        ui: &mut egui::Ui,
+        _tile_id: TileId,
+        tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        if let Some(active_pane_id) = tabs.active {
+            if ui.button("❌").on_hover_text("Close active pane").clicked() {
+                self.actions.push(TreeAction::Remove(active_pane_id));
+            }
+        }
+    }
+
+    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
+        match pane {
+            Pane::Inspector => {
+                if let Some((_, label, _)) = self.view.selected_node(self.graph) {
+                    format!("🔍 Inspector ({})", label).into()
+                } else {
+                    pane.title().into()
+                }
+            }
+            Pane::PinnedInspector(reference) => {
+                let inspector =
+                    crate::ui::inspector::SelectionInspector::from_reference(self.graph, reference);
+                match inspector {
+                    crate::ui::inspector::SelectionInspector::RunForestNode(node) => {
+                        format!("📌 {}", node.node.key.as_str()).into()
+                    }
+                    crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
+                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
+                            format!("📌 {}", key).into()
+                        }
+                        _ => pane.title().into(),
+                    },
+                    _ => pane.title().into(),
+                }
+            }
+            _ => pane.title().into(),
+        }
+    }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            prune_empty_tabs: true,
+            prune_single_child_tabs: false,
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
+}
+
+pub fn create_default_tree() -> egui_tiles::Tree<Pane> {
+    let mut tiles = egui_tiles::Tiles::default();
+
+    let graph_pane = tiles.insert_pane(Pane::Graph);
+    let inspector_pane = tiles.insert_pane(Pane::Inspector);
+
+    let graph_tab = tiles.insert_tab_tile(vec![graph_pane]);
+    let inspector_tab = tiles.insert_tab_tile(vec![inspector_pane]);
+
+    // Create a horizontal split between graph and inspector
+    let root = tiles.insert_horizontal_tile(vec![graph_tab, inspector_tab]);
+
+    egui_tiles::Tree::new("main_tree", root, tiles)
+}

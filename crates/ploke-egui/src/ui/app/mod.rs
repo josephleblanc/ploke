@@ -1,7 +1,7 @@
 //! eframe application shell for the operator graph UI.
 
 pub(crate) mod layout;
-mod shell;
+pub(crate) mod shell;
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -44,7 +44,7 @@ use crate::ui::inspector::default_selections;
 use crate::ui::inspector::{GraphRevision, InspectorCache, SelectionInspector};
 use crate::ui::view::{ArtifactTreeFilters, GraphView, GraphViewDiagnostics, GraphViewMode};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OperatorApp {
     graph: Graph,
     graph_revision: GraphRevision,
@@ -52,7 +52,7 @@ pub struct OperatorApp {
     inspector_cache: InspectorCache,
     inspector_render_cache: shell::InspectorRenderCache,
     patch_diff_cache: PatchDiffCache,
-    windows: AppWindows,
+    dashboard_tree: egui_tiles::Tree<crate::ui::dashboard::tiles::Pane>,
     #[cfg(not(target_arch = "wasm32"))]
     run_picker: RunPicker,
     #[cfg(not(target_arch = "wasm32"))]
@@ -85,11 +85,6 @@ pub struct OperatorApp {
     benchmark_inspector_exclusive: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct AppWindows {
-    show_bar: bool,
-}
-
 impl OperatorApp {
     pub fn new(graph: Graph) -> Self {
         Self {
@@ -99,7 +94,7 @@ impl OperatorApp {
             inspector_cache: InspectorCache::default(),
             inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
-            windows: AppWindows::default(),
+            dashboard_tree: crate::ui::dashboard::tiles::create_default_tree(),
             #[cfg(not(target_arch = "wasm32"))]
             run_picker: RunPicker::from_default_root(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -142,6 +137,7 @@ impl OperatorApp {
             inspector_cache: InspectorCache::default(),
             inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
+            dashboard_tree: crate::ui::dashboard::tiles::create_default_tree(),
             run_picker,
             run_error: None,
             diagnostics_sink: None,
@@ -167,7 +163,6 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_exclusive: false,
-            windows: AppWindows::default(),
         }
     }
 
@@ -203,6 +198,12 @@ impl OperatorApp {
         self
     }
 
+    pub fn load(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(tree) = eframe::get_value(storage, "ploke-egui-dashboard") {
+            self.dashboard_tree = tree;
+        }
+    }
+
     fn current_run_name(&self) -> Option<&str> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -230,13 +231,7 @@ impl OperatorApp {
                 self.render_run_picker(ui);
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
-
-                // -- display different kinds of charts
-                ui.separator();
-                ui.label("Charts");
-                // example chart
-                ui.checkbox(&mut self.windows.show_bar, "Example Bar Chart");
-                // more here
+                render_tile_picker(ui, &mut self.dashboard_tree);
 
                 ui.separator();
                 render_graph_facts(ui, &self.graph);
@@ -272,6 +267,10 @@ impl OperatorApp {
 }
 
 impl eframe::App for OperatorApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "ploke-egui-dashboard", &self.dashboard_tree);
+    }
+
     #[cfg_attr(
         all(not(target_arch = "wasm32"), feature = "native-benchmark"),
         tracing::instrument(skip_all, name = "frame_update")
@@ -336,73 +335,6 @@ impl eframe::App for OperatorApp {
         ))]
         self.record_benchmark_component("run_navigation", run_navigation_start);
 
-        let (graph_has_content, selected_kind, selected_label, selected_sections, selection_synced) = {
-            let _span = tracing::trace_span!("frame_prepare_selection").entered();
-            let graph_has_content = graph_has_content(&self.graph);
-            let selected_node = self.view.selected_node(&self.graph);
-            let selected_reference = selected_node.map(|(reference, _, _)| reference);
-            let selected_kind = selected_node.map(|(_, _, kind)| kind);
-            let selected_label = selected_node.map(|(_, label, _)| label);
-            let selected_sections =
-                self.inspector_cache
-                    .sections(&self.graph, self.graph_revision, selected_reference);
-            let selection_synced = selected_reference.is_some();
-            (
-                graph_has_content,
-                selected_kind,
-                selected_label,
-                selected_sections,
-                selection_synced,
-            )
-        };
-
-        #[cfg(all(
-            not(target_arch = "wasm32"),
-            feature = "dev",
-            feature = "native-benchmark"
-        ))]
-        let inspector_start = Instant::now();
-        {
-            let _span = tracing::trace_span!("egui_panel_selection_inspector_layout").entered();
-            egui::Panel::right("selection_inspector")
-                .default_size(layout::RIGHT_INSPECTOR_WIDTH)
-                .max_size(layout::RIGHT_INSPECTOR_MAX_WIDTH)
-                .show_inside(ui, |ui| {
-                    profiling::scope!("ploke-egui.frame.selection-inspector");
-                    #[cfg(all(
-                        not(target_arch = "wasm32"),
-                        feature = "dev",
-                        feature = "native-benchmark"
-                    ))]
-                    let inspector_open_state = shell::InspectorOpenState::benchmark(
-                        self.benchmark_inspector_section,
-                        self.benchmark_inspector_exclusive,
-                    );
-                    #[cfg(not(all(
-                        not(target_arch = "wasm32"),
-                        feature = "dev",
-                        feature = "native-benchmark"
-                    )))]
-                    let inspector_open_state = shell::InspectorOpenState::default();
-                    shell::render_right_inspector(
-                        ui,
-                        &self.graph,
-                        selected_kind,
-                        selected_label,
-                        selected_sections,
-                        &mut self.inspector_render_cache,
-                        &mut self.patch_diff_cache,
-                        inspector_open_state,
-                    );
-                });
-        }
-        #[cfg(all(
-            not(target_arch = "wasm32"),
-            feature = "dev",
-            feature = "native-benchmark"
-        ))]
-        self.record_benchmark_component("selection_inspector", inspector_start);
-
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
@@ -415,6 +347,7 @@ impl eframe::App for OperatorApp {
                 .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
                 .show_inside(ui, |ui| {
                     profiling::scope!("ploke-egui.frame.timeline");
+                    let selection_synced = self.view.selected_node(&self.graph).is_some();
                     shell::render_bottom_timeline(
                         ui,
                         self.view.diagnostics().as_ref(),
@@ -439,15 +372,53 @@ impl eframe::App for OperatorApp {
             let _span = tracing::trace_span!("egui_panel_central_layout").entered();
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.central");
-                        if graph_has_content {
-                            self.view.show(ui, &self.graph);
-                        } else {
-                            ui.centered_and_justified(|ui| {
-                                ui.label(
-                                    "No graph records loaded. Pass --run-root with a Prototype 1 record root.",
-                                );
-                            });
+
+                let mut actions = Vec::new();
+                let mut behavior = crate::ui::dashboard::tiles::TreeBehavior {
+                    graph: &self.graph,
+                    view: &mut self.view,
+                    inspector_cache: &mut self.inspector_cache,
+                    inspector_render_cache: &mut self.inspector_render_cache,
+                    patch_diff_cache: &mut self.patch_diff_cache,
+                    graph_revision: self.graph_revision,
+                    actions: &mut actions,
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    benchmark_inspector_section: self.benchmark_inspector_section,
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    benchmark_inspector_exclusive: self.benchmark_inspector_exclusive,
+                };
+
+                self.dashboard_tree.ui(&mut behavior, ui);
+
+                for action in actions {
+                    use crate::ui::dashboard::tiles::{Pane, TreeAction};
+                    match action {
+                        TreeAction::Pin(reference) => {
+                            let pane = Pane::PinnedInspector(reference);
+                            let id = self.dashboard_tree.tiles.insert_pane(pane);
+                            if let Some(root) = self.dashboard_tree.root {
+                                if let Some(egui_tiles::Tile::Container(container)) =
+                                    self.dashboard_tree.tiles.get_mut(root)
+                                {
+                                    container.add_child(id);
+                                }
+                            } else {
+                                self.dashboard_tree.root = Some(id);
+                            }
                         }
+                        TreeAction::Remove(tile_id) => {
+                            self.dashboard_tree.tiles.remove(tile_id);
+                        }
+                    }
+                }
             });
         }
         #[cfg(all(
@@ -456,16 +427,6 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         self.record_benchmark_component("central_graph", central_start);
-
-        if self.windows.show_bar {
-            egui::Window::new("📊 Bar Example")
-                .open(&mut self.windows.show_bar) // Adds the 'X' close button
-                .default_size([400.0, 300.0])
-                .vscroll(true) // Enable scrolling inside the window
-                .show(ui.ctx(), |ui| {
-                    charts::render_dashboard_content(ui, &self.graph);
-                });
-        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -905,6 +866,43 @@ fn elapsed_ns(start: Instant) -> u64 {
     start.elapsed().as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
+fn render_tile_picker(
+    ui: &mut egui::Ui,
+    tree: &mut egui_tiles::Tree<crate::ui::dashboard::tiles::Pane>,
+) {
+    ui.separator();
+    ui.label("Tiles");
+    ui.horizontal_wrapped(|ui| {
+        use crate::ui::dashboard::tiles::Pane;
+
+        let options = [
+            Pane::Graph,
+            Pane::Inspector,
+            Pane::ArtifactDistribution,
+            Pane::RecentActivity,
+            Pane::StatsSummary,
+            Pane::Diagnostics,
+        ];
+
+        for pane in options {
+            if ui.button(pane.title()).clicked() {
+                let id = tree.tiles.insert_pane(pane);
+                if let Some(root) = tree.root {
+                    if let Some(egui_tiles::Tile::Container(container)) = tree.tiles.get_mut(root) {
+                        container.add_child(id);
+                    }
+                } else {
+                    tree.root = Some(id);
+                }
+            }
+        }
+
+        if ui.button("🔄 Reset Layout").clicked() {
+            *tree = crate::ui::dashboard::tiles::create_default_tree();
+        }
+    });
+}
+
 fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {
     ui.horizontal(|ui| {
         if ui
@@ -972,7 +970,7 @@ fn graph_has_content(graph: &Graph) -> bool {
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "diagnostics")
 )]
-fn render_diagnostics(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
+pub(crate) fn render_diagnostics(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
     ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
     ui.label(format!("View nodes: {}", diagnostics.node_count));
     ui.label(format!("View edges: {}", diagnostics.edge_count));

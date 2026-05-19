@@ -129,7 +129,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .with_benchmark(BenchmarkController::new(config, startup)?);
         with_benchmark_tracing_subscriber(|| {
             let _span = tracing::trace_span!("eframe_run_native").entered();
-            eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))
+            eframe::run_native(
+                "ploke-egui",
+                options,
+                Box::new(|cc| {
+                    let mut app = app;
+                    if let Some(storage) = cc.storage {
+                        app.load(storage);
+                    }
+                    Ok(Box::new(app))
+                }),
+            )
         })?;
         return Ok(());
     }
@@ -199,7 +209,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     } else {
         app
     };
-    eframe::run_native("ploke-egui", options, Box::new(|_cc| Ok(Box::new(app))))?;
+    eframe::run_native(
+        "ploke-egui",
+        options,
+        Box::new(|cc| {
+            let mut app = app;
+            if let Some(storage) = cc.storage {
+                app.load(storage);
+            }
+            Ok(Box::new(app))
+        }),
+    )?;
     Ok(())
 }
 

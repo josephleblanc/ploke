@@ -284,7 +284,9 @@ pub struct GraphSelectionDetail {
     pub reference: GraphSelectionRef,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphSelectionRef {
     Artifact { key: String },
     RunForestNode { key: String },
