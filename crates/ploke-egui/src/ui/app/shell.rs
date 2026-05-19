@@ -456,7 +456,7 @@ pub enum InspectorPanelSection {
     RunRecords,
     GraphEdges,
     ArtifactEdges,
-    PatchDebug,
+    Patches,
     SourceRefs,
     ArtifactIds,
 }
@@ -471,7 +471,7 @@ impl InspectorPanelSection {
             Self::RunRecords => "Run Records",
             Self::GraphEdges => "Graph Edges",
             Self::ArtifactEdges => "Artifact Edges",
-            Self::PatchDebug => "Patch Debug",
+            Self::Patches => "Patches",
             Self::SourceRefs => "Source Refs",
             Self::ArtifactIds => "Artifact IDs",
         }
@@ -556,20 +556,26 @@ fn show_inspector_section_collapsing<R>(
 ) {
     ui.separator();
     let _span = tracing::trace_span!("inspector_collapsing_header_layout").entered();
-    let header = egui::CollapsingHeader::new(title).id_salt(title).open(open);
     let mut pin_clicked = false;
 
-    header.show(ui, |ui| {
+    ui.horizontal(|ui| {
+        let header = egui::RichText::new(title).heading();
         if actions.is_some() && selection_ref.is_some() {
-            ui.horizontal(|ui| {
-                if ui.button("↗ Pop out to new pane").clicked() {
-                    pin_clicked = true;
-                }
-            });
-            ui.separator();
+            ui.label(header);
+            if ui
+                .button("↗")
+                .on_hover_text("Pop out to new pane")
+                .clicked()
+            {
+                pin_clicked = true;
+            }
         }
-        add_body(ui)
     });
+
+    let header = egui::CollapsingHeader::new("details")
+        .id_salt(title)
+        .open(open);
+    header.show(ui, |ui| add_body(ui));
 
     if pin_clicked {
         if let (Some(actions), Some(selection)) = (actions.as_deref_mut(), selection_ref) {
@@ -650,25 +656,69 @@ pub(crate) fn render_right_inspector(
                     kv(ui, "roles", "not_applicable");
                 }
 
-                ui.separator();
-                show_inspector_section_header(
+                show_inspector_section_collapsing(
                     ui,
-                    "Patch Generation",
-                    InspectorPanelSection::PatchGeneration,
+                    "Agent Trace",
+                    InspectorPanelSection::LlmCalls,
+                    open_state.open(InspectorPanelSection::LlmCalls),
                     selection_ref,
                     &mut actions,
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_parent_create_for_inspector(
+                                ui,
+                                graph,
+                                sections,
+                                render_cache,
+                                open_state,
+                            );
+                        } else {
+                            kv(ui, "agent trace", "not_applicable");
+                        }
+                    },
                 );
-                if let Some(sections) = sections {
-                    render_parent_create_for_inspector(
-                        ui,
-                        graph,
-                        sections,
-                        render_cache,
-                        open_state,
-                    );
-                } else {
-                    kv(ui, "attempt", "not_applicable");
-                }
+
+                show_inspector_section_collapsing(
+                    ui,
+                    "Patches",
+                    InspectorPanelSection::Patches,
+                    open_state.open(InspectorPanelSection::Patches),
+                    selection_ref,
+                    &mut actions,
+                    |ui| {
+                        if let Some(sections) = sections {
+                            render_patches_for_inspector(
+                                ui,
+                                graph,
+                                sections,
+                                render_cache,
+                                diff_cache,
+                            );
+                        } else {
+                            kv(ui, "patch", "not_applicable");
+                        }
+                    },
+                );
+
+                // ui.separator();
+                // show_inspector_section_header(
+                //     ui,
+                //     "Patch Generation",
+                //     InspectorPanelSection::PatchGeneration,
+                //     selection_ref,
+                //     &mut actions,
+                // );
+                // if let Some(sections) = sections {
+                //     render_parent_create_for_inspector(
+                //         ui,
+                //         graph,
+                //         sections,
+                //         render_cache,
+                //         open_state,
+                //     );
+                // } else {
+                //     kv(ui, "attempt", "not_applicable");
+                // }
 
                 show_inspector_section_collapsing(
                     ui,
@@ -714,28 +764,6 @@ pub(crate) fn render_right_inspector(
                             render_artifact_edges_for_inspector(ui, sections, render_cache);
                         } else {
                             kv(ui, "artifact edges", "not_applicable");
-                        }
-                    },
-                );
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Patch Debug",
-                    InspectorPanelSection::PatchDebug,
-                    open_state.open(InspectorPanelSection::PatchDebug),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_patches_for_inspector(
-                                ui,
-                                graph,
-                                sections,
-                                render_cache,
-                                diff_cache,
-                            );
-                        } else {
-                            kv(ui, "patch", "not_applicable");
                         }
                     },
                 );
@@ -2324,6 +2352,9 @@ fn render_parent_create_attempt(
         render_cache,
         open_state,
     );
+
+    // render_run_record_turns(ui, render_cache, graph, run_record_slots);
+    // render_agent_turns(ui, render_cache, attempt.agent_turns());
     render_parent_create_source_status(ui, &attempt, render_cache);
 }
 

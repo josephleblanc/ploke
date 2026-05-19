@@ -3,16 +3,15 @@ use egui_tiles::{Behavior, TileId, UiResponse};
 use ploke_tree::Graph;
 use serde::{Deserialize, Serialize};
 
+use crate::ui::{app::shell, view::GraphSelectionRef};
+
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize, Default)]
 pub enum Pane {
     #[default]
     Graph,
     Inspector,
-    PinnedInspector(crate::ui::view::GraphSelectionRef),
-    InspectorSection(
-        crate::ui::view::GraphSelectionRef,
-        crate::ui::app::shell::InspectorPanelSection,
-    ),
+    PinnedInspector(GraphSelectionRef),
+    InspectorSection(GraphSelectionRef, shell::InspectorPanelSection),
     ArtifactDistribution,
     RecentActivity,
     StatsSummary,
@@ -35,11 +34,8 @@ impl Pane {
 }
 
 pub(crate) enum TreeAction {
-    Pin(crate::ui::view::GraphSelectionRef),
-    PinSection(
-        crate::ui::view::GraphSelectionRef,
-        crate::ui::app::shell::InspectorPanelSection,
-    ),
+    Pin(GraphSelectionRef),
+    PinSection(GraphSelectionRef, shell::InspectorPanelSection),
     Remove(TileId),
 }
 
@@ -47,7 +43,7 @@ pub(crate) struct TreeBehavior<'a> {
     pub(crate) graph: &'a Graph,
     pub(crate) view: &'a mut crate::ui::view::GraphView,
     pub(crate) inspector_cache: &'a mut crate::ui::inspector::InspectorCache,
-    pub(crate) inspector_render_cache: &'a mut crate::ui::app::shell::InspectorRenderCache,
+    pub(crate) inspector_render_cache: &'a mut shell::InspectorRenderCache,
     pub(crate) patch_diff_cache: &'a mut crate::ui::diff::PatchDiffCache,
     pub(crate) graph_revision: crate::ui::inspector::GraphRevision,
     pub(crate) actions: &'a mut Vec<TreeAction>,
@@ -102,7 +98,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     feature = "dev",
                     feature = "native-benchmark"
                 ))]
-                let inspector_open_state = crate::ui::app::shell::InspectorOpenState::benchmark(
+                let inspector_open_state = shell::InspectorOpenState::benchmark(
                     self.benchmark_inspector_section,
                     self.benchmark_inspector_exclusive,
                 );
@@ -111,9 +107,9 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     feature = "dev",
                     feature = "native-benchmark"
                 )))]
-                let inspector_open_state = crate::ui::app::shell::InspectorOpenState::default();
+                let inspector_open_state = shell::InspectorOpenState::default();
 
-                crate::ui::app::shell::render_right_inspector(
+                shell::render_right_inspector(
                     ui,
                     self.graph,
                     selected_reference,
@@ -127,7 +123,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 );
             }
             Pane::PinnedInspector(reference_mut) => {
-                let reference: &crate::ui::view::GraphSelectionRef = reference_mut;
+                let reference: &GraphSelectionRef = reference_mut;
                 let sections =
                     self.inspector_cache
                         .sections(self.graph, self.graph_revision, Some(reference));
@@ -139,7 +135,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         (Some("run-forest-node"), Some(node.node.key.as_str()))
                     }
                     crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
-                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
+                        GraphSelectionRef::Artifact { key } => {
                             (Some("artifact"), Some(key.as_str()))
                         }
                         _ => (Some("artifact"), None),
@@ -147,7 +143,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     crate::ui::inspector::SelectionInspector::Unresolved(_) => (None, None),
                 };
 
-                crate::ui::app::shell::render_right_inspector(
+                shell::render_right_inspector(
                     ui,
                     self.graph,
                     Some(reference),
@@ -156,12 +152,12 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     sections,
                     self.inspector_render_cache,
                     self.patch_diff_cache,
-                    crate::ui::app::shell::InspectorOpenState::default(),
+                    shell::InspectorOpenState::default(),
                     None,
                 );
             }
             Pane::InspectorSection(reference_mut, section) => {
-                let reference: &crate::ui::view::GraphSelectionRef = reference_mut;
+                let reference: &GraphSelectionRef = reference_mut;
                 let sections =
                     self.inspector_cache
                         .sections(self.graph, self.graph_revision, Some(reference));
@@ -171,55 +167,55 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     .show(ui, |ui| {
                         if let Some(sections) = sections {
                             match section {
-                                crate::ui::app::shell::InspectorPanelSection::Identity => {
-                                    crate::ui::app::shell::render_identity(
+                                shell::InspectorPanelSection::Identity => {
+                                    shell::render_identity(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::Roles => {
-                                    crate::ui::app::shell::render_roles_and_metrics(
+                                shell::InspectorPanelSection::Roles => {
+                                    shell::render_roles_and_metrics(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::PatchGeneration => {
-                                    crate::ui::app::shell::render_parent_create_for_inspector(
+                                shell::InspectorPanelSection::PatchGeneration => {
+                                    shell::render_parent_create_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
-                                        crate::ui::app::shell::InspectorOpenState::default(),
+                                        shell::InspectorOpenState::default(),
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::RunRecords => {
-                                    crate::ui::app::shell::render_run_records_for_inspector(
+                                shell::InspectorPanelSection::RunRecords => {
+                                    shell::render_run_records_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::GraphEdges => {
-                                    crate::ui::app::shell::render_graph_edges_for_inspector(
+                                shell::InspectorPanelSection::GraphEdges => {
+                                    shell::render_graph_edges_for_inspector(
                                         ui,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::ArtifactEdges => {
-                                    crate::ui::app::shell::render_artifact_edges_for_inspector(
+                                shell::InspectorPanelSection::ArtifactEdges => {
+                                    shell::render_artifact_edges_for_inspector(
                                         ui,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::PatchDebug => {
-                                    crate::ui::app::shell::render_patches_for_inspector(
+                                shell::InspectorPanelSection::Patches => {
+                                    shell::render_patches_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
@@ -227,29 +223,29 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                                         self.patch_diff_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::SourceRefs => {
-                                    crate::ui::app::shell::render_source_refs_for_inspector(
+                                shell::InspectorPanelSection::SourceRefs => {
+                                    shell::render_source_refs_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::ArtifactIds => {
-                                    crate::ui::app::shell::render_artifact_ids_for_inspector(
+                                shell::InspectorPanelSection::ArtifactIds => {
+                                    shell::render_artifact_ids_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
                                         self.inspector_render_cache,
                                     );
                                 }
-                                crate::ui::app::shell::InspectorPanelSection::LlmCalls => {
+                                shell::InspectorPanelSection::LlmCalls => {
                                     if let Some(parent_create) = sections.parent_create() {
                                         if let ploke_tree::graph::ParentCreateLookup::Attempt(
                                             attempt,
                                         ) = parent_create.resolve(self.graph)
                                         {
-                                            crate::ui::app::shell::render_parent_create_llm_calls_body(
+                                            shell::render_parent_create_llm_calls_body(
                                                 ui,
                                                 self.graph,
                                                 &attempt,
@@ -336,9 +332,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         format!("📌 {}", node.node.key.as_str()).into()
                     }
                     crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
-                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
-                            format!("📌 {}", key).into()
-                        }
+                        GraphSelectionRef::Artifact { key } => format!("📌 {}", key).into(),
                         _ => pane.title().into(),
                     },
                     _ => pane.title().into(),
@@ -352,7 +346,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         format!("📌 {} ({})", section.title(), node.node.key.as_str()).into()
                     }
                     crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
-                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
+                        GraphSelectionRef::Artifact { key } => {
                             format!("📌 {} ({})", section.title(), key).into()
                         }
                         _ => pane.title().into(),

@@ -414,6 +414,19 @@ impl eframe::App for OperatorApp {
                                 self.dashboard_tree.root = Some(id);
                             }
                         }
+                        TreeAction::PinSection(reference, section) => {
+                            let pane = Pane::InspectorSection(reference, section);
+                            let id = self.dashboard_tree.tiles.insert_pane(pane);
+                            if let Some(root) = self.dashboard_tree.root {
+                                if let Some(egui_tiles::Tile::Container(container)) =
+                                    self.dashboard_tree.tiles.get_mut(root)
+                                {
+                                    container.add_child(id);
+                                }
+                            } else {
+                                self.dashboard_tree.root = Some(id);
+                            }
+                        }
                         TreeAction::Remove(tile_id) => {
                             self.dashboard_tree.tiles.remove(tile_id);
                         }
