@@ -44,6 +44,10 @@ use crate::cli::prototype1_state::{
         select_artifact_for_handoff, select_successor_for_profile,
         selection_input_from_child_report,
     },
+    edit_surface::harness_request::{
+        BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
+        ProtectedCoreAnchor, PublishedBroadHarnessRequest,
+    },
     event::{ContentHash, RuntimeId},
     history::{ArtifactSurface, surface_attempt},
     identity::{ParentIdentity, load_parent_identity_optional, parent_identity_relpath},
@@ -96,6 +100,7 @@ pub(crate) struct ActiveParentStatus {
     pub(crate) parent_identity: ParentIdentity,
     pub(crate) run_profile: RunProfileCommitment,
     pub(crate) effective_control: EffectiveRunControl,
+    pub(crate) prompt_preflight: PromptPreflight,
     pub(crate) phase: DiagnosedPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) current_child: Option<CurrentChildStatus>,
@@ -115,6 +120,40 @@ struct RuntimeContext {
     parent_identity: ParentIdentity,
     admitted_profile: AdmittedRunProfile,
     effective_control: EffectiveRunControl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PromptPreflight {
+    pub(crate) outcome: PromptPreflightOutcome,
+    pub(crate) checked: Vec<PromptReference>,
+    pub(crate) prompt_files: Vec<PathBuf>,
+    pub(crate) problems: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PromptPreflightOutcome {
+    Skipped,
+    Pending,
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PromptReference {
+    pub(crate) label: String,
+    pub(crate) path: PathBuf,
+    pub(crate) kind: PromptReferenceKind,
+    pub(crate) present: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PromptReferenceKind {
+    File,
+    Directory,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +185,7 @@ struct Diagnosis {
     current_child: Option<CurrentChildStatus>,
     blockers: Vec<String>,
     notes: Vec<String>,
+    prompt_preflight: PromptPreflight,
     child_plan: Option<ChildPlanFiles>,
     child_snapshots: Vec<ChildSnapshot>,
 }
@@ -235,6 +275,20 @@ fn render_status(
                     ""
                 }
             );
+            println!(
+                "prompt_preflight: {} (checked={} prompt_files={})",
+                prompt_preflight_label(status.prompt_preflight.outcome),
+                status.prompt_preflight.checked.len(),
+                status.prompt_preflight.prompt_files.len()
+            );
+            for reference in &status.prompt_preflight.checked {
+                println!(
+                    "  - {} {} {}",
+                    if reference.present { "ok" } else { "missing" },
+                    prompt_reference_kind_label(reference.kind),
+                    reference.path.display()
+                );
+            }
             if let Some(child) = status.current_child.as_ref() {
                 println!(
                     "current_child: plan_index={} node_id={} branch_id={} status={}",
@@ -353,6 +407,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         parent_identity: diagnosis.context.parent_identity,
         run_profile: diagnosis.context.admitted_profile.commitment,
         effective_control: diagnosis.context.effective_control,
+        prompt_preflight: diagnosis.prompt_preflight,
         phase: diagnosis.phase,
         current_child: diagnosis.current_child,
         blockers: diagnosis.blockers,
@@ -387,6 +442,22 @@ fn suggested_commands(repo_root: &Path) -> Vec<String> {
     ]
 }
 
+fn prompt_preflight_label(outcome: PromptPreflightOutcome) -> &'static str {
+    match outcome {
+        PromptPreflightOutcome::Skipped => "skipped",
+        PromptPreflightOutcome::Pending => "pending",
+        PromptPreflightOutcome::Passed => "passed",
+        PromptPreflightOutcome::Failed => "failed",
+    }
+}
+
+fn prompt_reference_kind_label(kind: PromptReferenceKind) -> &'static str {
+    match kind {
+        PromptReferenceKind::File => "file",
+        PromptReferenceKind::Directory => "dir",
+    }
+}
+
 fn phase_label(phase: DiagnosedPhase) -> &'static str {
     match phase {
         DiagnosedPhase::BaselineEval => "baseline_eval",
@@ -403,6 +474,285 @@ fn phase_label(phase: DiagnosedPhase) -> &'static str {
     }
 }
 
+fn prompt_preflight(
+    context: &RuntimeContext,
+    require_future_prompt_refs: bool,
+) -> Result<PromptPreflight, PrepareError> {
+    if context
+        .admitted_profile
+        .profile
+        .generation
+        .candidate_generator()
+        != crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest
+    {
+        return Ok(PromptPreflight::skipped(
+            "run profile does not use broad-harness prompt generation",
+        ));
+    }
+
+    let prototype_root = prototype1_root(&context.manifest_path);
+    let mut checked = Vec::new();
+    let mut prompt_files = Vec::new();
+    let mut problems = Vec::new();
+    let mut notes = Vec::new();
+
+    let template = BroadHarnessRequest::prototype1_workspace(
+        context.parent_identity.node_id().to_string(),
+        context.repo_root.clone(),
+        HarnessChildBudget {
+            min_children: context.admitted_profile.profile.search.children.min,
+            max_children: context.admitted_profile.profile.search.children.max,
+        },
+        context.repo_root.clone(),
+        &prototype_root,
+        &prototype_root.join("messages/edit-harness-result/preflight.json"),
+    );
+    checked.extend(prompt_refs_from_request(
+        &template,
+        &context.repo_root,
+        false,
+        require_future_prompt_refs,
+    ));
+    if !require_future_prompt_refs {
+        notes.push(
+            "future evidence-root prompt references are deferred until baseline closure is complete"
+                .to_string(),
+        );
+    }
+
+    for published in load_published_broad_requests(&context.manifest_path)? {
+        prompt_files.push(published.prompt_path().to_path_buf());
+        checked.push(PromptReference::check(
+            "published prompt file",
+            published.prompt_path().to_path_buf(),
+            PromptReferenceKind::File,
+        ));
+        match fs::read_to_string(published.prompt_path()) {
+            Ok(prompt) => {
+                let rendered = published.request().render_prompt();
+                if prompt != rendered {
+                    problems.push(format!(
+                        "published prompt '{}' does not match its typed request render",
+                        published.prompt_path().display()
+                    ));
+                }
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PrepareError::ReadManifest {
+                    path: published.prompt_path().to_path_buf(),
+                    source,
+                });
+            }
+        }
+        checked.extend(prompt_refs_from_request(
+            published.request(),
+            published.workspace_path(),
+            true,
+            true,
+        ));
+    }
+
+    Ok(PromptPreflight::from_parts(
+        checked,
+        prompt_files,
+        problems,
+        notes,
+    ))
+}
+
+fn prototype1_root(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+}
+
+fn load_published_broad_requests(
+    campaign_manifest_path: &Path,
+) -> Result<Vec<PublishedBroadHarnessRequest>, PrepareError> {
+    let request_dir = prototype1_root(campaign_manifest_path).join("messages/edit-harness-request");
+    let entries = match fs::read_dir(&request_dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: request_dir,
+                source,
+            });
+        }
+    };
+    let mut requests = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: request_dir.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+            path: path.clone(),
+            source,
+        })?;
+        let published =
+            serde_json::from_str::<PublishedBroadHarnessRequest>(&text).map_err(|source| {
+                PrepareError::ParseManifest {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+        requests.push(published);
+    }
+    requests.sort_by(|left, right| left.request_path().cmp(right.request_path()));
+    Ok(requests)
+}
+
+fn prompt_refs_from_request(
+    request: &BroadHarnessRequest,
+    protected_core_root: &Path,
+    include_candidate_workspace: bool,
+    include_evidence_roots: bool,
+) -> Vec<PromptReference> {
+    let mut refs = Vec::new();
+    if include_candidate_workspace {
+        refs.push(PromptReference::check(
+            "candidate workspace referenced by prompt",
+            request.workspace.candidate_workspace_path().to_path_buf(),
+            PromptReferenceKind::Directory,
+        ));
+    }
+    if include_evidence_roots {
+        refs.extend(prompt_evidence_ref(
+            request,
+            EvidenceRootKind::Evaluations,
+            "past benchmark results referenced by prompt",
+        ));
+        refs.extend(prompt_evidence_ref(
+            request,
+            EvidenceRootKind::Nodes,
+            "prior attempts and conversation history referenced by prompt",
+        ));
+    }
+    match &request.protected_core.anchor {
+        ProtectedCoreAnchor::AuthorityConstant { code_path, .. } => {
+            refs.push(PromptReference::check(
+                "protected core file referenced by prompt",
+                protected_core_root.join(code_path),
+                PromptReferenceKind::File,
+            ));
+        }
+    }
+    refs
+}
+
+fn prompt_evidence_ref(
+    request: &BroadHarnessRequest,
+    kind: EvidenceRootKind,
+    label: &'static str,
+) -> Option<PromptReference> {
+    request
+        .evidence_roots
+        .iter()
+        .find(|root| root.kind == kind)
+        .and_then(|root| match &root.location {
+            EvidenceRootLocation::Directory { path } => Some(PromptReference::check(
+                label,
+                path.clone(),
+                PromptReferenceKind::Directory,
+            )),
+            EvidenceRootLocation::File { path } => Some(PromptReference::check(
+                label,
+                path.clone(),
+                PromptReferenceKind::File,
+            )),
+            EvidenceRootLocation::NodeScopedDirectory { nodes_root, .. } => Some(
+                PromptReference::check(label, nodes_root.clone(), PromptReferenceKind::Directory),
+            ),
+            EvidenceRootLocation::AttachedReport { .. } => None,
+        })
+}
+
+fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut Vec<String>) {
+    if preflight.outcome != PromptPreflightOutcome::Failed {
+        return;
+    }
+    for reference in preflight
+        .checked
+        .iter()
+        .filter(|reference| !reference.present)
+    {
+        blockers.push(format!(
+            "prompt preflight missing {} for {}: '{}'",
+            prompt_reference_kind_label(reference.kind),
+            reference.label,
+            reference.path.display()
+        ));
+    }
+    for problem in &preflight.problems {
+        blockers.push(format!("prompt preflight: {problem}"));
+    }
+}
+
+impl PromptPreflight {
+    fn skipped(note: impl Into<String>) -> Self {
+        Self {
+            outcome: PromptPreflightOutcome::Skipped,
+            checked: Vec::new(),
+            prompt_files: Vec::new(),
+            problems: Vec::new(),
+            notes: vec![note.into()],
+        }
+    }
+
+    fn from_parts(
+        mut checked: Vec<PromptReference>,
+        mut prompt_files: Vec<PathBuf>,
+        problems: Vec<String>,
+        notes: Vec<String>,
+    ) -> Self {
+        checked.sort_by(|left, right| {
+            (&left.path, left.kind, &left.label).cmp(&(&right.path, right.kind, &right.label))
+        });
+        checked.dedup_by(|left, right| {
+            left.path == right.path && left.kind == right.kind && left.label == right.label
+        });
+        prompt_files.sort();
+        prompt_files.dedup();
+        let missing = checked.iter().any(|reference| !reference.present);
+        let outcome = if missing || !problems.is_empty() {
+            PromptPreflightOutcome::Failed
+        } else if checked.is_empty() && prompt_files.is_empty() {
+            PromptPreflightOutcome::Pending
+        } else {
+            PromptPreflightOutcome::Passed
+        };
+        Self {
+            outcome,
+            checked,
+            prompt_files,
+            problems,
+            notes,
+        }
+    }
+}
+
+impl PromptReference {
+    fn check(label: impl Into<String>, path: PathBuf, kind: PromptReferenceKind) -> Self {
+        let present = match kind {
+            PromptReferenceKind::File => path.is_file(),
+            PromptReferenceKind::Directory => path.is_dir(),
+        };
+        Self {
+            label: label.into(),
+            path,
+            kind,
+            present,
+        }
+    }
+}
+
 fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
     let mut blockers = Vec::new();
     let mut notes = Vec::new();
@@ -411,35 +761,44 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
         match load_closure_state(&context.campaign_id) {
             Ok(closure) => {
                 if closure.eval.status != ClosureClass::Complete {
+                    let prompt_preflight = prompt_preflight(context, false)?;
+                    extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
                     return Ok(Diagnosis {
                         context: context.clone(),
                         phase: DiagnosedPhase::BaselineEval,
                         current_child: None,
                         blockers,
                         notes,
+                        prompt_preflight,
                         child_plan: None,
                         child_snapshots: Vec::new(),
                     });
                 }
                 if closure.protocol.status != ClosureClass::Complete {
+                    let prompt_preflight = prompt_preflight(context, false)?;
+                    extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
                     return Ok(Diagnosis {
                         context: context.clone(),
                         phase: DiagnosedPhase::BaselineProtocol,
                         current_child: None,
                         blockers,
                         notes,
+                        prompt_preflight,
                         child_plan: None,
                         child_snapshots: Vec::new(),
                     });
                 }
             }
             Err(_) => {
+                let prompt_preflight = prompt_preflight(context, false)?;
+                extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
                 return Ok(Diagnosis {
                     context: context.clone(),
                     phase: DiagnosedPhase::BaselineEval,
                     current_child: None,
                     blockers,
                     notes,
+                    prompt_preflight,
                     child_plan: None,
                     child_snapshots: Vec::new(),
                 });
@@ -458,6 +817,8 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
         }
     }
 
+    let prompt_preflight = prompt_preflight(context, true)?;
+    extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
     let child_plan = load_child_plan(context, &mut blockers)?;
     let child_snapshots = if let Some(plan) = child_plan.as_ref() {
         load_child_snapshots(context, plan, &mut blockers)?
@@ -473,6 +834,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
             current_child: None,
             blockers,
             notes,
+            prompt_preflight,
             child_plan,
             child_snapshots,
         });
@@ -485,6 +847,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
             current_child: None,
             blockers,
             notes,
+            prompt_preflight,
             child_plan,
             child_snapshots,
         });
@@ -512,6 +875,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
             }),
             blockers,
             notes,
+            prompt_preflight,
             child_plan,
             child_snapshots,
         });
@@ -538,6 +902,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
         current_child: None,
         blockers,
         notes,
+        prompt_preflight,
         child_plan,
         child_snapshots,
     })
@@ -1427,6 +1792,78 @@ mod tests {
             },
             profile,
         }
+    }
+
+    fn write_protected_core(repo: &Path) {
+        let path = repo.join("crates/ploke-eval/src/cli/prototype1_state/backend.rs");
+        fs::create_dir_all(path.parent().expect("backend parent")).expect("create backend parent");
+        fs::write(path, "pub const EVAL_CORE_SURFACE_ROOT: &[&str] = &[];\n")
+            .expect("write backend");
+    }
+
+    #[test]
+    fn prompt_preflight_accepts_existing_prompt_references() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        write_protected_core(&repo);
+        let prototype = temp.path().join("campaign/prototype1");
+        fs::create_dir_all(prototype.join("evaluations")).expect("create evals");
+        fs::create_dir_all(prototype.join("nodes")).expect("create nodes");
+        let request = BroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            repo.clone(),
+            &prototype,
+            &prototype.join("messages/edit-harness-result/node-parent.json"),
+        );
+
+        let preflight = PromptPreflight::from_parts(
+            prompt_refs_from_request(&request, &repo, true, true),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(preflight.outcome, PromptPreflightOutcome::Passed);
+        assert!(preflight.checked.iter().all(|reference| reference.present));
+    }
+
+    #[test]
+    fn prompt_preflight_fails_missing_prompt_reference() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        write_protected_core(&repo);
+        let prototype = temp.path().join("campaign/prototype1");
+        fs::create_dir_all(prototype.join("evaluations")).expect("create evals");
+        let request = BroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            repo.clone(),
+            &prototype,
+            &prototype.join("messages/edit-harness-result/node-parent.json"),
+        );
+
+        let preflight = PromptPreflight::from_parts(
+            prompt_refs_from_request(&request, &repo, true, true),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(preflight.outcome, PromptPreflightOutcome::Failed);
+        assert!(preflight.checked.iter().any(|reference| {
+            !reference.present && reference.path.ends_with("prototype1/nodes")
+        }));
     }
 
     #[test]
