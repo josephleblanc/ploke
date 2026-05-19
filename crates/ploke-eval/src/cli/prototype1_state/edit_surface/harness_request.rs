@@ -1160,7 +1160,7 @@ impl BroadHarnessRequest {
     pub(crate) fn render_prompt(&self) -> String {
         let mut prompt = String::new();
         prompt.push_str(&format!(
-            "Modify any part of the codebase at `{}` to improve performance on the `{}` benchmark.\n\n",
+            "Modify the candidate checkout at `{}` to improve performance on the `{}` benchmark. Edits must stay outside the protected core.\n\n",
             self.workspace.display_candidate_workspace(),
             self.evaluation.scope.benchmark_name()
         ));
@@ -1183,7 +1183,7 @@ impl BroadHarnessRequest {
             ));
         }
         prompt.push_str(
-            "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. You may edit any file outside the protected core. Protocol diagnoses are guidance, not hard edit targets.\n",
+            "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. Stage the change in the candidate checkout outside the protected core. Protocol diagnoses are guidance, not hard edit targets.\n",
         );
         prompt
     }
@@ -1479,7 +1479,7 @@ mod tests {
         let prompt = published.request().render_prompt();
 
         let opening = format!(
-            "Modify any part of the codebase at `{}` to improve performance on the `Prototype 1 descendant performance` benchmark.",
+            "Modify the candidate checkout at `{}` to improve performance on the `Prototype 1 descendant performance` benchmark. Edits must stay outside the protected core.",
             fixture
                 .prototype_root
                 .join("workspaces/edit-harness/parent-node-7")
@@ -1496,7 +1496,11 @@ mod tests {
         assert!(prompt.contains(
             "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`."
         ));
-        assert!(prompt.contains("You may edit any file outside the protected core"));
+        assert!(
+            prompt
+                .contains("Stage the change in the candidate checkout outside the protected core")
+        );
+        assert!(!prompt.contains("Modify any part of the codebase"));
         assert!(prompt.contains("Protocol diagnoses are guidance, not hard edit targets"));
         assert!(!prompt.contains("## Latest Evidence Digest"));
         assert!(!prompt.contains("## Validation Contract"));
