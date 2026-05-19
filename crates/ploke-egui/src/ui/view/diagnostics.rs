@@ -318,6 +318,7 @@ mod tests {
 
     use super::*;
     use crate::ui::view::GraphSelectionRef;
+    use crate::ui::view::effects::{EdgeVisualEffect, NodeVisualEffect};
     use crate::ui::view::projection::{EdgePattern, GraphLayerMask, GraphNode};
 
     #[test]
@@ -440,6 +441,7 @@ mod tests {
                 key: label.to_owned(),
             },
             color: Color32::WHITE,
+            effect: NodeVisualEffect::None,
             layers: GraphLayerMask::ARTIFACT,
             filter_visible: true,
             visible: true,
@@ -459,6 +461,7 @@ mod tests {
             style: style.edge,
             kind,
             pattern: EdgePattern::Solid,
+            effect: EdgeVisualEffect::None,
             layers: GraphLayerMask::ARTIFACT,
             filter_visible: true,
             visible: true,

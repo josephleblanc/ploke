@@ -7,6 +7,7 @@ use eframe::egui::{
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
 
+use super::effects::{self, EdgeVisualEffect};
 use super::geometry::{
     cubic_point, curve_points, distance_to_curve, endpoint_direction, self_loop_points,
 };
@@ -21,6 +22,7 @@ pub(super) struct GraphEdgeShape {
     color: Color32,
     selected: bool,
     visible: bool,
+    effect: EdgeVisualEffect,
     pattern: EdgePattern,
     style: EdgeStyle,
     curve: Cell<Option<EdgeCurve>>,
@@ -36,6 +38,7 @@ impl From<egui_graphs::EdgeProps<GraphEdgePayload>> for GraphEdgeShape {
             color: edge.payload.color,
             selected: edge.selected,
             visible,
+            effect: edge.payload.effect,
             pattern: edge.payload.pattern,
             style: edge.payload.style,
             curve: Cell::new(None),
@@ -165,7 +168,15 @@ where
         } else {
             self.style.normal_width
         };
-        let mut shapes = Vec::with_capacity(1);
+        let effect = self.effect.with_interaction(self.selected);
+        if effect.needs_repaint() {
+            ctx.ctx
+                .request_repaint_after(effects::EFFECT_REPAINT_INTERVAL);
+        }
+
+        let time = ctx.ctx.input(|input| input.time);
+        let mut shapes =
+            effects::edge_backdrop_shapes(screen_curve, color, stroke_width, effect, time);
         match self.pattern {
             EdgePattern::Solid => {
                 shapes.push(
@@ -230,6 +241,7 @@ where
         self.color = state.payload.color;
         self.selected = state.selected;
         self.visible = state.payload.visible();
+        self.effect = state.payload.effect;
         self.pattern = state.payload.pattern;
         self.style = state.payload.style;
     }

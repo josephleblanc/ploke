@@ -3,6 +3,7 @@
 pub mod artifact_tree;
 mod diagnostics;
 mod edge;
+mod effects;
 mod geometry;
 mod label;
 mod layout;

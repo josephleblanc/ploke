@@ -19,6 +19,7 @@ use ploke_tree::graph::{
 use super::artifact_tree;
 use super::diagnostics::{graph_diagnostics, readability_diagnostics};
 use super::edge::GraphEdgeShape;
+use super::effects::{EdgeVisualEffect, NodeVisualEffect};
 use super::node::GraphNodeShape;
 use super::style::{EdgeStyle, ViewStyle};
 use super::{
@@ -802,6 +803,9 @@ pub(super) enum GraphNode {
         detail: Arc<str>,
         reference: GraphSelectionRef,
         color: Color32,
+        /// archaeology:artifact-lineage-highlight
+        /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
+        effect: NodeVisualEffect,
         layers: GraphLayerMask,
         filter_visible: bool,
         visible: bool,
@@ -836,6 +840,21 @@ impl GraphNode {
     fn color(&self) -> Color32 {
         match self {
             Self::Artifact { color, .. } => *color,
+        }
+    }
+
+    pub(super) fn effect(&self) -> NodeVisualEffect {
+        match self {
+            Self::Artifact { effect, .. } => *effect,
+        }
+    }
+
+    fn set_effect(&mut self, effect: NodeVisualEffect) {
+        match self {
+            Self::Artifact {
+                effect: node_effect,
+                ..
+            } => *node_effect = node_effect.merge(effect),
         }
     }
 
@@ -880,6 +899,9 @@ pub(super) struct GraphEdgePayload {
     pub(super) style: EdgeStyle,
     pub(super) kind: ViewEdgeKind,
     pub(super) pattern: EdgePattern,
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
+    pub(super) effect: EdgeVisualEffect,
     pub(super) layers: GraphLayerMask,
     pub(super) filter_visible: bool,
     pub(super) visible: bool,
@@ -925,6 +947,8 @@ pub(super) struct ProjectedGraph {
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-relations.md
 /// archaeology:artifact-child-consideration
 /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
+/// archaeology:artifact-lineage-highlight
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
 fn project_artifact_tree(
     graph: &DomainGraph,
     style: ViewStyle,
@@ -978,10 +1002,12 @@ fn project_artifact_tree(
         );
         if selected_ruler == Some(tree_node.key) {
             set_artifact_tree_node_color(&mut raw, node, style.edge.colors.selected);
+            set_artifact_tree_node_effect(&mut raw, node, NodeVisualEffect::Pulse);
             ruler_highlights.insert(node);
         }
         if lineage_refs.contains(&tree_node.key) {
             raw[node].add_layer(GraphLayerMask::LINEAGE);
+            set_artifact_tree_node_effect(&mut raw, node, NodeVisualEffect::Glow);
         }
         artifact_lookup.entry(tree_node.key).or_insert(node);
     }
@@ -1010,6 +1036,11 @@ fn project_artifact_tree(
         } else {
             GraphLayerMask::ARTIFACT
         };
+        let effect = if lineage_edges.contains(&(edge.from, edge.to)) {
+            EdgeVisualEffect::Glow
+        } else {
+            EdgeVisualEffect::None
+        };
         if add_unique_edge_with_layers(
             &mut raw,
             parent,
@@ -1018,6 +1049,7 @@ fn project_artifact_tree(
             true,
             ViewEdgeKind::ArtifactPatch,
             EdgePattern::Solid,
+            effect,
             style,
             layers,
             true,
@@ -1068,6 +1100,7 @@ fn project_artifact_tree(
             } else {
                 EdgePattern::Solid
             },
+            EdgeVisualEffect::None,
             style,
             GraphLayerMask::ARTIFACT,
             !filters.hide_unconsidered_children || !dotted,
@@ -1370,6 +1403,7 @@ fn add_artifact_tree_node<'a>(
             key: key.as_str().to_owned(),
         },
         color,
+        effect: NodeVisualEffect::None,
         layers: GraphLayerMask::ARTIFACT,
         filter_visible,
         visible: true,
@@ -1388,6 +1422,15 @@ fn set_artifact_tree_node_color(raw: &mut RawGraph, node: NodeIndex, color: Colo
     }
 }
 
+/// archaeology:artifact-lineage-highlight
+/// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
+#[allow(irrefutable_let_patterns)]
+fn set_artifact_tree_node_effect(raw: &mut RawGraph, node: NodeIndex, effect: NodeVisualEffect) {
+    if let GraphNode::Artifact { .. } = &mut raw[node] {
+        raw[node].set_effect(effect);
+    }
+}
+
 fn add_unique_edge_with_layers(
     raw: &mut RawGraph,
     source: NodeIndex,
@@ -1396,6 +1439,7 @@ fn add_unique_edge_with_layers(
     label_visible: bool,
     kind: ViewEdgeKind,
     pattern: EdgePattern,
+    effect: EdgeVisualEffect,
     style: ViewStyle,
     layers: GraphLayerMask,
     filter_visible: bool,
@@ -1411,6 +1455,7 @@ fn add_unique_edge_with_layers(
             if payload.pattern != EdgePattern::Dotted {
                 payload.pattern = pattern;
             }
+            payload.effect = payload.effect.merge(effect);
         }
         return false;
     }
@@ -1422,6 +1467,7 @@ fn add_unique_edge_with_layers(
         label_visible,
         kind,
         pattern,
+        effect,
         style,
         layers,
         filter_visible,
@@ -1452,6 +1498,7 @@ fn add_edge_with_layers(
     label_visible: bool,
     kind: ViewEdgeKind,
     pattern: EdgePattern,
+    effect: EdgeVisualEffect,
     style: ViewStyle,
     layers: GraphLayerMask,
     filter_visible: bool,
@@ -1466,6 +1513,7 @@ fn add_edge_with_layers(
             style: style.edge,
             kind,
             pattern,
+            effect,
             layers,
             filter_visible,
             visible: true,
@@ -1555,6 +1603,7 @@ mod tests {
     use ploke_tree::graph::{CandidateBranchNode, CandidateSource};
     use ploke_tree::{PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal};
 
+    use super::super::effects::{EdgeVisualEffect, NodeVisualEffect};
     use super::{EdgePattern, GraphNode, GraphViewCache, project_artifact_tree};
     use crate::ui::view::{ArtifactTreeFilters, GraphViewMode, ViewStyle};
 
@@ -1843,6 +1892,16 @@ mod tests {
             node_color(&projected.raw[child]),
             Some(style.edge.colors.selected)
         );
+        assert_eq!(node_effect(&projected.raw[parent]), NodeVisualEffect::Glow);
+        assert_eq!(node_effect(&projected.raw[child]), NodeVisualEffect::Pulse);
+        assert_eq!(
+            projected
+                .raw
+                .edges_connecting(parent, child)
+                .next()
+                .map(|edge| edge.weight().effect),
+            Some(EdgeVisualEffect::Glow)
+        );
     }
 
     #[test]
@@ -2046,6 +2105,12 @@ mod tests {
     fn node_color(node: &GraphNode) -> Option<eframe::egui::Color32> {
         match node {
             GraphNode::Artifact { color, .. } => Some(*color),
+        }
+    }
+
+    fn node_effect(node: &GraphNode) -> NodeVisualEffect {
+        match node {
+            GraphNode::Artifact { effect, .. } => *effect,
         }
     }
 

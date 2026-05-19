@@ -165,7 +165,15 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if let Some(sections) = sections {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 8,
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                if let Some(sections) = sections {
                             match section {
                                 shell::InspectorPanelSection::Identity => {
                                     shell::render_identity(
@@ -223,6 +231,15 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                                         self.patch_diff_cache,
                                     );
                                 }
+                                shell::InspectorPanelSection::PatchDebug => {
+                                    shell::render_patches_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                        self.patch_diff_cache,
+                                    );
+                                }
                                 shell::InspectorPanelSection::SourceRefs => {
                                     shell::render_source_refs_for_inspector(
                                         ui,
@@ -233,6 +250,40 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                                 }
                                 shell::InspectorPanelSection::ArtifactIds => {
                                     shell::render_artifact_ids_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                shell::InspectorPanelSection::Technical => {
+                                    ui.label(egui::RichText::new("Run Records").strong());
+                                    shell::render_run_records_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Graph edges").strong());
+                                    shell::render_graph_edges_for_inspector(
+                                        ui,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Artifact edges").strong());
+                                    shell::render_artifact_edges_for_inspector(
+                                        ui,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Source refs").strong());
+                                    shell::render_source_refs_for_inspector(
                                         ui,
                                         self.graph,
                                         sections,
@@ -263,6 +314,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         } else {
                             ui.label("No data available.");
                         }
+                    });
                     });
             }
             Pane::ArtifactDistribution => {

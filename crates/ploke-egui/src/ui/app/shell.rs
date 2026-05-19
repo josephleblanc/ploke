@@ -3,6 +3,7 @@
 use eframe::egui;
 use std::collections::BTreeMap;
 
+use crate::ui::app::layout::INSPECTOR_MARGIN_INNER;
 use crate::ui::id_display;
 use crate::ui::id_display::{InteractiveId, ShortId, TraceId};
 use crate::ui::inspector::{
@@ -459,6 +460,8 @@ pub enum InspectorPanelSection {
     Patches,
     SourceRefs,
     ArtifactIds,
+    Technical,
+    PatchDebug,
 }
 
 impl InspectorPanelSection {
@@ -474,6 +477,8 @@ impl InspectorPanelSection {
             Self::Patches => "Patches",
             Self::SourceRefs => "Source Refs",
             Self::ArtifactIds => "Artifact IDs",
+            Self::Technical => "Technical",
+            Self::PatchDebug => "Patch Debug",
         }
     }
     #[cfg(all(
@@ -484,11 +489,11 @@ impl InspectorPanelSection {
     fn from_benchmark(section: crate::benchmark::BenchmarkInspectorSection) -> Self {
         match section {
             crate::benchmark::BenchmarkInspectorSection::LlmCalls => Self::LlmCalls,
-            crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::RunRecords,
-            crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::GraphEdges,
-            crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::ArtifactEdges,
+            crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::Technical,
+            crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::Technical,
+            crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::Technical,
             crate::benchmark::BenchmarkInspectorSection::PatchDebug => Self::PatchDebug,
-            crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::SourceRefs,
+            crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::Technical,
             crate::benchmark::BenchmarkInspectorSection::ArtifactIds => Self::ArtifactIds,
         }
     }
@@ -617,188 +622,172 @@ pub(crate) fn render_right_inspector(
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.heading("Inspector");
-                ui.separator();
+                egui::Frame::new()
+                    .inner_margin(INSPECTOR_MARGIN_INNER)
+                    .show(ui, |ui| {
+                        ui.heading("Inspector");
+                        ui.separator();
 
-                ui.label("Summary");
-                if let (Some(kind), Some(label)) = (selection_kind, selection_label) {
-                    cached_kv_id(ui, render_cache, "kind", kind);
-                    cached_kv_id(ui, render_cache, "label", label);
-                } else {
-                    kv(ui, "selection", "not_applicable");
-                }
-
-                ui.separator();
-                show_inspector_section_header(
-                    ui,
-                    "Identity",
-                    InspectorPanelSection::Identity,
-                    selection_ref,
-                    &mut actions,
-                );
-                if let Some(sections) = sections {
-                    render_identity(ui, graph, sections, render_cache);
-                } else {
-                    kv(ui, "record refs", "not_applicable");
-                }
-
-                ui.separator();
-                show_inspector_section_header(
-                    ui,
-                    "Roles",
-                    InspectorPanelSection::Roles,
-                    selection_ref,
-                    &mut actions,
-                );
-                if let Some(sections) = sections {
-                    render_roles_and_metrics(ui, graph, sections, render_cache);
-                } else {
-                    kv(ui, "roles", "not_applicable");
-                }
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Agent Trace",
-                    InspectorPanelSection::LlmCalls,
-                    open_state.open(InspectorPanelSection::LlmCalls),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_parent_create_for_inspector(
-                                ui,
-                                graph,
-                                sections,
-                                render_cache,
-                                open_state,
-                            );
+                        ui.label("Summary");
+                        if let (Some(kind), Some(label)) = (selection_kind, selection_label) {
+                            cached_kv_id(ui, render_cache, "kind", kind);
+                            cached_kv_id(ui, render_cache, "label", label);
                         } else {
-                            kv(ui, "agent trace", "not_applicable");
+                            kv(ui, "selection", "not_applicable");
                         }
-                    },
-                );
 
-                show_inspector_section_collapsing(
-                    ui,
-                    "Patches",
-                    InspectorPanelSection::Patches,
-                    open_state.open(InspectorPanelSection::Patches),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
+                        ui.separator();
+                        show_inspector_section_header(
+                            ui,
+                            "Identity",
+                            InspectorPanelSection::Identity,
+                            selection_ref,
+                            &mut actions,
+                        );
                         if let Some(sections) = sections {
-                            render_patches_for_inspector(
-                                ui,
-                                graph,
-                                sections,
-                                render_cache,
-                                diff_cache,
-                            );
-                        } else {
-                            kv(ui, "patch", "not_applicable");
-                        }
-                    },
-                );
-
-                // ui.separator();
-                // show_inspector_section_header(
-                //     ui,
-                //     "Patch Generation",
-                //     InspectorPanelSection::PatchGeneration,
-                //     selection_ref,
-                //     &mut actions,
-                // );
-                // if let Some(sections) = sections {
-                //     render_parent_create_for_inspector(
-                //         ui,
-                //         graph,
-                //         sections,
-                //         render_cache,
-                //         open_state,
-                //     );
-                // } else {
-                //     kv(ui, "attempt", "not_applicable");
-                // }
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Run Records",
-                    InspectorPanelSection::RunRecords,
-                    open_state.open(InspectorPanelSection::RunRecords),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_run_records_for_inspector(ui, graph, sections, render_cache);
-                        } else {
-                            kv(ui, "run records", "not_applicable");
-                        }
-                    },
-                );
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Graph edges",
-                    InspectorPanelSection::GraphEdges,
-                    open_state.open(InspectorPanelSection::GraphEdges),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_graph_edges_for_inspector(ui, sections, render_cache);
-                        } else {
-                            kv(ui, "edges", "not_applicable");
-                        }
-                    },
-                );
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Artifact edges",
-                    InspectorPanelSection::ArtifactEdges,
-                    open_state.open(InspectorPanelSection::ArtifactEdges),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_artifact_edges_for_inspector(ui, sections, render_cache);
-                        } else {
-                            kv(ui, "artifact edges", "not_applicable");
-                        }
-                    },
-                );
-
-                show_inspector_section_collapsing(
-                    ui,
-                    "Source refs",
-                    InspectorPanelSection::SourceRefs,
-                    open_state.open(InspectorPanelSection::SourceRefs),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
-                        if let Some(sections) = sections {
-                            render_source_refs_for_inspector(ui, graph, sections, render_cache);
+                            render_identity(ui, graph, sections, render_cache);
                         } else {
                             kv(ui, "record refs", "not_applicable");
                         }
-                    },
-                );
 
-                show_inspector_section_collapsing(
-                    ui,
-                    "Artifact Ids",
-                    InspectorPanelSection::ArtifactIds,
-                    open_state.open(InspectorPanelSection::ArtifactIds),
-                    selection_ref,
-                    &mut actions,
-                    |ui| {
+                        ui.separator();
+                        show_inspector_section_header(
+                            ui,
+                            "Roles",
+                            InspectorPanelSection::Roles,
+                            selection_ref,
+                            &mut actions,
+                        );
                         if let Some(sections) = sections {
-                            render_artifact_ids_for_inspector(ui, graph, sections, render_cache);
+                            render_roles_and_metrics(ui, graph, sections, render_cache);
                         } else {
-                            kv(ui, "artifact ids", "not_applicable");
+                            kv(ui, "roles", "not_applicable");
                         }
-                    },
-                );
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Agent Trace",
+                            InspectorPanelSection::LlmCalls,
+                            open_state.open(InspectorPanelSection::LlmCalls),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    render_parent_create_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                        open_state,
+                                    );
+                                } else {
+                                    kv(ui, "agent trace", "not_applicable");
+                                }
+                            },
+                        );
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Patches",
+                            InspectorPanelSection::Patches,
+                            open_state.open(InspectorPanelSection::Patches),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    render_patches_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                        diff_cache,
+                                    );
+                                } else {
+                                    kv(ui, "patch", "not_applicable");
+                                }
+                            },
+                        );
+
+                        // ui.separator();
+                        // show_inspector_section_header(
+                        //     ui,
+                        //     "Patch Generation",
+                        //     InspectorPanelSection::PatchGeneration,
+                        //     selection_ref,
+                        //     &mut actions,
+                        // );
+                        // if let Some(sections) = sections {
+                        //     render_parent_create_for_inspector(
+                        //         ui,
+                        //         graph,
+                        //         sections,
+                        //         render_cache,
+                        //         open_state,
+                        //     );
+                        // } else {
+                        //     kv(ui, "attempt", "not_applicable");
+                        // }
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Technical",
+                            InspectorPanelSection::Technical,
+                            open_state.open(InspectorPanelSection::Technical),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    ui.label(egui::RichText::new("Run Records").strong());
+                                    render_run_records_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                    );
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Graph edges").strong());
+                                    render_graph_edges_for_inspector(ui, sections, render_cache);
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Artifact edges").strong());
+                                    render_artifact_edges_for_inspector(ui, sections, render_cache);
+
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Source refs").strong());
+                                    render_source_refs_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                    );
+                                } else {
+                                    kv(ui, "technical", "not_applicable");
+                                }
+                            },
+                        );
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Artifact Ids",
+                            InspectorPanelSection::ArtifactIds,
+                            open_state.open(InspectorPanelSection::ArtifactIds),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    render_artifact_ids_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                    );
+                                } else {
+                                    kv(ui, "artifact ids", "not_applicable");
+                                }
+                            },
+                        );
+                    });
             });
     }
 }

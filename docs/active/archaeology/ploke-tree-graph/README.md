@@ -14,6 +14,9 @@ projection-only labels.
 - [`artifact-child-consideration.md`](artifact-child-consideration.md)
   Mark/filter semantics for produced child Artifacts that never entered the
   current-generation selection process.
+- [`artifact-lineage-highlight.md`](artifact-lineage-highlight.md)
+  Primary History lineage and current-ruler highlight marks for the default
+  artifact canvas.
 - [`artifact-promotion-continuity.md`](artifact-promotion-continuity.md)
   Default artifact-tree identity quotient for selected child -> next parent
   continuity, keeping one displayed Artifact node when graph-owned child-plan
