@@ -10,6 +10,12 @@
 - Requirement: when running `cargo test`, bound the default output to the useful tail or a targeted error filter, such as `cargo test -p <crate> <test-filter> -- <test-args> 2>&1 | tail -n 20`, `cargo test -p <crate> ... 2>&1 | rg 'E[0-9]+'`, or `cargo test -p <crate> ... 2>&1 | rg '<regex>'`.
 - Use fuller `cargo test` output only when the bounded output is insufficient to diagnose the failure, and make that expansion explicit.
 
+## Secret Handling
+
+- Requirement: never print, paste, log, or expose raw secret values. This includes API keys, bearer tokens, passwords, credentials, private auth headers, session tokens, and environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `BEARER`, or `CREDENTIAL`.
+- Requirement: do not run broad environment or config dumps such as `env`, `printenv`, `set`, or unredacted config/log inspection when diagnosing credentials. Use explicit masked probes that report only presence, variable name, length, source path, or a short non-reversible fingerprint.
+- Requirement: before displaying request logs, response logs, headers, or environment-derived diagnostics, pass the output through a redaction filter or inspect only named non-secret fields. If raw secret material appears in tool output, do not repeat it in the final answer.
+
 ## Verification Surface Honesty
 
 - Requirement: when reporting whether a feature was tested, name the exact verified surface in the first sentence. Valid surfaces include `CLI snapshot/export`, `focused egui renderer test`, `native interactive window`, `real-run import`, or `not tested`.

@@ -2971,7 +2971,18 @@ fn render_tool_call_arguments(
 ) {
     match arguments {
         ToolCallArguments::RequestCodeContext(args) => {
-            render_optional_u32(ui, render_cache, "token budget", args.token_budget);
+            render_optional_u32(
+                ui,
+                render_cache,
+                "token budget per result",
+                args.token_budget_per_result,
+            );
+            render_optional_u32(
+                ui,
+                render_cache,
+                "token budget total",
+                args.token_budget_total,
+            );
             render_optional_str(ui, render_cache, "search term", args.search_term.as_deref());
         }
         ToolCallArguments::ApplyCodeEdit(args) => {

@@ -15,6 +15,10 @@ track whether skills, repo guidance, and memory actually reduce repeats.
 - [`model-communication-failures/`](model-communication-failures/README.md)
   Incidents where the agent buried a practical recommendation under mixed
   architecture models, formal vocabulary, or decision scaffolding.
+- [`secret-handling-failures/`](secret-handling-failures/README.md)
+  Incidents where the agent exposed, copied, logged, or risked exposing API
+  keys, bearer tokens, private credentials, or secret-bearing environment
+  output.
 - [`semantic-naming-failures/`](semantic-naming-failures/README.md)
   Incidents where the agent reused or invented names that collapsed distinct
   domain concepts and made later graph, record, or UI work ambiguous.

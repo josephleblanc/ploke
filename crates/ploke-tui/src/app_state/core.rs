@@ -600,6 +600,7 @@ pub struct SystemStatus {
     pub(crate) pwd: PathBuf,
     pub(crate) extra_read_roots: Vec<PathBuf>,
     pub(crate) write_scope: Option<WriteScope>,
+    pub(crate) write_denials: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -744,6 +745,7 @@ impl SystemStatus {
 
     pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
         self.write_scope = scope;
+        self.write_denials.clear();
     }
 
     /// Registers a crate root into loaded state. If the root is already a member
@@ -958,6 +960,10 @@ impl SystemStatus {
         let (primary_root, policy) = self.tool_path_context()?;
         Some((primary_root, policy, self.write_scope.clone()))
     }
+
+    pub fn note_write_denial(&mut self, key: String) -> bool {
+        !self.write_denials.insert(key)
+    }
 }
 
 /// Effects that must be dispatched after a transaction commits (lock released).
@@ -1166,6 +1172,10 @@ impl<'a> SystemTxn<'a> {
 
     pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
         self.state.set_write_scope(scope);
+    }
+
+    pub fn note_write_denial(&mut self, key: String) -> bool {
+        self.state.note_write_denial(key)
     }
 
     /// Derive the path policy from the current workspace state.

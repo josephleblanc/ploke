@@ -12,7 +12,7 @@ use crate::{
 };
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -257,6 +257,12 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
         args = %args,
         "tool_call_request"
     );
+    preflight_write_paths(name, &args, &ctx)
+        .await
+        .map_err(|err| {
+            emit_tool_error(&ctx, err.clone());
+            eyre!(err.format_for_audience(Audience::System))
+        })?;
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
             let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
@@ -538,6 +544,188 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
     }
+}
+
+const WRITE_POLICY_RETRY_HINT: &str = "Choose a workspace source file that is inside the writable surface. Do not edit protected manifests/configs such as Cargo.toml or .cargo/config.toml; if a dependency or config change is needed, explain it instead of retrying the same path.";
+const WRITE_POLICY_REPEAT_HINT: &str = "This exact write target was already denied in this run. Do not retry it; choose an allowed Rust/source file or finish with an explanation.";
+
+async fn preflight_write_paths(
+    tool_name: ToolName,
+    args: &str,
+    ctx: &Ctx,
+) -> Result<(), ToolError> {
+    let Some(paths) = write_paths_from_args(tool_name, args) else {
+        return Ok(());
+    };
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let Some((primary_root, policy, scope)) = ctx
+        .state
+        .with_system_read(|sys| sys.write_path_context())
+        .await
+    else {
+        return Err(ToolError::new(
+            tool_name,
+            ToolErrorCode::InvalidFormat,
+            "No workspace is loaded for write-tool path preflight",
+        )
+        .field(write_path_field(tool_name))
+        .retry_hint("Load a workspace before using edit tools.")
+        .retry_context(ToolRetryContext::new().field("input_paths", paths)));
+    };
+
+    let mut denied = Vec::new();
+    for input in paths {
+        let requested = PathBuf::from(&input);
+        match path_scoping::resolve_write_path(
+            requested.as_path(),
+            &primary_root,
+            &policy,
+            scope.as_ref(),
+        ) {
+            Ok(_) => {}
+            Err(reason) => denied.push((input, reason)),
+        }
+    }
+    if denied.is_empty() {
+        return Ok(());
+    }
+
+    let key = write_denial_key(tool_name, &denied);
+    let repeated = ctx
+        .state
+        .with_system_txn(|txn| txn.note_write_denial(key))
+        .await
+        .result;
+
+    Err(write_policy_error(
+        tool_name,
+        &primary_root,
+        &denied,
+        repeated,
+    ))
+}
+
+fn write_paths_from_args(tool_name: ToolName, args: &str) -> Option<Vec<String>> {
+    match tool_name {
+        ToolName::ApplyCodeEdit => {
+            code_edit::GatCodeEdit::deserialize_params(args)
+                .ok()
+                .map(|params| {
+                    params
+                        .edits
+                        .iter()
+                        .map(|edit| edit.file.clone().into_owned())
+                        .collect()
+                })
+        }
+        ToolName::InsertRustItem => insert_rust_item::InsertRustItem::deserialize_params(args)
+            .ok()
+            .map(|params| vec![params.file.into_owned()]),
+        ToolName::CreateFile => create_file::CreateFile::deserialize_params(args)
+            .ok()
+            .map(|params| vec![params.file_path.into_owned()]),
+        ToolName::NsPatch => ns_patch::NsPatch::deserialize_params(args)
+            .ok()
+            .map(|params| {
+                params
+                    .patches
+                    .iter()
+                    .map(|patch| patch.file.clone().into_owned())
+                    .collect()
+            }),
+        _ => None,
+    }
+}
+
+fn write_policy_error(
+    tool_name: ToolName,
+    primary_root: &Path,
+    denied: &[(String, String)],
+    repeated: bool,
+) -> ToolError {
+    let paths = denied
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let reasons = denied
+        .iter()
+        .map(|(_, reason)| reason.clone())
+        .collect::<Vec<_>>();
+    let mut unique_reasons = BTreeSet::new();
+    unique_reasons.extend(reasons.iter().cloned());
+    let reason_text = unique_reasons.into_iter().join("; ");
+    let path_text = paths.iter().join(", ");
+    let message = if repeated {
+        format!(
+            "Repeated protected or out-of-scope write path denied before execution: {path_text}"
+        )
+    } else {
+        format!(
+            "Write path denied before executing `{}`: {path_text}. Reason: {reason_text}",
+            tool_name.as_str()
+        )
+    };
+
+    ToolError::new(tool_name, ToolErrorCode::InvalidFormat, message)
+        .field(write_path_field(tool_name))
+        .expected("workspace-root-relative path inside the writable surface")
+        .received(path_text)
+        .retry_hint(if repeated {
+            WRITE_POLICY_REPEAT_HINT
+        } else {
+            WRITE_POLICY_RETRY_HINT
+        })
+        .retry_context(
+            ToolRetryContext::new()
+                .field("input_paths", paths)
+                .field("reasons", reasons)
+                .field("workspace_root", primary_root.display().to_string())
+                .field("repeated", repeated)
+                .field(
+                    "allowed_alternatives",
+                    vec![
+                        "edit a Rust/source file inside the writable surface",
+                        "avoid Cargo.toml and .cargo/config.toml",
+                        "state required manifest/config changes in prose",
+                    ],
+                ),
+        )
+}
+
+fn write_denial_key(tool_name: ToolName, denied: &[(String, String)]) -> String {
+    let mut parts = denied
+        .iter()
+        .map(|(path, reason)| format!("{path}\u{1f}{reason}"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    format!("{}:{}", tool_name.as_str(), parts.join("\u{1e}"))
+}
+
+fn write_path_field(tool_name: ToolName) -> &'static str {
+    match tool_name {
+        ToolName::CreateFile => "file_path",
+        ToolName::NsPatch => "patches.file",
+        ToolName::ApplyCodeEdit => "edits.file",
+        ToolName::InsertRustItem => "file",
+        _ => "path",
+    }
+}
+
+fn emit_tool_error(ctx: &Ctx, error: ToolError) {
+    let ui_payload = Some(ToolUiPayload::from_error(ctx.call_id.clone(), &error));
+    let _ = ctx
+        .event_bus
+        .realtime_tx
+        .send(crate::AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id: ctx.request_id,
+            parent_id: ctx.parent_id,
+            call_id: ctx.call_id.clone(),
+            error: error.to_wire_string(),
+            ui_payload,
+        }));
 }
 
 const TOOL_ARG_SUFFIXES: [&str; 1] = ["<|tool_call_end|>"];

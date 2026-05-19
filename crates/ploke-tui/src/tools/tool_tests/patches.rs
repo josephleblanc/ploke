@@ -24,6 +24,7 @@ use crate::app_state::events::SystemEvent;
 use crate::rag::editing::{
     rescan_for_changes_calls_for_test, reset_rescan_for_changes_calls_for_test,
 };
+use crate::utils::path_scoping::WriteScope;
 use crate::{AppEvent, EventPriority, emit_app_event};
 
 const FIRST_SAME_FILE_DIFF: &str = r#"--- a/notes.txt
@@ -302,6 +303,117 @@ async fn ns_patch_malformed_diff_emits_one_failure_and_stages_zero_proposals() {
     assert!(
         proposals.is_empty(),
         "malformed diff must be rejected before staging"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_protected_path_preflight_rejects_repeat_before_staging() {
+    let _guard = ns_patch_event_test_lock().lock().await;
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db);
+    let state = rt.state_arc();
+    let tmp = tempdir().expect("temp workspace");
+    configure_temp_workspace(&state, tmp.path()).await;
+    state
+        .with_system_txn(|txn| {
+            txn.set_write_scope(Some(
+                WriteScope::new()
+                    .deny_filenames(["Cargo.toml".to_string()])
+                    .deny_prefixes([PathBuf::from(".cargo")]),
+            ));
+        })
+        .await;
+
+    let event_bus = Arc::new(crate::EventBus::new(crate::EventBusCaps::default()));
+    let mut realtime_rx = event_bus.subscribe(EventPriority::Realtime);
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let diff = r#"--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,2 +1,2 @@
+-[package]
++[workspace]
+ name = "fixture"
+"#;
+
+    for call_id in ["protected-manifest-1", "protected-manifest-2"] {
+        let call = ns_patch_tool_call(call_id, "Cargo.toml", diff, "Try a manifest edit");
+        let ctx = crate::tools::Ctx {
+            state: Arc::clone(&state),
+            event_bus: Arc::clone(&event_bus),
+            request_id,
+            parent_id,
+            call_id: call.call_id.clone(),
+        };
+        let _ = crate::tools::process_tool(call, ctx)
+            .await
+            .expect_err("protected path preflight should reject");
+    }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let mut failures = Vec::new();
+    let mut completed_count = 0usize;
+    while let Ok(event) = realtime_rx.try_recv() {
+        match event {
+            AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                error,
+                ..
+            }) if event_request_id == request_id => failures.push(error),
+            AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                ..
+            }) if event_request_id == request_id => completed_count += 1,
+            _ => {}
+        }
+    }
+
+    assert_eq!(failures.len(), 2, "both attempts should fail preflight");
+    assert_eq!(
+        completed_count, 0,
+        "protected preflight must not emit completed events"
+    );
+    assert!(
+        state.proposals.read().await.is_empty(),
+        "protected preflight must not stage proposals"
+    );
+
+    let first = crate::tools::ToolErrorWire::parse(&failures[0])
+        .expect("first protected failure should be structured");
+    let second = crate::tools::ToolErrorWire::parse(&failures[1])
+        .expect("second protected failure should be structured");
+    assert_eq!(first.llm.code, crate::tools::ToolErrorCode::InvalidFormat);
+    assert!(
+        first
+            .llm
+            .retry_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("protected manifests/configs")),
+        "first failure should include the full policy guidance"
+    );
+    assert_eq!(
+        first.llm["retry_context"]
+            .as_object()
+            .and_then(|ctx| ctx.get("repeated"))
+            .is_some_and(|value| matches!(value, crate::tools::ToolLlmErrorValue::Bool(false))),
+        true
+    );
+    assert_eq!(
+        second.llm["retry_context"]
+            .as_object()
+            .and_then(|ctx| ctx.get("repeated"))
+            .is_some_and(|value| matches!(value, crate::tools::ToolLlmErrorValue::Bool(true))),
+        true,
+        "second identical protected write should be marked as a repeat"
+    );
+    assert!(
+        second
+            .llm
+            .retry_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("already denied")),
+        "repeat failure should tell the model not to retry the same target"
     );
 }
 
