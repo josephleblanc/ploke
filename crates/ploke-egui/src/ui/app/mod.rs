@@ -33,6 +33,7 @@ use crate::import::graph_from_run_root;
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
+use crate::ui::charts;
 use crate::ui::diff::PatchDiffCache;
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -51,6 +52,7 @@ pub struct OperatorApp {
     inspector_cache: InspectorCache,
     inspector_render_cache: shell::InspectorRenderCache,
     patch_diff_cache: PatchDiffCache,
+    windows: AppWindows,
     #[cfg(not(target_arch = "wasm32"))]
     run_picker: RunPicker,
     #[cfg(not(target_arch = "wasm32"))]
@@ -83,6 +85,11 @@ pub struct OperatorApp {
     benchmark_inspector_exclusive: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AppWindows {
+    show_bar: bool,
+}
+
 impl OperatorApp {
     pub fn new(graph: Graph) -> Self {
         Self {
@@ -92,6 +99,7 @@ impl OperatorApp {
             inspector_cache: InspectorCache::default(),
             inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
+            windows: AppWindows::default(),
             #[cfg(not(target_arch = "wasm32"))]
             run_picker: RunPicker::from_default_root(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -159,6 +167,7 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_exclusive: false,
+            windows: AppWindows::default(),
         }
     }
 
@@ -221,6 +230,15 @@ impl OperatorApp {
                 self.render_run_picker(ui);
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
+
+                // -- display different kinds of charts
+                ui.separator();
+                ui.label("Charts");
+                // example chart
+                ui.checkbox(&mut self.windows.show_bar, "Example Bar Chart");
+                // more here
+
+                ui.separator();
                 render_graph_facts(ui, &self.graph);
                 if let Some(diagnostics) = self.view.diagnostics() {
                     ui.separator();
@@ -421,15 +439,15 @@ impl eframe::App for OperatorApp {
             let _span = tracing::trace_span!("egui_panel_central_layout").entered();
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.central");
-                if graph_has_content {
-                    self.view.show(ui, &self.graph);
-                } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.label(
-                            "No graph records loaded. Pass --run-root with a Prototype 1 record root.",
-                        );
-                    });
-                }
+                        if graph_has_content {
+                            self.view.show(ui, &self.graph);
+                        } else {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(
+                                    "No graph records loaded. Pass --run-root with a Prototype 1 record root.",
+                                );
+                            });
+                        }
             });
         }
         #[cfg(all(
@@ -438,6 +456,16 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         self.record_benchmark_component("central_graph", central_start);
+
+        if self.windows.show_bar {
+            egui::Window::new("📊 Bar Example")
+                .open(&mut self.windows.show_bar) // Adds the 'X' close button
+                .default_size([400.0, 300.0])
+                .vscroll(true) // Enable scrolling inside the window
+                .show(ui.ctx(), |ui| {
+                    charts::render_dashboard_content(ui, &self.graph);
+                });
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {

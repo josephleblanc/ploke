@@ -5,6 +5,7 @@
 //! application shell.
 
 pub mod app;
+pub(crate) mod charts;
 pub(crate) mod diff;
 pub(crate) mod id_display;
 pub mod inspector;

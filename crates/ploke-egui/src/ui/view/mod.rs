@@ -46,7 +46,7 @@ impl Default for GraphView {
             cache: GraphViewCache::default(),
             id: GRAPH_VIEW_ID.to_owned(),
             interaction: egui_graphs::SettingsInteraction::new()
-                .with_dragging_enabled(true)
+                .with_dragging_enabled(false)
                 .with_node_selection_enabled(true)
                 .with_edge_selection_enabled(true),
             navigation: navigation(view_style.layout.fit_padding, false),
