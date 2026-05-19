@@ -20,7 +20,7 @@ Every tracked regression test should have a nearby source comment:
 
 | Marker | Status | File | Test | Expected result | Removal or update condition |
 | --- | --- | --- | --- | --- | --- |
-| _none_ | _none_ | _none_ | _none_ | _none_ | _none_ |
+| `regr:samefile:19-05-26_06-42` | expected-fail | `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` | `cargo test -p ploke-eval recorded_replay_rejects_stale_same_file_repair_after_first_apply -- --ignored --nocapture` | Currently fails for [`RF-05`](../bugs/2026-05-19-rf-05-edit-composition-same-file-repair.md) because a stale same-file `non_semantic_patch` replay applies as a second proposal instead of being rejected before staging/materialization. | Remove `#[ignore]` or mark resolved once replay rejects or invalidates the stale same-file repair and leaves only the first proposal applied. |
 
 ## Triage Rules
 

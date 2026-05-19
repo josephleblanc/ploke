@@ -51,3 +51,5 @@ for near-term implementation planning.
   Headless TUI attempts can keep applying or retrying same-file `ns_patch` proposals after an earlier accepted proposal has already invalidated their staged file hashes.
 - [`2026-05-17-headless-tui-staged-proposal-tool-result-lifecycle.md`](./2026-05-17-headless-tui-staged-proposal-tool-result-lifecycle.md)
   Headless TUI `ns_patch` staging is replayed to the model as a completed tool result before proposal admission/apply decides whether the workspace changed.
+- [`2026-05-19-rf-05-edit-composition-same-file-repair.md`](./2026-05-19-rf-05-edit-composition-same-file-repair.md)
+  RF-05 headless TUI repeated same-file repair attempts can materialize malformed intermediate Rust unless edits are composed, invalidated, or rejected before candidate artifact submission.

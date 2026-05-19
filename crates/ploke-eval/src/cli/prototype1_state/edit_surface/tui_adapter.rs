@@ -3867,6 +3867,160 @@ mod tests {
         );
     }
 
+    /// Fixed-contract replay coverage for RF-05: repeated same-file repair
+    /// attempts must settle through the real tool/proposal loop without leaving
+    /// a malformed intermediate artifact.
+    ///
+    /// The provider tape asks for one valid `non_semantic_patch` edit and then a
+    /// stale same-file repair against the pre-apply content. The fixed behavior
+    /// is: the first edit applies, the stale repair fails before staging a
+    /// second proposal, the next provider request receives a rejection for the
+    /// stale call, and the workspace remains at the first valid edit.
+    ///
+    /// Active bug:
+    /// docs/active/bugs/2026-05-19-rf-05-edit-composition-same-file-repair.md.
+    // regr:samefile:19-05-26_06-42
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "expected-failing RF-05: stale same-file replay currently applies as a second proposal"]
+    async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let fixture = prepare_live_canary(
+            "recorded-same-file-stale-repair",
+            "Replay repeated same-file non_semantic_patch repair attempts.",
+        )
+        .expect("prepare recorded same-file replay fixture");
+
+        let first_call_id = "call_same_file_first_apply";
+        let stale_call_id = "call_same_file_stale_repair";
+        let tape =
+            recorded_same_file_repair_tape(&fixture.artifact_root, first_call_id, stale_call_id);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
+        let (mut runtime, parent_id) = start_attempt_runtime(
+            &fixture.workspace,
+            &[],
+            fixture.prompt.clone(),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            None,
+        )
+        .await
+        .expect("start same-file recorded replay runtime");
+
+        let mut run = HeadlessRun::new();
+        let outcome = run_attempt(
+            &mut runtime,
+            parent_id,
+            &fixture.workspace,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            1,
+            &mut run,
+            &LiveObserver { enabled: false },
+        )
+        .await
+        .expect("same-file recorded replay should finish");
+
+        let AttemptEnd::Terminal(HeadlessTerminal::Applied {
+            applied_proposal_ids,
+            changed_paths,
+            ..
+        }) = outcome
+        else {
+            panic!("same-file replay should finish with one applied edit, got {outcome:?}");
+        };
+        assert_eq!(
+            applied_proposal_ids.len(),
+            1,
+            "stale same-file repair must not become a second applied proposal"
+        );
+        assert_eq!(
+            changed_paths,
+            vec![fixture.src_file.clone()],
+            "only src/lib.rs should change"
+        );
+
+        let stale_failed = run.events().iter().any(|event| {
+            matches!(
+                event,
+                Event::Tool {
+                    call_id,
+                    result: Tool::Failed { error },
+                } if call_id == stale_call_id
+                    && (error.contains("failed to patch")
+                        || error.contains("No non-semantic edits were applied")
+                        || error.contains("No patches were found")
+                        || error.contains("Patch applied partially"))
+            )
+        });
+        assert!(
+            stale_failed,
+            "stale same-file repair should fail before staging; events={:#?}",
+            run.events()
+        );
+        assert!(
+            !run.events().iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Tool {
+                        call_id,
+                        result: Tool::Completed { .. },
+                    } if call_id == stale_call_id
+                )
+            }),
+            "stale same-file repair must not produce a ToolCallCompleted success"
+        );
+
+        let proposals = runtime.state.proposals.read().await;
+        assert_eq!(
+            proposals.len(),
+            1,
+            "only the first same-file proposal should remain recorded, got {:?}",
+            proposals.keys().collect::<Vec<_>>()
+        );
+        drop(proposals);
+
+        let final_src =
+            fs::read_to_string(&fixture.src_file).expect("read final same-file replay source");
+        assert!(
+            final_src.contains(r#""after""#),
+            "first same-file edit should apply, got:\n{final_src}"
+        );
+        assert!(
+            !final_src.contains("repair") && !final_src.contains("START RESTORE"),
+            "stale repair artifacts must not be written, got:\n{final_src}"
+        );
+
+        let mut snapshots = Vec::new();
+        collect_request_snapshots(&request_rx, &mut snapshots);
+        let second_request = snapshots.get(1).unwrap_or_else(|| {
+            panic!(
+                "expected second provider request after first apply; captured {} requests",
+                snapshots.len()
+            )
+        });
+        assert!(
+            model_request_contains_applied_success(second_request, first_call_id),
+            "expected second request to contain settled applied result; request={second_request:#?}"
+        );
+        assert!(
+            !model_request_contains_staged_success(second_request, first_call_id),
+            "first same-file edit must not be replayed as staged-only success; request={second_request:#?}"
+        );
+
+        let third_request = snapshots.get(2).unwrap_or_else(|| {
+            panic!(
+                "expected third provider request after stale repair rejection; captured {} requests",
+                snapshots.len()
+            )
+        });
+        assert!(
+            model_request_contains_ns_patch_failure(third_request, stale_call_id),
+            "expected third request to carry stale same-file rejection; request={third_request:#?}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -4136,6 +4290,37 @@ mod tests {
         )
     }
 
+    fn recorded_same_file_repair_tape(
+        run_dir: &Path,
+        first_call_id: &str,
+        stale_call_id: &str,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        let assistant_id = Uuid::new_v4();
+        let first = ns_patch_request(
+            first_call_id,
+            "src/lib.rs".to_string(),
+            allowed_canary_ns_patch_diff(),
+            "First same-file edit changes broad_surface_canary from before to after",
+            Some(0.95),
+        );
+        let stale = ns_patch_request(
+            stale_call_id,
+            "src/lib.rs".to_string(),
+            stale_canary_repair_ns_patch_diff(),
+            "Stale repair attempt generated against the pre-apply same-file content",
+            Some(0.80),
+        );
+        load_recorded_tape(
+            run_dir,
+            assistant_id,
+            vec![
+                tool_response_record(assistant_id, 0, "recorded-same-file-first", &first),
+                tool_response_record(assistant_id, 1, "recorded-same-file-stale-repair", &stale),
+                stop_response_record(assistant_id, 2, "recorded-same-file-final"),
+            ],
+        )
+    }
+
     fn ns_patch_request(
         call_id: &str,
         file: String,
@@ -4285,6 +4470,20 @@ mod tests {
         .join("\n")
     }
 
+    fn stale_canary_repair_ns_patch_diff() -> String {
+        [
+            "--- a/src/lib.rs",
+            "+++ b/src/lib.rs",
+            "@@ -1,3 +1,3 @@",
+            " pub fn broad_surface_canary() -> &'static str {",
+            "-    \"before\"",
+            "+    \"repair\"",
+            " }",
+            "",
+        ]
+        .join("\n")
+    }
+
     fn retry_context_bool(wire: &ploke_tui::tools::ToolErrorWire, field: &str) -> Option<bool> {
         match wire.llm["retry_context"].as_object()?.get(field)? {
             ploke_tui::tools::ToolLlmErrorValue::Bool(value) => Some(*value),
@@ -4305,6 +4504,21 @@ mod tests {
                 && message.content.contains(r#""ok":true"#)
                 && message.content.contains(r#""staged":1"#)
                 && message.content.contains(r#""applied":0"#)
+        })
+    }
+
+    fn model_request_contains_ns_patch_failure(
+        messages: &[ploke_tui::llm::RequestMessage],
+        call_id: &str,
+    ) -> bool {
+        messages.iter().any(|message| {
+            message.role == ploke_llm::manager::Role::Tool
+                && message
+                    .tool_call_id
+                    .as_ref()
+                    .is_some_and(|tool_call_id| tool_call_id.as_ref() == call_id)
+                && message.content.contains(r#""ok":false"#)
+                && message.content.contains(r#""tool":"non_semantic_patch""#)
         })
     }
 
