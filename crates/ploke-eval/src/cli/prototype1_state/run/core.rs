@@ -12,7 +12,10 @@ use crate::{
     ClosureClass, ResolvedCampaignConfig,
     campaign::resolve_campaign_config,
     campaign_manifest_path,
-    cli::{InspectOutputFormat, Prototype1ControlCommand},
+    cli::{
+        InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
+        Prototype1PromptCommand,
+    },
     closure::load_closure_state,
     intervention::{
         CompleteBaseline, Intervention, Prototype1ChildScheduleMode, Prototype1NodeRecord,
@@ -199,6 +202,13 @@ enum ExecuteMode {
 pub(crate) async fn doctor(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
     let status = diagnose_command(&command)?;
     render_status(command.format, &status)
+}
+
+pub(crate) async fn prompt(command: Prototype1PromptCommand) -> Result<(), PrepareError> {
+    let context = resolve_context(command.repo_root.as_deref())?;
+    let prompt = prompt_text(&context)?;
+    print!("{prompt}");
+    Ok(())
 }
 
 pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
@@ -392,6 +402,58 @@ fn load_effective_control(
         parallel_cap,
         defaulted_from_profile: admitted.profile.control.parallel_cap.is_none(),
     })
+}
+
+fn prompt_text(context: &RuntimeContext) -> Result<String, PrepareError> {
+    if context
+        .admitted_profile
+        .profile
+        .generation
+        .candidate_generator()
+        != Prototype1CandidateGenerator::BroadHarnessRequest
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-prompt requires a broad-harness request run profile".to_string(),
+        });
+    }
+
+    let parent_node_id = context.parent_identity.node_id();
+    if let Some(published) = load_published_broad_requests(&context.manifest_path)?
+        .into_iter()
+        .filter(|published| published.request().parent_node_id.as_str() == parent_node_id)
+        .last()
+    {
+        return fs::read_to_string(published.prompt_path()).map_err(|source| {
+            PrepareError::ReadManifest {
+                path: published.prompt_path().to_path_buf(),
+                source,
+            }
+        });
+    }
+
+    Ok(broad_request_for_current_parent(context).render_prompt())
+}
+
+fn broad_request_for_current_parent(context: &RuntimeContext) -> BroadHarnessRequest {
+    let prototype_root = prototype1_root(&context.manifest_path);
+    let parent_node_id = context.parent_identity.node_id().to_string();
+    let candidate_workspace = prototype_root
+        .join("workspaces/edit-harness")
+        .join(&parent_node_id);
+    let submitted_result_path = prototype_root
+        .join("messages/edit-harness-result")
+        .join(format!("{parent_node_id}.json"));
+    BroadHarnessRequest::prototype1_workspace(
+        parent_node_id,
+        context.repo_root.clone(),
+        HarnessChildBudget {
+            min_children: context.admitted_profile.profile.search.children.min,
+            max_children: context.admitted_profile.profile.search.children.max,
+        },
+        candidate_workspace,
+        &prototype_root,
+        &submitted_result_path,
+    )
 }
 
 fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {

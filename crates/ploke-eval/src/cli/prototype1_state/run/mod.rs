@@ -210,4 +210,4 @@
 
 pub(crate) mod core;
 
-pub(crate) use core::{doctor, resume, step};
+pub(crate) use core::{doctor, prompt, resume, step};

@@ -544,6 +544,8 @@ pub enum LoopSubcommand {
     Prototype1Setup(Prototype1LoopCommand),
     /// Diagnose the active Prototype 1 parent checkout and print the next exact commands.
     Prototype1Doctor(Prototype1ControlCommand),
+    /// Print the broad-harness prompt for the active Prototype 1 parent checkout.
+    Prototype1Prompt(Prototype1PromptCommand),
     /// Resume the active Prototype 1 parent checkout until the current turn completes or hands off.
     Prototype1Continue(Prototype1ControlCommand),
     /// Advance exactly one diagnosed Prototype 1 parent phase.
@@ -660,6 +662,14 @@ pub struct Prototype1ControlCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(about = "Print the broad-harness prompt for the active Prototype 1 parent checkout")]
+pub struct Prototype1PromptCommand {
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -1403,6 +1413,7 @@ impl LoopCommand {
             LoopSubcommand::Prototype1(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
             LoopSubcommand::Prototype1Doctor(cmd) => prototype1_state::run::doctor(cmd).await,
+            LoopSubcommand::Prototype1Prompt(cmd) => prototype1_state::run::prompt(cmd).await,
             LoopSubcommand::Prototype1Continue(cmd) => prototype1_state::run::resume(cmd).await,
             LoopSubcommand::Prototype1Step(cmd) => prototype1_state::run::step(cmd).await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
@@ -13320,6 +13331,27 @@ mod tests {
             }) => {
                 assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
                 assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_prompt_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-prompt",
+            "--repo-root",
+            "/tmp/repo",
+        ])
+        .expect("loop prototype1-prompt should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Prompt(cmd),
+            }) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

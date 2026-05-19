@@ -1178,7 +1178,7 @@ impl BroadHarnessRequest {
         }
         if let Some(protected_core) = self.protected_core_definition() {
             prompt.push_str(&format!(
-                "Protected core: see `{}`. Ordinary edits touching that surface will be rejected.\n",
+                "Protected core: see `{}` and `WORKSPACE_EXCEPT_AUTHORITY_*`. Ordinary edits touching that surface will be rejected.\n",
                 protected_core
             ));
         }
@@ -1195,7 +1195,7 @@ impl BroadHarnessRequest {
     fn protected_core_definition(&self) -> Option<String> {
         match &self.protected_core.anchor {
             ProtectedCoreAnchor::AuthorityConstant { code_path, symbol } => Some(format!(
-                "{}::{symbol_name} and `WORKSPACE_EXCEPT_AUTHORITY_*`",
+                "{}::{symbol_name}",
                 code_path.display(),
                 symbol_name = symbol.render()
             )),
@@ -1493,6 +1493,9 @@ mod tests {
         assert!(prompt.contains("Protected core: see"));
         assert!(prompt.contains("backend.rs::EVAL_CORE_SURFACE_ROOT"));
         assert!(prompt.contains("WORKSPACE_EXCEPT_AUTHORITY_*"));
+        assert!(prompt.contains(
+            "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`."
+        ));
         assert!(prompt.contains("You may edit any file outside the protected core"));
         assert!(prompt.contains("Protocol diagnoses are guidance, not hard edit targets"));
         assert!(!prompt.contains("## Latest Evidence Digest"));
