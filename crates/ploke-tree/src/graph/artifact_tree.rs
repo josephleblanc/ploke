@@ -70,8 +70,14 @@ pub struct ProducedChildEdge<'g> {
 
 #[derive(Debug, PartialEq)]
 pub struct Marks<'g> {
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
     pub primary_lineage: Option<&'g LineageNode>,
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
     pub lineage_artifacts: Vec<Key<'g>>,
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
     pub lineage_edges: Vec<(Key<'g>, Key<'g>)>,
     /// archaeology:artifact-child-consideration
     /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
@@ -79,6 +85,8 @@ pub struct Marks<'g> {
     /// archaeology:artifact-child-consideration
     /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
     pub unconsidered_child_edges: Vec<(Key<'g>, Key<'g>)>,
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
     pub selected_ruler: Option<Key<'g>>,
 }
 
@@ -429,6 +437,8 @@ fn endpoints_present<'g>(
 }
 
 impl<'g> Marks<'g> {
+    /// archaeology:artifact-lineage-highlight
+    /// proof:docs/active/archaeology/ploke-tree-graph/artifact-lineage-highlight.md
     /// archaeology:artifact-child-consideration
     /// proof:docs/active/archaeology/ploke-tree-graph/artifact-child-consideration.md
     fn from_graph(

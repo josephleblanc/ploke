@@ -462,6 +462,8 @@ pub enum InspectorPanelSection {
     ArtifactIds,
     Technical,
     PatchDebug,
+    CandidateComparison,
+    LineageAuthority,
 }
 
 impl InspectorPanelSection {
@@ -479,6 +481,8 @@ impl InspectorPanelSection {
             Self::ArtifactIds => "Artifact IDs",
             Self::Technical => "Technical",
             Self::PatchDebug => "Patch Debug",
+            Self::CandidateComparison => "Candidate Comparison",
+            Self::LineageAuthority => "Lineage Authority",
         }
     }
     #[cfg(all(

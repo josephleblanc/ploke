@@ -53,3 +53,5 @@ for near-term implementation planning.
   Headless TUI `ns_patch` staging is replayed to the model as a completed tool result before proposal admission/apply decides whether the workspace changed.
 - [`2026-05-19-rf-05-edit-composition-same-file-repair.md`](./2026-05-19-rf-05-edit-composition-same-file-repair.md)
   RF-05 headless TUI repeated same-file repair attempts can materialize malformed intermediate Rust unless edits are composed, invalidated, or rejected before candidate artifact submission.
+- [`2026-05-19-rf-08-headless-tui-evidence-read-roots.md`](./2026-05-19-rf-08-headless-tui-evidence-read-roots.md)
+  RF-08 broad-harness prompts advertise campaign evidence that the headless TUI read-root policy only partially admits, causing avoidable outside-root and missing-artifact navigation failures.

@@ -285,11 +285,73 @@ Subcases:
 
 **Observed examples:**
 
-- Multiple traces attempted outside-root reads of campaign `prototype1`
-  directories or files.
-- `node-81bd26e4b6222d08` tried to read missing prior node runner artifacts.
-- Several traces had invalid read ranges, `list_dir` on files, or malformed
-  lookup arguments.
+- The published broad-harness request explicitly told the model to inspect
+  campaign evidence, for example
+  [`node-a87394840086768d.md`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-request/node-a87394840086768d.md>)
+  says past benchmark results live under `prototype1/evaluations` and prior
+  attempts live under `prototype1/nodes`. The matching typed request
+  [`node-a87394840086768d.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-request/node-a87394840086768d.json>)
+  contains `evidence_roots` for `history/blocks`, `evaluations`, `nodes`, and
+  node-scoped `protocol-artifacts`. Despite that, the first recorded tool call
+  in
+  [`node-a87394840086768d.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-a87394840086768d.headless-tui.json>)
+  attempted `list_dir` on the enclosing campaign `prototype1` directory and was
+  rejected with `path outside configured roots`.
+- The same prompt/root mismatch recurred after the run had more campaign state.
+  [`node-81bd26e4b6222d08-r6.md`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-request/node-81bd26e4b6222d08-r6.md>)
+  advertised the same evidence surface, while
+  [`node-81bd26e4b6222d08-r6.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-81bd26e4b6222d08-r6.headless-tui.json>)
+  recorded a failed `read_file` of
+  `prototype1/campaign.json` as `path outside configured roots`. The current
+  artifact tree does contain campaign metadata and run records around that
+  path, including
+  [`branches.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/branches.json>),
+  [`scheduler.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/scheduler.json>),
+  and
+  [`transition-journal.jsonl`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/transition-journal.jsonl>).
+- [`node-81bd26e4b6222d08-r7.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-81bd26e4b6222d08-r7.headless-tui.json>)
+  failed a `read_file` of `prototype1/branches.json` as outside-root even
+  though the persisted
+  [`branches.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/branches.json>)
+  is exactly the kind of read-only campaign navigation index agents need when
+  selecting prior evidence.
+- Missing-node reads were reported as raw file I/O misses rather than typed
+  missing-artifact guidance. In
+  [`node-81bd26e4b6222d08.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-81bd26e4b6222d08.headless-tui.json>),
+  `read_file` requested
+  `prototype1/nodes/node-a87394840086768d/runner-result.json`, but the persisted
+  node directory only had
+  [`node.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/nodes/node-a87394840086768d/node.json>)
+  and
+  [`runner-request.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/nodes/node-a87394840086768d/runner-request.json>).
+  [`node-81bd26e4b6222d08-r9.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-81bd26e4b6222d08-r9.headless-tui.json>)
+  similarly requested a not-yet-existing
+  `nodes/node-81bd26e4b6222d08-r9/runner-result.json`.
+- Navigation shape errors added avoidable churn around the same issue:
+  [`node-a87394840086768d-r2.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-a87394840086768d-r2.headless-tui.json>)
+  recorded `read_file` with `start_line=1050,end_line=200` and `list_dir` on
+  the worktree `.git` file. These are model/tool-use errors, but the tool
+  responses did not steer the session back to the intended evidence roots.
+- The downstream agent-turn sidecars show the broader cost of this navigation
+  mismatch: the treatment runs mostly spent turns on `list_dir`, `read_file`,
+  and `request_code_context` before provider aborts. See the sidecar inventory
+  in
+  [`agent-turn-traces.md`](./deep-review/agent-turn-traces.md) and the raw
+  treatment trace for
+  [`branch-1e4da15f47e52f34`](</home/brasides/.ploke-eval/instances/prototype1/p1-smoke-broad-harness-1x3-20260519-1/treatments/branch-1e4da15f47e52f34/instances/BurntSushi__ripgrep-2209/runs/run-1779186538438-structured-current-policy-d5325c36/agent-turn-trace.json>).
+
+**Code-path follow-up:** This is not simply `ploke-tui` blocking evidence
+reads. `ploke-eval` publishes the request roots in
+`harness_request.rs`, maps them with `tui_adapter.rs::evidence_read_roots`, and
+passes them through
+`runner.rs::setup_workspace_tui_runtime_with_read_roots`. `ploke-tui`
+`SystemStatus::derive_path_policy` preserves those extra roots, and `ploke-io`
+then enforces the configured roots. The problematic contract is that the prompt
+advertises campaign evidence while the configured readable roots admit only
+selected subdirectories (`history/blocks`, `evaluations`, `nodes`) and skip
+attached reports and the enclosing `prototype1` navigation root. Agents should
+be allowed to read the campaign evidence needed to navigate those records; the
+read-only admission surface is too narrow or too imprecisely described.
 
 **Replay evidence surface:** Tool request/response records, readable-root
 metadata, missing-artifact responses, and request-code-context records.
