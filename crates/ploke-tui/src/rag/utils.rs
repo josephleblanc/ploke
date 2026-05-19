@@ -10,6 +10,28 @@ pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
     top_k.clamp(5, 20)
 }
 
+pub(crate) fn max_results_for_budget(
+    token_budget_total: u32,
+    token_budget_per_result: u32,
+) -> usize {
+    let total = token_budget_total.max(1) as usize;
+    let per_result = (token_budget_per_result.max(1) as usize).min(total);
+    (total / per_result).max(1)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn max_results_respects_total_and_per_result_caps() {
+        assert_eq!(max_results_for_budget(1_000, 250), 4);
+        assert_eq!(max_results_for_budget(1_000, 400), 2);
+        assert_eq!(max_results_for_budget(100, 400), 1);
+        assert_eq!(max_results_for_budget(0, 0), 1);
+    }
+}
+
 // Strongly-typed request for apply_code_edit
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyCodeEditRequest {

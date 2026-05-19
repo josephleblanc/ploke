@@ -94,6 +94,8 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 ## Typed UI Projection Style
 
 - Requirement: `ploke-egui` is a typed projection of `ploke-tree::Graph`, not a string-rendering layer. Preserve semantic graph facts as typed borrowed values until the egui render boundary.
+- Requirement: for `ploke-egui` graph, inspector, timeline, source-ref, default-view, plan, or profiling work, start from `crates/ploke-egui/docs/README.md` and follow the relevant directory README. Do not bypass the README indexes by hard-coding a stale doc path from memory.
+- Requirement: for graph/view/inspector semantics, start from `crates/ploke-egui/docs/model/README.md` and follow its current links. For bounded UI plans, start from `crates/ploke-egui/docs/plan/README.md`. For performance work, start from `crates/ploke-egui/docs/profiling/README.md`.
 - Requirement: before adding, changing, or explaining a UI-facing semantic claim with ambiguous identity/provenance carriers, use both project skills `ploke-debugger-claim-workflow` and `ui-claim-archaeology`.
 - Requirement: before editing an archaeology report inside an existing `docs/active/archaeology/` group, re-read the local archaeology set: `README.md`, `INDEX.md`, the group `README.md`, and at least one sibling report in that group. Do not update one report in isolation and call the archaeology pass complete.
 - Requirement: archaeology report carrier tables must use concrete type/path references in `where it appears`. Do not use vague buckets like `scheduler records`, `child-plan record`, or `sealed History fields` when a real type/field path is available.
@@ -155,22 +157,13 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - The audit must inspect the actual type barriers: private fields, sealed or module-private state markers, constructor visibility, move-only transition methods, and the durable records emitted by those transitions.
 - Treat any drift between claimed invariants and implemented constraints as a correctness issue. Fix the implementation, narrow the claim, or record the gap explicitly before relying on the History model for longer runs.
 
-## Prototype 1 Run Playback / Observability Plan
+## ploke-egui Graph / Observability Docs
 
-- Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, start from the shared track index at `docs/active/plans/self-improvement-loop/handoffs.md`.
-- Before changing the default `ploke-egui` tree graph projection or graph view mode, read `docs/active/agents/ploke-ui-task-readability/artifact-tree-default/README.md`.
-- Before changing default artifact-graph semantics, also re-read:
-  - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
-  - `crates/ploke-egui/docs/model/README.md`
-  - `crates/ploke-egui/docs/model/source-process-graph.md`
-  - `crates/ploke-egui/docs/model/default-view-contract.md`
-  - `crates/ploke-egui/docs/model/view-set-contract.md`
-  - `crates/ploke-egui/docs/model/run-graph-crosswalk.md`
-  and restate the intended default node set and edge set before editing.
-- The default `ploke-egui` graph is an artifact-first tree/DAG: Artifact states are primary nodes, applied patch / derivation relations are primary edges, and History is reveal/dimming/highlight state rather than the canvas spine.
-- Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, or typed drilldown.
-- Treat `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md` as the typed playback contract, not necessarily the latest operational handoff.
-- Playback is a read/projection layer over persisted typed records. It must not become active loop authority, and it must not parse rendered CLI output.
-- Preserve granularity structurally with typestates such as `RunPlayback<Coarse>` and `RunPlayback<Fine>` rather than string modes or report flags.
-- Provide both owned and borrowed playback forms. UI-facing paths should be able to use borrowed `RunPlaybackRef<'a, G>` projections over an already-loaded record store without cloning large payloads.
-- Coarsening, filtering, or rendering must not upgrade evidence authority. Steps should carry evidence strength separately from playback granularity.
+- Before changing the default `ploke-egui` graph projection, graph view mode, inspector source model, source-ref handling, timeline shell, or UI/WebAssembly observability surface, start from `crates/ploke-egui/docs/README.md`, then follow `crates/ploke-egui/docs/model/README.md`. The README indexes are the current routing surface for how `ploke-egui` turns `ploke_tree::Graph` into an interactive inspection UI.
+- Before changing default artifact-graph semantics, follow the `crates/ploke-egui/docs/model/README.md` reading path and restate the intended default node set and edge set before editing.
+- The default `ploke-egui` graph is the artifact-first `ArtifactTree` projection over `ploke_tree::Graph`: rendered nodes are resolved Artifact identities, rendered default edges are `P_H union P_C`, and History/candidate/runtime/tool/provider records are context, marks, diagnostics, or drilldown material unless a non-default projection admits them explicitly.
+- Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, timeline lanes, or typed drilldown.
+- `ploke-egui` is read-only inspection. It does not choose, admit, seal, or advance successors. Runtime records, reports, protocol artifacts, and benchmark outputs must enter through named typed records or typed graph projections before the UI uses them.
+- For evaluation, protocol, and run-record source locations, start from `crates/ploke-egui/docs/model/README.md` and follow its data-location entry. Do not make `ploke-egui` parse run JSON, compressed records, rendered CLI output, or copied path strings directly.
+- For performance-affecting `ploke-egui` edits, read `crates/ploke-egui/docs/profiling/README.md` and keep the benchmark/report requirements from the local `ploke-egui-benchmarking` skill. Treat allocation churn in the right inspector and graph canvas as a first-class regression surface.
+- Use `docs/active/plans/self-improvement-loop/typed-persistence-spine/operating-console.md` and its implementation queue when the task is a typed-persistence or graph-ingestion slice. Use older observability notes only when routed by a current README/index or explicitly requested.

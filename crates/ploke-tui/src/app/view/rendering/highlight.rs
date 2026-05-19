@@ -1066,7 +1066,7 @@ mod tests {
 
 | Tool | Purpose | Key Parameters |
 |------|---------|-----------------|
-| `request_code_context` | Ask the repository for additional code snippets up to a token budget. | `search_term` (optional string), `token_budget` (optional integer) |
+| `request_code_context` | Ask the repository for additional code snippets within per-result and total token budgets. | `search_term` (optional string), `token_budget_per_result`, `token_budget_total` (optional integers) |
 | `apply_code_edit` | Apply canonical edits to one or more Rust nodes identified by their canonical path. | `edits` array – each with `canon`, `code`, `file`, `node_type`; optional `confidence` |
 | `create_file` | Atomically create a new text file (staged for approval). | `file_path`, `content`; optional `create_parents`, `on_exists` |
 | `non_semantic_patch` | Apply raw unified‑diff patches (useful for non‑Rust files or when the semantic parser fails). | `patches` array – each with `diff`, `file`, `reasoning`; optional `confidence` |

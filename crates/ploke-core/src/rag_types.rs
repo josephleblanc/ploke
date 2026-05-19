@@ -83,8 +83,10 @@ impl Modality {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCodeContextArgs {
     pub search_term: String,
+    #[serde(default, alias = "token_budget")]
+    pub token_budget_per_result: Option<u32>,
     #[serde(default)]
-    pub token_budget: Option<u32>,
+    pub token_budget_total: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

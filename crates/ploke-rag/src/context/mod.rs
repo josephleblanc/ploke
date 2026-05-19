@@ -272,6 +272,15 @@ pub async fn assemble_context(
         }
     }
 
+    Ok(apply_token_budget(parts, budget, tokenizer, dedup_removed))
+}
+
+fn apply_token_budget(
+    parts: Vec<ContextPart>,
+    budget: &TokenBudget,
+    tokenizer: &dyn TokenCounter,
+    dedup_removed: usize,
+) -> AssembledContext {
     // Token budgeting (water-filling).
     let mut stats = ContextStats {
         dedup_removed,
@@ -302,8 +311,8 @@ pub async fn assemble_context(
             continue;
         }
 
-        // Enforce total cap
-        if budget.max_total < part_tokens {
+        // Enforce total cap.
+        if stats.total_tokens.saturating_add(part_tokens) > budget.max_total {
             // No more room.
             break;
         }
@@ -314,7 +323,6 @@ pub async fn assemble_context(
             .entry(part.file_path.clone())
             .and_modify(|t| *t += part_tokens)
             .or_insert(part_tokens);
-        let remaining_total = budget.max_total.saturating_sub(part_tokens);
         stats.total_tokens = stats.total_tokens.saturating_add(part_tokens);
         admitted.push(part);
     }
@@ -322,10 +330,10 @@ pub async fn assemble_context(
     stats.parts = admitted.len();
     stats.files = per_file_used.len();
 
-    Ok(AssembledContext {
+    AssembledContext {
         parts: admitted,
         stats,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -356,6 +364,27 @@ mod tests {
     }
 
     #[test]
+    fn budgeting_obeys_accumulated_total_limit() {
+        let tk = ApproxCharTokenizer;
+        let budget = TokenBudget {
+            max_total: 4,
+            per_file_max: 100,
+            per_part_max: 2,
+        };
+        let parts = vec![
+            test_part(1, "src/a.rs", "abcdefgh"),
+            test_part(2, "src/b.rs", "ijklmnop"),
+            test_part(3, "src/c.rs", "qrstuvwx"),
+        ];
+
+        let ctx = apply_token_budget(parts, &budget, &tk, 0);
+
+        assert_eq!(ctx.parts.len(), 2);
+        assert_eq!(ctx.stats.parts, 2);
+        assert!(ctx.stats.total_tokens <= budget.max_total);
+    }
+
+    #[test]
     fn dedup_preserves_order() {
         let ids = vec![
             Uuid::from_u128(1),
@@ -370,5 +399,18 @@ mod tests {
             vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)]
         );
         assert_eq!(removed, 2);
+    }
+
+    fn test_part(id: u128, file_path: &str, text: &str) -> ContextPart {
+        ContextPart {
+            id: Uuid::from_u128(id),
+            file_path: NodeFilepath(file_path.to_string()),
+            canon_path: CanonPath(format!("test::{id}")),
+            ranges: Vec::new(),
+            kind: ContextPartKind::Code,
+            text: text.to_string(),
+            score: 1.0,
+            modality: Modality::Sparse,
+        }
     }
 }

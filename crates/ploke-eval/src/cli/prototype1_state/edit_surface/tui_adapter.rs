@@ -694,13 +694,12 @@ async fn run_attempt(
                     ));
                 }
 
-                let terminal_id = applied
-                    .first()
-                    .map(|item| item.id())
-                    .expect("applied is not empty");
+                let (proposal_id, applied_proposal_ids) =
+                    terminal_ids(&applied).expect("applied is not empty");
 
                 return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
-                    proposal_id: terminal_id,
+                    proposal_id,
+                    applied_proposal_ids,
                     request_id,
                     changed_paths: changed_paths.clone(),
                 }));
@@ -708,6 +707,14 @@ async fn run_attempt(
             _ => {}
         }
     }
+}
+
+fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
+    let proposal_ids = applied.iter().map(|item| item.id()).collect::<Vec<_>>();
+    proposal_ids
+        .last()
+        .copied()
+        .map(|primary| (primary, proposal_ids))
 }
 
 fn record_batch_terminal(
@@ -1871,6 +1878,7 @@ pub(crate) enum HeadlessAttemptResult {
 pub(crate) enum HeadlessTerminal {
     Applied {
         proposal_id: Uuid,
+        applied_proposal_ids: Vec<Uuid>,
         request_id: Uuid,
         changed_paths: Vec<PathBuf>,
     },
@@ -1902,11 +1910,13 @@ impl HeadlessTerminal {
         match self {
             Self::Applied {
                 proposal_id,
+                applied_proposal_ids,
                 changed_paths,
                 ..
             } => format!(
-                "applied proposal_id={} changed_paths={}",
+                "applied proposal_id={} applied_proposals={} changed_paths={}",
                 proposal_id,
+                applied_proposal_ids.len(),
                 join_paths(changed_paths)
             ),
             Self::Exhausted { attempts, last } => format!(
@@ -1941,6 +1951,7 @@ pub(crate) mod evidence {
     use std::path::PathBuf;
 
     use serde::{Deserialize, Serialize};
+    use uuid::Uuid;
 
     use super::{
         DebugRelay, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, MAX_EVIDENCE_EVENT_CHARS,
@@ -2093,6 +2104,8 @@ pub(crate) mod evidence {
     pub(crate) enum Terminal {
         Applied {
             proposal_id: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            applied_proposal_ids: Vec<Uuid>,
             request_id: String,
             changed_paths: Vec<PathBuf>,
         },
@@ -2319,10 +2332,12 @@ pub(crate) mod evidence {
             match value {
                 HeadlessTerminal::Applied {
                     proposal_id,
+                    applied_proposal_ids,
                     request_id,
                     changed_paths,
                 } => Self::Applied {
                     proposal_id: proposal_id.to_string(),
+                    applied_proposal_ids: applied_proposal_ids.clone(),
                     request_id: request_id.to_string(),
                     changed_paths: changed_paths.clone(),
                 },
@@ -3126,6 +3141,18 @@ mod tests {
     }
 
     #[test]
+    fn terminal_ids_use_last_applied_proposal_as_primary() {
+        let first = AppliedItem::Edit(Uuid::from_u128(1));
+        let second = AppliedItem::Edit(Uuid::from_u128(2));
+        let third = AppliedItem::Edit(Uuid::from_u128(3));
+
+        let (primary, proposal_ids) = terminal_ids(&[first, second, third]).expect("terminal ids");
+
+        assert_eq!(primary, third.id());
+        assert_eq!(proposal_ids, vec![first.id(), second.id(), third.id()]);
+    }
+
+    #[test]
     fn attempt_prompt_preserves_minimal_request_text() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let existing_evidence = tmp.path().join("evaluations");
@@ -3264,12 +3291,14 @@ mod tests {
             prompt_diagnostics: Vec::new(),
             terminal: Some(HeadlessTerminal::Applied {
                 proposal_id,
+                applied_proposal_ids: vec![proposal_id],
                 request_id,
                 changed_paths: changed_paths.clone(),
             }),
         };
 
         let summary = run.evidence();
+        let proposal_uuid = proposal_id;
         let proposal_id = proposal_id.to_string();
         let request_id = request_id.to_string();
 
@@ -3287,9 +3316,11 @@ mod tests {
             summary.terminal.as_ref(),
             Some(evidence::Terminal::Applied {
                 proposal_id: observed_proposal,
+                applied_proposal_ids,
                 request_id: observed_request,
                 changed_paths: observed_paths,
             }) if observed_proposal == &proposal_id
+                && applied_proposal_ids.as_slice() == &[proposal_uuid]
                 && observed_request == &request_id
                 && observed_paths == &changed_paths
         ));
@@ -4175,7 +4206,8 @@ Do not call tools. Do not propose edits. This canary only checks context mode Of
             let snippet_ok = snippet_checks.iter().filter(|res| res.is_ok()).count();
             let result = <ploke_tui::tools::request_code_context::RequestCodeContextGat as ploke_tui::tools::Tool>::execute(
                 ploke_tui::tools::request_code_context::RequestCodeContextParams {
-                    token_budget: Some(1_200),
+                    token_budget_per_result: Some(300),
+                    token_budget_total: Some(1_200),
                     search_term: Some(Cow::Owned(term.clone())),
                 },
                 ctx.clone(),

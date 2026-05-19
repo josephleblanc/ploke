@@ -399,7 +399,7 @@ Workspace metadata (recent roots, snapshot paths, etc.) is stored separately as 
 | **`tooling`** | Timeouts for `cargo check` / `cargo test`, and allowed extensions for create-file tooling. | |
 | **`chat_policy`** | Tool-call timeouts, chain limits, retry/timeout strategy, and related chat-loop behavior. | |
 | **`rag`** | Retrieval: top-k, per-part token limits, dense/sparse/hybrid strategy, BM25 timeouts, RRF/MMR fusion. | |
-| **`token_limit`** | Default token budget for the **`request_code_context`** tool when the model does not pass a budget. | Not a global max-tokens cap for all LLM traffic. |
+| **`token_limit`** | Default total token budget for the **`request_code_context`** tool when the model does not pass `token_budget_total`. | Not a global max-tokens cap for all LLM traffic. |
 | **`tool_retries`** | Intended tool retry count. | **Currently unused** by the chat/tool loop (value is loaded and saved only). |
 | **`llm_timeout_secs`** | HTTP timeout for chat requests to the LLM API. | |
 

@@ -11147,7 +11147,12 @@ fn tool_argument_projection(arguments: &ToolCallArguments) -> Vec<ToolArgumentFi
     let mut fields = Vec::new();
     match arguments {
         ToolCallArguments::RequestCodeContext(args) => {
-            push_option(&mut fields, "token_budget", args.token_budget);
+            push_option(
+                &mut fields,
+                "token_budget_per_result",
+                args.token_budget_per_result,
+            );
+            push_option(&mut fields, "token_budget_total", args.token_budget_total);
             push_option_ref(&mut fields, "search_term", args.search_term.as_deref());
         }
         ToolCallArguments::ApplyCodeEdit(args) => {

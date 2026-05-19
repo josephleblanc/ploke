@@ -418,6 +418,22 @@ mod tests {
 
     #[test]
     fn tool_call_arguments_decode_request_code_context() {
+        let raw = r#"{"token_budget_per_result":512,"token_budget_total":2048,"search_term":"ToolRequestRecord"}"#;
+        let decoded = decode_tool_arguments("request_code_context", raw);
+
+        let PersistedToolCallArguments::Decoded(ToolCallArguments::RequestCodeContext(arguments)) =
+            decoded
+        else {
+            panic!("expected decoded request_code_context arguments");
+        };
+
+        assert_eq!(arguments.token_budget_per_result, Some(512));
+        assert_eq!(arguments.token_budget_total, Some(2048));
+        assert_eq!(arguments.search_term.as_deref(), Some("ToolRequestRecord"));
+    }
+
+    #[test]
+    fn tool_call_arguments_decode_legacy_request_code_context_budget() {
         let raw = r#"{"token_budget":2048,"search_term":"ToolRequestRecord"}"#;
         let decoded = decode_tool_arguments("request_code_context", raw);
 
@@ -427,7 +443,8 @@ mod tests {
             panic!("expected decoded request_code_context arguments");
         };
 
-        assert_eq!(arguments.token_budget, Some(2048));
+        assert_eq!(arguments.token_budget_per_result, Some(2048));
+        assert_eq!(arguments.token_budget_total, None);
         assert_eq!(arguments.search_term.as_deref(), Some("ToolRequestRecord"));
     }
 

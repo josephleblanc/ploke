@@ -1546,6 +1546,7 @@ async fn run_broad_headless_tui_attempt_with_options(
     match terminal {
         tui_adapter::HeadlessTerminal::Applied {
             proposal_id,
+            applied_proposal_ids: _,
             request_id,
             changed_paths,
         } => {
