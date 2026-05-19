@@ -29,3 +29,7 @@ could no longer tell what concrete action was being recommended.
 - [`2026-05-19-orchestrator-survey-collapsed-to-short-slice.md`](2026-05-19-orchestrator-survey-collapsed-to-short-slice.md)
   The agent used the requested orchestrator machinery but collapsed a broad
   command/UI/proof survey into a short verdict and one implementation slice.
+- [`2026-05-19-line-reference-confirmation-missed-user-mismatch.md`](2026-05-19-line-reference-confirmation-missed-user-mismatch.md)
+  The agent confirmed a regression marker with a line link without reconciling
+  that the user's displayed snippet omitted the marker and their navigation
+  landed on a neighboring replay test.
