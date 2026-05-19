@@ -1071,6 +1071,57 @@ impl BroadHarnessRequest {
         prototype_root: &Path,
         submitted_result_path: &Path,
     ) -> Self {
+        let evaluations_root = prototype_root.join("evaluations");
+        let nodes_root = prototype_root.join("nodes");
+        let mut evidence_roots = vec![
+            EvidenceRoot {
+                kind: EvidenceRootKind::SubmittedResultOutput,
+                location: EvidenceRootLocation::File {
+                    path: submitted_result_path.to_path_buf(),
+                },
+                role: EvidenceRole::OutputBox,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::HistoryBlocks,
+                location: EvidenceRootLocation::Directory {
+                    path: prototype_root.join("history/blocks"),
+                },
+                role: EvidenceRole::SealedHistory,
+            },
+        ];
+        if directory_has_entries(&evaluations_root) {
+            evidence_roots.push(EvidenceRoot {
+                kind: EvidenceRootKind::Evaluations,
+                location: EvidenceRootLocation::Directory {
+                    path: evaluations_root,
+                },
+                role: EvidenceRole::EvaluationPayloads,
+            });
+        }
+        evidence_roots.extend([
+            EvidenceRoot {
+                kind: EvidenceRootKind::Nodes,
+                location: EvidenceRootLocation::Directory {
+                    path: nodes_root.clone(),
+                },
+                role: EvidenceRole::RuntimeEvidence,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::ProtocolArtifacts,
+                location: EvidenceRootLocation::NodeScopedDirectory {
+                    nodes_root,
+                    child_relpath: PathBuf::from("protocol-artifacts"),
+                },
+                role: EvidenceRole::GuidanceOnly,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::Oracle,
+                location: EvidenceRootLocation::AttachedReport {
+                    report: AttachedReport::FinalReportJson,
+                },
+                role: EvidenceRole::OracleSummary,
+            },
+        ]);
         Self {
             schema: BroadHarnessRequestSchema::V1,
             parent_node_id: ParentNodeRef::new(parent_node_id),
@@ -1093,51 +1144,7 @@ impl BroadHarnessRequest {
                 guidance: GuidancePolicy::ProtocolDiagnosticsAreContext,
             },
             contract: contract::Bundle::prototype1(prototype_root),
-            evidence_roots: vec![
-                EvidenceRoot {
-                    kind: EvidenceRootKind::SubmittedResultOutput,
-                    location: EvidenceRootLocation::File {
-                        path: submitted_result_path.to_path_buf(),
-                    },
-                    role: EvidenceRole::OutputBox,
-                },
-                EvidenceRoot {
-                    kind: EvidenceRootKind::HistoryBlocks,
-                    location: EvidenceRootLocation::Directory {
-                        path: prototype_root.join("history/blocks"),
-                    },
-                    role: EvidenceRole::SealedHistory,
-                },
-                EvidenceRoot {
-                    kind: EvidenceRootKind::Evaluations,
-                    location: EvidenceRootLocation::Directory {
-                        path: prototype_root.join("evaluations"),
-                    },
-                    role: EvidenceRole::EvaluationPayloads,
-                },
-                EvidenceRoot {
-                    kind: EvidenceRootKind::Nodes,
-                    location: EvidenceRootLocation::Directory {
-                        path: prototype_root.join("nodes"),
-                    },
-                    role: EvidenceRole::RuntimeEvidence,
-                },
-                EvidenceRoot {
-                    kind: EvidenceRootKind::ProtocolArtifacts,
-                    location: EvidenceRootLocation::NodeScopedDirectory {
-                        nodes_root: prototype_root.join("nodes"),
-                        child_relpath: PathBuf::from("protocol-artifacts"),
-                    },
-                    role: EvidenceRole::GuidanceOnly,
-                },
-                EvidenceRoot {
-                    kind: EvidenceRootKind::Oracle,
-                    location: EvidenceRootLocation::AttachedReport {
-                        report: AttachedReport::FinalReportJson,
-                    },
-                    role: EvidenceRole::OracleSummary,
-                },
-            ],
+            evidence_roots,
             return_evidence: ReturnEvidenceContract {
                 authority_boundary: SubmissionAuthorityBoundary::submitted_evidence_only(),
                 fields: vec![
@@ -1201,6 +1208,12 @@ impl BroadHarnessRequest {
             )),
         }
     }
+}
+
+fn directory_has_entries(path: &Path) -> bool {
+    fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
 }
 
 impl ProtectedCoreSymbol {
@@ -1356,8 +1369,12 @@ mod tests {
             let prototype_root = temp.path().join("prototype1");
             let prompt_dir = prototype_root.join("messages/edit-harness-request");
             let result_dir = prototype_root.join("messages/edit-harness-result");
+            let evaluations_dir = prototype_root.join("evaluations");
             fs::create_dir_all(&prompt_dir).expect("create prompt dir");
             fs::create_dir_all(&result_dir).expect("create result dir");
+            fs::create_dir_all(&evaluations_dir).expect("create evaluations dir");
+            fs::write(evaluations_dir.join("branch-sample.json"), "{}\n")
+                .expect("write evaluation sample");
             Self {
                 _temp: temp,
                 prototype_root,
@@ -1526,6 +1543,35 @@ mod tests {
         assert!(!prompt.contains("Parent node"));
         assert!(!prompt.contains("Guidance"));
         assert!(!prompt.contains("Write the resulting child plan"));
+    }
+
+    #[test]
+    fn prompt_omits_evaluations_when_no_reports_exist() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let prototype_root = temp.path().join("prototype1");
+        fs::create_dir_all(prototype_root.join("nodes")).expect("create nodes");
+        let request = BroadHarnessRequest::prototype1_workspace(
+            "parent-node-7".to_string(),
+            PathBuf::from("/repo/live-parent"),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 3,
+            },
+            prototype_root.join("workspaces/edit-harness/parent-node-7"),
+            &prototype_root,
+            &prototype_root.join("messages/edit-harness-result/parent-node-7.json"),
+        );
+
+        let prompt = request.render_prompt();
+
+        assert!(!prompt.contains("Past benchmark results live under"));
+        assert!(
+            !request
+                .evidence_roots
+                .iter()
+                .any(|root| root.kind == EvidenceRootKind::Evaluations)
+        );
+        assert!(prompt.contains("If prior attempt or conversation history is useful"));
     }
 
     #[test]

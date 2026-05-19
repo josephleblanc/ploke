@@ -1871,6 +1871,8 @@ mod tests {
         write_protected_core(&repo);
         let prototype = temp.path().join("campaign/prototype1");
         fs::create_dir_all(prototype.join("evaluations")).expect("create evals");
+        fs::write(prototype.join("evaluations/branch-sample.json"), "{}\n")
+            .expect("write eval sample");
         fs::create_dir_all(prototype.join("nodes")).expect("create nodes");
         let request = BroadHarnessRequest::prototype1_workspace(
             "node-parent".to_string(),
