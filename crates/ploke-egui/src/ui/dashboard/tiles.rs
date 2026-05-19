@@ -9,6 +9,10 @@ pub enum Pane {
     Graph,
     Inspector,
     PinnedInspector(crate::ui::view::GraphSelectionRef),
+    InspectorSection(
+        crate::ui::view::GraphSelectionRef,
+        crate::ui::app::shell::InspectorPanelSection,
+    ),
     ArtifactDistribution,
     RecentActivity,
     StatsSummary,
@@ -21,6 +25,7 @@ impl Pane {
             Self::Graph => "🌐 Graph".to_owned(),
             Self::Inspector => "🔍 Inspector".to_owned(),
             Self::PinnedInspector(_) => "📌 Inspector".to_owned(),
+            Self::InspectorSection(_, section) => format!("📌 {}", section.title()),
             Self::ArtifactDistribution => "📊 Artifact Distribution".to_owned(),
             Self::RecentActivity => "📋 Recent Activity".to_owned(),
             Self::StatsSummary => "🔢 Stats Summary".to_owned(),
@@ -31,6 +36,10 @@ impl Pane {
 
 pub(crate) enum TreeAction {
     Pin(crate::ui::view::GraphSelectionRef),
+    PinSection(
+        crate::ui::view::GraphSelectionRef,
+        crate::ui::app::shell::InspectorPanelSection,
+    ),
     Remove(TileId),
 }
 
@@ -107,15 +116,18 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 crate::ui::app::shell::render_right_inspector(
                     ui,
                     self.graph,
+                    selected_reference,
                     selected_kind,
                     selected_label,
                     selected_sections,
                     self.inspector_render_cache,
                     self.patch_diff_cache,
                     inspector_open_state,
+                    Some(self.actions),
                 );
             }
-            Pane::PinnedInspector(reference) => {
+            Pane::PinnedInspector(reference_mut) => {
+                let reference: &crate::ui::view::GraphSelectionRef = reference_mut;
                 let sections =
                     self.inspector_cache
                         .sections(self.graph, self.graph_revision, Some(reference));
@@ -138,13 +150,124 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 crate::ui::app::shell::render_right_inspector(
                     ui,
                     self.graph,
+                    Some(reference),
                     kind,
                     label,
                     sections,
                     self.inspector_render_cache,
                     self.patch_diff_cache,
                     crate::ui::app::shell::InspectorOpenState::default(),
+                    None,
                 );
+            }
+            Pane::InspectorSection(reference_mut, section) => {
+                let reference: &crate::ui::view::GraphSelectionRef = reference_mut;
+                let sections =
+                    self.inspector_cache
+                        .sections(self.graph, self.graph_revision, Some(reference));
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(sections) = sections {
+                            match section {
+                                crate::ui::app::shell::InspectorPanelSection::Identity => {
+                                    crate::ui::app::shell::render_identity(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::Roles => {
+                                    crate::ui::app::shell::render_roles_and_metrics(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::PatchGeneration => {
+                                    crate::ui::app::shell::render_parent_create_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                        crate::ui::app::shell::InspectorOpenState::default(),
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::RunRecords => {
+                                    crate::ui::app::shell::render_run_records_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::GraphEdges => {
+                                    crate::ui::app::shell::render_graph_edges_for_inspector(
+                                        ui,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::ArtifactEdges => {
+                                    crate::ui::app::shell::render_artifact_edges_for_inspector(
+                                        ui,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::PatchDebug => {
+                                    crate::ui::app::shell::render_patches_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                        self.patch_diff_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::SourceRefs => {
+                                    crate::ui::app::shell::render_source_refs_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::ArtifactIds => {
+                                    crate::ui::app::shell::render_artifact_ids_for_inspector(
+                                        ui,
+                                        self.graph,
+                                        sections,
+                                        self.inspector_render_cache,
+                                    );
+                                }
+                                crate::ui::app::shell::InspectorPanelSection::LlmCalls => {
+                                    if let Some(parent_create) = sections.parent_create() {
+                                        if let ploke_tree::graph::ParentCreateLookup::Attempt(
+                                            attempt,
+                                        ) = parent_create.resolve(self.graph)
+                                        {
+                                            crate::ui::app::shell::render_parent_create_llm_calls_body(
+                                                ui,
+                                                self.graph,
+                                                &attempt,
+                                                sections.run_records(),
+                                                self.inspector_render_cache,
+                                            );
+                                        } else {
+                                            ui.label("Attempt not available.");
+                                        }
+                                    } else {
+                                        ui.label("Attempt not available.");
+                                    }
+                                }
+                            }
+                        } else {
+                            ui.label("No data available.");
+                        }
+                    });
             }
             Pane::ArtifactDistribution => {
                 crate::ui::dashboard::charts::horizontal_bar_chart(
@@ -215,6 +338,22 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
                         crate::ui::view::GraphSelectionRef::Artifact { key } => {
                             format!("📌 {}", key).into()
+                        }
+                        _ => pane.title().into(),
+                    },
+                    _ => pane.title().into(),
+                }
+            }
+            Pane::InspectorSection(reference, section) => {
+                let inspector =
+                    crate::ui::inspector::SelectionInspector::from_reference(self.graph, reference);
+                match inspector {
+                    crate::ui::inspector::SelectionInspector::RunForestNode(node) => {
+                        format!("📌 {} ({})", section.title(), node.node.key.as_str()).into()
+                    }
+                    crate::ui::inspector::SelectionInspector::Artifact(_) => match reference {
+                        crate::ui::view::GraphSelectionRef::Artifact { key } => {
+                            format!("📌 {} ({})", section.title(), key).into()
                         }
                         _ => pane.title().into(),
                     },

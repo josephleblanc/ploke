@@ -447,8 +447,11 @@ impl InspectorOpenState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InspectorPanelSection {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum InspectorPanelSection {
+    Identity,
+    Roles,
+    PatchGeneration,
     LlmCalls,
     RunRecords,
     GraphEdges,
@@ -459,6 +462,20 @@ enum InspectorPanelSection {
 }
 
 impl InspectorPanelSection {
+    pub(crate) fn title(&self) -> &'static str {
+        match self {
+            Self::Identity => "Identity",
+            Self::Roles => "Roles",
+            Self::PatchGeneration => "Patch Generation",
+            Self::LlmCalls => "LLM Calls",
+            Self::RunRecords => "Run Records",
+            Self::GraphEdges => "Graph Edges",
+            Self::ArtifactEdges => "Artifact Edges",
+            Self::PatchDebug => "Patch Debug",
+            Self::SourceRefs => "Source Refs",
+            Self::ArtifactIds => "Artifact IDs",
+        }
+    }
     #[cfg(all(
         not(target_arch = "wasm32"),
         feature = "dev",
@@ -502,6 +519,68 @@ pub(crate) fn render_top_strip(
     });
 }
 
+fn show_inspector_section_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    section: InspectorPanelSection,
+    selection_ref: Option<&crate::ui::view::GraphSelectionRef>,
+    actions: &mut Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
+) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(title).strong());
+        if let (Some(actions), Some(selection)) = (actions.as_deref_mut(), selection_ref) {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("↗")
+                    .on_hover_text("Pop out to new pane")
+                    .clicked()
+                {
+                    actions.push(crate::ui::dashboard::tiles::TreeAction::PinSection(
+                        selection.clone(),
+                        section,
+                    ));
+                }
+            });
+        }
+    });
+}
+
+fn show_inspector_section_collapsing<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    section: InspectorPanelSection,
+    open: Option<bool>,
+    selection_ref: Option<&crate::ui::view::GraphSelectionRef>,
+    actions: &mut Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
+    add_body: impl FnOnce(&mut egui::Ui) -> R,
+) {
+    ui.separator();
+    let _span = tracing::trace_span!("inspector_collapsing_header_layout").entered();
+    let header = egui::CollapsingHeader::new(title).id_salt(title).open(open);
+    let mut pin_clicked = false;
+
+    header.show(ui, |ui| {
+        if actions.is_some() && selection_ref.is_some() {
+            ui.horizontal(|ui| {
+                if ui.button("↗ Pop out to new pane").clicked() {
+                    pin_clicked = true;
+                }
+            });
+            ui.separator();
+        }
+        add_body(ui)
+    });
+
+    if pin_clicked {
+        if let (Some(actions), Some(selection)) = (actions.as_deref_mut(), selection_ref) {
+            actions.push(crate::ui::dashboard::tiles::TreeAction::PinSection(
+                selection.clone(),
+                section,
+            ));
+        }
+    }
+}
+
 fn show_inspector_collapsing<R>(
     ui: &mut egui::Ui,
     header: egui::CollapsingHeader,
@@ -518,12 +597,14 @@ fn show_inspector_collapsing<R>(
 pub(crate) fn render_right_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
+    selection_ref: Option<&crate::ui::view::GraphSelectionRef>,
     selection_kind: Option<&str>,
     selection_label: Option<&str>,
     sections: Option<&InspectorSections>,
     render_cache: &mut InspectorRenderCache,
     diff_cache: &mut crate::ui::diff::PatchDiffCache,
     open_state: InspectorOpenState,
+    mut actions: Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
 ) {
     {
         let _span = tracing::trace_span!("inspector_scroll_area_layout").entered();
@@ -542,7 +623,13 @@ pub(crate) fn render_right_inspector(
                 }
 
                 ui.separator();
-                ui.label("Identity");
+                show_inspector_section_header(
+                    ui,
+                    "Identity",
+                    InspectorPanelSection::Identity,
+                    selection_ref,
+                    &mut actions,
+                );
                 if let Some(sections) = sections {
                     render_identity(ui, graph, sections, render_cache);
                 } else {
@@ -550,7 +637,13 @@ pub(crate) fn render_right_inspector(
                 }
 
                 ui.separator();
-                ui.label("Roles");
+                show_inspector_section_header(
+                    ui,
+                    "Roles",
+                    InspectorPanelSection::Roles,
+                    selection_ref,
+                    &mut actions,
+                );
                 if let Some(sections) = sections {
                     render_roles_and_metrics(ui, graph, sections, render_cache);
                 } else {
@@ -558,7 +651,13 @@ pub(crate) fn render_right_inspector(
                 }
 
                 ui.separator();
-                ui.label("Patch Generation");
+                show_inspector_section_header(
+                    ui,
+                    "Patch Generation",
+                    InspectorPanelSection::PatchGeneration,
+                    selection_ref,
+                    &mut actions,
+                );
                 if let Some(sections) = sections {
                     render_parent_create_for_inspector(
                         ui,
@@ -571,11 +670,13 @@ pub(crate) fn render_right_inspector(
                     kv(ui, "attempt", "not_applicable");
                 }
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Run Records")
-                        .open(open_state.open(InspectorPanelSection::RunRecords)),
+                    "Run Records",
+                    InspectorPanelSection::RunRecords,
+                    open_state.open(InspectorPanelSection::RunRecords),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_run_records_for_inspector(ui, graph, sections, render_cache);
@@ -585,11 +686,13 @@ pub(crate) fn render_right_inspector(
                     },
                 );
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Graph edges")
-                        .open(open_state.open(InspectorPanelSection::GraphEdges)),
+                    "Graph edges",
+                    InspectorPanelSection::GraphEdges,
+                    open_state.open(InspectorPanelSection::GraphEdges),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_graph_edges_for_inspector(ui, sections, render_cache);
@@ -599,11 +702,13 @@ pub(crate) fn render_right_inspector(
                     },
                 );
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Artifact edges")
-                        .open(open_state.open(InspectorPanelSection::ArtifactEdges)),
+                    "Artifact edges",
+                    InspectorPanelSection::ArtifactEdges,
+                    open_state.open(InspectorPanelSection::ArtifactEdges),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_artifact_edges_for_inspector(ui, sections, render_cache);
@@ -613,11 +718,13 @@ pub(crate) fn render_right_inspector(
                     },
                 );
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Patch Debug")
-                        .open(open_state.open(InspectorPanelSection::PatchDebug)),
+                    "Patch Debug",
+                    InspectorPanelSection::PatchDebug,
+                    open_state.open(InspectorPanelSection::PatchDebug),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_patches_for_inspector(
@@ -633,11 +740,13 @@ pub(crate) fn render_right_inspector(
                     },
                 );
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Source refs")
-                        .open(open_state.open(InspectorPanelSection::SourceRefs)),
+                    "Source refs",
+                    InspectorPanelSection::SourceRefs,
+                    open_state.open(InspectorPanelSection::SourceRefs),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_source_refs_for_inspector(ui, graph, sections, render_cache);
@@ -647,11 +756,13 @@ pub(crate) fn render_right_inspector(
                     },
                 );
 
-                ui.separator();
-                show_inspector_collapsing(
+                show_inspector_section_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("Artifact Ids")
-                        .open(open_state.open(InspectorPanelSection::ArtifactIds)),
+                    "Artifact Ids",
+                    InspectorPanelSection::ArtifactIds,
+                    open_state.open(InspectorPanelSection::ArtifactIds),
+                    selection_ref,
+                    &mut actions,
                     |ui| {
                         if let Some(sections) = sections {
                             render_artifact_ids_for_inspector(ui, graph, sections, render_cache);
@@ -882,7 +993,7 @@ fn render_badges(
     }
 }
 
-fn render_identity(
+pub(crate) fn render_identity(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -984,7 +1095,7 @@ fn render_artifact_identity(
     cached_kv_id(ui, render_cache, "artifact", artifact_label(graph, sources));
 }
 
-fn render_roles_and_metrics(
+pub(crate) fn render_roles_and_metrics(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -1043,7 +1154,7 @@ fn render_artifact_metrics(
     );
 }
 
-fn render_parent_create_for_inspector(
+pub(crate) fn render_parent_create_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -1073,7 +1184,7 @@ fn render_parent_create_for_inspector(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_run_records")
 )]
-fn render_run_records_for_inspector(
+pub(crate) fn render_run_records_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -1298,7 +1409,7 @@ fn patch_projection_check_state_label(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_graph_edges")
 )]
-fn render_graph_edges_for_inspector(
+pub(crate) fn render_graph_edges_for_inspector(
     ui: &mut egui::Ui,
     sections: &InspectorSections,
     render_cache: &mut InspectorRenderCache,
@@ -1325,7 +1436,7 @@ fn render_graph_edges_for_inspector(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_artifact_edges")
 )]
-fn render_artifact_edges_for_inspector(
+pub(crate) fn render_artifact_edges_for_inspector(
     ui: &mut egui::Ui,
     sections: &InspectorSections,
     render_cache: &mut InspectorRenderCache,
@@ -1352,7 +1463,7 @@ fn render_artifact_edges_for_inspector(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_patch_debug")
 )]
-fn render_patches_for_inspector(
+pub(crate) fn render_patches_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -1378,7 +1489,7 @@ fn render_patches_for_inspector(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_source_refs")
 )]
-fn render_source_refs_for_inspector(
+pub(crate) fn render_source_refs_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -1404,7 +1515,7 @@ fn render_source_refs_for_inspector(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_artifact_ids")
 )]
-fn render_artifact_ids_for_inspector(
+pub(crate) fn render_artifact_ids_for_inspector(
     ui: &mut egui::Ui,
     graph: &Graph,
     sections: &InspectorSections,
@@ -2216,7 +2327,7 @@ fn render_parent_create_attempt(
     render_parent_create_source_status(ui, &attempt, render_cache);
 }
 
-fn render_parent_create_llm_calls(
+pub(crate) fn render_parent_create_llm_calls(
     ui: &mut egui::Ui,
     graph: &Graph,
     attempt: &ParentCreateAttempt<'_>,
@@ -2230,14 +2341,24 @@ fn render_parent_create_llm_calls(
             .default_open(false)
             .open(open_state.open(InspectorPanelSection::LlmCalls)),
         |ui| {
-            let _span = tracing::trace_span!("inspector_parent_create_llm_calls").entered();
-            if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
-                return;
-            }
-            cached_kv_id(ui, render_cache, "evidence", "agent_turn_sidecar_fallback");
-            render_agent_turns(ui, render_cache, attempt.agent_turns());
+            render_parent_create_llm_calls_body(ui, graph, attempt, run_record_slots, render_cache)
         },
     );
+}
+
+pub(crate) fn render_parent_create_llm_calls_body(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    attempt: &ParentCreateAttempt<'_>,
+    run_record_slots: &[RunRecordSlot],
+    render_cache: &mut InspectorRenderCache,
+) {
+    let _span = tracing::trace_span!("inspector_parent_create_llm_calls").entered();
+    if render_run_record_turns(ui, render_cache, graph, run_record_slots) {
+        return;
+    }
+    cached_kv_id(ui, render_cache, "evidence", "agent_turn_sidecar_fallback");
+    render_agent_turns(ui, render_cache, attempt.agent_turns());
 }
 
 fn render_parent_create_source_status(
