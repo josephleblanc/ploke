@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
-use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
+use crate::user_config::{ChatPolicy, ChatTimeoutStrategy, ToolLoopMode};
 use chrono::DateTime;
 use ploke_llm::ChatStepOutcome;
 use ploke_llm::manager::{ChatStepData, RecordedResponse, RecordedResponseTape};
@@ -137,6 +137,7 @@ where
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
+    pub tool_loop_mode: ToolLoopMode,
     pub retry_without_tools_on_404: bool,
 }
 
@@ -149,6 +150,7 @@ impl Default for TuiToolPolicy {
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
             tool_call_chain_limit: 100,
+            tool_loop_mode: ToolLoopMode::Auto,
             retry_without_tools_on_404: false,
         }
     }
@@ -263,6 +265,7 @@ pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
     TuiToolPolicy {
         tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
         tool_call_chain_limit: cfg.tool_call_chain_limit,
+        tool_loop_mode: cfg.tool_loop_mode,
         retry_without_tools_on_404: cfg.retry_without_tools_on_404,
     }
 }
@@ -1110,6 +1113,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     step_request_id,
                     calls,
                     policy.tool_call_timeout,
+                    policy.tool_loop_mode,
                 );
                 let results = tokio::select! {
                     result = results => result,
@@ -1660,6 +1664,7 @@ pub async fn execute_tools_via_event_bus(
     step_request_id: Uuid,
     calls: Vec<ToolCall>,
     policy_timeout: ToolCallTimeout,
+    tool_loop_mode: ToolLoopMode,
 ) -> Vec<(
     ploke_core::ArcStr,
     Result<ToolCallUiResult, ToolCallUiError>,
@@ -1674,6 +1679,10 @@ pub async fn execute_tools_via_event_bus(
 
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
+    let tool_name_by_call = calls
+        .iter()
+        .map(|call| (call.call_id.clone(), call.function.name))
+        .collect::<HashMap<_, _>>();
 
     // Per-call waiters
     let mut waiters: HashMap<
@@ -1731,6 +1740,16 @@ pub async fn execute_tools_via_event_bus(
                     ui_payload,
                     ..
                 })) if request_id == step_request_id => {
+                    let tool_name = tool_name_by_call.get(&call_id).copied();
+                    if should_wait_for_settled_edit(tool_loop_mode, tool_name, ui_payload.as_ref())
+                    {
+                        tracing::debug!(
+                            request_id = %step_request_id,
+                            call_id = %call_id,
+                            "gated tool loop waiting for settled edit result"
+                        );
+                        continue;
+                    }
                     if let Some(tx) = waiters.remove(&call_id) {
                         let _ = tx.send(Ok(ToolCallUiResult {
                             content,
@@ -1790,6 +1809,37 @@ pub async fn execute_tools_via_event_bus(
     let _ = dispatcher.await;
 
     results
+}
+
+fn should_wait_for_settled_edit(
+    mode: ToolLoopMode,
+    tool_name: Option<crate::tools::ToolName>,
+    ui_payload: Option<&ToolUiPayload>,
+) -> bool {
+    if !matches!(mode, ToolLoopMode::Gated) {
+        return false;
+    }
+    if !tool_name.is_some_and(is_edit_tool) {
+        return false;
+    }
+    ui_payload.is_some_and(is_pending_edit_payload)
+}
+
+fn is_edit_tool(tool_name: crate::tools::ToolName) -> bool {
+    matches!(
+        tool_name,
+        crate::tools::ToolName::ApplyCodeEdit
+            | crate::tools::ToolName::InsertRustItem
+            | crate::tools::ToolName::CreateFile
+            | crate::tools::ToolName::NsPatch
+    )
+}
+
+fn is_pending_edit_payload(payload: &ToolUiPayload) -> bool {
+    payload
+        .fields
+        .iter()
+        .any(|field| field.name.as_ref() == "status" && field.value.as_ref() == "pending")
 }
 
 use tracing::info;
@@ -1891,8 +1941,9 @@ mod tests {
     use super::*;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
-    use crate::tools::ToolName;
+    use crate::tools::{FunctionMarker, ToolName};
     use crate::user_config::ChatPolicy;
+    use ploke_llm::response::FunctionCall;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::{Mutex, mpsc, watch};
@@ -3214,6 +3265,7 @@ mod tests {
                 Uuid::new_v4(),
                 Vec::new(),
                 Duration::from_secs(1),
+                ToolLoopMode::Auto,
             ),
         )
         .await
@@ -3223,5 +3275,95 @@ mod tests {
             result.is_empty(),
             "empty tool batch should produce no results"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_tools_via_event_bus_gated_waits_for_settled_edit_result() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let parent_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let call_id = ploke_core::ArcStr::from("call_gated_ns_patch");
+        let tool_call = ToolCall {
+            call_id: call_id.clone(),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name: ToolName::NsPatch,
+                arguments: r#"{"patches":[]}"#.to_string(),
+            },
+        };
+
+        let mut requested_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let mut waiter = tokio::spawn(execute_tools_via_event_bus(
+            event_bus.clone(),
+            parent_id,
+            request_id,
+            vec![tool_call],
+            Duration::from_secs(5),
+            ToolLoopMode::Gated,
+        ));
+
+        loop {
+            let event = timeout(Duration::from_secs(1), requested_rx.recv())
+                .await
+                .expect("tool request event should arrive")
+                .expect("event bus should stay open");
+            if matches!(
+                event,
+                AppEvent::System(SystemEvent::ToolCallRequested {
+                    request_id: seen,
+                    ..
+                }) if seen == request_id
+            ) {
+                break;
+            }
+        }
+
+        let staged_payload = ToolUiPayload::new(ToolName::NsPatch, call_id.clone(), "staged")
+            .with_request_id(request_id)
+            .with_proposal_id(Uuid::new_v4())
+            .with_field("status", "pending")
+            .with_field("staged", "1")
+            .with_field("applied", "0");
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content: r#"{"ok":true,"staged":1,"applied":0}"#.to_string(),
+            ui_payload: Some(staged_payload),
+        }));
+
+        assert!(
+            timeout(Duration::from_millis(100), &mut waiter)
+                .await
+                .is_err(),
+            "gated edit tool loop must not resolve on a pending staged completion"
+        );
+
+        let applied_payload = ToolUiPayload::new(ToolName::NsPatch, call_id.clone(), "applied")
+            .with_request_id(request_id)
+            .with_proposal_id(Uuid::new_v4())
+            .with_field("status", "applied")
+            .with_field("applied", "1");
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content: r#"{"ok":true,"applied":1}"#.to_string(),
+            ui_payload: Some(applied_payload),
+        }));
+
+        let results = timeout(Duration::from_secs(1), &mut waiter)
+            .await
+            .expect("settled edit result should resolve")
+            .expect("tool waiter task should not panic")
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 1);
+        let (seen_call_id, result) = &results[0];
+        assert_eq!(seen_call_id.as_ref(), call_id.as_ref());
+        let result = result
+            .as_ref()
+            .expect("settled applied event should be a successful tool result");
+        assert_eq!(result.content, r#"{"ok":true,"applied":1}"#);
     }
 }

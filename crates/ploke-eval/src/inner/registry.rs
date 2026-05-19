@@ -555,7 +555,7 @@ mod tests {
         );
         assert_eq!(
             registration.artifacts.protocol_artifacts_dir,
-            registration.run_root().join("protocol-artifacts")
+            crate::layout::protocol_artifacts_dir_for_run(&registration.run_root())
         );
     }
 

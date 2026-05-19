@@ -60,7 +60,8 @@ pub use closure::{
 };
 pub use layout::{
     batches_dir, campaigns_dir, datasets_dir, instances_dir, ploke_eval_home,
-    protocol_artifacts_dir_for_run, registries_dir, repos_dir, workspace_root_for_key,
+    protocol_artifact_read_dirs_for_run, protocol_artifacts_dir_for_run, protocol_dir,
+    registries_dir, repos_dir, workspace_root_for_key,
 };
 pub use mbe::{
     FinalReport as MbeFinalReport, HarnessConfig as MbeHarnessConfig,

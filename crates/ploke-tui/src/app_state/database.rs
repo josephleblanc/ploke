@@ -2098,18 +2098,19 @@ mod tests {
         assert_eq!(resolved.as_path(), workspace_root.as_path());
     }
 
-    struct XdgConfigHomeGuard {
+    struct WorkspaceRegistryPathGuard {
         old_xdg: Option<String>,
         old_registry_path: Option<String>,
     }
 
-    impl XdgConfigHomeGuard {
+    impl WorkspaceRegistryPathGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
             let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+            let registry_path = path.join("ploke").join("workspaces.toml");
             unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", path);
-                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+                std::env::remove_var("XDG_CONFIG_HOME");
+                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", registry_path);
             }
             Self {
                 old_xdg,
@@ -2118,7 +2119,7 @@ mod tests {
         }
     }
 
-    impl Drop for XdgConfigHomeGuard {
+    impl Drop for WorkspaceRegistryPathGuard {
         fn drop(&mut self) {
             restore_workspace_registry_path(self.old_registry_path.take());
             restore_xdg_config_home(self.old_xdg.take());
@@ -2184,7 +2185,7 @@ mod tests {
     async fn load_db_restores_saved_embedding_set_and_index() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
         let crate_name = "fixture_crate_restore_embeddings";
         let crate_root = tmp_config.path().join(crate_name);
@@ -2321,7 +2322,7 @@ mod tests {
     async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
         let workspace_name = "fixture_crate_missing_registry";
         let data_dir = tmp_config.path().join("ploke/data");
@@ -2353,7 +2354,7 @@ mod tests {
     async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
         let workspace_name = "fixture_crate_first_populated_fallback";
         let workspace_root = tmp_config.path().join(workspace_name);
@@ -2443,7 +2444,7 @@ mod tests {
     async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
         let workspace_name = "fixture_crate_metadata_mismatch";
         let workspace_root = tmp_config.path().join(workspace_name);

@@ -577,6 +577,8 @@ pub struct ChatPolicy {
     #[serde(default = "default_tool_call_chain_limit")]
     pub tool_call_chain_limit: usize,
     #[serde(default)]
+    pub tool_loop_mode: ToolLoopMode,
+    #[serde(default)]
     pub retry_without_tools_on_404: bool,
     #[serde(default = "default_chat_timeout_strategy")]
     pub timeout_strategy: ChatTimeoutStrategy,
@@ -599,6 +601,7 @@ impl Default for ChatPolicy {
         Self {
             tool_call_timeout_secs: default_tool_call_timeout_secs(),
             tool_call_chain_limit: default_tool_call_chain_limit(),
+            tool_loop_mode: ToolLoopMode::default(),
             retry_without_tools_on_404: false,
             timeout_strategy: default_chat_timeout_strategy(),
             timeout_base_secs: default_timeout_base_secs(),
@@ -624,6 +627,7 @@ impl ChatPolicy {
         Self {
             tool_call_timeout_secs,
             tool_call_chain_limit,
+            tool_loop_mode: self.tool_loop_mode,
             retry_without_tools_on_404: self.retry_without_tools_on_404,
             timeout_strategy,
             timeout_base_secs,
@@ -634,6 +638,14 @@ impl ChatPolicy {
             tool_replay: self.tool_replay.validated(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolLoopMode {
+    #[default]
+    Auto,
+    Gated,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -970,6 +982,7 @@ mod tests {
             [chat_policy]
             tool_call_timeout_secs = 45
             tool_call_chain_limit = 50
+            tool_loop_mode = "gated"
             retry_without_tools_on_404 = true
             timeout_base_secs = 20
             error_retry_limit = 4
@@ -1002,6 +1015,7 @@ mod tests {
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
         assert_eq!(cfg.tool_retries, 3);
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
+        assert_eq!(cfg.chat_policy.tool_loop_mode, ToolLoopMode::Gated);
         assert_eq!(cfg.chat_policy.tool_replay.max_file_lines, 120);
         assert_eq!(cfg.rag.top_k, 20);
         assert_eq!(cfg.rag.per_part_max_tokens, 160);

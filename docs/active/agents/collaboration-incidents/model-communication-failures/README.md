@@ -22,3 +22,10 @@ could no longer tell what concrete action was being recommended.
   The agent buried a Prototype 1 triage conclusion under repeated absolute
   worktree paths, making the causal chain harder to read even though the
   underlying evidence was relevant.
+- [`2026-05-19-protocol-child-self-eval-vague-code-path.md`](2026-05-19-protocol-child-self-eval-vague-code-path.md)
+  The agent described the missing treatment protocol-artifact producer as a
+  vague "code path" instead of naming the child runtime self-eval caller,
+  C1-C5 boundary, parent consumer, and persisted run-artifact target.
+- [`2026-05-19-orchestrator-survey-collapsed-to-short-slice.md`](2026-05-19-orchestrator-survey-collapsed-to-short-slice.md)
+  The agent used the requested orchestrator machinery but collapsed a broad
+  command/UI/proof survey into a short verdict and one implementation slice.

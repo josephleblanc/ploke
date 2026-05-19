@@ -10,7 +10,7 @@ use ploke_records::protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::layout::protocol_artifacts_dir_for_run;
+use crate::layout::{protocol_artifact_read_dirs_for_run, protocol_artifacts_dir_for_run};
 use crate::run_registry::{
     ResolvedProtocolRunIdentity, resolve_protocol_run_identity, sync_protocol_registration_status,
 };
@@ -356,34 +356,35 @@ pub fn list_protocol_artifacts(
     record_path: &Path,
 ) -> Result<Vec<StoredProtocolArtifactFile>, PrepareError> {
     let resolved_identity = resolve_protocol_run_identity(record_path)?;
-    let artifacts_dir = protocol_artifacts_dir_for_run(&resolved_identity.run_dir);
-    if !artifacts_dir.exists() {
-        return Ok(Vec::new());
-    }
-
     let mut entries = Vec::new();
-    for entry in
-        fs::read_dir(&artifacts_dir).map_err(|source| PrepareError::ReadProtocolArtifact {
-            path: artifacts_dir.clone(),
-            source,
-        })?
-    {
-        let entry = entry.map_err(|source| PrepareError::ReadProtocolArtifact {
-            path: artifacts_dir.clone(),
-            source,
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+    for artifacts_dir in protocol_artifact_read_dirs_for_run(&resolved_identity.run_dir) {
+        if !artifacts_dir.exists() {
             continue;
         }
-        let loaded = load_protocol_artifact(&path)?;
-        validate_protocol_artifact_identity(&loaded, &resolved_identity).map_err(|mismatch| {
-            PrepareError::DatabaseSetup {
-                phase: "protocol_artifact_identity",
-                detail: mismatch.to_string(),
+
+        for entry in
+            fs::read_dir(&artifacts_dir).map_err(|source| PrepareError::ReadProtocolArtifact {
+                path: artifacts_dir.clone(),
+                source,
+            })?
+        {
+            let entry = entry.map_err(|source| PrepareError::ReadProtocolArtifact {
+                path: artifacts_dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
             }
-        })?;
-        entries.push(loaded);
+            let loaded = load_protocol_artifact(&path)?;
+            validate_protocol_artifact_identity(&loaded, &resolved_identity).map_err(
+                |mismatch| PrepareError::DatabaseSetup {
+                    phase: "protocol_artifact_identity",
+                    detail: mismatch.to_string(),
+                },
+            )?;
+            entries.push(loaded);
+        }
     }
 
     entries.sort_by(|left, right| right.path.cmp(&left.path));
@@ -408,27 +409,28 @@ pub fn list_protocol_artifact_load_results(
 fn list_protocol_artifact_load_results_for_identity(
     resolved_identity: &ResolvedProtocolRunIdentity,
 ) -> Result<Vec<ProtocolArtifactLoadResult>, PrepareError> {
-    let artifacts_dir = protocol_artifacts_dir_for_run(&resolved_identity.run_dir);
-    if !artifacts_dir.exists() {
-        return Ok(Vec::new());
-    }
-
     let mut entries = Vec::new();
-    for entry in
-        fs::read_dir(&artifacts_dir).map_err(|source| PrepareError::ReadProtocolArtifact {
-            path: artifacts_dir.clone(),
-            source,
-        })?
-    {
-        let entry = entry.map_err(|source| PrepareError::ReadProtocolArtifact {
-            path: artifacts_dir.clone(),
-            source,
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+    for artifacts_dir in protocol_artifact_read_dirs_for_run(&resolved_identity.run_dir) {
+        if !artifacts_dir.exists() {
             continue;
         }
-        entries.push(load_protocol_artifact_result(&path, resolved_identity));
+
+        for entry in
+            fs::read_dir(&artifacts_dir).map_err(|source| PrepareError::ReadProtocolArtifact {
+                path: artifacts_dir.clone(),
+                source,
+            })?
+        {
+            let entry = entry.map_err(|source| PrepareError::ReadProtocolArtifact {
+                path: artifacts_dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            entries.push(load_protocol_artifact_result(&path, resolved_identity));
+        }
     }
 
     entries.sort_by(|left, right| right.path().cmp(&left.path()));
@@ -1127,6 +1129,31 @@ mod tests {
         assert_eq!(loaded_rows(&rows).len(), 1);
         assert_eq!(decode_failures(&rows).len(), 2);
         assert_eq!(identity_failures(&rows).len(), 1);
+    }
+
+    #[test]
+    fn tolerant_listing_reads_legacy_run_local_artifacts() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let identity = test_identity(&tmp, "run-legacy", "subject-1");
+        let _ = fs::remove_dir_all(protocol_artifacts_dir_for_run(&identity.run_dir));
+        let legacy_dir = crate::layout::legacy_protocol_artifacts_dir_for_run(&identity.run_dir);
+        fs::create_dir_all(&legacy_dir).expect("legacy protocol dir");
+        fs::write(
+            legacy_dir.join("1000_valid.json"),
+            serde_json::to_string_pretty(&valid_segmentation_json(
+                &identity.run_id,
+                &identity.subject_id,
+                1000,
+                &identity.subject_id,
+            ))
+            .expect("serialize"),
+        )
+        .expect("write legacy artifact");
+
+        let rows = load_rows(&identity);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(loaded_rows(&rows).len(), 1);
     }
 
     #[test]

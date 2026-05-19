@@ -1117,7 +1117,7 @@ All of these tools are defined in the `functions` namespace and can be called di
                 line,
                 [
                     "request_code_context",
-                    "Ask the repository for additional code snippets up to a token budget.",
+                    "Ask the repository for additional code snippets within per-result and total token budgets.",
                     "search_term",
                 ],
             )

@@ -61,7 +61,9 @@ use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus, RuntimeConfig}
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::llm::{ChatEvt, LlmEvent};
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
-use ploke_tui::user_config::{ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser};
+use ploke_tui::user_config::{
+    ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser, ToolLoopMode,
+};
 use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -3549,6 +3551,7 @@ async fn configure_sparse_strict_rag(state: &Arc<AppState>) {
     cfg.llm_timeout_secs = HEADLESS_TUI_LLM_TIMEOUT_SECS;
     cfg.chat_policy.tool_call_timeout_secs = HEADLESS_TUI_LLM_TIMEOUT_SECS;
     cfg.chat_policy.tool_call_chain_limit = HEADLESS_TUI_TOOL_CHAIN_LIMIT;
+    cfg.chat_policy.tool_loop_mode = ToolLoopMode::Gated;
     cfg.chat_policy.repair_attempt_limit = HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT;
     cfg.chat_policy.error_retry_limit = 10;
     cfg.chat_policy.length_retry_limit = 5;

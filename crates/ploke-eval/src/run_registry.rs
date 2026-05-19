@@ -231,6 +231,8 @@ pub fn sync_protocol_registration_status(record_path: &Path) -> Result<(), Prepa
         return Ok(());
     };
 
+    registration.artifacts.protocol_artifacts_dir =
+        crate::layout::protocol_artifacts_dir_for_run(&registration.run_root());
     let artifacts = crate::protocol_artifacts::list_protocol_artifacts(record_path)?;
     if artifacts.is_empty() {
         registration.update_phase(
