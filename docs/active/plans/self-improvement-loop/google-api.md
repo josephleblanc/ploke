@@ -42,3 +42,32 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 8. Partially done: add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
 
 The next implementation slice is live/runtime validation: prove direct Google through the native TUI tool loop or headless eval adapter, then tighten any remaining persistence around active route selection.
+
+**Next Implementation Steps**
+9. Prove direct Google through the `ploke-tui` session/tool loop, not only through `ploke-llm::chat_step`.
+   - Source facts: `RuntimeConfig.active_router`, the selected model id, the existing tool definitions, and the normal `LlmEvent`/tool-call session flow.
+   - Semantic object: the selected LLM route, where `RouterVariants::Google` means a direct Google model route with no OpenRouter provider endpoint.
+   - Projection: a recorded or live TUI run that shows Google model output entering the same tool-call loop used by OpenRouter.
+   - Renderer/test surface: an ignored live test or recorded-prefix test that drives the real session loop and asserts on tool request/completion behavior.
+   - Likely `ploke-tui` touch points:
+     - [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:593): live request construction already branches on `active_router`; verify the Google branch carries the same tools, tool-choice policy, timeout, and message history as OpenRouter.
+     - [session.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs:594): recorded and recorded-prefix providers are the right harness for replay-style validation through the real session loop.
+     - [exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs:761): `model search` now uses the active router; this is the operator entry point to verify before a native run.
+     - [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs:210): `RuntimeConfig.active_router` is the runtime authority for direct Google dispatch.
+
+10. Carry the same route into the `ploke-eval` headless adapter.
+    - Source facts: the merged model registry row, `route_source`, selected model id, optional OpenRouter provider preference, and the headless TUI `ModelSelection`.
+    - Semantic object: eval-selected route, where OpenRouter routes may have provider preferences and direct Google routes must not.
+    - Projection: a headless TUI attempt configured with `RouterVariants::Google` when the selected registry row is `direct_google`.
+    - Renderer/test surface: a focused headless adapter test, preferably recorded-prefix first, then an ignored live canary when `GEMINI_API_KEY` is present.
+    - Likely `ploke-eval` touch points:
+      - [runner.rs](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs:1999): route resolution already uses `route_source`; keep direct Google on `LlmRoute::direct_google_model` and do not synthesize an endpoint.
+      - [model_registry.rs](/home/brasides/code/ploke/crates/ploke-eval/src/model_registry.rs:64): registry refresh merges OpenRouter and Google catalogs; use this as the source for route provenance.
+      - [cli.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli.rs:2845): `ModelSelection` construction is where OpenRouter provider preference can accidentally leak into direct Google selection.
+      - [tui_adapter.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:1): the headless adapter must pass router/model intent into vanilla `ploke-tui` rather than interpreting provider endpoints itself.
+      - [cli_tests.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:1218): existing ignored live headless attempt test is a candidate surface for a Google-specific canary once the adapter can select the route.
+
+11. After runtime validation, tighten persistence and operator semantics.
+    - Decide whether `active_router` is intentionally runtime-only in `ploke-tui`, or whether user config should persist it alongside the selected model.
+    - Keep OpenRouter provider pinning scoped to OpenRouter. For direct Google, persisted selection should be model plus route provenance, not provider slug.
+    - Add or adjust operator text only as a renderer over the route object: `openrouter` can show providers/endpoints; `google` should show direct route capability and key status.
