@@ -12,6 +12,7 @@ pub use fine::{
     fine_run_playback_ref_steps_from_sealed_history,
 };
 pub use turn::{
-    TurnArtifactKind, TurnEventKind, TurnEventPlaybackRefSteps, TurnEventStepRef,
-    turn_event_steps_from_agent_turn_records, turn_event_steps_from_artifact,
+    ResponseTapeRef, TurnArtifactKind, TurnCursor, TurnEventKind, TurnEventPlaybackRefSteps,
+    TurnEventStepRef, turn_event_step_at, turn_event_steps_from_agent_turn_records,
+    turn_event_steps_from_artifact,
 };

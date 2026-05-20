@@ -1220,9 +1220,30 @@ mod tests {
         assert_eq!(trace_steps[0].kind(), crate::TurnEventKind::ToolRequested);
         assert_eq!(trace_steps[0].tool_name(), Some("read_file"));
         assert_eq!(trace_steps[0].call_id(), Some("call-1"));
+        assert_eq!(
+            trace_steps[0]
+                .response_tape_ref()
+                .map(|response| response.assistant_message_id),
+            Some("assistant-1")
+        );
         assert_eq!(trace_steps[1].kind(), crate::TurnEventKind::ToolCompleted);
         assert_eq!(trace_steps[2].kind(), crate::TurnEventKind::ToolFailed);
         assert_eq!(trace_steps[3].kind(), crate::TurnEventKind::TurnFinished);
+        assert_eq!(
+            trace_steps[3].event_assistant_message_id(),
+            Some("assistant-1")
+        );
+        let cursor = trace_steps[0].cursor();
+        let resolved = crate::turn_event_step_at(graph.agent_turn_records(), &cursor)
+            .expect("resolve playback cursor");
+        assert_eq!(resolved.kind(), crate::TurnEventKind::ToolRequested);
+        assert_eq!(resolved.tool_name(), Some("read_file"));
+        assert_eq!(
+            resolved
+                .response_tape_ref()
+                .map(|response| response.assistant_message_id),
+            Some("assistant-1")
+        );
         let ObservedTurnEventRecord::ToolRequested(request) = trace_steps[0].event else {
             panic!("expected first trace event to be the typed tool request");
         };
