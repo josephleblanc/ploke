@@ -4,6 +4,7 @@
 mod tests;
 
 pub(super) mod cli;
+pub mod google;
 pub mod openrouter;
 
 use crate::manager::RequestMessage;
@@ -177,6 +178,7 @@ pub trait HasEndpoint: Router {
 pub enum RouterVariants {
     OpenRouter(openrouter::OpenRouter),
     Anthropic(anthropic::Anthropic),
+    Google(google::Google),
 }
 
 impl Default for RouterVariants {
@@ -247,11 +249,7 @@ pub trait Router:
     // that is not common to both native model APIs like OpenAI and true routers like OpenRouter.
     const PROVIDERS_URL: &str;
 
-    fn resolve_api_key() -> Result<String, std::env::VarError> {
-        // 1. Check provider-specific env var if specified
-        let key_name = Self::API_KEY_NAME;
-        std::env::var(key_name)
-    }
+    fn resolve_api_key() -> Result<String, crate::LlmError>;
 
     fn endpoints_url(model: Self::RouterModelId) -> String {
         // OpenRouter’s models path treats ':' as a reserved char → percent-encode

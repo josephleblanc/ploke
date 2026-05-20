@@ -1265,7 +1265,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             } => {
                 let x = "";
                 let msg = format!(
-                    "{x:-^10} Reasoning {x:-^10}\n 
+                    "{x:-^10} Reasoning {x:-^10}\n
                     {reasoning_msg}\n
                     {x:^20}
                     {content_msg}"
@@ -2036,6 +2036,10 @@ mod tests {
         const ENDPOINTS_TAIL: &str = "endpoints";
         const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
         const PROVIDERS_URL: &str = "http://127.0.0.1:39181/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
     }
 
     impl RouterCalibration for TestRouter {
@@ -2058,6 +2062,10 @@ mod tests {
         const ENDPOINTS_TAIL: &str = "endpoints";
         const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
         const PROVIDERS_URL: &str = "http://127.0.0.1:39182/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
     }
 
     impl RouterCalibration for TestRouterAlt {
@@ -2080,6 +2088,10 @@ mod tests {
         const ENDPOINTS_TAIL: &str = "endpoints";
         const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
         const PROVIDERS_URL: &str = "http://127.0.0.1:39181/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
     }
 
     impl RouterCalibration for CalibratedTestRouter {

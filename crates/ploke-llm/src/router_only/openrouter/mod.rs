@@ -37,6 +37,11 @@ impl Router for OpenRouter {
     const ENDPOINTS_TAIL: &str = "endpoints";
     const API_KEY_NAME: &str = "OPENROUTER_API_KEY";
     const PROVIDERS_URL: &str = "https://openrouter.ai/api/v1/providers";
+
+    fn resolve_api_key() -> Result<String, LlmError> {
+        // 1. Check provider-specific env var if specified
+        std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+    }
 }
 
 impl TryFrom<RouterVariants> for OpenRouter {
@@ -45,8 +50,11 @@ impl TryFrom<RouterVariants> for OpenRouter {
     fn try_from(value: RouterVariants) -> Result<Self, Self::Error> {
         match value {
             RouterVariants::OpenRouter(_open_router) => Ok(OpenRouter),
-            RouterVariants::Anthropic(_anthropic) => Err(LlmError::Conversion(String::from(
+            RouterVariants::Anthropic(_) => Err(LlmError::Conversion(String::from(
                 "Invalid conversion from Anthropic to OpenRouter",
+            ))),
+            RouterVariants::Google(_) => Err(LlmError::Conversion(String::from(
+                "Invalid conversion from Google to OpenRouter",
             ))),
         }
     }

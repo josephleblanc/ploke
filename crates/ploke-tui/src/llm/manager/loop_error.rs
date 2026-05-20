@@ -544,6 +544,22 @@ pub fn classify_llm_error(
             context.finish_reason = Some(finish_reason.clone());
             finish_reason_metadata(finish_reason)
         }
+        var_err @ LlmError::Var { .. } => {
+            let reason = format!(
+                "Error with authentication of api provider: {}",
+                var_err.to_string()
+            );
+            (
+                LoopErrorKind::ProviderProtocol,
+                ArcStr::from("INTERNAL_ERROR"),
+                ErrorSeverity::Error,
+                RetryAdvice::Maybe {
+                    reason: ArcStr::from(reason),
+                },
+                None,
+                None,
+            )
+        }
     };
 
     let summary = ArcStr::from(err.to_string());

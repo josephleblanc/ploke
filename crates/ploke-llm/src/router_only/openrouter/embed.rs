@@ -61,7 +61,7 @@ pub struct OpenRouterEmbedEnv {
 }
 
 impl OpenRouterEmbedEnv {
-    pub fn from_env() -> Result<Self, std::env::VarError> {
+    pub fn from_env() -> Result<Self, LlmError> {
         let api_key = super::OpenRouter::resolve_api_key()?;
         Ok(Self {
             api_key,
@@ -80,7 +80,7 @@ impl OpenRouterEmbedEnv {
     pub fn from_overrides(
         api_key: Option<String>,
         embeddings_url: Option<String>,
-    ) -> Result<Self, std::env::VarError> {
+    ) -> Result<Self, LlmError> {
         let key = match api_key {
             Some(k) => k,
             None => super::OpenRouter::resolve_api_key()?,

@@ -182,6 +182,11 @@ pub enum LlmError {
     Conversion(String),
     #[error(transparent)]
     Http(#[from] HttpFailure),
+    #[error("Var error: {message}, original: {original}")]
+    Var {
+        message: &'static str,
+        original: String,
+    },
 
     /// The API provider returned a non-success status code.
     #[error("API error (status {status}): {message}")]
@@ -252,6 +257,15 @@ pub enum LlmError {
         full_response: OpenAiResponse,
         finish_reason: FinishReason,
     },
+}
+
+impl From<std::env::VarError> for LlmError {
+    fn from(value: std::env::VarError) -> Self {
+        LlmError::Var {
+            message: "Error from env variable",
+            original: value.to_string(),
+        }
+    }
 }
 
 impl LlmError {
@@ -380,8 +394,10 @@ impl From<LlmError> for ploke_error::Error {
             err_chat @ LlmError::ChatStep(_) => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_chat.to_string()),
             ),
-            // TODO: Add more match arms for levels of error by `FinishReason`
             err_llm @ LlmError::FinishError { .. } => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
+            ),
+            err_llm @ LlmError::Var { .. } => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
             ),
         }

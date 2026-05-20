@@ -18,6 +18,7 @@ tracing = { workspace = true }
 
 # http handling
 reqwest = { version = "0.12", features = ["json"] }
+http = {version = "1.1"}
 
 # used mostly in tests for convenience, refactor local error
 # type and remove this later
