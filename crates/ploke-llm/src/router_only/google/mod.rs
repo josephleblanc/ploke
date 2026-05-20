@@ -43,7 +43,7 @@ pub struct GoogleChatCompFields {
 // reference_images	List	Video	Up to 3 images for style/character reference (base64 assets).
 // image	Text	Video	Base64-encoded initial input image to condition the video generation.
 // last_frame	Object	Video	Final image for interpolation (requires image as first frame).
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExtraBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub google: Option<GoogleExtraBody>,
@@ -56,13 +56,20 @@ impl ExtraBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct GoogleExtraBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
 }
 
 impl GoogleExtraBody {
+    pub fn with_cached_content(mut self, cached_content: impl Into<String>) -> Self {
+        self.cached_content = Some(cached_content.into());
+        self
+    }
+
     pub fn with_thinking_config(mut self, thinking_config: ThinkingConfig) -> Self {
         self.thinking_config = Some(thinking_config);
         self
@@ -175,7 +182,7 @@ mod tests {
     use crate::router_only::Router;
 
     #[cfg(feature = "live_api_tests")]
-    use std::time::Duration;
+    use std::{env, time::Duration};
 
     #[cfg(feature = "live_api_tests")]
     use color_eyre::{Result, eyre::bail};
@@ -185,7 +192,16 @@ mod tests {
     use serde_json::json;
 
     #[cfg(feature = "live_api_tests")]
-    use crate::{HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS};
+    use crate::{
+        HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS,
+        manager::RequestMessage,
+        router_only::{
+            ChatCompRequest,
+            google::{
+                ExtraBody, GoogleChatCompFields, GoogleExtraBody, ThinkingConfig, ThinkingLevel,
+            },
+        },
+    };
 
     #[cfg(feature = "live_api_tests")]
     fn body_snippet(body: &str) -> String {
@@ -218,6 +234,79 @@ mod tests {
             .and_then(|error| error.get("status"))
             .and_then(|status| status.as_str())
             == Some("RESOURCE_EXHAUSTED")
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_chat_model() -> String {
+        env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-3.5-flash".to_string())
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn send_chat_request(
+        request: &ChatCompRequest<Google>,
+    ) -> Result<(reqwest::StatusCode, serde_json::Value, String)> {
+        let key = Google::resolve_api_key()?;
+        let url = Google::COMPLETION_URL;
+        let response = Client::new()
+            .post(url)
+            .bearer_auth(key)
+            .header("Accept", "application/json")
+            .json(request)
+            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|error| send_failure(url, error))?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+
+        Ok((status, response_value, response_text))
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn first_message_content(response: &serde_json::Value) -> Option<&str> {
+        response
+            .get("choices")?
+            .as_array()?
+            .iter()
+            .filter_map(|choice| {
+                choice
+                    .get("message")
+                    .and_then(|message| message.get("content"))
+                    .and_then(|content| content.as_str())
+            })
+            .find(|content| !content.trim().is_empty())
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn first_message_reasoning(response: &serde_json::Value) -> Option<&str> {
+        response
+            .get("choices")?
+            .as_array()?
+            .iter()
+            .filter_map(|choice| {
+                choice
+                    .get("message")
+                    .and_then(|message| message.get("reasoning"))
+                    .and_then(|reasoning| reasoning.as_str())
+            })
+            .find(|reasoning| !reasoning.trim().is_empty())
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn json_contains_text(value: &serde_json::Value, needle: &str) -> bool {
+        match value {
+            serde_json::Value::String(text) => text.to_ascii_lowercase().contains(needle),
+            serde_json::Value::Array(items) => {
+                items.iter().any(|item| json_contains_text(item, needle))
+            }
+            serde_json::Value::Object(fields) => fields
+                .values()
+                .any(|field| json_contains_text(field, needle)),
+            _ => false,
+        }
     }
 
     #[test]
@@ -334,6 +423,98 @@ mod tests {
         assert!(
             !content.trim().is_empty(),
             "expected non-empty assistant content in Google completion response: {response_value}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_thinking_request_returns_reasoning_success_or_quota() -> Result<()> {
+        let router = GoogleChatCompFields {
+            extra_body: Some(
+                ExtraBody::default().with_google(
+                    GoogleExtraBody::default().with_thinking_config(
+                        ThinkingConfig::default()
+                            .with_thinking_level(ThinkingLevel::Low)
+                            .with_include_thoughts(true),
+                    ),
+                ),
+            ),
+        };
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(&live_chat_model())?
+            .with_message(RequestMessage::new_user(
+                "Explain why 13 is prime in one short paragraph.".to_string(),
+            ))
+            .with_max_tokens(256)
+            .with_temperature(0.0)
+            .with_router_bundle(router);
+
+        let (status, response_value, response_text) = send_chat_request(&request).await?;
+        if !status.is_success() {
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && is_resource_exhausted(&response_value)
+            {
+                return Ok(());
+            }
+
+            bail!(
+                "Google thinking chat completion failed: status={} body={}",
+                status,
+                body_snippet(&response_text)
+            );
+        }
+
+        assert!(
+            first_message_content(&response_value).is_some(),
+            "expected assistant content in Google thinking response: {response_value}"
+        );
+        assert!(
+            first_message_reasoning(&response_value).is_some(),
+            "expected non-empty message.reasoning when include_thoughts=true: {response_value}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_cached_content_reaches_provider_as_rejected_resource() -> Result<()> {
+        let missing_cache = "cachedContents/ploke-live-test-missing-cache";
+        let router = GoogleChatCompFields {
+            extra_body: Some(
+                ExtraBody::default()
+                    .with_google(GoogleExtraBody::default().with_cached_content(missing_cache)),
+            ),
+        };
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(&live_chat_model())?
+            .with_message(RequestMessage::new_user(
+                "Reply with the word ok.".to_string(),
+            ))
+            .with_max_tokens(8)
+            .with_temperature(0.0)
+            .with_router_bundle(router);
+
+        let (status, response_value, response_text) = send_chat_request(&request).await?;
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            && is_resource_exhausted(&response_value)
+        {
+            return Ok(());
+        }
+
+        assert!(
+            !status.is_success(),
+            "expected missing cached_content resource to be rejected, got success: {response_value}"
+        );
+        assert!(
+            json_contains_text(&response_value, "cached")
+                || json_contains_text(&response_value, "cache")
+                || json_contains_text(&response_value, missing_cache),
+            "expected cache-related error for missing cached_content, status={} body={}",
+            status,
+            body_snippet(&response_text)
         );
 
         Ok(())

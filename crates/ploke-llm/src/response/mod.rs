@@ -123,18 +123,6 @@ pub struct ErrorResponse {
     pub(super) metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Use OpenAI-style normalized tool call shape per OpenRouter docs
-
-// TODO:ploke-llm
-// Old, I think not useful, but want to leave it until we finish up with the transition from
-// ploke-tui::llm.
-// Delete after migration complete.
-//
-// #[derive(Deserialize, Serialize, Debug, Clone)]
-// pub(crate) struct Choice {
-//     pub(super) message: ResponseMessage,
-// }
-
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ResponseMessage {
     // When tool_calls are present, role may be null/absent
