@@ -9,7 +9,7 @@ pub mod report;
 use std::path::PathBuf;
 
 #[cfg(feature = "dev")]
-use clap::{Parser, Subcommand};
+use clap::{Args as ClapArgs, Parser, Subcommand};
 
 #[cfg(feature = "dev")]
 use self::bench::{BenchArgs, BenchRun};
@@ -18,6 +18,7 @@ use crate::ui::view::GraphViewMode;
 #[derive(Debug)]
 pub struct Run {
     pub run_root: Option<PathBuf>,
+    pub graph_snapshot: Option<PathBuf>,
     pub mode: GraphViewMode,
     pub snapshot: bool,
     pub contract_report: bool,
@@ -45,6 +46,8 @@ pub struct Run {
     pub benchmark_callsite_sample_every: Option<u64>,
     #[cfg(feature = "dev")]
     pub bench: Option<BenchRun>,
+    #[cfg(feature = "dev")]
+    pub export_graph: Option<ExportGraphRun>,
 }
 
 impl Run {
@@ -52,8 +55,20 @@ impl Run {
         #[cfg(feature = "dev")]
         {
             let args = Args::parse();
+            let (bench, export_graph) = match args.command {
+                Some(Command::Bench(args)) => (Some(args.into_run()), None),
+                Some(Command::ExportGraph(args)) => (
+                    None,
+                    Some(ExportGraphRun {
+                        run_root: args.run_root,
+                        output: args.output,
+                    }),
+                ),
+                None => (None, None),
+            };
             return Self {
                 run_root: args.run_root.or(args.positional_run_root),
+                graph_snapshot: args.graph_snapshot,
                 mode: args.mode.unwrap_or_default(),
                 snapshot: args.snapshot,
                 contract_report: args.contract_report,
@@ -69,7 +84,8 @@ impl Run {
                 benchmark_scenarios: args.benchmark_scenario,
                 benchmark_output: args.benchmark_output,
                 benchmark_callsite_sample_every: args.benchmark_callsite_sample_every,
-                bench: args.command.map(Command::into_run),
+                bench,
+                export_graph,
             };
         }
 
@@ -77,6 +93,7 @@ impl Run {
         {
             Self {
                 run_root: std::env::args_os().nth(1).map(PathBuf::from),
+                graph_snapshot: None,
                 mode: GraphViewMode::ArtifactTree,
                 snapshot: false,
                 contract_report: false,
@@ -96,6 +113,15 @@ struct Args {
 
     #[arg(long, value_name = "RUN_ROOT")]
     run_root: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "run_root",
+        conflicts_with = "positional_run_root",
+        help = "Load the UI from a portable ploke-tree graph snapshot"
+    )]
+    graph_snapshot: Option<PathBuf>,
 
     #[arg(long)]
     snapshot: bool,
@@ -192,15 +218,25 @@ struct Args {
 enum Command {
     #[command(about = "Inspect and render benchmark reports and artifacts")]
     Bench(BenchArgs),
+    #[command(about = "Export a run root into a portable ploke-tree graph snapshot")]
+    ExportGraph(ExportGraphArgs),
 }
 
 #[cfg(feature = "dev")]
-impl Command {
-    fn into_run(self) -> BenchRun {
-        match self {
-            Self::Bench(args) => args.into_run(),
-        }
-    }
+#[derive(Debug, Clone, ClapArgs)]
+pub struct ExportGraphArgs {
+    #[arg(long, value_name = "RUN_ROOT")]
+    pub run_root: PathBuf,
+
+    #[arg(long, value_name = "PATH")]
+    pub output: PathBuf,
+}
+
+#[cfg(feature = "dev")]
+#[derive(Debug, Clone)]
+pub struct ExportGraphRun {
+    pub run_root: PathBuf,
+    pub output: PathBuf,
 }
 
 #[cfg(feature = "dev")]
@@ -219,6 +255,13 @@ fn parse_mode(value: &str) -> Result<GraphViewMode, String> {
 #[cfg(all(test, feature = "dev"))]
 mod tests {
     use super::*;
+
+    fn into_bench_run(command: Command) -> Option<BenchRun> {
+        match command {
+            Command::Bench(args) => Some(args.into_run()),
+            Command::ExportGraph(_) => None,
+        }
+    }
 
     #[test]
     fn benchmark_suite_requires_explicit_run_root() {
@@ -256,11 +299,47 @@ mod tests {
     }
 
     #[test]
+    fn graph_snapshot_load_conflicts_with_run_root() {
+        let args = Args::try_parse_from(["ploke-egui", "--graph-snapshot", "/tmp/demo.json"])
+            .expect("parse graph snapshot load");
+        assert_eq!(args.graph_snapshot, Some(PathBuf::from("/tmp/demo.json")));
+
+        let error = Args::try_parse_from([
+            "ploke-egui",
+            "--run-root",
+            "/tmp/prototype1",
+            "--graph-snapshot",
+            "/tmp/demo.json",
+        ])
+        .expect_err("graph snapshot should not also take run root");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn export_graph_command_parses_snapshot_paths() {
+        let args = Args::try_parse_from([
+            "ploke-egui",
+            "export-graph",
+            "--run-root",
+            "/tmp/prototype1",
+            "--output",
+            "/tmp/demo.graph.json",
+        ])
+        .expect("parse export graph command");
+
+        let Some(Command::ExportGraph(export)) = args.command else {
+            panic!("expected export graph command");
+        };
+        assert_eq!(export.run_root, PathBuf::from("/tmp/prototype1"));
+        assert_eq!(export.output, PathBuf::from("/tmp/demo.graph.json"));
+    }
+
+    #[test]
     fn bench_breakdown_accepts_optional_path_and_alias() {
         let latest = Args::try_parse_from(["ploke-egui", "bench", "--breakdown"])
             .expect("parse latest allocation breakdown");
         assert!(matches!(
-            latest.command.map(Command::into_run),
+            latest.command.and_then(into_bench_run),
             Some(BenchRun::AllocationBreakdown(args)) if args.report_or_dir.is_none()
                 && !args.short
                 && !args.fast_only
@@ -270,7 +349,7 @@ mod tests {
             Args::try_parse_from(["ploke-egui", "bench", "--breakdown", "/tmp/report.json"])
                 .expect("parse explicit allocation breakdown");
         assert!(matches!(
-            explicit.command.map(Command::into_run),
+            explicit.command.and_then(into_bench_run),
             Some(BenchRun::AllocationBreakdown(args))
                 if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
         ));
@@ -278,7 +357,7 @@ mod tests {
         let alias = Args::try_parse_from(["ploke-egui", "bench", "--bd", "/tmp/report.json"])
             .expect("parse allocation breakdown alias");
         assert!(matches!(
-            alias.command.map(Command::into_run),
+            alias.command.and_then(into_bench_run),
             Some(BenchRun::AllocationBreakdown(args))
                 if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
         ));
@@ -296,7 +375,7 @@ mod tests {
         ])
         .expect("parse allocation breakdown filters");
         assert!(matches!(
-            args.command.map(Command::into_run),
+            args.command.and_then(into_bench_run),
             Some(BenchRun::AllocationBreakdown(args))
                 if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
                     && args.short
@@ -317,7 +396,7 @@ mod tests {
         ])
         .expect("parse allocation delta");
         assert!(matches!(
-            delta.command.map(Command::into_run),
+            delta.command.and_then(into_bench_run),
             Some(BenchRun::AllocationDelta(args))
                 if args.report_or_dir == Some(PathBuf::from("/tmp/report.json"))
                     && args.short
@@ -327,7 +406,7 @@ mod tests {
         let diff = Args::try_parse_from(["ploke-egui", "bench", "diff", "--bd"])
             .expect("parse allocation delta alias");
         assert!(matches!(
-            diff.command.map(Command::into_run),
+            diff.command.and_then(into_bench_run),
             Some(BenchRun::AllocationDelta(args)) if args.report_or_dir.is_none()
         ));
     }

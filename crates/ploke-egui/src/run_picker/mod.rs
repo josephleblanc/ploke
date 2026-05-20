@@ -103,6 +103,10 @@ impl RunPicker {
         self.selected = Some(0);
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
     pub fn record_loaded_graph(&mut self, path: &Path, graph: &Graph) {
         self.select_or_insert_path(path);
         if let Some(index) = self.selected

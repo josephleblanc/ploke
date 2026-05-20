@@ -10,7 +10,9 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-use ploke_tree::{FsRunStore, FsRunStoreError, Graph, RunRecordSet};
+use ploke_tree::{
+    FsRunStore, FsRunStoreError, Graph, GraphSnapshot, GraphSnapshotError, RunRecordSet,
+};
 
 pub fn graph_from_run_root(run_root: impl AsRef<Path>) -> Result<Graph, ImportError> {
     let store = FsRunStore::new(run_root.as_ref());
@@ -23,15 +25,21 @@ pub fn graph_from_run_records(records: &RunRecordSet) -> Graph {
     Graph::from_records(records)
 }
 
+pub fn graph_from_snapshot(path: impl AsRef<Path>) -> Result<Graph, ImportError> {
+    Ok(GraphSnapshot::read_json(path)?.graph())
+}
+
 #[derive(Debug)]
 pub enum ImportError {
     Store(FsRunStoreError),
+    Snapshot(GraphSnapshotError),
 }
 
 impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(error) => write!(f, "{error}"),
+            Self::Snapshot(error) => write!(f, "{error}"),
         }
     }
 }
@@ -40,6 +48,7 @@ impl Error for ImportError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Store(error) => Some(error),
+            Self::Snapshot(error) => Some(error),
         }
     }
 }
@@ -47,5 +56,11 @@ impl Error for ImportError {
 impl From<FsRunStoreError> for ImportError {
     fn from(error: FsRunStoreError) -> Self {
         Self::Store(error)
+    }
+}
+
+impl From<GraphSnapshotError> for ImportError {
+    fn from(error: GraphSnapshotError) -> Self {
+        Self::Snapshot(error)
     }
 }

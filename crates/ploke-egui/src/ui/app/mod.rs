@@ -3,6 +3,8 @@
 pub(crate) mod layout;
 pub(crate) mod shell;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "dev",
@@ -12,6 +14,8 @@ use std::time::Instant;
 
 use eframe::egui;
 use ploke_tree::Graph;
+#[cfg(not(target_arch = "wasm32"))]
+use ploke_tree::GraphSnapshot;
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -58,6 +62,14 @@ pub struct OperatorApp {
     #[cfg(not(target_arch = "wasm32"))]
     run_error: Option<String>,
     #[cfg(not(target_arch = "wasm32"))]
+    graph_snapshot: Option<GraphSnapshot>,
+    #[cfg(not(target_arch = "wasm32"))]
+    graph_snapshot_path: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    graph_snapshot_label: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    graph_snapshot_status: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     diagnostics_sink: Option<SnapshotSink>,
     #[cfg(not(target_arch = "wasm32"))]
     close_after_snapshot: bool,
@@ -100,6 +112,14 @@ impl OperatorApp {
             #[cfg(not(target_arch = "wasm32"))]
             run_error: None,
             #[cfg(not(target_arch = "wasm32"))]
+            graph_snapshot: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            graph_snapshot_path: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            graph_snapshot_label: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            graph_snapshot_status: None,
+            #[cfg(not(target_arch = "wasm32"))]
             diagnostics_sink: None,
             #[cfg(not(target_arch = "wasm32"))]
             close_after_snapshot: false,
@@ -140,6 +160,10 @@ impl OperatorApp {
             dashboard_tree: crate::ui::dashboard::tiles::create_default_tree(),
             run_picker,
             run_error: None,
+            graph_snapshot: None,
+            graph_snapshot_path: String::new(),
+            graph_snapshot_label: None,
+            graph_snapshot_status: None,
             diagnostics_sink: None,
             close_after_snapshot: false,
             diagnostics_error: None,
@@ -182,6 +206,14 @@ impl OperatorApp {
         self
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_graph_snapshot(mut self, path: PathBuf, snapshot: GraphSnapshot) -> Self {
+        self.graph_snapshot_path = path.display().to_string();
+        self.graph_snapshot_label = Some(snapshot_label(path.as_path()));
+        self.graph_snapshot = Some(snapshot);
+        self
+    }
+
     #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
     pub fn with_puffin_capture(mut self, capture: PuffinCapture) -> Self {
         self.puffin_capture = Some(capture);
@@ -210,6 +242,7 @@ impl OperatorApp {
             return self
                 .run_picker
                 .selected_run_name()
+                .or(self.graph_snapshot_label.as_deref())
                 .filter(|name| !name.is_empty());
         }
 
@@ -229,6 +262,10 @@ impl OperatorApp {
             .show(ui, |ui| {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.render_run_picker(ui);
+                #[cfg(not(target_arch = "wasm32"))]
+                self.render_graph_snapshot_controls(ui);
+                #[cfg(not(target_arch = "wasm32"))]
+                ui.separator();
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
                 render_tile_picker(ui, &mut self.dashboard_tree);
@@ -480,15 +517,11 @@ impl OperatorApp {
         if let Some(path) = self.run_picker.show(ui) {
             match graph_from_run_root(&path) {
                 Ok(graph) => {
-                    let mode = self.view.mode();
-                    self.graph = graph;
-                    self.graph_revision = self.graph_revision.next();
-                    self.view = GraphView::default();
-                    self.view.set_mode(mode);
-                    self.inspector_cache = InspectorCache::default();
-                    self.inspector_render_cache = shell::InspectorRenderCache::default();
-                    self.patch_diff_cache = PatchDiffCache::default();
+                    self.replace_graph(graph);
+                    self.graph_snapshot = None;
+                    self.graph_snapshot_label = None;
                     self.run_error = None;
+                    self.graph_snapshot_status = None;
                 }
                 Err(error) => {
                     self.run_error = Some(format!("Run import failed: {error}"));
@@ -499,6 +532,86 @@ impl OperatorApp {
         if let Some(error) = &self.run_error {
             ui.label(error);
         }
+    }
+
+    fn render_graph_snapshot_controls(&mut self, ui: &mut egui::Ui) {
+        profiling::scope!("ploke-egui.render-graph-snapshot-controls");
+        ui.separator();
+        ui.label("Graph snapshot");
+        ui.text_edit_singleline(&mut self.graph_snapshot_path);
+        ui.horizontal(|ui| {
+            if ui.button("Load").clicked() {
+                self.load_graph_snapshot_from_control();
+            }
+            if ui.button("Export").clicked() {
+                self.export_graph_snapshot_from_control();
+            }
+        });
+        if let Some(status) = &self.graph_snapshot_status {
+            ui.label(status.as_str());
+        }
+    }
+
+    fn load_graph_snapshot_from_control(&mut self) {
+        let Some(path) = snapshot_control_path(&self.graph_snapshot_path) else {
+            self.graph_snapshot_status = Some("Graph snapshot path is empty".to_owned());
+            return;
+        };
+
+        match GraphSnapshot::read_json(&path) {
+            Ok(snapshot) => {
+                let graph = snapshot.graph();
+                self.replace_graph(graph);
+                self.run_picker.clear_selection();
+                self.run_error = None;
+                self.graph_snapshot_label = Some(snapshot_label(path.as_path()));
+                self.graph_snapshot = Some(snapshot);
+                self.graph_snapshot_status =
+                    Some(format!("Graph snapshot loaded: {}", path.display()));
+            }
+            Err(error) => {
+                self.graph_snapshot_status = Some(format!("Graph snapshot load failed: {error}"));
+            }
+        }
+    }
+
+    fn export_graph_snapshot_from_control(&mut self) {
+        let Some(path) = snapshot_control_path(&self.graph_snapshot_path) else {
+            self.graph_snapshot_status = Some("Graph snapshot path is empty".to_owned());
+            return;
+        };
+
+        let result = if let Some(snapshot) = &self.graph_snapshot {
+            snapshot.write_json(&path)
+        } else if let Some(run) = self.run_picker.selected_run() {
+            GraphSnapshot::from_run_root(&run.path).and_then(|snapshot| snapshot.write_json(&path))
+        } else {
+            self.graph_snapshot_status =
+                Some("Select a run or load a graph snapshot before export".to_owned());
+            return;
+        };
+
+        match result {
+            Ok(()) => {
+                self.graph_snapshot_path = path.display().to_string();
+                self.graph_snapshot_status =
+                    Some(format!("Graph snapshot exported: {}", path.display()));
+            }
+            Err(error) => {
+                self.graph_snapshot_status = Some(format!("Graph snapshot export failed: {error}"));
+            }
+        }
+    }
+
+    fn replace_graph(&mut self, graph: Graph) {
+        let mode = self.view.mode();
+        self.graph = graph;
+        self.graph_revision = self.graph_revision.next();
+        self.view = GraphView::default();
+        self.view.set_mode(mode);
+        self.inspector_cache = InspectorCache::default();
+        self.inspector_render_cache = shell::InspectorRenderCache::default();
+        self.patch_diff_cache = PatchDiffCache::default();
     }
 
     fn emit_diagnostics(&mut self, ctx: &egui::Context) {
@@ -599,6 +712,113 @@ impl OperatorApp {
             name: run.name,
             path: run.path.display().to_string(),
         })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn snapshot_control_path(text: &str) -> Option<PathBuf> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn snapshot_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use std::fs;
+
+    use ploke_records::ids::CampaignId;
+    use ploke_records::scheduler::SchedulerStateRecord;
+    use ploke_tree::{
+        AgentTurnRecordSet, PassiveEvidence, RunForestInput, RunRecordSet, TransitionJournal,
+    };
+
+    use super::*;
+
+    #[test]
+    fn graph_snapshot_controls_load_and_export_snapshot() {
+        let dir = std::env::temp_dir().join(format!(
+            "ploke-egui-snapshot-controls-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let input = dir.join("input.json");
+        let output = dir.join("output.json");
+        GraphSnapshot::from_records(empty_record_set())
+            .write_json(&input)
+            .expect("write input snapshot");
+
+        let picker = RunPicker::from_root_deferred(dir.clone());
+        let mut app = OperatorApp::new_with_run_picker(crate::demo::sample_graph(), picker);
+        app.graph_snapshot_path = input.display().to_string();
+        app.load_graph_snapshot_from_control();
+
+        assert!(app.graph_snapshot.is_some());
+        assert_eq!(
+            app.graph
+                .forest
+                .as_ref()
+                .expect("loaded forest")
+                .campaign
+                .campaign_id,
+            "campaign-ui"
+        );
+
+        app.graph_snapshot_path = output.display().to_string();
+        app.export_graph_snapshot_from_control();
+        let exported = GraphSnapshot::read_json(&output).expect("read exported snapshot");
+        assert_eq!(
+            exported
+                .graph()
+                .forest
+                .as_ref()
+                .expect("exported forest")
+                .campaign
+                .campaign_id,
+            "campaign-ui"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove test dir");
+    }
+
+    fn empty_record_set() -> RunRecordSet {
+        RunRecordSet {
+            forest_input: RunForestInput {
+                scheduler: SchedulerStateRecord {
+                    schema_version: "prototype1-scheduler.v1".to_owned(),
+                    campaign_id: CampaignId("campaign-ui".to_owned()),
+                    updated_at: "2026-05-20T00:00:00Z".to_owned(),
+                    policy: Default::default(),
+                    frontier_node_ids: Vec::new(),
+                    completed_node_ids: Vec::new(),
+                    failed_node_ids: Vec::new(),
+                    last_continuation_decision: None,
+                    nodes: Vec::new(),
+                },
+                node_records: Vec::new(),
+                parent_identity: None,
+                successor_ready: Vec::new(),
+                successor_completion: Vec::new(),
+                passive_evidence: PassiveEvidence::default(),
+            },
+            history_blocks: Vec::new(),
+            transition_journal: TransitionJournal::default(),
+            agent_turn_records: AgentTurnRecordSet::default(),
+        }
     }
 }
 

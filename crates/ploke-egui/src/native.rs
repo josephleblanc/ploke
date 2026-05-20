@@ -21,7 +21,7 @@ use crate::diagnostics::{
     GraphIdentity, RunSnapshot, Snapshot, SnapshotObservation, SnapshotSink,
     artifact_component_breakdown,
 };
-use crate::import::graph_from_run_root;
+use crate::import::{graph_from_run_root, graph_from_snapshot};
 #[cfg(all(feature = "dev", feature = "profile-with-puffin"))]
 use crate::perf::PuffinCapture;
 #[cfg(feature = "dev")]
@@ -34,7 +34,7 @@ use crate::ui::view::GraphViewMode;
 #[cfg(feature = "dev")]
 use eframe::egui::Vec2;
 use eframe::egui::ViewportBuilder;
-use ploke_tree::Graph;
+use ploke_tree::{Graph, GraphSnapshot};
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     profiling::register_thread!("ploke-egui.main");
@@ -67,7 +67,23 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    #[cfg(feature = "dev")]
+    if let Some(export) = run.export_graph.as_ref() {
+        let snapshot = GraphSnapshot::from_run_root(&export.run_root)?;
+        snapshot.write_json(&export.output)?;
+        let graph = snapshot.graph();
+        println!(
+            "Graph snapshot written: {}\nartifacts: {}\nhistory_blocks: {}\nselections: {}\nevidence: {}",
+            export.output.display(),
+            graph.artifacts.artifacts.len(),
+            graph.history.blocks.len(),
+            graph.selections.selections.len(),
+            graph.evidence.attachments.len()
+        );
+        return Ok(());
+    }
     let explicit_run_root = run.run_root.clone();
+    let explicit_graph_snapshot = run.graph_snapshot.clone();
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([layout::DEFAULT_WINDOW_WIDTH, layout::DEFAULT_WINDOW_HEIGHT]),
@@ -75,16 +91,20 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
     #[cfg(all(feature = "dev", feature = "native-benchmark"))]
     let run_picker_start = Instant::now();
-    let mut picker = if explicit_run_root.is_some() {
+    let mut picker = if explicit_run_root.is_some() || explicit_graph_snapshot.is_some() {
         RunPicker::from_default_root_deferred()
     } else {
         RunPicker::from_default_root()
     };
     #[cfg(all(feature = "dev", feature = "native-benchmark"))]
     let run_picker_span = span_from_start("run_picker_discovery", run_picker_start);
-    let initial_run_root = explicit_run_root
-        .clone()
-        .or_else(|| picker.first_loadable_path().map(PathBuf::from));
+    let initial_run_root = if explicit_graph_snapshot.is_some() {
+        None
+    } else {
+        explicit_run_root
+            .clone()
+            .or_else(|| picker.first_loadable_path().map(PathBuf::from))
+    };
     if let Some(path) = initial_run_root.as_deref() {
         picker.select_or_insert_path(path);
     }
@@ -162,11 +182,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     }
     #[cfg(feature = "dev")]
     if run.artifact_edges_report {
-        let graph = initial_graph(initial_run_root.clone())?;
+        let graph = initial_graph(initial_run_root.clone(), explicit_graph_snapshot.clone())?;
         print_artifact_edges_report(&graph)?;
         return Ok(());
     }
-    let graph = initial_graph(initial_run_root.clone())?;
+    let (graph, initial_snapshot) = if let Some(path) = explicit_graph_snapshot.clone() {
+        let snapshot = GraphSnapshot::read_json(&path)?;
+        (snapshot.graph(), Some((path, snapshot)))
+    } else {
+        (initial_graph(initial_run_root.clone(), None)?, None)
+    };
     if let Some(path) = initial_run_root.as_deref() {
         picker.record_loaded_graph(path, &graph);
     }
@@ -190,7 +215,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         return Err("--puffin-capture-frames requires --features profile-with-puffin".into());
     }
 
-    let app = app(graph, run.mode, run.snapshot, picker)?;
+    let app = app(graph, run.mode, run.snapshot, picker, initial_snapshot)?;
     #[cfg(all(feature = "dev", feature = "profile-with-puffin"))]
     let app = if let Some(frame_target) = run.puffin_capture_frames {
         let Some(run_root) = explicit_run_root.clone() else {
@@ -223,8 +248,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn initial_graph(run_root: Option<PathBuf>) -> Result<Graph, Box<dyn Error>> {
+fn initial_graph(
+    run_root: Option<PathBuf>,
+    graph_snapshot: Option<PathBuf>,
+) -> Result<Graph, Box<dyn Error>> {
     profiling::scope!("ploke-egui.initial-graph");
+    if let Some(path) = graph_snapshot {
+        return Ok(graph_from_snapshot(path)?);
+    }
+
     let Some(run_root) = run_root else {
         return Ok(sample_graph());
     };
@@ -237,8 +269,12 @@ fn app(
     mode: GraphViewMode,
     snapshot: bool,
     picker: RunPicker,
+    initial_snapshot: Option<(PathBuf, GraphSnapshot)>,
 ) -> Result<OperatorApp, Box<dyn Error>> {
-    let app = OperatorApp::new_with_run_picker(graph, picker).with_mode(mode);
+    let mut app = OperatorApp::new_with_run_picker(graph, picker).with_mode(mode);
+    if let Some((path, graph_snapshot)) = initial_snapshot {
+        app = app.with_graph_snapshot(path, graph_snapshot);
+    }
     #[cfg(feature = "dev")]
     {
         if !snapshot {
