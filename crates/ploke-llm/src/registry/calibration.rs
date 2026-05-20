@@ -6,6 +6,7 @@ use crate::{
     ModelKey, ProviderKey, Router,
     router_only::{
         ChatCompRequest,
+        google::Google,
         openrouter::{OpenRouter, ProviderPreferences},
     },
 };
@@ -171,6 +172,11 @@ pub struct OpenRouterCalibrationKey {
     pub provider: Option<ProviderKey>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoogleCalibrationKey {
+    pub model: ModelKey,
+}
+
 impl RouterCalibration for OpenRouter {
     type Model = ModelKey;
     type Provider = ProviderKey;
@@ -219,10 +225,36 @@ impl RouterCalibration for OpenRouter {
     }
 }
 
+impl RouterCalibration for Google {
+    type Model = ModelKey;
+    type Provider = ();
+    type Preferences = ();
+    type Key = GoogleCalibrationKey;
+
+    fn calibration_input(req: &ChatCompRequest<Self>) -> CalibrationInput<Self> {
+        let key = req
+            .model_key
+            .clone()
+            .map(|model| GoogleCalibrationKey { model });
+
+        CalibrationInput {
+            model: req.model_key.clone(),
+            provider: None,
+            provider_preferences: None,
+            key,
+        }
+    }
+
+    fn calibration_key(input: &CalibrationInput<Self>) -> Option<String> {
+        let key = input.key.as_ref()?;
+        Some(format!("google:{}", key.model))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::router_only::openrouter::ChatCompFields;
+    use crate::router_only::{Router as _, google::Google, openrouter::ChatCompFields};
 
     #[test]
     fn default_provider_timing_matches_current_chat_timeout_defaults() {
@@ -279,6 +311,26 @@ mod tests {
         assert_eq!(
             OpenRouter::calibration_key(&input).as_deref(),
             Some("openrouter:x-ai/grok-4-fast:provider:xai")
+        );
+    }
+
+    #[test]
+    fn google_calibration_input_uses_direct_model_key() {
+        let req = Google::default_chat_completion()
+            .with_model_str("google/gemini-2.5-flash")
+            .expect("model id");
+
+        let input = Google::calibration_input(&req);
+
+        assert_eq!(
+            input.model.as_ref().map(ToString::to_string).as_deref(),
+            Some("google/gemini-2.5-flash")
+        );
+        assert!(input.provider.is_none());
+        assert!(input.provider_preferences.is_none());
+        assert_eq!(
+            Google::calibration_key(&input).as_deref(),
+            Some("google:google/gemini-2.5-flash")
         );
     }
 }

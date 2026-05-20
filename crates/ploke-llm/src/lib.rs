@@ -32,8 +32,8 @@ pub use manager::{
     handle_endpoint_request_async,
 };
 pub use registry::calibration::{
-    AttemptTimeout, CalibrationInput, OpenRouterCalibrationKey, ProviderTiming, RetryTuning,
-    RouterCalibration,
+    AttemptTimeout, CalibrationInput, GoogleCalibrationKey, OpenRouterCalibrationKey,
+    ProviderTiming, RetryTuning, RouterCalibration,
 };
 
 pub use embeddings::{

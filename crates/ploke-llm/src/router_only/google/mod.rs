@@ -323,8 +323,9 @@ mod tests {
 
     #[cfg(feature = "live_api_tests")]
     use crate::{
-        HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS,
+        ChatHttpConfig, ChatStepOutcome, HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS,
         manager::RequestMessage,
+        request::endpoint::{ToolChoice, ToolChoiceFunction},
         router_only::{
             ChatCompRequest,
             google::{
@@ -334,6 +335,8 @@ mod tests {
     };
     #[cfg(feature = "live_api_tests")]
     use color_eyre::{Result, eyre::bail};
+    #[cfg(feature = "live_api_tests")]
+    use ploke_core::tool_types::{FunctionMarker, ToolDefinition, ToolFunctionDef, ToolName};
     #[cfg(feature = "live_api_tests")]
     use reqwest::Client;
 
@@ -373,7 +376,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     fn live_chat_model() -> String {
         env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
-            .unwrap_or_else(|_| "google/gemini-3.5-flash".to_string())
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string())
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -441,6 +444,32 @@ mod tests {
                 .any(|field| json_contains_text(field, needle)),
             _ => false,
         }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn is_google_quota_error(error: &crate::LlmError) -> bool {
+        let text = format!("{error:?}");
+        text.contains("RESOURCE_EXHAUSTED") || text.contains("429")
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn list_dir_tool_definition() -> ToolDefinition {
+        ToolFunctionDef {
+            name: ToolName::ListDir,
+            description: "List entries under a relative directory path.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative directory path to list."
+                    }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        }
+        .into()
     }
 
     #[test]
@@ -633,6 +662,52 @@ mod tests {
             !content.trim().is_empty(),
             "expected non-empty assistant content in Google completion response: {response_value}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires GEMINI_API_KEY, a live Google model with tool support, and quota"]
+    async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(&live_chat_model())?
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once for path \".\". Do not answer in prose."
+                    .to_string(),
+            ))
+            .with_max_tokens(128)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![list_dir_tool_definition()]))
+            .with_tool_choice(Some(ToolChoice::Function {
+                r#type: FunctionMarker,
+                function: ToolChoiceFunction {
+                    name: ToolName::ListDir.as_str().to_string(),
+                },
+            }));
+
+        let client = Client::new();
+        let cfg = ChatHttpConfig::default();
+        let step = match crate::chat_step(&client, &request, &cfg).await {
+            Ok(step) => step,
+            Err(error) if is_google_quota_error(&error) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls { calls, .. } => {
+                assert_eq!(calls.len(), 1, "expected exactly one Google tool call");
+                assert_eq!(calls[0].function.name, ToolName::ListDir);
+                assert!(
+                    calls[0].function.arguments.contains("\"path\""),
+                    "expected list_dir arguments to include path: {}",
+                    calls[0].function.arguments
+                );
+            }
+            other => {
+                bail!("expected forced Google tool call through chat_step, got {other:?}");
+            }
+        }
 
         Ok(())
     }

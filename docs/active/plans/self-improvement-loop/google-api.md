@@ -1,8 +1,10 @@
 Date: 20-05-26
 
-Verified surface: `cargo test -p ploke-llm google` passed 7 focused unit tests; this was a code survey plus official-doc check, not a live Google request, native TUI run, or `ploke-eval` run.
+Verified surface: `cargo test -p ploke-llm google` passed 11 focused unit tests; `cargo test -p ploke-llm --features live_api_tests --no-run live_google_chat_step_forced_tool_call_success_or_quota` compiled the ignored live Google tool-call test; `cargo check -p ploke-tui` and `cargo check -p ploke-eval` passed. This was not a live Google request or native TUI run.
 
 Update 2026-05-20: `Google` now implements `HasModels` through a Google OpenAI-compatible model-list adapter in `ploke-llm`. Verified with `cargo test -p ploke-llm google` and `cargo check -p ploke-tui`; this was not a live Google request.
+
+Update 2026-05-20: `Google` now implements `RouterCalibration` with a direct model-key calibration id, and `ploke-llm` has an ignored live `chat_step` forced-tool-call test for Google. The direct Google provider path should not fake OpenRouter endpoint/provider metadata; until TUI/eval routing is generalized, Google tool capability is carried by the Google model-list adapter. Verified by the surface above.
 
 Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible request/response shape, but it is not yet at OpenRouter parity for the TUI tool loop or eval runner.
 
@@ -13,10 +15,11 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 - The shared parser can accept Google’s OpenAI-compatible success response shape: [shape_tests.rs](/home/brasides/code/ploke/crates/ploke-llm/src/response/shape_tests.rs:6).
 - The generic HTTP sender `chat_step<R: Router>` can technically send Google requests because it uses `R::COMPLETION_URL` and `R::resolve_api_key`: [session.rs](/home/brasides/code/ploke/crates/ploke-llm/src/manager/session.rs:281).
 - `Google` implements `HasModels` with its own OpenAI-compatible model-list response types and an adapter into the existing shared model registry item shape: [google/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/google/mod.rs:21).
+- `Google` implements `RouterCalibration` without provider preferences or endpoint routing, using the direct model key as the calibration key.
+- `ploke-llm` has an ignored live Google `chat_step` forced-tool-call test. It requires `--features live_api_tests -- --ignored` plus `GEMINI_API_KEY`.
 
 **Still Missing For Parity**
-- `Google` does not implement `HasEndpoint`; OpenRouter endpoint metadata drives provider/tool support, but Google has no equivalent implementation: [openrouter/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/openrouter/mod.rs:76).
-- `Google` does not implement `RouterCalibration`, so it cannot be used by the TUI session loop as written. `run_chat_session` requires `R: Router + RouterCalibration`: [session.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs:779). Only OpenRouter has a calibration impl: [calibration.rs](/home/brasides/code/ploke/crates/ploke-llm/src/registry/calibration.rs:174).
+- `Google` still does not implement `HasEndpoint`, intentionally. OpenRouter endpoint metadata drives provider/tool support, but direct Google has no provider endpoint selection. TUI/eval code that requires endpoint metadata must be generalized rather than fed fake Google endpoints.
 - `ploke-tui` hardcodes OpenRouter when building live chat requests: [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:584), [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:616).
 - TUI model search, provider listing, API-key checks, and provider pinning are OpenRouter-specific: [exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs:517), [exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs:560).
 - `ploke-eval` is OpenRouter-specific for model registry, tool-capable provider resolution, and headless runtime setup: [model_registry.rs](/home/brasides/code/ploke/crates/ploke-eval/src/model_registry.rs:61), [runner.rs](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs:2000), [runner.rs](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs:2244).
@@ -25,10 +28,10 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 **Work To Reach Parity**
 1. Done: add Google model-list response types and an adapter from Google `/openai/models` into the project’s model registry shape.
 2. Done: add `impl HasModels for Google`.
-3. Decide what replaces OpenRouter endpoint/provider metadata for Google. Direct Google likely has no provider endpoint selection, so model/tool capability should be modeled as direct-provider capability, not fake OpenRouter endpoints.
-4. Add `impl RouterCalibration for Google`.
+3. Done: decide what replaces OpenRouter endpoint/provider metadata for Google. Direct Google has no provider endpoint selection in this integration; model/tool capability is modeled as direct-provider model capability, not fake OpenRouter endpoints.
+4. Done: add `impl RouterCalibration for Google`.
 5. Generalize `RuntimeConfig` and TUI request construction so active router is selected explicitly, not inferred as OpenRouter.
 6. Add Google-aware API-key diagnostics and model commands.
-7. Add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
+7. Partially done: add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
 
-The right next implementation slice is small: add `RouterCalibration for Google`, a direct Google model-list adapter, and a Google `chat_step` live ignored tool-call test. That proves the provider boundary before touching TUI/eval routing.
+The next implementation slice is TUI routing: generalize `RuntimeConfig` and live request construction so the active router can be selected explicitly instead of assuming OpenRouter.
