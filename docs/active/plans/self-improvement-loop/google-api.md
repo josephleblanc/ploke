@@ -2,6 +2,8 @@ Date: 20-05-26
 
 Verified surface: `cargo test -p ploke-llm google` passed 7 focused unit tests; this was a code survey plus official-doc check, not a live Google request, native TUI run, or `ploke-eval` run.
 
+Update 2026-05-20: `Google` now implements `HasModels` through a Google OpenAI-compatible model-list adapter in `ploke-llm`. Verified with `cargo test -p ploke-llm google` and `cargo check -p ploke-tui`; this was not a live Google request.
+
 Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible request/response shape, but it is not yet at OpenRouter parity for the TUI tool loop or eval runner.
 
 **Already Done**
@@ -10,9 +12,9 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 - Google `extra_body.google.thinking_config` and `cached_content` structs exist and are unit-tested: [google/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/google/mod.rs:14), [google_chat_completion.rs](/home/brasides/code/ploke/crates/ploke-llm/src/request/tests/google_chat_completion.rs:15).
 - The shared parser can accept Google’s OpenAI-compatible success response shape: [shape_tests.rs](/home/brasides/code/ploke/crates/ploke-llm/src/response/shape_tests.rs:6).
 - The generic HTTP sender `chat_step<R: Router>` can technically send Google requests because it uses `R::COMPLETION_URL` and `R::resolve_api_key`: [session.rs](/home/brasides/code/ploke/crates/ploke-llm/src/manager/session.rs:281).
+- `Google` implements `HasModels` with its own OpenAI-compatible model-list response types and an adapter into the existing shared model registry item shape: [google/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/google/mod.rs:21).
 
 **Still Missing For Parity**
-- `Google` does not implement `HasModels`; model listing is still OpenRouter-shaped and OpenRouter-only. The trait exists generically, but only OpenRouter implements it: [router_only/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/mod.rs:43), [openrouter/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/openrouter/mod.rs:25).
 - `Google` does not implement `HasEndpoint`; OpenRouter endpoint metadata drives provider/tool support, but Google has no equivalent implementation: [openrouter/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/openrouter/mod.rs:76).
 - `Google` does not implement `RouterCalibration`, so it cannot be used by the TUI session loop as written. `run_chat_session` requires `R: Router + RouterCalibration`: [session.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs:779). Only OpenRouter has a calibration impl: [calibration.rs](/home/brasides/code/ploke/crates/ploke-llm/src/registry/calibration.rs:174).
 - `ploke-tui` hardcodes OpenRouter when building live chat requests: [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:584), [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:616).
@@ -21,8 +23,8 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 - Tool-call request shape is likely compatible, but not proven live. Official Gemini OpenAI compatibility docs show `tools` plus `tool_choice="auto"` are supported, and the same docs show the `/v1beta/openai/chat/completions` and `/v1beta/openai/models` endpoints with bearer auth. See Google docs: https://ai.google.dev/gemini-api/docs/openai.
 
 **Work To Reach Parity**
-1. Add Google model-list response types or an adapter from Google `/openai/models` into the project’s model registry shape.
-2. Add `impl HasModels for Google`.
+1. Done: add Google model-list response types and an adapter from Google `/openai/models` into the project’s model registry shape.
+2. Done: add `impl HasModels for Google`.
 3. Decide what replaces OpenRouter endpoint/provider metadata for Google. Direct Google likely has no provider endpoint selection, so model/tool capability should be modeled as direct-provider capability, not fake OpenRouter endpoints.
 4. Add `impl RouterCalibration for Google`.
 5. Generalize `RuntimeConfig` and TUI request construction so active router is selected explicitly, not inferred as OpenRouter.

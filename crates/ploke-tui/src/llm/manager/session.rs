@@ -592,6 +592,7 @@ pub enum CancelChatToken {
 pub enum ChatStepSource {
     Live,
     Recorded(RecordedResponseTape),
+    RecordedPrefixThenLive(RecordedResponseTape),
 }
 
 impl ChatStepSource {
@@ -601,6 +602,10 @@ impl ChatStepSource {
 
     pub fn recorded(tape: RecordedResponseTape) -> Self {
         Self::Recorded(tape)
+    }
+
+    pub fn recorded_prefix_then_live(tape: RecordedResponseTape) -> Self {
+        Self::RecordedPrefixThenLive(tape)
     }
 
     async fn next_step<R: Router>(
@@ -613,6 +618,10 @@ impl ChatStepSource {
         match self {
             Self::Live => ploke_llm::chat_step_with_attempts(client, req, cfg).await,
             Self::Recorded(tape) => tape.next_chat_step(),
+            Self::RecordedPrefixThenLive(tape) if tape.remaining() > 0 => tape.next_chat_step(),
+            Self::RecordedPrefixThenLive(_) => {
+                ploke_llm::chat_step_with_attempts(client, req, cfg).await
+            }
         }
     }
 }
@@ -624,13 +633,20 @@ impl Default for ChatStepSource {
 }
 
 #[cfg(feature = "test_harness")]
-static RECORDED_RESPONSE_TAPE: std::sync::OnceLock<std::sync::Mutex<Option<RecordedResponseTape>>> =
-    std::sync::OnceLock::new();
+static RECORDED_RESPONSE_TAPE: std::sync::OnceLock<
+    std::sync::Mutex<Option<InstalledChatStepSource>>,
+> = std::sync::OnceLock::new();
 
 #[cfg(feature = "test_harness")]
 static REQUEST_TAP: std::sync::OnceLock<
     std::sync::Mutex<Option<std::sync::mpsc::Sender<Vec<RequestMessage>>>>,
 > = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+enum InstalledChatStepSource {
+    Recorded(RecordedResponseTape),
+    RecordedPrefixThenLive(RecordedResponseTape),
+}
 
 #[cfg(feature = "test_harness")]
 pub struct RequestTapGuard;
@@ -648,7 +664,16 @@ pub fn install_recorded_response_tape(tape: RecordedResponseTape) {
     let mut guard = lock
         .lock()
         .expect("recorded response tape lock should not be poisoned");
-    *guard = Some(tape);
+    *guard = Some(InstalledChatStepSource::Recorded(tape));
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_prefix_then_live(tape: RecordedResponseTape) {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(InstalledChatStepSource::RecordedPrefixThenLive(tape));
 }
 
 #[cfg(feature = "test_harness")]
@@ -703,7 +728,12 @@ pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
         .expect("recorded response tape lock should not be poisoned");
     guard
         .take()
-        .map(ChatStepSource::recorded)
+        .map(|source| match source {
+            InstalledChatStepSource::Recorded(tape) => ChatStepSource::recorded(tape),
+            InstalledChatStepSource::RecordedPrefixThenLive(tape) => {
+                ChatStepSource::recorded_prefix_then_live(tape)
+            }
+        })
         .unwrap_or_else(ChatStepSource::live)
 }
 
@@ -2501,6 +2531,81 @@ mod tests {
         assert!(
             traces.iter().any(|line| line.contains("\"id\":\"final\"")),
             "expected final provider envelope in full-response trace, got {traces:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_can_replay_recorded_prefix_then_continue_live() {
+        let _router_guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let responses = vec![content_response("live tail after recorded prefix")];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, malformed_response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+
+        server.await.expect("server task");
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert_eq!(report.attempts, 2);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "only the live tail should reach the provider"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .any(|content| content.contains("live tail after recorded prefix")),
+            "expected live-tail assistant update, got {assistant_updates:?}"
         );
     }
 

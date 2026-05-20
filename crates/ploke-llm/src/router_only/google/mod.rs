@@ -2,7 +2,15 @@
 
 use std::str::FromStr;
 
-use crate::{LlmError, Router};
+use ploke_core::ArcStr;
+
+use crate::{
+    Author, InputModality, LlmError, Modality, ModelName, ModelSlug, OutputModality, Router,
+    SupportedParameters, Tokenizer,
+    request::{ModelPricing, models},
+    router_only::{HasModelId, HasModels, openrouter::TopProvider},
+    types::model_types::Architecture,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +18,131 @@ use super::{ApiRoute, EndpointKey, ModelId, ModelKey, RouterModelId, RouterVaria
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Hash, Eq, Default)]
 pub struct Google;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelsResponse {
+    pub data: Vec<Model>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object: Option<ArcStr>,
+}
+
+impl IntoIterator for ModelsResponse {
+    type Item = Model;
+    type IntoIter = std::vec::IntoIter<Model>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.into_iter()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Model {
+    pub id: ModelSlug,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object: Option<ArcStr>,
+    #[serde(default)]
+    pub created: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<ArcStr>,
+}
+
+impl HasModelId for Model {
+    fn model_id(&self) -> ModelId {
+        google_model_id(self.id.clone())
+    }
+}
+
+impl From<Model> for models::ResponseItem {
+    fn from(model: Model) -> Self {
+        let model_id = model.model_id();
+        let supported_parameters = supported_parameters_for_google_model(&model.id);
+
+        Self {
+            id: model_id.clone(),
+            name: ModelName::new(model.id.as_str()),
+            created: model.created.unwrap_or_default(),
+            description: ArcStr::from(
+                "Google OpenAI-compatible model metadata; pricing and full capability metadata are not included by /openai/models.",
+            ),
+            architecture: google_openai_architecture(),
+            top_provider: TopProvider::default(),
+            pricing: unknown_pricing(),
+            canonical: Some(model_id),
+            context_length: None,
+            hugging_face_id: None,
+            per_request_limits: None,
+            supported_parameters,
+        }
+    }
+}
+
+fn google_model_id(slug: ModelSlug) -> ModelId {
+    ModelId {
+        key: ModelKey {
+            author: Author::new("google").expect("static Google author is valid"),
+            slug,
+        },
+        variant: None,
+    }
+}
+
+fn google_openai_architecture() -> Architecture {
+    Architecture {
+        input_modalities: vec![InputModality::Text],
+        modality: Modality::TextToText,
+        output_modalities: vec![OutputModality::Text],
+        tokenizer: Tokenizer::Gemini,
+        instruct_type: None,
+    }
+}
+
+fn unknown_pricing() -> ModelPricing {
+    ModelPricing {
+        prompt: 0.0,
+        completion: 0.0,
+        audio: None,
+        image: None,
+        image_output: None,
+        input_cache_read: None,
+        input_cache_write: None,
+        internal_reasoning: None,
+        request: None,
+        web_search: None,
+        discount: None,
+    }
+}
+
+fn supported_parameters_for_google_model(model: &ModelSlug) -> Option<Vec<SupportedParameters>> {
+    if !is_google_openai_chat_model(model.as_str()) {
+        return None;
+    }
+
+    Some(vec![
+        SupportedParameters::MaxTokens,
+        SupportedParameters::ResponseFormat,
+        SupportedParameters::Stop,
+        SupportedParameters::Temperature,
+        SupportedParameters::ToolChoice,
+        SupportedParameters::Tools,
+        SupportedParameters::TopP,
+    ])
+}
+
+fn is_google_openai_chat_model(slug: &str) -> bool {
+    slug.starts_with("gemini-")
+        && !slug.contains("embedding")
+        && !slug.contains("image")
+        && !slug.starts_with("imagen")
+        && !slug.starts_with("veo-")
+        && !slug.starts_with("lyria")
+        && !slug.contains("tts")
+}
+
+impl HasModels for Google {
+    type Response = ModelsResponse;
+    type Models = Model;
+    type Error = LlmError;
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct GoogleChatCompFields {
@@ -179,17 +312,14 @@ impl Router for Google {
 mod tests {
     use super::Google;
 
-    use crate::router_only::Router;
+    use crate::{
+        SupportsTools,
+        router_only::{HasModelId, HasModels, Router},
+    };
+    use serde_json::json;
 
     #[cfg(feature = "live_api_tests")]
     use std::{env, time::Duration};
-
-    #[cfg(feature = "live_api_tests")]
-    use color_eyre::{Result, eyre::bail};
-    #[cfg(feature = "live_api_tests")]
-    use reqwest::Client;
-    #[cfg(feature = "live_api_tests")]
-    use serde_json::json;
 
     #[cfg(feature = "live_api_tests")]
     use crate::{
@@ -202,6 +332,10 @@ mod tests {
             },
         },
     };
+    #[cfg(feature = "live_api_tests")]
+    use color_eyre::{Result, eyre::bail};
+    #[cfg(feature = "live_api_tests")]
+    use reqwest::Client;
 
     #[cfg(feature = "live_api_tests")]
     fn body_snippet(body: &str) -> String {
@@ -324,6 +458,81 @@ mod tests {
             "https://generativelanguage.googleapis.com/v1beta/openai/models"
         );
         assert_eq!(Google::API_KEY_NAME, "GEMINI_API_KEY");
+    }
+
+    #[test]
+    fn google_models_response_deserializes_and_adapts_to_shared_registry_item() {
+        let response: <Google as HasModels>::Response = serde_json::from_value(json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "gemini-2.5-flash",
+                    "object": "model",
+                    "created": 1710000000,
+                    "owned_by": "google"
+                }
+            ]
+        }))
+        .expect("Google OpenAI-compatible models response parses");
+
+        let mut models = response.into_iter();
+        let model = models.next().expect("one model");
+        assert_eq!(model.model_id().to_string(), "google/gemini-2.5-flash");
+
+        let item: crate::request::models::ResponseItem = model.into();
+        assert_eq!(item.id.to_string(), "google/gemini-2.5-flash");
+        assert_eq!(item.name.as_str(), "gemini-2.5-flash");
+        assert_eq!(item.created, 1710000000);
+        assert!(item.supports_tools());
+        assert_eq!(item.architecture.tokenizer, crate::Tokenizer::Gemini);
+    }
+
+    #[test]
+    fn google_embedding_model_adapter_does_not_advertise_tool_support() {
+        let response: <Google as HasModels>::Response = serde_json::from_value(json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "text-embedding-004",
+                    "object": "model",
+                    "owned_by": "google"
+                }
+            ]
+        }))
+        .expect("Google OpenAI-compatible models response parses");
+
+        let model = response.into_iter().next().expect("one model");
+        let item: crate::request::models::ResponseItem = model.into();
+
+        assert_eq!(item.id.to_string(), "google/text-embedding-004");
+        assert!(!item.supports_tools());
+    }
+
+    #[test]
+    fn google_non_chat_openai_models_do_not_advertise_tool_support() {
+        for id in [
+            "gemini-embedding-2-preview",
+            "gemini-2.5-flash-image",
+            "veo-3.1-generate-preview",
+            "imagen-4.0-generate-preview",
+        ] {
+            let response: <Google as HasModels>::Response = serde_json::from_value(json!({
+                "object": "list",
+                "data": [
+                    {
+                        "id": id,
+                        "object": "model",
+                        "owned_by": "google"
+                    }
+                ]
+            }))
+            .expect("Google OpenAI-compatible models response parses");
+
+            let model = response.into_iter().next().expect("one model");
+            let item: crate::request::models::ResponseItem = model.into();
+
+            assert!(!item.supports_tools(), "{id} should not advertise tools");
+        }
     }
 
     #[tokio::test]
