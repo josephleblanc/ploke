@@ -259,7 +259,13 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         Model,
         "model search",
         "model search <model-name>",
-        "Search OpenRouter models and open the interactive browser"
+        "Search the active router's models and open the interactive browser"
+    ),
+    command_entry!(
+        Model,
+        "model router",
+        "model router [openrouter|google]",
+        "Show or set the active chat/model-list router"
     ),
     command_entry!(
         Model,
@@ -271,7 +277,7 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         Model,
         "model providers",
         "model providers <model_id>",
-        "List provider endpoints for a model and show tool support and slugs"
+        "List OpenRouter provider endpoints or direct Google route information"
     ),
     command_entry!(
         Provider,

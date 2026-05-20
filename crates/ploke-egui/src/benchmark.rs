@@ -1622,6 +1622,7 @@ pub fn load_graph_with_startup_profile(
         forest_input,
         history_blocks,
         transition_journal,
+        agent_turn_records: Default::default(),
     };
     startup.push_span(
         "FsRunStore::load_record_set",

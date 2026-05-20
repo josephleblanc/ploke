@@ -7,7 +7,7 @@ use ploke_core::ArcStr;
 use crate::{
     Author, InputModality, LlmError, Modality, ModelName, ModelSlug, OutputModality, Router,
     SupportedParameters, Tokenizer,
-    request::{ModelPricing, models},
+    request::{ModelPricing, models, models::ModelRouteSource},
     router_only::{HasModelId, HasModels, openrouter::TopProvider},
     types::model_types::Architecture,
 };
@@ -72,6 +72,7 @@ impl From<Model> for models::ResponseItem {
             hugging_face_id: None,
             per_request_limits: None,
             supported_parameters,
+            route_source: ModelRouteSource::DirectGoogle,
         }
     }
 }

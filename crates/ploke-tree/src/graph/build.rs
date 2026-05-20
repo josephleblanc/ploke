@@ -36,6 +36,7 @@ impl Graph {
         builder.ingest_passive_evidence(&records.forest_input.passive_evidence);
         let mut graph = builder.finish();
         graph.forest = Some(crate::RunForest::from_records(records.forest_input.clone()));
+        graph.agent_turn_records = records.agent_turn_records.clone();
         graph
     }
 }

@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use ploke_llm::Router;
 use ploke_llm::request::models::{Response, ResponseItem};
+use ploke_llm::router_only::HasModels;
+use ploke_llm::router_only::google::Google;
 use ploke_llm::router_only::openrouter::OpenRouter;
 use ploke_llm::{HTTP_REFERER, HTTP_TITLE, ModelId, ModelKey};
 use reqwest::Client;
@@ -59,6 +62,33 @@ pub async fn refresh_model_registry() -> Result<ModelRegistry, PrepareError> {
 }
 
 pub async fn fetch_model_registry() -> Result<ModelRegistry, PrepareError> {
+    let mut registries = Vec::new();
+    let mut errors = Vec::new();
+
+    match fetch_openrouter_model_registry().await {
+        Ok(registry) => registries.push(registry),
+        Err(err) => errors.push(format!("openrouter: {err}")),
+    }
+
+    match fetch_google_model_registry().await {
+        Ok(registry) => registries.push(registry),
+        Err(err) => errors.push(format!("google: {err}")),
+    }
+
+    if registries.is_empty() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "fetch_model_registry",
+            detail: format!(
+                "no model registry source refreshed successfully ({})",
+                errors.join("; ")
+            ),
+        });
+    }
+
+    Ok(merge_model_registries(registries))
+}
+
+pub async fn fetch_openrouter_model_registry() -> Result<ModelRegistry, PrepareError> {
     let api_key = OpenRouter::resolve_api_key().map_err(|source| PrepareError::DatabaseSetup {
         phase: "resolve_openrouter_api_key",
         detail: source.to_string(),
@@ -93,6 +123,45 @@ pub async fn fetch_model_registry() -> Result<ModelRegistry, PrepareError> {
             phase: "parse_model_registry_response",
             detail: source.to_string(),
         })
+}
+
+pub async fn fetch_google_model_registry() -> Result<ModelRegistry, PrepareError> {
+    let _api_key = Google::resolve_api_key().map_err(|source| PrepareError::DatabaseSetup {
+        phase: "resolve_google_api_key",
+        detail: source.to_string(),
+    })?;
+    let client = Client::builder()
+        .build()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "build_google_model_registry_client",
+            detail: source.to_string(),
+        })?;
+    let response = <Google as HasModels>::fetch_models(&client)
+        .await
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "fetch_google_model_registry",
+            detail: source.to_string(),
+        })?;
+    Ok(ModelRegistry {
+        data: response.into_iter().map(Into::into).collect(),
+    })
+}
+
+fn merge_model_registries(registries: Vec<ModelRegistry>) -> ModelRegistry {
+    let mut by_id = BTreeMap::new();
+    for registry in registries {
+        for item in registry.data {
+            let replace = by_id.get(&item.id).is_none_or(|existing: &ResponseItem| {
+                item.route_source.is_direct_google() && existing.route_source.is_openrouter()
+            });
+            if replace {
+                by_id.insert(item.id.clone(), item);
+            }
+        }
+    }
+    ModelRegistry {
+        data: by_id.into_values().collect(),
+    }
 }
 
 pub fn load_model_registry() -> Result<ModelRegistry, PrepareError> {
@@ -293,7 +362,9 @@ pub fn find_models<'a>(registry: &'a ModelRegistry, query: &str) -> Vec<&'a Resp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_llm::request::models::ModelRouteSource;
     use serde_json::json;
+    use std::str::FromStr;
     use tempfile::tempdir;
 
     fn sample_registry() -> ModelRegistry {
@@ -360,6 +431,34 @@ mod tests {
         let matches = find_models(&registry, "qwen");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].id.to_string(), "qwen/qwen2.5");
+    }
+
+    #[test]
+    fn merge_model_registries_prefers_direct_google_row_on_id_collision() {
+        let mut openrouter = sample_registry();
+        let google_id = ModelId::from_str("google/gemini-2.5-flash").expect("model id");
+        let mut openrouter_google = openrouter.data[0].clone();
+        openrouter_google.id = google_id.clone();
+        openrouter_google.route_source = ModelRouteSource::OpenRouter;
+        openrouter.data.push(openrouter_google);
+
+        let mut direct_google = openrouter.data[0].clone();
+        direct_google.id = google_id.clone();
+        direct_google.route_source = ModelRouteSource::DirectGoogle;
+
+        let merged = merge_model_registries(vec![
+            openrouter,
+            ModelRegistry {
+                data: vec![direct_google],
+            },
+        ]);
+
+        let selected = merged
+            .data
+            .iter()
+            .find(|item| item.id == google_id)
+            .expect("merged google model");
+        assert!(selected.route_source.is_direct_google());
     }
 
     #[test]

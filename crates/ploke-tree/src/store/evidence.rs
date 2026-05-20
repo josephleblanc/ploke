@@ -312,6 +312,24 @@ impl AgentTurnEvidenceSummary {
     }
 }
 
+/// Canonical agent-turn records loaded for drilldown playback.
+///
+/// Summary evidence keeps compact counts for graph attachment. These records
+/// preserve the ordered turn events for lower-granularity playback consumers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentTurnRecordSet {
+    #[serde(default)]
+    pub traces: BTreeMap<String, AgentTurnArtifactRecord>,
+    #[serde(default)]
+    pub summaries: BTreeMap<String, AgentTurnArtifactRecord>,
+}
+
+impl AgentTurnRecordSet {
+    pub fn is_empty(&self) -> bool {
+        self.traces.is_empty() && self.summaries.is_empty()
+    }
+}
+
 /// Passive projection over fields already parsed through `ploke_records::agent_turn`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentTurnArtifactEvidence {

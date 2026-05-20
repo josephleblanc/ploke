@@ -1,12 +1,14 @@
 Date: 20-05-26
 
-Verified surface: `cargo test -p ploke-llm google` passed 12 focused unit tests; `cargo test -p ploke-llm --features live_api_tests --no-run live_google_chat_step_forced_tool_call_success_or_quota` compiled the ignored live Google tool-call test; `cargo check -p ploke-tui` and `cargo check -p ploke-eval` passed; `cargo test -p ploke-eval benchmark_runtime_config_overrides_llm_timeout` passed. This was not a live Google request or native TUI run.
+Verified surface: `cargo test -p ploke-llm google` passed 12 focused unit tests; `cargo test -p ploke-llm --features live_api_tests --no-run live_google_chat_step_forced_tool_call_success_or_quota` compiled the ignored live Google tool-call test; `cargo check -p ploke-llm`, `cargo check -p ploke-tui`, and `cargo check -p ploke-eval` passed; `cargo test -p ploke-eval merge_model_registries_prefers_direct_google_row_on_id_collision` passed; `cargo test -p ploke-eval benchmark_runtime_config_overrides_llm_timeout` passed; `cargo test -p ploke-tui test_model_router_parser_show_and_set` passed. This was not a live Google request or native TUI run.
 
 Update 2026-05-20: `Google` now implements `HasModels` through a Google OpenAI-compatible model-list adapter in `ploke-llm`. Verified with `cargo test -p ploke-llm google` and `cargo check -p ploke-tui`; this was not a live Google request.
 
 Update 2026-05-20: `Google` now implements `RouterCalibration` with a direct model-key calibration id, and `ploke-llm` has an ignored live `chat_step` forced-tool-call test for Google. The direct Google provider path should not fake OpenRouter endpoint/provider metadata; until TUI/eval routing is generalized, Google tool capability is carried by the Google model-list adapter. Verified by the surface above.
 
 Update 2026-05-20: The provider-neutral route boundary now exists as `LlmRoute` in `ploke-llm`: OpenRouter routes carry provider endpoint metadata, while Google routes carry direct model capability without a provider endpoint. `RuntimeConfig` now carries an explicit `active_router`, `ploke-eval` sets it from the selected route, and `ploke-tui` live chat request construction dispatches `RouterVariants::Google` through `ChatCompRequest<Google>`.
+
+Update 2026-05-20: Model registry rows now carry route provenance. Direct Google rows are tagged as `direct_google`, `ploke-eval model refresh` can merge OpenRouter and Google model catalogs, and direct Google rows win same-id collisions so `google/*` can resolve to the direct route without fake provider endpoints. TUI operator commands now show both OpenRouter and Google API-key diagnostics, include an active `model router [openrouter|google]` command, search the active router's model catalog, and show direct Google route information instead of provider endpoints.
 
 Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible request/response shape, but it is not yet at OpenRouter parity for the TUI tool loop or eval runner.
 
@@ -25,8 +27,8 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 
 **Still Missing For Parity**
 - `Google` still does not implement `HasEndpoint`, intentionally. OpenRouter endpoint metadata drives provider/tool support, but direct Google has no provider endpoint selection. TUI/eval code that requires endpoint metadata must be generalized rather than fed fake Google endpoints.
-- TUI model search, provider listing, API-key checks, and provider pinning are still OpenRouter-specific: [exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs:517), [exec.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs:560).
-- `ploke-eval` model registry loading is still OpenRouter-shaped unless the cached registry contains Google-adapted model items: [model_registry.rs](/home/brasides/code/ploke/crates/ploke-eval/src/model_registry.rs:61).
+- Provider pinning remains OpenRouter-specific. Direct Google routes intentionally do not persist provider endpoint preferences.
+- TUI direct Google selection is now exposed through `model router google`, but it has not been exercised in a native TUI run.
 - Tool-call request shape is likely compatible, but not proven live. Official Gemini OpenAI compatibility docs show `tools` plus `tool_choice="auto"` are supported, and the same docs show the `/v1beta/openai/chat/completions` and `/v1beta/openai/models` endpoints with bearer auth. See Google docs: https://ai.google.dev/gemini-api/docs/openai.
 
 **Work To Reach Parity**
@@ -35,7 +37,8 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 3. Done: decide what replaces OpenRouter endpoint/provider metadata for Google. Direct Google has no provider endpoint selection in this integration; model/tool capability is modeled as direct-provider model capability, not fake OpenRouter endpoints.
 4. Done: add `impl RouterCalibration for Google`.
 5. Done: `RuntimeConfig` now carries explicit router selection, and TUI request construction dispatches Google routes through `Google` instead of inferring every live request as OpenRouter.
-6. Add Google-aware API-key diagnostics and model commands.
-7. Partially done: add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
+6. Done: add Google-aware API-key diagnostics and model commands, including direct Google route display and TUI `model router`.
+7. Done: add route provenance to registry rows and refresh `ploke-eval` model registry from both OpenRouter and direct Google catalogs.
+8. Partially done: add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
 
-The next implementation slice is user/operator surfacing: Google-aware API-key diagnostics, model commands, and model registry refresh/loading so `google/*` models can be selected without relying on an OpenRouter-shaped cache.
+The next implementation slice is live/runtime validation: prove direct Google through the native TUI tool loop or headless eval adapter, then tighten any remaining persistence around active route selection.

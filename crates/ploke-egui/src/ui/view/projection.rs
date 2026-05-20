@@ -2164,6 +2164,7 @@ mod tests {
             },
             history_blocks: Vec::new(),
             transition_journal: TransitionJournal::default(),
+            agent_turn_records: Default::default(),
         }
     }
 

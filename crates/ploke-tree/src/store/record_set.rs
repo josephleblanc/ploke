@@ -4,7 +4,7 @@ use ploke_records::invocation::{SuccessorCompletionRecord, SuccessorReadyRecord}
 use ploke_records::scheduler::{NodeRecord, SchedulerStateRecord};
 use serde::{Deserialize, Serialize};
 
-use super::{PassiveEvidence, TransitionJournal};
+use super::{AgentTurnRecordSet, PassiveEvidence, TransitionJournal};
 
 /// In-memory inputs for one run-forest projection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -34,6 +34,8 @@ pub struct RunRecordSet {
     pub history_blocks: Vec<SealedBlockRecord>,
     #[serde(default)]
     pub transition_journal: TransitionJournal,
+    #[serde(default, skip_serializing_if = "AgentTurnRecordSet::is_empty")]
+    pub agent_turn_records: AgentTurnRecordSet,
 }
 
 /// Lightweight typed counts for choosing a run root before full graph import.

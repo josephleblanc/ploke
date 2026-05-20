@@ -12,8 +12,9 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use ploke_llm::Router;
 use ploke_llm::request::endpoint::Endpoint;
 use ploke_llm::router_only::HasEndpoint;
+use ploke_llm::router_only::google::Google;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
-use ploke_llm::{ModelId, ProviderKey};
+use ploke_llm::{ModelId, ProviderKey, SupportsTools};
 use ploke_protocol::procedure::{
     ProcedureDebugEvent, ProcedureDebugEventKind, ProcedureDebugSink, set_procedure_debug_sink,
 };
@@ -2568,7 +2569,16 @@ impl ModelCommand {
         match self.command {
             ModelSubcommand::Refresh => {
                 let registry = refresh_model_registry().await?;
-                println!("refreshed {} models", registry.data.len());
+                let direct_google = registry
+                    .data
+                    .iter()
+                    .filter(|item| item.route_source.is_direct_google())
+                    .count();
+                println!(
+                    "refreshed {} models ({} direct Google)",
+                    registry.data.len(),
+                    direct_google
+                );
                 Ok(())
             }
             ModelSubcommand::List => {
@@ -2583,11 +2593,12 @@ impl ModelCommand {
                     .max("model_id".len());
 
                 println!(
-                    "{:<id_width$}  {:>14}  {:>10}  {:>10}  {}",
+                    "{:<id_width$}  {:>14}  {:>10}  {:>10}  {:>13}  {}",
                     "model_id",
                     "context_length",
                     "in($/M)",
                     "out($/M)",
+                    "route_source",
                     "size",
                     id_width = id_width
                 );
@@ -2596,12 +2607,18 @@ impl ModelCommand {
                     let input = display_price_per_million(item.pricing.prompt);
                     let output = display_price_per_million(item.pricing.completion);
                     let size = model_size_string(item);
+                    let route_source = if item.route_source.is_direct_google() {
+                        "direct_google"
+                    } else {
+                        "openrouter"
+                    };
                     println!(
-                        "{:<id_width$}  {:>14}  {:>10}  {:>10}  {}",
+                        "{:<id_width$}  {:>14}  {:>10}  {:>10}  {:>13}  {}",
                         item.id,
                         context,
                         input,
                         output,
+                        route_source,
                         size,
                         id_width = id_width
                     );
@@ -2736,6 +2753,29 @@ async fn print_model_providers(model_id: Option<String>) -> Result<(), PrepareEr
         phase: "parse_model_id",
         detail: format!("invalid model id '{model_id}': {err}"),
     })?;
+    if let Ok(registry) = load_model_registry() {
+        if let Some(item) = registry.data.iter().find(|item| item.id == model) {
+            if item.route_source.is_direct_google() {
+                println!("Direct Google route for model '{}':", model);
+                println!(
+                    "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
+                    "provider_slug", "provider_name", "tools", "selected", "context"
+                );
+                println!(
+                    "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
+                    "google",
+                    "Google",
+                    if item.supports_tools() { "yes" } else { "no" },
+                    "yes",
+                    item.context_length
+                        .or(item.top_provider.context_length)
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+                return Ok(());
+            }
+        }
+    }
     let client = reqwest::Client::new();
     let typed_model = OpenRouterModelId::from(model.clone());
     let endpoints = OpenRouter::fetch_model_endpoints(&client, typed_model)
@@ -12208,6 +12248,17 @@ fn run_doctor() -> Result<(), PrepareError> {
         Err(err) => {
             warn += 1;
             println!("[warn] OpenRouter API key: unavailable ({err})");
+        }
+    }
+
+    match Google::resolve_api_key() {
+        Ok(_) => {
+            ok += 1;
+            println!("[ok] Google API key: present");
+        }
+        Err(err) => {
+            note += 1;
+            println!("[note] Google API key: unavailable ({err})");
         }
     }
 

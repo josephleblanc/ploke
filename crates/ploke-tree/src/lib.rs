@@ -15,10 +15,12 @@ mod tests;
 
 pub use graph::Graph;
 pub use playback::{
-    CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, build_coarse_history_spine,
+    CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, TurnArtifactKind, TurnEventKind,
+    TurnEventPlaybackRefSteps, TurnEventStepRef, build_coarse_history_spine,
     coarse_run_playback_from_sealed_history, coarse_run_playback_ref_steps_from_sealed_history,
     fine_run_playback_from_sealed_history, fine_run_playback_ref_steps_from_sealed_history,
-    project_coarse_history_spine,
+    project_coarse_history_spine, turn_event_steps_from_agent_turn_records,
+    turn_event_steps_from_artifact,
 };
 pub use store::*;
 

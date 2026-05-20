@@ -24,7 +24,10 @@ use std::path::PathBuf;
 use ploke_records::ids::ArtifactId;
 use ploke_records::invocation::{InvocationRecord, Role};
 
-use crate::{BranchRunRecordRef, ProtocolArtifactsEvidence, RunAttemptEvidence, RunRecordEvidence};
+use crate::{
+    AgentTurnRecordSet, BranchRunRecordRef, ProtocolArtifactsEvidence, RunAttemptEvidence,
+    RunRecordEvidence,
+};
 
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +56,8 @@ pub struct Graph {
     pub child_plans: ChildPlanIndex,
     /// Typed attachments that explain graph objects without replacing History.
     pub evidence: EvidenceIndex,
+    /// Canonical agent-turn records available for event-level playback drilldown.
+    pub agent_turn_records: AgentTurnRecordSet,
     pub warnings: Vec<GraphWarning>,
 }
 
@@ -70,12 +75,18 @@ impl Default for Graph {
             metrics: MetricIndex::default(),
             child_plans: ChildPlanIndex::default(),
             evidence: EvidenceIndex::default(),
+            agent_turn_records: AgentTurnRecordSet::default(),
             warnings: Vec::new(),
         }
     }
 }
 
 impl Graph {
+    /// Loaded agent-turn records carried through the graph boundary.
+    pub fn agent_turn_records(&self) -> &AgentTurnRecordSet {
+        &self.agent_turn_records
+    }
+
     /// Loaded run-attempt records carried through the graph boundary.
     pub fn run_attempts(&self) -> Option<&RunAttemptEvidence> {
         self.forest

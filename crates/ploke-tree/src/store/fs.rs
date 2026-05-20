@@ -30,12 +30,13 @@ use serde::Deserialize;
 use crate::{RunForest, assemble_run_forest};
 
 use super::{
-    AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, BranchRegistryEvidence,
-    BranchRunRecordRef, ChannelEvidence, ChildPlanEvidence, ChildPlanSummary, ComparedRunArm,
-    EvaluationArtifactSummary, EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord,
-    PassiveEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence,
-    RunAttemptSummary, RunForestInput, RunProfileEvidence, RunRecordEvidence, RunRecordSet,
-    RunRecordStats, RunRecordSummary, RunRootSummary, TransitionJournal,
+    AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, AgentTurnRecordSet,
+    BranchRegistryEvidence, BranchRunRecordRef, ChannelEvidence, ChildPlanEvidence,
+    ChildPlanSummary, ComparedRunArm, EvaluationArtifactSummary, EvaluationEvidence,
+    HistoryEvidence, JsonlEvidence, JsonlRecord, PassiveEvidence, ProtocolArtifactSummary,
+    ProtocolArtifactsEvidence, RunAttemptEvidence, RunAttemptSummary, RunForestInput,
+    RunProfileEvidence, RunRecordEvidence, RunRecordSet, RunRecordStats, RunRecordSummary,
+    RunRootSummary, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -127,6 +128,7 @@ impl FsRunStore {
             forest_input: self.load()?,
             history_blocks: self.load_history_blocks()?,
             transition_journal: self.load_transition_journal()?,
+            agent_turn_records: self.load_agent_turn_records()?,
         })
     }
 
@@ -782,6 +784,22 @@ impl FsRunStore {
         }))
     }
 
+    fn load_agent_turn_records(&self) -> Result<AgentTurnRecordSet, FsRunStoreError> {
+        let mut traces = BTreeMap::new();
+        for path in expected_agent_turn_files(&self.run_root, "agent-turn-trace.json") {
+            let record = self.read_json::<AgentTurnTraceRecord>(&path)?.0;
+            traces.insert(run_relative_key(&self.run_root, &path), record);
+        }
+
+        let mut summaries = BTreeMap::new();
+        for path in expected_agent_turn_files(&self.run_root, "agent-turn-summary.json") {
+            let record = self.read_json::<AgentTurnSummaryRecord>(&path)?.0;
+            summaries.insert(run_relative_key(&self.run_root, &path), record);
+        }
+
+        Ok(AgentTurnRecordSet { traces, summaries })
+    }
+
     fn load_attempt_runner_results(
         &self,
     ) -> Result<BTreeMap<String, RunnerResultRecord>, FsRunStoreError> {
@@ -1091,6 +1109,7 @@ fn run_relative_key(run_root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_records::agent_turn::ObservedTurnEventRecord;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1179,6 +1198,35 @@ mod tests {
                 .summaries
                 .contains_key("nodes/child/output/agent-turn-summary.json")
         );
+        assert_eq!(records.agent_turn_records.traces.len(), 1);
+        assert_eq!(records.agent_turn_records.summaries.len(), 1);
+        assert!(
+            !records
+                .agent_turn_records
+                .traces
+                .contains_key("nodes/child/output/agent-turn-trace.json")
+        );
+
+        let graph = crate::Graph::from_records(&records);
+        assert_eq!(graph.agent_turn_records().traces.len(), 1);
+
+        let playback = crate::turn_event_steps_from_agent_turn_records(graph.agent_turn_records());
+        let trace_steps = playback
+            .iter()
+            .filter(|step| step.artifact_path == "agent-turn-trace.json")
+            .collect::<Vec<_>>();
+        assert_eq!(trace_steps.len(), 4);
+        assert_eq!(trace_steps[0].event_index, 0);
+        assert_eq!(trace_steps[0].kind(), crate::TurnEventKind::ToolRequested);
+        assert_eq!(trace_steps[0].tool_name(), Some("read_file"));
+        assert_eq!(trace_steps[0].call_id(), Some("call-1"));
+        assert_eq!(trace_steps[1].kind(), crate::TurnEventKind::ToolCompleted);
+        assert_eq!(trace_steps[2].kind(), crate::TurnEventKind::ToolFailed);
+        assert_eq!(trace_steps[3].kind(), crate::TurnEventKind::TurnFinished);
+        let ObservedTurnEventRecord::ToolRequested(request) = trace_steps[0].event else {
+            panic!("expected first trace event to be the typed tool request");
+        };
+        assert_eq!(request.arguments.as_str(), "{\"file\":\"src/lib.rs\"}");
 
         fs::remove_dir_all(root).expect("remove temp run");
     }

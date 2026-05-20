@@ -38,6 +38,7 @@ fn import_delegates_to_ploke_tree_graph() {
         },
         history_blocks: vec![sealed_block(0, "root", "selected")],
         transition_journal: TransitionJournal::default(),
+        agent_turn_records: Default::default(),
     };
 
     let imported = graph_from_run_records(&records);

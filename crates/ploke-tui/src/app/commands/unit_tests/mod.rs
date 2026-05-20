@@ -139,6 +139,21 @@ async fn test_index_workspace_dot_normalizes_to_current_workspace() {
 }
 
 #[tokio::test]
+async fn test_model_router_parser_show_and_set() {
+    let app = TEST_APP_NODES_CANNONICAL_FRESH.lock().await;
+
+    let show = crate::app::commands::parser::parse(&app, "/model router", CommandStyle::Slash);
+    assert!(matches!(show, Command::ModelRouter(None)));
+
+    let set_google =
+        crate::app::commands::parser::parse(&app, "/model router google", CommandStyle::Slash);
+    match set_google {
+        Command::ModelRouter(Some(router)) => assert_eq!(router, "google"),
+        other => panic!("unexpected command variant: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn test_index_pause_stays_on_legacy_feedback_path() {
     let app = TEST_APP_NODES_CANNONICAL_FRESH.lock().await;
     let style = CommandStyle::Slash;

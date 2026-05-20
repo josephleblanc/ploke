@@ -2009,7 +2009,7 @@ pub(crate) async fn resolve_route_for_model(
         });
     }
 
-    if selected_model.id.key.author.as_str() == "google" {
+    if selected_model.route_source.is_direct_google() {
         if let Some(provider) = requested_provider {
             let requested_slug = provider.slug.as_str();
             if requested_slug != "google" {
