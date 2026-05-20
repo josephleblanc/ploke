@@ -50,7 +50,7 @@ ploke-test-utils = { path = "../test-utils" }
 tracing-subscriber = { workspace = true }
 
 [features]
-default = ["live_api_tests"]
+default = []
 live_api_tests = []
 test_harness = []
 flakey_test = []

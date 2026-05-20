@@ -121,3 +121,159 @@ impl Router for Google {
         std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Google;
+
+    use crate::router_only::Router;
+
+    #[cfg(feature = "live_api_tests")]
+    use std::time::Duration;
+
+    #[cfg(feature = "live_api_tests")]
+    use color_eyre::{Result, eyre::bail};
+    #[cfg(feature = "live_api_tests")]
+    use reqwest::Client;
+    #[cfg(feature = "live_api_tests")]
+    use serde_json::json;
+
+    #[cfg(feature = "live_api_tests")]
+    use crate::{HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS};
+
+    #[cfg(feature = "live_api_tests")]
+    fn body_snippet(body: &str) -> String {
+        const MAX: usize = 1_000;
+        body.chars().take(MAX).collect()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn send_failure(url: &str, error: reqwest::Error) -> crate::LlmError {
+        let phase = if error.is_timeout() {
+            HttpSendFailure::Timeout
+        } else {
+            HttpSendFailure::Failed
+        };
+        crate::LlmError::Http(HttpFailure::send(
+            Some(url.to_string()),
+            None,
+            error.to_string(),
+            phase,
+        ))
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn is_resource_exhausted(response: &serde_json::Value) -> bool {
+        let error = response
+            .get("error")
+            .or_else(|| response.as_array()?.first()?.get("error"));
+
+        error
+            .and_then(|error| error.get("status"))
+            .and_then(|status| status.as_str())
+            == Some("RESOURCE_EXHAUSTED")
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_models_list_smoke() -> Result<()> {
+        let key = Google::resolve_api_key()?;
+        let url = Google::MODELS_URL;
+
+        let response = Client::new()
+            .get(url)
+            .bearer_auth(key)
+            .header("Accept", "application/json")
+            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|error| send_failure(url, error))?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+        if !status.is_success() {
+            bail!(
+                "Google models list failed: status={} body={}",
+                status,
+                body_snippet(&response_text)
+            );
+        }
+
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+        println!("{print_str:#?}");
+        let models = response_value
+            .get("data")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing `data` array: {response_value}"))?;
+
+        assert!(
+            models
+                .iter()
+                .any(|model| model.get("id").and_then(|id| id.as_str()).is_some()),
+            "expected at least one model id in Google models response: {response_value}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_chat_completions_smoke_success_or_quota() -> Result<()> {
+        let key = Google::resolve_api_key()?;
+        let url = Google::COMPLETION_URL;
+        let request = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Reply with one short sentence."
+                }
+            ],
+            "max_tokens": 32,
+            "temperature": 0.0
+        });
+
+        let response = Client::new()
+            .post(url)
+            .bearer_auth(key)
+            .json(&request)
+            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|error| send_failure(url, error))?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+        if !status.is_success() {
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && is_resource_exhausted(&response_value)
+            {
+                // Authenticated quota exhaustion still verifies the live endpoint/model path.
+                return Ok(());
+            }
+
+            bail!(
+                "Google chat completion failed: status={} body={}",
+                status,
+                body_snippet(&response_text)
+            );
+        }
+
+        let content = response_value
+            .get("choices")
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|content| content.as_str())
+            .unwrap_or_default();
+
+        assert!(
+            !content.trim().is_empty(),
+            "expected non-empty assistant content in Google completion response: {response_value}"
+        );
+
+        Ok(())
+    }
+}
