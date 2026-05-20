@@ -135,6 +135,17 @@ pub fn install_tui_recorded_response_tape(
     Ok(loaded)
 }
 
+pub fn install_tui_recorded_response_prefix_then_live(
+    run_dir: &Path,
+    assistant_message_id: &str,
+) -> Result<LoadedResponseTape, PrepareError> {
+    let loaded = LoadedResponseTape::load(run_dir, assistant_message_id)?;
+    ploke_tui::llm::install_recorded_response_prefix_then_live(
+        loaded.clone().into_recorded_response_tape(),
+    );
+    Ok(loaded)
+}
+
 fn load_response_tape_records(
     run_dir: &Path,
     assistant_message_id: &str,
