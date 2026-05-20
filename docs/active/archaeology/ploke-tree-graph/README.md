@@ -30,5 +30,13 @@ projection-only labels.
   Artifacts showing typed baseline and treatment `record.json.gz` output
   records, LLM turns, and ordered tool steps through branch-scoped graph refs.
 - [`selection-protocol-evidence.md`](selection-protocol-evidence.md)
-  Inspector claim for selection-time procedure/traversal headers and protocol
-  aggregate metrics sealed in History for a selected candidate-backed Artifact.
+  Inspector claim for the parent-owned candidate universe, selected marker,
+  metric policy, `imp@k`, and compared-run operational/protocol metric inputs
+  sealed in History for candidate-backed Artifacts.
+- [`score-child-prop-ui-spec.md`](score-child-prop-ui-spec.md)
+  Spec for showing the actual `score_child_prop` selector equation, persisted
+  inputs, per-candidate weights, and selected weighted-sample row in the
+  inspector.
+- [`lineage-authority.md`](lineage-authority.md)
+  Inspector claim for sealed History block authority, surface commitments, and
+  active Artifact lineage custody.

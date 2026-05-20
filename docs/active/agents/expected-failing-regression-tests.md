@@ -1,8 +1,8 @@
-# Expected-Failing Regression Tests
+# Regression Test Tracker
 
-This tracker records regression tests and bug-pinning reproducers that are expected to fail, or that are intentionally asserting current bad behavior until the fix lands.
+This tracker records expected-failing regression tests, bug-pinning reproducers, and recently fixed regression tests retained as resolved handoff rows.
 
-Use it to avoid losing known-red tests during broad runs, interrupted work, or test-failure triage.
+Use it to avoid losing known-red tests during broad runs, interrupted work, or test-failure triage, and to keep short-lived fixed-contract regression handoffs discoverable.
 
 ## Marker Convention
 
@@ -16,11 +16,19 @@ Every tracked regression test should have a nearby source comment:
 - The timestamp is local time when the marker was added.
 - Use `rg -n 'regr:'` from the repo root to find all marked tests.
 
-## Current Tracker
+## Active Tracker
 
-| Marker | Status | File | Test | Expected result | Removal or update condition |
+No current expected-failing or bug-pinning regression tests are tracked.
+
+## Resolved Handoff Rows
+
+| Marker | Status | File path | Exact test name or command | Expected result | Removal or update condition |
 | --- | --- | --- | --- | --- | --- |
-| `regr:samefile:19-05-26_06-42` | expected-fail | `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` | `cargo test -p ploke-eval recorded_replay_rejects_stale_same_file_repair_after_first_apply -- --ignored --nocapture` | Currently fails for [`RF-05`](../bugs/2026-05-19-rf-05-edit-composition-same-file-repair.md) because a stale same-file `non_semantic_patch` replay applies as a second proposal instead of being rejected before staging/materialization. | Remove `#[ignore]` or mark resolved once replay rejects or invalidates the stale same-file repair and leaves only the first proposal applied. |
+| `regr:samefile:19-05-26_06-42` | resolved | `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` | `cargo test -p ploke-eval recorded_replay_rejects_stale_same_file_repair_after_first_apply` | Asserts stale same-file `non_semantic_patch` replay is rejected or invalidated before it becomes a second applied proposal. | Remove after the RF-05 handoff no longer needs a dedicated tracker row, or keep as fixed-contract replay coverage for same-file edit composition. |
+| `regr:samefiletui:19-05-26_15-43` | resolved | `crates/ploke-tui/src/tools/tool_tests/patches.rs` | `cargo test -p ploke-tui ns_patch_rejects_fuzzy_same_file_repair_after_applied_proposal_before_staging` | Asserts a fuzzy stale same-file `non_semantic_patch` repair fails before staging after the first same-file proposal has applied. | Remove after the RF-05 handoff no longer needs a dedicated tracker row, or keep as lower-level fixed-contract coverage for same-file edit composition. |
+| `regr:protectedstaged:19-05-26_15-43` | resolved | `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` | `cargo test -p ploke-eval recorded_replay_rejects_protected_ns_patch_before_staged_success_reaches_model` | Asserts protected `non_semantic_patch` failures are model-visible as structured rejections, not replayed as staged-success payloads. | Remove after the run-review handoff no longer needs a dedicated tracker row, or keep as fixed-contract regression coverage for the staged-success ambiguity in `2026-05-18-tool-failures.md`. |
+| `regr:protectedrepeat:19-05-26_15-43` | resolved | `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs` | `cargo test -p ploke-eval historical_trace_replay_marks_repeated_protected_ns_patch_before_staging` | Replays the `node-01c9e8fdc70e3ee8` protected `Cargo.toml` retry shape from `/home/brasides/.ploke-eval/campaigns/p1-broad-batch-admission-20260518-2/.../node-01c9e8fdc70e3ee8.headless-tui.json` and asserts both attempts fail before staging, with the repeated denial marked. | Remove after the run-review handoff no longer needs a dedicated tracker row, or keep as fixed-contract regression coverage for repeated protected manifest denials. |
+| `regr:protectedpreflight:19-05-26_15-43` | resolved | `crates/ploke-tui/src/tools/tool_tests/patches.rs` | `cargo test -p ploke-tui ns_patch_protected_path_preflight_rejects_repeat_before_staging` | Asserts repeated protected manifest/config edits fail in preflight, emit no `ToolCallCompleted`, stage no proposals, and mark repeat context. | Remove after the run-review handoff no longer needs a dedicated tracker row, or keep as lower-level fixed-contract coverage for protected-path policy preflight. |
 
 ## Triage Rules
 

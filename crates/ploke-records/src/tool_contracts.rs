@@ -11,10 +11,12 @@
 //! execution, database handles, or edit authority. The goal is type identity for
 //! persisted/replay/UI readers, not access to the TUI runtime.
 
+pub use ploke_core::tool_types::ToolName;
+#[cfg(not(target_arch = "wasm32"))]
 pub use ploke_tui::tools::{
     ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult, ToolErrorCode,
-    ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolName, ToolRetryContext,
-    ToolRetryContextField, ToolRetryContextValue, ToolUiField, ToolUiPayload, ToolVerbosity,
+    ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField,
+    ToolRetryContextValue, ToolUiField, ToolUiPayload, ToolVerbosity,
     cargo::{
         CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
         CargoToolParamsOwned, CargoToolResult,
@@ -30,7 +32,9 @@ pub use ploke_tui::tools::{
     request_code_context::RequestCodeContextParamsOwned,
 };
 
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+#[cfg(not(target_arch = "wasm32"))]
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 /// Provider-supplied tool argument JSON captured as persisted text.
@@ -63,6 +67,7 @@ impl ToolArgumentsJson {
         &self.raw
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn decode_for_tool(&self, tool: &str) -> PersistedToolCallArguments {
         decode_tool_arguments(tool, &self.raw)
     }
@@ -89,6 +94,7 @@ impl fmt::Display for ToolArgumentsJson {
 }
 
 /// Typed persisted view of a tool-call argument payload.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", content = "record", rename_all = "snake_case")]
 pub enum PersistedToolCallArguments {
@@ -96,6 +102,7 @@ pub enum PersistedToolCallArguments {
     ParseFailure(ToolArgumentParseFailure),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PersistedToolCallArguments {
     pub fn decoded(&self) -> Option<&ToolCallArguments> {
         match self {
@@ -113,6 +120,7 @@ impl PersistedToolCallArguments {
 }
 
 /// Closed enum of currently owned tool argument DTOs.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "tool", content = "arguments")]
 pub enum ToolCallArguments {
@@ -144,6 +152,7 @@ pub enum ToolCallArguments {
     QueryCodebase(LegacySearchArguments),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ToolCallArguments {
     pub fn tool_name(&self) -> Option<ToolName> {
         match self {
@@ -163,6 +172,7 @@ impl ToolCallArguments {
 }
 
 /// Historical search tool argument shape kept for replay/protocol context.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LegacySearchArguments {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,6 +183,7 @@ pub struct LegacySearchArguments {
 
 /// Typed record emitted when a persisted/provider argument string cannot be
 /// decoded into the tool-specific DTO.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolArgumentParseFailure {
     pub tool: String,
@@ -180,6 +191,7 @@ pub struct ToolArgumentParseFailure {
     pub error: ToolArgumentDecodeError,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolArgumentDecodeError {
@@ -187,6 +199,7 @@ pub enum ToolArgumentDecodeError {
     InvalidJson { message: String },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArguments {
     match tool {
         "search_code" => return decode_as(tool, raw, ToolCallArguments::SearchCode),
@@ -231,6 +244,7 @@ pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArgument
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_as<T>(
     tool: &str,
     raw: &str,
@@ -252,6 +266,7 @@ where
 }
 
 /// Typed persisted view of a tool result `content` payload.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", content = "record", rename_all = "snake_case")]
 pub enum PersistedToolResultContent {
@@ -259,6 +274,7 @@ pub enum PersistedToolResultContent {
     ParseFailure(ToolResultParseFailure),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PersistedToolResultContent {
     pub fn decoded(&self) -> Option<&ToolResultContent> {
         match self {
@@ -276,6 +292,7 @@ impl PersistedToolResultContent {
 }
 
 /// Closed enum of currently owned tool result DTOs.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "tool", content = "result")]
 pub enum ToolResultContent {
@@ -299,6 +316,7 @@ pub enum ToolResultContent {
     ListDir(ListDirResult),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ToolResultContent {
     pub fn tool_name(&self) -> ToolName {
         match self {
@@ -316,6 +334,7 @@ impl ToolResultContent {
 }
 
 /// Typed record emitted when a persisted tool result string cannot be decoded.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolResultParseFailure {
     pub tool: String,
@@ -323,6 +342,7 @@ pub struct ToolResultParseFailure {
     pub error: ToolResultDecodeError,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolResultDecodeError {
@@ -331,6 +351,7 @@ pub enum ToolResultDecodeError {
     InvalidJson { message: String },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultContent {
     let Some(tool_name) = tool_name_from_persisted(tool) else {
         return PersistedToolResultContent::ParseFailure(ToolResultParseFailure {
@@ -376,6 +397,7 @@ pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultC
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_result_as<T>(
     tool: &str,
     raw: &str,
@@ -396,6 +418,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
     match tool {
         "request_code_context" => Some(ToolName::RequestCodeContext),
@@ -412,7 +435,7 @@ fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

@@ -24,11 +24,11 @@ use crate::{
     cli::prototype1_state::history::{
         CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
         CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
-        HistoryCandidateSource, HistoryCandidates, HistoryError, SealedCandidateEvidence,
-        SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluatorIdentity,
-        SealedProtocolArtifactEvidence, SealedRunEvidence, SealedRunProtocolEvidence,
-        SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-        SelectionScope, SubjectRef, TraversalCandidateSource,
+        HistoryCandidateSource, HistoryCandidates, HistoryError, HistoryHash,
+        SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
+        SealedEvaluatorIdentity, SealedProtocolArtifactEvidence, SealedRunEvidence,
+        SealedRunProtocolEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
+        SelectionProjectionFailureKind, SelectionScope, SubjectRef, TraversalCandidateSource,
     },
     metric::{self, Summary},
 };
@@ -418,6 +418,97 @@ pub(crate) struct ScoreChildPropReplayRow {
     pub(crate) selected: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct SelectionFormula {
+    pub(crate) metric_set_id: HistoryHash,
+    pub(crate) formula: Formula,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Formula {
+    ScoreChildProp(ScoreChildPropFormula),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ScoreChildPropFormula {
+    pub(crate) schema_version: u32,
+    pub(crate) seed: u64,
+    pub(crate) top_m: usize,
+    pub(crate) lambda_millis: u32,
+    pub(crate) lambda: f64,
+    pub(crate) metric_inputs: String,
+    pub(crate) oracle_mode: String,
+    pub(crate) oracle_require_evidence: bool,
+    pub(crate) total_weight: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sample: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sample_threshold: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uniform_fallback_slot: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_candidate: Option<String>,
+    pub(crate) alpha_mid: f64,
+    pub(crate) oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rows: Vec<ScoreChildPropFormulaRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ScoreChildPropFormulaRow {
+    pub(crate) payload_index: usize,
+    pub(crate) candidate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch_disposition: Option<String>,
+    pub(crate) base_outcome: SuccessorOutcome,
+    pub(crate) outcome_points: i64,
+    pub(crate) operational_points: i64,
+    pub(crate) protocol_points: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) imp_at_k_delta: Option<i64>,
+    pub(crate) imp_at_k_score_excluded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) performance: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_resolved: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_configured: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_rate: Option<f64>,
+    pub(crate) oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) child_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) alpha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) alpha_mid: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exploitation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exploration: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cumulative_lower: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cumulative_upper: Option<f64>,
+    pub(crate) sample_hit: bool,
+    pub(crate) selectable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exclusion_reason: Option<String>,
+    pub(crate) performance_present: bool,
+    pub(crate) selection_input_present: bool,
+    pub(crate) decision_present: bool,
+    pub(crate) selected: bool,
+}
+
 pub(crate) fn replay_score_child_prop(
     entry: &SelectionDecisionEntry,
 ) -> Result<Option<ScoreChildPropReplay>, HistoryError> {
@@ -504,6 +595,161 @@ pub(crate) fn replay_score_child_prop(
         selected_index,
         selected_candidate,
         rows,
+    }))
+}
+
+pub(crate) fn score_child_prop_formula(
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<SelectionFormula>, HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let StrategyKind::ScoreChildProp {
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    } = traversal.strategy
+    else {
+        return Ok(None);
+    };
+    let items = entry
+        .considered
+        .iter()
+        .cloned()
+        .map(|payload| Item {
+            payload,
+            source: Source::SealedDecisionReplay,
+            candidate_set_root: None,
+            candidate_set_membership: None,
+        })
+        .collect::<Vec<_>>();
+    let child_counts = successful_child_counts(&entry.considered);
+    let calculation = score_child_prop_calculation_with_set(
+        &items,
+        &child_counts,
+        &entry.metrics,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    )?;
+    let total_weight = calculation
+        .weights
+        .iter()
+        .map(|weight| weight.weight)
+        .sum::<f64>();
+    let sample = if calculation.weights.is_empty() {
+        None
+    } else {
+        Some(sample_unit(traversal.seed, &items)?)
+    };
+    let selected_index =
+        sample.and_then(|sample| sample_weighted_index(&calculation.weights, total_weight, sample));
+    let selected_candidate = selected_index
+        .and_then(|index| items.get(index))
+        .map(|item| item.payload.candidate.as_str().to_string());
+    let sample_threshold = sample
+        .filter(|_| total_weight > 0.0 && total_weight.is_finite())
+        .map(|sample| sample * total_weight);
+    let uniform_fallback_slot = sample
+        .filter(|_| !calculation.weights.is_empty())
+        .filter(|_| total_weight <= 0.0 || !total_weight.is_finite())
+        .map(|sample| {
+            let slot = (sample * calculation.weights.len() as f64).floor() as usize;
+            slot.min(calculation.weights.len().saturating_sub(1))
+        });
+    let ranges = cumulative_ranges(&calculation.weights, total_weight, sample);
+    let rows = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let case = CandidateCase::from_payload(&item.payload);
+            let input = case.selection_input();
+            let decision = traversal_decision(&case);
+            let breakdown = performance_breakdown_with_set(index, case, metrics, &entry.metrics);
+            let weight = calculation
+                .weights
+                .iter()
+                .find(|weight| weight.index == index);
+            let range = ranges.iter().find(|range| range.index == index);
+            ScoreChildPropFormulaRow {
+                payload_index: index,
+                candidate: item.payload.candidate.as_str().to_string(),
+                node_id: input.map(|value| value.candidate.node_id.clone()),
+                branch_id: input.map(|value| value.candidate.branch_id.clone()),
+                branch_disposition: input
+                    .map(|value| disposition_as_str(value.branch_disposition.clone()).to_string()),
+                base_outcome: decision
+                    .as_ref()
+                    .map(|decision| decision.outcome)
+                    .unwrap_or(SuccessorOutcome::Stop),
+                outcome_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.outcome_points)
+                    .unwrap_or_default(),
+                operational_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.operational_points)
+                    .unwrap_or_default(),
+                protocol_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.protocol_points)
+                    .unwrap_or_default(),
+                imp_at_k_delta: breakdown
+                    .as_ref()
+                    .and_then(|breakdown| breakdown.imp_at_k_delta),
+                imp_at_k_score_excluded: breakdown
+                    .as_ref()
+                    .is_some_and(|breakdown| breakdown.imp_at_k_score_excluded),
+                performance: weight.map(|weight| weight.performance.0),
+                oracle_resolved: weight
+                    .and_then(|weight| weight.oracle.map(|score| score.resolved)),
+                oracle_configured: weight
+                    .and_then(|weight| weight.oracle.map(|score| score.configured)),
+                oracle_rate: weight.and_then(|weight| weight.oracle.map(|score| score.rate())),
+                oracle_used_for_alpha: calculation.oracle_used_for_alpha,
+                child_count: weight.map(|weight| weight.child_count),
+                alpha: weight.map(|weight| weight.alpha),
+                alpha_mid: weight.map(|_| calculation.alpha_mid),
+                exploitation: weight.map(|weight| weight.exploitation),
+                exploration: weight.map(|weight| weight.exploration),
+                weight: weight.map(|weight| weight.weight),
+                cumulative_lower: range.map(|range| range.lower),
+                cumulative_upper: range.map(|range| range.upper),
+                sample_hit: range.is_some_and(|range| range.sample_hit),
+                selectable: weight.is_some(),
+                exclusion_reason: exclusion_reason(input.is_some(), decision.is_some(), &breakdown),
+                performance_present: weight.is_some(),
+                selection_input_present: input.is_some(),
+                decision_present: decision.is_some(),
+                selected: selected_index == Some(index),
+            }
+        })
+        .collect();
+    Ok(Some(SelectionFormula {
+        metric_set_id: entry.metrics.id.clone(),
+        formula: Formula::ScoreChildProp(ScoreChildPropFormula {
+            schema_version: 1,
+            seed: traversal.seed,
+            top_m,
+            lambda_millis,
+            lambda: lambda_millis as f64 / 1_000.0,
+            metric_inputs: metric_inputs_name(metrics).to_string(),
+            oracle_mode: oracle_mode_name(oracle).to_string(),
+            oracle_require_evidence: require_evidence,
+            total_weight,
+            sample,
+            sample_threshold,
+            uniform_fallback_slot,
+            selected_index,
+            selected_candidate,
+            alpha_mid: calculation.alpha_mid,
+            oracle_used_for_alpha: calculation.oracle_used_for_alpha,
+            rows,
+        }),
     }))
 }
 
@@ -1005,32 +1251,35 @@ fn traversal_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PerformanceScore(i64);
 
+#[derive(Debug, Clone, Copy)]
+struct PerformanceBreakdown {
+    outcome_points: i64,
+    operational_points: i64,
+    protocol_points: i64,
+    imp_at_k_delta: Option<i64>,
+    imp_at_k_score_excluded: bool,
+}
+
+impl PerformanceBreakdown {
+    fn total(self) -> Option<PerformanceScore> {
+        let mut score = self
+            .outcome_points
+            .saturating_add(self.operational_points)
+            .saturating_add(self.protocol_points);
+        let Some(delta) = self.imp_at_k_delta else {
+            return if self.imp_at_k_score_excluded {
+                None
+            } else {
+                Some(PerformanceScore(score))
+            };
+        };
+        score = score.saturating_add(delta);
+        Some(PerformanceScore(score))
+    }
+}
+
 fn performance_score(case: CandidateCase<'_>, metrics: metric::Inputs) -> Option<PerformanceScore> {
-    let input = case.selection_input()?;
-    let decision = decide_candidate(input.clone());
-    let mut score = match decision.outcome {
-        SuccessorOutcome::Accepted => 10_000,
-        SuccessorOutcome::ExploreFrom => 5_000,
-        SuccessorOutcome::Stop if input.branch_disposition == BranchDisposition::Reject => 2_500,
-        SuccessorOutcome::Stop => 0,
-    };
-
-    for metrics in input
-        .comparisons
-        .iter()
-        .filter_map(|comparison| comparison.child_metrics.as_ref())
-    {
-        score += metrics.selection_points();
-    }
-    if metrics.includes_protocol() {
-        for run in case.compared_runs() {
-            if let Some(treatment) = run.treatment_protocol.as_ref() {
-                score += treatment.selection_delta_points(run.baseline_protocol.as_ref());
-            }
-        }
-    }
-
-    Some(PerformanceScore(score))
+    performance_breakdown(case, metrics)?.total()
 }
 
 fn performance_score_with_set(
@@ -1046,6 +1295,66 @@ fn performance_score_with_set(
             Some(score)
         }
         Err(_) => None,
+    }
+}
+
+fn performance_breakdown(
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+) -> Option<PerformanceBreakdown> {
+    let input = case.selection_input()?;
+    let decision = decide_candidate(input.clone());
+    let outcome_points = match decision.outcome {
+        SuccessorOutcome::Accepted => 10_000,
+        SuccessorOutcome::ExploreFrom => 5_000,
+        SuccessorOutcome::Stop if input.branch_disposition == BranchDisposition::Reject => 2_500,
+        SuccessorOutcome::Stop => 0,
+    };
+
+    let operational_points = input
+        .comparisons
+        .iter()
+        .filter_map(|comparison| comparison.child_metrics.as_ref())
+        .map(Summary::selection_points)
+        .sum();
+    let protocol_points = if metrics.includes_protocol() {
+        case.compared_runs()
+            .filter_map(|run| {
+                run.treatment_protocol.as_ref().map(|treatment| {
+                    treatment.selection_delta_points(run.baseline_protocol.as_ref())
+                })
+            })
+            .sum()
+    } else {
+        0
+    };
+
+    Some(PerformanceBreakdown {
+        outcome_points,
+        operational_points,
+        protocol_points,
+        imp_at_k_delta: Some(0),
+        imp_at_k_score_excluded: false,
+    })
+}
+
+fn performance_breakdown_with_set(
+    index: usize,
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+    metric_set: &selection_metrics::Set,
+) -> Option<PerformanceBreakdown> {
+    let mut breakdown = performance_breakdown(case, metrics)?;
+    match metric_set.score_delta(index) {
+        Ok(delta) => {
+            breakdown.imp_at_k_delta = Some(delta);
+            Some(breakdown)
+        }
+        Err(_) => {
+            breakdown.imp_at_k_delta = None;
+            breakdown.imp_at_k_score_excluded = true;
+            Some(breakdown)
+        }
     }
 }
 
@@ -1390,6 +1699,19 @@ struct ScoreChildPropWeight {
     decision: SuccessorDecision,
 }
 
+struct ScoreChildPropCalculation {
+    weights: Vec<ScoreChildPropWeight>,
+    alpha_mid: f64,
+    oracle_used_for_alpha: bool,
+}
+
+struct CumulativeRange {
+    index: usize,
+    lower: f64,
+    upper: f64,
+    sample_hit: bool,
+}
+
 fn select_score_child_prop(
     items: &[Item],
     child_counts: &BTreeMap<String, usize>,
@@ -1489,6 +1811,29 @@ fn score_child_prop_weights_with_set(
     oracle: OracleMode,
     require_evidence: bool,
 ) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
+    score_child_prop_calculation_with_set(
+        items,
+        child_counts,
+        metric_set,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+    )
+    .map(|calculation| calculation.weights)
+}
+
+fn score_child_prop_calculation_with_set(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+) -> Result<ScoreChildPropCalculation, HistoryError> {
     let mut selectable = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let case = CandidateCase::from_payload(&item.payload);
@@ -1510,7 +1855,11 @@ fn score_child_prop_weights_with_set(
     }
 
     if selectable.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ScoreChildPropCalculation {
+            weights: Vec::new(),
+            alpha_mid: 0.0,
+            oracle_used_for_alpha: false,
+        });
     }
 
     let min_performance = selectable
@@ -1572,7 +1921,7 @@ fn score_child_prop_weights_with_set(
         / frontier_count as f64;
     let lambda = lambda_millis as f64 / 1_000.0;
 
-    Ok(selectable
+    let weights = selectable
         .into_iter()
         .map(
             |(index, performance, oracle_score, child_count, decision)| {
@@ -1593,7 +1942,60 @@ fn score_child_prop_weights_with_set(
                 }
             },
         )
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    Ok(ScoreChildPropCalculation {
+        weights,
+        alpha_mid,
+        oracle_used_for_alpha: oracle_scores_differ,
+    })
+}
+
+fn cumulative_ranges(
+    weights: &[ScoreChildPropWeight],
+    total_weight: f64,
+    sample: Option<f64>,
+) -> Vec<CumulativeRange> {
+    let threshold = sample
+        .filter(|_| total_weight > 0.0 && total_weight.is_finite())
+        .map(|sample| sample * total_weight);
+    let mut cumulative = 0.0;
+    weights
+        .iter()
+        .map(|weight| {
+            let lower = cumulative;
+            cumulative += weight.weight;
+            CumulativeRange {
+                index: weight.index,
+                lower,
+                upper: cumulative,
+                sample_hit: threshold
+                    .is_some_and(|threshold| threshold >= lower && threshold <= cumulative),
+            }
+        })
+        .collect()
+}
+
+fn exclusion_reason(
+    has_selection_input: bool,
+    has_decision: bool,
+    breakdown: &Option<PerformanceBreakdown>,
+) -> Option<String> {
+    if !has_selection_input {
+        return Some("selection_input_missing".to_string());
+    }
+    if !has_decision {
+        return Some("decision_not_recorded".to_string());
+    }
+    if breakdown
+        .as_ref()
+        .is_some_and(|breakdown| breakdown.imp_at_k_score_excluded)
+    {
+        return Some("imp_at_k_score_excluded".to_string());
+    }
+    if breakdown.is_none() {
+        return Some("performance_not_recorded".to_string());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1755,6 +2157,7 @@ mod tests {
                 HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
                 SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
                 SealedEvidenceCitation, SelectionDecisionEntry, SelectionScope, SubjectRef,
+                TraversalEvidence,
             },
         },
         intervention::{
@@ -2431,6 +2834,70 @@ mod tests {
                 .iter()
                 .any(|line| line == "traversal_strategy=score_child_prop")
         );
+    }
+
+    #[test]
+    fn score_child_prop_selection_entry_persists_formula_rows() {
+        let strategy = StrategyKind::score_child_prop();
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "node-a",
+                    "branch-a",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "node-b",
+                    "branch-b",
+                    None,
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+            ],
+        };
+        let selection = select_from_history(candidates, 99, strategy.clone())
+            .expect("selection")
+            .expect("selected");
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: 99,
+                strategy,
+                selected_source: None,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("selection entry with formula");
+
+        let formula = entry.formula.as_ref().expect("formula persisted");
+        assert_eq!(formula.metric_set_id, entry.metrics.id);
+        let Formula::ScoreChildProp(score) = &formula.formula;
+        assert_eq!(score.seed, 99);
+        assert_eq!(score.rows.len(), 2);
+        assert!(score.sample.is_some());
+        assert!(score.rows.iter().all(|row| row.performance_present));
+        assert!(score.rows.iter().any(|row| row.selected));
+        let selected = score
+            .rows
+            .iter()
+            .find(|row| row.selected)
+            .expect("selected row");
+        assert!(selected.weight.is_some());
+        assert!(selected.cumulative_lower.is_some());
+        assert!(selected.cumulative_upper.is_some());
     }
 
     #[test]

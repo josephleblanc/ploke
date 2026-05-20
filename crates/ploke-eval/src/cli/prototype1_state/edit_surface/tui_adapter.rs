@@ -3581,6 +3581,7 @@ mod tests {
         );
     }
 
+    // regr:protectedstaged:19-05-26_15-43
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn recorded_replay_rejects_protected_ns_patch_before_staged_success_reaches_model() {
         let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -3691,9 +3692,9 @@ mod tests {
     /// Regression test for the protected-manifest retry loop observed in the
     /// `node-01c9e8fdc70e3ee8` headless TUI trace.
     ///
-    /// This is fixed-contract regression coverage, not an expected-failing
-    /// `regr:` tracker case, because the checked-in test should stay green.
-    /// It replays only the relevant failure shape instead of the full trace.
+    /// This is fixed-contract regression coverage tracked as resolved, not an
+    /// expected-failing case. It replays only the relevant failure shape instead
+    /// of the full trace.
     ///
     /// The historical run repeatedly attempted the same `non_semantic_patch`
     /// against workspace `Cargo.toml`, and the old tool response gave the
@@ -3710,6 +3711,7 @@ mod tests {
     /// denial is marked `retry_context.repeated = true`, and the next model
     /// requests receive structured rejection messages rather than staged-success
     /// payloads.
+    // regr:protectedrepeat:19-05-26_15-43
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn historical_trace_replay_marks_repeated_protected_ns_patch_before_staging() {
         let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -3877,11 +3879,10 @@ mod tests {
     /// second proposal, the next provider request receives a rejection for the
     /// stale call, and the workspace remains at the first valid edit.
     ///
-    /// Active bug:
+    /// Related RF-05 bug report:
     /// docs/active/bugs/2026-05-19-rf-05-edit-composition-same-file-repair.md.
     // regr:samefile:19-05-26_06-42
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    #[ignore = "expected-failing RF-05: stale same-file replay currently applies as a second proposal"]
     async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
         let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
         let fixture = prepare_live_canary(

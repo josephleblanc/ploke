@@ -2267,6 +2267,7 @@ fn synthetic_sealed_block(
                             considered_count,
                             &HistoryHash("a".repeat(64)),
                         ),
+                        formula: None,
                         decision: Decision {
                             procedure_id: "selector-v1".to_owned(),
                             candidate_node_id: "node-0".to_owned(),

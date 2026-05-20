@@ -1,6 +1,6 @@
 #![allow(clippy::needless_lifetimes)]
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /* NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
@@ -56,6 +56,32 @@ fn has_duplicate_edit_proposal(
     call_id: &ArcStr,
 ) -> bool {
     reg.values().any(|proposal| proposal.call_id == *call_id)
+}
+
+fn file_has_settled_proposal(
+    reg: &std::collections::HashMap<Uuid, EditProposal>,
+    file_path: &Path,
+) -> bool {
+    reg.values().any(|proposal| {
+        matches!(
+            proposal.status,
+            EditProposalStatus::Applied
+                | EditProposalStatus::Failed(_)
+                | EditProposalStatus::Stale(_)
+        ) && proposal.files.iter().any(|path| path == file_path)
+    })
+}
+
+fn used_fuzzy_hunk_match(report: &mpatch::ApplyResult) -> bool {
+    report.hunk_results.iter().any(|status| {
+        matches!(
+            status,
+            mpatch::HunkApplyStatus::Applied {
+                match_type: mpatch::MatchType::Fuzzy { .. },
+                ..
+            }
+        )
+    })
 }
 
 pub(crate) trait LlmTool<T, R, U>
@@ -1070,6 +1096,10 @@ pub async fn apply_ns_code_edit_tool(
             patch_api = "try_apply_patch_to_content",
             "ns_patch: before try_apply_patch_to_content"
         );
+        let touched_by_settled_proposal = {
+            let reg = state.proposals.read().await;
+            file_has_settled_proposal(&reg, &abs_path)
+        };
         let apply_patch_result =
             ploke_io::try_apply_ns_diff_to_content(&diff, &content, state_cfg.editing.patch_cfg)
                 .map_err(|e| {
@@ -1085,6 +1115,20 @@ pub async fn apply_ns_code_edit_tool(
                     );
                     ploke_error::Error::Domain(DomainError::Io { message: msg })
                 })?;
+        if touched_by_settled_proposal && used_fuzzy_hunk_match(&apply_patch_result.report) {
+            let msg = format!(
+                "failed to patch {}: patch matched only fuzzily after an earlier settled proposal touched the same file; refresh the file and submit a diff against the current content",
+                abs_path.display()
+            );
+            tracing::error!(
+                target: "ns-patch",
+                request_id = %request_id,
+                call_id = %call_id,
+                file = %abs_path.display(),
+                "ns_patch staging rejected stale same-file patch"
+            );
+            return Err(ploke_error::Error::Domain(DomainError::Io { message: msg }));
+        }
         tracing::info!(
             target: "ns-patch",
             request_id = %request_id,

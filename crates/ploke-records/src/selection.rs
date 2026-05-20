@@ -138,6 +138,103 @@ pub struct MetricSet {
     pub candidates: Vec<MetricCandidate>,
 }
 
+/// Selector formula sealed beside one selection decision.
+///
+/// This record is selection-entry scoped by containment in
+/// `SelectionDecisionEntryRecord`; `metric_set_id` binds the formula to the
+/// metric evidence used by that selection entry, but is not the formula
+/// identity on its own.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelectionFormulaRecord {
+    pub metric_set_id: HistoryHash,
+    pub formula: FormulaRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FormulaRecord {
+    ScoreChildProp(ScoreChildPropRecord),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScoreChildPropRecord {
+    pub schema_version: u32,
+    pub seed: u64,
+    pub top_m: usize,
+    pub lambda_millis: u32,
+    pub lambda: f64,
+    pub metric_inputs: String,
+    pub oracle_mode: String,
+    pub oracle_require_evidence: bool,
+    pub total_weight: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_threshold: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniform_fallback_slot: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_candidate: Option<String>,
+    pub alpha_mid: f64,
+    pub oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<ScoreChildPropRowRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScoreChildPropRowRecord {
+    pub payload_index: usize,
+    pub candidate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_disposition: Option<String>,
+    pub base_outcome: Outcome,
+    pub outcome_points: i64,
+    pub operational_points: i64,
+    pub protocol_points: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imp_at_k_delta: Option<i64>,
+    pub imp_at_k_score_excluded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_resolved: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_configured: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_rate: Option<f64>,
+    pub oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha_mid: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploitation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploration: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_lower: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_upper: Option<f64>,
+    pub sample_hit: bool,
+    pub selectable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusion_reason: Option<String>,
+    pub performance_present: bool,
+    pub selection_input_present: bool,
+    pub decision_present: bool,
+    pub selected: bool,
+}
+
 impl MetricSet {
     pub fn absent_from_legacy_record() -> Self {
         Self {
@@ -358,5 +455,69 @@ mod tests {
                 .and_then(|row| row.improvement),
             Some(400)
         );
+    }
+
+    #[test]
+    fn selection_formula_roundtrip_passive_dto() {
+        let formula = SelectionFormulaRecord {
+            metric_set_id: HistoryHash("a".repeat(64)),
+            formula: FormulaRecord::ScoreChildProp(ScoreChildPropRecord {
+                schema_version: 1,
+                seed: 7,
+                top_m: 2,
+                lambda_millis: 1500,
+                lambda: 1.5,
+                metric_inputs: "operational".to_string(),
+                oracle_mode: "record_only".to_string(),
+                oracle_require_evidence: true,
+                total_weight: 0.75,
+                sample: Some(0.25),
+                sample_threshold: Some(0.1875),
+                uniform_fallback_slot: None,
+                selected_index: Some(0),
+                selected_candidate: Some("candidate:node-a:plan_index=0".to_string()),
+                alpha_mid: 0.5,
+                oracle_used_for_alpha: false,
+                rows: vec![ScoreChildPropRowRecord {
+                    payload_index: 0,
+                    candidate: "candidate:node-a:plan_index=0".to_string(),
+                    node_id: Some("node-a".to_string()),
+                    branch_id: Some("branch-a".to_string()),
+                    branch_disposition: Some("keep".to_string()),
+                    base_outcome: Outcome::Accepted,
+                    outcome_points: 10_000,
+                    operational_points: 900,
+                    protocol_points: 0,
+                    imp_at_k_delta: Some(0),
+                    imp_at_k_score_excluded: false,
+                    performance: Some(10_900),
+                    oracle_resolved: None,
+                    oracle_configured: None,
+                    oracle_rate: None,
+                    oracle_used_for_alpha: false,
+                    child_count: Some(0),
+                    alpha: Some(0.5),
+                    alpha_mid: Some(0.5),
+                    exploitation: Some(0.5),
+                    exploration: Some(1.0),
+                    weight: Some(0.5),
+                    cumulative_lower: Some(0.0),
+                    cumulative_upper: Some(0.5),
+                    sample_hit: true,
+                    selectable: true,
+                    exclusion_reason: None,
+                    performance_present: true,
+                    selection_input_present: true,
+                    decision_present: true,
+                    selected: true,
+                }],
+            }),
+        };
+
+        let encoded = serde_json::to_string(&formula).expect("serialize formula");
+        let decoded: SelectionFormulaRecord =
+            serde_json::from_str(&encoded).expect("deserialize formula");
+
+        assert_eq!(decoded, formula);
     }
 }

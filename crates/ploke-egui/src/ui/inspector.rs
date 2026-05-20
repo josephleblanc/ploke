@@ -7,9 +7,10 @@ use serde::Serialize;
 
 use crate::ui::text::decor::Badge;
 use crate::ui::view::{GraphSelectionDetail, GraphSelectionRef};
-use ploke_records::ids::ArtifactId;
+use ploke_records::ids::{ArtifactId, BlockHash, EntryId};
 use ploke_tree::graph::{
-    ArtifactKey, ParentCreateAttempt, ParentCreateLookup, ParentCreateUnavailable,
+    ArtifactKey, CandidateNode, HistoryBlockNode, MetricCandidateKey, MetricCandidateNode,
+    MetricSetNode, ParentCreateAttempt, ParentCreateLookup, ParentCreateUnavailable, SelectionNode,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -81,6 +82,8 @@ pub(crate) struct InspectorSections {
     artifact_incoming: Vec<ArtifactRelationSlot>,
     artifact_outgoing: Vec<ArtifactRelationSlot>,
     patches: Vec<PatchSlot>,
+    candidate_comparison: Option<CandidateComparisonSlot>,
+    lineage_authority: Option<LineageAuthoritySlot>,
     source_refs: Vec<SourceRefSlot>,
     unavailable: Option<UnavailableReason>,
 }
@@ -92,8 +95,8 @@ impl InspectorSections {
         inspector: &SelectionInspector<'_>,
     ) -> Self {
         match inspector {
-            SelectionInspector::RunForestNode(run) => Self::from_run_forest(run),
-            SelectionInspector::Artifact(artifact) => Self::from_artifact(artifact),
+            SelectionInspector::RunForestNode(run) => Self::from_run_forest(_graph, run),
+            SelectionInspector::Artifact(artifact) => Self::from_artifact(_graph, artifact),
             SelectionInspector::Unresolved(reason) => Self {
                 identity: Some(IdentitySlot::from_selection(selection)),
                 metrics: None,
@@ -104,13 +107,15 @@ impl InspectorSections {
                 artifact_incoming: Vec::new(),
                 artifact_outgoing: Vec::new(),
                 patches: Vec::new(),
+                candidate_comparison: None,
+                lineage_authority: None,
                 source_refs: Vec::new(),
                 unavailable: Some(*reason),
             },
         }
     }
 
-    fn from_run_forest(run: &RunForestNodeInspection<'_>) -> Self {
+    fn from_run_forest(graph: &ploke_tree::Graph, run: &RunForestNodeInspection<'_>) -> Self {
         let node_key = run.node.key.as_str().to_owned();
         let incoming = run
             .parent
@@ -165,12 +170,14 @@ impl InspectorSections {
             artifact_incoming: Vec::new(),
             artifact_outgoing,
             patches: run.patch.iter().map(PatchSlot::from_inspection).collect(),
+            candidate_comparison: candidate_comparison_slot_for_run_forest(graph, run),
+            lineage_authority: None,
             source_refs: run_forest_source_slots(run.node),
             unavailable: None,
         }
     }
 
-    fn from_artifact(artifact: &ArtifactInspection<'_>) -> Self {
+    fn from_artifact(graph: &ploke_tree::Graph, artifact: &ArtifactInspection<'_>) -> Self {
         let artifact_sources = artifact
             .sources
             .iter()
@@ -213,6 +220,8 @@ impl InspectorSections {
                 .iter()
                 .map(PatchSlot::from_inspection)
                 .collect(),
+            candidate_comparison: candidate_comparison_slot_for_artifact(graph, artifact),
+            lineage_authority: lineage_authority_slot_for_artifact(graph, artifact),
             source_refs: artifact_source_slots(artifact.sources.as_slice()),
             unavailable: None,
         }
@@ -266,6 +275,14 @@ impl InspectorSections {
 
     pub(crate) fn patches(&self) -> &[PatchSlot] {
         self.patches.as_slice()
+    }
+
+    pub(crate) fn candidate_comparison(&self) -> Option<&CandidateComparisonSlot> {
+        self.candidate_comparison.as_ref()
+    }
+
+    pub(crate) fn lineage_authority(&self) -> Option<&LineageAuthoritySlot> {
+        self.lineage_authority.as_ref()
     }
 
     pub(crate) fn source_refs(&self) -> &[SourceRefSlot] {
@@ -451,6 +468,144 @@ impl PatchSlot {
             .child_plans
             .child_for_node_id(self.child_node_id.as_str())
             .map(|child| PatchInspection { child })
+    }
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CandidateComparisonSlot {
+    pub(crate) parent_node_id: String,
+    children: Vec<CandidateComparisonChildSlot>,
+}
+
+impl CandidateComparisonSlot {
+    pub(crate) fn children(&self) -> &[CandidateComparisonChildSlot] {
+        self.children.as_slice()
+    }
+
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    pub(crate) fn metric_set<'g>(&self, graph: &'g ploke_tree::Graph) -> Option<&'g MetricSetNode> {
+        let selection = self
+            .children
+            .iter()
+            .find_map(|child| child.selection_entry_id.as_ref())
+            .and_then(|entry_id| graph.selections.selections.get(entry_id))?;
+        graph.metrics.sets.get(&selection.metric_set_id)
+    }
+
+    /// archaeology:score-child-prop-ui
+    /// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+    pub(crate) fn selection_formula<'g>(
+        &self,
+        graph: &'g ploke_tree::Graph,
+    ) -> Option<&'g ploke_tree::graph::SelectionFormulaNode> {
+        let selection = self
+            .children
+            .iter()
+            .find_map(|child| child.selection_entry_id.as_ref())
+            .and_then(|entry_id| graph.selections.selections.get(entry_id))?;
+        selection_formula_for_selection(graph, selection)
+    }
+
+    pub(crate) fn resolve_child<'g>(
+        &self,
+        graph: &'g ploke_tree::Graph,
+        child: &CandidateComparisonChildSlot,
+    ) -> Option<CandidateComparisonCandidate<'g>> {
+        let child_record = graph
+            .child_plans
+            .child_for_node_id(child.child_node_id.as_str())?;
+        let candidate = child
+            .selection_entry_id
+            .as_ref()
+            .zip(child.payload_index)
+            .and_then(|(entry_id, payload_index)| {
+                graph.candidates.candidates.iter().find(|candidate| {
+                    &candidate.selection_entry_id == entry_id
+                        && candidate.payload_index == payload_index
+                })
+            })
+            .or_else(|| candidate_for_child(graph, child_record));
+        let selection = candidate.and_then(|candidate| {
+            graph
+                .selections
+                .selections
+                .get(&candidate.selection_entry_id)
+        });
+        let metric = candidate
+            .and_then(|candidate| selection_metric_for_candidate(graph, candidate, selection));
+        let formula =
+            selection.and_then(|selection| selection_formula_for_selection(graph, selection));
+        let formula_row = formula.and_then(|formula| {
+            let payload_index = child
+                .payload_index
+                .or_else(|| candidate.map(|candidate| candidate.payload_index))?;
+            match &formula.formula {
+                ploke_tree::graph::SelectionFormulaKind::ScoreChildProp(score) => {
+                    score.row_for_payload_index(payload_index)
+                }
+            }
+        });
+        let selected = candidate
+            .zip(selection)
+            .is_some_and(|(candidate, selection)| selection_marks_candidate(selection, candidate));
+
+        Some(CandidateComparisonCandidate {
+            child: child_record,
+            candidate,
+            metric,
+            selector: formula.map(|_| CandidateSelectorFormula { row: formula_row }),
+            selected,
+        })
+    }
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CandidateComparisonChildSlot {
+    pub(crate) child_node_id: String,
+    pub(crate) selection_entry_id: Option<EntryId>,
+    pub(crate) payload_index: Option<usize>,
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CandidateComparisonCandidate<'g> {
+    pub(crate) child: &'g ploke_records::child_plan::ChildPlanChildRecord,
+    pub(crate) candidate: Option<&'g CandidateNode>,
+    pub(crate) metric: Option<&'g MetricCandidateNode>,
+    /// archaeology:score-child-prop-ui
+    /// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+    pub(crate) selector: Option<CandidateSelectorFormula<'g>>,
+    pub(crate) selected: bool,
+}
+
+/// archaeology:score-child-prop-ui
+/// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CandidateSelectorFormula<'g> {
+    pub(crate) row: Option<&'g ploke_records::selection::ScoreChildPropRowRecord>,
+}
+
+/// archaeology:lineage-authority
+/// proof:docs/active/archaeology/ploke-tree-graph/lineage-authority.md
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LineageAuthoritySlot {
+    blocks: Vec<BlockHash>,
+}
+
+impl LineageAuthoritySlot {
+    pub(crate) fn blocks<'g>(
+        &'g self,
+        graph: &'g ploke_tree::Graph,
+    ) -> impl Iterator<Item = &'g HistoryBlockNode> + 'g {
+        self.blocks
+            .iter()
+            .filter_map(|block_hash| graph.history.blocks.get(block_hash))
     }
 }
 
@@ -1715,6 +1870,326 @@ fn artifact_run_record_inspection<'g>(
     branch_id
         .map(|branch_id| RunRecordBranchInspection::from_graph(graph, branch_id))
         .unwrap_or_else(RunRecordBranchInspection::empty)
+}
+
+fn candidate_comparison_slot_for_run_forest(
+    graph: &ploke_tree::Graph,
+    run: &RunForestNodeInspection<'_>,
+) -> Option<CandidateComparisonSlot> {
+    if graph
+        .child_plans
+        .plan_for_parent_node_id(run.node.key.as_str())
+        .is_some()
+    {
+        return candidate_comparison_slot_for_parent_node_id(graph, run.node.key.as_str());
+    }
+
+    let parent_node_id = run.node.parent.as_ref()?;
+    candidate_comparison_slot_for_parent_node_id(graph, parent_node_id.as_str()).or_else(|| {
+        plan_parent_node_id_for_child(graph, run.node.key.as_str()).and_then(|parent_node_id| {
+            candidate_comparison_slot_for_parent_node_id(graph, parent_node_id)
+        })
+    })
+}
+
+fn candidate_comparison_slot_for_artifact(
+    graph: &ploke_tree::Graph,
+    artifact: &ArtifactInspection<'_>,
+) -> Option<CandidateComparisonSlot> {
+    if let ParentCreateLookup::Attempt(attempt) = artifact.parent_create
+        && let Some(parent_node_id) = attempt.child().node.parent_node_id.as_ref()
+    {
+        if let Some(slot) =
+            candidate_comparison_slot_for_parent_node_id(graph, parent_node_id.as_str())
+        {
+            return Some(slot);
+        }
+        if let Some(parent_node_id) =
+            plan_parent_node_id_for_child(graph, attempt.child().node.node_id.as_str())
+        {
+            return candidate_comparison_slot_for_parent_node_id(graph, parent_node_id);
+        }
+    }
+
+    let parent_node_id = graph
+        .child_plans
+        .plans
+        .iter()
+        .find(|(_, plan)| {
+            plan.children
+                .iter()
+                .any(|child| child_base_matches_artifact(graph, child, artifact.sources.as_slice()))
+        })
+        .map(|(parent_node_id, _)| parent_node_id.as_str().to_owned())?;
+    candidate_comparison_slot_for_parent_node_id(graph, parent_node_id.as_str())
+}
+
+fn candidate_comparison_slot_for_parent_node_id(
+    graph: &ploke_tree::Graph,
+    parent_node_id: &str,
+) -> Option<CandidateComparisonSlot> {
+    let plan = graph.child_plans.plan_for_parent_node_id(parent_node_id)?;
+    let mut children = plan
+        .children
+        .iter()
+        .map(|child| {
+            let candidate = candidate_for_child(graph, child);
+            CandidateComparisonChildSlot {
+                child_node_id: child.node.node_id.as_str().to_owned(),
+                selection_entry_id: candidate.map(|candidate| candidate.selection_entry_id.clone()),
+                payload_index: candidate.map(|candidate| candidate.payload_index),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    children.sort_by(|left, right| {
+        let left_rank = left
+            .resolve_rank(graph)
+            .unwrap_or(CandidateComparisonRank::Missing);
+        let right_rank = right
+            .resolve_rank(graph)
+            .unwrap_or(CandidateComparisonRank::Missing);
+        right_rank.cmp(&left_rank)
+    });
+
+    Some(CandidateComparisonSlot {
+        parent_node_id: parent_node_id.to_owned(),
+        children,
+    })
+}
+
+fn plan_parent_node_id_for_child<'g>(
+    graph: &'g ploke_tree::Graph,
+    child_node_id: &str,
+) -> Option<&'g str> {
+    graph
+        .child_plans
+        .plans
+        .iter()
+        .find(|(_, plan)| {
+            plan.children
+                .iter()
+                .any(|child| child.node.node_id.as_str() == child_node_id)
+        })
+        .map(|(parent_node_id, _)| parent_node_id.as_str())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CandidateComparisonRank {
+    Missing,
+    Value(i64),
+}
+
+impl CandidateComparisonChildSlot {
+    fn resolve_rank(&self, graph: &ploke_tree::Graph) -> Option<CandidateComparisonRank> {
+        let entry_id = self.selection_entry_id.as_ref()?;
+        let payload_index = self.payload_index?;
+        let selection = graph.selections.selections.get(entry_id)?;
+        let metric = graph.metrics.candidates.get(&MetricCandidateKey {
+            metric_set_id: selection.metric_set_id.clone(),
+            payload_index,
+        })?;
+        Some(metric_rank(metric).map_or(
+            CandidateComparisonRank::Missing,
+            CandidateComparisonRank::Value,
+        ))
+    }
+}
+
+fn candidate_for_child<'g>(
+    graph: &'g ploke_tree::Graph,
+    child: &ploke_records::child_plan::ChildPlanChildRecord,
+) -> Option<&'g CandidateNode> {
+    let node_id = child.node.node_id.as_str();
+    let branch_id = child.resolved.branch.branch_id.as_str();
+    let derived_artifact = child_derived_artifact_id(child);
+    graph
+        .candidates
+        .candidates
+        .iter()
+        .find(|candidate| candidate.node_id.as_deref() == Some(node_id))
+        .or_else(|| {
+            graph
+                .candidates
+                .candidates
+                .iter()
+                .find(|candidate| candidate.branch_id.as_deref() == Some(branch_id))
+        })
+        .or_else(|| {
+            derived_artifact.and_then(|artifact_id| {
+                graph.candidates.candidates.iter().find(|candidate| {
+                    candidate
+                        .artifact_after
+                        .as_ref()
+                        .is_some_and(|candidate_artifact| {
+                            same_artifact_label(candidate_artifact.0.as_str(), artifact_id)
+                        })
+                })
+            })
+        })
+}
+
+fn selection_metric_for_candidate<'g>(
+    graph: &'g ploke_tree::Graph,
+    candidate: &CandidateNode,
+    selection: Option<&SelectionNode>,
+) -> Option<&'g MetricCandidateNode> {
+    let selection = selection?;
+    graph.metrics.candidates.get(&MetricCandidateKey {
+        metric_set_id: selection.metric_set_id.clone(),
+        payload_index: candidate.payload_index,
+    })
+}
+
+/// archaeology:score-child-prop-ui
+/// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+fn selection_formula_for_selection<'g>(
+    graph: &'g ploke_tree::Graph,
+    selection: &SelectionNode,
+) -> Option<&'g ploke_tree::graph::SelectionFormulaNode> {
+    graph
+        .metrics
+        .formulas
+        .get(&ploke_tree::graph::SelectionFormulaKey {
+            selection_entry_id: selection.entry_id.clone(),
+            metric_set_id: selection.metric_set_id.clone(),
+        })
+}
+
+fn selection_marks_candidate(selection: &SelectionNode, candidate: &CandidateNode) -> bool {
+    if let Some(selected) = selection.selected_membership_id.as_ref() {
+        return candidate.membership_id.as_ref() == Some(selected);
+    }
+    if let Some(selected) = selection.selected_occurrence_id.as_ref() {
+        return candidate.occurrence_id.as_ref() == Some(selected);
+    }
+    selection
+        .selected_candidate
+        .as_ref()
+        .is_some_and(|selected| selected == &candidate.subject)
+}
+
+fn metric_rank(metric: &MetricCandidateNode) -> Option<i64> {
+    metric.imp_at_k.as_ref().and_then(|imp| {
+        imp.improvement
+            .or(imp.best_descendant_score)
+            .or(imp.baseline_score)
+    })
+}
+
+fn child_base_matches_artifact(
+    graph: &ploke_tree::Graph,
+    child: &ploke_records::child_plan::ChildPlanChildRecord,
+    sources: &[&ploke_tree::graph::ArtifactNode],
+) -> bool {
+    let Some(base) = child
+        .surface
+        .as_ref()
+        .map(|surface| surface.base.artifact_id.0.as_str())
+        .or_else(|| {
+            child
+                .request
+                .base_artifact_id
+                .as_ref()
+                .map(|id| id.0.as_str())
+        })
+        .or_else(|| child.node.base_artifact_id.as_ref().map(|id| id.0.as_str()))
+    else {
+        return false;
+    };
+    artifact_sources_match_label(graph, sources, base)
+}
+
+fn child_derived_artifact_id(
+    child: &ploke_records::child_plan::ChildPlanChildRecord,
+) -> Option<&str> {
+    child
+        .surface
+        .as_ref()
+        .map(|surface| surface.after.artifact_id.0.as_str())
+        .or_else(|| {
+            child
+                .node
+                .derived_artifact_id
+                .as_ref()
+                .map(|id| id.0.as_str())
+        })
+        .or_else(|| {
+            child
+                .request
+                .derived_artifact_id
+                .as_ref()
+                .map(|id| id.0.as_str())
+        })
+        .or(child
+            .resolved
+            .branch
+            .derived_artifact_id
+            .as_ref()
+            .map(|id| id.0.as_str()))
+}
+
+fn lineage_authority_slot_for_artifact(
+    graph: &ploke_tree::Graph,
+    artifact: &ArtifactInspection<'_>,
+) -> Option<LineageAuthoritySlot> {
+    let mut blocks = graph
+        .history
+        .blocks
+        .values()
+        .filter(|block| {
+            artifact_sources_match_history_ref(
+                graph,
+                artifact.sources.as_slice(),
+                &block.active_artifact,
+            )
+        })
+        .map(|block| block.block_hash.clone())
+        .collect::<Vec<_>>();
+    blocks.sort_by_key(|block_hash| {
+        graph
+            .history
+            .blocks
+            .get(block_hash)
+            .map(|block| (block.lineage_id.0.clone(), block.block_height))
+            .unwrap_or_else(|| (String::new(), u64::MAX))
+    });
+    (!blocks.is_empty()).then_some(LineageAuthoritySlot { blocks })
+}
+
+fn artifact_sources_match_history_ref(
+    graph: &ploke_tree::Graph,
+    sources: &[&ploke_tree::graph::ArtifactNode],
+    artifact: &ploke_records::history::ArtifactRefRecord,
+) -> bool {
+    artifact_sources_match_label(graph, sources, artifact.as_str())
+        || artifact_sources_match_label(graph, sources, artifact.id().0.as_str())
+}
+
+fn artifact_sources_match_label(
+    _graph: &ploke_tree::Graph,
+    sources: &[&ploke_tree::graph::ArtifactNode],
+    artifact: &str,
+) -> bool {
+    sources.iter().any(|source| {
+        source
+            .artifact_ids()
+            .iter()
+            .any(|candidate| same_artifact_label(candidate.0.as_str(), artifact))
+            || source
+                .artifact_refs()
+                .iter()
+                .any(|candidate| same_artifact_label(candidate.as_str(), artifact))
+            || same_artifact_label(artifact_node_label_for_render(source), artifact)
+    })
+}
+
+fn same_artifact_label(left: &str, right: &str) -> bool {
+    normalize_artifact_label(left) == normalize_artifact_label(right)
+}
+
+fn normalize_artifact_label(value: &str) -> &str {
+    value.strip_prefix("artifact:").unwrap_or(value)
 }
 
 fn snapshot_run_forest<'a, 'g>(
@@ -3586,6 +4061,161 @@ mod tests {
     }
 
     #[test]
+    fn selected_child_artifact_exposes_candidate_comparison_from_parent_plan() {
+        let mut graph = artifact_graph_with_applied_patch_edge();
+        let mut sibling = child_plan_child_record();
+        sibling.node.node_id = SchedulerNodeId("child-2".to_owned());
+        sibling.node.branch_id = BranchId("branch-sibling".to_owned());
+        sibling.node.candidate_id = CandidateId("candidate-sibling".to_owned());
+        sibling.node.patch_id = Some(PatchId("patch:sibling".to_owned()));
+        sibling.node.derived_artifact_id = Some(ArtifactId("artifact:sibling".to_owned()));
+        sibling.request.node_id = SchedulerNodeId("child-2".to_owned());
+        sibling.request.branch_id = BranchId("branch-sibling".to_owned());
+        sibling.request.patch_id = Some(PatchId("patch:sibling".to_owned()));
+        sibling.request.derived_artifact_id = Some(ArtifactId("artifact:sibling".to_owned()));
+        sibling.resolved.branch.branch_id = "branch-sibling".to_owned();
+        sibling.resolved.branch.candidate_id = "candidate-sibling".to_owned();
+        sibling.resolved.branch.patch_id = Some(PatchId("patch:sibling".to_owned()));
+        sibling.resolved.branch.derived_artifact_id =
+            Some(ArtifactId("artifact:sibling".to_owned()));
+        if let Some(surface) = sibling.surface.as_mut() {
+            surface.after.artifact_id = ArtifactId("artifact:sibling".to_owned());
+            surface.patch_id = PatchId("patch:sibling".to_owned());
+        }
+
+        graph
+            .child_plans
+            .plans
+            .get_mut(&SchedulerNodeId("node-base".to_owned()))
+            .expect("parent plan exists")
+            .children
+            .push(sibling);
+
+        let entry_id = EntryId("entry:1".to_owned());
+        let metric_set_id = HistoryHash("metric-set".to_owned());
+        graph.candidates.candidates = vec![
+            candidate_node(
+                entry_id.clone(),
+                0,
+                "candidate-1",
+                "child-1",
+                "branch-child",
+                "artifact:after",
+            ),
+            candidate_node(
+                entry_id.clone(),
+                1,
+                "candidate-sibling",
+                "child-2",
+                "branch-sibling",
+                "artifact:sibling",
+            ),
+        ];
+        graph.selections.selections.insert(
+            entry_id.clone(),
+            ploke_tree::graph::SelectionNode {
+                entry_id: entry_id.clone(),
+                procedure_or_policy: ploke_records::history::ProcedureRefRecord {
+                    value: "policy:score-child-prop".to_owned(),
+                },
+                scope: ploke_records::history::SelectionScopeRecord {
+                    value: "scope:parent".to_owned(),
+                },
+                selected_candidate: Some(SubjectRefRecord {
+                    value: "candidate-1".to_owned(),
+                }),
+                selected_occurrence_id: None,
+                selected_membership_id: None,
+                candidate_set_root: None,
+                considered_count: 2,
+                projection_failure_count: 0,
+                metric_set_id: metric_set_id.clone(),
+                decision_outcome: ploke_records::selection::Outcome::Accepted,
+            },
+        );
+        graph.metrics.candidates.insert(
+            ploke_tree::graph::MetricCandidateKey {
+                metric_set_id: metric_set_id.clone(),
+                payload_index: 0,
+            },
+            metric_candidate(
+                entry_id.clone(),
+                metric_set_id.clone(),
+                0,
+                "candidate-1",
+                10,
+            ),
+        );
+        graph.metrics.candidates.insert(
+            ploke_tree::graph::MetricCandidateKey {
+                metric_set_id: metric_set_id.clone(),
+                payload_index: 1,
+            },
+            metric_candidate(
+                entry_id.clone(),
+                metric_set_id.clone(),
+                1,
+                "candidate-sibling",
+                2,
+            ),
+        );
+        graph.metrics.formulas.insert(
+            ploke_tree::graph::SelectionFormulaKey {
+                selection_entry_id: entry_id.clone(),
+                metric_set_id: metric_set_id.clone(),
+            },
+            score_child_prop_formula_node(entry_id.clone(), metric_set_id.clone()),
+        );
+
+        let (selection, _) = SelectionInspector::from_default_selector(&graph, "after")
+            .expect("artifact key resolves from default selections");
+        let mut cache = InspectorCache::default();
+        let sections = cache
+            .sections(&graph, GraphRevision::default(), Some(&selection.reference))
+            .expect("cached sections");
+        let slot = sections
+            .candidate_comparison()
+            .expect("candidate comparison slot");
+
+        assert_eq!(slot.parent_node_id, "node-base");
+        assert_eq!(slot.children().len(), 2);
+        let first = slot
+            .resolve_child(&graph, &slot.children()[0])
+            .expect("first comparison candidate resolves");
+        assert_eq!(first.child.node.node_id.as_str(), "child-1");
+        assert!(first.selected);
+        assert_eq!(
+            first
+                .metric
+                .and_then(|metric| metric.imp_at_k.as_ref())
+                .and_then(|imp| imp.improvement),
+            Some(10)
+        );
+        let selector = first.selector.expect("score-child-prop selector witness");
+        let row = selector.row.expect("score-child-prop row witness");
+        assert_eq!(row.payload_index, 0);
+        assert_eq!(row.performance, Some(10_900));
+        assert_eq!(row.weight, Some(0.75));
+        assert!(row.sample_hit);
+        assert_eq!(
+            first
+                .metric
+                .and_then(|metric| metric.compared_runs.first())
+                .and_then(|run| run.treatment_metrics.as_ref())
+                .map(|metrics| metrics.tool_calls_failed),
+            Some(1)
+        );
+        assert_eq!(
+            first
+                .metric
+                .and_then(|metric| metric.compared_runs.first())
+                .and_then(|run| run.treatment_protocol.as_ref())
+                .map(|metrics| metrics.reviewed_call_count),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn selection_snapshot_serializes_typed_schema() {
         let graph = artifact_graph_with_applied_patch_edge();
         let (selection, inspector) = SelectionInspector::from_default_selector(&graph, "after")
@@ -3602,6 +4232,216 @@ mod tests {
 
     fn key(value: &str) -> NodeKey {
         NodeKey::from(value)
+    }
+
+    fn candidate_node(
+        entry_id: EntryId,
+        payload_index: usize,
+        candidate: &str,
+        node_id: &str,
+        branch_id: &str,
+        artifact_after: &str,
+    ) -> ploke_tree::graph::CandidateNode {
+        ploke_tree::graph::CandidateNode {
+            selection_entry_id: entry_id,
+            payload_index,
+            subject: SubjectRefRecord {
+                value: candidate.to_owned(),
+            },
+            source: Some(ploke_tree::graph::CandidateSource::CurrentGeneration),
+            occurrence_id: None,
+            membership_id: None,
+            membership_key: None,
+            node_id: Some(node_id.to_owned()),
+            branch_id: Some(branch_id.to_owned()),
+            generation: Some(1),
+            primary_runtime_id: None,
+            artifact_after: Some(ArtifactId(artifact_after.to_owned())),
+            patch_id: None,
+            evidence: Vec::new(),
+        }
+    }
+
+    fn score_child_prop_formula_node(
+        entry_id: EntryId,
+        metric_set_id: HistoryHash,
+    ) -> ploke_tree::graph::SelectionFormulaNode {
+        ploke_tree::graph::SelectionFormulaNode {
+            selection_entry_id: entry_id,
+            metric_set_id,
+            formula: ploke_tree::graph::SelectionFormulaKind::ScoreChildProp(
+                ploke_tree::graph::ScoreChildPropNode {
+                    record: ploke_records::selection::ScoreChildPropRecord {
+                        schema_version: 1,
+                        seed: 7,
+                        top_m: 1,
+                        lambda_millis: 1000,
+                        lambda: 1.0,
+                        metric_inputs: "operational".to_owned(),
+                        oracle_mode: "record_only".to_owned(),
+                        oracle_require_evidence: true,
+                        total_weight: 1.0,
+                        sample: Some(0.25),
+                        sample_threshold: Some(0.25),
+                        uniform_fallback_slot: None,
+                        selected_index: Some(0),
+                        selected_candidate: Some("candidate-1".to_owned()),
+                        alpha_mid: 0.5,
+                        oracle_used_for_alpha: false,
+                        rows: vec![
+                            score_child_prop_row(0, "candidate-1", 10_900, 0.75, true),
+                            score_child_prop_row(1, "candidate-sibling", 10_200, 0.25, false),
+                        ],
+                    },
+                },
+            ),
+        }
+    }
+
+    fn score_child_prop_row(
+        payload_index: usize,
+        candidate: &str,
+        performance: i64,
+        weight: f64,
+        selected: bool,
+    ) -> ploke_records::selection::ScoreChildPropRowRecord {
+        ploke_records::selection::ScoreChildPropRowRecord {
+            payload_index,
+            candidate: candidate.to_owned(),
+            node_id: Some(
+                if payload_index == 0 {
+                    "child-1"
+                } else {
+                    "child-2"
+                }
+                .to_owned(),
+            ),
+            branch_id: Some(
+                if payload_index == 0 {
+                    "branch-child"
+                } else {
+                    "branch-sibling"
+                }
+                .to_owned(),
+            ),
+            branch_disposition: Some("keep".to_owned()),
+            base_outcome: ploke_records::selection::Outcome::Accepted,
+            outcome_points: 10_000,
+            operational_points: performance - 10_000,
+            protocol_points: 0,
+            imp_at_k_delta: Some(0),
+            imp_at_k_score_excluded: false,
+            performance: Some(performance),
+            oracle_resolved: None,
+            oracle_configured: None,
+            oracle_rate: None,
+            oracle_used_for_alpha: false,
+            child_count: Some(payload_index),
+            alpha: Some(if selected { 1.0 } else { 0.0 }),
+            alpha_mid: Some(0.5),
+            exploitation: Some(weight),
+            exploration: Some(1.0),
+            weight: Some(weight),
+            cumulative_lower: Some(if selected { 0.0 } else { 0.75 }),
+            cumulative_upper: Some(if selected { 0.75 } else { 1.0 }),
+            sample_hit: selected,
+            selectable: true,
+            exclusion_reason: None,
+            performance_present: true,
+            selection_input_present: true,
+            decision_present: true,
+            selected,
+        }
+    }
+
+    fn metric_candidate(
+        entry_id: EntryId,
+        metric_set_id: HistoryHash,
+        payload_index: usize,
+        candidate: &str,
+        improvement: i64,
+    ) -> ploke_tree::graph::MetricCandidateNode {
+        ploke_tree::graph::MetricCandidateNode {
+            metric_set_id,
+            selection_entry_id: entry_id,
+            payload_index,
+            payload_hash: HistoryHash(format!("payload:{payload_index}")),
+            candidate: candidate.to_owned(),
+            occurrence_id: None,
+            membership_id: None,
+            imp_at_k: Some(ploke_records::selection::ImpAtK {
+                start_node_id: format!("node:{payload_index}"),
+                start_branch_id: None,
+                start_generation: Some(1),
+                parent_node_id: Some("parent-1".to_owned()),
+                primary_runtime_id: None,
+                evaluator: None,
+                eval_set: None,
+                budget_k: 50,
+                baseline_score: Some(100),
+                best_descendant_score: Some(100 + improvement),
+                improvement: Some(improvement),
+                descendant_count: 1,
+                scored_descendant_count: 1,
+                incomplete_reasons: Vec::new(),
+            }),
+            compared_runs: vec![ploke_tree::graph::ComparedRunMetricNode {
+                instance_id: Some(format!("instance:{payload_index}")),
+                status: Some("completed".to_owned()),
+                baseline_metrics: Some(test_run_metrics(0, 2)),
+                treatment_metrics: Some(test_run_metrics(1, 1)),
+                baseline_protocol: Some(test_protocol_metrics(1, 3)),
+                treatment_protocol: Some(test_protocol_metrics(2 + payload_index, 1)),
+            }],
+        }
+    }
+
+    fn test_run_metrics(
+        tool_calls_failed: u64,
+        partial_patch_failures: u64,
+    ) -> ploke_records::evaluation::RunMetrics {
+        ploke_records::evaluation::RunMetrics {
+            tool_calls_total: 4,
+            tool_calls_failed,
+            patch_attempted: true,
+            patch_apply_state: "applied".to_owned(),
+            submission_artifact_state: "present".to_owned(),
+            patch_projection_check_state: Default::default(),
+            partial_patch_failures,
+            same_file_patch_retry_count: 0,
+            same_file_patch_max_streak: 0,
+            aborted: false,
+            aborted_repair_loop: false,
+            nonempty_valid_patch: true,
+            convergence: true,
+            oracle_eligible: true,
+        }
+    }
+
+    fn test_protocol_metrics(
+        reviewed_call_count: usize,
+        missing_call_count: usize,
+    ) -> ploke_records::history::ProtocolMetricsRecord {
+        ploke_records::history::ProtocolMetricsRecord {
+            scanned_artifact_count: 1,
+            artifact_counts: Default::default(),
+            total_calls_in_run: reviewed_call_count + missing_call_count,
+            total_segments_in_anchor: 0,
+            reviewed_call_count,
+            reviewed_segment_count: 0,
+            missing_call_count,
+            missing_segment_count: 0,
+            skipped_segment_review_count: 0,
+            segment_anchor_mismatch_count: 0,
+            call_review_overall_counts: Default::default(),
+            segment_review_overall_counts: Default::default(),
+            call_review_confidence_counts: Default::default(),
+            segment_review_confidence_counts: Default::default(),
+            calls_with_segment_crosswalk: 0,
+            calls_without_segment_crosswalk: 0,
+            average_calls_per_anchor_segment_x1000: 0,
+            review_signal_totals: Default::default(),
+        }
     }
 
     fn graph_with_parent_child() -> ploke_tree::Graph {

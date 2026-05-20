@@ -10,9 +10,15 @@ serde_json = { workspace = true, features = ["raw_value"] }
 uuid = { workspace = true, features = ["serde"] }
 sha2 = "0.10"
 flate2 = "1.0"
+ploke-core = { workspace = true, features = ["json"] }
 ploke-llm = { path = "../ploke-llm", default-features = false, optional = true }
 ploke-protocol = { path = "../ploke-protocol", default-features = false, features = ["record-types"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ploke-tui = { path = "../ploke-tui", default-features = false, features = ["tool_contracts"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
 
 [features]
 default = []

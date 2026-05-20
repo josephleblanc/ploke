@@ -65,19 +65,20 @@ submitted or materialized.
 The fixed-contract replay test is:
 
 ```text
-cargo test -p ploke-eval recorded_replay_rejects_stale_same_file_repair_after_first_apply -- --ignored --nocapture
+cargo test -p ploke-eval recorded_replay_rejects_stale_same_file_repair_after_first_apply -- --nocapture
 ```
 
-Tracked marker:
+Lower-level TUI guard coverage:
 
 ```text
-regr:samefile:19-05-26_06-42
+cargo test -p ploke-tui ns_patch_rejects_fuzzy_same_file_repair_after_applied_proposal_before_staging -- --nocapture
 ```
 
-Location:
+Locations:
 
 ```text
 crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs
+crates/ploke-tui/src/tools/tool_tests/patches.rs
 ```
 
 The provider tape asks for one valid `non_semantic_patch` edit and then a stale
@@ -89,8 +90,9 @@ same-file repair against the pre-apply content. The fixed behavior is:
 4. the final workspace remains at the first valid edit and contains no repair
    artifacts.
 
-The test is currently expected-failing because the stale same-file repair still
-applies as a second proposal instead of being rejected or invalidated.
+The fixed behavior rejects a fuzzy same-file repair after an earlier settled
+proposal has touched that file, so the stale repair fails before a second
+proposal is staged or materialized.
 
 ## Expected Behavior
 

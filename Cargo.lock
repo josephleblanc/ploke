@@ -6745,6 +6745,7 @@ name = "ploke-records"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "ploke-core",
  "ploke-llm",
  "ploke-protocol",
  "ploke-tui",
@@ -9794,8 +9795,10 @@ checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
  "atomic 0.6.0",
  "getrandom 0.3.1",
+ "js-sys",
  "serde",
  "sha1_smol",
+ "wasm-bindgen",
 ]
 
 [[package]]

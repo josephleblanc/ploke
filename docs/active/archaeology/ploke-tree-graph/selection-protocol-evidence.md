@@ -12,13 +12,15 @@ run-record output claim, and not a raw `protocol-artifacts/*.json` drilldown.
 It answers: "what did the sealed selection entry say about this candidate and
 the protocol metrics available to the selector?"
 
-Status: graph/UI read-model carrier implemented for selected Artifact
-drilldown. `ploke_tree::Graph` now stores the full typed
-`SelectionDecisionEntryRecord` once per entry and exposes
-`SelectionMetricWitnessRef<'_>` keyed by
-`(selection_entry_id, payload_index, branch_id)`. `ploke-egui` still selects a
-visible Artifact or run-forest node; the successor candidate decision is made
-and sealed upstream in `ploke-eval`, then borrowed through the graph witness.
+Status: graph/UI read-model carrier implemented for candidate comparison.
+`ploke_tree::Graph` exposes `ChildPlanIndex`, `CandidateNode`,
+`SelectionNode`, `MetricSetNode`, and `MetricCandidateNode`, which are enough
+for `ploke-egui` to show the parent-owned child universe, selected candidate
+marker, selection metric policy, `imp@k` rows, and the sealed compared-run
+operational/protocol metric inputs attached to each considered candidate
+without reparsing History or child-plan JSON. A future witness can still expose
+the full traversal replay and per-candidate score weights; the Inspector must
+label missing metric fields as `not_recorded` rather than inventing scores.
 
 ## 2. Competing IDs and Carriers
 
@@ -30,10 +32,13 @@ and sealed upstream in `ploke-eval`, then borrowed through the graph witness.
 | `EvaluationPayloadRecord.sealed_evidence.evaluations[].compared_runs[].{baseline_protocol,treatment_protocol}` | `ploke_records::history::ComparedRunEvidenceRecord` | typed selection evidence | chosen source for protocol aggregate metrics used by traversal scoring |
 | `EvaluationPayloadRecord.artifact.resolved.branch.derived_artifact_id` | `ploke_records::history::CandidateArtifactRecord.resolved.branch.derived_artifact_id` | Artifact identity join | ties a considered candidate to the Artifact visible in the inspector |
 | `EvaluationPayloadRecord.sealed_evidence.coordinate.branch_id` | `ploke_records::history::CandidateEvidenceRecord.coordinate.branch_id` | branch join key | ties selection evidence to branch-scoped evaluation and run-record refs |
+| `ChildPlanRecord.parent_node_id` | `ploke_records::child_plan::ChildPlanRecord.parent_node_id` | parent-owned candidate universe handle | primary starting point for the Candidate Comparison section |
+| `ChildPlanChildRecord.node.node_id` | `ploke_records::child_plan::ChildPlanChildRecord.node.node_id` | child candidate handle | joins one planned child to `CandidateNode.node_id` |
 | `SelectionNode.{procedure_or_policy,scope,decision_outcome,metric_set_id}` | `ploke_tree::graph::SelectionNode` | graph read-model projection | reduced selection header facts |
 | `CandidateNode.{selection_entry_id,payload_index,branch_id,artifact_after}` | `ploke_tree::graph::CandidateNode` | graph read-model join | currently enough to find the candidate, but not its protocol metrics |
-| `SelectionMetricWitnessKey` / `SelectionMetricWitnessRef<'_>` | `ploke_tree::graph::{SelectionMetricWitnessKey,SelectionMetricWitnessRef}` | graph read-model witness | primary graph witness for the Inspector section; borrows full sealed selection payload, candidate evidence, metrics, evaluations, compared runs, protocol metrics, and diagnostics |
-| `MetricSetNode` / `MetricCandidateNode` | `ploke_tree::graph::{MetricSetNode,MetricCandidateNode}` | selection metric projection | preserves metric-set identity and `imp_at_k`; detailed drilldown now borrows the full `MetricSet` through `SelectionMetricWitnessRef<'_>` |
+| `SelectionMetricWitnessKey` / `SelectionMetricWitnessRef<'_>` | future `ploke_tree::graph` witness | graph read-model witness | not present in current code; needed later for traversal replay and per-candidate score-weight drilldown |
+| `MetricSetNode` / `MetricCandidateNode` | `ploke_tree::graph::{MetricSetNode,MetricCandidateNode}` | selection metric projection | preserves metric-set identity, policy, `imp_at_k`, and compared-run metric inputs for candidate comparison |
+| `ComparedRunMetricNode` | `ploke_tree::graph::ComparedRunMetricNode` | selection metric input projection | graph-owned projection of `ComparedRunEvidenceRecord` operational/protocol fields used by selection scoring |
 | `ProtocolArtifactsEvidence.index` | `ploke_tree::ProtocolArtifactsEvidence.index` | passive protocol payload inventory | full typed per-run procedure artifacts, but not currently branch or selection scoped |
 | `EvidenceSubject::ProtocolArtifact` | `ploke_tree::graph::EvidenceSubject::ProtocolArtifact` | reduced locator/provenance | summary and locator evidence only; not enough for a selection header |
 | `ploke_records::evaluation::Artifact.compared_instances` | `ploke_records::evaluation::Artifact` | evaluation source handle | owns record paths and operational comparison data; selection-time protocol metrics are sealed elsewhere |
@@ -62,10 +67,11 @@ and sealed upstream in `ploke-eval`, then borrowed through the graph witness.
   `<run>/protocol-artifacts`, and loaded by `ploke_tree::FsRunStore` as
   `ploke_records::protocol::Artifact`.
 - `ploke_tree::graph::build::selection::Builder::ingest_selection` mints
-  `SelectionNode`, `CandidateNode`, `CandidateBranchNode`,
-  `MetricSetNode`, `MetricCandidateNode`, stores the full
-  `SelectionDecisionEntryRecord`, and creates `SelectionMetricWitness` bindings
-  for considered payloads with sealed branch ids.
+  `SelectionNode`, `CandidateNode`, `CandidateBranchNode`, `MetricSetNode`,
+  and `MetricCandidateNode` from the sealed selection entry.
+- `ploke_tree::graph::types::child_plan::ChildPlanIndex` stores typed
+  `ChildPlanRecord` boxes by parent scheduler node id and exposes
+  `plan_for_parent_node_id`, `child_for_node_id`, and `child_for_patch_id`.
 - `ploke-egui` does not make the successor candidate choice. The current UI
   selection path is:
   `GraphView::show -> egui_graphs::GraphView -> GraphViewCache::selected_payload
@@ -99,13 +105,28 @@ selected Artifact
   -> SelectionNode
 ```
 
+Chosen Candidate Comparison join:
+
+```text
+selected Artifact or run-forest node
+  -> parent scheduler node id
+  -> ChildPlanIndex.plan_for_parent_node_id(parent_node_id)
+  -> ChildPlanChildRecord.node.node_id
+  -> CandidateNode.{selection_entry_id,payload_index}
+  -> SelectionNode.metric_set_id
+  -> MetricSetNode.policy
+  -> MetricCandidateNode.{imp_at_k,compared_runs[]}
+  -> ComparedRunMetricNode.{baseline_metrics,treatment_metrics,
+       baseline_protocol,treatment_protocol}
+```
+
 Graph carrier used for rendering:
 
 ```text
-ploke_records::history::ComparedRunEvidenceRecord protocol fields
-  -> ploke_tree::Graph SelectionMetricWitnessRef<'_>
+ploke_records child-plan and selection records
+  -> ploke_tree::Graph reduced child/candidate/selection/metric indexes
   -> borrowed ploke-egui Inspector witness
-  -> render-only Selection section
+  -> render-only Candidate Comparison section
 ```
 
 `ploke-egui` must not recover this by reading History JSON or scanning protocol
@@ -146,11 +167,16 @@ fact that the traversal used `operational_and_protocol` appears in traversal
 policy/rationale, while the protocol aggregate values live in sealed candidate
 evidence.
 
-### `MetricSetNode` / `MetricCandidateNode` is not enough
+### `MetricSetNode` / `MetricCandidateNode` are reduced evidence
 
-The metric index binds candidate order and `imp_at_k` rows, but it does not
-carry protocol aggregate values such as reviewed calls, missing segments, or
-review verdict counts.
+The metric index now binds candidate order, policy, `imp_at_k` rows, and
+compared-run operational/protocol metric values. It is enough for the Candidate
+Comparison panel to show raw metric inputs used by selection.
+
+It is still not enough for full traversal replay because the final
+`score_child_prop` per-candidate weight vector is not a graph carrier. Selected
+candidate rationale strings may mention selected components, but the UI should
+not parse those strings into sibling score rows.
 
 ### `record.json.gz` and `RunRecordEvidence` are not primary
 
@@ -228,6 +254,7 @@ truth for this claim.
   - `average_calls_per_anchor_segment_x1000`
   - `review_signal_totals`
 - `ploke_records::selection::MetricSet`
+- `ploke_records::selection::MetricPolicy`
 - `ploke_records::selection::MetricCandidate`
 - `ploke_records::selection::ImpAtK`
 - `ploke_records::protocol::Artifact`
@@ -247,10 +274,9 @@ Current carriers:
 - `ploke_tree::graph::MetricIndex`
 - `ploke_tree::graph::MetricSetNode`
 - `ploke_tree::graph::MetricCandidateNode`
-- `ploke_tree::graph::SelectionMetricWitnessKey`
-- `ploke_tree::graph::SelectionMetricWitness`
-- `ploke_tree::graph::SelectionMetricWitnessRef<'_>`
-- `ploke_tree::graph::SelectionWitnessLookup<'_>`
+- `ploke_tree::graph::ComparedRunMetricNode`
+- future full `SelectionMetricWitnessRef<'_>` for traversal replay and
+  score-weight drilldown
 - `ploke_tree::ProtocolArtifactsEvidence`
 - `ploke_tree::ProtocolArtifactSummary`
 - `ploke_tree::Graph::protocol_artifacts`
@@ -258,13 +284,16 @@ Current carriers:
 - `ploke_tree::Graph::run_record_refs_for_branch`
 - `ploke_tree::graph::ParentCreateAttempt`
 
-Implemented graph carrier:
+Implemented graph carrier for Candidate Comparison:
 
-- `SelectionMetricWitnessKey { selection_entry_id, payload_index, branch_id }`
-  and `SelectionMetricWitnessRef<'_>` borrow the graph-owned full
-  `SelectionDecisionEntryRecord` plus the considered payload, candidate
-  evidence, metric candidate, `imp@k`, evaluations, compared runs, run metrics,
-  protocol metrics, citations, and diagnostics.
+- `ChildPlanIndex.plan_for_parent_node_id(parent_node_id)` returns the
+  committed parent-owned child universe.
+- `CandidateNode { selection_entry_id, payload_index, node_id }` joins each
+  child-plan child to the sealed selection entry when available.
+- `SelectionNode.metric_set_id`, `MetricSetNode.policy`, and
+  `MetricCandidateNode.{imp_at_k,compared_runs}` expose the metric policy,
+  reduced improvement rows, and raw operational/protocol inputs available in
+  the current graph.
 
 Graph invariant needed for the UI:
 
@@ -274,13 +303,14 @@ Artifact selection resolves to branch B
   and CandidateNode.artifact_after matches the selected Artifact
   and CandidateNode.{selection_entry_id,payload_index} identifies a considered
       payload in SelectionDecisionEntryRecord
-  and that payload carries ComparedRunEvidenceRecord protocol metrics
-  therefore the Inspector may show selection protocol evidence for that
+  and MetricCandidateNode.compared_runs comes from the same payload's
+      ComparedRunEvidenceRecord values
+  therefore the Inspector may show selection protocol metric inputs for that
       Artifact.
 ```
 
-The current graph only satisfies this through `CandidateNode` identity joins.
-It does not yet preserve the final protocol metric values.
+The current graph satisfies this for raw metric inputs. It does not yet preserve
+the final `score_child_prop` sibling weight rows.
 
 ## 8. Downstream UI Consumers
 
@@ -288,7 +318,8 @@ Current consumers using the typed witness:
 
 - `crates/ploke-egui/src/ui/inspector.rs`
   - `InspectorSections`
-  - `SelectionMetricSlot`
+  - `CandidateComparisonSlot`
+  - `CandidateComparisonCandidate`
   - `SelectionInspector`
   - `RunForestNodeInspection`
   - `ArtifactInspection`
@@ -298,13 +329,11 @@ Current consumers using the typed witness:
   - `snapshot_artifact`
 - `crates/ploke-egui/src/ui/app/shell.rs`
   - `render_right_inspector`
-  - `render_selection_for_inspector`
+  - `render_candidate_comparison_for_inspector`
 
-Current right-panel sections in `render_right_inspector` are `Summary`,
-`Identity`, `Roles`, `Patch Generation`, `Run Records`, `Graph edges`,
-`Artifact edges`, `Patch Debug`, `Source refs`, and `Artifact Ids`. There is no
-current `Selection` section and `InspectorSections` has no selection/protocol
-slot.
+Current right-panel sections in `render_right_inspector` include `Candidate
+Comparison`, which renders parent plan children, selected marker, `imp@k`, and
+compared-run metric deltas from graph-backed witnesses.
 
 The UI witness should be borrowed from `ploke_tree::Graph`; it should not be a
 row-shaped cache or direct JSON projection. A future shape should preserve:
@@ -317,6 +346,7 @@ row-shaped cache or direct JSON projection. A future shape should preserve:
 - traversal strategy
 - decision outcome
 - compared-run protocol metrics
+- compared-run operational metrics
 
 ## 9. Current Run Probe
 

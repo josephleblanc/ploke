@@ -683,7 +683,7 @@ pub struct TraversalEvidenceRecord {
 }
 
 /// Selection decision entry sealed in a History entry payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectionDecisionEntryRecord {
     pub schema_version: u32,
     pub procedure_or_policy: ProcedureRefRecord,
@@ -707,6 +707,8 @@ pub struct SelectionDecisionEntryRecord {
     pub traversal: Option<TraversalEvidenceRecord>,
     #[serde(default = "selection::MetricSet::absent_from_legacy_record")]
     pub metrics: selection::MetricSet,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<selection::SelectionFormulaRecord>,
     pub decision: selection::Decision,
 }
 

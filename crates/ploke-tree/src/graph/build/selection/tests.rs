@@ -1,11 +1,13 @@
 use ploke_records::branch::{ResolvedTreatmentBranch, TreatmentBranchNode, TreatmentBranchStatus};
+use ploke_records::evaluation::RunMetrics;
 use ploke_records::history::{
     ActorRefRecord, AdmittedEntryRecord, AdmittedEntryStateRecord, CandidateArtifactRecord,
     CandidateCoordinateRecord, CandidateEvidenceRecord, CandidateLifecycleRecord,
     CandidateSetMembershipRecord, CandidateSetProofRecord, CandidateSetRecord,
-    CandidateSetRootRecord, EntryCoreRecord, EntryKindRecord, EntryPayloadRecord,
-    EvaluationPayloadRecord, EvidenceRefRecord, ObservedEntryRecord, OperationalEnvironmentRecord,
-    ProcedureRefRecord, SelectionDecisionEntryRecord, SelectionScopeRecord, SubjectRefRecord,
+    CandidateSetRootRecord, ComparedRunEvidenceRecord, EntryCoreRecord, EntryKindRecord,
+    EntryPayloadRecord, EvaluationEvidenceRecord, EvaluationPayloadRecord, EvidenceCitationRecord,
+    EvidenceRefRecord, ObservedEntryRecord, OperationalEnvironmentRecord, ProcedureRefRecord,
+    ProtocolMetricsRecord, SelectionDecisionEntryRecord, SelectionScopeRecord, SubjectRefRecord,
 };
 use ploke_records::ids::{
     ArtifactId, BlockId, BranchId, CandidateId, CandidateMembershipId, CandidateOccurrenceId,
@@ -13,11 +15,14 @@ use ploke_records::ids::{
     SchedulerNodeId, SourceStateId,
 };
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord};
-use ploke_records::selection::{Decision, MetricCandidate, MetricPolicy, MetricSet, Outcome};
+use ploke_records::selection::{
+    Decision, FormulaRecord, MetricCandidate, MetricPolicy, MetricSet, Outcome,
+    ScoreChildPropRecord, ScoreChildPropRowRecord, SelectionFormulaRecord,
+};
 
 use crate::graph::{
     CandidateMembershipKey, EvidenceKind, GraphWarningKind, MetricCandidateKey, OperationKey,
-    OperationTargetKey,
+    OperationTargetKey, SelectionFormulaKey, SelectionFormulaKind,
 };
 
 use super::super::Builder;
@@ -339,6 +344,7 @@ fn selection_with_root(
         projection_failures: Vec::new(),
         traversal: None,
         metrics,
+        formula: None,
         decision: Decision {
             procedure_id: "prototype1.successor_selection.history_traversal.v1".to_owned(),
             candidate_node_id: "candidate:a".to_owned(),
@@ -354,15 +360,16 @@ fn selection_with_root(
 #[test]
 fn selection_metrics_ingestion_preserves_metric_bindings() {
     let membership_id = CandidateMembershipId("membership:metric".to_owned());
-    let selection = selection_with_root(
+    let mut selection = selection_with_root(
         "root-metric",
-        vec![payload("candidate:metric")],
+        vec![payload_with_metrics("candidate:metric")],
         vec![membership(
             "candidate:metric",
             Some(membership_id.clone()),
             "payload-metric",
         )],
     );
+    selection.formula = Some(score_child_prop_formula(selection.metrics.id.clone()));
     let admitted_entry = entry(selection.clone());
     let mut builder = Builder::default();
 
@@ -390,6 +397,38 @@ fn selection_metrics_ingestion_preserves_metric_bindings() {
         .expect("metric candidate indexed");
     assert_eq!(candidate.membership_id.as_ref(), Some(&membership_id));
     assert_eq!(candidate.payload_hash.0, "payload-metric");
+    assert_eq!(candidate.compared_runs.len(), 1);
+    let compared = candidate
+        .compared_runs
+        .first()
+        .expect("compared-run metrics preserved");
+    assert_eq!(
+        compared
+            .treatment_metrics
+            .as_ref()
+            .map(|metrics| metrics.tool_calls_failed),
+        Some(1)
+    );
+    assert_eq!(
+        compared
+            .treatment_protocol
+            .as_ref()
+            .map(|metrics| metrics.reviewed_call_count),
+        Some(3)
+    );
+    let formula = builder
+        .graph
+        .metrics
+        .formulas
+        .get(&SelectionFormulaKey {
+            selection_entry_id: admitted_entry.core.entry_id.clone(),
+            metric_set_id: selection.metrics.id.clone(),
+        })
+        .expect("selection-entry-scoped formula indexed");
+    assert_eq!(formula.selection_entry_id, admitted_entry.core.entry_id);
+    assert_eq!(formula.metric_set_id, selection.metrics.id);
+    let SelectionFormulaKind::ScoreChildProp(score) = &formula.formula;
+    assert_eq!(score.record.rows[0].payload_index, 0);
 }
 
 #[test]
@@ -521,6 +560,91 @@ fn payload_with_coordinate(
     payload
 }
 
+fn payload_with_metrics(candidate: &str) -> EvaluationPayloadRecord {
+    let mut payload = payload_with_coordinate(candidate, "node:metric", "runtime:metric");
+    let sealed = payload
+        .sealed_evidence
+        .as_mut()
+        .expect("coordinate payload has sealed evidence");
+    sealed.evaluations.push(EvaluationEvidenceRecord {
+        branch_id: "branch:metric".to_owned(),
+        evaluation_procedure_id: Some("eval:metric".to_owned()),
+        evaluator_identity: None,
+        eval_set_identity: None,
+        evaluation_artifact_citation: None,
+        overall_disposition: Some("keep".to_owned()),
+        primary_report_citation: citation("evaluation:metric"),
+        compared_runs: vec![ComparedRunEvidenceRecord {
+            instance_id: Some("instance:metric".to_owned()),
+            status: Some("completed".to_owned()),
+            baseline_citation: None,
+            treatment_citation: None,
+            baseline_metrics: Some(run_metrics(0, 2)),
+            treatment_metrics: Some(run_metrics(1, 1)),
+            oracle_evaluation: None,
+            baseline_protocol: Some(protocol_metrics(1, 4)),
+            treatment_protocol: Some(protocol_metrics(3, 1)),
+            diagnostics: Vec::new(),
+            baseline_run: None,
+            treatment_run: None,
+        }],
+    });
+    payload
+}
+
+fn citation(ref_id: &str) -> EvidenceCitationRecord {
+    EvidenceCitationRecord {
+        ref_id: ref_id.to_owned(),
+        content_hash: None,
+        record_name: None,
+    }
+}
+
+fn run_metrics(tool_calls_failed: u64, partial_patch_failures: u64) -> RunMetrics {
+    RunMetrics {
+        tool_calls_total: 4,
+        tool_calls_failed,
+        patch_attempted: true,
+        patch_apply_state: "applied".to_owned(),
+        submission_artifact_state: "present".to_owned(),
+        patch_projection_check_state: Default::default(),
+        partial_patch_failures,
+        same_file_patch_retry_count: 0,
+        same_file_patch_max_streak: 0,
+        aborted: false,
+        aborted_repair_loop: false,
+        nonempty_valid_patch: true,
+        convergence: true,
+        oracle_eligible: true,
+    }
+}
+
+fn protocol_metrics(
+    reviewed_call_count: usize,
+    missing_call_count: usize,
+) -> ProtocolMetricsRecord {
+    ProtocolMetricsRecord {
+        scanned_artifact_count: 1,
+        artifact_counts: Default::default(),
+        total_calls_in_run: reviewed_call_count + missing_call_count,
+        total_segments_in_anchor: 0,
+        reviewed_call_count,
+        reviewed_segment_count: 0,
+        missing_call_count,
+        missing_segment_count: 0,
+        skipped_segment_review_count: 0,
+        segment_anchor_mismatch_count: 0,
+        call_review_overall_counts: Default::default(),
+        segment_review_overall_counts: Default::default(),
+        call_review_confidence_counts: Default::default(),
+        segment_review_confidence_counts: Default::default(),
+        calls_with_segment_crosswalk: 0,
+        calls_without_segment_crosswalk: 0,
+        average_calls_per_anchor_segment_x1000: 0,
+        review_signal_totals: Default::default(),
+    }
+}
+
 fn payload_with_operation(
     candidate: &str,
     node_id: &str,
@@ -646,5 +770,62 @@ fn metrics(
                 }
             })
             .collect(),
+    }
+}
+
+fn score_child_prop_formula(metric_set_id: HistoryHash) -> SelectionFormulaRecord {
+    SelectionFormulaRecord {
+        metric_set_id,
+        formula: FormulaRecord::ScoreChildProp(ScoreChildPropRecord {
+            schema_version: 1,
+            seed: 7,
+            top_m: 1,
+            lambda_millis: 1000,
+            lambda: 1.0,
+            metric_inputs: "operational".to_owned(),
+            oracle_mode: "record_only".to_owned(),
+            oracle_require_evidence: true,
+            total_weight: 0.5,
+            sample: Some(0.25),
+            sample_threshold: Some(0.125),
+            uniform_fallback_slot: None,
+            selected_index: Some(0),
+            selected_candidate: Some("candidate:metric".to_owned()),
+            alpha_mid: 0.5,
+            oracle_used_for_alpha: false,
+            rows: vec![ScoreChildPropRowRecord {
+                payload_index: 0,
+                candidate: "candidate:metric".to_owned(),
+                node_id: Some("candidate:metric".to_owned()),
+                branch_id: Some("branch:metric".to_owned()),
+                branch_disposition: Some("keep".to_owned()),
+                base_outcome: Outcome::Accepted,
+                outcome_points: 10_000,
+                operational_points: 850,
+                protocol_points: 0,
+                imp_at_k_delta: Some(0),
+                imp_at_k_score_excluded: false,
+                performance: Some(10_850),
+                oracle_resolved: None,
+                oracle_configured: None,
+                oracle_rate: None,
+                oracle_used_for_alpha: false,
+                child_count: Some(0),
+                alpha: Some(0.5),
+                alpha_mid: Some(0.5),
+                exploitation: Some(0.5),
+                exploration: Some(1.0),
+                weight: Some(0.5),
+                cumulative_lower: Some(0.0),
+                cumulative_upper: Some(0.5),
+                sample_hit: true,
+                selectable: true,
+                exclusion_reason: None,
+                performance_present: true,
+                selection_input_present: true,
+                decision_present: true,
+                selected: true,
+            }],
+        }),
     }
 }

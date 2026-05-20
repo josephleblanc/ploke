@@ -234,6 +234,7 @@ fn selection(
         projection_failures: Vec::new(),
         traversal: None,
         metrics,
+        formula: None,
         decision: Decision {
             procedure_id: "prototype1.successor_selection.v1".to_owned(),
             candidate_node_id: "node-a".to_owned(),

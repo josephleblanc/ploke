@@ -10,26 +10,17 @@
 - Requirement: when running `cargo test`, bound the default output to the useful tail or a targeted error filter, such as `cargo test -p <crate> <test-filter> -- <test-args> 2>&1 | tail -n 20`, `cargo test -p <crate> ... 2>&1 | rg 'E[0-9]+'`, or `cargo test -p <crate> ... 2>&1 | rg '<regex>'`.
 - Use fuller `cargo test` output only when the bounded output is insufficient to diagnose the failure, and make that expansion explicit.
 
+## Secret Handling
+
+- Requirement: never print, paste, log, or expose raw secret values. This includes API keys, bearer tokens, passwords, credentials, private auth headers, session tokens, and environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `BEARER`, or `CREDENTIAL`.
+- Requirement: do not run broad environment or config dumps such as `env`, `printenv`, `set`, or unredacted config/log inspection when diagnosing credentials. Use explicit masked probes that report only presence, variable name, length, source path, or a short non-reversible fingerprint.
+- Requirement: before displaying request logs, response logs, headers, or environment-derived diagnostics, pass the output through a redaction filter or inspect only named non-secret fields. If raw secret material appears in tool output, do not repeat it in the final answer.
+
 ## Verification Surface Honesty
 
 - Requirement: when reporting whether a feature was tested, name the exact verified surface in the first sentence. Valid surfaces include `CLI snapshot/export`, `focused egui renderer test`, `native interactive window`, `real-run import`, or `not tested`.
 - Requirement: do not let one verification surface stand in for another. In particular, do not describe CLI snapshot inspection as though it proves live egui right-panel behavior, and do not describe focused renderer tests as though they prove native pointer interaction.
-
-## Context Budget / Large File Guardrails
-
-- Context explosion counter:
-  - Total incidents: 2
-  - Last context explosion: 2026-05-11
-  - Days since last context explosion: 0
-
-- Requirement: do not read large logs, journals, generated artifacts, or long documents directly. Before opening any unknown-size file, use metadata guardrails such as `wc -l` and `ls -lh` to estimate both line count and byte size.
-- Requirement: for JSONL, journals, traces, or other record-oriented files, a small line count is not enough. Lines may be huge, so content reads must cap both record count and record width, for example `rg -n '<pattern>' <file> | head -n 5 | cut -c 1-400`, `sed -n 'start,endp' <file> | cut -c 1-400`, or `tail -n 3 <file> | cut -c 1-400`.
-- Requirement: do not read `transition-journal.jsonl` or similar run/history journals wholesale. Query them only with narrow `rg` patterns, bounded line ranges, or very small tails, always with a width cap such as `cut -c 1-400`, unless the user explicitly asks for a full read.
-- Requirement added 2026-05-11: repeated health checks for Prototype 1 campaigns must be metadata-first. Use admitted node counts/statuses, file mtimes, byte sizes, line counts, transition-file mtimes, and disk usage as the default signal. Do not read JSONL content during routine health checks.
-- Requirement added 2026-05-11: JSONL content reads during Prototype 1 health checks are anomaly diagnostics only. If an anomaly requires content inspection, read at most one explicitly named file, at most three records, and at most 400 characters per record, for example `tail -n 3 <file> | cut -c 1-400`. Do not run broad `rg` over multiple observation streams or journal files for routine health.
-- Requirement added 2026-05-11: if the user asks for repeated loop health checks, preserve context by reporting compact deltas from the last check: node count, generation range, status counts, newest mtime, and disk free. Do not restate or dump raw trace records unless the user explicitly asks for raw evidence.
-- Requirement: docs are not exempt from context discipline. When consulting a doc, first identify the needed section with `rg` or inspect a bounded range; avoid dumping whole planning documents into context.
-- If a bounded read is insufficient, state what extra range or pattern is needed before expanding it, and keep the expansion targeted.
+- Requirement: for graph or edge rendering changes, distinguish `projected payload visible` from `drawable in the current renderer/readability path`. Do not claim an edge is visible just because `GraphViewDiagnostics.edge_count` or contract reports include it. If the geometry/readability path drops the edge class, or the renderer cannot draw that edge shape (for example self-loops), report it as not visibly rendered until that path is verified.
 
 ## Coding Style & Naming Discipline
 
@@ -109,6 +100,12 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 ## Typed UI Projection Style
 
 - Requirement: `ploke-egui` is a typed projection of `ploke-tree::Graph`, not a string-rendering layer. Preserve semantic graph facts as typed borrowed values until the egui render boundary.
+- Requirement: for `ploke-egui` graph, inspector, timeline, source-ref, default-view, plan, or profiling work, start from `crates/ploke-egui/docs/README.md` and follow the relevant directory README. Do not bypass the README indexes by hard-coding a stale doc path from memory.
+- Requirement: for graph/view/inspector semantics, start from `crates/ploke-egui/docs/model/README.md` and follow its current links. For bounded UI plans, start from `crates/ploke-egui/docs/plan/README.md`. For performance work, start from `crates/ploke-egui/docs/profiling/README.md`.
+- Requirement: before adding, changing, or explaining a UI-facing semantic claim with ambiguous identity/provenance carriers, use both project skills `ploke-debugger-claim-workflow` and `ui-claim-archaeology`.
+- Requirement: before editing an archaeology report inside an existing `docs/active/archaeology/` group, re-read the local archaeology set: `README.md`, `INDEX.md`, the group `README.md`, and at least one sibling report in that group. Do not update one report in isolation and call the archaeology pass complete.
+- Requirement: archaeology report carrier tables must use concrete type/path references in `where it appears`. Do not use vague buckets like `scheduler records`, `child-plan record`, or `sealed History fields` when a real type/field path is available.
+- Requirement: do not cite a file, type, helper, or field in archaeology work unless you actually read it in the current pass. If an entry is not yet grounded, mark it `unverified` and stop instead of filling it with plausible text.
 - Requirement: do not collapse Artifact, Runtime, role, History, candidate, or evidence facts into `InspectorRow`, string labels, or row-shaped carriers. If the UI fact means `Parent`, `Child`, selected Artifact, Runtime role, or evidence relation, carry that meaning in the type.
 - Requirement: visual row layout may exist only inside the renderer. Rows are not semantic objects, cache entries, inspector facts, or projection carriers. Text-only rendering belongs at the egui/text boundary after typed facts have already been selected.
 - Requirement: prefer graph-derived typed witnesses such as `Badge::Child(&ArtifactId)` or `Badge::Parent(&ArtifactId)` over labels like `"child"` or `"parent"`. The carried id is a binding: it proves the rendered item is attached to an underlying semantic object and should make detached role labels hard to construct.
@@ -135,6 +132,12 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - Each incident entry must record: trigger, user-visible failure, touched code surface, skipped docs/skills/instructions, why the behavior was risky, and the concrete prevention rule for next time.
 - If the incident reveals a durable repo-level workflow gap, update `AGENTS.md` or the relevant skill in the same turn when feasible.
 - Use the `collaboration-incident-logging` skill when this trigger fires.
+- When the user signals that an architecture explanation became confusing,
+  reset to a concrete recommendation in the local subsystem's terms before
+  continuing with broader authority, protocol, or formal-model language.
+- For broad-harness edit-surface work, do not solve safety by defaulting to a
+  one-edit harness. Preserve the goal of broad model autonomy and put safety at
+  the admission, batching, refresh, and evidence-counting boundaries.
 
 ## Bounded Edit Surface Plan
 
@@ -160,14 +163,13 @@ Maintain this list when a bug is discovered that would have been prevented by pr
 - The audit must inspect the actual type barriers: private fields, sealed or module-private state markers, constructor visibility, move-only transition methods, and the durable records emitted by those transitions.
 - Treat any drift between claimed invariants and implemented constraints as a correctness issue. Fix the implementation, narrow the claim, or record the gap explicitly before relying on the History model for longer runs.
 
-## Prototype 1 Run Playback / Observability Plan
+## ploke-egui Graph / Observability Docs
 
-- Before implementing `RunPlayback`, `RunPlaybackRef`, playback iterators, replay CLI commands, `ploke-tree` run projections, or front-facing UI/WebAssembly observability surfaces, start from the shared track index at `docs/active/plans/self-improvement-loop/handoffs.md`.
-- Before changing the default `ploke-egui` tree graph projection or graph view mode, read `docs/active/agents/ploke-ui-task-readability/artifact-tree-default/README.md`.
-- The default `ploke-egui` graph is an artifact-first tree/DAG: Artifact states are primary nodes, applied patch / derivation relations are primary edges, and History is reveal/dimming/highlight state rather than the canvas spine.
-- Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, or typed drilldown.
-- Treat `docs/active/agents/2026-05-09_run-playback-typed-observability-plan.md` as the typed playback contract, not necessarily the latest operational handoff.
-- Playback is a read/projection layer over persisted typed records. It must not become active loop authority, and it must not parse rendered CLI output.
-- Preserve granularity structurally with typestates such as `RunPlayback<Coarse>` and `RunPlayback<Fine>` rather than string modes or report flags.
-- Provide both owned and borrowed playback forms. UI-facing paths should be able to use borrowed `RunPlaybackRef<'a, G>` projections over an already-loaded record store without cloning large payloads.
-- Coarsening, filtering, or rendering must not upgrade evidence authority. Steps should carry evidence strength separately from playback granularity.
+- Before changing the default `ploke-egui` graph projection, graph view mode, inspector source model, source-ref handling, timeline shell, or UI/WebAssembly observability surface, start from `crates/ploke-egui/docs/README.md`, then follow `crates/ploke-egui/docs/model/README.md`. The README indexes are the current routing surface for how `ploke-egui` turns `ploke_tree::Graph` into an interactive inspection UI.
+- Before changing default artifact-graph semantics, follow the `crates/ploke-egui/docs/model/README.md` reading path and restate the intended default node set and edge set before editing.
+- The default `ploke-egui` graph is the artifact-first `ArtifactTree` projection over `ploke_tree::Graph`: rendered nodes are resolved Artifact identities, rendered default edges are `P_H union P_C`, and History/candidate/runtime/tool/provider records are context, marks, diagnostics, or drilldown material unless a non-default projection admits them explicitly.
+- Do not make the default graph a full record graph, History-block chain, candidate inventory pile, runtime/tool/agent-turn graph, or synthetic-anchor debug surface. Those belong in explicit debug modes, side diagnostics, timeline lanes, or typed drilldown.
+- `ploke-egui` is read-only inspection. It does not choose, admit, seal, or advance successors. Runtime records, reports, protocol artifacts, and benchmark outputs must enter through named typed records or typed graph projections before the UI uses them.
+- For evaluation, protocol, and run-record source locations, start from `crates/ploke-egui/docs/model/README.md` and follow its data-location entry. Do not make `ploke-egui` parse run JSON, compressed records, rendered CLI output, or copied path strings directly.
+- For performance-affecting `ploke-egui` edits, read `crates/ploke-egui/docs/profiling/README.md` and keep the benchmark/report requirements from the local `ploke-egui-benchmarking` skill. Treat allocation churn in the right inspector and graph canvas as a first-class regression surface.
+- Use `docs/active/plans/self-improvement-loop/typed-persistence-spine/operating-console.md` and its implementation queue when the task is a typed-persistence or graph-ingestion slice. Use older observability notes only when routed by a current README/index or explicitly requested.

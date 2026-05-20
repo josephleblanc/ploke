@@ -16,6 +16,7 @@ use crate::ui::inspector::{
     turn_outcome_tool_count,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
+#[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
@@ -35,8 +36,11 @@ pub(crate) struct InspectorRenderCache {
     parent_create_row_rebuilds: usize,
     text_galleys: Vec<CachedTextGalley>,
     id_galleys: Vec<CachedIdGalley>,
+    #[cfg(not(target_arch = "wasm32"))]
     tool_argument_decodes: Vec<ToolArgumentDecodeEntry>,
+    #[cfg(not(target_arch = "wasm32"))]
     tool_result_decodes: Vec<ToolResultDecodeEntry>,
+    #[cfg(not(target_arch = "wasm32"))]
     text_size_summaries: Vec<TextSizeSummaryEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
@@ -197,6 +201,7 @@ impl InspectorRenderCache {
         galley
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn tool_arguments(
         &mut self,
         call_id: &str,
@@ -222,6 +227,7 @@ impl InspectorRenderCache {
         self.tool_argument_decodes[index].decoded.clone()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn tool_result(
         &mut self,
         call_id: &str,
@@ -247,6 +253,7 @@ impl InspectorRenderCache {
         self.tool_result_decodes[index].decoded.clone()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn text_size_summary(&mut self, text: &str) -> Arc<str> {
         let key = TextSizeSummaryKey {
             bytes: text.len(),
@@ -279,6 +286,7 @@ impl InspectorRenderCache {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolArgumentDecodeEntry {
     call_id: Arc<str>,
@@ -287,6 +295,7 @@ struct ToolArgumentDecodeEntry {
     decoded: Arc<PersistedToolCallArguments>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolResultDecodeEntry {
     call_id: Arc<str>,
@@ -295,12 +304,14 @@ struct ToolResultDecodeEntry {
     decoded: Arc<PersistedToolResultContent>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextSizeSummaryKey {
     bytes: usize,
     lines: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct TextSizeSummaryEntry {
     key: TextSizeSummaryKey,
@@ -454,10 +465,10 @@ pub enum InspectorPanelSection {
     Roles,
     PatchGeneration,
     LlmCalls,
+    Patches,
     RunRecords,
     GraphEdges,
     ArtifactEdges,
-    Patches,
     SourceRefs,
     ArtifactIds,
     Technical,
@@ -493,11 +504,11 @@ impl InspectorPanelSection {
     fn from_benchmark(section: crate::benchmark::BenchmarkInspectorSection) -> Self {
         match section {
             crate::benchmark::BenchmarkInspectorSection::LlmCalls => Self::LlmCalls,
-            crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::Technical,
-            crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::Technical,
-            crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::Technical,
+            crate::benchmark::BenchmarkInspectorSection::RunRecords => Self::RunRecords,
+            crate::benchmark::BenchmarkInspectorSection::GraphEdges => Self::GraphEdges,
+            crate::benchmark::BenchmarkInspectorSection::ArtifactEdges => Self::ArtifactEdges,
             crate::benchmark::BenchmarkInspectorSection::PatchDebug => Self::PatchDebug,
-            crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::Technical,
+            crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::SourceRefs,
             crate::benchmark::BenchmarkInspectorSection::ArtifactIds => Self::ArtifactIds,
         }
     }
@@ -731,6 +742,48 @@ pub(crate) fn render_right_inspector(
                         // } else {
                         //     kv(ui, "attempt", "not_applicable");
                         // }
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Candidate Comparison",
+                            InspectorPanelSection::CandidateComparison,
+                            open_state.open(InspectorPanelSection::CandidateComparison),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    render_candidate_comparison_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                    );
+                                } else {
+                                    kv(ui, "candidate comparison", "not_applicable");
+                                }
+                            },
+                        );
+
+                        show_inspector_section_collapsing(
+                            ui,
+                            "Lineage Authority",
+                            InspectorPanelSection::LineageAuthority,
+                            open_state.open(InspectorPanelSection::LineageAuthority),
+                            selection_ref,
+                            &mut actions,
+                            |ui| {
+                                if let Some(sections) = sections {
+                                    render_lineage_authority_for_inspector(
+                                        ui,
+                                        graph,
+                                        sections,
+                                        render_cache,
+                                    );
+                                } else {
+                                    kv(ui, "lineage authority", "not_applicable");
+                                }
+                            },
+                        );
 
                         show_inspector_section_collapsing(
                             ui,
@@ -974,6 +1027,51 @@ fn cached_kv_u64(
 ) {
     let mut buffer = itoa::Buffer::new();
     cached_kv_id(ui, render_cache, key, buffer.format(value));
+}
+
+fn cached_kv_i64(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: i64,
+) {
+    let mut buffer = itoa::Buffer::new();
+    cached_kv_id(ui, render_cache, key, buffer.format(value));
+}
+
+fn cached_kv_f64(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: f64,
+) {
+    cached_kv_text(ui, render_cache, key, format_f64(value).as_str());
+}
+
+fn cached_kv_optional_f64(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: Option<f64>,
+) {
+    if let Some(value) = value {
+        cached_kv_f64(ui, render_cache, key, value);
+    } else {
+        cached_kv_text(ui, render_cache, key, "not_recorded");
+    }
+}
+
+fn cached_kv_optional_usize(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: Option<usize>,
+) {
+    if let Some(value) = value {
+        cached_kv_usize(ui, render_cache, key, value);
+    } else {
+        cached_kv_text(ui, render_cache, key, "not_recorded");
+    }
 }
 
 fn cached_kv_text(
@@ -1506,6 +1604,647 @@ pub(crate) fn render_patches_for_inspector(
     );
 }
 
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_candidate_comparison")
+)]
+pub(crate) fn render_candidate_comparison_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+    render_cache: &mut InspectorRenderCache,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
+    }
+    let Some(slot) = sections.candidate_comparison() else {
+        kv(ui, "candidate comparison", "not_available");
+        return;
+    };
+
+    cached_kv_id(
+        ui,
+        render_cache,
+        "parent node",
+        slot.parent_node_id.as_str(),
+    );
+    cached_kv_usize(ui, render_cache, "planned children", slot.children().len());
+    if let Some(metric_set) = slot.metric_set(graph) {
+        cached_kv_id(
+            ui,
+            render_cache,
+            "metric set",
+            metric_set.metric_set_id.0.as_str(),
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "score profile",
+            score_profile_label(metric_set.policy.score_profile),
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "imp@k budget",
+            metric_set.policy.imp_at_k.budget_k,
+        );
+        cached_kv_i64(
+            ui,
+            render_cache,
+            "imp@k score weight",
+            metric_set.policy.imp_at_k.score_points_per_imp_point,
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "imp@k required",
+            bool_label(metric_set.policy.imp_at_k.require_for_score),
+        );
+    }
+
+    render_candidate_comparison_formula_summary(ui, render_cache, slot.selection_formula(graph));
+
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        egui::Grid::new(("candidate-comparison", slot.parent_node_id.as_str()))
+            .striped(true)
+            .num_columns(32)
+            .show(ui, |ui| {
+                cached_label(ui, render_cache, "selected");
+                cached_label(ui, render_cache, "child");
+                cached_label(ui, render_cache, "candidate");
+                cached_label(ui, render_cache, "payload");
+                cached_label(ui, render_cache, "outcome");
+                cached_label(ui, render_cache, "outcome pts");
+                cached_label(ui, render_cache, "operational pts");
+                cached_label(ui, render_cache, "protocol pts");
+                cached_label(ui, render_cache, "imp@k delta");
+                cached_label(ui, render_cache, "performance");
+                cached_label(ui, render_cache, "oracle rate");
+                cached_label(ui, render_cache, "alpha");
+                cached_label(ui, render_cache, "alpha mid");
+                cached_label(ui, render_cache, "exploitation");
+                cached_label(ui, render_cache, "exploration");
+                cached_label(ui, render_cache, "weight");
+                cached_label(ui, render_cache, "cumulative");
+                cached_label(ui, render_cache, "sample hit");
+                cached_label(ui, render_cache, "child count");
+                cached_label(ui, render_cache, "selectable");
+                cached_label(ui, render_cache, "exclusion");
+                cached_label(ui, render_cache, "improvement");
+                cached_label(ui, render_cache, "baseline");
+                cached_label(ui, render_cache, "best descendant");
+                cached_label(ui, render_cache, "scored / descendants");
+                cached_label(ui, render_cache, "tool failures delta");
+                cached_label(ui, render_cache, "patch failures delta");
+                cached_label(ui, render_cache, "valid patch");
+                cached_label(ui, render_cache, "converged");
+                cached_label(ui, render_cache, "oracle eligible");
+                cached_label(ui, render_cache, "protocol reviewed delta");
+                cached_label(ui, render_cache, "protocol missing delta");
+                ui.end_row();
+
+                for child in slot.children() {
+                    if let Some(candidate) = slot.resolve_child(graph, child) {
+                        render_candidate_comparison_candidate(ui, render_cache, candidate);
+                        ui.end_row();
+                    }
+                }
+            });
+    });
+}
+
+/// archaeology:score-child-prop-ui
+/// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+fn render_candidate_comparison_formula_summary(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    formula: Option<&ploke_tree::graph::SelectionFormulaNode>,
+) {
+    let Some(formula) = formula else {
+        cached_kv_text(ui, render_cache, "selector formula", "not_recorded");
+        return;
+    };
+    match &formula.formula {
+        ploke_tree::graph::SelectionFormulaKind::ScoreChildProp(score) => {
+            cached_kv_text(ui, render_cache, "selector formula", "score_child_prop");
+            cached_kv_id(
+                ui,
+                render_cache,
+                "formula selection entry",
+                formula.selection_entry_id.0.as_str(),
+            );
+            cached_kv_id(
+                ui,
+                render_cache,
+                "formula metric set",
+                formula.metric_set_id.0.as_str(),
+            );
+            cached_kv_u64(ui, render_cache, "seed", score.record.seed);
+            cached_kv_usize(ui, render_cache, "top_m", score.record.top_m);
+            cached_kv_u32(
+                ui,
+                render_cache,
+                "lambda_millis",
+                score.record.lambda_millis,
+            );
+            cached_kv_f64(ui, render_cache, "lambda", score.record.lambda);
+            cached_kv_text(
+                ui,
+                render_cache,
+                "metric inputs",
+                score.record.metric_inputs.as_str(),
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "oracle mode",
+                score.record.oracle_mode.as_str(),
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "oracle required",
+                bool_label(score.record.oracle_require_evidence),
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "alpha source",
+                if score.record.oracle_used_for_alpha {
+                    "oracle"
+                } else {
+                    "performance"
+                },
+            );
+            cached_kv_f64(ui, render_cache, "alpha_mid", score.record.alpha_mid);
+            cached_kv_f64(ui, render_cache, "total_weight", score.record.total_weight);
+            cached_kv_optional_f64(ui, render_cache, "sample", score.record.sample);
+            cached_kv_optional_f64(
+                ui,
+                render_cache,
+                "sample threshold",
+                score.record.sample_threshold,
+            );
+            cached_kv_optional_usize(
+                ui,
+                render_cache,
+                "uniform fallback slot",
+                score.record.uniform_fallback_slot,
+            );
+            cached_kv_optional_usize(
+                ui,
+                render_cache,
+                "selected index",
+                score.record.selected_index,
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "selected replay candidate",
+                score
+                    .record
+                    .selected_candidate
+                    .as_deref()
+                    .unwrap_or("not_recorded"),
+            );
+        }
+    }
+}
+
+/// archaeology:score-child-prop-ui
+/// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+fn render_candidate_comparison_candidate(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    candidate: crate::ui::inspector::CandidateComparisonCandidate<'_>,
+) {
+    let row = candidate.selector.and_then(|selector| selector.row);
+    cached_label(
+        ui,
+        render_cache,
+        if candidate.selected { "yes" } else { "no" },
+    );
+    cached_expandable_id(
+        ui,
+        render_cache,
+        (
+            "candidate-comparison-child",
+            candidate.child.node.node_id.as_str(),
+        ),
+        candidate.child.node.node_id.as_str(),
+    );
+    cached_expandable_id(
+        ui,
+        render_cache,
+        (
+            "candidate-comparison-candidate",
+            candidate.child.node.node_id.as_str(),
+        ),
+        candidate
+            .candidate
+            .map(|candidate| candidate.subject.value.as_str())
+            .unwrap_or(candidate.child.resolved.branch.candidate_id.as_str()),
+    );
+    render_optional_usize_value(ui, render_cache, row.map(|row| row.payload_index));
+    render_optional_str_value(
+        ui,
+        render_cache,
+        row.map(|row| outcome_label(row.base_outcome)),
+    );
+    render_optional_i64(ui, render_cache, row.map(|row| row.outcome_points));
+    render_optional_i64(ui, render_cache, row.map(|row| row.operational_points));
+    render_optional_i64(ui, render_cache, row.map(|row| row.protocol_points));
+    render_optional_i64(ui, render_cache, row.and_then(|row| row.imp_at_k_delta));
+    render_optional_i64(ui, render_cache, row.and_then(|row| row.performance));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.oracle_rate));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.alpha));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.alpha_mid));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.exploitation));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.exploration));
+    render_optional_f64_value(ui, render_cache, row.and_then(|row| row.weight));
+    render_optional_f64_range(
+        ui,
+        render_cache,
+        row.and_then(|row| row.cumulative_lower.zip(row.cumulative_upper)),
+    );
+    render_optional_bool(ui, render_cache, row.map(|row| row.sample_hit));
+    render_optional_usize_value(ui, render_cache, row.and_then(|row| row.child_count));
+    render_optional_bool(ui, render_cache, row.map(|row| row.selectable));
+    render_optional_str_value(
+        ui,
+        render_cache,
+        row.and_then(|row| row.exclusion_reason.as_deref())
+            .or(Some("none")),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate
+            .metric
+            .and_then(|metric| metric.imp_at_k.as_ref())
+            .and_then(|imp| imp.improvement),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate
+            .metric
+            .and_then(|metric| metric.imp_at_k.as_ref())
+            .and_then(|imp| imp.baseline_score),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate
+            .metric
+            .and_then(|metric| metric.imp_at_k.as_ref())
+            .and_then(|imp| imp.best_descendant_score),
+    );
+    render_imp_at_k_counts(ui, render_cache, candidate.metric);
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_tool_failures_delta),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_patch_failures_delta),
+    );
+    render_optional_bool(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_treatment_valid_patch),
+    );
+    render_optional_bool(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_treatment_converged),
+    );
+    render_optional_bool(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_treatment_oracle_eligible),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_protocol_reviewed_delta),
+    );
+    render_optional_i64(
+        ui,
+        render_cache,
+        candidate.metric.and_then(metric_protocol_missing_delta),
+    );
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn score_profile_label(profile: ploke_records::selection::ScoreProfile) -> &'static str {
+    match profile {
+        ploke_records::selection::ScoreProfile::OperationalQualityV1 => "operational_quality_v1",
+    }
+}
+
+fn bool_label(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
+fn outcome_label(outcome: ploke_records::selection::Outcome) -> &'static str {
+    match outcome {
+        ploke_records::selection::Outcome::Accepted => "accepted",
+        ploke_records::selection::Outcome::ExploreFrom => "explore_from",
+        ploke_records::selection::Outcome::Stop => "stop",
+    }
+}
+
+fn format_f64(value: f64) -> String {
+    if value.is_finite() {
+        format!("{value:.6}")
+    } else {
+        value.to_string()
+    }
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn render_imp_at_k_counts(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    metric: Option<&ploke_tree::graph::MetricCandidateNode>,
+) {
+    let Some(imp) = metric.and_then(|metric| metric.imp_at_k.as_ref()) else {
+        cached_label(ui, render_cache, "not_recorded");
+        return;
+    };
+    let mut scored = itoa::Buffer::new();
+    let mut descendants = itoa::Buffer::new();
+    ui.horizontal(|ui| {
+        cached_monospace_label(ui, render_cache, scored.format(imp.scored_descendant_count));
+        cached_label(ui, render_cache, "/");
+        cached_monospace_label(ui, render_cache, descendants.format(imp.descendant_count));
+    });
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_tool_failures_delta(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<i64> {
+    metric.compared_runs.iter().fold(None, |acc, run| {
+        sum_delta(
+            acc,
+            run.baseline_metrics.as_ref()?.tool_calls_failed,
+            run.treatment_metrics.as_ref()?.tool_calls_failed,
+        )
+    })
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_patch_failures_delta(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<i64> {
+    metric.compared_runs.iter().fold(None, |acc, run| {
+        sum_delta(
+            acc,
+            run.baseline_metrics.as_ref()?.partial_patch_failures,
+            run.treatment_metrics.as_ref()?.partial_patch_failures,
+        )
+    })
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_treatment_valid_patch(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<bool> {
+    metric
+        .compared_runs
+        .iter()
+        .filter_map(|run| {
+            run.treatment_metrics
+                .as_ref()
+                .map(|metrics| metrics.nonempty_valid_patch)
+        })
+        .reduce(|left, right| left && right)
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_treatment_converged(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<bool> {
+    metric
+        .compared_runs
+        .iter()
+        .filter_map(|run| {
+            run.treatment_metrics
+                .as_ref()
+                .map(|metrics| metrics.convergence)
+        })
+        .reduce(|left, right| left && right)
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_treatment_oracle_eligible(
+    metric: &ploke_tree::graph::MetricCandidateNode,
+) -> Option<bool> {
+    metric
+        .compared_runs
+        .iter()
+        .filter_map(|run| {
+            run.treatment_metrics
+                .as_ref()
+                .map(|metrics| metrics.oracle_eligible)
+        })
+        .reduce(|left, right| left && right)
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_protocol_reviewed_delta(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<i64> {
+    metric.compared_runs.iter().fold(None, |acc, run| {
+        sum_delta(
+            acc,
+            run.baseline_protocol.as_ref()?.reviewed_call_count as u64,
+            run.treatment_protocol.as_ref()?.reviewed_call_count as u64,
+        )
+    })
+}
+
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+fn metric_protocol_missing_delta(metric: &ploke_tree::graph::MetricCandidateNode) -> Option<i64> {
+    metric.compared_runs.iter().fold(None, |acc, run| {
+        sum_delta(
+            acc,
+            run.baseline_protocol.as_ref()?.missing_call_count as u64,
+            run.treatment_protocol.as_ref()?.missing_call_count as u64,
+        )
+    })
+}
+
+fn sum_delta(acc: Option<i64>, baseline: u64, treatment: u64) -> Option<i64> {
+    Some(
+        acc.unwrap_or_default()
+            .saturating_add((treatment as i64).saturating_sub(baseline as i64)),
+    )
+}
+
+fn render_optional_i64(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<i64>,
+) {
+    if let Some(value) = value {
+        let mut buffer = itoa::Buffer::new();
+        cached_monospace_label(ui, render_cache, buffer.format(value));
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+fn render_optional_usize_value(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<usize>,
+) {
+    if let Some(value) = value {
+        let mut buffer = itoa::Buffer::new();
+        cached_monospace_label(ui, render_cache, buffer.format(value));
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+fn render_optional_f64_value(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<f64>,
+) {
+    if let Some(value) = value {
+        cached_monospace_label(ui, render_cache, format_f64(value).as_str());
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+fn render_optional_f64_range(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<(f64, f64)>,
+) {
+    if let Some((lower, upper)) = value {
+        cached_monospace_label(
+            ui,
+            render_cache,
+            format!("{}..{}", format_f64(lower), format_f64(upper)).as_str(),
+        );
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+fn render_optional_str_value(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<&str>,
+) {
+    if let Some(value) = value {
+        cached_monospace_label(ui, render_cache, value);
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+fn render_optional_bool(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    value: Option<bool>,
+) {
+    if let Some(value) = value {
+        cached_label(ui, render_cache, bool_label(value));
+    } else {
+        cached_label(ui, render_cache, "not_recorded");
+    }
+}
+
+/// archaeology:lineage-authority
+/// proof:docs/active/archaeology/ploke-tree-graph/lineage-authority.md
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "inspector_lineage_authority")
+)]
+pub(crate) fn render_lineage_authority_for_inspector(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    sections: &InspectorSections,
+    render_cache: &mut InspectorRenderCache,
+) {
+    if let Some(reason) = sections.unavailable() {
+        render_unavailable(ui, reason);
+        return;
+    }
+    let Some(slot) = sections.lineage_authority() else {
+        kv(ui, "lineage authority", "not_available");
+        return;
+    };
+
+    let mut rendered = false;
+    for block in slot.blocks(graph) {
+        rendered = true;
+        ui.separator();
+        cached_kv_id(ui, render_cache, "block hash", block.block_hash.0.as_str());
+        cached_kv_u64(ui, render_cache, "height", block.block_height);
+        cached_kv_id(ui, render_cache, "lineage", block.lineage_id.0.as_str());
+        cached_kv_id(
+            ui,
+            render_cache,
+            "active artifact",
+            block.active_artifact.as_str(),
+        );
+        cached_kv_id(
+            ui,
+            render_cache,
+            "successor artifact",
+            block.selected_successor.artifact.as_str(),
+        );
+        cached_kv_id(ui, render_cache, "policy", block.policy_ref.value.as_str());
+        cached_kv_id(
+            ui,
+            render_cache,
+            "opening authority",
+            opening_authority_label(&block.opening_authority),
+        );
+        cached_kv_id(
+            ui,
+            render_cache,
+            "immutable surface",
+            block.surface.immutable.root.hash.0.as_str(),
+        );
+        cached_kv_id(
+            ui,
+            render_cache,
+            "mutated surface",
+            block.surface.mutated.after.root.hash.0.as_str(),
+        );
+        cached_kv_id(
+            ui,
+            render_cache,
+            "ambient surface",
+            block.surface.ambient.after.root.hash.0.as_str(),
+        );
+        cached_kv_usize(ui, render_cache, "entries", block.entry_count);
+    }
+    if !rendered {
+        kv(ui, "lineage authority", "not_available");
+    }
+}
+
+fn opening_authority_label(authority: &ploke_tree::graph::OpeningAuthorityNode) -> &'static str {
+    match authority {
+        ploke_tree::graph::OpeningAuthorityNode::Genesis { .. } => "genesis",
+        ploke_tree::graph::OpeningAuthorityNode::Predecessor { .. } => "predecessor",
+    }
+}
+
 #[cfg_attr(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "inspector_source_refs")
@@ -1732,6 +2471,7 @@ mod render_cache_tests {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn tool_decoded_payload_cache_reuses_stable_records() {
         let mut cache = InspectorRenderCache::default();
@@ -2064,12 +2804,14 @@ mod tests {
                 render_right_inspector(
                     ui,
                     &graph,
+                    Some(&selection),
                     Some("artifact"),
                     Some("A1"),
                     Some(sections),
                     &mut render_cache,
                     &mut diff_cache,
                     InspectorOpenState::default(),
+                    None,
                 );
                 render_artifact_ids_for_inspector(ui, &graph, sections, &mut render_cache);
             });
@@ -2836,6 +3578,7 @@ fn render_tool_arguments_section(
             .id_salt(("run-record-tool-arguments", index, call_id))
             .default_open(true),
         |ui| {
+            #[cfg(not(target_arch = "wasm32"))]
             {
                 let decoded = render_cache.tool_arguments(
                     call_id,
@@ -2844,6 +3587,8 @@ fn render_tool_arguments_section(
                 );
                 render_decoded_tool_arguments(ui, render_cache, decoded.as_ref());
             }
+            #[cfg(target_arch = "wasm32")]
+            tool_kv_text(ui, render_cache, "decode", "native_only");
 
             show_inspector_collapsing(
                 ui,
@@ -2896,11 +3641,14 @@ fn render_tool_result_section(
             .default_open(false),
         |ui| match &tool.result {
             ploke_records::run_record::ToolResult::Completed(_) => {
+                #[cfg(not(target_arch = "wasm32"))]
                 {
                     let decoded =
                         render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
                     render_decoded_tool_result(ui, render_cache, decoded.as_ref());
                 }
+                #[cfg(target_arch = "wasm32")]
+                tool_kv_text(ui, render_cache, "decode", "native_only");
 
                 show_inspector_collapsing(
                     ui,
@@ -3091,6 +3839,7 @@ fn render_tool_failure_content(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_decoded_tool_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3109,6 +3858,7 @@ fn render_decoded_tool_arguments(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_call_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3247,6 +3997,7 @@ fn render_tool_call_arguments(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_decoded_tool_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3265,6 +4016,7 @@ fn render_decoded_tool_result(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_result_content(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3378,6 +4130,7 @@ fn render_tool_result_content(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_patch_like_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3396,6 +4149,7 @@ fn render_patch_like_result(
     render_string_list(ui, render_cache, "files", files);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_code_item_query(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3410,6 +4164,7 @@ fn render_code_item_query(
     tool_kv_text(ui, render_cache, "module path", module_path);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_concise_context(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3428,6 +4183,7 @@ fn render_concise_context(
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_str(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3439,6 +4195,7 @@ fn render_optional_str(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3450,6 +4207,7 @@ fn render_optional_string_list(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3462,6 +4220,7 @@ fn render_string_list(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3473,6 +4232,7 @@ fn render_optional_u32(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u64(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3484,6 +4244,7 @@ fn render_optional_u64(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_i32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3495,6 +4256,7 @@ fn render_optional_i32(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_f32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3536,16 +4298,19 @@ fn tool_kv_bool(
     tool_kv_text(ui, render_cache, key, if value { "true" } else { "false" });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u32(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u32) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u64(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u64) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_usize(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3565,6 +4330,7 @@ fn tool_kv_debug(
     tool_kv_owned(ui, render_cache, key, format!("{value:?}"));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_text_size_summary(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -3584,6 +4350,7 @@ fn cached_wrapped_monospace_label(
     ui.add(egui::Label::new(galley).wrap())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn list_item_key(index: usize) -> &'static str {
     match index {
         0 => "1",

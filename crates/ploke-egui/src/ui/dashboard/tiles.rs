@@ -174,147 +174,165 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                             })
                             .show(ui, |ui| {
                                 if let Some(sections) = sections {
-                            match section {
-                                shell::InspectorPanelSection::Identity => {
-                                    shell::render_identity(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::Roles => {
-                                    shell::render_roles_and_metrics(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::PatchGeneration => {
-                                    shell::render_parent_create_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                        shell::InspectorOpenState::default(),
-                                    );
-                                }
-                                shell::InspectorPanelSection::RunRecords => {
-                                    shell::render_run_records_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::GraphEdges => {
-                                    shell::render_graph_edges_for_inspector(
-                                        ui,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::ArtifactEdges => {
-                                    shell::render_artifact_edges_for_inspector(
-                                        ui,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::Patches => {
-                                    shell::render_patches_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                        self.patch_diff_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::PatchDebug => {
-                                    shell::render_patches_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                        self.patch_diff_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::SourceRefs => {
-                                    shell::render_source_refs_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::ArtifactIds => {
-                                    shell::render_artifact_ids_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::Technical => {
-                                    ui.label(egui::RichText::new("Run Records").strong());
-                                    shell::render_run_records_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-
-                                    ui.separator();
-                                    ui.label(egui::RichText::new("Graph edges").strong());
-                                    shell::render_graph_edges_for_inspector(
-                                        ui,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-
-                                    ui.separator();
-                                    ui.label(egui::RichText::new("Artifact edges").strong());
-                                    shell::render_artifact_edges_for_inspector(
-                                        ui,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-
-                                    ui.separator();
-                                    ui.label(egui::RichText::new("Source refs").strong());
-                                    shell::render_source_refs_for_inspector(
-                                        ui,
-                                        self.graph,
-                                        sections,
-                                        self.inspector_render_cache,
-                                    );
-                                }
-                                shell::InspectorPanelSection::LlmCalls => {
-                                    if let Some(parent_create) = sections.parent_create() {
-                                        if let ploke_tree::graph::ParentCreateLookup::Attempt(
-                                            attempt,
-                                        ) = parent_create.resolve(self.graph)
-                                        {
-                                            shell::render_parent_create_llm_calls_body(
+                                    match section {
+                                        shell::InspectorPanelSection::Identity => {
+                                            shell::render_identity(
                                                 ui,
                                                 self.graph,
-                                                &attempt,
-                                                sections.run_records(),
+                                                sections,
                                                 self.inspector_render_cache,
                                             );
-                                        } else {
-                                            ui.label("Attempt not available.");
                                         }
-                                    } else {
-                                        ui.label("Attempt not available.");
+                                        shell::InspectorPanelSection::Roles => {
+                                            shell::render_roles_and_metrics(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::PatchGeneration => {
+                                            shell::render_parent_create_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                                shell::InspectorOpenState::default(),
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::RunRecords => {
+                                            shell::render_run_records_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::GraphEdges => {
+                                            shell::render_graph_edges_for_inspector(
+                                                ui,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::ArtifactEdges => {
+                                            shell::render_artifact_edges_for_inspector(
+                                                ui,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::Patches => {
+                                            shell::render_patches_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                                self.patch_diff_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::PatchDebug => {
+                                            shell::render_patches_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                                self.patch_diff_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::LlmCalls => {
+                                            if let Some(parent_create) = sections.parent_create() {
+                                                if let ploke_tree::graph::ParentCreateLookup::Attempt(
+                                                    attempt,
+                                                ) = parent_create.resolve(self.graph)
+                                                {
+                                                    shell::render_parent_create_llm_calls_body(
+                                                        ui,
+                                                        self.graph,
+                                                        &attempt,
+                                                        sections.run_records(),
+                                                        self.inspector_render_cache,
+                                                    );
+                                                } else {
+                                                    ui.label("Attempt not available.");
+                                                }
+                                            } else {
+                                                ui.label("Attempt not available.");
+                                            }
+                                        }
+                                        shell::InspectorPanelSection::SourceRefs => {
+                                            shell::render_source_refs_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::ArtifactIds => {
+                                            shell::render_artifact_ids_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::Technical => {
+                                            ui.label(egui::RichText::new("Run Records").strong());
+                                            shell::render_run_records_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+
+                                            ui.separator();
+                                            ui.label(egui::RichText::new("Graph edges").strong());
+                                            shell::render_graph_edges_for_inspector(
+                                                ui,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+
+                                            ui.separator();
+                                            ui.label(
+                                                egui::RichText::new("Artifact edges").strong(),
+                                            );
+                                            shell::render_artifact_edges_for_inspector(
+                                                ui,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+
+                                            ui.separator();
+                                            ui.label(egui::RichText::new("Source refs").strong());
+                                            shell::render_source_refs_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::CandidateComparison => {
+                                            shell::render_candidate_comparison_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
+                                        shell::InspectorPanelSection::LineageAuthority => {
+                                            shell::render_lineage_authority_for_inspector(
+                                                ui,
+                                                self.graph,
+                                                sections,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
                                     }
+                                } else {
+                                    ui.label("No data available.");
                                 }
-                            }
-                        } else {
-                            ui.label("No data available.");
-                        }
-                    });
+                            });
                     });
             }
             Pane::ArtifactDistribution => {

@@ -215,6 +215,7 @@ fn selection_entry(block_height: u64, selected: &str) -> AdmittedEntryRecord {
             projection_failures: Vec::new(),
             traversal: None,
             metrics: selection_metrics(selected, block_height),
+            formula: None,
             decision: selection::Decision {
                 procedure_id: "policy:select".to_owned(),
                 candidate_node_id: selected.to_owned(),

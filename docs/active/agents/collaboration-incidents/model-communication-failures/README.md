@@ -33,3 +33,7 @@ could no longer tell what concrete action was being recommended.
   The agent confirmed a regression marker with a line link without reconciling
   that the user's displayed snippet omitted the marker and their navigation
   landed on a neighboring replay test.
+- [`2026-05-19-typed-reconstruction-language-encouraged-mirror-dtos.md`](2026-05-19-typed-reconstruction-language-encouraged-mirror-dtos.md)
+  The agent used "typed reconstruction" language from the instruction stack,
+  which biased future work toward one-time subset DTOs instead of existing
+  canonical types, borrowed accessors, or owner-schema extensions.

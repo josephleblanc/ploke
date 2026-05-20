@@ -2768,7 +2768,7 @@ pub(crate) enum EntryKind {
 }
 
 /// Entry-local payload committed by the entry hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum EntryPayload {
     Direct,
@@ -4875,7 +4875,7 @@ fn append_sealed_evidence_citation_pairs(
 ///
 /// This is intended to be committed into an `EntryKind::Decision` entry, using
 /// the existing `Entry` observation/proposal/admission chain-of-custody.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SelectionDecisionEntry {
     pub(crate) schema_version: u32,
 
@@ -4934,6 +4934,10 @@ pub(crate) struct SelectionDecisionEntry {
 
     /// Selection-time metric evidence bound to the ordered candidate set.
     pub(crate) metrics: selection_metrics::Set,
+
+    /// Selection-entry-scoped selector formula values persisted for debugger replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) formula: Option<crate::successor_selection::traversal::SelectionFormula>,
 
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
@@ -5083,7 +5087,7 @@ impl SelectionDecisionEntry {
             &considered_order_hash,
             candidate_set.as_ref().map(|set| &set.root),
         )?;
-        Ok(Self {
+        let mut entry = Self {
             schema_version: 4,
             procedure_or_policy,
             scope,
@@ -5097,8 +5101,11 @@ impl SelectionDecisionEntry {
             projection_failures,
             traversal,
             metrics,
+            formula: None,
             decision,
-        })
+        };
+        entry.formula = crate::successor_selection::traversal::score_child_prop_formula(&entry)?;
+        Ok(entry)
     }
 
     fn contributes_candidates_to_history_projection(&self) -> bool {
@@ -5673,7 +5680,7 @@ pub(crate) struct Proposal {
     pub(crate) procedure_or_policy: ProcedureRef,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 struct EntryCore {
     entry_id: EntryId,
     entry_kind: EntryKind,
@@ -5725,7 +5732,7 @@ pub(crate) struct Admitted {
 }
 
 /// A provenance-bearing fact in one typed History state.
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Entry<S> {
     core: EntryCore,
     state: S,
@@ -6187,7 +6194,7 @@ struct SealedBlockPreimage {
 /// this block is a valid authority epoch for one History store and lineage.
 /// Human or root authority is intentionally left as future policy work rather
 /// than a current block invariant.
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Block<S> {
     entries: Vec<Entry<Admitted>>,
     state: S,

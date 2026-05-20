@@ -47,6 +47,16 @@ beta
 delta
 "#;
 
+const STALE_SAME_FILE_REPAIR_DIFF: &str = r#"--- a/notes.txt
++++ b/notes.txt
+@@ -1,4 +1,4 @@
+ alpha
+-beta
++beta-repair
+ gamma
+ delta
+"#;
+
 const BARE_HUNK_DIFF: &str = r#"@@ -1,4 +1,4 @@
  alpha
 -beta
@@ -193,6 +203,47 @@ async fn stage_tool_call_via_llm_manager(
     panic!("timed out waiting for ToolCallCompleted while staging ns_patch");
 }
 
+async fn stage_tool_call_failure_via_llm_manager(
+    request_id: Uuid,
+    parent_id: Uuid,
+    tool_call: ToolCall,
+    realtime_rx: &mut tokio::sync::broadcast::Receiver<AppEvent>,
+) -> String {
+    let expected_call_id = tool_call.call_id.clone();
+    emit_app_event(AppEvent::System(SystemEvent::ToolCallRequested {
+        tool_call,
+        request_id,
+        parent_id,
+    }))
+    .await;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match timeout(Duration::from_millis(100), realtime_rx.recv()).await {
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                error,
+                ..
+            }))) if event_request_id == request_id && event_call_id == expected_call_id => {
+                return error;
+            }
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                content,
+                ..
+            }))) if event_request_id == request_id && event_call_id == expected_call_id => {
+                panic!("ns_patch unexpectedly completed while staging: {content}");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+
+    panic!("timed out waiting for ToolCallFailed while staging ns_patch");
+}
+
 async fn wait_for_proposal_status(
     state: &Arc<crate::app_state::AppState>,
     proposal_id: Uuid,
@@ -215,6 +266,113 @@ async fn wait_for_proposal_status(
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+}
+
+// regr:samefiletui:19-05-26_15-43
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_rejects_fuzzy_same_file_repair_after_applied_proposal_before_staging() {
+    let _guard = ns_patch_event_test_lock().lock().await;
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db)
+        .spawn_state_manager()
+        .spawn_event_bus()
+        .spawn_llm_manager();
+
+    let state = rt.state_arc();
+    let events = rt.events_builder().build_event_bus_only();
+    let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("same-file-fuzzy-repair");
+    let fixture_path =
+        write_named_fixture(&workspace_root, "notes.txt", "alpha\nbeta\ngamma\ndelta\n");
+    configure_temp_workspace(&state, &workspace_root).await;
+
+    let app = rt.into_app_with_state_pwd(workspace_root.clone()).await;
+    let cmd_tx = app.state_cmd_tx();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let first_request_id = Uuid::new_v4();
+    let second_request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let first_call = same_file_tool_call(
+        "ns-patch-fuzzy-repair-first",
+        FIRST_SAME_FILE_DIFF,
+        "Stage first same-file patch",
+    );
+    let stale_call = same_file_tool_call(
+        "ns-patch-fuzzy-repair-stale",
+        STALE_SAME_FILE_REPAIR_DIFF,
+        "Attempt stale same-file repair",
+    );
+
+    let first_stage = stage_tool_call_via_llm_manager(
+        first_request_id,
+        parent_id,
+        first_call.clone(),
+        &mut realtime_rx,
+    )
+    .await;
+    assert!(first_stage.ok, "first ns_patch should stage successfully");
+
+    let first_proposal_id = derive_edit_proposal_id(first_request_id, &first_call.call_id);
+    cmd_tx
+        .send(StateCommand::ApproveEdits {
+            proposal_id: first_proposal_id,
+        })
+        .await
+        .expect("approve first same-file proposal");
+
+    let first_status = wait_for_proposal_status(&state, first_proposal_id, |status| {
+        matches!(status, EditProposalStatus::Applied)
+    })
+    .await;
+    assert!(
+        matches!(first_status, EditProposalStatus::Applied),
+        "first proposal should apply before stale repair, got {first_status:?}"
+    );
+
+    let error = stage_tool_call_failure_via_llm_manager(
+        second_request_id,
+        parent_id,
+        stale_call.clone(),
+        &mut realtime_rx,
+    )
+    .await;
+    let wire = crate::tools::ToolErrorWire::parse(&error)
+        .expect("stale same-file repair should use structured tool error wire");
+    assert_eq!(wire.llm.code, crate::tools::ToolErrorCode::Io);
+    assert!(
+        wire.llm.message.contains("failed to patch")
+            && wire.llm.message.contains("matched only fuzzily"),
+        "failure should explain stale fuzzy same-file rejection, got: {}",
+        wire.llm.message
+    );
+
+    let stale_proposal_id = derive_edit_proposal_id(second_request_id, &stale_call.call_id);
+    let proposals = state.proposals.read().await;
+    assert!(
+        proposals.contains_key(&first_proposal_id),
+        "first proposal should remain recorded"
+    );
+    assert!(
+        !proposals.contains_key(&stale_proposal_id),
+        "stale fuzzy same-file repair must be rejected before staging"
+    );
+    assert_eq!(
+        proposals.len(),
+        1,
+        "only the first applied proposal should remain recorded"
+    );
+    drop(proposals);
+
+    assert_eq!(
+        fs::read_to_string(&fixture_path).expect("read file after stale repair rejection"),
+        "alpha\nbeta-one\ngamma\ndelta\n",
+        "stale repair must not rewrite the file after the first applied patch"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -306,6 +464,7 @@ async fn ns_patch_malformed_diff_emits_one_failure_and_stages_zero_proposals() {
     );
 }
 
+// regr:protectedpreflight:19-05-26_15-43
 #[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_protected_path_preflight_rejects_repeat_before_staging() {
     let _guard = ns_patch_event_test_lock().lock().await;

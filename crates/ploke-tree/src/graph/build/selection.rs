@@ -15,8 +15,9 @@ use ploke_records::ids::{CandidateId, Coordinate, RuntimeId};
 
 use crate::graph::{
     CandidateBranchNode, CandidateMembershipKey, CandidateMembershipNode, CandidateNode,
-    CandidateSource, EvidenceKind, EvidenceSubject, GraphWarningKind, MetricCandidateKey,
-    MetricCandidateNode, MetricSetNode, SelectionNode,
+    CandidateSource, ComparedRunMetricNode, EvidenceKind, EvidenceSubject, GraphWarningKind,
+    MetricCandidateKey, MetricCandidateNode, MetricSetNode, SelectionFormulaKey,
+    SelectionFormulaNode, SelectionNode,
 };
 
 use super::Builder;
@@ -315,6 +316,7 @@ impl Builder {
                 considered_order_hash: metric_set.considered_order_hash.clone(),
                 candidate_set_root: metric_set.candidate_set_root.clone(),
                 candidate_count: metric_set.candidates.len(),
+                policy: metric_set.policy.clone(),
             },
         );
 
@@ -333,10 +335,56 @@ impl Builder {
                     occurrence_id: candidate.occurrence_id.clone(),
                     membership_id: candidate.membership_id.clone(),
                     imp_at_k: candidate.imp_at_k.clone(),
+                    compared_runs: selection_metric_inputs(selection, candidate.payload_index),
+                },
+            );
+        }
+
+        if let Some(formula) = selection.formula.as_ref() {
+            if formula.metric_set_id != metric_set.id {
+                self.warn(
+                    GraphWarningKind::SelectionMetricBindingMismatch,
+                    format!(
+                        "selection entry {} formula metric_set_id does not match selection metrics",
+                        entry.core.entry_id.0
+                    ),
+                );
+            }
+            self.graph.metrics.formulas.insert(
+                SelectionFormulaKey {
+                    selection_entry_id: entry.core.entry_id.clone(),
+                    metric_set_id: formula.metric_set_id.clone(),
+                },
+                SelectionFormulaNode {
+                    selection_entry_id: entry.core.entry_id.clone(),
+                    metric_set_id: formula.metric_set_id.clone(),
+                    formula: formula.formula.clone().into(),
                 },
             );
         }
     }
+}
+
+fn selection_metric_inputs(
+    selection: &SelectionDecisionEntryRecord,
+    payload_index: usize,
+) -> Vec<ComparedRunMetricNode> {
+    selection
+        .considered
+        .get(payload_index)
+        .and_then(|payload| payload.sealed_evidence.as_ref())
+        .into_iter()
+        .flat_map(|evidence| evidence.evaluations.iter())
+        .flat_map(|evaluation| evaluation.compared_runs.iter())
+        .map(|run| ComparedRunMetricNode {
+            instance_id: run.instance_id.clone(),
+            status: run.status.clone(),
+            baseline_metrics: run.baseline_metrics.clone(),
+            treatment_metrics: run.treatment_metrics.clone(),
+            baseline_protocol: run.baseline_protocol.clone(),
+            treatment_protocol: run.treatment_protocol.clone(),
+        })
+        .collect()
 }
 
 fn operation_coordinate(payload: &EvaluationPayloadRecord) -> Option<Coordinate> {

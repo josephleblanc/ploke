@@ -1,14 +1,18 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
+use ploke_records::evaluation::RunMetrics;
 use ploke_records::history::{
-    CandidateSetRootRecord, ProcedureRefRecord, SelectionScopeRecord, SubjectRefRecord,
+    CandidateSetRootRecord, ProcedureRefRecord, ProtocolMetricsRecord, SelectionScopeRecord,
+    SubjectRefRecord,
 };
 use ploke_records::ids::{
     ArtifactId, CandidateId, CandidateMembershipId, CandidateOccurrenceId, EntryId, HistoryHash,
     PatchId,
 };
-use ploke_records::selection::ImpAtK;
 use ploke_records::selection::Outcome as SelectionOutcome;
+use ploke_records::selection::{
+    FormulaRecord, ImpAtK, MetricPolicy, ScoreChildPropRecord, ScoreChildPropRowRecord,
+};
 
 use super::evidence::EvidenceId;
 
@@ -113,6 +117,9 @@ pub struct SelectionNode {
 pub struct MetricIndex {
     pub sets: BTreeMap<HistoryHash, MetricSetNode>,
     pub candidates: BTreeMap<MetricCandidateKey, MetricCandidateNode>,
+    /// archaeology:score-child-prop-ui
+    /// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+    pub formulas: BTreeMap<SelectionFormulaKey, SelectionFormulaNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +129,9 @@ pub struct MetricSetNode {
     pub considered_order_hash: HistoryHash,
     pub candidate_set_root: Option<HistoryHash>,
     pub candidate_count: usize,
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    pub policy: MetricPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,4 +162,78 @@ pub struct MetricCandidateNode {
     pub occurrence_id: Option<CandidateOccurrenceId>,
     pub membership_id: Option<CandidateMembershipId>,
     pub imp_at_k: Option<ImpAtK>,
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    pub compared_runs: Vec<ComparedRunMetricNode>,
+}
+
+/// Selection-time run metrics sealed beside a considered candidate.
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComparedRunMetricNode {
+    pub instance_id: Option<String>,
+    pub status: Option<String>,
+    pub baseline_metrics: Option<RunMetrics>,
+    pub treatment_metrics: Option<RunMetrics>,
+    pub baseline_protocol: Option<ProtocolMetricsRecord>,
+    pub treatment_protocol: Option<ProtocolMetricsRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionFormulaKey {
+    pub selection_entry_id: EntryId,
+    pub metric_set_id: HistoryHash,
+}
+
+impl Ord for SelectionFormulaKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.selection_entry_id, &self.metric_set_id)
+            .cmp(&(&other.selection_entry_id, &other.metric_set_id))
+    }
+}
+
+impl PartialOrd for SelectionFormulaKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Selection-entry-scoped selector formula values ingested from History.
+/// archaeology:score-child-prop-ui
+/// proof:docs/active/archaeology/ploke-tree-graph/score-child-prop-ui-spec.md
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectionFormulaNode {
+    pub selection_entry_id: EntryId,
+    pub metric_set_id: HistoryHash,
+    pub formula: SelectionFormulaKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectionFormulaKind {
+    ScoreChildProp(ScoreChildPropNode),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoreChildPropNode {
+    pub record: ScoreChildPropRecord,
+}
+
+impl ScoreChildPropNode {
+    pub fn row_for_payload_index(&self, payload_index: usize) -> Option<&ScoreChildPropRowRecord> {
+        self.record
+            .rows
+            .iter()
+            .find(|row| row.payload_index == payload_index)
+    }
+}
+
+impl From<FormulaRecord> for SelectionFormulaKind {
+    fn from(value: FormulaRecord) -> Self {
+        match value {
+            FormulaRecord::ScoreChildProp(record) => {
+                Self::ScoreChildProp(ScoreChildPropNode { record })
+            }
+        }
+    }
 }
