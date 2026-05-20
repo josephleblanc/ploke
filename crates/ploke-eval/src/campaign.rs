@@ -8,7 +8,7 @@ use crate::closure::ClosureRecomputeRequest;
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
 use crate::model_registry::{load_active_model, load_model_registry, registry_has_model};
 use crate::provider_prefs::load_provider_for_model;
-use crate::runner::resolve_provider_for_model;
+use crate::runner::resolve_route_for_model;
 use crate::spec::{EvalBudget, FrameworkConfig, PrepareError};
 use crate::target_registry::{
     BenchmarkFamily, RegistryDatasetSource, RegistryRecomputeRequest, TargetRegistry,
@@ -584,14 +584,14 @@ pub async fn validate_campaign_config(
         }
         None => None,
     };
-    let resolved_provider =
-        resolve_provider_for_model(&selected_model, requested_provider.as_ref()).await?;
+    let route = resolve_route_for_model(&selected_model, requested_provider.as_ref()).await?;
+    let selected_provider = route.selected_provider_slug();
     checks.push(CampaignValidationCheck {
         label: "provider".to_string(),
         detail: if config.provider_slug.is_some() {
-            resolved_provider.provider.slug.as_str().to_string()
+            selected_provider
         } else {
-            format!("auto -> {}", resolved_provider.provider.slug.as_str())
+            format!("auto -> {selected_provider}")
         },
     });
 

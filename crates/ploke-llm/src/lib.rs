@@ -35,6 +35,7 @@ pub use registry::calibration::{
     AttemptTimeout, CalibrationInput, GoogleCalibrationKey, OpenRouterCalibrationKey,
     ProviderTiming, RetryTuning, RouterCalibration,
 };
+pub use registry::route::{GoogleRoute, LlmRoute, OpenRouterRoute};
 
 pub use embeddings::{
     EmbClientConfig, fetch_and_write_embedding_models_registry, load_embedding_models_registry,

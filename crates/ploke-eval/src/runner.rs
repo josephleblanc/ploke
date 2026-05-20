@@ -26,7 +26,7 @@ use ploke_llm::router_only::{
         embed::OpenRouterEmbeddingFields,
     },
 };
-use ploke_llm::{ModelId, ProviderKey, ProviderSlug, SupportsTools};
+use ploke_llm::{LlmRoute, ModelId, ProviderKey, ProviderSlug, SupportsTools};
 use ploke_records::agent_turn::{
     AgentTurnArtifactRecord as PersistedAgentTurnArtifactRecord, AgentTurnSummaryRecord,
     AgentTurnTraceRecord, ExpectedFileChangeRecord as PersistedExpectedFileChangeRecord,
@@ -110,25 +110,20 @@ fn benchmark_chat_policy() -> ChatPolicy {
     policy.validated()
 }
 
-fn configure_eval_model_runtime(
-    cfg: &mut RuntimeConfig,
-    selected_model_id: &ModelId,
-    selected_provider: &ProviderKey,
-) {
+fn configure_eval_model_runtime(cfg: &mut RuntimeConfig, route: &LlmRoute) {
     cfg.llm_timeout_secs = ploke_llm::LLM_TIMEOUT_SECS;
-    cfg.active_model = selected_model_id.clone();
-    cfg.model_registry
-        .select_model_provider(selected_model_id, Some(selected_provider));
+    cfg.active_model = route.model().clone();
+    cfg.active_router = route.router();
+    if let Some(provider) = route.provider_key() {
+        cfg.model_registry
+            .select_model_provider(route.model(), Some(provider));
+    }
 }
 
-fn configure_headless_benchmark_chat(
-    cfg: &mut RuntimeConfig,
-    selected_model_id: &ModelId,
-    selected_provider: &ProviderKey,
-) {
+fn configure_headless_benchmark_chat(cfg: &mut RuntimeConfig, route: &LlmRoute) {
     cfg.editing.auto_confirm_edits = true;
     cfg.chat_policy = benchmark_chat_policy();
-    configure_eval_model_runtime(cfg, selected_model_id, selected_provider);
+    configure_eval_model_runtime(cfg, route);
 }
 
 fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
@@ -714,10 +709,13 @@ impl SelectedEndpointProvenance {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedProviderSelection {
-    pub provider: ProviderKey,
-    pub endpoint: SelectedEndpointProvenance,
+fn selected_endpoint_provenance(route: &LlmRoute) -> Option<SelectedEndpointProvenance> {
+    match route {
+        LlmRoute::OpenRouter(route) => {
+            Some(SelectedEndpointProvenance::from_endpoint(&route.endpoint))
+        }
+        LlmRoute::Google(_) => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1997,18 +1995,35 @@ async fn persist_starting_db_cache(
     .await
 }
 
-pub(crate) async fn resolve_provider_for_model(
+pub(crate) async fn resolve_route_for_model(
     selected_model: &ResponseItem,
     requested_provider: Option<&ProviderKey>,
-) -> Result<ResolvedProviderSelection, PrepareError> {
+) -> Result<LlmRoute, PrepareError> {
     if !selected_model.supports_tools() {
         return Err(PrepareError::DatabaseSetup {
-            phase: "resolve_model_provider",
+            phase: "resolve_model_route",
             detail: format!(
                 "model '{}' does not advertise tool-call support",
                 selected_model.id
             ),
         });
+    }
+
+    if selected_model.id.key.author.as_str() == "google" {
+        if let Some(provider) = requested_provider {
+            let requested_slug = provider.slug.as_str();
+            if requested_slug != "google" {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "resolve_model_route",
+                    detail: format!(
+                        "requested provider '{requested_slug}' is not valid for direct Google model '{}'",
+                        selected_model.id
+                    ),
+                });
+            }
+        }
+
+        return Ok(LlmRoute::direct_google_model(selected_model));
     }
 
     let client = reqwest::Client::new();
@@ -2045,10 +2060,11 @@ pub(crate) async fn resolve_provider_for_model(
             });
         }
 
-        return Ok(ResolvedProviderSelection {
-            provider: requested_provider.clone(),
-            endpoint: SelectedEndpointProvenance::from_endpoint(endpoint),
-        });
+        return Ok(LlmRoute::openrouter(
+            selected_model.id.clone(),
+            requested_provider.clone(),
+            endpoint.clone(),
+        ));
     }
 
     let provider = tool_capable_provider_key(&endpoints.data.endpoints).ok_or_else(|| {
@@ -2075,10 +2091,11 @@ pub(crate) async fn resolve_provider_for_model(
             ),
         })?;
 
-    Ok(ResolvedProviderSelection {
+    Ok(LlmRoute::openrouter(
+        selected_model.id.clone(),
         provider,
-        endpoint: SelectedEndpointProvenance::from_endpoint(endpoint),
-    })
+        endpoint.clone(),
+    ))
 }
 
 fn parse_requested_model_id(model_id: Option<&str>) -> Result<Option<ModelId>, PrepareError> {
@@ -2106,13 +2123,13 @@ impl RunMsbSingleRequest {
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let resolved_provider = resolve_provider_for_model(
+        let route = resolve_route_for_model(
             &selected_model,
             self.provider.as_ref().or(preferred_provider.as_ref()),
         )
         .await?;
-        let selected_provider = resolved_provider.provider.clone();
-        let selected_endpoint = resolved_provider.endpoint.clone();
+        let selected_provider = route.selected_provider_slug();
+        let selected_endpoint = selected_endpoint_provenance(&route);
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -2137,15 +2154,15 @@ impl RunMsbSingleRequest {
 
         let mut run_record = RunRecord::new(&prepared, run_arm.clone());
         run_record.metadata.agent.model_id = Some(selected_model_id.clone());
-        run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
-        run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
+        run_record.metadata.agent.provider = Some(selected_provider.clone());
+        run_record.metadata.agent.selected_endpoint = selected_endpoint.clone();
         let mut registration = register_run_attempt(
             &prepared,
             &manifest_path,
             &run_arm,
             &run_output_dir,
             &selected_model_id,
-            selected_provider.slug.as_str(),
+            &selected_provider,
             self.batch_id.clone(),
         )?;
         registration.mark_execution_started(Some("run setup started".to_string()));
@@ -2242,7 +2259,7 @@ impl RunMsbSingleRequest {
             let state = runtime.state_arc();
             {
                 let mut cfg = state.config.write().await;
-                configure_eval_model_runtime(&mut cfg, &selected_model_id, &selected_provider);
+                configure_eval_model_runtime(&mut cfg, &route);
             }
             info!("runner phase: inspect active embedding set before activation");
             let currently_active_set: EmbeddingSet = runtime_db
@@ -2473,8 +2490,8 @@ impl RunMsbSingleRequest {
                 repo_root: prepared.repo_root.clone(),
                 output_dir: run_output_dir.clone(),
                 selected_model: selected_model_id.clone(),
-                selected_provider: Some(selected_provider.slug.as_str().to_string()),
-                selected_endpoint: Some(selected_endpoint.clone()),
+                selected_provider: Some(selected_provider.clone()),
+                selected_endpoint: selected_endpoint.clone(),
                 full_response_trace: None,
                 steps,
             };
@@ -2548,13 +2565,13 @@ impl RunMsbAgentSingleRequest {
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
         let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let resolved_provider = resolve_provider_for_model(
+        let route = resolve_route_for_model(
             &selected_model,
             self.provider.as_ref().or(preferred_provider.as_ref()),
         )
         .await?;
-        let selected_provider = resolved_provider.provider.clone();
-        let selected_endpoint = resolved_provider.endpoint.clone();
+        let selected_provider = route.selected_provider_slug();
+        let selected_endpoint = selected_endpoint_provenance(&route);
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -2587,15 +2604,15 @@ impl RunMsbAgentSingleRequest {
 
         let mut run_record = RunRecord::new(&prepared, run_arm.clone());
         run_record.metadata.agent.model_id = Some(selected_model_id.clone());
-        run_record.metadata.agent.provider = Some(selected_provider.slug.as_str().to_string());
-        run_record.metadata.agent.selected_endpoint = Some(selected_endpoint.clone());
+        run_record.metadata.agent.provider = Some(selected_provider.clone());
+        run_record.metadata.agent.selected_endpoint = selected_endpoint.clone();
         let mut registration = register_run_attempt(
             &prepared,
             &manifest_path,
             &run_arm,
             &run_output_dir,
             &selected_model_id,
-            selected_provider.slug.as_str(),
+            &selected_provider,
             self.batch_id.clone(),
         )?;
         registration.artifacts.turn_trace = Some(turn_trace_path.clone());
@@ -2707,7 +2724,7 @@ impl RunMsbAgentSingleRequest {
             let state = runtime.state_arc();
             {
                 let mut cfg = state.config.write().await;
-                configure_headless_benchmark_chat(&mut cfg, &selected_model_id, &selected_provider);
+                configure_headless_benchmark_chat(&mut cfg, &route);
             }
             info!("runner phase: inspect active embedding set before activation");
             let currently_active_set: EmbeddingSet = runtime_db
@@ -2997,8 +3014,8 @@ impl RunMsbAgentSingleRequest {
                 repo_root: prepared.repo_root.clone(),
                 output_dir: run_output_dir.clone(),
                 selected_model: selected_model_id.clone(),
-                selected_provider: Some(selected_provider.slug.as_str().to_string()),
-                selected_endpoint: Some(selected_endpoint.clone()),
+                selected_provider: Some(selected_provider.clone()),
+                selected_endpoint: selected_endpoint.clone(),
                 full_response_trace: full_response_trace.clone(),
                 steps,
             };
@@ -3113,12 +3130,12 @@ async fn run_batch(
     let selected_model = resolve_model_for_run(requested_model.as_ref(), use_default_model)?;
     let selected_model_id = selected_model.id.clone();
     let preferred_provider = load_provider_for_model(&selected_model_id)?;
-    let resolved_provider = resolve_provider_for_model(
+    let route = resolve_route_for_model(
         &selected_model,
         provider.as_ref().or(preferred_provider.as_ref()),
     )
     .await?;
-    let selected_provider = resolved_provider.provider;
+    let selected_provider = route.selected_provider_slug();
 
     let summary_path = prepared.output_dir.join("batch-run-summary.json");
     let submission_path = prepared.output_dir.join("multi-swe-bench-submission.jsonl");
@@ -3273,7 +3290,7 @@ async fn run_batch(
         repo_cache: prepared.repo_cache,
         instances_root: prepared.instances_root,
         selected_model: Some(selected_model_id),
-        selected_provider: Some(selected_provider.slug.as_str().to_string()),
+        selected_provider: Some(selected_provider),
         instances_total: prepared.instances.len(),
         instances_attempted: instance_results.len(),
         instances_succeeded,
@@ -4876,14 +4893,16 @@ mod tests {
 
     #[test]
     fn benchmark_runtime_config_overrides_llm_timeout() {
-        let model = ploke_llm::ModelId::from(ploke_llm::ModelKey::default());
-        let provider = test_provider_key();
+        let model = "google/gemini-2.5-flash"
+            .parse::<ploke_llm::ModelId>()
+            .expect("model id");
+        let route = LlmRoute::google(model, true);
         let mut cfg = RuntimeConfig {
             llm_timeout_secs: 30,
             ..RuntimeConfig::default()
         };
 
-        configure_headless_benchmark_chat(&mut cfg, &model, &provider);
+        configure_headless_benchmark_chat(&mut cfg, &route);
 
         assert_eq!(cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
         assert_eq!(cfg.chat_policy.tool_call_timeout_secs, 60);

@@ -32,7 +32,7 @@ use ploke_llm::{
     HasModels as _, Router as _,
     manager::events::{endpoint, models},
     request::ToolChoice,
-    router_only::openrouter::OpenRouter,
+    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -582,9 +582,6 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     //    When registry is available, merge model/user defaults into LLMParameters.
     let llm_params = crate::llm::LLMParameters::default();
 
-    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
-    //      Construct a concrete request object that RequestSession will dispatch.
-
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
@@ -593,8 +590,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         (None, None)
     };
 
-    // Use the runtime-selected active model (includes optional variant)
-    let (model_id, chat_policy, llm_timeout_secs, router_fields) = {
+    let (model_id, active_router, chat_policy, llm_timeout_secs, openrouter_fields) = {
         let cfg = state.config.read().await;
         let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
         if let Some(provider) = cfg
@@ -608,20 +604,12 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         router_fields = router_fields.preferences_union(&cfg.model_registry);
         (
             cfg.active_model.clone(),
+            cfg.active_router,
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
             router_fields,
         )
     };
-
-    let req = OpenRouter::default_chat_completion()
-        .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
-        .with_model(model_id)
-        .with_messages(messages)
-        .with_param_bundle(llm_params)
-        .with_router_bundle(router_fields)
-        .with_tools(tools)
-        .with_tool_choice(tool_choice);
 
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
     // let log_fut: Option<_> = None;
@@ -635,19 +623,52 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let finish_policy = finish_policy_from_chat(&chat_policy);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
 
-    let chat_session = session::ChatSession {
-        client,
-        req,
-        chat_step_source: session::take_recorded_chat_step_source(),
-        parent_id,
-        assistant_message_id,
-        event_bus,
-        state_cmd_tx: cmd_tx.clone(),
-        included_message_ids,
-        chat_policy,
-        cancel_rx,
-    };
-    run_chat_session(chat_session, llm_timeout_secs).await
+    if matches!(active_router, RouterVariants::Google(_)) {
+        let req = Google::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    } else {
+        let req = OpenRouter::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_router_bundle(openrouter_fields)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    }
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {

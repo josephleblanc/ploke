@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::llm::LLMParameters;
 use crate::llm::registry::user_prefs::RegistryPrefs;
+use crate::llm::router_only::RouterVariants;
 use crate::llm::{ModelId, ModelKey};
 use crate::user_config::{
     ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning,
@@ -205,6 +206,8 @@ pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
     pub model_registry: RegistryPrefs,
     pub active_model: ModelId,
+    #[serde(default)]
+    pub active_router: RouterVariants,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub tool_verbosity: ToolVerbosity,
@@ -264,6 +267,7 @@ impl From<UserConfig> for RuntimeConfig {
             llm_params,
             model_registry: registry,
             active_model: ModelId::from(ModelKey::default()),
+            active_router: RouterVariants::default(),
             editing,
             command_style: uc.command_style,
             tool_verbosity: uc.tool_verbosity,

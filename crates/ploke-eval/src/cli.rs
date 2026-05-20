@@ -108,7 +108,7 @@ use crate::run_registry::list_registrations_for_instance;
 use crate::runner::{
     BatchRunArtifactPaths, BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest,
     RunMsbAgentBatchRequest, RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest,
-    resolve_provider_for_model,
+    resolve_route_for_model,
 };
 use crate::selection::{
     ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
@@ -2841,9 +2841,19 @@ async fn set_persisted_provider(
             phase: "parse_provider_key",
             detail: format!("invalid provider slug '{provider_slug}': {err}"),
         })?;
-    let validated = resolve_provider_for_model(&selected, Some(&provider_key)).await?;
-    set_provider_for_model(&selected.id, validated.provider.clone())?;
-    println!("{}\t{}", selected.id, validated.provider.slug.as_str());
+    let route = resolve_route_for_model(&selected, Some(&provider_key)).await?;
+    let provider = route
+        .provider_key()
+        .cloned()
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "set_provider_for_model",
+            detail: format!(
+                "model '{}' uses a direct route and does not have provider endpoints to persist",
+                selected.id
+            ),
+        })?;
+    set_provider_for_model(&selected.id, provider.clone())?;
+    println!("{}\t{}", selected.id, provider.slug.as_str());
     Ok(())
 }
 
