@@ -205,6 +205,10 @@ impl RouterModelId for OpenRouterModelId {
         }
         base
     }
+
+    fn request_model_string(model: &ModelId) -> String {
+        Self::from(model.clone()).to_string()
+    }
 }
 
 use std::{fmt, str::FromStr, sync::Arc};

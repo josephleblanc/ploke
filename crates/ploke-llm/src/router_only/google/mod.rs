@@ -1,5 +1,7 @@
 //! src/google.rs
 
+use std::str::FromStr;
+
 use crate::{LlmError, Router};
 
 use serde::{Deserialize, Serialize};
@@ -41,18 +43,54 @@ pub struct GoogleChatCompFields {
 // reference_images	List	Video	Up to 3 images for style/character reference (base64 assets).
 // image	Text	Video	Base64-encoded initial input image to condition the video generation.
 // last_frame	Object	Video	Final image for interpolation (requires image as first frame).
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExtraBody {
-    pub thinking_config: ThinkingConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google: Option<GoogleExtraBody>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+impl ExtraBody {
+    pub fn with_google(mut self, google: GoogleExtraBody) -> Self {
+        self.google = Some(google);
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GoogleExtraBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
+}
+
+impl GoogleExtraBody {
+    pub fn with_thinking_config(mut self, thinking_config: ThinkingConfig) -> Self {
+        self.thinking_config = Some(thinking_config);
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ThinkingConfig {
-    thinking_level: ThinkingLevel,
-    include_thoughts: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_thoughts: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+impl ThinkingConfig {
+    pub fn with_thinking_level(mut self, thinking_level: ThinkingLevel) -> Self {
+        self.thinking_level = Some(thinking_level);
+        self
+    }
+
+    pub fn with_include_thoughts(mut self, include_thoughts: bool) -> Self {
+        self.include_thoughts = Some(include_thoughts);
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Low,
     #[default]
@@ -99,7 +137,15 @@ impl RouterModelId for GoogleModelId {
     fn into_url_format(self) -> String {
         // Gemini doesn't use the OpenRouter {author}/{model} format in its URLs,
         // it just needs the raw string.
-        self.0.to_string()
+        self.0.slug.as_str().to_string()
+    }
+
+    fn model_id_from_request_string(model: &str) -> Result<ModelId, crate::IdError> {
+        if model.contains('/') {
+            ModelId::from_str(model)
+        } else {
+            ModelId::from_str(&format!("google/{model}"))
+        }
     }
 }
 
@@ -174,6 +220,23 @@ mod tests {
             == Some("RESOURCE_EXHAUSTED")
     }
 
+    #[test]
+    fn openai_compatible_route_constants_match_google() {
+        assert_eq!(
+            Google::BASE_URL,
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        );
+        assert_eq!(
+            Google::COMPLETION_URL,
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+        assert_eq!(
+            Google::MODELS_URL,
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
+        assert_eq!(Google::API_KEY_NAME, "GEMINI_API_KEY");
+    }
+
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_google_models_list_smoke() -> Result<()> {
@@ -200,7 +263,6 @@ mod tests {
         }
 
         let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
-        println!("{print_str:#?}");
         let models = response_value
             .get("data")
             .and_then(|value| value.as_array())

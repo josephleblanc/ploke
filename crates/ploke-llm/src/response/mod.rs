@@ -153,6 +153,9 @@ pub struct ResponseMessage {
 }
 
 #[cfg(test)]
+mod shape_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
