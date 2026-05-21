@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use super::{CommandContext, XtaskError};
 
 mod lanes;
+#[cfg(test)]
+mod tests;
 
 use lanes::{LaneCommand, LaneSpec, LaneValidation};
 
@@ -164,6 +166,9 @@ pub struct Complete {
     /// Optional worker report path.
     #[arg(long)]
     report: Option<String>,
+    /// Inline completion summary. Written to `.orchestrator/reports/` and attached as a report.
+    #[arg(long)]
+    summary: Option<String>,
 }
 
 /// Mark a completed task as reviewed.
@@ -579,6 +584,15 @@ impl Complete {
         let mut board = Board::load(&path)?;
         board.ensure_task(&self.task)?;
         let worker = board.assigned_worker(&self.task);
+        if let Some(summary) = &self.summary {
+            let report = board.write_inline_report(ctx, &path, &self.task, "complete", summary)?;
+            board
+                .tasks
+                .get_mut(&self.task)
+                .expect("checked")
+                .reports
+                .push(report);
+        }
         if let Some(report) = &self.report {
             board
                 .tasks
@@ -799,6 +813,34 @@ impl Board {
         Ok(path)
     }
 
+    fn write_inline_report(
+        &self,
+        ctx: &CommandContext,
+        board_path: &Path,
+        task_id: &str,
+        kind: &str,
+        summary: &str,
+    ) -> Result<String, XtaskError> {
+        let report_dir = board_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("reports");
+        fs::create_dir_all(&report_dir)?;
+        let timestamp = now();
+        let file_name = format!(
+            "{}-{}-{}.md",
+            file_fragment(task_id),
+            kind,
+            file_fragment(&timestamp)
+        );
+        let path = report_dir.join(file_name);
+        let body = format!(
+            "# Orchestrator {kind} Summary\n\n- task: {task_id}\n- recorded_at: {timestamp}\n\n{summary}\n"
+        );
+        fs::write(&path, body)?;
+        display(ctx, &path)
+    }
+
     fn packet_body(&self, worker: &WorkerSlot) -> String {
         let mut out = String::new();
         out.push_str(&format!("# Worker Packet: {}\n\n", worker.id));
@@ -874,6 +916,22 @@ fn push_list(out: &mut String, label: &str, items: &[String]) {
     out.push_str(&format!("- {label}:\n"));
     for item in items {
         out.push_str(&format!("  - {item}\n"));
+    }
+}
+
+fn file_fragment(raw: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "item".to_string()
+    } else {
+        out
     }
 }
 
