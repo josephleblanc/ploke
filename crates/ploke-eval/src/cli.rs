@@ -2962,6 +2962,7 @@ impl From<ReplayTurnArtifactArg> for ploke_tree::TurnArtifactKind {
 pub enum ReplayTailArg {
     Stop,
     Live,
+    LiveStep,
 }
 
 impl From<ReplayTailArg> for crate::replay::turn::ReplayTail {
@@ -2969,6 +2970,7 @@ impl From<ReplayTailArg> for crate::replay::turn::ReplayTail {
         match value {
             ReplayTailArg::Stop => Self::Stop,
             ReplayTailArg::Live => Self::Live,
+            ReplayTailArg::LiveStep => Self::LiveStep,
         }
     }
 }
@@ -2988,8 +2990,11 @@ This installs the recorded provider response tape resolved from the agent-turn
 cursor, submits the recorded issue prompt to the target workspace, and consumes
 the selected prefix through the normal ploke-tui session/tool path. By default
 the prefix is the full assistant-message tape and the next provider request goes
-live. Use --through-response-index or --through-event to slice the prefix, and
-use --tail stop to stop before any live provider call.
+live. Use --through-response-index or --through-event to slice the prefix,
+--tail stop to stop before any live provider call, or --tail live-step to take
+one live provider step and stop at the next provider boundary. Use --branch-out
+to save that live response as replayable branch tape, then --branch-in on the
+next invocation to continue one more step from the same branch.
 
 The command is intentionally explicit about --run-dir and --workspace. The run
 directory supplies the historical typed records and response sidecar; the
@@ -3027,9 +3032,26 @@ pub struct ReplayTurnLiveCommand {
     #[arg(long, conflicts_with = "through_response_index")]
     pub through_event: bool,
 
-    /// What to do after the recorded prefix is exhausted.
+    /// What to do after the selected recorded/branch prefix is exhausted.
     #[arg(long, value_enum, default_value_t = ReplayTailArg::Live)]
     pub tail: ReplayTailArg,
+
+    /// Replay branch tape to append after the selected historical prefix.
+    ///
+    /// Use the file written by a previous `--tail live-step --branch-out`
+    /// invocation to continue stepping from that live branch. The branch holds
+    /// provider responses only; tool behavior is still re-executed in the
+    /// current `--workspace`.
+    #[arg(long, value_name = "FILE")]
+    pub branch_in: Option<PathBuf>,
+
+    /// Write the replay branch tape after appending newly observed live responses.
+    ///
+    /// This is most useful with `--tail live-step`: each invocation can write a
+    /// new branch file, and the next invocation can pass it as `--branch-in` to
+    /// advance one more provider response through the same current tool loop.
+    #[arg(long, value_name = "FILE")]
+    pub branch_out: Option<PathBuf>,
 
     /// Model id for the live tail. Defaults to the parent-patcher model selection.
     #[arg(long, value_name = "MODEL")]
@@ -4589,6 +4611,12 @@ impl ReplayTurnLiveCommand {
             tail,
             budget: crate::replay::probe::ProbeBudget::new(self.max_attempts, self.timeout_secs),
             model,
+            branch: self
+                .branch_in
+                .as_deref()
+                .map(crate::replay::probe::ReplayBranchTape::load)
+                .transpose()?,
+            branch_out: self.branch_out,
         }
         .run()
         .await?;
@@ -4748,6 +4776,7 @@ fn print_replay_probe(
                 "live_provider: {}",
                 probe.live_provider.as_deref().unwrap_or("(model default)")
             );
+            print_replay_probe_workspace_git("workspace_before", &probe.workspace_before);
             println!("tail: {:?}", probe.prefix.tail);
             println!(
                 "prefix: {}",
@@ -4770,17 +4799,137 @@ fn print_replay_probe(
                 "tape_records: {}/{}",
                 probe.prefix.installed_records, probe.prefix.total_records
             );
+            println!("loaded_tape_records: {}", probe.tape_records);
+            println!("branch_in_records: {}", probe.branch_in_records);
+            println!("branch_records: {}", probe.branch_records.len());
+            if let Some(path) = probe.branch_out.as_ref() {
+                println!("branch_out: {}", path.display());
+            }
             println!("captured_requests: {}", probe.captured_requests.len());
+            println!("captured_responses: {}", probe.captured_responses.len());
             println!("live_tail_reached: {}", probe.tail_reached());
+            println!("live_step_responses: {}", probe.live_step_response_count());
+            print_replay_probe_live_step(probe);
+            println!(
+                "live_step_boundary_reached: {}",
+                probe.live_step_boundary_reached()
+            );
             println!("attempts: {}", probe.attempt_count());
             println!("terminal: {}", probe.terminal_label());
             println!("elapsed_ms: {}", probe.elapsed_ms);
             if let Some(last) = probe.captured_requests.last() {
                 println!("last_request_messages: {}", last.message_count);
             }
+            print_replay_probe_workspace_git("workspace_after", &probe.workspace_after);
+            print_replay_probe_events(probe);
         }
     }
     Ok(())
+}
+
+fn print_replay_probe_workspace_git(label: &str, git: &crate::replay::probe::WorkspaceGit) {
+    println!("{label}_dirty: {}", git.is_dirty());
+    println!("{label}_dirty_paths: {}", git.dirty_count());
+    for path in git.dirty_paths.iter().take(6) {
+        println!("  {}", path.display());
+    }
+    if git.dirty_paths.len() > 6 {
+        println!("  ... {} more path(s)", git.dirty_paths.len() - 6);
+    }
+    if let Some(error) = git.error.as_ref() {
+        println!("{label}_git_error: {error}");
+    }
+}
+
+fn print_replay_probe_live_step(probe: &crate::replay::probe::ProbeRun) {
+    let calls = probe.live_step_tool_calls();
+    println!("new_live_tool_calls: {}", calls.len());
+    for call in calls.iter().take(8) {
+        println!(
+            "  response={} call_id={} tool={}",
+            call.response_index, call.call_id, call.tool
+        );
+    }
+    if calls.len() > 8 {
+        println!("  ... {} more call(s)", calls.len() - 8);
+    }
+
+    let events = probe.live_step_tool_events();
+    if events.is_empty() {
+        return;
+    }
+    println!("new_live_tool_events:");
+    for event in events.iter().take(12) {
+        println!("  {}", format_replay_probe_event(event));
+    }
+    if events.len() > 12 {
+        println!("  ... {} more event(s)", events.len() - 12);
+    }
+}
+
+fn print_replay_probe_events(probe: &crate::replay::probe::ProbeRun) {
+    let event_count = probe.tui.events.len();
+    if event_count == 0 {
+        return;
+    }
+    let skip = event_count.saturating_sub(12);
+    println!("events:");
+    if skip > 0 {
+        println!("  ... {skip} earlier events omitted");
+    }
+    for (index, event) in probe.tui.events.iter().enumerate().skip(skip) {
+        println!("  {index}: {}", format_replay_probe_event(event));
+    }
+}
+
+fn format_replay_probe_event(
+    event: &crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event,
+) -> String {
+    use crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event;
+
+    match event {
+        Event::Proposal {
+            id,
+            edit_count,
+            paths,
+        } => format!("proposal id={id} edits={edit_count} paths={}", paths.len()),
+        Event::ToolRequest {
+            call_id,
+            tool,
+            arguments,
+            ..
+        } => format!(
+            "tool_request call_id={call_id} tool={tool} args={}",
+            arguments.preview
+        ),
+        Event::ToolCompleted { call_id, content } => {
+            format!(
+                "tool_completed call_id={call_id} content={}",
+                content.preview
+            )
+        }
+        Event::ToolFailed { call_id, error } => {
+            format!("tool_failed call_id={call_id} error={}", error.preview)
+        }
+        Event::AssistantMessage {
+            id,
+            status,
+            content,
+        } => format!(
+            "assistant_message id={id} status={status} content={}",
+            content.preview
+        ),
+        Event::Turn {
+            outcome,
+            attempts,
+            summary,
+            ..
+        } => format!(
+            "turn outcome={outcome} attempts={attempts} summary={}",
+            summary.preview
+        ),
+        Event::Outcome { outcome } => format!("outcome {outcome:?}"),
+    }
 }
 
 fn format_replay_prefix_selector(selector: &crate::replay::turn::ReplayPrefixSelector) -> String {
@@ -14392,6 +14541,8 @@ mod tests {
                 assert_eq!(cmd.through_response_index, None);
                 assert!(!cmd.through_event);
                 assert_eq!(cmd.tail, ReplayTailArg::Live);
+                assert_eq!(cmd.branch_in, None);
+                assert_eq!(cmd.branch_out, None);
                 assert_eq!(cmd.model_id.as_deref(), Some("openai/gpt-5"));
                 assert_eq!(cmd.provider.as_deref(), Some("openrouter"));
                 assert_eq!(cmd.max_attempts, 1);
@@ -14466,6 +14617,46 @@ mod tests {
                 assert!(cmd.through_event);
                 assert_eq!(cmd.through_response_index, None);
                 assert_eq!(cmd.tail, ReplayTailArg::Live);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_turn_live_command_parses_live_step_branch_tape() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "turn-live",
+            "--run-dir",
+            "/tmp/run",
+            "--workspace",
+            "/tmp/workspace",
+            "--event-index",
+            "11",
+            "--through-event",
+            "--tail",
+            "live-step",
+            "--branch-in",
+            "/tmp/branch-in.json",
+            "--branch-out",
+            "/tmp/branch-out.json",
+        ])
+        .expect("run replay turn-live should parse live-step branch tape");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::TurnLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.event_index, 11);
+                assert!(cmd.through_event);
+                assert_eq!(cmd.tail, ReplayTailArg::LiveStep);
+                assert_eq!(cmd.branch_in, Some(PathBuf::from("/tmp/branch-in.json")));
+                assert_eq!(cmd.branch_out, Some(PathBuf::from("/tmp/branch-out.json")));
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

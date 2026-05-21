@@ -110,6 +110,45 @@ impl LoadedResponseTape {
         })
     }
 
+    pub fn with_appended_records(
+        &self,
+        records: &[RawFullResponseRecord],
+    ) -> Result<Self, PrepareError> {
+        let mut merged = self.records.clone();
+        let mut seen = merged
+            .iter()
+            .map(RawFullResponseRecord::response_index)
+            .collect::<BTreeSet<_>>();
+        for record in records {
+            if !record.matches_assistant_message(self.assistant_message_id) {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "append_llm_replay_branch",
+                    detail: format!(
+                        "branch response assistant_message_id '{}' does not match replay assistant_message_id '{}'",
+                        record.assistant_message_id, self.assistant_message_id
+                    ),
+                });
+            }
+            if !seen.insert(record.response_index()) {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "append_llm_replay_branch",
+                    detail: format!(
+                        "branch response_index {} duplicates an installed replay response",
+                        record.response_index()
+                    ),
+                });
+            }
+            merged.push(record.clone());
+        }
+        let loaded = Self {
+            path: self.path.clone(),
+            assistant_message_id: self.assistant_message_id,
+            records: merged,
+        };
+        loaded.reject_missing_response_indices()?;
+        Ok(loaded)
+    }
+
     pub fn response_index_for_tool_call(
         &self,
         call_id: &str,
@@ -369,6 +408,29 @@ mod tests {
     }
 
     #[test]
+    fn loaded_response_tape_can_append_branch_records() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let first = response_line(assistant, 0, "first");
+        fs::write(&path, format!("{first}\n")).expect("write sidecar");
+        let loaded =
+            LoadedResponseTape::load(root.path(), &assistant.to_string()).expect("load tape");
+        let branch = response_record(assistant, 1, "branch");
+
+        let merged = loaded
+            .with_appended_records(&[branch])
+            .expect("append branch response");
+
+        let indexes = merged
+            .records()
+            .iter()
+            .map(|record| record.response_index().get())
+            .collect::<Vec<_>>();
+        assert_eq!(indexes, vec![0, 1]);
+    }
+
+    #[test]
     fn loaded_response_tape_allows_non_contiguous_response_indexes_for_inspection() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
@@ -408,5 +470,18 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn response_record(
+        assistant_message_id: Uuid,
+        response_index: usize,
+        content: &str,
+    ) -> RawFullResponseRecord {
+        serde_json::from_str(&response_line(
+            assistant_message_id,
+            response_index,
+            content,
+        ))
+        .expect("response record")
     }
 }

@@ -67,6 +67,13 @@ pub enum ReplayTail {
     Stop,
     /// Switch from recorded provider responses to the normal live provider path.
     Live,
+    /// Take one live provider step, execute its tool calls, then stop before the next provider call.
+    ///
+    /// This is the CLI stepping mode. It lets an operator replay up to a
+    /// historical breakpoint, ask the live model for exactly one response, see
+    /// how the current tool surface handled that response, and persist the
+    /// response as branch tape for the next invocation.
+    LiveStep,
 }
 
 /// Resolved replay prefix installed into the TUI session path.
@@ -176,6 +183,12 @@ pub fn install_replay_prefix_at(
         ReplayTail::Live => {
             ploke_tui::llm::install_recorded_response_prefix_then_live(
                 loaded.clone().into_recorded_response_tape(),
+            );
+        }
+        ReplayTail::LiveStep => {
+            ploke_tui::llm::install_recorded_response_prefix_then_live_steps(
+                loaded.clone().into_recorded_response_tape(),
+                1,
             );
         }
     }

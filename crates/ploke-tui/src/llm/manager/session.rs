@@ -52,6 +52,7 @@ const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json"
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
+const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
@@ -590,9 +591,32 @@ pub enum CancelChatToken {
 
 #[derive(Debug)]
 pub enum ChatStepSource {
+    /// Use the configured provider/client for every chat step.
     Live,
+    /// Replay only recorded provider envelopes.
+    ///
+    /// This is useful for deterministic replay regressions. The replay still
+    /// flows through the normal session parser and tool execution path, but no
+    /// live provider request is allowed once the tape is exhausted.
     Recorded(RecordedResponseTape),
+    /// Replay a recorded prefix, then continue with normal live provider calls.
+    ///
+    /// This is the broad smoke-probe mode: it reconstructs the historical
+    /// model-output prefix, lets the current tools handle those calls, and then
+    /// gives the live model the resulting conversation state.
     RecordedPrefixThenLive(RecordedResponseTape),
+    /// Replay a recorded prefix, then allow a bounded number of live steps.
+    ///
+    /// A "step" here is one provider response envelope, not one tool call. If
+    /// that response requests tools, the normal session loop executes the whole
+    /// batch and appends tool results before the step limit is enforced. The
+    /// next attempted provider request returns the internal replay-limit error,
+    /// which `run_chat_session` turns into a clean completed report. This gives
+    /// CLI probes a stop point just before the model would see the next request.
+    RecordedPrefixThenLiveSteps {
+        tape: RecordedResponseTape,
+        live_steps_remaining: usize,
+    },
 }
 
 impl ChatStepSource {
@@ -606,6 +630,16 @@ impl ChatStepSource {
 
     pub fn recorded_prefix_then_live(tape: RecordedResponseTape) -> Self {
         Self::RecordedPrefixThenLive(tape)
+    }
+
+    pub fn recorded_prefix_then_live_steps(
+        tape: RecordedResponseTape,
+        live_steps_remaining: usize,
+    ) -> Self {
+        Self::RecordedPrefixThenLiveSteps {
+            tape,
+            live_steps_remaining,
+        }
     }
 
     async fn next_step<R: Router>(
@@ -622,6 +656,19 @@ impl ChatStepSource {
             Self::RecordedPrefixThenLive(_) => {
                 ploke_llm::chat_step_with_attempts(client, req, cfg).await
             }
+            Self::RecordedPrefixThenLiveSteps { tape, .. } if tape.remaining() > 0 => {
+                tape.next_chat_step()
+            }
+            Self::RecordedPrefixThenLiveSteps {
+                live_steps_remaining,
+                ..
+            } if *live_steps_remaining > 0 => {
+                *live_steps_remaining = live_steps_remaining.saturating_sub(1);
+                ploke_llm::chat_step_with_attempts(client, req, cfg).await
+            }
+            Self::RecordedPrefixThenLiveSteps { .. } => Err(ChatStepError::new(
+                LlmError::ChatStep(REPLAY_LIVE_STEP_LIMIT_REACHED.to_string()),
+            )),
         }
     }
 }
@@ -643,9 +690,24 @@ static REQUEST_TAP: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg(feature = "test_harness")]
+static RESPONSE_TAP: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<RecordedResponse>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
 enum InstalledChatStepSource {
     Recorded(RecordedResponseTape),
     RecordedPrefixThenLive(RecordedResponseTape),
+    /// Test-harness installer for branchable replay probes.
+    ///
+    /// This is intentionally keyed in the same global slot as the existing
+    /// recorded tape installers so only one chat-step source can be active for
+    /// a session. `ploke-eval` owns the CLI semantics; this enum only carries
+    /// the session-level source that `take_recorded_chat_step_source` consumes.
+    RecordedPrefixThenLiveSteps {
+        tape: RecordedResponseTape,
+        live_steps: usize,
+    },
 }
 
 #[cfg(feature = "test_harness")]
@@ -655,6 +717,16 @@ pub struct RequestTapGuard;
 impl Drop for RequestTapGuard {
     fn drop(&mut self) {
         clear_request_tap();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub struct ResponseTapGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for ResponseTapGuard {
+    fn drop(&mut self) {
+        clear_response_tap();
     }
 }
 
@@ -674,6 +746,22 @@ pub fn install_recorded_response_prefix_then_live(tape: RecordedResponseTape) {
         .lock()
         .expect("recorded response tape lock should not be poisoned");
     *guard = Some(InstalledChatStepSource::RecordedPrefixThenLive(tape));
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_prefix_then_live_steps(
+    tape: RecordedResponseTape,
+    live_steps: usize,
+) {
+    // Used by replay probes that need "advance once, report, then stop"
+    // behavior. The recorded prefix preserves historical model output; the
+    // live-step limit prevents the headless TUI attempt from running to a full
+    // terminal edit/retry outcome before the operator can inspect the tools.
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(InstalledChatStepSource::RecordedPrefixThenLiveSteps { tape, live_steps });
 }
 
 #[cfg(feature = "test_harness")]
@@ -707,6 +795,29 @@ pub fn clear_request_tap() {
 }
 
 #[cfg(feature = "test_harness")]
+pub fn install_response_tap(sender: std::sync::mpsc::Sender<RecordedResponse>) -> ResponseTapGuard {
+    // Captures provider envelopes after parsing, including recorded responses
+    // and live responses. `ploke-eval` converts these back into typed
+    // `RawFullResponseRecord` lines so a live-step probe can be continued by a
+    // later CLI invocation without inventing a second persisted shape.
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    *guard = Some(sender);
+    ResponseTapGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_response_tap() {
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
 fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
     let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
     let guard = lock
@@ -721,6 +832,33 @@ fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
 fn capture_request_for_tap<R: Router>(_req: &ChatCompRequest<R>) {}
 
 #[cfg(feature = "test_harness")]
+fn capture_response_for_tap(response_index: usize, response: &OpenAiResponse) {
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    if let Some(sender) = guard.as_ref() {
+        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
+    }
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn capture_response_for_tap(_response_index: usize, _response: &OpenAiResponse) {}
+
+#[cfg(feature = "test_harness")]
+fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
+    // This sentinel is not a model failure. It is the intentional breakpoint
+    // used by `RecordedPrefixThenLiveSteps` after the allowed live responses
+    // have been consumed and their tool results are already in the request.
+    matches!(error, LlmError::ChatStep(message) if message == REPLAY_LIVE_STEP_LIMIT_REACHED)
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn is_replay_live_step_limit_error(_error: &LlmError) -> bool {
+    false
+}
+
+#[cfg(feature = "test_harness")]
 pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
     let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
     let mut guard = lock
@@ -732,6 +870,9 @@ pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
             InstalledChatStepSource::Recorded(tape) => ChatStepSource::recorded(tape),
             InstalledChatStepSource::RecordedPrefixThenLive(tape) => {
                 ChatStepSource::recorded_prefix_then_live(tape)
+            }
+            InstalledChatStepSource::RecordedPrefixThenLiveSteps { tape, live_steps } => {
+                ChatStepSource::recorded_prefix_then_live_steps(tape, live_steps)
             }
         })
         .unwrap_or_else(ChatStepSource::live)
@@ -899,6 +1040,12 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 let provider_exhausted = provider_retry_exhausted(&provider_attempts);
                 report.record_chat_step(chain_index, provider_timing.clone(), provider_attempts);
                 let err = chat_step_error.source;
+                if is_replay_live_step_limit_error(&err) {
+                    report.outcome = SessionOutcome::Completed;
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
                 let allowed = allowed_tool_names();
                 let semantic_context = base_error_context(
                     attempts,
@@ -1034,6 +1181,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             chain_index,
             &full_response,
         );
+        capture_response_for_tap(chain_index, &full_response);
 
         let token_usage = full_response.usage;
         if let Some(resp_tokens) = token_usage {
@@ -2744,6 +2892,74 @@ mod tests {
                 .any(|content| content.contains("live tail after recorded prefix")),
             "expected live-tail assistant update, got {assistant_updates:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_can_replay_prefix_then_take_one_live_step() {
+        let _router_guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let responses = vec![malformed_tool_call_response(2)];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, _state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let recorded_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, recorded_response)]);
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _request_tap = install_request_tap(request_tx);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let _response_tap = install_response_tap(response_tx);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+
+        server.await.expect("server task");
+        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "exactly one live step should reach the provider"
+        );
+        assert_eq!(
+            captured_requests.len(),
+            3,
+            "expected recorded request, live request, then step-boundary request"
+        );
+        assert_eq!(
+            captured_responses.len(),
+            2,
+            "expected recorded and one live provider response"
+        );
+        assert_eq!(captured_responses[0].index(), 0);
+        assert_eq!(captured_responses[1].index(), 1);
     }
 
     #[test]
