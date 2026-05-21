@@ -21,6 +21,14 @@ use crate::app::view::components::model_browser::{
 };
 use crate::app_state::AppState;
 
+pub(crate) const MODEL_BROWSER_HELP_TEXT: &str = "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
+     Source badges: [openrouter]=OpenRouter catalog + provider endpoints; [google]=direct Google catalog route\n\
+     Overlapping model ids use the route shown by the selected row\n\
+     Save/Load/Search:\n\
+     - model save [path] [--with-keys]\n\
+     - model load [path]\n\
+     - model search <keyword>";
+
 #[derive(Debug)]
 pub enum ActiveOverlay {
     Config(ConfigOverlayState),
@@ -262,16 +270,10 @@ impl OverlayManager {
 
         // Footer: bottom-right help toggle or expanded help
         if overlay.help_visible {
-            let help = Paragraph::new(
-                "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
-                 Save/Load/Search:\n\
-                 - model save [path] [--with-keys]\n\
-                 - model load [path]\n\
-                 - model search <keyword>",
-            )
-            .style(overlay_style)
-            .block(Block::bordered().title(" Help ").style(overlay_style))
-            .wrap(Wrap { trim: true });
+            let help = Paragraph::new(MODEL_BROWSER_HELP_TEXT)
+                .style(overlay_style)
+                .block(Block::bordered().title(" Help ").style(overlay_style))
+                .wrap(Wrap { trim: true });
             frame.render_widget(help, footer_area);
         } else {
             let hint = Paragraph::new(" ? Help ")
@@ -396,4 +398,16 @@ impl OverlayManager {
     }
 
     // Approvals uses the Overlay trait render implementation.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MODEL_BROWSER_HELP_TEXT;
+
+    #[test]
+    fn model_browser_help_explains_source_badges() {
+        assert!(MODEL_BROWSER_HELP_TEXT.contains("[openrouter]=OpenRouter catalog"));
+        assert!(MODEL_BROWSER_HELP_TEXT.contains("[google]=direct Google catalog route"));
+        assert!(MODEL_BROWSER_HELP_TEXT.contains("Overlapping model ids use the route shown"));
+    }
 }

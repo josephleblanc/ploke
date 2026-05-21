@@ -2003,6 +2003,7 @@ impl App {
                     supports_tools,
                     // Provider rows populated later
                     providers: Vec::new(),
+                    direct_route: m.route_source.is_direct_google(),
                     expanded: false,
                     loading_providers: false,
                     pending_select: false,

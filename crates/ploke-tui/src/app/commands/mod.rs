@@ -99,6 +99,7 @@ const HELP_TAIL: &str = r#"    Keyboard shortcuts (Normal mode):
       ↑/↓ or j/k - Navigate
       Enter/Space - Expand/collapse details
       s - Select and set active model
+      [openrouter] rows use OpenRouter provider endpoints; [google] rows use direct Google routes
       q/Esc - Close
 
     Embedding Browser (opened via 'embedding search <keyword>'):
@@ -483,6 +484,8 @@ mod tests {
         assert!(help.contains("Workspace commands:"));
         assert!(help.contains("Keyboard shortcuts (Normal mode):"));
         assert!(help.contains("Model Browser (opened via 'model search <keyword>'):"));
+        assert!(help.contains("[openrouter] rows use OpenRouter provider endpoints"));
+        assert!(help.contains("[google] rows use direct Google routes"));
     }
 
     #[test]

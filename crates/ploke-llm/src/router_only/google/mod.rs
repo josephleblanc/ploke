@@ -518,6 +518,48 @@ mod tests {
     }
 
     #[test]
+    fn google_models_fixture_adapts_to_direct_registry_rows() {
+        static RAW: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test_data/google/openai_models.json"
+        ));
+        let response: <Google as HasModels>::Response =
+            serde_json::from_str(RAW).expect("Google OpenAI-compatible models fixture parses");
+
+        let items = response
+            .into_iter()
+            .map(crate::request::models::ResponseItem::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(items.len(), 5);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.route_source.is_direct_google()),
+            "Google fixture rows must retain direct route provenance: {items:#?}"
+        );
+
+        let flash = items
+            .iter()
+            .find(|item| item.id.to_string() == "google/gemini-2.5-flash")
+            .expect("flash model");
+        assert!(flash.supports_tools());
+        assert_eq!(flash.canonical.as_ref(), Some(&flash.id));
+        assert_eq!(flash.pricing.prompt, 0.0);
+
+        for item in items.iter().filter(|item| {
+            let id = item.id.to_string();
+            id.contains("embedding") || id.contains("imagen") || id.contains("veo-")
+        }) {
+            assert!(
+                !item.supports_tools(),
+                "{} should not advertise tools",
+                item.id
+            );
+        }
+    }
+
+    #[test]
     fn google_embedding_model_adapter_does_not_advertise_tool_support() {
         let response: <Google as HasModels>::Response = serde_json::from_value(json!({
             "object": "list",
@@ -591,6 +633,8 @@ mod tests {
         }
 
         let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+        let typed_response: <Google as HasModels>::Response =
+            serde_json::from_value(response_value.clone())?;
         let models = response_value
             .get("data")
             .and_then(|value| value.as_array())
@@ -601,6 +645,13 @@ mod tests {
                 .iter()
                 .any(|model| model.get("id").and_then(|id| id.as_str()).is_some()),
             "expected at least one model id in Google models response: {response_value}"
+        );
+        assert!(
+            typed_response
+                .into_iter()
+                .map(crate::request::models::ResponseItem::from)
+                .any(|item| item.route_source.is_direct_google()),
+            "expected live Google models response to adapt into direct route rows"
         );
 
         Ok(())
