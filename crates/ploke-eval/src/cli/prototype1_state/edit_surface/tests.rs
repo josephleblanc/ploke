@@ -126,20 +126,53 @@ fn broad_objective_spec(summary: &str) -> surface::ObjectiveSpec {
 fn live_openrouter_env_or_skip(test_name: &str) -> Option<ploke_tui::test_harness::OpenRouterEnv> {
     let env = ploke_tui::test_harness::openrouter_env();
     if env.is_none() {
-        let strict_live = std::env::var("PLOKE_RUN_LIVE_TESTS")
-            .ok()
-            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
         let message = format!(
             "skipping {test_name}: no OpenRouter credentials found through ploke-tui \
              test_harness::openrouter_env() (OPENROUTER_API_KEY process env or .env); \
              live 7.6 Router path was not exercised"
         );
-        if strict_live {
+        if strict_live_tests_requested() {
             panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
         }
         eprintln!("{message}");
     }
     env
+}
+
+#[cfg(feature = "live_api_tests")]
+fn live_google_env_or_skip(test_name: &str) -> bool {
+    use ploke_llm::router_only::google::Google;
+
+    let route_config_available = Google::route_config_available().is_ok();
+    let auth_config_available = Google::auth_config_available().is_ok();
+    if route_config_available && auth_config_available {
+        return true;
+    }
+
+    let missing = match (route_config_available, auth_config_available) {
+        (false, false) => {
+            "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth"
+        }
+        (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
+        (true, false) => "Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth",
+        (true, true) => unreachable!("handled above"),
+    };
+    let message = format!(
+        "skipping {test_name}: active eval model uses the direct Google route, but missing {missing}; \
+         live 7.6 Router path was not exercised"
+    );
+    if strict_live_tests_requested() {
+        panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
+    }
+    eprintln!("{message}");
+    false
+}
+
+#[cfg(feature = "live_api_tests")]
+fn strict_live_tests_requested() -> bool {
+    std::env::var("PLOKE_RUN_LIVE_TESTS")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
 }
 
 #[test]
@@ -1881,9 +1914,36 @@ async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
 
     const TEST_NAME: &str = "live_tui_router_staged_proposal_lowers_to_checked_artifact_delta";
 
-    if live_openrouter_env_or_skip(TEST_NAME).is_none() {
+    let model_id = crate::model_registry::load_active_model()
+        .expect("load active eval model config")
+        .model_id;
+    let direct_google = crate::model_registry::load_model_registry()
+        .expect("load eval model registry")
+        .data
+        .iter()
+        .find(|item| item.id == model_id)
+        .is_some_and(|item| item.route_source.is_direct_google());
+    if direct_google {
+        if !live_google_env_or_skip(TEST_NAME) {
+            return;
+        }
+    } else if live_openrouter_env_or_skip(TEST_NAME).is_none() {
         return;
     }
+    let provider_key = if direct_google {
+        None
+    } else {
+        Some(
+            crate::provider_prefs::load_provider_for_model(&model_id)
+                .expect("load eval provider preferences")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "OpenRouter-routed active eval model {model_id} has no selected provider in provider preferences"
+                    )
+                }),
+        )
+    };
+    let _llm_guard = crate::test_support::llm_lock().lock().await;
 
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
@@ -1898,28 +1958,6 @@ async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
         .setup_loaded_standalone_crate(fixture_root.clone())
         .await;
     let state = runtime.state_arc();
-    let model_id = crate::model_registry::load_active_model()
-        .expect("load active eval model config")
-        .model_id;
-    let direct_google = crate::model_registry::load_model_registry()
-        .expect("load eval model registry")
-        .data
-        .iter()
-        .find(|item| item.id == model_id)
-        .is_some_and(|item| item.route_source.is_direct_google());
-    let provider_key = if direct_google {
-        None
-    } else {
-        Some(
-            crate::provider_prefs::load_provider_for_model(&model_id)
-                .expect("load eval provider preferences")
-                .unwrap_or_else(|| {
-                    panic!(
-                        "OpenRouter-routed active eval model {model_id} has no selected provider in provider preferences"
-                    )
-                }),
-        )
-    };
     {
         use ploke_llm::router_only::{RouterVariants, google::Google, openrouter::OpenRouter};
 
@@ -2154,28 +2192,43 @@ Use exactly this JSON payload:
     );
     let request_core = ploke_llm::request::ChatCompReqCore::default().with_model(model_id.clone());
     let default_core = ploke_llm::request::ChatCompReqCore::default();
-    let provider_preferences = {
+    let provider_preferences = if direct_google {
+        None
+    } else {
         let cfg = state.config.read().await;
-        cfg.model_registry
-            .models
-            .get(&model_id.key)
-            .and_then(|prefs| prefs.selected_provider_preferences())
-            .expect("selected provider preferences")
+        Some(
+            cfg.model_registry
+                .models
+                .get(&model_id.key)
+                .and_then(|prefs| prefs.selected_provider_preferences())
+                .expect("selected provider preferences"),
+        )
     };
     let params = ploke_llm::LLMParameters::default();
     // The live TUI path still lacks full outbound request capture. Bind only
     // the current client-policy shape plus explicit unknown payload hashes to
     // the actual staged live proposal identity, without claiming replay or
     // provider-side completeness.
-    let live_request_policy_receipt = request_policy::Receipt::openrouter(
-        artifact.reference().id().clone(),
-        &objective,
-        &request_core,
-        &default_core,
-        &params,
-        &params,
-        Some(&provider_preferences),
-    )
+    let live_request_policy_receipt = if direct_google {
+        request_policy::Receipt::google(
+            artifact.reference().id().clone(),
+            &objective,
+            &request_core,
+            &default_core,
+            &params,
+            &params,
+        )
+    } else {
+        request_policy::Receipt::openrouter(
+            artifact.reference().id().clone(),
+            &objective,
+            &request_core,
+            &default_core,
+            &params,
+            &params,
+            provider_preferences.as_ref(),
+        )
+    }
     .bind_proposal(staged.proposal_id.to_string(), "run:live-router-7-6")
     .with_request_payload_hash(request_policy::PayloadHash::unknown(
         "live 7.6 path does not expose serialized outbound request payload",

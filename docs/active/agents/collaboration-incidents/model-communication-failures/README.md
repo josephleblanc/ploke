@@ -37,3 +37,7 @@ could no longer tell what concrete action was being recommended.
   The agent used "typed reconstruction" language from the instruction stack,
   which biased future work toward one-time subset DTOs instead of existing
   canonical types, borrowed accessors, or owner-schema extensions.
+- [`2026-05-21-live-router-test-control-flow-understated.md`](2026-05-21-live-router-test-control-flow-understated.md)
+  The agent diagnosed a live router test from the observed abort and config
+  mismatch without first restating the test's own route branch, event wait, and
+  assertion chain.

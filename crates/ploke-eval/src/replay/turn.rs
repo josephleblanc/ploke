@@ -430,6 +430,7 @@ mod tests {
 
     #[test]
     fn install_prefix_then_live_at_uses_resolved_assistant_message() {
+        let _llm_guard = crate::test_support::llm_lock().blocking_lock();
         let _guard = RecordedTapeGuard;
         ploke_tui::llm::clear_recorded_response_tape();
         let root = tempfile::tempdir().expect("tempdir");

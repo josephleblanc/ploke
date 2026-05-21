@@ -302,12 +302,54 @@ impl Receipt {
         default_params: &LLMParameters,
         provider: Option<&ProviderPreferences>,
     ) -> Self {
+        Self::for_router(
+            "openrouter",
+            base_artifact_id,
+            objective,
+            request,
+            defaults,
+            request_params,
+            default_params,
+            provider,
+        )
+    }
+
+    pub(crate) fn google(
+        base_artifact_id: ArtifactId,
+        objective: &surface::EditObjective,
+        request: &ChatCompReqCore,
+        defaults: &ChatCompReqCore,
+        request_params: &LLMParameters,
+        default_params: &LLMParameters,
+    ) -> Self {
+        Self::for_router(
+            "google",
+            base_artifact_id,
+            objective,
+            request,
+            defaults,
+            request_params,
+            default_params,
+            None,
+        )
+    }
+
+    fn for_router(
+        router: impl Into<String>,
+        base_artifact_id: ArtifactId,
+        objective: &surface::EditObjective,
+        request: &ChatCompReqCore,
+        defaults: &ChatCompReqCore,
+        request_params: &LLMParameters,
+        default_params: &LLMParameters,
+        provider: Option<&ProviderPreferences>,
+    ) -> Self {
         let receipt = Self {
             schema_version: 1,
             base_artifact_id,
             objective: ObjectiveBinding::from_objective(objective),
             proposal: ProposalBinding::default(),
-            router: "openrouter".to_string(),
+            router: router.into(),
             model: Effective::new(
                 request.model.to_string(),
                 if request.model == defaults.model {
@@ -646,6 +688,57 @@ mod tests {
         );
 
         assert_ne!(left.client_policy_hash, right.client_policy_hash);
+    }
+
+    #[test]
+    fn google_receipt_uses_google_router_without_openrouter_provider_policy() {
+        let defaults = ChatCompReqCore::default();
+        let request = defaults
+            .clone()
+            .with_model(ModelId::from_str("google/gemini-2.5-flash").expect("model"));
+
+        let receipt = Receipt::google(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &request,
+            &defaults,
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+        );
+
+        assert_eq!(receipt.router, "google");
+        assert!(receipt.provider.is_none());
+        receipt
+            .verify_current_client_policy_shape()
+            .expect("google receipt should verify current policy shape");
+    }
+
+    #[test]
+    fn request_policy_receipt_hash_changes_when_router_changes() {
+        let defaults = ChatCompReqCore::default();
+        let request = defaults
+            .clone()
+            .with_model(ModelId::from_str("google/gemini-2.5-flash").expect("model"));
+
+        let openrouter = Receipt::openrouter(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &request,
+            &defaults,
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+            None,
+        );
+        let google = Receipt::google(
+            ArtifactId::new("artifact:base"),
+            &objective(),
+            &request,
+            &defaults,
+            &LLMParameters::default(),
+            &LLMParameters::default(),
+        );
+
+        assert_ne!(openrouter.client_policy_hash, google.client_policy_hash);
     }
 
     #[test]

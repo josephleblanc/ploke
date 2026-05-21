@@ -4137,8 +4137,7 @@ mod tests {
     }
 
     fn recorded_replay_test_mutex() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        crate::test_support::llm_lock()
     }
 
     struct ClearRecordedTapeOnDrop;

@@ -524,7 +524,7 @@ mod tests {
         let request = google_json_request(model, &cfg, &prompt).expect("google request");
 
         let value = serde_json::to_value(&request).expect("serialize request");
-        assert_eq!(value["model"], "gemini-2.5-flash");
+        assert_eq!(value["model"], "google/gemini-2.5-flash");
         assert_eq!(value["response_format"]["type"], "json_object");
         assert_eq!(value["max_tokens"], 64);
         assert!(value.get("provider").is_none());
