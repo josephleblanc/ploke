@@ -2,10 +2,23 @@
 
 Shared planning area for Prototype 1 records, playback, loop evaluation, and frontend observability work.
 
-Status guide: `handoffs.md`, `implementation-status.md`, and the typed-persistence spine console are restart routing surfaces; design docs capture intent and must be checked against current code, typed records, and run artifacts before implementation claims are repeated.
+Status guide: `handoffs.md` is the restart routing surface for this track.
+Older dated handoffs and typed-persistence-spine queues are historical inputs
+unless the current runtime-playback handoff revives them explicitly. Design docs
+capture intent and must be checked against current code, typed records, and run
+artifacts before implementation claims are repeated.
 
 - [`handoffs.md`](handoffs.md)
   Current handoff list for this track, ordered by use during restart.
+- [`../../agents/2026-05-21_runtime-playback-observability-handoff.md`](../../agents/2026-05-21_runtime-playback-observability-handoff.md)
+  Current restart packet for runtime playback, agent-turn timelines,
+  graph-backed projections, shared cursor state, and implementation guardrails.
+- [`../../agents/2026-05-21_runtime-playback-implementation-handoff.md`](../../agents/2026-05-21_runtime-playback-implementation-handoff.md)
+  Current code-facing restart packet for the first `ploke-tree`
+  `RuntimePlaybackRef` slice and the agent-turn drilldown follow-on.
+- [`../../../workflow/evalnomicon/drafts/observability/runtime-playback/`](../../../workflow/evalnomicon/drafts/observability/runtime-playback/)
+  Current durable design folder for graph-backed runtime playback and
+  agent-turn drilldowns.
 - [`plan.md`](plan.md)
   Ordered implementation plan for records, playback roundtrips, loop-run evaluation, benchmark evidence, and frontend direction.
 - [`implementation-status.md`](implementation-status.md)
@@ -21,11 +34,14 @@ Status guide: `handoffs.md`, `implementation-status.md`, and the typed-persisten
 - [`typed-persistence-survey-orchestration.md`](typed-persistence-survey-orchestration.md)
   JSONL-based sub-agent workflow for surveying typed persistence surfaces without overloading the main context.
 - [`typed-persistence-spine/`](typed-persistence-spine/README.md)
-  Current indexed workspace for typed-persistence survey artifacts, implementation slices, traceability, reports, and family drilldowns.
+  Historical indexed workspace for typed-persistence survey artifacts,
+  implementation slices, traceability, reports, and family drilldowns.
 - [`typed-persistence-spine/operating-console.md`](typed-persistence-spine/operating-console.md)
-  Operating console for the typed-persistence lane: current workflow, roadmap, doc admission, and drift checks.
+  Historical operating console for the typed-persistence lane. Verify against
+  the runtime-playback handoff before using.
 - [`typed-persistence-spine/implementation-slices.md`](typed-persistence-spine/implementation-slices.md)
-  Queue of record for typed-persistence implementation slices. Use this instead of `.codex/task-stack.jsonl` for this lane's next task.
+  Historical typed-persistence implementation queue. Treat statuses and next
+  slices as stale until revalidated.
 - [`typed-persistence-spine/ui-drilldown-contract.md`](typed-persistence-spine/ui-drilldown-contract.md)
   Data contract for the interactive tree UI questions each typed record/replay slice must make answerable.
 - [`typed-persistence-spine/traceability-matrix.md`](typed-persistence-spine/traceability-matrix.md)
@@ -45,4 +61,5 @@ Status guide: `handoffs.md`, `implementation-status.md`, and the typed-persisten
 - [`google-api.md`](google-api.md)
   External API notes for this track; verify provider/API details before use.
 - [`../../agents/2026-05-11_mbe-oracle-calibration-handoff.md`](../../agents/2026-05-11_mbe-oracle-calibration-handoff.md)
-  Active oracle-calibration handoff for MBE controls, compile-failed loop candidates, and benchmark-base patch export questions.
+  Historical oracle-calibration handoff for MBE controls, compile-failed loop
+  candidates, and benchmark-base patch export questions.
