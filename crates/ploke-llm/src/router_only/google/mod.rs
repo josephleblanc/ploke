@@ -54,12 +54,13 @@ impl HasModelId for Model {
 
 impl From<Model> for models::ResponseItem {
     fn from(model: Model) -> Self {
+        let normalized_slug = normalize_google_model_slug(&model.id);
         let model_id = model.model_id();
-        let supported_parameters = supported_parameters_for_google_model(&model.id);
+        let supported_parameters = supported_parameters_for_google_model(&normalized_slug);
 
         Self {
             id: model_id.clone(),
-            name: ModelName::new(model.id.as_str()),
+            name: ModelName::new(normalized_slug.as_str()),
             created: model.created.unwrap_or_default(),
             description: ArcStr::from(
                 "Google OpenAI-compatible model metadata; pricing and full capability metadata are not included by /openai/models.",
@@ -78,6 +79,7 @@ impl From<Model> for models::ResponseItem {
 }
 
 fn google_model_id(slug: ModelSlug) -> ModelId {
+    let slug = normalize_google_model_slug(&slug);
     ModelId {
         key: ModelKey {
             author: Author::new("google").expect("static Google author is valid"),
@@ -85,6 +87,13 @@ fn google_model_id(slug: ModelSlug) -> ModelId {
         },
         variant: None,
     }
+}
+
+fn normalize_google_model_slug(slug: &ModelSlug) -> ModelSlug {
+    let raw = slug.as_str();
+    let normalized = raw.strip_prefix("models/").unwrap_or(raw);
+    ModelSlug::new(normalized)
+        .expect("Google model-list slug should remain valid after prefix strip")
 }
 
 fn google_openai_architecture() -> Architecture {
@@ -515,6 +524,31 @@ mod tests {
         assert_eq!(item.created, 1710000000);
         assert!(item.supports_tools());
         assert_eq!(item.architecture.tokenizer, crate::Tokenizer::Gemini);
+    }
+
+    #[test]
+    fn google_models_response_strips_models_prefix_for_registry_identity() {
+        let response: <Google as HasModels>::Response = serde_json::from_value(json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "models/gemini-2.5-flash",
+                    "object": "model",
+                    "created": 1710000000,
+                    "owned_by": "google"
+                }
+            ]
+        }))
+        .expect("Google OpenAI-compatible models response parses");
+
+        let model = response.into_iter().next().expect("one model");
+        assert_eq!(model.model_id().to_string(), "google/gemini-2.5-flash");
+
+        let item: crate::request::models::ResponseItem = model.into();
+        assert_eq!(item.id.to_string(), "google/gemini-2.5-flash");
+        assert_eq!(item.name.as_str(), "gemini-2.5-flash");
+        assert!(item.supports_tools());
+        assert!(item.route_source.is_direct_google());
     }
 
     #[test]
