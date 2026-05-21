@@ -36,6 +36,9 @@ pub struct Init {
 pub struct Status {
     #[command(flatten)]
     pub(super) board: BoardArg,
+    /// Show a bounded routine summary instead of the full board.
+    #[arg(long)]
+    pub(super) brief: bool,
 }
 
 /// Add or update a worker slot.
@@ -190,7 +193,13 @@ impl Status {
     pub(super) fn execute(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
         let path = resolve(ctx, &self.board.board)?;
         let board = Board::load(&path)?;
-        Ok(OrchestrateOutput::Status(board.status(ctx, &path)?))
+        if self.brief {
+            Ok(OrchestrateOutput::StatusBrief(
+                board.bounded_status(ctx, &path)?,
+            ))
+        } else {
+            Ok(OrchestrateOutput::Status(board.status(ctx, &path)?))
+        }
     }
 }
 

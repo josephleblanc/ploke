@@ -1,6 +1,8 @@
 use serde::Serialize;
 
-use super::{Blocker, BoardStatus, LaneSpec, LaneValidation, Task, UsageSummary, WorkerSlot};
+use super::{
+    Blocker, BoardStatus, BoundedStatus, LaneSpec, LaneValidation, Task, UsageSummary, WorkerSlot,
+};
 
 /// Command output for orchestration commands.
 #[derive(Debug, Clone, Serialize)]
@@ -15,6 +17,8 @@ pub enum OrchestrateOutput {
     },
     /// Board status summary.
     Status(BoardStatus),
+    /// Bounded routine board status.
+    StatusBrief(BoundedStatus),
     /// Worker was added or updated.
     Worker {
         /// Worker slot after the change.

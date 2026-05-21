@@ -169,7 +169,7 @@ slices.
 - [x] Sync `orchestrator-conveyor` skill documentation.
 - [x] Split `xtask/src/commands/orchestrate.rs` into smaller modules.
 - [x] Add local usage counters under `.orchestrator/`.
-- [ ] Add bounded status projection.
+- [x] Add bounded status projection.
 - [ ] Add task-set model and direct `status --set`.
 - [ ] Add blocker resolution.
 - [ ] Add task aging and packet staleness.

@@ -87,9 +87,12 @@ fn usage_command_counts_orchestrate_command_paths() {
     })
     .execute(&ctx)
     .expect("init board");
-    Orchestrate::Status(Status { board: board_arg() })
-        .execute(&ctx)
-        .expect("status board");
+    Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: false,
+    })
+    .execute(&ctx)
+    .expect("status board");
 
     let output = Orchestrate::Usage(Usage { board: board_arg() })
         .execute(&ctx)
@@ -102,6 +105,73 @@ fn usage_command_counts_orchestrate_command_paths() {
     assert_eq!(usage_count(&summary, "init"), Some(1));
     assert_eq!(usage_count(&summary, "status"), Some(1));
     assert_eq!(usage_count(&summary, "usage"), Some(1));
+}
+
+#[test]
+fn status_brief_returns_bounded_projection() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "status/brief".to_string(),
+        lane: "tooling".to_string(),
+        title: "Add bounded status".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "status/brief".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign task");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status output");
+    };
+    assert_eq!(status.board, ".orchestrator/board.json");
+    assert_eq!(status.blockers, 0);
+    assert_eq!(status.workers.len(), 1);
+    assert_eq!(status.workers[0].id, "worker-a");
+    assert_eq!(status.workers[0].active.as_deref(), Some("status/brief"));
+    assert_eq!(status.workers[0].queue_len, 0);
+    assert_eq!(task_state_count(&status, "assigned_active"), Some(1));
+}
+
+fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {
+    status
+        .tasks_by_state
+        .iter()
+        .find(|entry| entry.state == state)
+        .map(|entry| entry.count)
 }
 
 fn usage_count(summary: &UsageSummary, command: &str) -> Option<u64> {

@@ -13,6 +13,7 @@ mod lanes;
 mod output;
 mod packet;
 mod reports;
+mod status;
 #[cfg(test)]
 mod tests;
 mod usage;
@@ -26,6 +27,7 @@ pub use commands::{
 };
 pub use lanes::{LaneCommand, LaneSpec, LaneValidation};
 pub use output::OrchestrateOutput;
+pub use status::BoundedStatus;
 pub use usage::UsageSummary;
 
 /// Commands for the agent orchestration board.
