@@ -242,12 +242,21 @@ impl AddTask {
                     .with_recovery("Use a new task id or update the existing task manually."),
             );
         }
+        let created_at = now();
         let task = Task {
             id: self.id.clone(),
             lane: self.lane.clone(),
             title: self.title.clone(),
             priority: self.priority,
             state: TaskState::NotStarted,
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            assigned_at: None,
+            activated_at: None,
+            completed_at: None,
+            reviewed_at: None,
+            blocked_at: None,
+            unblocked_at: None,
             allowed_edit: self.allowed_edit.clone(),
             forbidden_edit: self.forbidden_edit.clone(),
             docs: self.docs.clone(),
@@ -343,14 +352,12 @@ impl Packet {
         let mut board = Board::load(&path)?;
         board.ensure_worker(&self.worker)?;
         let packet_path = board.write_packet(ctx, &self.worker)?;
-        if let Some(worker) = board.workers.get_mut(&self.worker) {
-            worker.packet_path = Some(display(ctx, &packet_path)?);
-        }
-        board.record(format!("packet generated for {}", self.worker));
+        let packet_path_display = display(ctx, &packet_path)?;
+        board.record_packet_generated(&self.worker, packet_path_display.clone());
         board.save(&path)?;
         Ok(OrchestrateOutput::Packet {
             worker: self.worker.clone(),
-            path: display(ctx, &packet_path)?,
+            path: packet_path_display,
         })
     }
 }

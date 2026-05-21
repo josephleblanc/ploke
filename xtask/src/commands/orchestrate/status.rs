@@ -1,11 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::commands::{CommandContext, XtaskError};
 
+use super::board::parse_time;
 use super::{Board, TaskState, WorkerRole, display, resolve};
+
+const ACTIVE_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
+const REVIEW_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
 
 /// Bounded routine board status.
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +30,9 @@ pub struct BoundedStatus {
     pub(super) blockers: usize,
     /// Lane ownership summary.
     pub(super) lanes: Vec<LaneStatus>,
+    /// Warning-only stale state signals.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) warnings: Vec<StatusWarning>,
 }
 
 /// Task count for one lifecycle state.
@@ -55,6 +63,9 @@ pub struct WorkerStatus {
     pub(super) queue_in_filter: Option<usize>,
     /// Last packet path.
     pub(super) packet_path: Option<String>,
+    /// Last packet generation time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) packet_generated_at: Option<String>,
 }
 
 /// Bounded lane status.
@@ -68,6 +79,20 @@ pub struct LaneStatus {
     pub(super) docs: usize,
     /// Lane note count.
     pub(super) notes: usize,
+}
+
+/// Warning emitted by bounded status.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusWarning {
+    /// Machine-readable warning kind.
+    pub(super) kind: String,
+    /// Task or worker id the warning applies to.
+    pub(super) subject: String,
+    /// Human-readable warning summary.
+    pub(super) message: String,
+    /// Age in seconds when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) age_seconds: Option<i64>,
 }
 
 impl Board {
@@ -119,6 +144,7 @@ impl Board {
                     queue_len: worker.queue.len(),
                     queue_in_filter,
                     packet_path: worker.packet_path.clone(),
+                    packet_generated_at: worker.packet_generated_at.clone(),
                 }
             })
             .collect();
@@ -164,8 +190,98 @@ impl Board {
                 })
                 .count(),
             lanes,
+            warnings: self.status_warnings(task_filter.as_ref()),
         })
     }
+
+    fn status_warnings(
+        &self,
+        task_filter: Option<&std::collections::BTreeSet<String>>,
+    ) -> Vec<StatusWarning> {
+        let now = Utc::now();
+        let mut warnings = Vec::new();
+
+        for task in self
+            .tasks
+            .values()
+            .filter(|task| task_filter.map_or(true, |filter| filter.contains(&task.id)))
+        {
+            match &task.state {
+                TaskState::AssignedActive { .. } => {
+                    let timestamp = task.activated_at.as_deref().unwrap_or(&task.updated_at);
+                    if let Some(age) = age_seconds(timestamp, now) {
+                        if age > ACTIVE_STALE_AFTER_SECS {
+                            warnings.push(StatusWarning {
+                                kind: "stale_active_task".to_string(),
+                                subject: task.id.clone(),
+                                message: format!("active task has been active for {age} seconds"),
+                                age_seconds: Some(age),
+                            });
+                        }
+                    }
+                }
+                TaskState::CompleteUnreviewed { .. } => {
+                    let timestamp = task.completed_at.as_deref().unwrap_or(&task.updated_at);
+                    if let Some(age) = age_seconds(timestamp, now) {
+                        if age > REVIEW_STALE_AFTER_SECS {
+                            warnings.push(StatusWarning {
+                                kind: "stale_review_task".to_string(),
+                                subject: task.id.clone(),
+                                message: format!(
+                                    "completed task has waited {age} seconds for review"
+                                ),
+                                age_seconds: Some(age),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for worker in self.workers.values() {
+            let assigned_tasks: Vec<_> = worker
+                .active
+                .iter()
+                .chain(worker.queue.iter())
+                .filter(|task_id| task_filter.map_or(true, |filter| filter.contains(*task_id)))
+                .filter_map(|task_id| self.tasks.get(task_id))
+                .collect();
+            if assigned_tasks.is_empty() {
+                continue;
+            }
+            let Some(packet_generated_at) = worker.packet_generated_at.as_deref() else {
+                warnings.push(StatusWarning {
+                    kind: "missing_worker_packet".to_string(),
+                    subject: worker.id.clone(),
+                    message: "worker has assigned tasks but no generated packet".to_string(),
+                    age_seconds: None,
+                });
+                continue;
+            };
+            let Some(packet_time) = parse_time(packet_generated_at) else {
+                continue;
+            };
+            let stale = assigned_tasks.iter().any(|task| {
+                parse_time(&task.updated_at).is_some_and(|task_time| task_time > packet_time)
+            });
+            if stale {
+                warnings.push(StatusWarning {
+                    kind: "stale_worker_packet".to_string(),
+                    subject: worker.id.clone(),
+                    message: "worker packet is older than its assigned task state".to_string(),
+                    age_seconds: age_seconds(packet_generated_at, now),
+                });
+            }
+        }
+
+        warnings.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.subject.cmp(&b.subject)));
+        warnings
+    }
+}
+
+fn age_seconds(timestamp: &str, now: DateTime<Utc>) -> Option<i64> {
+    parse_time(timestamp).map(|then| (now - then).num_seconds())
 }
 
 impl TaskState {

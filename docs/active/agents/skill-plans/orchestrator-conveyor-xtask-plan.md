@@ -182,7 +182,7 @@ slices.
 - [x] Add task-set model and direct `status --set`.
 - [x] Add blocker resolution.
 - [x] Apply rust-review corrective slice for usage, lifecycle transitions, and filtered worker occupancy.
-- [ ] Add task aging and packet staleness.
+- [x] Add task aging and packet staleness.
 - [ ] Add board health check.
 - [ ] Add saved views and narrow filters.
 - [ ] Improve worker packet rendering.

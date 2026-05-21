@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{CommandContext, XtaskError};
@@ -88,6 +88,9 @@ pub struct WorkerSlot {
     pub(super) queue: Vec<String>,
     /// Last generated packet path.
     pub(super) packet_path: Option<String>,
+    /// Time when the packet path was last generated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) packet_generated_at: Option<String>,
     /// Retainer refresh threshold.
     pub(super) refresh_after_questions: u32,
     /// Number of answered retainer questions since refresh.
@@ -107,6 +110,30 @@ pub struct Task {
     pub(super) priority: u8,
     /// Current assignment state.
     pub(super) state: TaskState,
+    /// Creation time.
+    #[serde(default = "now")]
+    pub(super) created_at: String,
+    /// Last lifecycle update time.
+    #[serde(default = "now")]
+    pub(super) updated_at: String,
+    /// Last queue assignment time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) assigned_at: Option<String>,
+    /// Last active assignment time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) activated_at: Option<String>,
+    /// Last completion time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) completed_at: Option<String>,
+    /// Last review time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) reviewed_at: Option<String>,
+    /// Last block time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) blocked_at: Option<String>,
+    /// Last unblock time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) unblocked_at: Option<String>,
     /// Allowed edit surfaces.
     pub(super) allowed_edit: Vec<String>,
     /// Forbidden edit surfaces.
@@ -459,7 +486,8 @@ impl Board {
         self.ensure_task(task_id)?;
         self.ensure_worker(worker_id)?;
         self.ensure_task_unblocked(task_id, "assign")?;
-        self.assign_task_unchecked(task_id, worker_id, slot);
+        let at = now();
+        self.assign_task_unchecked(task_id, worker_id, slot, &at);
         let worker = self.workers.get(worker_id).expect("checked").clone();
         self.record(format!(
             "task {} assigned to {}{}",
@@ -481,12 +509,15 @@ impl Board {
         self.ensure_task(task_id)?;
         self.ensure_task_unblocked(task_id, "complete")?;
         let worker = self.assigned_worker(task_id);
+        let at = now();
         if let Some(task) = self.tasks.get_mut(task_id) {
             task.reports.extend(reports);
         }
         self.remove_task_from_workers(task_id);
         let task = self.tasks.get_mut(task_id).expect("checked");
         task.state = TaskState::CompleteUnreviewed { worker };
+        task.completed_at = Some(at.clone());
+        task.updated_at = at;
         let task = task.clone();
         self.record(format!("task {} completed", task_id));
         Ok(task)
@@ -513,7 +544,10 @@ impl Board {
         if let Some(report) = report {
             task.reports.push(report);
         }
+        let at = now();
         task.state = TaskState::CompleteReviewed;
+        task.reviewed_at = Some(at.clone());
+        task.updated_at = at;
         let task = task.clone();
         self.record(format!("task {} reviewed", task_id));
         Ok(task)
@@ -531,6 +565,7 @@ impl Board {
                     .with_recovery("Use a new blocker id."),
             );
         }
+        let at = now();
         self.remove_task_from_workers(task_id);
         let task = self.tasks.get_mut(task_id).expect("checked");
         if !task.blockers.iter().any(|existing| existing == &blocker.id) {
@@ -539,6 +574,8 @@ impl Board {
         task.state = TaskState::Blocked {
             blocker: blocker.id.clone(),
         };
+        task.blocked_at = Some(at.clone());
+        task.updated_at = at;
         let task = task.clone();
         self.blockers.insert(blocker.id.clone(), blocker.clone());
         self.record(format!("task {} blocked by {}", task_id, blocker.id));
@@ -563,6 +600,7 @@ impl Board {
             .clone();
         self.ensure_task(&task_id)?;
         self.ensure_next_worker(&next)?;
+        let at = now();
 
         {
             let blocker = self.blockers.get_mut(blocker_id).expect("checked");
@@ -572,7 +610,7 @@ impl Board {
                 ))
                 .with_recovery("Use an open blocker id."));
             }
-            blocker.resolved_at = Some(now());
+            blocker.resolved_at = Some(at.clone());
             blocker.resolution_summary = Some(summary);
             blocker.resolution_evidence = evidence;
         }
@@ -585,8 +623,14 @@ impl Board {
         if let Some(remaining) = remaining {
             let task = self.tasks.get_mut(&task_id).expect("checked");
             task.state = TaskState::Blocked { blocker: remaining };
+            task.unblocked_at = Some(at.clone());
+            task.updated_at = at.clone();
         } else {
-            self.apply_task_placement(&task_id, next);
+            self.apply_task_placement(&task_id, next, &at);
+            if let Some(task) = self.tasks.get_mut(&task_id) {
+                task.unblocked_at = Some(at.clone());
+                task.updated_at = at.clone();
+            }
         }
 
         let task = self.tasks.get(&task_id).expect("checked").clone();
@@ -595,7 +639,22 @@ impl Board {
         Ok((task, blocker))
     }
 
-    fn assign_task_unchecked(&mut self, task_id: &str, worker_id: &str, slot: AssignmentSlot) {
+    pub(super) fn record_packet_generated(&mut self, worker_id: &str, packet_path: String) {
+        let at = now();
+        if let Some(worker) = self.workers.get_mut(worker_id) {
+            worker.packet_path = Some(packet_path);
+            worker.packet_generated_at = Some(at);
+        }
+        self.record(format!("packet generated for {}", worker_id));
+    }
+
+    fn assign_task_unchecked(
+        &mut self,
+        task_id: &str,
+        worker_id: &str,
+        slot: AssignmentSlot,
+        at: &str,
+    ) {
         self.remove_task_from_workers(task_id);
         let worker = self.workers.get_mut(worker_id).expect("checked");
         match slot {
@@ -606,35 +665,45 @@ impl Board {
                         task.state = TaskState::AssignedQueued {
                             worker: worker_id.to_string(),
                         };
+                        task.assigned_at = Some(at.to_string());
+                        task.updated_at = at.to_string();
                     }
                 }
-                self.tasks.get_mut(task_id).expect("checked").state = TaskState::AssignedActive {
+                let task = self.tasks.get_mut(task_id).expect("checked");
+                task.state = TaskState::AssignedActive {
                     worker: worker_id.to_string(),
                 };
+                task.assigned_at = Some(at.to_string());
+                task.activated_at = Some(at.to_string());
+                task.updated_at = at.to_string();
             }
             AssignmentSlot::Queue => {
                 if !worker.queue.iter().any(|queued| queued == task_id) {
                     worker.queue.push(task_id.to_string());
                 }
-                self.tasks.get_mut(task_id).expect("checked").state = TaskState::AssignedQueued {
+                let task = self.tasks.get_mut(task_id).expect("checked");
+                task.state = TaskState::AssignedQueued {
                     worker: worker_id.to_string(),
                 };
+                task.assigned_at = Some(at.to_string());
+                task.updated_at = at.to_string();
             }
         }
     }
 
-    fn apply_task_placement(&mut self, task_id: &str, next: TaskPlacement) {
+    fn apply_task_placement(&mut self, task_id: &str, next: TaskPlacement, at: &str) {
         match next {
             TaskPlacement::NotStarted => {
                 if let Some(task) = self.tasks.get_mut(task_id) {
                     task.state = TaskState::NotStarted;
+                    task.updated_at = at.to_string();
                 }
             }
             TaskPlacement::Queued { worker } => {
-                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Queue);
+                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Queue, at);
             }
             TaskPlacement::Active { worker } => {
-                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Active);
+                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Active, at);
             }
         }
     }
@@ -675,6 +744,7 @@ impl WorkerSlot {
             active: None,
             queue: Vec::new(),
             packet_path: None,
+            packet_generated_at: None,
             refresh_after_questions: 5,
             answered_questions: 0,
         }
@@ -700,6 +770,12 @@ pub(super) fn display(ctx: &CommandContext, path: &Path) -> Result<String, Xtask
 
 pub(super) fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+pub(super) fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|parsed| parsed.with_timezone(&Utc))
 }
 
 pub(super) struct BoardLock {

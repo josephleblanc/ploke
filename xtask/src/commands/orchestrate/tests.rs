@@ -579,12 +579,278 @@ fn unblock_keeps_task_blocked_until_all_open_blockers_resolve() {
     assert_eq!(task.blockers, vec!["blocker-b"]);
 }
 
+#[test]
+fn lifecycle_transitions_record_task_timestamps() {
+    let (dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    let output = Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "timed/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Timed task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    let OrchestrateOutput::Task { task } = output else {
+        panic!("expected task output");
+    };
+    assert_eq!(task.created_at, task.updated_at);
+    assert!(task.assigned_at.is_none());
+
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "timed/task".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign task");
+    let board = Board::load(&dir.path().join(DEFAULT_BOARD_PATH)).expect("load board");
+    let task = board.tasks.get("timed/task").expect("task");
+    assert!(task.assigned_at.is_some());
+    assert!(task.activated_at.is_some());
+
+    let output = Orchestrate::Complete(Complete {
+        board: board_arg(),
+        task: "timed/task".to_string(),
+        report: None,
+        summary: None,
+    })
+    .execute(&ctx)
+    .expect("complete task");
+    let OrchestrateOutput::Completed { task } = output else {
+        panic!("expected completed output");
+    };
+    assert!(task.completed_at.is_some());
+
+    let output = Orchestrate::Review(Review {
+        board: board_arg(),
+        task: "timed/task".to_string(),
+        report: None,
+    })
+    .execute(&ctx)
+    .expect("review task");
+    let OrchestrateOutput::Reviewed { task } = output else {
+        panic!("expected reviewed output");
+    };
+    assert!(task.reviewed_at.is_some());
+}
+
+#[test]
+fn status_warns_about_missing_and_stale_worker_packets() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    for task_id in ["timed/active", "timed/queued"] {
+        Orchestrate::Add(AddTask {
+            board: board_arg(),
+            id: task_id.to_string(),
+            lane: "tooling".to_string(),
+            title: "Timed task".to_string(),
+            priority: 3,
+            allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+            forbidden_edit: Vec::new(),
+            docs: Vec::new(),
+            acceptance: Vec::new(),
+        })
+        .execute(&ctx)
+        .expect("add task");
+    }
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "timed/active".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign active task");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert!(has_warning(&status, "missing_worker_packet", "worker-a"));
+
+    Orchestrate::Packet(Packet {
+        board: board_arg(),
+        worker: "worker-a".to_string(),
+    })
+    .execute(&ctx)
+    .expect("generate packet");
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert!(!has_warning(&status, "missing_worker_packet", "worker-a"));
+    assert!(!has_warning(&status, "stale_worker_packet", "worker-a"));
+    assert!(status.workers[0].packet_generated_at.is_some());
+
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "timed/queued".to_string(),
+        worker: "worker-a".to_string(),
+        active: false,
+    })
+    .execute(&ctx)
+    .expect("queue task after packet");
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert!(has_warning(&status, "stale_worker_packet", "worker-a"));
+}
+
+#[test]
+fn status_warns_about_stale_active_and_review_tasks() {
+    let (dir, ctx) = temp_ctx();
+    let board_path = dir.path().join(DEFAULT_BOARD_PATH);
+    let old = "2026-05-19T00:00:00Z".to_string();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "timed/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Timed task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "timed/task".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign task");
+    {
+        let mut board = Board::load(&board_path).expect("load board");
+        let task = board.tasks.get_mut("timed/task").expect("task");
+        task.activated_at = Some(old.clone());
+        task.updated_at = old.clone();
+        board.save(&board_path).expect("save board");
+    }
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert!(has_warning(&status, "stale_active_task", "timed/task"));
+
+    Orchestrate::Complete(Complete {
+        board: board_arg(),
+        task: "timed/task".to_string(),
+        report: None,
+        summary: None,
+    })
+    .execute(&ctx)
+    .expect("complete task");
+    {
+        let mut board = Board::load(&board_path).expect("load board");
+        let task = board.tasks.get_mut("timed/task").expect("task");
+        task.completed_at = Some(old.clone());
+        task.updated_at = old;
+        board.save(&board_path).expect("save board");
+    }
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert!(has_warning(&status, "stale_review_task", "timed/task"));
+}
+
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {
     status
         .tasks_by_state
         .iter()
         .find(|entry| entry.state == state)
         .map(|entry| entry.count)
+}
+
+fn has_warning(status: &BoundedStatus, kind: &str, subject: &str) -> bool {
+    status
+        .warnings
+        .iter()
+        .any(|warning| warning.kind == kind && warning.subject == subject)
 }
 
 fn usage_count(summary: &UsageSummary, command: &str) -> Option<u64> {
