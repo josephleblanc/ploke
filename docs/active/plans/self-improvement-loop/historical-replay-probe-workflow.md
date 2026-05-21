@@ -31,6 +31,14 @@ probe can therefore replay a historical prefix through current tools, stop
 before the next provider call, and show the compact tool/request outcome
 without misleading `INVALID_MODEL_RESPONSE` noise.
 
+Implemented slice added later on 2026-05-21: table output now keeps every
+returned tool result item visible by default while bounding each item. In
+particular, `request_code_context` completions show every returned path,
+canonical path, and a short snippet; `read_file` completions show file metadata
+and a bounded excerpt. The renderer decodes tool payloads through
+`ploke-records::tool_contracts` and uses full in-memory headless events for the
+interactive table, while leaving the persisted JSON evidence summary bounded.
+
 ## Goal
 
 Historical loop replay is not meant to prove that an old model run now succeeds.
@@ -154,8 +162,9 @@ environment is giving the model useful, truthful feedback.
 2. Done: make recorded-only stop-mode output cleaner. `ReplayExhausted` now
    distinguishes intentional tape exhaustion from malformed provider output,
    and the session reports the probe boundary as a completed replay stop.
-3. Continue compact per-step output for recorded-only probes: selected response
-   prefix, tool requests, current tool outcomes, and the next provider request
+3. Done in part: compact per-step tool output now shows selected response
+   prefix metadata, tool requests, and current tool outcomes with bounded
+   per-result detail. The remaining piece is an explicit next-provider-request
    snapshot.
 4. Use the breakpoint selectors in live-tail smoke probes with explicit
    live-step and timeout budgets.

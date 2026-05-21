@@ -163,6 +163,16 @@ pub(crate) struct ProbeRun {
     /// response is identified by having an index at or beyond the installed
     /// tape length, after any incoming branch records have been appended.
     pub(crate) captured_responses: Vec<RawFullResponseRecord>,
+    /// Full headless TUI events for this probe invocation.
+    ///
+    /// `tui` is the persisted/bounded evidence summary. It intentionally stores
+    /// short previews, which is right for JSON evidence but too lossy for
+    /// interactive step-through output: a truncated `request_code_context`
+    /// payload can hide whether later results were useful or misleading. Table
+    /// rendering may use these full in-memory events to produce bounded
+    /// per-result displays without changing the persisted summary shape.
+    #[serde(skip_serializing)]
+    pub(crate) events: Vec<tui_adapter::Event>,
     pub(crate) tui: tui_adapter::evidence::Summary,
 }
 
@@ -201,7 +211,7 @@ impl ProbeRun {
             .collect()
     }
 
-    pub(crate) fn live_step_tool_events(&self) -> Vec<&tui_adapter::evidence::Event> {
+    pub(crate) fn live_step_tool_events(&self) -> Vec<&tui_adapter::Event> {
         let call_ids = self
             .live_step_tool_calls()
             .into_iter()
@@ -210,8 +220,7 @@ impl ProbeRun {
         if call_ids.is_empty() {
             return Vec::new();
         }
-        self.tui
-            .events
+        self.events
             .iter()
             .filter(|event| {
                 probe_event_call_id(event)
@@ -481,6 +490,7 @@ pub(crate) async fn run_prefix_then_live_probe(
         elapsed_ms: start.elapsed().as_millis(),
         captured_requests,
         captured_responses,
+        events: run.events().to_vec(),
         tui: run.evidence(),
     })
 }
@@ -547,11 +557,10 @@ fn probe_tool_calls_from_response_record(record: &RawFullResponseRecord) -> Vec<
     }
 }
 
-fn probe_event_call_id(event: &tui_adapter::evidence::Event) -> Option<&str> {
+fn probe_event_call_id(event: &tui_adapter::Event) -> Option<&str> {
     match event {
-        tui_adapter::evidence::Event::ToolRequest { call_id, .. }
-        | tui_adapter::evidence::Event::ToolCompleted { call_id, .. }
-        | tui_adapter::evidence::Event::ToolFailed { call_id, .. } => Some(call_id),
+        tui_adapter::Event::ToolRequest { call_id, .. }
+        | tui_adapter::Event::Tool { call_id, .. } => Some(call_id),
         _ => None,
     }
 }
