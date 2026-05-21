@@ -7,6 +7,13 @@ Use this after reading
 [`2026-05-21_runtime-playback-observability-handoff.md`](2026-05-21_runtime-playback-observability-handoff.md).
 That file is the design contract. This file is the code-facing route.
 
+For Prototype 1 replay terminology, read
+[`2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md`](2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md)
+before interpreting "self-edit patch", "eval patch", or replay
+`--workspace` paths. That note records the current ripgrep replay target, the
+dirty shared target cache to avoid for clean probes, and the clean disposable
+workspace to use for continued CLI grounding.
+
 ## Implementation Goal
 
 Build the first graph-backed `RuntimePlayback` implementation without turning
@@ -31,6 +38,9 @@ but weaker reduction is another replay-specific iterator over files under
 
 Current code already has these useful pieces:
 
+- [`2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md`](2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md)
+  Operational orientation for the current CLI replay target and the boundary
+  between self-edit patches and eval patches.
 - `crates/ploke-tree/src/graph/mod.rs`
   Defines `Graph` as the read-side semantic boundary over loaded Prototype 1
   records. It keeps sealed History as primary lineage authority and attaches
