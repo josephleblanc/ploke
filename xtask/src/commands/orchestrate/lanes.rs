@@ -307,6 +307,7 @@ mod tests {
             workers: BTreeMap::new(),
             tasks: BTreeMap::from([(task.id.clone(), task)]),
             blockers: BTreeMap::new(),
+            task_sets: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -324,6 +325,7 @@ mod tests {
             acceptance: Vec::new(),
             reports: Vec::new(),
             blockers: Vec::new(),
+            task_sets: Vec::new(),
         }
     }
 

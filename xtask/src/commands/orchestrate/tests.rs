@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::task_sets;
 use super::*;
 
 fn temp_ctx() -> (tempfile::TempDir, CommandContext) {
@@ -90,6 +91,7 @@ fn usage_command_counts_orchestrate_command_paths() {
     Orchestrate::Status(Status {
         board: board_arg(),
         brief: false,
+        task_set: None,
     })
     .execute(&ctx)
     .expect("status board");
@@ -150,6 +152,7 @@ fn status_brief_returns_bounded_projection() {
     let output = Orchestrate::Status(Status {
         board: board_arg(),
         brief: true,
+        task_set: None,
     })
     .execute(&ctx)
     .expect("brief status");
@@ -164,6 +167,74 @@ fn status_brief_returns_bounded_projection() {
     assert_eq!(status.workers[0].active.as_deref(), Some("status/brief"));
     assert_eq!(status.workers[0].queue_len, 0);
     assert_eq!(task_state_count(&status, "assigned_active"), Some(1));
+}
+
+#[test]
+fn status_set_filters_to_task_set_members() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "task/current".to_string(),
+        lane: "tooling".to_string(),
+        title: "Current thread task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add current task");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "task/other".to_string(),
+        lane: "tooling".to_string(),
+        title: "Other thread task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["docs/active/agents".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add other task");
+    Orchestrate::TaskSet(task_sets::TaskSetCommand::Create(
+        task_sets::CreateTaskSet {
+            board: board_arg(),
+            id: "current-thread".to_string(),
+            description: Some("current thread".to_string()),
+        },
+    ))
+    .execute(&ctx)
+    .expect("create task set");
+    Orchestrate::TaskSet(task_sets::TaskSetCommand::Add(task_sets::AddTaskToSet {
+        board: board_arg(),
+        set: "current-thread".to_string(),
+        task: "task/current".to_string(),
+    }))
+    .execute(&ctx)
+    .expect("add task to set");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: Some("current-thread".to_string()),
+    })
+    .execute(&ctx)
+    .expect("filtered status");
+
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status output");
+    };
+    assert_eq!(status.task_set.as_deref(), Some("current-thread"));
+    assert_eq!(task_state_count(&status, "not_started"), Some(1));
 }
 
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {

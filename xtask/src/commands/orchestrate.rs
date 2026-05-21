@@ -14,12 +14,13 @@ mod output;
 mod packet;
 mod reports;
 mod status;
+mod task_sets;
 #[cfg(test)]
 mod tests;
 mod usage;
 
 pub use board::{
-    Blocker, BlockerKind, Board, BoardStatus, Task, TaskState, WorkerRole, WorkerSlot,
+    Blocker, BlockerKind, Board, BoardStatus, Task, TaskSet, TaskState, WorkerRole, WorkerSlot,
 };
 use board::{BoardLock, DEFAULT_BOARD_PATH, DEFAULT_PACKET_DIR, display, now, resolve};
 pub use commands::{
@@ -28,6 +29,7 @@ pub use commands::{
 pub use lanes::{LaneCommand, LaneSpec, LaneValidation};
 pub use output::OrchestrateOutput;
 pub use status::BoundedStatus;
+pub use task_sets::TaskSetCommand;
 pub use usage::UsageSummary;
 
 /// Commands for the agent orchestration board.
@@ -51,6 +53,9 @@ pub enum Orchestrate {
     Block(Block),
     /// Write a worker packet file from the current assignment.
     Packet(Packet),
+    /// Manage named task sets.
+    #[command(subcommand)]
+    TaskSet(TaskSetCommand),
     /// Show local command usage counters.
     Usage(Usage),
     /// Define and validate lane-owned edit surfaces.
@@ -72,6 +77,7 @@ impl Orchestrate {
             Self::Review(cmd) => cmd.execute(ctx),
             Self::Block(cmd) => cmd.execute(ctx),
             Self::Packet(cmd) => cmd.execute(ctx),
+            Self::TaskSet(cmd) => cmd.execute(ctx),
             Self::Usage(cmd) => cmd.execute(ctx),
             Self::Lane(cmd) => cmd.execute(ctx),
         }
@@ -88,6 +94,7 @@ impl Orchestrate {
             Self::Review(cmd) => &cmd.board,
             Self::Block(cmd) => &cmd.board,
             Self::Packet(cmd) => &cmd.board,
+            Self::TaskSet(cmd) => cmd.board_arg(),
             Self::Usage(cmd) => &cmd.board,
             Self::Lane(cmd) => cmd.board_arg(),
         }
@@ -105,6 +112,7 @@ impl Orchestrate {
             Self::Review(_) => "review",
             Self::Block(_) => "block",
             Self::Packet(_) => "packet",
+            Self::TaskSet(cmd) => cmd.usage_key(),
             Self::Usage(_) => "usage",
             Self::Lane(cmd) => cmd.usage_key(),
         }

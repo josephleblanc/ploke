@@ -1,7 +1,8 @@
 use serde::Serialize;
 
 use super::{
-    Blocker, BoardStatus, BoundedStatus, LaneSpec, LaneValidation, Task, UsageSummary, WorkerSlot,
+    Blocker, BoardStatus, BoundedStatus, LaneSpec, LaneValidation, Task, TaskSet, UsageSummary,
+    WorkerSlot,
 };
 
 /// Command output for orchestration commands.
@@ -67,6 +68,21 @@ pub enum OrchestrateOutput {
     LaneValidation {
         /// Validation result.
         validation: LaneValidation,
+    },
+    /// Task set was created.
+    TaskSet {
+        /// Task-set metadata.
+        task_set: TaskSet,
+    },
+    /// Task-set membership changed.
+    TaskSetMembership {
+        /// Task after membership change.
+        task: Task,
+    },
+    /// Task-set list.
+    TaskSets {
+        /// Known task sets.
+        task_sets: Vec<TaskSet>,
     },
     /// Local usage counter summary.
     Usage(UsageSummary),

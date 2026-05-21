@@ -39,6 +39,9 @@ pub struct Status {
     /// Show a bounded routine summary instead of the full board.
     #[arg(long)]
     pub(super) brief: bool,
+    /// Only show tasks that belong to this task set.
+    #[arg(long = "set")]
+    pub(super) task_set: Option<String>,
 }
 
 /// Add or update a worker slot.
@@ -194,11 +197,17 @@ impl Status {
         let path = resolve(ctx, &self.board.board)?;
         let board = Board::load(&path)?;
         if self.brief {
-            Ok(OrchestrateOutput::StatusBrief(
-                board.bounded_status(ctx, &path)?,
-            ))
+            Ok(OrchestrateOutput::StatusBrief(board.bounded_status(
+                ctx,
+                &path,
+                self.task_set.as_deref(),
+            )?))
         } else {
-            Ok(OrchestrateOutput::Status(board.status(ctx, &path)?))
+            Ok(OrchestrateOutput::Status(board.status(
+                ctx,
+                &path,
+                self.task_set.as_deref(),
+            )?))
         }
     }
 }
@@ -244,6 +253,7 @@ impl AddTask {
             acceptance: self.acceptance.clone(),
             reports: Vec::new(),
             blockers: Vec::new(),
+            task_sets: Vec::new(),
         };
         board.tasks.insert(task.id.clone(), task.clone());
         board.record(format!("task {} added to lane {}", task.id, task.lane));

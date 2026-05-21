@@ -12,6 +12,9 @@ use super::{Board, TaskState, WorkerRole, display, resolve};
 pub struct BoundedStatus {
     /// Board path.
     pub(super) board: String,
+    /// Applied task-set filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) task_set: Option<String>,
     /// Packet directory.
     pub(super) packet_dir: String,
     /// Task counts by lifecycle state.
@@ -66,9 +69,15 @@ impl Board {
         &self,
         ctx: &CommandContext,
         board_path: &Path,
+        task_set: Option<&str>,
     ) -> Result<BoundedStatus, XtaskError> {
+        let task_filter = self.task_filter(task_set)?;
         let mut counts = BTreeMap::new();
-        for task in self.tasks.values() {
+        for task in self.tasks.values().filter(|task| {
+            task_filter
+                .as_ref()
+                .map_or(true, |filter| filter.contains(&task.id))
+        }) {
             *counts.entry(task.state.label()).or_insert(0) += 1;
         }
         let tasks_by_state = counts
@@ -82,19 +91,51 @@ impl Board {
         let mut workers: Vec<_> = self
             .workers
             .values()
-            .map(|worker| WorkerStatus {
-                id: worker.id.clone(),
-                role: worker.role,
-                active: worker.active.clone(),
-                queue_len: worker.queue.len(),
-                packet_path: worker.packet_path.clone(),
+            .map(|worker| {
+                let active = worker.active.as_ref().and_then(|task_id| {
+                    if task_filter
+                        .as_ref()
+                        .map_or(true, |filter| filter.contains(task_id))
+                    {
+                        Some(task_id.clone())
+                    } else {
+                        None
+                    }
+                });
+                let queue_len = worker
+                    .queue
+                    .iter()
+                    .filter(|task_id| {
+                        task_filter
+                            .as_ref()
+                            .map_or(true, |filter| filter.contains(*task_id))
+                    })
+                    .count();
+                WorkerStatus {
+                    id: worker.id.clone(),
+                    role: worker.role,
+                    active,
+                    queue_len,
+                    packet_path: worker.packet_path.clone(),
+                }
             })
             .collect();
         workers.sort_by(|a, b| a.id.cmp(&b.id));
 
+        let task_lanes: std::collections::BTreeSet<_> = self
+            .tasks
+            .values()
+            .filter(|task| {
+                task_filter
+                    .as_ref()
+                    .map_or(true, |filter| filter.contains(&task.id))
+            })
+            .map(|task| task.lane.as_str())
+            .collect();
         let mut lanes: Vec<_> = self
             .lanes
             .values()
+            .filter(|lane| task_set.is_none() || task_lanes.contains(lane.id.as_str()))
             .map(|lane| LaneStatus {
                 id: lane.id.clone(),
                 owned_edit: lane.owned_edit.clone(),
@@ -106,10 +147,19 @@ impl Board {
 
         Ok(BoundedStatus {
             board: display(ctx, board_path)?,
+            task_set: task_set.map(str::to_string),
             packet_dir: display(ctx, &resolve(ctx, &self.packet_dir)?)?,
             tasks_by_state,
             workers,
-            blockers: self.blockers.len(),
+            blockers: self
+                .blockers
+                .values()
+                .filter(|blocker| {
+                    task_filter
+                        .as_ref()
+                        .map_or(true, |filter| filter.contains(&blocker.task_id))
+                })
+                .count(),
             lanes,
         })
     }

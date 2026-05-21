@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -67,6 +68,9 @@ pub struct Board {
     pub(super) tasks: BTreeMap<String, Task>,
     /// Known blockers.
     pub(super) blockers: BTreeMap<String, Blocker>,
+    /// Named task sets.
+    #[serde(default)]
+    pub(super) task_sets: BTreeMap<String, TaskSet>,
     /// Append-only event summaries.
     pub(super) events: Vec<Event>,
 }
@@ -115,6 +119,9 @@ pub struct Task {
     pub(super) reports: Vec<String>,
     /// Attached blocker ids.
     pub(super) blockers: Vec<String>,
+    /// Named task-set memberships.
+    #[serde(default)]
+    pub(super) task_sets: Vec<String>,
 }
 
 /// Task assignment state.
@@ -166,6 +173,17 @@ pub struct Blocker {
     pub(super) created_at: String,
 }
 
+/// Named task-set metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskSet {
+    /// Task-set id.
+    pub(super) id: String,
+    /// Optional description.
+    pub(super) description: Option<String>,
+    /// Creation time.
+    pub(super) created_at: String,
+}
+
 /// Board event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -180,6 +198,9 @@ pub struct Event {
 pub struct BoardStatus {
     /// Board path.
     pub(super) board: String,
+    /// Applied task-set filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) task_set: Option<String>,
     /// Packet directory.
     pub(super) packet_dir: String,
     /// Lane-owned edit surfaces.
@@ -204,6 +225,7 @@ impl Board {
             workers: BTreeMap::new(),
             tasks: BTreeMap::new(),
             blockers: BTreeMap::new(),
+            task_sets: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -245,17 +267,59 @@ impl Board {
         &self,
         ctx: &CommandContext,
         board_path: &Path,
+        task_set: Option<&str>,
     ) -> Result<BoardStatus, XtaskError> {
-        let mut workers: Vec<_> = self.workers.values().cloned().collect();
+        let task_filter = self.task_filter(task_set)?;
+        let mut workers: Vec<_> = self
+            .workers
+            .values()
+            .cloned()
+            .map(|mut worker| {
+                if let Some(filter) = &task_filter {
+                    if !worker
+                        .active
+                        .as_ref()
+                        .is_some_and(|task_id| filter.contains(task_id))
+                    {
+                        worker.active = None;
+                    }
+                    worker.queue.retain(|task_id| filter.contains(task_id));
+                }
+                worker
+            })
+            .collect();
         workers.sort_by(|a, b| a.id.cmp(&b.id));
-        let mut tasks: Vec<_> = self.tasks.values().cloned().collect();
+        let mut tasks: Vec<_> = self
+            .tasks
+            .values()
+            .filter(|task| {
+                task_filter
+                    .as_ref()
+                    .map_or(true, |filter| filter.contains(&task.id))
+            })
+            .cloned()
+            .collect();
         tasks.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.id.cmp(&b.id)));
-        let mut blockers: Vec<_> = self.blockers.values().cloned().collect();
+        let mut blockers: Vec<_> = self
+            .blockers
+            .values()
+            .filter(|blocker| {
+                task_filter
+                    .as_ref()
+                    .map_or(true, |filter| filter.contains(&blocker.task_id))
+            })
+            .cloned()
+            .collect();
         blockers.sort_by(|a, b| a.id.cmp(&b.id));
+        let task_lanes: BTreeSet<_> = tasks.iter().map(|task| task.lane.as_str()).collect();
         let mut lanes: Vec<_> = self.lanes.values().cloned().collect();
+        if task_set.is_some() {
+            lanes.retain(|lane| task_lanes.contains(lane.id.as_str()));
+        }
         lanes.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(BoardStatus {
             board: display(ctx, board_path)?,
+            task_set: task_set.map(str::to_string),
             packet_dir: display(ctx, &resolve(ctx, &self.packet_dir)?)?,
             lanes,
             workers,
@@ -315,6 +379,41 @@ impl Board {
                 None
             }
         })
+    }
+
+    pub(super) fn ensure_task_set(&self, id: &str) -> Result<(), XtaskError> {
+        if self.task_sets.contains_key(id) {
+            Ok(())
+        } else {
+            Err(
+                XtaskError::validation(format!("Unknown task set `{id}`")).with_recovery(
+                    "Create it with `target/debug/xtask orchestrate task-set create <id>`.",
+                ),
+            )
+        }
+    }
+
+    pub(super) fn task_sets_sorted(&self) -> Vec<TaskSet> {
+        let mut task_sets: Vec<_> = self.task_sets.values().cloned().collect();
+        task_sets.sort_by(|a, b| a.id.cmp(&b.id));
+        task_sets
+    }
+
+    pub(super) fn task_filter(
+        &self,
+        task_set: Option<&str>,
+    ) -> Result<Option<BTreeSet<String>>, XtaskError> {
+        let Some(task_set) = task_set else {
+            return Ok(None);
+        };
+        self.ensure_task_set(task_set)?;
+        Ok(Some(
+            self.tasks
+                .values()
+                .filter(|task| task.task_sets.iter().any(|set| set == task_set))
+                .map(|task| task.id.clone())
+                .collect(),
+        ))
     }
 }
 
