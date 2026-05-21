@@ -111,6 +111,62 @@ fn usage_command_counts_orchestrate_command_paths() {
 }
 
 #[test]
+fn usage_is_best_effort_and_records_status_set_after_success() {
+    let (dir, ctx) = temp_ctx();
+
+    Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    }
+    .execute(&ctx)
+    .expect("init board");
+    fs::write(dir.path().join(".orchestrator/usage.json"), "not json\n").expect("write bad usage");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("status ignores bad usage metadata");
+    assert!(matches!(output, OrchestrateOutput::StatusBrief(_)));
+
+    fs::remove_file(dir.path().join(".orchestrator/usage.json")).expect("remove bad usage");
+    Orchestrate::TaskSet(task_sets::TaskSetCommand::Create(
+        task_sets::CreateTaskSet {
+            board: board_arg(),
+            id: "current-thread".to_string(),
+            description: None,
+        },
+    ))
+    .execute(&ctx)
+    .expect("create task set");
+    let failed = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: Some("missing-set".to_string()),
+    })
+    .execute(&ctx);
+    assert!(failed.is_err());
+    Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: Some("current-thread".to_string()),
+    })
+    .execute(&ctx)
+    .expect("status set");
+
+    let output = Orchestrate::Usage(Usage { board: board_arg() })
+        .execute(&ctx)
+        .expect("usage summary");
+    let OrchestrateOutput::Usage(summary) = output else {
+        panic!("expected usage output");
+    };
+    assert_eq!(usage_count(&summary, "status --set"), Some(1));
+    assert_eq!(usage_count(&summary, "status --brief"), None);
+}
+
+#[test]
 fn status_brief_returns_bounded_projection() {
     let (_dir, ctx) = temp_ctx();
 
@@ -239,6 +295,94 @@ fn status_set_filters_to_task_set_members() {
 }
 
 #[test]
+fn status_set_preserves_worker_occupancy_outside_filter() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "task/current".to_string(),
+        lane: "tooling".to_string(),
+        title: "Current thread task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add current task");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "task/other".to_string(),
+        lane: "tooling".to_string(),
+        title: "Other thread task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["docs/active/agents".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add other task");
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "task/other".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign outside-set task");
+    Orchestrate::TaskSet(task_sets::TaskSetCommand::Create(
+        task_sets::CreateTaskSet {
+            board: board_arg(),
+            id: "current-thread".to_string(),
+            description: None,
+        },
+    ))
+    .execute(&ctx)
+    .expect("create task set");
+    Orchestrate::TaskSet(task_sets::TaskSetCommand::Add(task_sets::AddTaskToSet {
+        board: board_arg(),
+        set: "current-thread".to_string(),
+        task: "task/current".to_string(),
+    }))
+    .execute(&ctx)
+    .expect("add task to set");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: Some("current-thread".to_string()),
+    })
+    .execute(&ctx)
+    .expect("filtered status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status output");
+    };
+    assert_eq!(status.workers.len(), 1);
+    assert_eq!(status.workers[0].active.as_deref(), Some("task/other"));
+    assert_eq!(status.workers[0].active_in_filter, Some(false));
+    assert_eq!(status.workers[0].queue_len, 0);
+    assert_eq!(status.workers[0].queue_in_filter, Some(0));
+    assert_eq!(task_state_count(&status, "not_started"), Some(1));
+    assert_eq!(task_state_count(&status, "assigned_active"), None);
+}
+
+#[test]
 fn unblock_resolves_blocker_and_restores_task_state() {
     let (_dir, ctx) = temp_ctx();
 
@@ -306,6 +450,133 @@ fn unblock_resolves_blocker_and_restores_task_state() {
         panic!("expected brief status output");
     };
     assert_eq!(status.blockers, 0);
+}
+
+#[test]
+fn lifecycle_rejects_review_before_complete_and_assign_while_blocked() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "blocked/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Blocked task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+
+    let review = Orchestrate::Review(Review {
+        board: board_arg(),
+        task: "blocked/task".to_string(),
+        report: None,
+    })
+    .execute(&ctx);
+    assert!(review.is_err());
+
+    Orchestrate::Block(Block {
+        board: board_arg(),
+        task: "blocked/task".to_string(),
+        id: "blocker-a".to_string(),
+        kind: BlockerKind::Dependency,
+        summary: "waiting".to_string(),
+        evidence: Vec::new(),
+        unblock: None,
+    })
+    .execute(&ctx)
+    .expect("block task");
+
+    let assign = Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "blocked/task".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx);
+    assert!(assign.is_err());
+    let complete = Orchestrate::Complete(Complete {
+        board: board_arg(),
+        task: "blocked/task".to_string(),
+        report: None,
+        summary: None,
+    })
+    .execute(&ctx);
+    assert!(complete.is_err());
+}
+
+#[test]
+fn unblock_keeps_task_blocked_until_all_open_blockers_resolve() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "blocked/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Blocked task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    for blocker_id in ["blocker-a", "blocker-b"] {
+        Orchestrate::Block(Block {
+            board: board_arg(),
+            task: "blocked/task".to_string(),
+            id: blocker_id.to_string(),
+            kind: BlockerKind::Dependency,
+            summary: "waiting".to_string(),
+            evidence: Vec::new(),
+            unblock: None,
+        })
+        .execute(&ctx)
+        .expect("block task");
+    }
+
+    let output = Orchestrate::Unblock(Unblock {
+        board: board_arg(),
+        blocker: "blocker-a".to_string(),
+        summary: "first done".to_string(),
+        evidence: Vec::new(),
+        next: unblock::UnblockNext::NotStarted,
+        worker: None,
+    })
+    .execute(&ctx)
+    .expect("unblock first blocker");
+    let OrchestrateOutput::Unblocked { task, .. } = output else {
+        panic!("expected unblock output");
+    };
+    assert!(matches!(
+        task.state,
+        TaskState::Blocked { ref blocker } if blocker == "blocker-b"
+    ));
+    assert_eq!(task.blockers, vec!["blocker-b"]);
 }
 
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {

@@ -154,6 +154,32 @@ pub enum TaskState {
     },
 }
 
+/// Destination for assigning a task to a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AssignmentSlot {
+    /// Put the task in the worker queue.
+    Queue,
+    /// Put the task in the active worker slot.
+    Active,
+}
+
+/// Destination for a task after its final blocker is resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum TaskPlacement {
+    /// Restore the task to not-started.
+    NotStarted,
+    /// Queue the task for a worker.
+    Queued {
+        /// Worker id.
+        worker: String,
+    },
+    /// Assign the task as active for a worker.
+    Active {
+        /// Worker id.
+        worker: String,
+    },
+}
+
 /// Blocker record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blocker {
@@ -279,24 +305,7 @@ impl Board {
         task_set: Option<&str>,
     ) -> Result<BoardStatus, XtaskError> {
         let task_filter = self.task_filter(task_set)?;
-        let mut workers: Vec<_> = self
-            .workers
-            .values()
-            .cloned()
-            .map(|mut worker| {
-                if let Some(filter) = &task_filter {
-                    if !worker
-                        .active
-                        .as_ref()
-                        .is_some_and(|task_id| filter.contains(task_id))
-                    {
-                        worker.active = None;
-                    }
-                    worker.queue.retain(|task_id| filter.contains(task_id));
-                }
-                worker
-            })
-            .collect();
+        let mut workers: Vec<_> = self.workers.values().cloned().collect();
         workers.sort_by(|a, b| a.id.cmp(&b.id));
         let mut tasks: Vec<_> = self
             .tasks
@@ -439,6 +448,216 @@ impl Board {
                 .map(|task| task.id.clone())
                 .collect(),
         ))
+    }
+
+    pub(super) fn assign_task(
+        &mut self,
+        task_id: &str,
+        worker_id: &str,
+        slot: AssignmentSlot,
+    ) -> Result<WorkerSlot, XtaskError> {
+        self.ensure_task(task_id)?;
+        self.ensure_worker(worker_id)?;
+        self.ensure_task_unblocked(task_id, "assign")?;
+        self.assign_task_unchecked(task_id, worker_id, slot);
+        let worker = self.workers.get(worker_id).expect("checked").clone();
+        self.record(format!(
+            "task {} assigned to {}{}",
+            task_id,
+            worker_id,
+            match slot {
+                AssignmentSlot::Active => " active",
+                AssignmentSlot::Queue => " queue",
+            }
+        ));
+        Ok(worker)
+    }
+
+    pub(super) fn complete_task(
+        &mut self,
+        task_id: &str,
+        reports: Vec<String>,
+    ) -> Result<Task, XtaskError> {
+        self.ensure_task(task_id)?;
+        self.ensure_task_unblocked(task_id, "complete")?;
+        let worker = self.assigned_worker(task_id);
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            task.reports.extend(reports);
+        }
+        self.remove_task_from_workers(task_id);
+        let task = self.tasks.get_mut(task_id).expect("checked");
+        task.state = TaskState::CompleteUnreviewed { worker };
+        let task = task.clone();
+        self.record(format!("task {} completed", task_id));
+        Ok(task)
+    }
+
+    pub(super) fn ensure_task_can_complete(&self, task_id: &str) -> Result<(), XtaskError> {
+        self.ensure_task(task_id)?;
+        self.ensure_task_unblocked(task_id, "complete")
+    }
+
+    pub(super) fn review_task(
+        &mut self,
+        task_id: &str,
+        report: Option<String>,
+    ) -> Result<Task, XtaskError> {
+        self.ensure_task(task_id)?;
+        let task = self.tasks.get_mut(task_id).expect("checked");
+        if !matches!(task.state, TaskState::CompleteUnreviewed { .. }) {
+            return Err(XtaskError::validation(format!(
+                "Task `{task_id}` is not complete and awaiting review"
+            ))
+            .with_recovery("Complete it first with `target/debug/xtask orchestrate complete`."));
+        }
+        if let Some(report) = report {
+            task.reports.push(report);
+        }
+        task.state = TaskState::CompleteReviewed;
+        let task = task.clone();
+        self.record(format!("task {} reviewed", task_id));
+        Ok(task)
+    }
+
+    pub(super) fn block_task(
+        &mut self,
+        task_id: &str,
+        blocker: Blocker,
+    ) -> Result<(Task, Blocker), XtaskError> {
+        self.ensure_task(task_id)?;
+        if self.blockers.contains_key(&blocker.id) {
+            return Err(
+                XtaskError::validation(format!("Blocker `{}` already exists", blocker.id))
+                    .with_recovery("Use a new blocker id."),
+            );
+        }
+        self.remove_task_from_workers(task_id);
+        let task = self.tasks.get_mut(task_id).expect("checked");
+        if !task.blockers.iter().any(|existing| existing == &blocker.id) {
+            task.blockers.push(blocker.id.clone());
+        }
+        task.state = TaskState::Blocked {
+            blocker: blocker.id.clone(),
+        };
+        let task = task.clone();
+        self.blockers.insert(blocker.id.clone(), blocker.clone());
+        self.record(format!("task {} blocked by {}", task_id, blocker.id));
+        Ok((task, blocker))
+    }
+
+    pub(super) fn resolve_blocker(
+        &mut self,
+        blocker_id: &str,
+        summary: String,
+        evidence: Vec<String>,
+        next: TaskPlacement,
+    ) -> Result<(Task, Blocker), XtaskError> {
+        let task_id = self
+            .blockers
+            .get(blocker_id)
+            .ok_or_else(|| {
+                XtaskError::validation(format!("Unknown blocker `{blocker_id}`"))
+                    .with_recovery("Use an existing blocker id.")
+            })?
+            .task_id
+            .clone();
+        self.ensure_task(&task_id)?;
+        self.ensure_next_worker(&next)?;
+
+        {
+            let blocker = self.blockers.get_mut(blocker_id).expect("checked");
+            if !blocker.is_open() {
+                return Err(XtaskError::validation(format!(
+                    "Blocker `{blocker_id}` is already resolved"
+                ))
+                .with_recovery("Use an open blocker id."));
+            }
+            blocker.resolved_at = Some(now());
+            blocker.resolution_summary = Some(summary);
+            blocker.resolution_evidence = evidence;
+        }
+
+        if let Some(task) = self.tasks.get_mut(&task_id) {
+            task.blockers.retain(|blocker| blocker != blocker_id);
+        }
+        let remaining = self.first_open_blocker_for_task(&task_id);
+        self.remove_task_from_workers(&task_id);
+        if let Some(remaining) = remaining {
+            let task = self.tasks.get_mut(&task_id).expect("checked");
+            task.state = TaskState::Blocked { blocker: remaining };
+        } else {
+            self.apply_task_placement(&task_id, next);
+        }
+
+        let task = self.tasks.get(&task_id).expect("checked").clone();
+        let blocker = self.blockers.get(blocker_id).expect("checked").clone();
+        self.record(format!("blocker {} resolved", blocker_id));
+        Ok((task, blocker))
+    }
+
+    fn assign_task_unchecked(&mut self, task_id: &str, worker_id: &str, slot: AssignmentSlot) {
+        self.remove_task_from_workers(task_id);
+        let worker = self.workers.get_mut(worker_id).expect("checked");
+        match slot {
+            AssignmentSlot::Active => {
+                if let Some(previous) = worker.active.replace(task_id.to_string()) {
+                    worker.queue.insert(0, previous.clone());
+                    if let Some(task) = self.tasks.get_mut(&previous) {
+                        task.state = TaskState::AssignedQueued {
+                            worker: worker_id.to_string(),
+                        };
+                    }
+                }
+                self.tasks.get_mut(task_id).expect("checked").state = TaskState::AssignedActive {
+                    worker: worker_id.to_string(),
+                };
+            }
+            AssignmentSlot::Queue => {
+                if !worker.queue.iter().any(|queued| queued == task_id) {
+                    worker.queue.push(task_id.to_string());
+                }
+                self.tasks.get_mut(task_id).expect("checked").state = TaskState::AssignedQueued {
+                    worker: worker_id.to_string(),
+                };
+            }
+        }
+    }
+
+    fn apply_task_placement(&mut self, task_id: &str, next: TaskPlacement) {
+        match next {
+            TaskPlacement::NotStarted => {
+                if let Some(task) = self.tasks.get_mut(task_id) {
+                    task.state = TaskState::NotStarted;
+                }
+            }
+            TaskPlacement::Queued { worker } => {
+                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Queue);
+            }
+            TaskPlacement::Active { worker } => {
+                self.assign_task_unchecked(task_id, &worker, AssignmentSlot::Active);
+            }
+        }
+    }
+
+    fn ensure_task_unblocked(&self, task_id: &str, action: &str) -> Result<(), XtaskError> {
+        let blockers = self.open_blockers_for_task(task_id);
+        if blockers.is_empty() {
+            return Ok(());
+        }
+        Err(XtaskError::validation(format!(
+            "Cannot {action} task `{task_id}` while it has open blockers: {}",
+            blockers.join(", ")
+        ))
+        .with_recovery("Resolve blockers with `target/debug/xtask orchestrate unblock`."))
+    }
+
+    fn ensure_next_worker(&self, next: &TaskPlacement) -> Result<(), XtaskError> {
+        match next {
+            TaskPlacement::NotStarted => Ok(()),
+            TaskPlacement::Queued { worker } | TaskPlacement::Active { worker } => {
+                self.ensure_worker(worker)
+            }
+        }
     }
 }
 

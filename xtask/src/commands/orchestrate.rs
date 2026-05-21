@@ -70,7 +70,17 @@ pub enum Orchestrate {
 impl Orchestrate {
     /// Execute an orchestration command.
     pub fn execute(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
-        usage::record_usage(ctx, self.board_arg(), self.usage_key())?;
+        if matches!(self, Self::Usage(_)) {
+            usage::record_usage_best_effort(ctx, self.board_arg(), self.usage_key());
+            return self.dispatch(ctx);
+        }
+
+        let output = self.dispatch(ctx)?;
+        usage::record_usage_best_effort(ctx, self.board_arg(), self.usage_key());
+        Ok(output)
+    }
+
+    fn dispatch(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
         match self {
             Self::Init(cmd) => cmd.execute(ctx),
             Self::Status(cmd) => cmd.execute(ctx),
@@ -109,6 +119,8 @@ impl Orchestrate {
     fn usage_key(&self) -> &'static str {
         match self {
             Self::Init(_) => "init",
+            Self::Status(cmd) if cmd.task_set.is_some() => "status --set",
+            Self::Status(cmd) if cmd.brief => "status --brief",
             Self::Status(_) => "status",
             Self::Worker(_) => "worker",
             Self::Add(_) => "add",

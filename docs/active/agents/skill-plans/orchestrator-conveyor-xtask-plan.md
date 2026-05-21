@@ -18,6 +18,7 @@ Observed review points:
 - `--format compact` emits the whole board as one long JSON line.
 - `--format table` currently returns "Table formatting not yet implemented".
 - `xtask/src/commands/orchestrate.rs` is too broad for a CLI command module: it owns args, board schema, state mutations, locking, packet rendering, and report writing.
+- 2026-05-21 `rust-review-discipline` follow-up found that usage telemetry must be best-effort, task lifecycle transitions still need a board-owned API, `status --set` must not make busy workers look idle, and usage counts should distinguish `status --set` from plain `status`.
 
 ## Borrowed Patterns
 
@@ -92,54 +93,61 @@ slices.
    - Add a small usage projection, for example `orchestrate usage`, so we can see which planned helpers are actually used over time.
    - Treat usage counts as planning feedback only. They are not orchestration authority and should not affect task lifecycle decisions.
 
-7. Add saved views.
+7. Apply rust-review corrective slice before new features.
+   - Record usage only as best-effort telemetry; bad or future usage metadata must not block board commands.
+   - Count successful command paths with enough granularity to tell whether `status --set` is being used.
+   - Move lifecycle mutations for assign, complete, review, block, and unblock behind board-owned transition helpers.
+   - Preserve real worker occupancy in filtered status views so a worker active outside the selected set does not appear idle.
+   - Add focused tests for malformed usage metadata, failed command counting, filtered worker occupancy, and invalid lifecycle transitions.
+
+8. Add saved views.
    - Keep task sets as explicit metadata and views as dynamic projections over board state.
    - Start with built-in views such as `active`, `ready`, `review`, `blocked`, `stale`, and `all`.
    - Allow saved named views later if the built-ins prove useful.
    - Ensure views are read-only projections; changing a view must not mutate task lifecycle state.
 
-8. Add a small filter language.
+9. Add a small filter language.
    - Keep it intentionally narrow: `set:<name>`, `lane:<name>`, `state:<state>`, `worker:<id>`, `stale:true`, `blocked:true`, `no:worker`, and negation such as `-state:reviewed`.
    - Let `status --set` start as direct task-set lookup, then make it one case of the filter/view machinery after filters exist.
    - Use filters to power `status --view` and future saved views.
    - Avoid generic expression parsing until real usage proves it is needed.
 
-9. Add board health checks.
+10. Add board health checks.
    - Add `orchestrate check` as a non-mutating command.
    - Start with integrity checks: lane validation, missing task/blocker references, blocked tasks without unblock actions, worker active tasks that no longer exist, missing allowed edit surfaces for writer tasks, and conflicting active assignments.
    - Add stale packet and stale task checks only after timestamp fields exist.
    - Keep health findings as warnings or validation output; do not mutate the board.
 
-10. Add task aging and packet staleness.
+11. Add task aging and packet staleness.
    - Track timestamps for task creation, assignment, activation, completion, review, block, unblock, and packet generation.
    - Surface stale active tasks, stale packets, and long-waiting review items in bounded status and health checks.
    - Keep thresholds configurable but start with conservative defaults.
 
-11. Add WIP policy warnings.
+12. Add WIP policy warnings.
    - Track simple local limits such as active tasks per lane, active implementation workers, blocked task count, and unreviewed completion count.
    - Report WIP violations as warnings in `status --brief` and `orchestrate check`.
    - Do not prevent command execution until warning-only behavior proves insufficient.
 
-12. Add decision notes.
+13. Add decision notes.
    - Add a small `note` command for task-scoped or board-scoped decisions.
    - Use notes for why a task moved to another thread, why a helper idea was retired, or why a blocker was accepted.
    - Keep notes short and structured enough to render counts and latest summaries without reading full reports.
 
-13. Track planned-feature lifecycle.
+14. Track planned-feature lifecycle.
    - Track helper ideas as `planned`, `implemented`, `used`, `promoted`, or `retired`.
    - Use usage counts to identify commands or views that were implemented but never used.
    - Treat retirement as cleanup guidance, not an automatic deletion rule.
 
-14. Add archive/reset ergonomics.
+15. Add archive/reset ergonomics.
    - Add `archive` or `reset --archive` for a clean wave.
    - Prefer timestamped archive moves into `.orchestrator-archive/` over destructive deletion.
    - Keep task sets as the non-archive alternative for still-live work.
 
-15. Make retainer refresh actionable.
+16. Make retainer refresh actionable.
    - Add a command to record answered retainer questions.
    - Surface stale retainers in bounded status.
 
-16. Improve worker packets.
+17. Improve worker packets.
    - Include lane docs and notes.
    - Include relevant open blockers and proposed unblock actions.
    - Include the current task-set context.
@@ -153,15 +161,16 @@ slices.
 4. Bounded status projection and renderer, without future-only stale claims.
 5. Task-set model and direct `status --set`.
 6. Blocker resolution.
-7. Timestamp/staleness fields for tasks and packets.
-8. Board health check.
-9. Built-in views and narrow filters.
-10. Packet filtering and task-set-aware packet rendering.
-11. Retainer refresh tracking.
-12. WIP warning policy.
-13. Decision notes.
-14. Planned-feature lifecycle tracking.
-15. Archive/reset command.
+7. Rust-review corrective slice: best-effort usage, board-owned lifecycle transitions, filtered worker occupancy, and `status --set` usage counts.
+8. Timestamp/staleness fields for tasks and packets.
+9. Board health check.
+10. Built-in views and narrow filters.
+11. Packet filtering and task-set-aware packet rendering.
+12. Retainer refresh tracking.
+13. WIP warning policy.
+14. Decision notes.
+15. Planned-feature lifecycle tracking.
+16. Archive/reset command.
 
 ## Progress
 
@@ -172,6 +181,7 @@ slices.
 - [x] Add bounded status projection.
 - [x] Add task-set model and direct `status --set`.
 - [x] Add blocker resolution.
+- [x] Apply rust-review corrective slice for usage, lifecycle transitions, and filtered worker occupancy.
 - [ ] Add task aging and packet staleness.
 - [ ] Add board health check.
 - [ ] Add saved views and narrow filters.

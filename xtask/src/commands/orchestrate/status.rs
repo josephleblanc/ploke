@@ -43,10 +43,16 @@ pub struct WorkerStatus {
     pub(super) id: String,
     /// Worker role.
     pub(super) role: WorkerRole,
-    /// Active task id.
+    /// Active task id, even when it is outside the selected filter.
     pub(super) active: Option<String>,
-    /// Queued task count.
+    /// Whether the active task is included by the selected filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) active_in_filter: Option<bool>,
+    /// Total queued task count, including tasks outside the selected filter.
     pub(super) queue_len: usize,
+    /// Queued task count included by the selected filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) queue_in_filter: Option<usize>,
     /// Last packet path.
     pub(super) packet_path: Option<String>,
 }
@@ -92,30 +98,26 @@ impl Board {
             .workers
             .values()
             .map(|worker| {
-                let active = worker.active.as_ref().and_then(|task_id| {
-                    if task_filter
+                let active_in_filter = task_filter.as_ref().map(|filter| {
+                    worker
+                        .active
                         .as_ref()
-                        .map_or(true, |filter| filter.contains(task_id))
-                    {
-                        Some(task_id.clone())
-                    } else {
-                        None
-                    }
+                        .is_some_and(|task_id| filter.contains(task_id))
                 });
-                let queue_len = worker
-                    .queue
-                    .iter()
-                    .filter(|task_id| {
-                        task_filter
-                            .as_ref()
-                            .map_or(true, |filter| filter.contains(*task_id))
-                    })
-                    .count();
+                let queue_in_filter = task_filter.as_ref().map(|filter| {
+                    worker
+                        .queue
+                        .iter()
+                        .filter(|task_id| filter.contains(*task_id))
+                        .count()
+                });
                 WorkerStatus {
                     id: worker.id.clone(),
                     role: worker.role,
-                    active,
-                    queue_len,
+                    active: worker.active.clone(),
+                    active_in_filter,
+                    queue_len: worker.queue.len(),
+                    queue_in_filter,
                     packet_path: worker.packet_path.clone(),
                 }
             })

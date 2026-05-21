@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +59,7 @@ impl UsageLedger {
         command: &str,
     ) -> Result<(), XtaskError> {
         let path = usage_path_for_board(board_path);
+        let _lock = UsageLock::acquire(&path)?;
         let mut usage = Self::load_or_new(&path)?;
         usage.record(command);
         usage.save(&path)
@@ -137,13 +142,11 @@ impl UsageLedger {
     }
 }
 
-pub(super) fn record_usage(
-    ctx: &CommandContext,
-    board: &BoardArg,
-    command: &str,
-) -> Result<(), XtaskError> {
-    let board_path = resolve(ctx, board.path())?;
-    UsageLedger::record_command_for_board(&board_path, command)
+pub(super) fn record_usage_best_effort(ctx: &CommandContext, board: &BoardArg, command: &str) {
+    let Ok(board_path) = resolve(ctx, board.path()) else {
+        return;
+    };
+    let _ = UsageLedger::record_command_for_board(&board_path, command);
 }
 
 pub(super) fn usage_summary(
@@ -159,4 +162,50 @@ fn usage_path_for_board(board_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("usage.json")
+}
+
+struct UsageLock {
+    path: PathBuf,
+}
+
+impl UsageLock {
+    fn acquire(usage_path: &Path) -> Result<Self, XtaskError> {
+        if let Some(parent) = usage_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let lock_path = usage_path.with_extension("lock");
+        let started = Instant::now();
+        loop {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    write!(file, "pid={}\n", std::process::id())?;
+                    return Ok(Self { path: lock_path });
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if started.elapsed() > Duration::from_secs(10) {
+                        return Err(XtaskError::validation(format!(
+                            "Timed out waiting for usage lock `{}`",
+                            lock_path.display()
+                        ))
+                        .with_recovery(
+                            "Check for a stale usage lock file if no xtask process is running.",
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+}
+
+impl Drop for UsageLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }

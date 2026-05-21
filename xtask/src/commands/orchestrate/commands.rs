@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::{CommandContext, XtaskError};
 
+use super::board::AssignmentSlot;
 use super::{
     Blocker, BlockerKind, Board, BoardLock, DEFAULT_BOARD_PATH, DEFAULT_PACKET_DIR,
     OrchestrateOutput, Task, TaskState, WorkerRole, WorkerSlot, display, now, resolve,
@@ -267,39 +268,15 @@ impl Assign {
         let path = resolve(ctx, &self.board.board)?;
         let _lock = BoardLock::acquire(&path)?;
         let mut board = Board::load(&path)?;
-        board.ensure_worker(&self.worker)?;
-        board.ensure_task(&self.task)?;
-        board.remove_task_from_workers(&self.task);
-
-        let worker = board.workers.get_mut(&self.worker).expect("checked");
-        if self.active {
-            if let Some(previous) = worker.active.replace(self.task.clone()) {
-                worker.queue.insert(0, previous.clone());
-                if let Some(task) = board.tasks.get_mut(&previous) {
-                    task.state = TaskState::AssignedQueued {
-                        worker: self.worker.clone(),
-                    };
-                }
-            }
-            board.tasks.get_mut(&self.task).expect("checked").state = TaskState::AssignedActive {
-                worker: self.worker.clone(),
-            };
-        } else {
-            if !worker.queue.contains(&self.task) {
-                worker.queue.push(self.task.clone());
-            }
-            board.tasks.get_mut(&self.task).expect("checked").state = TaskState::AssignedQueued {
-                worker: self.worker.clone(),
-            };
-        }
-
-        let worker = board.workers.get(&self.worker).expect("checked").clone();
-        board.record(format!(
-            "task {} assigned to {}{}",
-            self.task,
-            self.worker,
-            if self.active { " active" } else { " queue" }
-        ));
+        let worker = board.assign_task(
+            &self.task,
+            &self.worker,
+            if self.active {
+                AssignmentSlot::Active
+            } else {
+                AssignmentSlot::Queue
+            },
+        )?;
         board.save(&path)?;
         Ok(OrchestrateOutput::Assigned { worker })
     }
@@ -310,30 +287,16 @@ impl Complete {
         let path = resolve(ctx, &self.board.board)?;
         let _lock = BoardLock::acquire(&path)?;
         let mut board = Board::load(&path)?;
-        board.ensure_task(&self.task)?;
-        let worker = board.assigned_worker(&self.task);
+        board.ensure_task_can_complete(&self.task)?;
+        let mut reports = Vec::new();
         if let Some(summary) = &self.summary {
             let report = board.write_inline_report(ctx, &path, &self.task, "complete", summary)?;
-            board
-                .tasks
-                .get_mut(&self.task)
-                .expect("checked")
-                .reports
-                .push(report);
+            reports.push(report);
         }
         if let Some(report) = &self.report {
-            board
-                .tasks
-                .get_mut(&self.task)
-                .expect("checked")
-                .reports
-                .push(report.clone());
+            reports.push(report.clone());
         }
-        board.remove_task_from_workers(&self.task);
-        let task = board.tasks.get_mut(&self.task).expect("checked");
-        task.state = TaskState::CompleteUnreviewed { worker };
-        let task = task.clone();
-        board.record(format!("task {} completed", self.task));
+        let task = board.complete_task(&self.task, reports)?;
         board.save(&path)?;
         Ok(OrchestrateOutput::Completed { task })
     }
@@ -344,14 +307,7 @@ impl Review {
         let path = resolve(ctx, &self.board.board)?;
         let _lock = BoardLock::acquire(&path)?;
         let mut board = Board::load(&path)?;
-        board.ensure_task(&self.task)?;
-        let task = board.tasks.get_mut(&self.task).expect("checked");
-        if let Some(report) = &self.report {
-            task.reports.push(report.clone());
-        }
-        task.state = TaskState::CompleteReviewed;
-        let task = task.clone();
-        board.record(format!("task {} reviewed", self.task));
+        let task = board.review_task(&self.task, self.report.clone())?;
         board.save(&path)?;
         Ok(OrchestrateOutput::Reviewed { task })
     }
@@ -362,13 +318,6 @@ impl Block {
         let path = resolve(ctx, &self.board.board)?;
         let _lock = BoardLock::acquire(&path)?;
         let mut board = Board::load(&path)?;
-        board.ensure_task(&self.task)?;
-        if board.blockers.contains_key(&self.id) {
-            return Err(
-                XtaskError::validation(format!("Blocker `{}` already exists", self.id))
-                    .with_recovery("Use a new blocker id."),
-            );
-        }
         let blocker = Blocker {
             id: self.id.clone(),
             task_id: self.task.clone(),
@@ -381,15 +330,7 @@ impl Block {
             resolution_summary: None,
             resolution_evidence: Vec::new(),
         };
-        board.blockers.insert(blocker.id.clone(), blocker.clone());
-        board.remove_task_from_workers(&self.task);
-        let task = board.tasks.get_mut(&self.task).expect("checked");
-        task.blockers.push(blocker.id.clone());
-        task.state = TaskState::Blocked {
-            blocker: blocker.id.clone(),
-        };
-        let task = task.clone();
-        board.record(format!("task {} blocked by {}", self.task, self.id));
+        let (task, blocker) = board.block_task(&self.task, blocker)?;
         board.save(&path)?;
         Ok(OrchestrateOutput::Blocked { task, blocker })
     }
