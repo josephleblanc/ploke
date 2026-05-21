@@ -20,6 +20,7 @@ mod task_sets;
 mod tests;
 mod unblock;
 mod usage;
+mod views;
 
 pub use board::{
     Blocker, BlockerKind, Board, BoardStatus, Task, TaskSet, TaskState, WorkerRole, WorkerSlot,
@@ -35,6 +36,7 @@ pub use status::BoundedStatus;
 pub use task_sets::TaskSetCommand;
 pub use unblock::Unblock;
 pub use usage::UsageSummary;
+pub use views::TaskView;
 
 /// Commands for the agent orchestration board.
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -126,6 +128,8 @@ impl Orchestrate {
         match self {
             Self::Init(_) => "init",
             Self::Status(cmd) if cmd.task_set.is_some() => "status --set",
+            Self::Status(cmd) if cmd.view.is_some() => "status --view",
+            Self::Status(cmd) if !cmd.filters.is_empty() => "status --filter",
             Self::Status(cmd) if cmd.brief => "status --brief",
             Self::Status(_) => "status",
             Self::Worker(_) => "worker",

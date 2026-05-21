@@ -93,6 +93,8 @@ fn usage_command_counts_orchestrate_command_paths() {
         board: board_arg(),
         brief: false,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("status board");
@@ -126,6 +128,8 @@ fn usage_is_best_effort_and_records_status_set_after_success() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("status ignores bad usage metadata");
@@ -145,6 +149,8 @@ fn usage_is_best_effort_and_records_status_set_after_success() {
         board: board_arg(),
         brief: true,
         task_set: Some("missing-set".to_string()),
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx);
     assert!(failed.is_err());
@@ -152,6 +158,8 @@ fn usage_is_best_effort_and_records_status_set_after_success() {
         board: board_arg(),
         brief: true,
         task_set: Some("current-thread".to_string()),
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("status set");
@@ -210,6 +218,8 @@ fn status_brief_returns_bounded_projection() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -283,6 +293,8 @@ fn status_set_filters_to_task_set_members() {
         board: board_arg(),
         brief: true,
         task_set: Some("current-thread".to_string()),
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("filtered status");
@@ -367,6 +379,8 @@ fn status_set_preserves_worker_occupancy_outside_filter() {
         board: board_arg(),
         brief: true,
         task_set: Some("current-thread".to_string()),
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("filtered status");
@@ -443,6 +457,8 @@ fn unblock_resolves_blocker_and_restores_task_state() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -701,6 +717,8 @@ fn status_warns_about_missing_and_stale_worker_packets() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -719,6 +737,8 @@ fn status_warns_about_missing_and_stale_worker_packets() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -741,6 +761,8 @@ fn status_warns_about_missing_and_stale_worker_packets() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -802,6 +824,8 @@ fn status_warns_about_stale_active_and_review_tasks() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -829,6 +853,8 @@ fn status_warns_about_stale_active_and_review_tasks() {
         board: board_arg(),
         brief: true,
         task_set: None,
+        view: None,
+        filters: Vec::new(),
     })
     .execute(&ctx)
     .expect("brief status");
@@ -963,6 +989,112 @@ fn check_reports_warning_health_without_failing_ok() {
         "missing_worker_packet",
         "worker-a"
     ));
+}
+
+#[test]
+fn status_view_and_filters_select_tasks() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    for task_id in ["view/active", "view/ready", "view/review"] {
+        Orchestrate::Add(AddTask {
+            board: board_arg(),
+            id: task_id.to_string(),
+            lane: "tooling".to_string(),
+            title: "View task".to_string(),
+            priority: 3,
+            allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+            forbidden_edit: Vec::new(),
+            docs: Vec::new(),
+            acceptance: Vec::new(),
+        })
+        .execute(&ctx)
+        .expect("add task");
+    }
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "view/active".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign task");
+    Orchestrate::Complete(Complete {
+        board: board_arg(),
+        task: "view/review".to_string(),
+        report: None,
+        summary: None,
+    })
+    .execute(&ctx)
+    .expect("complete task");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+        view: Some(TaskView::Review),
+        filters: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("review view");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert_eq!(status.view.as_deref(), Some("review"));
+    assert_eq!(task_state_count(&status, "complete_unreviewed"), Some(1));
+    assert_eq!(task_state_count(&status, "assigned_active"), None);
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+        view: None,
+        filters: vec!["lane:tooling".to_string(), "state:active".to_string()],
+    })
+    .execute(&ctx)
+    .expect("filtered status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status");
+    };
+    assert_eq!(status.filters, vec!["lane:tooling", "state:active"]);
+    assert_eq!(task_state_count(&status, "assigned_active"), Some(1));
+    assert_eq!(task_state_count(&status, "not_started"), None);
+}
+
+#[test]
+fn status_rejects_unknown_filter() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+        view: None,
+        filters: vec!["owner:worker-a".to_string()],
+    })
+    .execute(&ctx);
+
+    assert!(output.is_err());
 }
 
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {

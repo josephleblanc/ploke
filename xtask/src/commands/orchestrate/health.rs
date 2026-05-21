@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::commands::{CommandContext, XtaskError};
 
+use super::views::TaskQuery;
 use super::{
     Board, BoardArg, BoardLock, LaneValidation, OrchestrateOutput, Task, TaskState, WorkerRole,
     display, resolve,
@@ -284,7 +285,7 @@ impl Board {
         board_path: &Path,
         findings: &mut Vec<HealthFinding>,
     ) -> Result<(), XtaskError> {
-        let status = self.bounded_status(ctx, board_path, None)?;
+        let status = self.bounded_status(ctx, board_path, &TaskQuery::all())?;
         for warning in status.warnings {
             push(
                 findings,

@@ -13,10 +13,13 @@ use serde::{Deserialize, Serialize};
 use crate::commands::{CommandContext, XtaskError};
 
 use super::lanes::LaneSpec;
+use super::views::TaskQuery;
 
 pub(super) const DEFAULT_BOARD_PATH: &str = ".orchestrator/board.json";
 pub(super) const DEFAULT_PACKET_DIR: &str = ".orchestrator/workers";
 pub(super) const SCHEMA_VERSION: &str = "orchestrator-board.v1";
+pub(super) const ACTIVE_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
+pub(super) const REVIEW_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
 
 /// Worker role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -181,6 +184,19 @@ pub enum TaskState {
     },
 }
 
+impl TaskState {
+    pub(super) fn label(&self) -> &'static str {
+        match self {
+            Self::NotStarted => "not_started",
+            Self::AssignedQueued { .. } => "assigned_queued",
+            Self::AssignedActive { .. } => "assigned_active",
+            Self::CompleteUnreviewed { .. } => "complete_unreviewed",
+            Self::CompleteReviewed => "complete_reviewed",
+            Self::Blocked { .. } => "blocked",
+        }
+    }
+}
+
 /// Destination for assigning a task to a worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AssignmentSlot {
@@ -263,6 +279,12 @@ pub struct BoardStatus {
     /// Applied task-set filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) task_set: Option<String>,
+    /// Applied built-in view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) view: Option<String>,
+    /// Applied filter expressions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) filters: Vec<String>,
     /// Packet directory.
     pub(super) packet_dir: String,
     /// Lane-owned edit surfaces.
@@ -329,9 +351,9 @@ impl Board {
         &self,
         ctx: &CommandContext,
         board_path: &Path,
-        task_set: Option<&str>,
+        query: &TaskQuery,
     ) -> Result<BoardStatus, XtaskError> {
-        let task_filter = self.task_filter(task_set)?;
+        let task_filter = self.task_filter(query)?;
         let mut workers: Vec<_> = self.workers.values().cloned().collect();
         workers.sort_by(|a, b| a.id.cmp(&b.id));
         let mut tasks: Vec<_> = self
@@ -359,13 +381,15 @@ impl Board {
         blockers.sort_by(|a, b| a.id.cmp(&b.id));
         let task_lanes: BTreeSet<_> = tasks.iter().map(|task| task.lane.as_str()).collect();
         let mut lanes: Vec<_> = self.lanes.values().cloned().collect();
-        if task_set.is_some() {
+        if query.has_filters() {
             lanes.retain(|lane| task_lanes.contains(lane.id.as_str()));
         }
         lanes.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(BoardStatus {
             board: display(ctx, board_path)?,
-            task_set: task_set.map(str::to_string),
+            task_set: query.task_set().map(str::to_string),
+            view: query.view_label().map(str::to_string),
+            filters: query.filter_labels().to_vec(),
             packet_dir: display(ctx, &resolve(ctx, &self.packet_dir)?)?,
             lanes,
             workers,
@@ -462,19 +486,9 @@ impl Board {
 
     pub(super) fn task_filter(
         &self,
-        task_set: Option<&str>,
+        query: &TaskQuery,
     ) -> Result<Option<BTreeSet<String>>, XtaskError> {
-        let Some(task_set) = task_set else {
-            return Ok(None);
-        };
-        self.ensure_task_set(task_set)?;
-        Ok(Some(
-            self.tasks
-                .values()
-                .filter(|task| task.task_sets.iter().any(|set| set == task_set))
-                .map(|task| task.id.clone())
-                .collect(),
-        ))
+        super::views::filter_tasks(self, query)
     }
 
     pub(super) fn assign_task(

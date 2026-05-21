@@ -6,11 +6,9 @@ use serde::Serialize;
 
 use crate::commands::{CommandContext, XtaskError};
 
-use super::board::parse_time;
+use super::board::{ACTIVE_STALE_AFTER_SECS, REVIEW_STALE_AFTER_SECS, parse_time};
+use super::views::TaskQuery;
 use super::{Board, TaskState, WorkerRole, display, resolve};
-
-const ACTIVE_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
-const REVIEW_STALE_AFTER_SECS: i64 = 24 * 60 * 60;
 
 /// Bounded routine board status.
 #[derive(Debug, Clone, Serialize)]
@@ -20,6 +18,12 @@ pub struct BoundedStatus {
     /// Applied task-set filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) task_set: Option<String>,
+    /// Applied built-in view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) view: Option<String>,
+    /// Applied filter expressions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) filters: Vec<String>,
     /// Packet directory.
     pub(super) packet_dir: String,
     /// Task counts by lifecycle state.
@@ -100,9 +104,9 @@ impl Board {
         &self,
         ctx: &CommandContext,
         board_path: &Path,
-        task_set: Option<&str>,
+        query: &TaskQuery,
     ) -> Result<BoundedStatus, XtaskError> {
-        let task_filter = self.task_filter(task_set)?;
+        let task_filter = self.task_filter(query)?;
         let mut counts = BTreeMap::new();
         for task in self.tasks.values().filter(|task| {
             task_filter
@@ -163,7 +167,7 @@ impl Board {
         let mut lanes: Vec<_> = self
             .lanes
             .values()
-            .filter(|lane| task_set.is_none() || task_lanes.contains(lane.id.as_str()))
+            .filter(|lane| !query.has_filters() || task_lanes.contains(lane.id.as_str()))
             .map(|lane| LaneStatus {
                 id: lane.id.clone(),
                 owned_edit: lane.owned_edit.clone(),
@@ -175,7 +179,9 @@ impl Board {
 
         Ok(BoundedStatus {
             board: display(ctx, board_path)?,
-            task_set: task_set.map(str::to_string),
+            task_set: query.task_set().map(str::to_string),
+            view: query.view_label().map(str::to_string),
+            filters: query.filter_labels().to_vec(),
             packet_dir: display(ctx, &resolve(ctx, &self.packet_dir)?)?,
             tasks_by_state,
             workers,
@@ -282,17 +288,4 @@ impl Board {
 
 fn age_seconds(timestamp: &str, now: DateTime<Utc>) -> Option<i64> {
     parse_time(timestamp).map(|then| (now - then).num_seconds())
-}
-
-impl TaskState {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::NotStarted => "not_started",
-            Self::AssignedQueued { .. } => "assigned_queued",
-            Self::AssignedActive { .. } => "assigned_active",
-            Self::CompleteUnreviewed { .. } => "complete_unreviewed",
-            Self::CompleteReviewed => "complete_reviewed",
-            Self::Blocked { .. } => "blocked",
-        }
-    }
 }

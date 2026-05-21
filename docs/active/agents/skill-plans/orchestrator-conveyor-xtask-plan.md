@@ -184,7 +184,7 @@ slices.
 - [x] Apply rust-review corrective slice for usage, lifecycle transitions, and filtered worker occupancy.
 - [x] Add task aging and packet staleness.
 - [x] Add board health check.
-- [ ] Add saved views and narrow filters.
+- [x] Add saved views and narrow filters.
 - [ ] Improve worker packet rendering.
 - [ ] Add retainer refresh tracking.
 - [ ] Add WIP policy warnings.

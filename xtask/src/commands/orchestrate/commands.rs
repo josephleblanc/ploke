@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use crate::commands::{CommandContext, XtaskError};
 
 use super::board::AssignmentSlot;
+use super::views::TaskQuery;
 use super::{
     Blocker, BlockerKind, Board, BoardLock, DEFAULT_BOARD_PATH, DEFAULT_PACKET_DIR,
-    OrchestrateOutput, Task, TaskState, WorkerRole, WorkerSlot, display, now, resolve,
+    OrchestrateOutput, Task, TaskState, TaskView, WorkerRole, WorkerSlot, display, now, resolve,
 };
 
 /// Shared board path argument.
@@ -43,6 +44,12 @@ pub struct Status {
     /// Only show tasks that belong to this task set.
     #[arg(long = "set")]
     pub(super) task_set: Option<String>,
+    /// Apply a built-in task view.
+    #[arg(long, value_enum)]
+    pub(super) view: Option<TaskView>,
+    /// Apply a narrow task filter. May be repeated.
+    #[arg(long = "filter")]
+    pub(super) filters: Vec<String>,
 }
 
 /// Add or update a worker slot.
@@ -197,18 +204,13 @@ impl Status {
     pub(super) fn execute(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
         let path = resolve(ctx, &self.board.board)?;
         let board = Board::load(&path)?;
+        let query = TaskQuery::new(self.task_set.clone(), self.view, self.filters.clone())?;
         if self.brief {
-            Ok(OrchestrateOutput::StatusBrief(board.bounded_status(
-                ctx,
-                &path,
-                self.task_set.as_deref(),
-            )?))
+            Ok(OrchestrateOutput::StatusBrief(
+                board.bounded_status(ctx, &path, &query)?,
+            ))
         } else {
-            Ok(OrchestrateOutput::Status(board.status(
-                ctx,
-                &path,
-                self.task_set.as_deref(),
-            )?))
+            Ok(OrchestrateOutput::Status(board.status(ctx, &path, &query)?))
         }
     }
 }
