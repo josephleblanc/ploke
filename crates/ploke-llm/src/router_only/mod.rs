@@ -51,7 +51,7 @@ pub trait HasModels: Router {
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
         async {
             let url = Self::models_url()?;
-            let api_key = Self::resolve_api_key()?;
+            let api_key = Self::resolve_bearer_token().await?;
 
             let resp = client
                 .get(url)
@@ -153,7 +153,7 @@ pub trait HasEndpoint: Router {
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::EpResponse>> + Send {
         async {
             let url = Self::endpoints_url(model);
-            let api_key = Self::resolve_api_key()?;
+            let api_key = Self::resolve_bearer_token().await?;
 
             let resp = client
                 .get(url)
@@ -258,6 +258,11 @@ pub trait Router:
     const PROVIDERS_URL: &str;
 
     fn resolve_api_key() -> Result<String, crate::LlmError>;
+
+    fn resolve_bearer_token()
+    -> impl std::future::Future<Output = Result<String, crate::LlmError>> + Send {
+        async { Self::resolve_api_key() }
+    }
 
     fn completion_url() -> Result<&'static str, crate::LlmError> {
         Ok(Self::COMPLETION_URL)

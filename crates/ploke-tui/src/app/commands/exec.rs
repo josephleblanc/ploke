@@ -606,14 +606,6 @@ fn openrouter_api_key_missing_msg() -> String {
     )
 }
 
-fn google_api_key_missing_msg() -> String {
-    format!(
-        "Missing {}. Set it and try again (e.g., export {}=...)",
-        Google::API_KEY_NAME,
-        Google::API_KEY_NAME
-    )
-}
-
 fn models_response_from_google(
     response: <Google as HasModels>::Response,
 ) -> llm::request::models::Response {
@@ -772,16 +764,6 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let active_router = { state.config.read().await.active_router };
         let client = Client::new();
         let models_resp = if matches!(active_router, RouterVariants::Google(_)) {
-            if Google::resolve_api_key().is_err() {
-                let _ = cmd_tx
-                    .send(StateCommand::AddMessageImmediate {
-                        msg: google_api_key_missing_msg(),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    })
-                    .await;
-                return;
-            }
             match Google::fetch_models(&client).await {
                 Ok(models_resp) => models_response_from_google(models_resp),
                 Err(e) => {

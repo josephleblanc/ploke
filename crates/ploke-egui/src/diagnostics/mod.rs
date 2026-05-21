@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(test, all(not(target_arch = "wasm32"), feature = "dev")))]
+use crate::ui::inspector::SelectionInspector;
 use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics};
 pub use default_view::{
@@ -23,6 +25,8 @@ pub use default_view::{
 pub use graph_identity::GraphIdentity;
 
 const SNAPSHOT_VERSION: &str = "ploke-egui.graph-diagnostics.v1";
+#[cfg(any(test, all(not(target_arch = "wasm32"), feature = "dev")))]
+const SELECTED_GRAPH_ITEM_VERSION: &str = "ploke-egui.selected-graph-item.v1";
 const DEFAULT_MAX_SNAPSHOTS: u64 = 10;
 
 #[derive(Debug)]
@@ -164,6 +168,28 @@ impl<'a> SnapshotObservation<'a> {
 
 pub fn artifact_component_breakdown(graph: &ploke_tree::Graph) -> Vec<ComponentBreakdown> {
     default_view::component_breakdown(graph)
+}
+
+#[cfg(any(test, all(not(target_arch = "wasm32"), feature = "dev")))]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct SelectedGraphItemSnapshot<'a> {
+    pub schema_version: &'static str,
+    pub selected: &'a GraphSelectionDetail,
+    pub selected_inspector: SelectionInspectorSnapshot<'a>,
+}
+
+#[cfg(any(test, all(not(target_arch = "wasm32"), feature = "dev")))]
+impl<'a> SelectedGraphItemSnapshot<'a> {
+    pub(crate) fn from_graph(
+        graph: &'a ploke_tree::Graph,
+        selected: &'a GraphSelectionDetail,
+    ) -> Self {
+        Self {
+            schema_version: SELECTED_GRAPH_ITEM_VERSION,
+            selected,
+            selected_inspector: SelectionInspector::from_graph(graph, selected).snapshot(selected),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -635,7 +661,7 @@ mod tests {
     use super::*;
     use crate::ui::view::{
         EdgeCrossingsByKind, EdgeLabelDiagnostics, GraphConnectivityDiagnostics,
-        GraphReadabilityDiagnostics, GraphViewMode,
+        GraphReadabilityDiagnostics, GraphSelectionDetail, GraphSelectionRef, GraphViewMode,
         artifact_tree::{Components, Edges, Marks, Nodes, Shape},
     };
 
@@ -714,6 +740,33 @@ mod tests {
         let snapshot = Snapshot::from_diagnostics(1, diagnostics());
 
         assert!(snapshot.findings.is_empty());
+    }
+
+    #[test]
+    fn selected_graph_item_snapshot_serializes_reference_and_inspector() {
+        let graph = ploke_tree::Graph::default();
+        let selection = GraphSelectionDetail {
+            kind: "artifact".to_owned(),
+            label: "missing".to_owned(),
+            detail: "central graph payload".to_owned(),
+            reference: GraphSelectionRef::Artifact {
+                key: "artifact:missing".to_owned(),
+            },
+        };
+
+        let snapshot = SelectedGraphItemSnapshot::from_graph(&graph, &selection);
+        let json = serde_json::to_value(&snapshot).expect("serialize selected graph item");
+
+        assert_eq!(json["schema_version"], SELECTED_GRAPH_ITEM_VERSION);
+        assert_eq!(json["selected"]["detail"], "central graph payload");
+        assert_eq!(
+            json["selected"]["reference"]["Artifact"]["key"],
+            "artifact:missing"
+        );
+        assert_eq!(
+            json["selected_inspector"]["unavailable"],
+            "artifact_not_found"
+        );
     }
 
     #[test]

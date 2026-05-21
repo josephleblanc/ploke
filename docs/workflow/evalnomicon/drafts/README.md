@@ -16,7 +16,8 @@ stay short inside each topic.
 - [`edit-surface/`](edit-surface/)
   Prototype 1 bounded edit-surface model, harness adapter plan, and proof index.
 - [`selection/`](selection/)
-  Successor selection identity, fanout review, and selection impact audits.
+  Current code-rooted Prototype 1 successor-selection approach and display
+  expectations.
 - [`persistence/`](persistence/)
   Prototype 1 persistence inventory packs and evidence-surface maps.
 - [`observability/`](observability/)

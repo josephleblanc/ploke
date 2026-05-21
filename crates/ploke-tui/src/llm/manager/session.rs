@@ -2759,7 +2759,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, a live Google model with tool support, and quota"]
+    #[ignore = "requires Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
         let db = Arc::new(Database::new_init().expect("database initializes"));
         let embedder = Arc::new(EmbeddingRuntime::from_shared_set(

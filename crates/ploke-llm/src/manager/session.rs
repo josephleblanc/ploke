@@ -303,11 +303,11 @@ pub async fn chat_step_with_attempts<R: Router>(
     })?;
     let request_id = NEXT_CHAT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let mut provider_attempts = Vec::new();
-    let api_key = R::resolve_api_key().map_err(|e| {
+    let api_key = R::resolve_bearer_token().await.map_err(|e| {
         ChatStepError::new(LlmError::Http(HttpFailure::send(
             None,
             None,
-            format!("missing api key: {e}"),
+            format!("failed to resolve bearer token: {e}"),
             HttpSendFailure::Failed,
         )))
     })?;

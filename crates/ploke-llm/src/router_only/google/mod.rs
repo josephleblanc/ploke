@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use google_cloud_auth::credentials::{AccessTokenCredentials, Builder as GoogleAuthBuilder};
 use once_cell::sync::OnceCell;
 use ploke_core::ArcStr;
 
@@ -22,26 +23,63 @@ pub struct Google;
 
 static GOOGLE_OPENAPI_BASE_URL: OnceCell<String> = OnceCell::new();
 static GOOGLE_COMPLETION_URL: OnceCell<String> = OnceCell::new();
-static GOOGLE_MODELS_URL: OnceCell<String> = OnceCell::new();
+static GOOGLE_ADC_CREDENTIALS: OnceCell<AccessTokenCredentials> = OnceCell::new();
 
-fn google_location() -> String {
-    std::env::var("GOOGLE_LOCATION")
-        .or_else(|_| std::env::var("GOOGLE_REGION"))
-        .unwrap_or_else(|_| "global".to_string())
+fn google_project_id() -> Result<String, LlmError> {
+    required_google_env("GOOGLE_PROJECT_ID")
+}
+
+fn google_region() -> Result<String, LlmError> {
+    required_google_env("GOOGLE_REGION")
+}
+
+fn required_google_env(name: &'static str) -> Result<String, LlmError> {
+    let value = std::env::var(name).map_err(|source| LlmError::Var {
+        message: "required Google route environment variable is unset",
+        original: format!("{name}: {source}"),
+    })?;
+    if value.trim().is_empty() {
+        return Err(LlmError::Var {
+            message: "required Google route environment variable is empty",
+            original: name.to_string(),
+        });
+    }
+    Ok(value)
 }
 
 fn build_google_openapi_base_url() -> Result<String, LlmError> {
-    let project_id = std::env::var("GOOGLE_PROJECT_ID")?;
-    let location = google_location();
-    Ok(google_openapi_base_url(&project_id, &location))
+    let project_id = google_project_id()?;
+    let region = google_region()?;
+    Ok(google_openapi_base_url(&project_id, &region))
 }
 
-fn google_openapi_base_url(project_id: &str, location: &str) -> String {
+fn google_openapi_base_url(project_id: &str, region: &str) -> String {
     format!(
-        "{}/projects/{project_id}/locations/{location}/{}",
+        "{}/projects/{project_id}/locations/{region}/{}",
         Google::BASE_URL,
         Google::OPENAPI_ENDPOINT
     )
+}
+
+fn google_auth_error(_error: impl std::fmt::Display) -> LlmError {
+    LlmError::Authentication
+}
+
+fn google_adc_credentials() -> Result<&'static AccessTokenCredentials, LlmError> {
+    GOOGLE_ADC_CREDENTIALS.get_or_try_init(|| {
+        GoogleAuthBuilder::default()
+            .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+            .build_access_token_credentials()
+            .map_err(google_auth_error)
+    })
+}
+
+async fn google_adc_bearer_token() -> Result<String, LlmError> {
+    Ok(google_adc_credentials()?
+        .access_token()
+        .await
+        .map_err(google_auth_error)?
+        .token)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,13 +126,13 @@ impl From<Model> for models::ResponseItem {
             name: ModelName::new(normalized_slug.as_str()),
             created: model.created.unwrap_or_default(),
             description: ArcStr::from(
-                "Google OpenAI-compatible model metadata; pricing and full capability metadata are not included by /openai/models.",
+                "Direct Google catalog row for Vertex OpenAI-compatible chat completions.",
             ),
             architecture: google_openai_architecture(),
             top_provider: TopProvider::default(),
             pricing: unknown_pricing(),
             canonical: Some(model_id),
-            context_length: None,
+            context_length: google_context_length(&normalized_slug),
             hugging_face_id: None,
             per_request_limits: None,
             supported_parameters,
@@ -173,10 +211,39 @@ fn is_google_openai_chat_model(slug: &str) -> bool {
         && !slug.contains("tts")
 }
 
+fn google_context_length(model: &ModelSlug) -> Option<u32> {
+    match model.as_str() {
+        "gemini-2.5-flash" => Some(1_048_576),
+        _ => None,
+    }
+}
+
+fn google_catalog_model(slug: &str) -> Model {
+    Model {
+        id: ModelSlug::new(slug).expect("static Google catalog slug is valid"),
+        object: Some(ArcStr::from("model")),
+        created: Some(0),
+        owned_by: Some(ArcStr::from("google")),
+    }
+}
+
+fn google_catalog_models_response() -> ModelsResponse {
+    ModelsResponse {
+        data: vec![google_catalog_model("gemini-2.5-flash")],
+        object: Some(ArcStr::from("list")),
+    }
+}
+
 impl HasModels for Google {
     type Response = ModelsResponse;
     type Models = Model;
     type Error = LlmError;
+
+    fn fetch_models(
+        _client: &reqwest::Client,
+    ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
+        async { Ok(google_catalog_models_response()) }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -331,18 +398,32 @@ impl Router for Google {
     const BASE_URL: &'static str = "https://aiplatform.googleapis.com/v1";
     const COMPLETION_URL: &'static str = concat!(
         "https://aiplatform.googleapis.com/v1/projects/",
-        "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_LOCATION}/endpoints/openapi/chat/completions"
+        "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_REGION}/endpoints/openapi/chat/completions"
     );
-    const MODELS_URL: &'static str = concat!(
-        "https://aiplatform.googleapis.com/v1/projects/",
-        "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_LOCATION}/endpoints/openapi/models"
-    );
+    const MODELS_URL: &'static str = "";
     const ENDPOINTS_TAIL: &'static str = "";
     const API_KEY_NAME: &'static str = "GOOGLE_VERTEX_ACCESS_TOKEN";
     const PROVIDERS_URL: &'static str = "";
 
     fn resolve_api_key() -> Result<String, LlmError> {
-        std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        let token = std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)?;
+        if token.trim().is_empty() {
+            return Err(LlmError::Var {
+                message: "required Google bearer token environment variable is empty",
+                original: Self::API_KEY_NAME.to_string(),
+            });
+        }
+        Ok(token)
+    }
+
+    fn resolve_bearer_token() -> impl std::future::Future<Output = Result<String, LlmError>> + Send
+    {
+        async {
+            match std::env::var(Self::API_KEY_NAME) {
+                Ok(token) if !token.trim().is_empty() => Ok(token),
+                _ => google_adc_bearer_token().await,
+            }
+        }
     }
 
     fn completion_url() -> Result<&'static str, LlmError> {
@@ -358,15 +439,10 @@ impl Router for Google {
     }
 
     fn models_url() -> Result<&'static str, LlmError> {
-        Ok(GOOGLE_MODELS_URL
-            .get_or_try_init(|| {
-                Ok::<String, LlmError>(format!(
-                    "{}/{}",
-                    Self::openapi_base_url()?,
-                    Self::MODELS_ENDPOINT
-                ))
-            })?
-            .as_str())
+        Err(LlmError::Unknown(
+            "Vertex OpenAI-compatible API does not expose an OpenAI-compatible models endpoint"
+                .to_string(),
+        ))
     }
 }
 
@@ -379,6 +455,22 @@ impl Google {
         Ok(GOOGLE_OPENAPI_BASE_URL
             .get_or_try_init(build_google_openapi_base_url)?
             .as_str())
+    }
+
+    pub fn adc_credentials_available() -> Result<(), LlmError> {
+        google_adc_credentials().map(|_| ())
+    }
+
+    pub fn route_config_available() -> Result<(), LlmError> {
+        google_project_id()?;
+        google_region()?;
+        Ok(())
+    }
+
+    pub fn auth_config_available() -> Result<(), LlmError> {
+        Self::resolve_api_key()
+            .map(|_| ())
+            .or_else(|_| Self::adc_credentials_available())
     }
 }
 
@@ -421,6 +513,40 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
+    fn strict_live_tests_requested() -> bool {
+        env::var("PLOKE_RUN_LIVE_TESTS")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_env_or_skip(test_name: &str) -> bool {
+        let route_config_available = Google::route_config_available().is_ok();
+        let auth_config_available = Google::auth_config_available().is_ok();
+
+        if route_config_available && auth_config_available {
+            return true;
+        }
+
+        let missing = match (route_config_available, auth_config_available) {
+            (false, false) => {
+                "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth"
+            }
+            (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
+            (true, false) => "Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth",
+            (true, true) => unreachable!("handled above"),
+        };
+        let message = format!(
+            "skipping {test_name}: missing {missing}; direct Google live route was not exercised"
+        );
+        if strict_live_tests_requested() {
+            panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
+        }
+        eprintln!("{message}");
+        false
+    }
+
+    #[cfg(feature = "live_api_tests")]
     fn send_failure(url: &str, error: reqwest::Error) -> crate::LlmError {
         let phase = if error.is_timeout() {
             HttpSendFailure::Timeout
@@ -454,10 +580,16 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
+    fn live_thinking_model() -> String {
+        env::var("PLOKE_LIVE_GOOGLE_THINKING_MODEL")
+            .unwrap_or_else(|_| "google/gemini-3.1-pro-preview".to_string())
+    }
+
+    #[cfg(feature = "live_api_tests")]
     async fn send_chat_request(
         request: &ChatCompRequest<Google>,
     ) -> Result<(reqwest::StatusCode, serde_json::Value, String)> {
-        let key = Google::resolve_api_key()?;
+        let key = Google::resolve_bearer_token().await?;
         let url = Google::completion_url()?;
         let response = Client::new()
             .post(url)
@@ -507,6 +639,37 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
+    fn first_message_has_google_thought(response: &serde_json::Value) -> bool {
+        response
+            .get("choices")
+            .and_then(|choices| choices.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|choice| choice.get("message"))
+            .any(|message| {
+                message
+                    .pointer("/extra_content/google/thought")
+                    .and_then(|thought| thought.as_bool())
+                    == Some(true)
+            })
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn response_reports_reasoning_tokens(response: &serde_json::Value) -> bool {
+        response
+            .pointer("/usage/completion_tokens_details/reasoning_tokens")
+            .and_then(|tokens| tokens.as_u64())
+            .is_some_and(|tokens| tokens > 0)
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn response_has_thinking_evidence(response: &serde_json::Value) -> bool {
+        first_message_reasoning(response).is_some()
+            || first_message_has_google_thought(response)
+            || response_reports_reasoning_tokens(response)
+    }
+
+    #[cfg(feature = "live_api_tests")]
     fn json_contains_text(value: &serde_json::Value, needle: &str) -> bool {
         match value {
             serde_json::Value::String(text) => text.to_ascii_lowercase().contains(needle),
@@ -552,11 +715,23 @@ mod tests {
         assert_eq!(Google::OPENAPI_ENDPOINT, "endpoints/openapi");
         assert_eq!(Google::COMPLETION_ENDPOINT, "chat/completions");
         assert_eq!(Google::MODELS_ENDPOINT, "models");
+        assert_eq!(Google::MODELS_URL, "");
         assert_eq!(Google::API_KEY_NAME, "GOOGLE_VERTEX_ACCESS_TOKEN");
     }
 
     #[test]
-    fn vertex_openapi_base_url_uses_project_and_location_path() {
+    fn openai_compatible_models_url_is_not_supported_by_vertex() {
+        let error = Google::models_url().expect_err("Google models URL should be unsupported");
+        assert!(
+            error
+                .to_string()
+                .contains("does not expose an OpenAI-compatible models endpoint"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn vertex_openapi_base_url_uses_project_and_region_path() {
         assert_eq!(
             super::google_openapi_base_url("ploke-project", "us-central1"),
             "https://aiplatform.googleapis.com/v1/projects/ploke-project/locations/us-central1/endpoints/openapi"
@@ -706,51 +881,19 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "live_api_tests")]
-    async fn live_google_models_list_smoke() -> Result<()> {
-        let key = Google::resolve_api_key()?;
-        let url = Google::models_url()?;
+    async fn google_catalog_fetch_returns_direct_flash_row() -> color_eyre::Result<()> {
+        let typed_response = Google::fetch_models(&reqwest::Client::new()).await?;
+        let items = typed_response
+            .into_iter()
+            .map(crate::request::models::ResponseItem::from)
+            .collect::<Vec<_>>();
 
-        let response = Client::new()
-            .get(url)
-            .bearer_auth(key)
-            .header("Accept", "application/json")
-            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
-            .send()
-            .await
-            .map_err(|error| send_failure(url, error))?;
-
-        let status = response.status();
-        let response_text = response.text().await?;
-        if !status.is_success() {
-            bail!(
-                "Google models list failed: status={} body={}",
-                status,
-                body_snippet(&response_text)
-            );
-        }
-
-        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
-        let typed_response: <Google as HasModels>::Response =
-            serde_json::from_value(response_value.clone())?;
-        let models = response_value
-            .get("data")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing `data` array: {response_value}"))?;
-
-        assert!(
-            models
-                .iter()
-                .any(|model| model.get("id").and_then(|id| id.as_str()).is_some()),
-            "expected at least one model id in Google models response: {response_value}"
-        );
-        assert!(
-            typed_response
-                .into_iter()
-                .map(crate::request::models::ResponseItem::from)
-                .any(|item| item.route_source.is_direct_google()),
-            "expected live Google models response to adapt into direct route rows"
-        );
+        assert_eq!(items.len(), 1);
+        let flash = &items[0];
+        assert_eq!(flash.id.to_string(), "google/gemini-2.5-flash");
+        assert_eq!(flash.context_length, Some(1_048_576));
+        assert!(flash.supports_tools());
+        assert!(flash.route_source.is_direct_google());
 
         Ok(())
     }
@@ -758,7 +901,12 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_google_chat_completions_smoke_success_or_quota() -> Result<()> {
-        let key = Google::resolve_api_key()?;
+        const TEST_NAME: &str = "live_google_chat_completions_smoke_success_or_quota";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
+        let key = Google::resolve_bearer_token().await?;
         let url = Google::completion_url()?;
         let request = json!({
             "model": "google/gemini-2.5-flash",
@@ -818,8 +966,13 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, a live Google model with tool support, and quota"]
+    #[ignore = "requires Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
+        const TEST_NAME: &str = "live_google_chat_step_forced_tool_call_success_or_quota";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
         let request = ChatCompRequest::<Google>::default()
             .with_model_str(&live_chat_model())?
             .with_message(RequestMessage::new_user(
@@ -865,6 +1018,11 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_google_thinking_request_returns_reasoning_success_or_quota() -> Result<()> {
+        const TEST_NAME: &str = "live_google_thinking_request_returns_reasoning_success_or_quota";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
         let router = GoogleChatCompFields {
             extra_body: Some(
                 ExtraBody::default().with_google(
@@ -877,7 +1035,7 @@ mod tests {
             ),
         };
         let request = ChatCompRequest::<Google>::default()
-            .with_model_str(&live_chat_model())?
+            .with_model_str(&live_thinking_model())?
             .with_message(RequestMessage::new_user(
                 "Explain why 13 is prime in one short paragraph.".to_string(),
             ))
@@ -902,11 +1060,11 @@ mod tests {
 
         assert!(
             first_message_content(&response_value).is_some(),
-            "expected assistant content in Google thinking response: {response_value}"
+            "expected assistant content in Google thinking response"
         );
         assert!(
-            first_message_reasoning(&response_value).is_some(),
-            "expected non-empty message.reasoning when include_thoughts=true: {response_value}"
+            response_has_thinking_evidence(&response_value),
+            "expected Google thinking evidence when include_thoughts=true"
         );
 
         Ok(())
@@ -915,6 +1073,11 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_google_cached_content_reaches_provider_as_rejected_resource() -> Result<()> {
+        const TEST_NAME: &str = "live_google_cached_content_reaches_provider_as_rejected_resource";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
         let missing_cache = "cachedContents/ploke-live-test-missing-cache";
         let router = GoogleChatCompFields {
             extra_body: Some(

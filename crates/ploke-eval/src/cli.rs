@@ -338,6 +338,8 @@ pub enum RunReplaySubcommand {
     Batch(ReplayMsbBatchCommand),
     /// [debug/manual] Inspect replayable agent-turn cursors and response tapes.
     Inspect(ReplayInspectCommand),
+    /// [debug/manual] Replay historical broad-harness self-edit tool requests.
+    SelfEditLive(ReplaySelfEditLiveCommand),
     /// [debug/manual] Replay a recorded agent turn prefix, then continue live in one workspace.
     TurnLive(ReplayTurnLiveCommand),
 }
@@ -1389,6 +1391,7 @@ impl RunReplayCommand {
         match self.command {
             RunReplaySubcommand::Batch(cmd) => cmd.run().await,
             RunReplaySubcommand::Inspect(cmd) => cmd.run(),
+            RunReplaySubcommand::SelfEditLive(cmd) => cmd.run().await,
             RunReplaySubcommand::TurnLive(cmd) => cmd.run().await,
         }
     }
@@ -3105,6 +3108,71 @@ pub struct ReplayTurnLiveCommand {
 
 #[derive(Debug, Parser)]
 #[command(
+    about = "Replay broad-harness self-edit tool requests through the live TUI tool loop",
+    after_help = "\
+Example:
+
+  cargo run -p ploke-eval -- run replay self-edit-live \\
+    --request ~/.ploke-eval/campaigns/<campaign>/prototype1/messages/edit-harness-request/<node>.json \\
+    --result ~/.ploke-eval/campaigns/<campaign>/prototype1/messages/edit-harness-result/<node>.headless-tui.json \\
+    --workspace ~/.ploke-eval/campaigns/<campaign>/prototype1/workspaces/edit-harness/<node> \\
+    --event-index 7 --through-event --tail stop --format table
+
+This command is for self-edit attempts, not benchmark eval runs. It reads the
+published broad-harness request and historical headless-TUI evidence, rebuilds
+recorded assistant tool-call responses from historical ToolRequest events, and
+executes those requests through the current TUI tools in --workspace. It does
+not replay historical ToolCompleted or ToolFailed events.
+"
+)]
+pub struct ReplaySelfEditLiveCommand {
+    /// Published broad-harness request JSON.
+    #[arg(long, value_name = "FILE")]
+    pub request: PathBuf,
+
+    /// Historical .headless-tui.json result containing compact tool events.
+    #[arg(long, value_name = "FILE")]
+    pub result: PathBuf,
+
+    /// Workspace whose current files, search index, and tool behavior should be used.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+
+    /// Zero-based event index inside the historical headless-TUI event list.
+    #[arg(long, default_value_t = 0)]
+    pub event_index: usize,
+
+    /// Replay historical tool requests from event 0 through --event-index.
+    #[arg(long)]
+    pub through_event: bool,
+
+    /// What to do after the selected recorded prefix is exhausted.
+    #[arg(long, value_enum, default_value_t = ReplayTailArg::Stop)]
+    pub tail: ReplayTailArg,
+
+    /// Model id for the live tail. Defaults to the parent-patcher model selection.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug to pin for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum headless retry attempts around the replay/live tail.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Overall timeout for the headless replay probe.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(
     about = "Inspect replayable agent-turn cursors and provider-response sidecars",
     after_help = "\
 Example:
@@ -4653,6 +4721,39 @@ impl ReplayTurnLiveCommand {
     }
 }
 
+impl ReplaySelfEditLiveCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        let tail: crate::replay::turn::ReplayTail = self.tail.into();
+        let model = match (tail, self.model_id, self.provider) {
+            (crate::replay::turn::ReplayTail::Stop, None, None) => None,
+            (_, model_id, provider) => {
+                Some(resolve_replay_probe_model_selection(model_id, provider)?)
+            }
+        };
+        let budget = prototype1_state::edit_surface::tui_adapter::Budget::new(
+            self.max_attempts,
+            self.timeout_secs,
+        )
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "self_edit_replay_budget",
+            detail: source.to_string(),
+        })?;
+        let probe = crate::replay::self_edit::SelfEditProbeRequest {
+            request_path: self.request,
+            result_path: self.result,
+            workspace: self.workspace,
+            event_index: self.event_index,
+            through_event: self.through_event,
+            tail,
+            budget,
+            model,
+        }
+        .run()
+        .await?;
+        print_self_edit_probe(&probe, self.format)
+    }
+}
+
 impl ReplayInspectCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let limit = self.limit;
@@ -4786,6 +4887,88 @@ fn print_replay_probe(
         InspectOutputFormat::Table => {
             for line in crate::replay::probe_text::render_table(probe) {
                 println!("{line}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_self_edit_probe(
+    probe: &crate::replay::self_edit::SelfEditProbeRun,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(probe).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!("self_edit_replay");
+            println!("  request: {}", probe.request_path.display());
+            println!("  result: {}", probe.result_path.display());
+            println!("  workspace: {}", probe.workspace.display());
+            println!("  selected_events: {}", probe.selected_events);
+            println!("  selected_tool_requests: {}", probe.selected_tool_requests);
+            println!("  installed_records: {}", probe.installed_records);
+            println!("  terminal: {}", probe.terminal);
+            if !probe.historical_failures.is_empty() {
+                println!("historical_failures_before_breakpoint:");
+                for failure in &probe.historical_failures {
+                    println!(
+                        "  event={} call={} {}",
+                        failure.event_index,
+                        failure.call_id,
+                        truncate_middle(&failure.preview, 180)
+                    );
+                }
+            }
+            println!("observed_tool_events:");
+            let mut count = 0_usize;
+            for event in &probe.observed.events {
+                match event {
+                    prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolRequest {
+                        call_id,
+                        tool,
+                        arguments,
+                        ..
+                    } => {
+                        count += 1;
+                        println!(
+                            "  request call={} tool={} args={}",
+                            call_id,
+                            tool,
+                            truncate_middle(&arguments.preview, 180)
+                        );
+                    }
+                    prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolCompleted {
+                        call_id,
+                        content,
+                    } => {
+                        count += 1;
+                        println!(
+                            "  completed call={} result={}",
+                            call_id,
+                            truncate_middle(&content.preview, 220)
+                        );
+                    }
+                    prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolFailed {
+                        call_id,
+                        error,
+                    } => {
+                        count += 1;
+                        println!(
+                            "  failed call={} error={}",
+                            call_id,
+                            truncate_middle(&error.preview, 220)
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if count == 0 {
+                println!("  (none)");
             }
         }
     }
@@ -12768,14 +12951,25 @@ fn run_doctor() -> Result<(), PrepareError> {
         }
     }
 
-    match Google::resolve_api_key() {
+    match Google::route_config_available() {
         Ok(_) => {
             ok += 1;
-            println!("[ok] Google API key: present");
+            println!("[ok] Google route config: GOOGLE_PROJECT_ID and GOOGLE_REGION available");
         }
         Err(err) => {
             note += 1;
-            println!("[note] Google API key: unavailable ({err})");
+            println!("[note] Google route config: unavailable ({err})");
+        }
+    }
+
+    match Google::auth_config_available() {
+        Ok(_) => {
+            ok += 1;
+            println!("[ok] Google auth: ADC or explicit bearer token available");
+        }
+        Err(err) => {
+            note += 1;
+            println!("[note] Google auth: unavailable ({err})");
         }
     }
 

@@ -126,10 +126,6 @@ pub async fn fetch_openrouter_model_registry() -> Result<ModelRegistry, PrepareE
 }
 
 pub async fn fetch_google_model_registry() -> Result<ModelRegistry, PrepareError> {
-    let _api_key = Google::resolve_api_key().map_err(|source| PrepareError::DatabaseSetup {
-        phase: "resolve_google_api_key",
-        detail: source.to_string(),
-    })?;
     let client = Client::builder()
         .build()
         .map_err(|source| PrepareError::DatabaseSetup {
@@ -143,7 +139,7 @@ pub async fn fetch_google_model_registry() -> Result<ModelRegistry, PrepareError
             detail: source.to_string(),
         })?;
     Ok(ModelRegistry {
-        data: response.into_iter().map(Into::into).collect(),
+        data: response.into_iter().map(ResponseItem::from).collect(),
     })
 }
 

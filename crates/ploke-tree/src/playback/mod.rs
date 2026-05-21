@@ -1,5 +1,6 @@
 mod coarse;
 mod fine;
+mod runtime;
 mod turn;
 
 pub use coarse::{
@@ -10,6 +11,11 @@ pub use coarse::{
 pub use fine::{
     fine_history_steps_from_sealed_history, fine_run_playback_from_sealed_history,
     fine_run_playback_ref_steps_from_sealed_history,
+};
+pub use runtime::{
+    PlaybackCursor, PlaybackScope, RuntimeCoarse, RuntimePlaybackDeltaRef, RuntimePlaybackFrameRef,
+    RuntimePlaybackGranularity, RuntimePlaybackIndex, RuntimePlaybackRef, RuntimePlaybackStepRef,
+    RuntimePlaybackWarning,
 };
 pub use turn::{
     ResponseTapeRef, TurnArtifactKind, TurnCursor, TurnEventKind, TurnEventPlaybackRefSteps,

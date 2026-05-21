@@ -14,6 +14,7 @@ mod style;
 use eframe::egui;
 use eframe::egui::Vec2;
 use ploke_tree::Graph as DomainGraph;
+use serde::{Deserialize, Serialize};
 
 pub use style::{
     CurveStyle, EdgeLabelStyle, EdgeStyle, LabelStyle, LayoutStyle, StatusColors, ViewStyle,
@@ -277,15 +278,15 @@ pub struct GraphConnectivityDiagnostics {
     pub synthetic_anchors_visible: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GraphSelectionDetail {
     pub kind: String,
     pub label: String,
     pub detail: String,
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
     pub reference: GraphSelectionRef,
 }
-
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphSelectionRef {

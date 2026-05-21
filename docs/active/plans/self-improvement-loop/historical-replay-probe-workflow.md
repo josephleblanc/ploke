@@ -39,6 +39,63 @@ and a bounded excerpt. The renderer decodes tool payloads through
 `ploke-records::tool_contracts` and uses full in-memory headless events for the
 interactive table, while leaving the persisted JSON evidence summary bounded.
 
+Live-use findings added later on 2026-05-21:
+
+- Verified surfaces were live CLI replay/operator commands against persisted
+  Prototype 1 artifacts:
+  - `ploke-eval run replay inspect`;
+  - `ploke-eval run replay self-edit-live`;
+  - `ploke-eval run replay turn-live`.
+  No true `ploke-eval loop prototype1-harness attempt` live-provider run was
+  executed in this pass.
+- A recent real run,
+  `p1-smoke-broad-harness-1x3-20260519-2/.../run-1779210410211-structured-current-policy-d7e36c52`,
+  inspected successfully but reported one `tape_gap`: 408 agent-turn steps with
+  `25 rec missing 21` in `llm-full-responses.jsonl`.
+- `turn-live --through-response-index 3 --tail stop` still rejected that same
+  run before slicing because replay admission loads the full assistant-message
+  sidecar and requires the entire tape to be contiguous. This blocks useful
+  early-prefix probes on partially gapped real runs.
+- `self-edit-live --tail stop` worked through the actual headless TUI tool
+  path for
+  `p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-request/node-81bd26e4b6222d08-r9.json`.
+  Event `0` replayed one historical `list_dir` request. Event `84` replayed 43
+  historical tool requests and preserved the expected protected-core behavior:
+  the `non_semantic_patch` against `crates/ploke-eval/src/runner.rs` was
+  rejected before execution, the run ended `completed_without_edit`, and the
+  campaign workspace stayed clean.
+- The successful `self-edit-live` runs still emitted misleading operator noise
+  around expected boundaries and shutdown, including
+  `FileManager received unexpected event`, `channel closed`, and expected
+  `TOOL_EXECUTION_FAILED` warnings. The terminal replay result was clean, but
+  the logs need boundary-aware filtering or classification.
+- A different real run with a contiguous response tape,
+  `p1-smoke-broad-harness-1x3-20260519-1/.../run-1779193194784-structured-current-policy-966f1ec8`,
+  replayed with `turn-live --through-response-index 3 --tail stop` against the
+  current ripgrep workspace. It loaded 4 of 28 historical responses, captured 5
+  provider requests and 4 responses, reached no live tail, and ended
+  `completed_without_edit`.
+- That same `turn-live` run exposed a path-rebasing gap: historical absolute
+  paths from the old instance-target checkout were replayed unchanged and then
+  failed as outside configured roots, even though `--workspace` pointed at the
+  current checkout. The replay layer needs typed argument rebasing for known
+  workspace-root fields before provider output is installed.
+- `loop prototype1-harness attempt` was deliberately not run against the
+  selected existing campaign slot because its worktree `.git` resolves back to
+  `/home/brasides/code/ploke/.git`. A true live-provider harness probe should
+  use an isolated checkout/request pair rather than a slot backed by the primary
+  shared git directory.
+- Static review of the unstaged replay/runtime changes found DRY risks to carry
+  into the next implementation pass:
+  - `ReplayTail` to `install_recorded_response_*` dispatch is duplicated across
+    replay paths and should become one shared helper.
+  - Runtime playback frame/drilldown code should avoid rebuilding the same
+    unscoped agent-turn projection repeatedly.
+  - Self-edit replay response builders duplicate synthetic chat-completion
+    response construction already used in replay fixtures.
+  - Replay model-selection policy is repeated in `cli.rs`; `--tail stop` with
+    no model/provider should reuse one shared admission rule.
+
 ## Goal
 
 Historical loop replay is not meant to prove that an old model run now succeeds.
@@ -172,3 +229,12 @@ environment is giving the model useful, truthful feedback.
    detected quality signals, and workspace diff.
 6. Add deterministic regression tests for the stepper and keep live-provider
    probes as explicit smoke tests, not replay contract tests.
+7. Let prefix replay admit the selected contiguous prefix even when later
+   response indexes in the same assistant-message sidecar are missing; keep the
+   full-sidecar gap visible as a quality signal.
+8. Rebase historical workspace-root tool arguments through typed tool DTOs
+   before `turn-live` installs provider output against `--workspace`.
+9. Classify expected replay boundary and shutdown noise so clean replay stops do
+   not look like live harness failures.
+10. Run a true `prototype1-harness attempt` smoke only from an isolated
+    checkout/request whose `.git` does not point back at the primary repo.

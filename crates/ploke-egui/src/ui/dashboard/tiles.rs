@@ -3,6 +3,10 @@ use egui_tiles::{Behavior, TileId, UiResponse};
 use ploke_tree::Graph;
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
+use crate::diagnostics::SelectedGraphItemSnapshot;
+#[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
+use crate::ui::view::GraphSelectionDetail;
 use crate::ui::{app::shell, view::GraphSelectionRef};
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize, Default)]
@@ -37,6 +41,15 @@ pub(crate) enum TreeAction {
     Pin(GraphSelectionRef),
     PinSection(GraphSelectionRef, shell::InspectorPanelSection),
     Remove(TileId),
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
+fn print_selected_graph_item(graph: &Graph, detail: &GraphSelectionDetail) {
+    let snapshot = SelectedGraphItemSnapshot::from_graph(graph, detail);
+    match serde_json::to_string_pretty(&snapshot) {
+        Ok(json) => println!("{json}"),
+        Err(error) => eprintln!("failed to serialize selected graph item: {error}"),
+    }
 }
 
 pub(crate) struct TreeBehavior<'a> {
@@ -77,7 +90,17 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                             .on_hover_text("Pin this inspector as a new pane")
                             .clicked()
                         {
-                            self.actions.push(TreeAction::Pin(detail.reference));
+                            self.actions.push(TreeAction::Pin(detail.reference.clone()));
+                        }
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
+                        if ui
+                            .button("Print JSON")
+                            .on_hover_text(
+                                "Print the selected graph item and inspector snapshot to stdout.",
+                            )
+                            .clicked()
+                        {
+                            print_selected_graph_item(self.graph, &detail);
                         }
                     }
                 });
