@@ -10,7 +10,7 @@ use std::time::Instant;
 use chrono::Utc;
 use clap::{ArgAction, Args, Parser, Subcommand};
 use ploke_llm::Router;
-use ploke_llm::request::endpoint::Endpoint;
+use ploke_llm::request::{endpoint::Endpoint, models::ModelRouteSource};
 use ploke_llm::router_only::HasEndpoint;
 use ploke_llm::router_only::google::Google;
 use ploke_llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
@@ -1856,15 +1856,7 @@ async fn persist_intervention_synthesis_for_record(
         // OperationTarget here instead of relying on that fallback.
         operation_target: None,
     };
-    let model_id = resolve_protocol_model_id(model_id)?;
-    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
-    let cfg = JsonLlmConfig {
-        model_id: model_id.to_string(),
-        provider_slug,
-        timeout_secs: 120,
-        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-        max_tokens: 3200,
-    };
+    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 3200)?;
     let run = synthesize_intervention_with_llm(input.clone(), cfg.clone())
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -2847,6 +2839,48 @@ fn current_provider_for_model(
     Ok((model, provider))
 }
 
+fn registry_route_source(model_id: &ModelId) -> Result<Option<ModelRouteSource>, PrepareError> {
+    match load_model_registry() {
+        Ok(registry) => Ok(registry
+            .data
+            .iter()
+            .find(|item| item.id == *model_id)
+            .map(|item| item.route_source)),
+        Err(PrepareError::MissingModelRegistry(_)) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn headless_model_selection(
+    model_id: ModelId,
+    provider: Option<ProviderKey>,
+) -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    let registry_direct_google =
+        registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google());
+    let requested_google = provider
+        .as_ref()
+        .is_some_and(|provider| provider.slug.as_str() == "google");
+
+    if registry_direct_google || requested_google {
+        if let Some(provider) = provider.as_ref()
+            && provider.slug.as_str() != "google"
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "headless_model_route",
+                detail: format!(
+                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
+                    provider.slug.as_str()
+                ),
+            });
+        }
+        return Ok(
+            prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(model_id),
+        );
+    }
+
+    Ok(prototype1_state::edit_surface::tui_adapter::ModelSelection::openrouter(model_id, provider))
+}
+
 fn load_parent_patcher_model_selection()
 -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
     // Temporary split config: broad parent patch generation reads the
@@ -2858,12 +2892,7 @@ fn load_parent_patcher_model_selection()
         other => Err(other),
     })?;
     let provider = load_provider_for_model(&selected.model_id)?;
-    Ok(
-        prototype1_state::edit_surface::tui_adapter::ModelSelection::new(
-            selected.model_id,
-            provider,
-        ),
-    )
+    headless_model_selection(selected.model_id, provider)
 }
 
 async fn set_persisted_provider(
@@ -4656,11 +4685,7 @@ fn resolve_replay_probe_model_selection(
                     })
                 })
                 .transpose()?;
-            Ok(
-                prototype1_state::edit_surface::tui_adapter::ModelSelection::new(
-                    model_id, provider,
-                ),
-            )
+            headless_model_selection(model_id, provider)
         }
         (None, Some(provider)) => Err(PrepareError::InvalidBatchSelection {
             detail: format!("replay turn-live provider '{provider}' requires --model-id"),
@@ -5591,16 +5616,14 @@ impl ProtocolToolCallReviewCommand {
         let subject_id = subject.subject_id.clone();
         let persisted_input = subject.clone();
 
-        let model_id = resolve_protocol_model_id(self.model_id)?;
-        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
         let client = reqwest::Client::new();
-        let cfg = JsonLlmConfig {
-            model_id: model_id.to_string(),
-            provider_slug,
-            timeout_secs: TOOL_CALL_REVIEW_TIMEOUT_SECS,
-            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-            max_tokens: 400,
-        };
+        let cfg = protocol_llm_config(
+            self.model_id,
+            self.provider,
+            TOOL_CALL_REVIEW_TIMEOUT_SECS,
+            PROTOCOL_HTTP_MAX_ATTEMPTS,
+            400,
+        )?;
         let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
         let reviewed = protocol
             .run(subject)
@@ -5623,10 +5646,7 @@ impl ProtocolToolCallReviewCommand {
                 println!("Protocol: {}", reviewed.procedure_name);
                 println!("{}", "-".repeat(40));
                 println!("Model: {}", cfg.model_id);
-                println!(
-                    "Provider: {}",
-                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
-                );
+                println!("Provider: {}", cfg.provider_display());
                 println!("Artifact: {}", persisted_path.display());
                 println!(
                     "Target: {:?} {}",
@@ -6966,16 +6986,8 @@ async fn execute_protocol_intent_segments_quiet(
     let subject = build_tool_call_sequence_subject(&record)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
-    let model_id = resolve_protocol_model_id(model_id)?;
-    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
     let client = reqwest::Client::new();
-    let cfg = JsonLlmConfig {
-        model_id: model_id.to_string(),
-        provider_slug,
-        timeout_secs: 120,
-        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-        max_tokens: 1200,
-    };
+    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 1200)?;
     let segmented = 'retry: loop {
         for attempt in 1..=MAX_SEGMENTATION_ATTEMPTS {
             let protocol = segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(
@@ -7083,9 +7095,10 @@ fn protocol_llm_config(
     max_tokens: u32,
 ) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
-    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
+    let (route_source, provider_slug) = resolve_protocol_route(&model_id, provider)?;
     Ok(JsonLlmConfig {
         model_id: model_id.to_string(),
+        route_source,
         provider_slug,
         timeout_secs,
         max_attempts,
@@ -7207,16 +7220,8 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     let subject = build_segment_review_subject(&segmented, segment_index)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
-    let model_id = resolve_protocol_model_id(model_id)?;
-    let provider_slug = resolve_protocol_provider_slug(&model_id, provider)?;
     let client = reqwest::Client::new();
-    let cfg = JsonLlmConfig {
-        model_id: model_id.to_string(),
-        provider_slug,
-        timeout_secs: 120,
-        max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-        max_tokens: 1200,
-    };
+    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 1200)?;
     let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
     let reviewed = protocol
         .run(subject)
@@ -7506,16 +7511,14 @@ impl ProtocolToolCallSegmentReviewCommand {
             })?;
 
         let sequence_subject = build_tool_call_sequence_subject(&record)?;
-        let model_id = resolve_protocol_model_id(self.model_id)?;
-        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
         let client = reqwest::Client::new();
-        let cfg = JsonLlmConfig {
-            model_id: model_id.to_string(),
-            provider_slug,
-            timeout_secs: 120,
-            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-            max_tokens: 1200,
-        };
+        let cfg = protocol_llm_config(
+            self.model_id,
+            self.provider,
+            120,
+            PROTOCOL_HTTP_MAX_ATTEMPTS,
+            1200,
+        )?;
         let adjudicator = JsonAdjudicator::new(client, cfg.clone());
         let segmentation = segment::ToolCallIntentSegmentation::new(adjudicator.clone())
             .run(sequence_subject)
@@ -7547,10 +7550,7 @@ impl ProtocolToolCallSegmentReviewCommand {
                 println!("Protocol: {}", reviewed.procedure_name);
                 println!("{}", "-".repeat(40));
                 println!("Model: {}", cfg.model_id);
-                println!(
-                    "Provider: {}",
-                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
-                );
+                println!("Provider: {}", cfg.provider_display());
                 println!("Artifact: {}", persisted_path.display());
                 println!(
                     "Target: {:?} {}",
@@ -7649,16 +7649,14 @@ impl ProtocolToolCallIntentSegmentsCommand {
         let subject_id = subject.subject_id.clone();
         let persisted_input = subject.clone();
 
-        let model_id = resolve_protocol_model_id(self.model_id)?;
-        let provider_slug = resolve_protocol_provider_slug(&model_id, self.provider)?;
         let client = reqwest::Client::new();
-        let cfg = JsonLlmConfig {
-            model_id: model_id.to_string(),
-            provider_slug,
-            timeout_secs: 120,
-            max_attempts: PROTOCOL_HTTP_MAX_ATTEMPTS,
-            max_tokens: 1200,
-        };
+        let cfg = protocol_llm_config(
+            self.model_id,
+            self.provider,
+            120,
+            PROTOCOL_HTTP_MAX_ATTEMPTS,
+            1200,
+        )?;
         let protocol =
             segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
         let segmented = protocol
@@ -7682,10 +7680,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
                 println!("Protocol: {}", segmented.procedure_name);
                 println!("{}", "-".repeat(40));
                 println!("Model: {}", cfg.model_id);
-                println!(
-                    "Provider: {}",
-                    cfg.provider_slug.as_deref().unwrap_or("auto/openrouter")
-                );
+                println!("Provider: {}", cfg.provider_display());
                 println!("Artifact: {}", persisted_path.display());
                 println!("Turns: {}", output.sequence.total_turns);
                 println!("Tool calls: {}", output.sequence.total_calls_in_run);
@@ -11054,15 +11049,56 @@ fn resolve_protocol_provider_slug(
     model_id: &ModelId,
     provider: Option<String>,
 ) -> Result<Option<String>, PrepareError> {
+    resolve_protocol_route(model_id, provider).map(|(_, provider_slug)| provider_slug)
+}
+
+fn resolve_protocol_route(
+    model_id: &ModelId,
+    provider: Option<String>,
+) -> Result<(ModelRouteSource, Option<String>), PrepareError> {
     if let Some(provider) = provider {
         let parsed = ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
             phase: "protocol_provider_slug",
             detail: err.to_string(),
         })?;
-        return Ok(Some(parsed.slug.as_str().to_string()));
+        if parsed.slug.as_str() == "google" {
+            return Ok((ModelRouteSource::DirectGoogle, None));
+        }
+        if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "protocol_route",
+                detail: format!(
+                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
+                    parsed.slug.as_str()
+                ),
+            });
+        }
+        return Ok((
+            ModelRouteSource::OpenRouter,
+            Some(parsed.slug.as_str().to_string()),
+        ));
     }
 
-    Ok(load_provider_for_model(model_id)?.map(|provider| provider.slug.as_str().to_string()))
+    let provider = load_provider_for_model(model_id)?;
+    if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
+        if let Some(provider) = provider.as_ref()
+            && provider.slug.as_str() != "google"
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "protocol_route",
+                detail: format!(
+                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
+                    provider.slug.as_str()
+                ),
+            });
+        }
+        return Ok((ModelRouteSource::DirectGoogle, None));
+    }
+
+    Ok((
+        ModelRouteSource::OpenRouter,
+        provider.map(|provider| provider.slug.as_str().to_string()),
+    ))
 }
 
 fn print_protocol_artifact_detail(index: usize, entry: &StoredProtocolArtifactFile, full: bool) {
@@ -13086,6 +13122,38 @@ mod tests {
         env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn protocol_llm_config_google_provider_selects_direct_google_route() {
+        let cfg = protocol_llm_config(
+            Some("google/gemini-2.5-flash".to_string()),
+            Some("google".to_string()),
+            120,
+            1,
+            400,
+        )
+        .expect("protocol config");
+
+        assert!(cfg.route_source.is_direct_google());
+        assert!(cfg.provider_slug.is_none());
+        assert_eq!(cfg.provider_display(), "google");
+    }
+
+    #[test]
+    fn protocol_llm_config_openrouter_provider_keeps_provider_pin() {
+        let cfg = protocol_llm_config(
+            Some("x-ai/grok-4-fast".to_string()),
+            Some("xai".to_string()),
+            120,
+            1,
+            400,
+        )
+        .expect("protocol config");
+
+        assert!(cfg.route_source.is_openrouter());
+        assert_eq!(cfg.provider_slug.as_deref(), Some("xai"));
+        assert_eq!(cfg.provider_display(), "xai");
     }
 
     fn sample_run_intent(base: &Path, instances_root: &Path) -> RunIntent {

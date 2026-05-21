@@ -4,10 +4,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use fxhash::FxBuildHasher;
 use ploke_llm::manager::{ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step};
+use ploke_llm::request::models::ModelRouteSource;
 use ploke_llm::response::OpenAiResponse;
-use ploke_llm::router_only::Router;
+use ploke_llm::router_only::google::Google;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
-use ploke_llm::{AttemptTimeout, ProviderSlug, ReasoningConfig, ReasoningEffort};
+use ploke_llm::router_only::{ChatCompRequest, Router};
+use ploke_llm::{AttemptTimeout, ModelId, ProviderSlug, ReasoningConfig, ReasoningEffort};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +27,8 @@ pub struct JsonChatPrompt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonLlmConfig {
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "ModelRouteSource::is_openrouter")]
+    pub route_source: ModelRouteSource,
     pub provider_slug: Option<String>,
     pub timeout_secs: u64,
     pub max_attempts: u32,
@@ -35,6 +39,7 @@ impl Default for JsonLlmConfig {
     fn default() -> Self {
         Self {
             model_id: "moonshotai/kimi-k2".to_string(),
+            route_source: ModelRouteSource::OpenRouter,
             provider_slug: None,
             timeout_secs: 30,
             max_attempts: 1,
@@ -43,9 +48,21 @@ impl Default for JsonLlmConfig {
     }
 }
 
+impl JsonLlmConfig {
+    pub fn provider_display(&self) -> &str {
+        if self.route_source.is_direct_google() {
+            "google"
+        } else {
+            self.provider_slug.as_deref().unwrap_or("auto/openrouter")
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonLlmProvenance {
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "ModelRouteSource::is_openrouter")]
+    pub route_source: ModelRouteSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
     pub raw_content: String,
@@ -58,6 +75,8 @@ pub struct JsonLlmProvenance {
 pub enum ProtocolLlmError {
     #[error("invalid model id '{model_id}': {detail}")]
     InvalidModelId { model_id: String, detail: String },
+    #[error("invalid llm route config: {detail}")]
+    InvalidConfig { detail: String },
     #[error("llm request failed: {0}")]
     Request(String),
     #[error("expected content response but received tool calls")]
@@ -106,7 +125,11 @@ where
     }
 
     fn label(&self) -> &'static str {
-        "openrouter_json_chat"
+        if self.cfg.route_source.is_direct_google() {
+            "google_json_chat"
+        } else {
+            "openrouter_json_chat"
+        }
     }
 
     async fn execute(
@@ -120,6 +143,7 @@ where
             state: parsed.parsed,
             provenance: JsonLlmProvenance {
                 model_id: self.cfg.model_id.clone(),
+                route_source: self.cfg.route_source,
                 provider_slug: self.cfg.provider_slug.clone(),
                 raw_content: parsed.content,
                 reasoning: parsed.reasoning,
@@ -254,36 +278,7 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
     cfg: &JsonLlmConfig,
     prompt: &JsonChatPrompt,
 ) -> Result<JsonLlmResult<T>, ProtocolLlmError> {
-    let model = cfg.model_id.parse().map_err(|err: ploke_llm::IdError| {
-        ProtocolLlmError::InvalidModelId {
-            model_id: cfg.model_id.clone(),
-            detail: err.to_string(),
-        }
-    })?;
-
-    let mut request = OpenRouter::default_chat_completion()
-        .with_model(model)
-        .with_messages(vec![
-            RequestMessage::new_system(prompt.system.clone()),
-            RequestMessage::new_user(prompt.user.clone()),
-        ])
-        .with_json_response()
-        .with_max_tokens(cfg.max_tokens)
-        .with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None))
-        .non_streaming();
-
-    if let Some(provider_slug) = cfg.provider_slug.as_ref() {
-        let mut only = std::collections::HashSet::with_hasher(FxBuildHasher::default());
-        only.insert(ProviderSlug::new(provider_slug));
-        let provider = ProviderPreferences {
-            only: Some(only),
-            allow_fallbacks: Some(false),
-            ..Default::default()
-        };
-        request = request.with_router_bundle(
-            ploke_llm::router_only::openrouter::ChatCompFields::default().with_provider(provider),
-        );
-    }
+    let model = parse_json_model(cfg)?;
 
     let http = chat_http_config_for_json_llm(cfg);
 
@@ -291,9 +286,17 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         wait_for_json_llm_rate_slot(interval).await;
     }
 
-    let response = chat_step(client, &request, &http)
-        .await
-        .map_err(|err| ProtocolLlmError::Request(err.to_string()))?;
+    let response = if cfg.route_source.is_direct_google() {
+        let request = google_json_request(model, cfg, prompt)?;
+        chat_step(client, &request, &http)
+            .await
+            .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+    } else {
+        let request = openrouter_json_request(model, cfg, prompt);
+        chat_step(client, &request, &http)
+            .await
+            .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+    };
 
     match response.outcome {
         ChatStepOutcome::Content { content, reasoning } => {
@@ -308,6 +311,73 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         }
         ChatStepOutcome::ToolCalls { .. } => Err(ProtocolLlmError::UnexpectedToolCalls),
     }
+}
+
+fn parse_json_model(cfg: &JsonLlmConfig) -> Result<ModelId, ProtocolLlmError> {
+    cfg.model_id
+        .parse()
+        .map_err(|err: ploke_llm::IdError| ProtocolLlmError::InvalidModelId {
+            model_id: cfg.model_id.clone(),
+            detail: err.to_string(),
+        })
+}
+
+fn base_json_request<R: Router>(
+    model: ModelId,
+    cfg: &JsonLlmConfig,
+    prompt: &JsonChatPrompt,
+) -> ChatCompRequest<R> {
+    R::default_chat_completion()
+        .with_model(model)
+        .with_messages(vec![
+            RequestMessage::new_system(prompt.system.clone()),
+            RequestMessage::new_user(prompt.user.clone()),
+        ])
+        .with_json_response()
+        .with_max_tokens(cfg.max_tokens)
+        .with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None))
+        .non_streaming()
+}
+
+fn openrouter_json_request(
+    model: ModelId,
+    cfg: &JsonLlmConfig,
+    prompt: &JsonChatPrompt,
+) -> ChatCompRequest<OpenRouter> {
+    let mut request = base_json_request::<OpenRouter>(model, cfg, prompt);
+
+    if let Some(provider_slug) = cfg.provider_slug.as_ref() {
+        let mut only = std::collections::HashSet::with_hasher(FxBuildHasher::default());
+        only.insert(ProviderSlug::new(provider_slug));
+        let provider = ProviderPreferences {
+            only: Some(only),
+            allow_fallbacks: Some(false),
+            ..Default::default()
+        };
+        request = request.with_router_bundle(
+            ploke_llm::router_only::openrouter::ChatCompFields::default().with_provider(provider),
+        );
+    }
+
+    request
+}
+
+fn google_json_request(
+    model: ModelId,
+    cfg: &JsonLlmConfig,
+    prompt: &JsonChatPrompt,
+) -> Result<ChatCompRequest<Google>, ProtocolLlmError> {
+    if let Some(provider_slug) = cfg.provider_slug.as_deref()
+        && provider_slug != "google"
+    {
+        return Err(ProtocolLlmError::InvalidConfig {
+            detail: format!(
+                "direct Google route does not accept OpenRouter provider '{provider_slug}'"
+            ),
+        });
+    }
+
+    Ok(base_json_request::<Google>(model, cfg, prompt))
 }
 
 fn chat_http_config_for_json_llm(cfg: &JsonLlmConfig) -> ChatHttpConfig {
@@ -423,6 +493,7 @@ mod tests {
     fn json_llm_config_controls_http_attempt_count() {
         let cfg = JsonLlmConfig {
             model_id: "test/model".to_string(),
+            route_source: ModelRouteSource::OpenRouter,
             provider_slug: None,
             timeout_secs: 42,
             max_attempts: 3,
@@ -433,5 +504,50 @@ mod tests {
 
         assert_eq!(http.max_attempts, 3);
         assert_eq!(http.attempt_timeout.for_attempt(1), Duration::from_secs(42));
+    }
+
+    #[test]
+    fn google_json_request_serializes_direct_google_model() {
+        let cfg = JsonLlmConfig {
+            model_id: "google/gemini-2.5-flash".to_string(),
+            route_source: ModelRouteSource::DirectGoogle,
+            provider_slug: None,
+            timeout_secs: 42,
+            max_attempts: 1,
+            max_tokens: 64,
+        };
+        let prompt = JsonChatPrompt {
+            system: "Return JSON only.".to_string(),
+            user: "Return {\"ok\":true}.".to_string(),
+        };
+        let model = parse_json_model(&cfg).expect("model id");
+        let request = google_json_request(model, &cfg, &prompt).expect("google request");
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["model"], "gemini-2.5-flash");
+        assert_eq!(value["response_format"]["type"], "json_object");
+        assert_eq!(value["max_tokens"], 64);
+        assert!(value.get("provider").is_none());
+        assert!(value.get("transforms").is_none());
+    }
+
+    #[test]
+    fn google_json_request_rejects_openrouter_provider_pin() {
+        let cfg = JsonLlmConfig {
+            model_id: "google/gemini-2.5-flash".to_string(),
+            route_source: ModelRouteSource::DirectGoogle,
+            provider_slug: Some("inception".to_string()),
+            timeout_secs: 42,
+            max_attempts: 1,
+            max_tokens: 64,
+        };
+        let prompt = JsonChatPrompt {
+            system: "Return JSON only.".to_string(),
+            user: "Return {\"ok\":true}.".to_string(),
+        };
+        let model = parse_json_model(&cfg).expect("model id");
+        let err = google_json_request(model, &cfg, &prompt).expect_err("invalid provider pin");
+
+        assert!(matches!(err, ProtocolLlmError::InvalidConfig { .. }));
     }
 }

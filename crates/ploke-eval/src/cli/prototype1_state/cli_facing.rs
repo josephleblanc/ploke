@@ -677,7 +677,7 @@ impl BroadTuiAttemptOptions {
                         })
                     })
                     .transpose()?;
-                Some(tui_adapter::ModelSelection::new(model_id, provider))
+                Some(crate::cli::headless_model_selection(model_id, provider)?)
             }
             (None, Some(provider)) => {
                 return Err(PrepareError::InvalidBatchSelection {

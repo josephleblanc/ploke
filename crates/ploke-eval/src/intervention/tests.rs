@@ -633,6 +633,7 @@ async fn live_intervention_synthesis_fans_out_replacement_candidates() {
         .expect("provider configured for active model");
     let cfg = JsonLlmConfig {
         model_id: active_model.model_id.to_string(),
+        route_source: ploke_llm::request::models::ModelRouteSource::OpenRouter,
         provider_slug: Some(provider.slug.as_str().to_string()),
         timeout_secs: 45,
         max_attempts: 1,

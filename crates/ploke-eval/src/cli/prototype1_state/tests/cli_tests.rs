@@ -1213,6 +1213,24 @@ fn broad_tui_attempt_provider_requires_model_override() {
     }
 }
 
+#[test]
+fn broad_tui_attempt_google_provider_selects_google_router() {
+    let options = BroadTuiAttemptOptions::from_cli(
+        Some("google/gemini-2.5-flash".to_string()),
+        Some("google".to_string()),
+        Some(1),
+        None,
+    )
+    .expect("google headless model selection");
+
+    let model = options.model().expect("model selection");
+    assert!(matches!(
+        model.router(),
+        ploke_llm::router_only::RouterVariants::Google(_)
+    ));
+    assert!(model.provider().is_none());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "operator splice test for one published broad headless-TUI request"]
 async fn live_broad_headless_tui_attempt_from_published_request_env() {
@@ -1251,7 +1269,20 @@ async fn live_broad_headless_tui_attempt_from_published_request_env() {
         broad_headless_tui_diagnostics_path(slot.published.submitted_result_path()).display()
     );
 
-    let executor = run_broad_headless_tui_attempt(&slot)
+    let model_id = std::env::var("PLOKE_EVAL_HEADLESS_TUI_MODEL_ID").ok();
+    let provider = std::env::var("PLOKE_EVAL_HEADLESS_TUI_PROVIDER").ok();
+    let options = match (model_id, provider) {
+        (None, None) => BroadTuiAttemptOptions::for_parent_patcher_defaults(None, None),
+        (model_id, provider) => BroadTuiAttemptOptions::from_cli(model_id, provider, None, None),
+    }
+    .unwrap_or_else(|err| {
+        panic!(
+            "could not resolve broad headless-TUI model override for '{}': {err}",
+            request_path.display()
+        )
+    });
+
+    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
         .await
         .unwrap_or_else(|err| {
             panic!(

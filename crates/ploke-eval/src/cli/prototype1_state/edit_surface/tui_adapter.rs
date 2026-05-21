@@ -14,7 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ploke_llm::{ModelId, ProviderKey};
+use ploke_llm::{
+    ModelId, ProviderKey,
+    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
+};
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -58,11 +61,24 @@ pub(crate) mod state {
 pub(crate) struct ModelSelection {
     model_id: ModelId,
     provider: Option<ProviderKey>,
+    router: RouterVariants,
 }
 
 impl ModelSelection {
-    pub(crate) fn new(model_id: ModelId, provider: Option<ProviderKey>) -> Self {
-        Self { model_id, provider }
+    pub(crate) fn openrouter(model_id: ModelId, provider: Option<ProviderKey>) -> Self {
+        Self {
+            model_id,
+            provider,
+            router: RouterVariants::OpenRouter(OpenRouter),
+        }
+    }
+
+    pub(crate) fn direct_google(model_id: ModelId) -> Self {
+        Self {
+            model_id,
+            provider: None,
+            router: RouterVariants::Google(Google),
+        }
     }
 
     pub(crate) fn model_id(&self) -> &ModelId {
@@ -71,6 +87,10 @@ impl ModelSelection {
 
     pub(crate) fn provider(&self) -> Option<&ProviderKey> {
         self.provider.as_ref()
+    }
+
+    pub(crate) fn router(&self) -> RouterVariants {
+        self.router
     }
 }
 
@@ -248,8 +268,11 @@ async fn start_attempt_runtime(
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
         if let Some(model) = model {
             cfg.active_model = model.model_id.clone();
-            cfg.model_registry
-                .select_model_provider(&model.model_id, model.provider.as_ref());
+            cfg.active_router = model.router();
+            if !matches!(model.router(), RouterVariants::Google(_)) || model.provider.is_some() {
+                cfg.model_registry
+                    .select_model_provider(&model.model_id, model.provider.as_ref());
+            }
         }
     }
     let parent_id = submit_prompt(&runtime.app, prompt).await?;
@@ -3035,6 +3058,27 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn model_selection_sets_openrouter_route() {
+        let model_id = "moonshotai/kimi-k2".parse().expect("model id");
+        let provider = ProviderKey::new("moonshotai").expect("provider");
+
+        let selection = ModelSelection::openrouter(model_id, Some(provider.clone()));
+
+        assert!(matches!(selection.router(), RouterVariants::OpenRouter(_)));
+        assert_eq!(selection.provider(), Some(&provider));
+    }
+
+    #[test]
+    fn model_selection_sets_direct_google_route_without_provider_pin() {
+        let model_id = "google/gemini-2.5-flash".parse().expect("model id");
+
+        let selection = ModelSelection::direct_google(model_id);
+
+        assert!(matches!(selection.router(), RouterVariants::Google(_)));
+        assert!(selection.provider().is_none());
+    }
 
     #[test]
     fn classifier_rejects_absolute_path_outside_workspace() {

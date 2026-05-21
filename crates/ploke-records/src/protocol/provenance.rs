@@ -13,6 +13,8 @@ pub struct MechanizedProvenanceMirror {
 pub struct JsonLlmProvenanceMirror {
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
     pub raw_content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
