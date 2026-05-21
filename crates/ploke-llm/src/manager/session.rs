@@ -293,7 +293,14 @@ pub async fn chat_step_with_attempts<R: Router>(
     req: &ChatCompRequest<R>,
     cfg: &ChatHttpConfig,
 ) -> Result<ChatStepData, ChatStepError> {
-    let url = R::COMPLETION_URL;
+    let url = R::completion_url().map_err(|e| {
+        ChatStepError::new(LlmError::Http(HttpFailure::send(
+            None,
+            None,
+            format!("failed to resolve completion url: {e}"),
+            HttpSendFailure::Failed,
+        )))
+    })?;
     let request_id = NEXT_CHAT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let mut provider_attempts = Vec::new();
     let api_key = R::resolve_api_key().map_err(|e| {

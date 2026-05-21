@@ -1901,16 +1901,37 @@ async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
     let model_id = crate::model_registry::load_active_model()
         .expect("load active eval model config")
         .model_id;
-    let provider_key = crate::provider_prefs::load_provider_for_model(&model_id)
-        .expect("load eval provider preferences")
-        .unwrap_or_else(|| {
-            panic!("active eval model {model_id} has no selected provider in provider preferences")
-        });
+    let direct_google = crate::model_registry::load_model_registry()
+        .expect("load eval model registry")
+        .data
+        .iter()
+        .find(|item| item.id == model_id)
+        .is_some_and(|item| item.route_source.is_direct_google());
+    let provider_key = if direct_google {
+        None
+    } else {
+        Some(
+            crate::provider_prefs::load_provider_for_model(&model_id)
+                .expect("load eval provider preferences")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "OpenRouter-routed active eval model {model_id} has no selected provider in provider preferences"
+                    )
+                }),
+        )
+    };
     {
+        use ploke_llm::router_only::{RouterVariants, google::Google, openrouter::OpenRouter};
+
         let mut cfg = state.config.write().await;
         cfg.active_model = model_id.clone();
-        cfg.model_registry
-            .select_model_provider(&model_id, Some(&provider_key));
+        if direct_google {
+            cfg.active_router = RouterVariants::Google(Google);
+        } else {
+            cfg.active_router = RouterVariants::OpenRouter(OpenRouter);
+            cfg.model_registry
+                .select_model_provider(&model_id, provider_key.as_ref());
+        }
         cfg.llm_timeout_secs = 90;
         cfg.chat_policy.tool_call_timeout_secs = 30;
         cfg.chat_policy.tool_call_chain_limit = 4;
@@ -1974,6 +1995,7 @@ Use exactly this JSON payload:
     let mut completed_payload = None;
     let mut terminal = None;
     let mut terminal_seen_at = None;
+    let mut terminal_error_detail = None;
     let staged = timeout(Duration::from_secs(120), async {
         let mut last_event = String::new();
         loop {
@@ -1988,7 +2010,7 @@ Use exactly this JSON payload:
                 .is_some_and(|seen_at: Instant| seen_at.elapsed() >= Duration::from_secs(1))
             {
                 panic!(
-                    "live turn finished without staging proposal; terminal={terminal:?}; last_event={last_event}"
+                    "live turn finished without staging proposal; terminal={terminal:?}; detail={terminal_error_detail:?}; last_event={last_event}"
                 );
             }
 
@@ -2011,7 +2033,17 @@ Use exactly this JSON payload:
                         Ok(AppEvent::System(SystemEvent::ToolCallFailed { error, .. })) => {
                             last_event = format!("tool failed: {error}");
                         }
-                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished { outcome, summary, .. })) => {
+                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished { outcome, summary, assistant_message_id, error_id, .. })) => {
+                            terminal_error_detail = {
+                                let chat = state.chat.0.read().await;
+                                chat.messages.get(&assistant_message_id).map(|message| {
+                                    format!(
+                                        "assistant_message_id={assistant_message_id}; error_id={error_id:?}; status={:?}; content={}",
+                                        message.status,
+                                        message.content
+                                    )
+                                })
+                            };
                             terminal = Some((outcome, summary));
                             terminal_seen_at = Some(Instant::now());
                         }

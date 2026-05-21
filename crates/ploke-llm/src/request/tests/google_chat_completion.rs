@@ -48,7 +48,7 @@ fn google_chat_request_serializes_api_model_and_google_extra_body() -> Result<()
                     "content": "Reply with one short sentence."
                 }
             ],
-            "model": "gemini-2.5-flash",
+            "model": "google/gemini-2.5-flash",
             "max_tokens": 64,
             "temperature": 0.0,
             "reasoning": {
@@ -107,7 +107,7 @@ fn google_prompt_request_roundtrips_response_format_stop_and_params() -> Result<
         json!({
             "messages": [],
             "prompt": "Return JSON with a single `ok` boolean.",
-            "model": "gemini-2.0-flash",
+            "model": "google/gemini-2.0-flash",
             "response_format": {
                 "type": "json_object"
             },
@@ -128,7 +128,7 @@ fn google_prompt_request_roundtrips_response_format_stop_and_params() -> Result<
 fn google_chat_request_rejects_invalid_thinking_level() {
     let value = json!({
         "messages": [],
-        "model": "gemini-2.5-flash",
+        "model": "google/gemini-2.5-flash",
         "extra_body": {
             "google": {
                 "thinking_config": {

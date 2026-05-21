@@ -50,7 +50,7 @@ pub trait HasModels: Router {
         client: &reqwest::Client,
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
         async {
-            let url = Self::MODELS_URL;
+            let url = Self::models_url()?;
             let api_key = Self::resolve_api_key()?;
 
             let resp = client
@@ -258,6 +258,14 @@ pub trait Router:
     const PROVIDERS_URL: &str;
 
     fn resolve_api_key() -> Result<String, crate::LlmError>;
+
+    fn completion_url() -> Result<&'static str, crate::LlmError> {
+        Ok(Self::COMPLETION_URL)
+    }
+
+    fn models_url() -> Result<&'static str, crate::LlmError> {
+        Ok(Self::MODELS_URL)
+    }
 
     fn endpoints_url(model: Self::RouterModelId) -> String {
         // OpenRouter’s models path treats ':' as a reserved char → percent-encode

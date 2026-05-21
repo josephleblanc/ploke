@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use once_cell::sync::OnceCell;
 use ploke_core::ArcStr;
 
 use crate::{
@@ -18,6 +19,30 @@ use super::{ApiRoute, EndpointKey, ModelId, ModelKey, RouterModelId, RouterVaria
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Hash, Eq, Default)]
 pub struct Google;
+
+static GOOGLE_OPENAPI_BASE_URL: OnceCell<String> = OnceCell::new();
+static GOOGLE_COMPLETION_URL: OnceCell<String> = OnceCell::new();
+static GOOGLE_MODELS_URL: OnceCell<String> = OnceCell::new();
+
+fn google_location() -> String {
+    std::env::var("GOOGLE_LOCATION")
+        .or_else(|_| std::env::var("GOOGLE_REGION"))
+        .unwrap_or_else(|_| "global".to_string())
+}
+
+fn build_google_openapi_base_url() -> Result<String, LlmError> {
+    let project_id = std::env::var("GOOGLE_PROJECT_ID")?;
+    let location = google_location();
+    Ok(google_openapi_base_url(&project_id, &location))
+}
+
+fn google_openapi_base_url(project_id: &str, location: &str) -> String {
+    format!(
+        "{}/projects/{project_id}/locations/{location}/{}",
+        Google::BASE_URL,
+        Google::OPENAPI_ENDPOINT
+    )
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelsResponse {
@@ -285,9 +310,9 @@ impl RouterModelId for GoogleModelId {
     }
 
     fn into_url_format(self) -> String {
-        // Gemini doesn't use the OpenRouter {author}/{model} format in its URLs,
-        // it just needs the raw string.
-        self.0.slug.as_str().to_string()
+        // Vertex OpenAI compatibility expects the Google provider prefix in
+        // request bodies, e.g. `google/gemini-2.5-flash`.
+        format!("{}/{}", self.0.author.as_str(), self.0.slug.as_str())
     }
 
     fn model_id_from_request_string(model: &str) -> Result<ModelId, crate::IdError> {
@@ -303,18 +328,57 @@ impl Router for Google {
     type CompletionFields = GoogleChatCompFields;
     type RouterModelId = GoogleModelId;
 
-    // The official drop-in OpenAI-compatible endpoints
-    const BASE_URL: &'static str = "https://generativelanguage.googleapis.com/v1beta/openai";
-    const COMPLETION_URL: &'static str =
-        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-    const MODELS_URL: &'static str =
-        "https://generativelanguage.googleapis.com/v1beta/openai/models";
+    const BASE_URL: &'static str = "https://aiplatform.googleapis.com/v1";
+    const COMPLETION_URL: &'static str = concat!(
+        "https://aiplatform.googleapis.com/v1/projects/",
+        "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_LOCATION}/endpoints/openapi/chat/completions"
+    );
+    const MODELS_URL: &'static str = concat!(
+        "https://aiplatform.googleapis.com/v1/projects/",
+        "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_LOCATION}/endpoints/openapi/models"
+    );
     const ENDPOINTS_TAIL: &'static str = "";
-    const API_KEY_NAME: &'static str = "GEMINI_API_KEY";
-    const PROVIDERS_URL: &'static str = ""; // Not needed for direct API
+    const API_KEY_NAME: &'static str = "GOOGLE_VERTEX_ACCESS_TOKEN";
+    const PROVIDERS_URL: &'static str = "";
 
     fn resolve_api_key() -> Result<String, LlmError> {
         std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+    }
+
+    fn completion_url() -> Result<&'static str, LlmError> {
+        Ok(GOOGLE_COMPLETION_URL
+            .get_or_try_init(|| {
+                Ok::<String, LlmError>(format!(
+                    "{}/{}",
+                    Self::openapi_base_url()?,
+                    Self::COMPLETION_ENDPOINT
+                ))
+            })?
+            .as_str())
+    }
+
+    fn models_url() -> Result<&'static str, LlmError> {
+        Ok(GOOGLE_MODELS_URL
+            .get_or_try_init(|| {
+                Ok::<String, LlmError>(format!(
+                    "{}/{}",
+                    Self::openapi_base_url()?,
+                    Self::MODELS_ENDPOINT
+                ))
+            })?
+            .as_str())
+    }
+}
+
+impl Google {
+    pub const OPENAPI_ENDPOINT: &'static str = "endpoints/openapi";
+    pub const COMPLETION_ENDPOINT: &'static str = "chat/completions";
+    pub const MODELS_ENDPOINT: &'static str = "models";
+
+    pub fn openapi_base_url() -> Result<&'static str, LlmError> {
+        Ok(GOOGLE_OPENAPI_BASE_URL
+            .get_or_try_init(build_google_openapi_base_url)?
+            .as_str())
     }
 }
 
@@ -394,7 +458,7 @@ mod tests {
         request: &ChatCompRequest<Google>,
     ) -> Result<(reqwest::StatusCode, serde_json::Value, String)> {
         let key = Google::resolve_api_key()?;
-        let url = Google::COMPLETION_URL;
+        let url = Google::completion_url()?;
         let response = Client::new()
             .post(url)
             .bearer_auth(key)
@@ -484,19 +548,19 @@ mod tests {
 
     #[test]
     fn openai_compatible_route_constants_match_google() {
+        assert_eq!(Google::BASE_URL, "https://aiplatform.googleapis.com/v1");
+        assert_eq!(Google::OPENAPI_ENDPOINT, "endpoints/openapi");
+        assert_eq!(Google::COMPLETION_ENDPOINT, "chat/completions");
+        assert_eq!(Google::MODELS_ENDPOINT, "models");
+        assert_eq!(Google::API_KEY_NAME, "GOOGLE_VERTEX_ACCESS_TOKEN");
+    }
+
+    #[test]
+    fn vertex_openapi_base_url_uses_project_and_location_path() {
         assert_eq!(
-            Google::BASE_URL,
-            "https://generativelanguage.googleapis.com/v1beta/openai"
+            super::google_openapi_base_url("ploke-project", "us-central1"),
+            "https://aiplatform.googleapis.com/v1/projects/ploke-project/locations/us-central1/endpoints/openapi"
         );
-        assert_eq!(
-            Google::COMPLETION_URL,
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        );
-        assert_eq!(
-            Google::MODELS_URL,
-            "https://generativelanguage.googleapis.com/v1beta/openai/models"
-        );
-        assert_eq!(Google::API_KEY_NAME, "GEMINI_API_KEY");
     }
 
     #[test]
@@ -645,7 +709,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_google_models_list_smoke() -> Result<()> {
         let key = Google::resolve_api_key()?;
-        let url = Google::MODELS_URL;
+        let url = Google::models_url()?;
 
         let response = Client::new()
             .get(url)
@@ -695,9 +759,9 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_google_chat_completions_smoke_success_or_quota() -> Result<()> {
         let key = Google::resolve_api_key()?;
-        let url = Google::COMPLETION_URL;
+        let url = Google::completion_url()?;
         let request = json!({
-            "model": "gemini-2.5-flash",
+            "model": "google/gemini-2.5-flash",
             "messages": [
                 {
                     "role": "user",
@@ -754,7 +818,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires GEMINI_API_KEY, a live Google model with tool support, and quota"]
+    #[ignore = "requires GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, a live Google model with tool support, and quota"]
     async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
         let request = ChatCompRequest::<Google>::default()
             .with_model_str(&live_chat_model())?
