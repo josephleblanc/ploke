@@ -1,6 +1,6 @@
 Date: 20-05-26
 
-Verified surface: `cargo test -p ploke-llm google` passed 12 focused unit tests; `cargo test -p ploke-llm --features live_api_tests --no-run live_google_chat_step_forced_tool_call_success_or_quota` compiled the ignored live Google tool-call test; `cargo check -p ploke-llm`, `cargo check -p ploke-tui`, and `cargo check -p ploke-eval` passed; `cargo test -p ploke-eval merge_model_registries_prefers_direct_google_row_on_id_collision` passed; `cargo test -p ploke-eval benchmark_runtime_config_overrides_llm_timeout` passed; `cargo test -p ploke-tui test_model_router_parser_show_and_set` passed. This was not a live Google request or native TUI run.
+Verified surface: `cargo test -p ploke-llm google` passed 12 focused unit tests; `cargo test -p ploke-llm --features live_api_tests --no-run live_google_chat_step_forced_tool_call_success_or_quota` compiled the ignored live Google tool-call test; `cargo test -p ploke-llm --features live_api_tests live_google_chat_step_forced_tool_call_success_or_quota -- --ignored --nocapture` passed a live Google forced `chat_step` tool call; `cargo test -p ploke-tui live_google_chat_session_executes_list_dir_tool_call_success_or_quota -- --ignored --nocapture` passed a live Google TUI session-loop canary that executes `list_dir` through the event-bus tool path; `cargo check -p ploke-llm`, `cargo check -p ploke-tui`, and `cargo check -p ploke-eval` passed; `cargo test -p ploke-eval merge_model_registries_prefers_direct_google_row_on_id_collision` passed; `cargo test -p ploke-eval benchmark_runtime_config_overrides_llm_timeout` passed; `cargo test -p ploke-tui test_model_router_parser_show_and_set` passed. This was not a native interactive TUI run or headless eval adapter run.
 
 Update 2026-05-20: `Google` now implements `HasModels` through a Google OpenAI-compatible model-list adapter in `ploke-llm`. Verified with `cargo test -p ploke-llm google` and `cargo check -p ploke-tui`; this was not a live Google request.
 
@@ -10,7 +10,9 @@ Update 2026-05-20: The provider-neutral route boundary now exists as `LlmRoute` 
 
 Update 2026-05-20: Model registry rows now carry route provenance. Direct Google rows are tagged as `direct_google`, `ploke-eval model refresh` can merge OpenRouter and Google model catalogs, and direct Google rows win same-id collisions so `google/*` can resolve to the direct route without fake provider endpoints. TUI operator commands now show both OpenRouter and Google API-key diagnostics, include an active `model router [openrouter|google]` command, search the active router's model catalog, and show direct Google route information instead of provider endpoints.
 
-Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible request/response shape, but it is not yet at OpenRouter parity for the TUI tool loop or eval runner.
+Update 2026-05-21: Live Google now reaches the `ploke-tui` session/tool loop. The ignored canary `live_google_chat_session_executes_list_dir_tool_call_success_or_quota` constructs `ChatSession<Google>`, lets Google choose tools with `tool_choice=auto`, executes a `list_dir` tool call through the normal event-bus `ToolCallRequested`/`process_tool`/`ToolCallCompleted` path, and receives a final assistant response in the same session. This proves the TUI session loop can consume a live Google tool call, but it is still not a native interactive TUI run and does not yet prove the `ploke-eval` headless adapter route.
+
+Verdict: Google is integrated through `ploke-llm` and has a live `ploke-tui` session-loop tool-call canary, but it is not yet at OpenRouter parity for native TUI operation or the eval headless adapter.
 
 **Already Done**
 - `ploke-llm` has a `Google` router type with OpenAI-compatible constants and `GEMINI_API_KEY` auth: [google/mod.rs](/home/brasides/code/ploke/crates/ploke-llm/src/router_only/google/mod.rs:159).
@@ -24,12 +26,13 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 - Provider routing now has a shared `LlmRoute` carrier. OpenRouter routes carry endpoint/provider metadata; direct Google routes carry model-level tool capability.
 - `RuntimeConfig` carries an explicit active router, and `ploke-tui` live chat request construction dispatches `RouterVariants::Google` through `Google` instead of OpenRouter.
 - `ploke-eval` route validation accepts direct Google routes and no longer requires Google to provide OpenRouter endpoint metadata.
+- `ploke-tui` has an ignored live Google session-loop canary that proves a Google tool call can enter the normal event-bus tool execution path and complete `list_dir`.
 
 **Still Missing For Parity**
 - `Google` still does not implement `HasEndpoint`, intentionally. OpenRouter endpoint metadata drives provider/tool support, but direct Google has no provider endpoint selection. TUI/eval code that requires endpoint metadata must be generalized rather than fed fake Google endpoints.
 - Provider pinning remains OpenRouter-specific. Direct Google routes intentionally do not persist provider endpoint preferences.
-- TUI direct Google selection is now exposed through `model router google`, but it has not been exercised in a native TUI run.
-- Tool-call request shape is likely compatible, but not proven live. Official Gemini OpenAI compatibility docs show `tools` plus `tool_choice="auto"` are supported, and the same docs show the `/v1beta/openai/chat/completions` and `/v1beta/openai/models` endpoints with bearer auth. See Google docs: https://ai.google.dev/gemini-api/docs/openai.
+- TUI direct Google selection is now exposed through `model router google`, and the session loop has a live canary, but it has not been exercised in a native interactive TUI run.
+- Google tool calls are proven live at `ploke-llm::chat_step` and through the `ploke-tui` session loop. The remaining proof is route selection through the operator/native TUI surface and through `ploke-eval` headless adapter.
 
 **Work To Reach Parity**
 1. Done: add Google model-list response types and an adapter from Google `/openai/models` into the project’s model registry shape.
@@ -39,16 +42,16 @@ Verdict: Google is partially integrated in `ploke-llm` as an OpenAI-compatible r
 5. Done: `RuntimeConfig` now carries explicit router selection, and TUI request construction dispatches Google routes through `Google` instead of inferring every live request as OpenRouter.
 6. Done: add Google-aware API-key diagnostics and model commands, including direct Google route display and TUI `model router`.
 7. Done: add route provenance to registry rows and refresh `ploke-eval` model registry from both OpenRouter and direct Google catalogs.
-8. Partially done: add live ignored tests for Google tool calls through `chat_step`, then through `ploke-tui` recorded/live tool loop, then through `ploke-eval` headless adapter.
+8. Partially done: live ignored tests now cover Google tool calls through `chat_step` and one `ploke-tui` session-loop tool execution. Still missing: native TUI run and `ploke-eval` headless adapter.
 
-The next implementation slice is live/runtime validation: prove direct Google through the native TUI tool loop or headless eval adapter, then tighten any remaining persistence around active route selection.
+The next implementation slice is eval/runtime validation: carry direct Google through the `ploke-eval` headless adapter, then run a native interactive TUI smoke if needed and tighten any remaining persistence around active route selection.
 
 **Next Implementation Steps**
-9. Prove direct Google through the `ploke-tui` session/tool loop, not only through `ploke-llm::chat_step`.
+9. Done for the session layer: prove direct Google through the `ploke-tui` session/tool loop, not only through `ploke-llm::chat_step`.
    - Source facts: `RuntimeConfig.active_router`, the selected model id, the existing tool definitions, and the normal `LlmEvent`/tool-call session flow.
    - Semantic object: the selected LLM route, where `RouterVariants::Google` means a direct Google model route with no OpenRouter provider endpoint.
-   - Projection: a recorded or live TUI run that shows Google model output entering the same tool-call loop used by OpenRouter.
-   - Renderer/test surface: an ignored live test or recorded-prefix test that drives the real session loop and asserts on tool request/completion behavior.
+   - Projection: the ignored live session canary shows Google model output entering the same event-bus tool-call loop used by OpenRouter.
+   - Renderer/test surface: `cargo test -p ploke-tui live_google_chat_session_executes_list_dir_tool_call_success_or_quota -- --ignored --nocapture`.
    - Likely `ploke-tui` touch points:
      - [manager/mod.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs:593): live request construction already branches on `active_router`; verify the Google branch carries the same tools, tool-choice policy, timeout, and message history as OpenRouter.
      - [session.rs](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/session.rs:594): recorded and recorded-prefix providers are the right harness for replay-style validation through the real session loop.

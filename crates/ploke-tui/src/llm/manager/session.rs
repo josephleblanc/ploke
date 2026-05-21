@@ -1954,8 +1954,10 @@ mod tests {
         ApproxCharTokenizer, RecordedResponse, Role, TokenCounter, parse_chat_outcome,
     };
     use ploke_llm::registry::calibration::{AttemptTimeout, ProviderTiming, RouterCalibration};
+    use ploke_llm::request::endpoint::ToolChoice;
     use ploke_llm::router_only::ChatCompRequest;
     use ploke_llm::router_only::Router;
+    use ploke_llm::router_only::google::Google;
     use ploke_llm::router_only::openrouter::ChatCompFields;
     use ploke_llm::router_only::openrouter::OpenRouter;
     use ploke_llm::router_only::openrouter::OpenRouterModelId;
@@ -1970,10 +1972,16 @@ mod tests {
 
     use super::*;
     use crate::EventBus;
+    use crate::app_state::AppState;
     use crate::event_bus::EventBusCaps;
-    use crate::tools::{FunctionMarker, ToolName};
+    use crate::tools::{FunctionMarker, Tool, ToolName};
     use crate::user_config::ChatPolicy;
+    use ploke_db::Database;
+    use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+    use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+    use ploke_embed::runtime::EmbeddingRuntime;
     use ploke_llm::response::FunctionCall;
+    use ploke_rag::{RagService, TokenBudget};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::{Mutex, mpsc, watch};
@@ -2531,6 +2539,135 @@ mod tests {
         assert!(
             traces.iter().any(|line| line.contains("\"id\":\"final\"")),
             "expected final provider envelope in full-response trace, got {traces:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires GEMINI_API_KEY, a live Google model with tool support, and quota"]
+    async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace_root = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace_root.clone(),
+                    vec![workspace_root.clone()],
+                    Some(workspace_root),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested_tools = Arc::new(AtomicUsize::new(0));
+        let completed_tools = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_event_bus = Arc::clone(&event_bus);
+        let requested_tools_for_task = Arc::clone(&requested_tools);
+        let completed_tools_for_task = Arc::clone(&completed_tools);
+        let tool_dispatcher = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_tools_for_task.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_event_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_tools_for_task.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let model = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let req = ChatCompRequest::<Google>::default()
+            .with_model_str(&model)
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once with dir \".\" and max_entries 3. After the tool result, reply with the word listed."
+                    .to_string(),
+            ))
+            .with_max_tokens(160)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            90,
+        )
+        .await;
+
+        tool_dispatcher.abort();
+        drain.abort();
+
+        assert!(
+            matches!(report.outcome, SessionOutcome::Completed),
+            "expected completed Google TUI session, got {report:#?}"
+        );
+        assert!(
+            report.errors.is_empty(),
+            "Google TUI session recorded errors: {:#?}",
+            report.errors
+        );
+        assert_eq!(
+            requested_tools.load(Ordering::SeqCst),
+            1,
+            "expected exactly one list_dir request, report={report:#?}"
+        );
+        assert_eq!(
+            completed_tools.load(Ordering::SeqCst),
+            1,
+            "expected exactly one completed list_dir execution, report={report:#?}"
+        );
+        assert_eq!(
+            report.chat_steps.len(),
+            2,
+            "tool session should include Google tool-call and final-response steps: {report:#?}"
         );
     }
 
