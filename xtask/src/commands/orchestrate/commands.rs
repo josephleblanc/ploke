@@ -377,6 +377,9 @@ impl Block {
             evidence: self.evidence.clone(),
             proposed_unblock: self.unblock.clone(),
             created_at: now(),
+            resolved_at: None,
+            resolution_summary: None,
+            resolution_evidence: Vec::new(),
         };
         board.blockers.insert(blocker.id.clone(), blocker.clone());
         board.remove_task_from_workers(&self.task);

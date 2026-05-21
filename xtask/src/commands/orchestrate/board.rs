@@ -171,6 +171,15 @@ pub struct Blocker {
     pub(super) proposed_unblock: Option<String>,
     /// Creation time.
     pub(super) created_at: String,
+    /// Resolution time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) resolved_at: Option<String>,
+    /// Resolution summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) resolution_summary: Option<String>,
+    /// Resolution evidence paths or notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) resolution_evidence: Vec<String>,
 }
 
 /// Named task-set metadata.
@@ -304,9 +313,10 @@ impl Board {
             .blockers
             .values()
             .filter(|blocker| {
-                task_filter
-                    .as_ref()
-                    .map_or(true, |filter| filter.contains(&blocker.task_id))
+                blocker.is_open()
+                    && task_filter
+                        .as_ref()
+                        .map_or(true, |filter| filter.contains(&blocker.task_id))
             })
             .cloned()
             .collect();
@@ -326,6 +336,21 @@ impl Board {
             tasks,
             blockers,
         })
+    }
+
+    pub(super) fn open_blockers_for_task(&self, task_id: &str) -> Vec<String> {
+        let mut blockers: Vec<_> = self
+            .blockers
+            .values()
+            .filter(|blocker| blocker.task_id == task_id && blocker.is_open())
+            .map(|blocker| blocker.id.clone())
+            .collect();
+        blockers.sort();
+        blockers
+    }
+
+    pub(super) fn first_open_blocker_for_task(&self, task_id: &str) -> Option<String> {
+        self.open_blockers_for_task(task_id).into_iter().next()
     }
 
     pub(super) fn record(&mut self, summary: impl Into<String>) {
@@ -414,6 +439,12 @@ impl Board {
                 .map(|task| task.id.clone())
                 .collect(),
         ))
+    }
+}
+
+impl Blocker {
+    pub(super) fn is_open(&self) -> bool {
+        self.resolved_at.is_none()
     }
 }
 

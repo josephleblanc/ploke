@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::task_sets;
+use super::unblock;
 use super::*;
 
 fn temp_ctx() -> (tempfile::TempDir, CommandContext) {
@@ -235,6 +236,76 @@ fn status_set_filters_to_task_set_members() {
     };
     assert_eq!(status.task_set.as_deref(), Some("current-thread"));
     assert_eq!(task_state_count(&status, "not_started"), Some(1));
+}
+
+#[test]
+fn unblock_resolves_blocker_and_restores_task_state() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "blocked/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Blocked task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    Orchestrate::Block(Block {
+        board: board_arg(),
+        task: "blocked/task".to_string(),
+        id: "blocker-a".to_string(),
+        kind: BlockerKind::Dependency,
+        summary: "waiting on dependency".to_string(),
+        evidence: Vec::new(),
+        unblock: Some("dependency done".to_string()),
+    })
+    .execute(&ctx)
+    .expect("block task");
+
+    let output = Orchestrate::Unblock(Unblock {
+        board: board_arg(),
+        blocker: "blocker-a".to_string(),
+        summary: "dependency done".to_string(),
+        evidence: vec!["test evidence".to_string()],
+        next: unblock::UnblockNext::NotStarted,
+        worker: None,
+    })
+    .execute(&ctx)
+    .expect("unblock task");
+
+    let OrchestrateOutput::Unblocked { task, blocker } = output else {
+        panic!("expected unblock output");
+    };
+    assert!(matches!(task.state, TaskState::NotStarted));
+    assert!(task.blockers.is_empty());
+    assert!(blocker.resolved_at.is_some());
+    assert_eq!(
+        blocker.resolution_summary.as_deref(),
+        Some("dependency done")
+    );
+
+    let output = Orchestrate::Status(Status {
+        board: board_arg(),
+        brief: true,
+        task_set: None,
+    })
+    .execute(&ctx)
+    .expect("brief status");
+    let OrchestrateOutput::StatusBrief(status) = output else {
+        panic!("expected brief status output");
+    };
+    assert_eq!(status.blockers, 0);
 }
 
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {

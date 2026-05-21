@@ -17,6 +17,7 @@ mod status;
 mod task_sets;
 #[cfg(test)]
 mod tests;
+mod unblock;
 mod usage;
 
 pub use board::{
@@ -30,6 +31,7 @@ pub use lanes::{LaneCommand, LaneSpec, LaneValidation};
 pub use output::OrchestrateOutput;
 pub use status::BoundedStatus;
 pub use task_sets::TaskSetCommand;
+pub use unblock::Unblock;
 pub use usage::UsageSummary;
 
 /// Commands for the agent orchestration board.
@@ -51,6 +53,8 @@ pub enum Orchestrate {
     Review(Review),
     /// Add a blocker against a task.
     Block(Block),
+    /// Resolve a blocker and restore the task to a next state.
+    Unblock(Unblock),
     /// Write a worker packet file from the current assignment.
     Packet(Packet),
     /// Manage named task sets.
@@ -76,6 +80,7 @@ impl Orchestrate {
             Self::Complete(cmd) => cmd.execute(ctx),
             Self::Review(cmd) => cmd.execute(ctx),
             Self::Block(cmd) => cmd.execute(ctx),
+            Self::Unblock(cmd) => cmd.execute(ctx),
             Self::Packet(cmd) => cmd.execute(ctx),
             Self::TaskSet(cmd) => cmd.execute(ctx),
             Self::Usage(cmd) => cmd.execute(ctx),
@@ -93,6 +98,7 @@ impl Orchestrate {
             Self::Complete(cmd) => &cmd.board,
             Self::Review(cmd) => &cmd.board,
             Self::Block(cmd) => &cmd.board,
+            Self::Unblock(cmd) => &cmd.board,
             Self::Packet(cmd) => &cmd.board,
             Self::TaskSet(cmd) => cmd.board_arg(),
             Self::Usage(cmd) => &cmd.board,
@@ -111,6 +117,7 @@ impl Orchestrate {
             Self::Complete(_) => "complete",
             Self::Review(_) => "review",
             Self::Block(_) => "block",
+            Self::Unblock(_) => "unblock",
             Self::Packet(_) => "packet",
             Self::TaskSet(cmd) => cmd.usage_key(),
             Self::Usage(_) => "usage",

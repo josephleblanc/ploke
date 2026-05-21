@@ -171,7 +171,7 @@ slices.
 - [x] Add local usage counters under `.orchestrator/`.
 - [x] Add bounded status projection.
 - [x] Add task-set model and direct `status --set`.
-- [ ] Add blocker resolution.
+- [x] Add blocker resolution.
 - [ ] Add task aging and packet staleness.
 - [ ] Add board health check.
 - [ ] Add saved views and narrow filters.

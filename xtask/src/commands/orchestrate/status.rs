@@ -155,9 +155,10 @@ impl Board {
                 .blockers
                 .values()
                 .filter(|blocker| {
-                    task_filter
-                        .as_ref()
-                        .map_or(true, |filter| filter.contains(&blocker.task_id))
+                    blocker.is_open()
+                        && task_filter
+                            .as_ref()
+                            .map_or(true, |filter| filter.contains(&blocker.task_id))
                 })
                 .count(),
             lanes,

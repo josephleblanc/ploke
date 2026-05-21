@@ -52,6 +52,13 @@ pub enum OrchestrateOutput {
         /// Newly created blocker.
         blocker: Blocker,
     },
+    /// Blocker resolved.
+    Unblocked {
+        /// Task after blocker resolution.
+        task: Task,
+        /// Resolved blocker.
+        blocker: Blocker,
+    },
     /// Worker packet was written.
     Packet {
         /// Worker id.
