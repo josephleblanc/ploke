@@ -845,7 +845,6 @@ fn capture_response_for_tap(response_index: usize, response: &OpenAiResponse) {
 #[cfg(not(feature = "test_harness"))]
 fn capture_response_for_tap(_response_index: usize, _response: &OpenAiResponse) {}
 
-#[cfg(feature = "test_harness")]
 fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
     // This sentinel is not a model failure. It is the intentional breakpoint
     // used by `RecordedPrefixThenLiveSteps` after the allowed live responses
@@ -853,9 +852,11 @@ fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
     matches!(error, LlmError::ChatStep(message) if message == REPLAY_LIVE_STEP_LIMIT_REACHED)
 }
 
-#[cfg(not(feature = "test_harness"))]
-fn is_replay_live_step_limit_error(_error: &LlmError) -> bool {
-    false
+fn is_replay_boundary_error(error: &LlmError) -> bool {
+    // Both cases mean the replay harness reached an operator-chosen boundary:
+    // a recorded-only tape ended, or a live-step probe consumed its allowed
+    // live provider envelope. Neither should enter model-repair handling.
+    is_replay_live_step_limit_error(error) || matches!(error, LlmError::ReplayExhausted(_))
 }
 
 #[cfg(feature = "test_harness")]
@@ -1040,7 +1041,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 let provider_exhausted = provider_retry_exhausted(&provider_attempts);
                 report.record_chat_step(chain_index, provider_timing.clone(), provider_attempts);
                 let err = chat_step_error.source;
-                if is_replay_live_step_limit_error(&err) {
+                if is_replay_boundary_error(&err) {
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
@@ -2687,6 +2688,72 @@ mod tests {
         assert!(
             traces.iter().any(|line| line.contains("\"id\":\"final\"")),
             "expected final provider envelope in full-response trace, got {traces:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_stops_cleanly_when_recorded_tape_exhausted() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, malformed_response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 2);
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .all(|content| !content.contains("INVALID_MODEL_RESPONSE")),
+            "recorded tape exhaustion should not surface as invalid model output: {assistant_updates:?}"
         );
     }
 

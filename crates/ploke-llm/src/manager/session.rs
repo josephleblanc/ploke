@@ -1206,7 +1206,7 @@ impl RecordedResponseTape {
 
     pub fn next_chat_step(&mut self) -> Result<ChatStepData, ChatStepError> {
         let Some(record) = self.responses.get(self.cursor) else {
-            return Err(ChatStepError::new(LlmError::ChatStep(
+            return Err(ChatStepError::new(LlmError::ReplayExhausted(
                 "recorded provider response tape exhausted".to_string(),
             )));
         };

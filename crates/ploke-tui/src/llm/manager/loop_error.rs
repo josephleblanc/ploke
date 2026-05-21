@@ -540,6 +540,16 @@ pub fn classify_llm_error(
             None,
             None,
         ),
+        LlmError::ReplayExhausted(_) => (
+            LoopErrorKind::StateMachine,
+            ArcStr::from("REPLAY_EXHAUSTED"),
+            ErrorSeverity::Info,
+            RetryAdvice::No {
+                reason: ArcStr::from("Recorded replay reached its configured boundary"),
+            },
+            None,
+            None,
+        ),
         LlmError::FinishError { finish_reason, .. } => {
             context.finish_reason = Some(finish_reason.clone());
             finish_reason_metadata(finish_reason)

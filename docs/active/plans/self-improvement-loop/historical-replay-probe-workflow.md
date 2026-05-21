@@ -23,6 +23,14 @@ agent-turn artifact back to the provider response that produced the relevant
 tool call; `--tail stop` runs the prefix through current tools without a live
 provider call, while `--tail live` keeps the existing prefix-then-live behavior.
 
+Implemented slice added on 2026-05-21: recorded-only stop mode now has clean
+terminal semantics. `RecordedResponseTape` exhaustion is represented as
+`LlmError::ReplayExhausted`, and the `ploke-tui` session treats it as an
+intentional replay boundary rather than an invalid model response. The CLI
+probe can therefore replay a historical prefix through current tools, stop
+before the next provider call, and show the compact tool/request outcome
+without misleading `INVALID_MODEL_RESPONSE` noise.
+
 ## Goal
 
 Historical loop replay is not meant to prove that an old model run now succeeds.
@@ -110,7 +118,8 @@ bundle. It should not become the place where replay semantics are inferred.
 - `inspect`: show candidate turns, tape continuity, response indexes, tool
   calls, and path mismatches without executing the loop.
 - `recorded-only`: replay a prefix or range through current tools and stop
-  before any live provider call.
+  before any live provider call. Exhausting the selected recorded prefix is the
+  intended stop condition, not model-output failure.
 - `live-tail`: replay a prefix to a breakpoint, then allow a bounded number of
   live assistant turns.
 - `tool-call-drill`: rerun one localized historical tool call through current
@@ -142,10 +151,10 @@ environment is giving the model useful, truthful feedback.
    once real use-testing shows which filters matter most. It currently lists
    replayable cursors, tape continuity, response indexes, tool names, call ids,
    and embedded workspace paths.
-2. Make recorded-only stop-mode output cleaner. It currently stops before live
-   provider access by exhausting the recorded tape, which is correct but noisy
-   because the TUI reports the exhaustion as an invalid model response.
-3. Add compact per-step output for recorded-only probes: selected response
+2. Done: make recorded-only stop-mode output cleaner. `ReplayExhausted` now
+   distinguishes intentional tape exhaustion from malformed provider output,
+   and the session reports the probe boundary as a completed replay stop.
+3. Continue compact per-step output for recorded-only probes: selected response
    prefix, tool requests, current tool outcomes, and the next provider request
    snapshot.
 4. Use the breakpoint selectors in live-tail smoke probes with explicit

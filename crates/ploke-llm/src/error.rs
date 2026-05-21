@@ -251,6 +251,15 @@ pub enum LlmError {
     #[error("ChatStep Error: {0}")]
     ChatStep(String),
 
+    /// A recorded replay source was consumed to its configured boundary.
+    ///
+    /// This is a replay/harness terminal condition, not evidence that the
+    /// provider returned malformed model output. Keep it distinct from
+    /// `ChatStep` so recorded-only probes can stop without surfacing
+    /// `INVALID_MODEL_RESPONSE`.
+    #[error("Replay exhausted: {0}")]
+    ReplayExhausted(String),
+
     #[error("FinishReason Error: {msg}")]
     FinishError {
         msg: String,
@@ -393,6 +402,9 @@ impl From<LlmError> for ploke_error::Error {
             ),
             err_chat @ LlmError::ChatStep(_) => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_chat.to_string()),
+            ),
+            err_replay @ LlmError::ReplayExhausted(_) => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_replay.to_string()),
             ),
             err_llm @ LlmError::FinishError { .. } => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
