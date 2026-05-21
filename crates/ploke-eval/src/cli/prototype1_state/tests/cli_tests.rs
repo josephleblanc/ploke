@@ -1231,6 +1231,195 @@ fn broad_tui_attempt_google_provider_selects_google_router() {
     assert!(model.provider().is_none());
 }
 
+#[cfg(feature = "live_api_tests")]
+fn live_google_headless_tui_model_id() -> String {
+    let raw = std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID")
+        .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+        .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+    if raw.contains('/') {
+        raw
+    } else {
+        format!("google/{raw}")
+    }
+}
+
+#[cfg(feature = "live_api_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live Google provider test for the Prototype 1 broad headless-TUI attempt path"]
+async fn live_google_broad_headless_tui_attempt_applies_edit_from_published_request() {
+    // This is the ploke-eval broad harness execution surface:
+    // published request -> cli_facing runner -> tui_adapter -> ploke-tui llm_manager.
+    // Do not replace it with a direct ChatSession canary or selector-only test.
+    let model_id = live_google_headless_tui_model_id();
+    let options = BroadTuiAttemptOptions::from_cli(
+        Some(model_id.clone()),
+        Some("google".to_string()),
+        Some(1),
+        Some(240),
+    )
+    .expect("google model selection");
+    let model = options.model().expect("model selection");
+    assert!(matches!(
+        model.router(),
+        ploke_llm::router_only::RouterVariants::Google(_)
+    ));
+    assert!(model.provider().is_none());
+
+    let base = std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ploke-eval-live-google-broad-headless"));
+    let artifact_root = base.join(format!("run-{}", uuid::Uuid::new_v4().simple()));
+    fs::create_dir_all(&artifact_root).expect("create live artifact root");
+    println!(
+        "live Google broad headless-TUI artifacts: {}",
+        artifact_root.display()
+    );
+
+    let manifest_path = artifact_root.join("campaign.json");
+    let repo_root = artifact_root.join("repo");
+    init_indexed_repo(&repo_root);
+    fs::write(
+        repo_root.join("Cargo.toml"),
+        r#"[package]
+name = "ploke-eval-live-google-broad-headless"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#,
+    )
+    .expect("write Cargo.toml");
+    write_surface_target(
+        &repo_root,
+        Path::new("src/lib.rs"),
+        r#"pub fn broad_surface_canary() -> &'static str {
+    "before"
+}
+"#,
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "google broad headless fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget { min: 1, max: 1 },
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    fs::write(
+        publication.published.prompt_path(),
+        r#"Call the apply_code_edit tool exactly once. Do not call any other tool. Do not answer in prose before the tool call.
+Use exactly this JSON payload:
+{"edits":[{"file":"src/lib.rs","canon":"crate::broad_surface_canary","node_type":"function","code":"pub fn broad_surface_canary() -> &'static str {\n    \"after\"\n}"}],"confidence":0.99}
+"#,
+    )
+    .expect("write live Google canary prompt");
+
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path.clone(),
+        published: publication.published,
+    };
+    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "live Google broad headless-TUI attempt failed for '{}': {err}; artifacts at {}",
+                slot.request_path.display(),
+                artifact_root.display()
+            )
+        });
+    assert!(
+        executor.is_some(),
+        "expected broad headless-TUI executor for '{}'",
+        slot.request_path.display()
+    );
+
+    let diagnostics_path =
+        broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
+    let diagnostics = fs::read(&diagnostics_path).unwrap_or_else(|err| {
+        panic!(
+            "missing headless diagnostics '{}': {err}; artifacts at {}",
+            diagnostics_path.display(),
+            artifact_root.display()
+        )
+    });
+    let diagnostics: tui_adapter::evidence::Summary = serde_json::from_slice(&diagnostics)
+        .unwrap_or_else(|err| {
+            panic!(
+                "invalid headless diagnostics '{}': {err}; artifacts at {}",
+                diagnostics_path.display(),
+                artifact_root.display()
+            )
+        });
+    assert!(
+        matches!(
+            diagnostics.terminal,
+            Some(tui_adapter::evidence::Terminal::Applied { .. })
+        ),
+        "expected applied terminal in diagnostics; got {:?}; artifacts at {}",
+        diagnostics.terminal,
+        artifact_root.display()
+    );
+    let requested_tools = diagnostics
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            tui_adapter::evidence::Event::ToolRequest { tool, .. } => Some(tool.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        requested_tools.contains(&"apply_code_edit"),
+        "expected apply_code_edit tool request, got {requested_tools:?}; artifacts at {}",
+        artifact_root.display()
+    );
+    assert!(
+        diagnostics.events.iter().any(|event| matches!(
+            event,
+            tui_adapter::evidence::Event::Turn { outcome, .. } if outcome == "completed"
+        )),
+        "expected completed chat turn in diagnostics; artifacts at {}",
+        artifact_root.display()
+    );
+
+    let submitted = fs::read(slot.published.submitted_result_path()).unwrap_or_else(|err| {
+        panic!(
+            "missing submitted broad harness result '{}': {err}; artifacts at {}",
+            slot.published.submitted_result_path().display(),
+            artifact_root.display()
+        )
+    });
+    let submitted: SubmittedBroadHarnessResult =
+        serde_json::from_slice(&submitted).expect("submitted broad harness result should decode");
+    submitted
+        .verify_request(&slot.published)
+        .expect("submitted result remains bound to the published request");
+
+    let outcome = GitWorktreeBackend
+        .validate_tui_attempt(&repo_root, &slot.published)
+        .expect("validate broad headless-TUI workspace");
+    let diff = match outcome {
+        TuiAttemptOutcome::Accepted(diff) => diff,
+        TuiAttemptOutcome::Rejected(rejection) => {
+            panic!(
+                "expected accepted broad headless-TUI workspace, got {rejection:?}; artifacts at {}",
+                artifact_root.display()
+            )
+        }
+    };
+    assert_eq!(diff.changed_paths(), &[PathBuf::from("src/lib.rs")]);
+    let final_lib = fs::read_to_string(slot.published.workspace_path().join("src/lib.rs"))
+        .expect("read candidate src/lib.rs");
+    assert!(
+        final_lib.contains("\"after\"") && !final_lib.contains("\"before\""),
+        "expected Google-applied sentinel edit, got:\n{final_lib}\nartifacts at {}",
+        artifact_root.display()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "operator splice test for one published broad headless-TUI request"]
 async fn live_broad_headless_tui_attempt_from_published_request_env() {

@@ -51,13 +51,13 @@ Verdict: Google is integrated through `ploke-llm`, the `ploke-tui` model picker,
 - Native `ploke-tui` can select `model router google`, switch to `google/gemini-2.5-flash`, submit a normal user prompt, and receive a live Google assistant response.
 - `ploke-eval` headless model selection can now carry direct Google router intent into `ploke-tui` by setting `RuntimeConfig.active_router` instead of relying on ambient defaults.
 - `ploke-protocol` JSON adjudication can now dispatch direct Google requests through `ChatCompRequest<Google>` instead of always using `OpenRouter::default_chat_completion()`.
-- `ploke-eval` isolated headless canary reached the direct Google chat completion endpoint from a probe-local published request and probe-local clone, with OpenRouter credentials removed from the process.
+- `ploke-eval` has an ignored live broad headless-TUI canary that builds a typed published request, forces direct Google model selection, reaches `ploke-tui` `llm_manager`, completes `apply_code_edit`, writes the submitted broad-harness result, and validates the candidate workspace diff.
 - Active and parent-patcher model selections now point at `google/gemini-2.5-flash`, whose refreshed registry row has `route_source = direct_google`.
 
 **Still Missing For Parity**
 - `Google` still does not implement `HasEndpoint`, intentionally. OpenRouter endpoint metadata drives provider/tool support, but direct Google has no provider endpoint selection. Any remaining code that requires endpoint metadata must be generalized rather than fed fake Google endpoints.
 - Provider pinning remains OpenRouter-specific. Direct Google routes intentionally do not persist provider endpoint preferences.
-- Google tool calls are proven live at `ploke-llm::chat_step` and through the `ploke-tui` session loop. Native operator routing is proven for a normal chat response. `ploke-eval` headless adapter routing is proven to reach Google, but not to complete an edit while the Google API is returning HTTP 429.
+- Google tool calls are proven live at `ploke-llm::chat_step`, through the `ploke-tui` session loop, through the command-harness `llm_manager` path, and through the `ploke-eval` broad headless-TUI attempt path. Full self-propagating Prototype 1 parent-loop execution is still not proven on Google.
 - Eval embeddings still use the OpenRouter-backed `mistralai/codestral-embed-2505` path. This is acceptable for the next full loop because the current operator decision allows embeddings through OpenRouter; revisit only if the requirement returns to strict zero-OpenRouter network.
 
 **Work To Reach Parity**
@@ -69,9 +69,9 @@ Verdict: Google is integrated through `ploke-llm`, the `ploke-tui` model picker,
 6. Done: add Google-aware API-key diagnostics and model commands, including direct Google route display and TUI `model router`.
 7. Done: add route provenance to registry rows and refresh `ploke-eval` model registry from both OpenRouter and direct Google catalogs.
 8. Done for the basic catalog/picker path: fixture-backed Google model-list tests cover direct route provenance, and the TUI model picker no longer requests OpenRouter endpoints for direct Google rows. The picker also labels each row as `[via OpenRouter]` or `[via Google API]` so overlapping ids remain visually distinct.
-9. Partially done: live ignored tests now cover Google tool calls through `chat_step` and one `ploke-tui` session-loop tool execution, and a native interactive TUI smoke covers operator route selection plus a live Google chat response. Still missing: `ploke-eval` headless adapter.
+9. Done for the live TUI and headless-adapter surfaces: live ignored tests now cover Google tool calls through `chat_step`, the `ploke-tui` session loop, the command-harness `llm_manager` path, and the `ploke-eval` broad headless-TUI attempt path. A native interactive TUI smoke covers operator route selection plus a live Google chat response. Still missing: full self-propagating Prototype 1 parent-loop execution.
 
-The next Google implementation slice is eval/runtime validation: run a recorded-prefix headless adapter attempt with direct Google route selection, then an ignored live canary when ADC and `GOOGLE_PROJECT_ID`/`GOOGLE_REGION` are present, then decide the strict embedding path before calling a full loop Google-only.
+The next Google implementation slice is full-loop validation: run a bounded Prototype 1 parent-loop setup whose parent-patcher model is direct Google, then decide the strict embedding path before calling a longer Google-led loop.
 
 **Next Implementation Steps**
 10. Done for the session layer: prove direct Google through the `ploke-tui` session/tool loop, not only through `ploke-llm::chat_step`.
@@ -91,18 +91,18 @@ The next Google implementation slice is eval/runtime validation: run a recorded-
     - Renderer/test surface: `cargo run -p ploke-tui` in a PTY; observed `Active model router: google`, model switch to `google/gemini-2.5-flash`, submitted `Reply with exactly: google-native-smoke-ok`, received `google-native-smoke-ok`.
     - Operational note: `google/gemini-2.0-flash` returned 404 as unavailable to new users during the same smoke.
 
-12. Carry the same route into the `ploke-eval` headless adapter.
-    - Status: first route-selection slice done; recorded-prefix and live headless attempt proof still pending.
+12. Done for the live `ploke-eval` broad headless-TUI attempt path: carry the same route into the `ploke-eval` headless adapter.
+    - Status: live direct Google route selection and edit completion are proven for a typed published broad-harness request. Recorded-prefix replay remains optional diagnostic coverage; full parent-loop execution remains pending.
     - Source facts: the merged model registry row, `route_source`, selected model id, optional OpenRouter provider preference, and the headless TUI `ModelSelection`.
     - Semantic object: eval-selected route, where OpenRouter routes may have provider preferences and direct Google routes must not.
     - Projection: a headless TUI attempt configured with `RouterVariants::Google` when the selected registry row is `direct_google`, or when the operator explicitly requests `--provider google`.
-    - Renderer/test surface: current focused tests prove the route-selection carrier, and `cargo check -p ploke-eval` covers the adapter assignment into `RuntimeConfig.active_router`; the ignored live canary now accepts `PLOKE_EVAL_HEADLESS_TUI_MODEL_ID=google/gemini-2.5-flash` plus `PLOKE_EVAL_HEADLESS_TUI_PROVIDER=google` so it can test the direct route without changing persisted model config. Next proof should use an isolated published request, then an ignored live canary when ADC and `GOOGLE_PROJECT_ID`/`GOOGLE_REGION` are present.
+    - Renderer/test surface: `live_google_broad_headless_tui_attempt_applies_edit_from_published_request` synthesizes a small git-backed published broad-harness request, forces `--provider google`, runs `run_broad_headless_tui_attempt_with_options`, asserts `apply_code_edit` appears in headless diagnostics, asserts a completed chat turn and applied terminal, verifies the submitted result remains bound to the published request, validates the candidate workspace diff, and checks the final sentinel edit. Verified with `GOOGLE_PROJECT_ID=cs-poc-gtxw7jmtfuwfsiauziui9yx GOOGLE_REGION=us-central1 PLOKE_RUN_LIVE_TESTS=1 cargo test -p ploke-eval live_google_broad_headless_tui_attempt_applies_edit_from_published_request -- --ignored --nocapture`.
     - Likely `ploke-eval` touch points:
       - [runner.rs](/home/brasides/code/ploke/crates/ploke-eval/src/runner.rs:1999): route resolution already uses `route_source`; keep direct Google on `LlmRoute::direct_google_model` and do not synthesize an endpoint.
       - [model_registry.rs](/home/brasides/code/ploke/crates/ploke-eval/src/model_registry.rs:64): registry refresh merges OpenRouter and Google catalogs; use this as the source for route provenance.
       - [cli.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli.rs:2845): `ModelSelection` construction is where OpenRouter provider preference can accidentally leak into direct Google selection.
       - [tui_adapter.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:1): the headless adapter must pass router/model intent into vanilla `ploke-tui` rather than interpreting provider endpoints itself.
-      - [cli_tests.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:1218): existing ignored live headless attempt test is a candidate surface for a Google-specific canary once the adapter can select the route.
+      - [cli_tests.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:1245): Google-specific ignored live headless canary for a typed published broad-harness request.
 
 13. Done for protocol review routing: make `ploke-protocol::JsonAdjudicator` route-aware before any `stop_after = "complete"` loop.
     - Source facts: `JsonLlmConfig.model_id`, `JsonLlmConfig.route_source`, optional OpenRouter provider pin, and `JsonLlmProvenance`.
