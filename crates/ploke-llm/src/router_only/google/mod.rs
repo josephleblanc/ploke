@@ -421,12 +421,7 @@ impl Router for Google {
 
     fn resolve_bearer_token() -> impl std::future::Future<Output = Result<String, LlmError>> + Send
     {
-        async {
-            match std::env::var(Self::API_KEY_NAME) {
-                Ok(token) if !token.trim().is_empty() => Ok(token),
-                _ => google_adc_bearer_token().await,
-            }
-        }
+        async { google_adc_bearer_token().await }
     }
 
     fn completion_url() -> Result<&'static str, LlmError> {
@@ -471,9 +466,7 @@ impl Google {
     }
 
     pub fn auth_config_available() -> Result<(), LlmError> {
-        Self::resolve_api_key()
-            .map(|_| ())
-            .or_else(|_| Self::adc_credentials_available())
+        Self::adc_credentials_available()
     }
 }
 
@@ -532,11 +525,9 @@ mod tests {
         }
 
         let missing = match (route_config_available, auth_config_available) {
-            (false, false) => {
-                "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_API_KEY auth"
-            }
+            (false, false) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC auth",
             (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
-            (true, false) => "Google ADC or GOOGLE_API_KEY auth",
+            (true, false) => "Google ADC auth",
             (true, true) => unreachable!("handled above"),
         };
         let message = format!(
@@ -969,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires Google ADC or GOOGLE_API_KEY, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
+    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
         const TEST_NAME: &str = "live_google_chat_step_forced_tool_call_success_or_quota";
         if !live_google_env_or_skip(TEST_NAME) {
