@@ -1,5 +1,8 @@
 # Observability Drafts
 
+- [`agent-turn.md`](agent-turn.md)
+  Target architecture for a unified agent-turn timeline across model exchanges,
+  tool execution, edit proposals, replay, CLI, egui, and model-facing queries.
 - [`timing-projection-handoff-2026-05-02.md`](timing-projection-handoff-2026-05-02.md)
   Historical restart handoff for timing projection, observed timing evidence,
   source/binary drift, and next join targets.
