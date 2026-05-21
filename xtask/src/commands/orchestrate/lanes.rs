@@ -248,6 +248,12 @@ impl Board {
     }
 }
 
+impl LaneValidation {
+    pub(super) fn is_ok(&self) -> bool {
+        self.ok
+    }
+}
+
 fn surfaces_overlap(ctx: &CommandContext, left: &str, right: &str) -> Result<bool, XtaskError> {
     let left = surface_components(ctx, left)?;
     let right = surface_components(ctx, right)?;

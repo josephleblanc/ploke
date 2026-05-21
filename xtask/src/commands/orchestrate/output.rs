@@ -1,8 +1,8 @@
 use serde::Serialize;
 
 use super::{
-    Blocker, BoardStatus, BoundedStatus, LaneSpec, LaneValidation, Task, TaskSet, UsageSummary,
-    WorkerSlot,
+    Blocker, BoardHealth, BoardStatus, BoundedStatus, LaneSpec, LaneValidation, Task, TaskSet,
+    UsageSummary, WorkerSlot,
 };
 
 /// Command output for orchestration commands.
@@ -93,4 +93,6 @@ pub enum OrchestrateOutput {
     },
     /// Local usage counter summary.
     Usage(UsageSummary),
+    /// Board health check.
+    Health(BoardHealth),
 }

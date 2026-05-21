@@ -9,6 +9,7 @@ use super::{CommandContext, XtaskError};
 
 mod board;
 mod commands;
+mod health;
 mod lanes;
 mod output;
 mod packet;
@@ -27,6 +28,7 @@ use board::{BoardLock, DEFAULT_BOARD_PATH, DEFAULT_PACKET_DIR, display, now, res
 pub use commands::{
     AddTask, Assign, Block, BoardArg, Complete, Init, Packet, Review, Status, Usage, WorkerCommand,
 };
+pub use health::{BoardHealth, Check};
 pub use lanes::{LaneCommand, LaneSpec, LaneValidation};
 pub use output::OrchestrateOutput;
 pub use status::BoundedStatus;
@@ -62,6 +64,8 @@ pub enum Orchestrate {
     TaskSet(TaskSetCommand),
     /// Show local command usage counters.
     Usage(Usage),
+    /// Check board integrity and warning-only health signals.
+    Check(Check),
     /// Define and validate lane-owned edit surfaces.
     #[command(subcommand)]
     Lane(LaneCommand),
@@ -94,6 +98,7 @@ impl Orchestrate {
             Self::Packet(cmd) => cmd.execute(ctx),
             Self::TaskSet(cmd) => cmd.execute(ctx),
             Self::Usage(cmd) => cmd.execute(ctx),
+            Self::Check(cmd) => cmd.execute(ctx),
             Self::Lane(cmd) => cmd.execute(ctx),
         }
     }
@@ -112,6 +117,7 @@ impl Orchestrate {
             Self::Packet(cmd) => &cmd.board,
             Self::TaskSet(cmd) => cmd.board_arg(),
             Self::Usage(cmd) => &cmd.board,
+            Self::Check(cmd) => &cmd.board,
             Self::Lane(cmd) => cmd.board_arg(),
         }
     }
@@ -133,6 +139,7 @@ impl Orchestrate {
             Self::Packet(_) => "packet",
             Self::TaskSet(cmd) => cmd.usage_key(),
             Self::Usage(_) => "usage",
+            Self::Check(_) => "check",
             Self::Lane(cmd) => cmd.usage_key(),
         }
     }

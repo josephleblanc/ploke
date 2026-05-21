@@ -838,6 +838,133 @@ fn status_warns_about_stale_active_and_review_tasks() {
     assert!(has_warning(&status, "stale_review_task", "timed/task"));
 }
 
+#[test]
+fn check_reports_integrity_errors() {
+    let (dir, ctx) = temp_ctx();
+    let board_path = dir.path().join(DEFAULT_BOARD_PATH);
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "check/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Check task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    {
+        let mut board = Board::load(&board_path).expect("load board");
+        board.workers.get_mut("worker-a").expect("worker").active =
+            Some("missing/task".to_string());
+        board.save(&board_path).expect("save board");
+    }
+
+    let output = Orchestrate::Check(Check { board: board_arg() })
+        .execute(&ctx)
+        .expect("check board");
+    let OrchestrateOutput::Health(health) = output else {
+        panic!("expected health output");
+    };
+    assert!(!health.ok);
+    assert!(has_health_finding(
+        &health,
+        "lane_validation_failed",
+        "board"
+    ));
+    assert!(has_health_finding(
+        &health,
+        "worker_active_missing_task",
+        "worker-a"
+    ));
+}
+
+#[test]
+fn check_reports_warning_health_without_failing_ok() {
+    let (dir, ctx) = temp_ctx();
+    let board_path = dir.path().join(DEFAULT_BOARD_PATH);
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Worker(WorkerCommand {
+        board: board_arg(),
+        id: "worker-a".to_string(),
+        role: WorkerRole::Worker,
+        refresh_after_questions: 5,
+    })
+    .execute(&ctx)
+    .expect("add worker");
+    Orchestrate::Add(AddTask {
+        board: board_arg(),
+        id: "check/task".to_string(),
+        lane: "tooling".to_string(),
+        title: "Check task".to_string(),
+        priority: 3,
+        allowed_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+        forbidden_edit: Vec::new(),
+        docs: Vec::new(),
+        acceptance: Vec::new(),
+    })
+    .execute(&ctx)
+    .expect("add task");
+    Orchestrate::Assign(Assign {
+        board: board_arg(),
+        task: "check/task".to_string(),
+        worker: "worker-a".to_string(),
+        active: true,
+    })
+    .execute(&ctx)
+    .expect("assign task");
+    {
+        let mut board = Board::load(&board_path).expect("load board");
+        board.lanes.insert(
+            "tooling".to_string(),
+            LaneSpec {
+                id: "tooling".to_string(),
+                owned_edit: vec!["xtask/src/commands/orchestrate".to_string()],
+                docs: Vec::new(),
+                notes: Vec::new(),
+            },
+        );
+        board.save(&board_path).expect("save board");
+    }
+
+    let output = Orchestrate::Check(Check { board: board_arg() })
+        .execute(&ctx)
+        .expect("check board");
+    let OrchestrateOutput::Health(health) = output else {
+        panic!("expected health output");
+    };
+    assert!(health.ok);
+    assert!(health.lane_validation.is_ok());
+    assert!(has_health_finding(
+        &health,
+        "missing_worker_packet",
+        "worker-a"
+    ));
+}
+
 fn task_state_count(status: &BoundedStatus, state: &str) -> Option<usize> {
     status
         .tasks_by_state
@@ -851,6 +978,13 @@ fn has_warning(status: &BoundedStatus, kind: &str, subject: &str) -> bool {
         .warnings
         .iter()
         .any(|warning| warning.kind == kind && warning.subject == subject)
+}
+
+fn has_health_finding(health: &BoardHealth, kind: &str, subject: &str) -> bool {
+    health
+        .findings
+        .iter()
+        .any(|finding| finding.kind == kind && finding.subject == subject)
 }
 
 fn usage_count(summary: &UsageSummary, command: &str) -> Option<u64> {
