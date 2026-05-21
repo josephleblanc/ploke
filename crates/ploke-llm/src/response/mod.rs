@@ -40,11 +40,38 @@ pub enum ResponseFormat {
 }
 
 /// Token usage statistics
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+}
+
+impl<'de> Deserialize<'de> for TokenUsage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireTokenUsage {
+            #[serde(default)]
+            prompt_tokens: u32,
+            completion_tokens: Option<u32>,
+            #[serde(default)]
+            total_tokens: u32,
+        }
+
+        let wire = WireTokenUsage::deserialize(deserializer)?;
+        let completion_tokens = wire
+            .completion_tokens
+            .unwrap_or_else(|| wire.total_tokens.saturating_sub(wire.prompt_tokens));
+
+        Ok(Self {
+            prompt_tokens: wire.prompt_tokens,
+            completion_tokens,
+            total_tokens: wire.total_tokens,
+        })
+    }
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]

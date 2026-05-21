@@ -78,15 +78,13 @@ fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> 
     };
 
     let mut kept = Vec::new();
-    let mut line_count = 0usize;
     let mut truncated = false;
-    for line in file_text.lines() {
+    for (line_count, line) in file_text.lines().enumerate() {
         if line_count >= max_file_lines {
             truncated = true;
             break;
         }
         kept.push(line);
-        line_count += 1;
     }
 
     if !truncated {
@@ -2141,37 +2139,6 @@ mod tests {
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
 
-    #[cfg(feature = "live_api_tests")]
-    fn strict_live_tests_requested() -> bool {
-        std::env::var("PLOKE_RUN_LIVE_TESTS")
-            .ok()
-            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
-    }
-
-    #[cfg(feature = "live_api_tests")]
-    fn live_google_env_or_skip(test_name: &str) -> bool {
-        let route_config_available = Google::route_config_available().is_ok();
-        let auth_config_available = Google::auth_config_available().is_ok();
-        if route_config_available && auth_config_available {
-            return true;
-        }
-
-        let missing = match (route_config_available, auth_config_available) {
-            (false, false) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC auth",
-            (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
-            (true, false) => "Google ADC auth",
-            (true, true) => unreachable!("handled above"),
-        };
-        let message = format!(
-            "skipping {test_name}: missing {missing}; direct Google live route was not exercised"
-        );
-        if strict_live_tests_requested() {
-            panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
-        }
-        eprintln!("{message}");
-        false
-    }
-
     #[derive(Clone, Default)]
     struct TraceLines(StdArc<StdMutex<Vec<String>>>);
 
@@ -2790,14 +2757,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
-        const TEST_NAME: &str =
-            "live_google_chat_session_executes_list_dir_tool_call_success_or_quota";
-        if !live_google_env_or_skip(TEST_NAME) {
-            return;
-        }
-
         let db = Arc::new(Database::new_init().expect("database initializes"));
         let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),

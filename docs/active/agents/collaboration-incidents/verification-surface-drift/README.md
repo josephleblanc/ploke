@@ -23,3 +23,10 @@ focused renderer tests, and live UI behavior as interchangeable.
   left-panel diagnostic text as no-wrap galleys and shrank the central graph
   viewport, treating allocation measurements as insufficiently coupled to
   visible UI layout acceptance.
+- [`2026-05-21-live-google-canary-test-body-skipped.md`](2026-05-21-live-google-canary-test-body-skipped.md)
+  While checking the live Google `ploke-tui` canary, the agent summarized the
+  passing test before reading the test body and assertion chain.
+- [`2026-05-21-live-google-harness-skip-and-timeout.md`](2026-05-21-live-google-harness-skip-and-timeout.md)
+  While adding the live Google command-harness test, the agent substituted cheap
+  wiring checks and skip behavior before proving the exact live
+  `llm_manager -> list_dir -> final assistant response` surface the user named.

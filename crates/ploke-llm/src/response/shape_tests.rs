@@ -78,6 +78,53 @@ fn google_resource_exhausted_error_shape_is_diagnostic_array() {
 }
 
 #[test]
+fn google_empty_visible_content_response_derives_completion_tokens() {
+    let value = json!({
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "index": 0,
+                "logprobs": null,
+                "message": {
+                    "content": "",
+                    "role": "assistant"
+                }
+            }
+        ],
+        "created": 1779382162,
+        "id": "kjcPat6OHo6kq8YPg6CZ2AM",
+        "model": "google/gemini-2.5-flash",
+        "object": "chat.completion",
+        "system_fingerprint": "",
+        "usage": {
+            "completion_tokens_details": {
+                "reasoning_tokens": 295
+            },
+            "extra_properties": {
+                "google": {
+                    "traffic_type": "ON_DEMAND"
+                }
+            },
+            "prompt_tokens": 7912,
+            "total_tokens": 8207
+        }
+    });
+
+    let response: OpenAiResponse =
+        serde_json::from_value(value).expect("google empty-content response");
+    let message = response.choices[0]
+        .message
+        .as_ref()
+        .expect("assistant message");
+    assert_eq!(message.content.as_deref(), Some(""));
+
+    let usage = response.usage.expect("usage");
+    assert_eq!(usage.prompt_tokens, 7912);
+    assert_eq!(usage.completion_tokens, 295);
+    assert_eq!(usage.total_tokens, 8207);
+}
+
+#[test]
 fn openrouter_reasoning_response_deserializes_message_reasoning() {
     let value = json!({
         "id": "gen-openrouter-diagnostic",

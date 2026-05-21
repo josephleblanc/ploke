@@ -14,6 +14,8 @@
 
 - Requirement: when reporting whether a feature was tested, name the exact verified surface in the first sentence. Valid surfaces include `CLI snapshot/export`, `focused egui renderer test`, `native interactive window`, `real-run import`, or `not tested`.
 - Requirement: do not let one verification surface stand in for another. In particular, do not describe CLI snapshot inspection as though it proves live egui right-panel behavior, and do not describe focused renderer tests as though they prove native pointer interaction.
+- Requirement: before reporting what a targeted test proves, read the test body or the helper it delegates to and name the concrete assertion-backed behavior. A passing test name plus Cargo output is not enough evidence for a behavioral claim.
+- Requirement: when the user narrows acceptance to one live surface, do not add skip helpers, cheap substitute tests, or adjacent passing surfaces as progress. Run that surface directly, and if it fails, report provider/tool/state/assertion evidence separately.
 
 ## Context Budget / Large File Guardrails
 
