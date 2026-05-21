@@ -41,6 +41,10 @@ observations, and terminal events for that selected runtime step.
   Current turn-level design for model exchanges, request snapshots, tool
   execution, edit lifecycles, adapter observations, replay, and model-facing
   trace queries.
+- [`runtime-playback/inventory/`](../../workflow/evalnomicon/drafts/observability/runtime-playback/inventory/)
+  Current survey lane for record owners, emitted files, graph coverage gaps,
+  joins, playback sequencing, egui aggregates, benchmark evidence, and
+  operational metrics.
 - [`historical-replay-probe-workflow.md`](../plans/self-improvement-loop/historical-replay-probe-workflow.md)
   Current operator workflow for stepping historical provider output through
   current tools and branching live from a suspicious state. Verify command

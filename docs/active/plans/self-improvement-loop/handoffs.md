@@ -24,6 +24,10 @@ they appear in the active route.
   Current turn-level drilldown plan for model exchanges, request snapshots,
   tool execution, edit lifecycles, adapter observations, replay, and
   model-facing trace queries.
+- [`../../../workflow/evalnomicon/drafts/observability/runtime-playback/inventory/`](../../../workflow/evalnomicon/drafts/observability/runtime-playback/inventory/)
+  Current survey lane for record owners, emitted files, graph coverage gaps,
+  joins, playback sequencing, egui aggregates, benchmark evidence, and
+  operational metrics.
 - [`historical-replay-probe-workflow.md`](historical-replay-probe-workflow.md)
   Current operator workflow for replaying historical provider output through
   current tools, stepping to breakpoints, and branching live from a suspicious

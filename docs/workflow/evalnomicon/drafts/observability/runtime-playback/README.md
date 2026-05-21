@@ -8,6 +8,10 @@ observability.
 - [`agent-turn.md`](agent-turn.md)
   Turn-level drilldown for model exchanges, tool execution, edit proposals,
   replay prefixes, and model-facing trace queries.
+- [`inventory/`](inventory/)
+  Survey track for current record owners, emitted files, graph coverage gaps,
+  join keys, playback placement, egui aggregates, and benchmark/operational
+  metrics.
 
 ## Goal
 
@@ -445,3 +449,5 @@ Start here before implementing or revising this plan:
 - [`agent-turn.md`](agent-turn.md)
   Nested turn-level timeline design for model exchanges, tools, edits, adapter
   observations, replay, and model-facing trace queries.
+- [`inventory/`](inventory/)
+  Record-surface and aggregate survey for the larger runtime playback model.
