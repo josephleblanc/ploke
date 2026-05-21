@@ -168,7 +168,7 @@ slices.
 - [x] Create durable plan under `docs/active/agents/skill-plans/`.
 - [x] Sync `orchestrator-conveyor` skill documentation.
 - [x] Split `xtask/src/commands/orchestrate.rs` into smaller modules.
-- [ ] Add local usage counters under `.orchestrator/`.
+- [x] Add local usage counters under `.orchestrator/`.
 - [ ] Add bounded status projection.
 - [ ] Add task-set model and direct `status --set`.
 - [ ] Add blocker resolution.

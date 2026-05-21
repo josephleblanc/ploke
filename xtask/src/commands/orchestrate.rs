@@ -15,16 +15,18 @@ mod packet;
 mod reports;
 #[cfg(test)]
 mod tests;
+mod usage;
 
 pub use board::{
     Blocker, BlockerKind, Board, BoardStatus, Task, TaskState, WorkerRole, WorkerSlot,
 };
 use board::{BoardLock, DEFAULT_BOARD_PATH, DEFAULT_PACKET_DIR, display, now, resolve};
 pub use commands::{
-    AddTask, Assign, Block, BoardArg, Complete, Init, Packet, Review, Status, WorkerCommand,
+    AddTask, Assign, Block, BoardArg, Complete, Init, Packet, Review, Status, Usage, WorkerCommand,
 };
 pub use lanes::{LaneCommand, LaneSpec, LaneValidation};
 pub use output::OrchestrateOutput;
+pub use usage::UsageSummary;
 
 /// Commands for the agent orchestration board.
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -47,6 +49,8 @@ pub enum Orchestrate {
     Block(Block),
     /// Write a worker packet file from the current assignment.
     Packet(Packet),
+    /// Show local command usage counters.
+    Usage(Usage),
     /// Define and validate lane-owned edit surfaces.
     #[command(subcommand)]
     Lane(LaneCommand),
@@ -55,6 +59,7 @@ pub enum Orchestrate {
 impl Orchestrate {
     /// Execute an orchestration command.
     pub fn execute(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
+        usage::record_usage(ctx, self.board_arg(), self.usage_key())?;
         match self {
             Self::Init(cmd) => cmd.execute(ctx),
             Self::Status(cmd) => cmd.execute(ctx),
@@ -65,7 +70,41 @@ impl Orchestrate {
             Self::Review(cmd) => cmd.execute(ctx),
             Self::Block(cmd) => cmd.execute(ctx),
             Self::Packet(cmd) => cmd.execute(ctx),
+            Self::Usage(cmd) => cmd.execute(ctx),
             Self::Lane(cmd) => cmd.execute(ctx),
+        }
+    }
+
+    fn board_arg(&self) -> &BoardArg {
+        match self {
+            Self::Init(cmd) => &cmd.board,
+            Self::Status(cmd) => &cmd.board,
+            Self::Worker(cmd) => &cmd.board,
+            Self::Add(cmd) => &cmd.board,
+            Self::Assign(cmd) => &cmd.board,
+            Self::Complete(cmd) => &cmd.board,
+            Self::Review(cmd) => &cmd.board,
+            Self::Block(cmd) => &cmd.board,
+            Self::Packet(cmd) => &cmd.board,
+            Self::Usage(cmd) => &cmd.board,
+            Self::Lane(cmd) => cmd.board_arg(),
+        }
+    }
+
+    fn usage_key(&self) -> &'static str {
+        match self {
+            Self::Init(_) => "init",
+            Self::Status(_) => "status",
+            Self::Worker(_) => "worker",
+            Self::Add(_) => "add",
+            Self::Assign(_) => "assign",
+            Self::Complete(cmd) if cmd.summary.is_some() => "complete --summary",
+            Self::Complete(_) => "complete",
+            Self::Review(_) => "review",
+            Self::Block(_) => "block",
+            Self::Packet(_) => "packet",
+            Self::Usage(_) => "usage",
+            Self::Lane(cmd) => cmd.usage_key(),
         }
     }
 }

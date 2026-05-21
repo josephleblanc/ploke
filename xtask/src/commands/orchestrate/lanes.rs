@@ -22,6 +22,20 @@ impl LaneCommand {
             Self::Validate(cmd) => cmd.execute(ctx),
         }
     }
+
+    pub(super) fn board_arg(&self) -> &BoardArg {
+        match self {
+            Self::Set(cmd) => &cmd.board,
+            Self::Validate(cmd) => &cmd.board,
+        }
+    }
+
+    pub(super) fn usage_key(&self) -> &'static str {
+        match self {
+            Self::Set(_) => "lane set",
+            Self::Validate(_) => "lane validate",
+        }
+    }
 }
 
 /// Add or replace a lane definition.

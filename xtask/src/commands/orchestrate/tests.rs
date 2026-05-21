@@ -76,3 +76,38 @@ fn complete_summary_writes_report_file_and_attaches_path() {
     assert!(report.contains("- task: task/a"));
     assert!(report.contains("Changed files: xtask/src/commands/orchestrate.rs"));
 }
+
+#[test]
+fn usage_command_counts_orchestrate_command_paths() {
+    let (_dir, ctx) = temp_ctx();
+
+    Orchestrate::Init(Init {
+        board: board_arg(),
+        packet_dir: PathBuf::from(DEFAULT_PACKET_DIR),
+    })
+    .execute(&ctx)
+    .expect("init board");
+    Orchestrate::Status(Status { board: board_arg() })
+        .execute(&ctx)
+        .expect("status board");
+
+    let output = Orchestrate::Usage(Usage { board: board_arg() })
+        .execute(&ctx)
+        .expect("usage summary");
+
+    let OrchestrateOutput::Usage(summary) = output else {
+        panic!("expected usage output");
+    };
+    assert_eq!(summary.path, ".orchestrator/usage.json");
+    assert_eq!(usage_count(&summary, "init"), Some(1));
+    assert_eq!(usage_count(&summary, "status"), Some(1));
+    assert_eq!(usage_count(&summary, "usage"), Some(1));
+}
+
+fn usage_count(summary: &UsageSummary, command: &str) -> Option<u64> {
+    summary
+        .commands
+        .iter()
+        .find(|entry| entry.command == command)
+        .map(|entry| entry.count)
+}

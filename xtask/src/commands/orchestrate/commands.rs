@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::commands::{CommandContext, XtaskError};
 
@@ -13,6 +13,12 @@ pub struct BoardArg {
     /// Board JSON path, relative to the workspace root unless absolute.
     #[arg(long, default_value = DEFAULT_BOARD_PATH)]
     pub(super) board: PathBuf,
+}
+
+impl BoardArg {
+    pub(super) fn path(&self) -> &Path {
+        &self.board
+    }
 }
 
 /// Initialize the orchestration board.
@@ -148,6 +154,13 @@ pub struct Packet {
     pub(super) board: BoardArg,
     /// Worker id.
     pub(super) worker: String,
+}
+
+/// Show local orchestrator command usage counters.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Usage {
+    #[command(flatten)]
+    pub(super) board: BoardArg,
 }
 
 impl Init {
@@ -376,5 +389,14 @@ impl Packet {
             worker: self.worker.clone(),
             path: display(ctx, &packet_path)?,
         })
+    }
+}
+
+impl Usage {
+    pub(super) fn execute(&self, ctx: &CommandContext) -> Result<OrchestrateOutput, XtaskError> {
+        Ok(OrchestrateOutput::Usage(super::usage::usage_summary(
+            ctx,
+            &self.board,
+        )?))
     }
 }

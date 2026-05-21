@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::{Blocker, BoardStatus, LaneSpec, LaneValidation, Task, WorkerSlot};
+use super::{Blocker, BoardStatus, LaneSpec, LaneValidation, Task, UsageSummary, WorkerSlot};
 
 /// Command output for orchestration commands.
 #[derive(Debug, Clone, Serialize)]
@@ -64,4 +64,6 @@ pub enum OrchestrateOutput {
         /// Validation result.
         validation: LaneValidation,
     },
+    /// Local usage counter summary.
+    Usage(UsageSummary),
 }
