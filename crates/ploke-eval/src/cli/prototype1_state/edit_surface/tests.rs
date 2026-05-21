@@ -151,10 +151,10 @@ fn live_google_env_or_skip(test_name: &str) -> bool {
 
     let missing = match (route_config_available, auth_config_available) {
         (false, false) => {
-            "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth"
+            "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_API_KEY auth"
         }
         (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
-        (true, false) => "Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth",
+        (true, false) => "Google ADC or GOOGLE_API_KEY auth",
         (true, true) => unreachable!("handled above"),
     };
     let message = format!(

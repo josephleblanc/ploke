@@ -61,8 +61,11 @@ fn google_openapi_base_url(project_id: &str, region: &str) -> String {
     )
 }
 
-fn google_auth_error(_error: impl std::fmt::Display) -> LlmError {
-    LlmError::Authentication
+fn google_auth_error(error: impl std::fmt::Display) -> LlmError {
+    LlmError::Var {
+        message: "failed to resolve Google application default credentials",
+        original: error.to_string(),
+    }
 }
 
 fn google_adc_credentials() -> Result<&'static AccessTokenCredentials, LlmError> {
@@ -402,7 +405,7 @@ impl Router for Google {
     );
     const MODELS_URL: &'static str = "";
     const ENDPOINTS_TAIL: &'static str = "";
-    const API_KEY_NAME: &'static str = "GOOGLE_VERTEX_ACCESS_TOKEN";
+    const API_KEY_NAME: &'static str = "GOOGLE_API_KEY";
     const PROVIDERS_URL: &'static str = "";
 
     fn resolve_api_key() -> Result<String, LlmError> {
@@ -530,10 +533,10 @@ mod tests {
 
         let missing = match (route_config_available, auth_config_available) {
             (false, false) => {
-                "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth"
+                "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC or GOOGLE_API_KEY auth"
             }
             (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
-            (true, false) => "Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN auth",
+            (true, false) => "Google ADC or GOOGLE_API_KEY auth",
             (true, true) => unreachable!("handled above"),
         };
         let message = format!(
@@ -716,7 +719,7 @@ mod tests {
         assert_eq!(Google::COMPLETION_ENDPOINT, "chat/completions");
         assert_eq!(Google::MODELS_ENDPOINT, "models");
         assert_eq!(Google::MODELS_URL, "");
-        assert_eq!(Google::API_KEY_NAME, "GOOGLE_VERTEX_ACCESS_TOKEN");
+        assert_eq!(Google::API_KEY_NAME, "GOOGLE_API_KEY");
     }
 
     #[test]
@@ -966,7 +969,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires Google ADC or GOOGLE_VERTEX_ACCESS_TOKEN, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
+    #[ignore = "requires Google ADC or GOOGLE_API_KEY, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
         const TEST_NAME: &str = "live_google_chat_step_forced_tool_call_success_or_quota";
         if !live_google_env_or_skip(TEST_NAME) {
