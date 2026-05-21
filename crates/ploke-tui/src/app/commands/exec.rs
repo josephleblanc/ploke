@@ -634,7 +634,8 @@ fn direct_google_provider_lines(model_id: &str) -> Vec<String> {
 fn show_model_search_help(app: &App) {
     let msg = "Usage: model search <keyword>\n\
 Examples:\n  model search gemini\n  model search claude\n  model search qwen\n\
-This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.";
+This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.\n\
+Rows are labeled by route source: [via OpenRouter] means the model came from OpenRouter, even if its id starts with google/; [via Google API] means direct Google.";
     app.send_cmd(StateCommand::AddMessageImmediate {
         msg: msg.to_string(),
         kind: MessageKind::SysInfo,

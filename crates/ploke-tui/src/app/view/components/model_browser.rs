@@ -192,9 +192,9 @@ pub fn render_model_browser<'a>(
         };
         let is_selected = i == mb.selected;
         let source_label = if it.direct_route {
-            "[google]"
+            "[via Google API]"
         } else {
-            "[openrouter]"
+            "[via OpenRouter]"
         };
         let source_style = match (it.direct_route, is_selected) {
             (true, true) => selected_google_source_style,
@@ -238,9 +238,9 @@ pub fn render_model_browser<'a>(
                 format!(
                     "    source: {}",
                     if it.direct_route {
-                        "google direct catalog"
+                        "Google API direct catalog"
                     } else {
-                        "openrouter catalog"
+                        "OpenRouter catalog"
                     }
                 ),
                 if it.direct_route {
@@ -617,24 +617,44 @@ mod tests {
         let lines = render_lines(&mb);
         let text = lines_to_text(&lines);
 
-        assert!(text.contains("google/gemini-2.5-flash [openrouter]"));
-        assert!(text.contains("google/gemini-2.5-pro [google]"));
-        assert!(text.contains("source: openrouter catalog"));
-        assert!(text.contains("source: google direct catalog"));
+        assert!(text.contains("google/gemini-2.5-flash [via OpenRouter]"));
+        assert!(text.contains("google/gemini-2.5-pro [via Google API]"));
+        assert!(text.contains("source: OpenRouter catalog"));
+        assert!(text.contains("source: Google API direct catalog"));
         assert!(text.contains("route: direct; provider endpoints are not used"));
 
         let openrouter_style = lines
             .iter()
             .flat_map(|line| line.spans.iter())
-            .find(|span| span.content.as_ref() == "[openrouter]")
+            .find(|span| span.content.as_ref() == "[via OpenRouter]")
             .expect("openrouter badge")
             .style;
         let google_style = lines
             .iter()
             .flat_map(|line| line.spans.iter())
-            .find(|span| span.content.as_ref() == "[google]")
+            .find(|span| span.content.as_ref() == "[via Google API]")
             .expect("google badge")
             .style;
         assert_ne!(openrouter_style, google_style);
+    }
+
+    #[test]
+    fn google_author_model_from_openrouter_is_labeled_as_openrouter_supplied() {
+        let mb = ModelBrowserState {
+            visible: true,
+            keyword: "gemini".to_string(),
+            items: vec![model_item("google/gemini-flash-latest", false, false)],
+            selected: 0,
+            help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 25,
+        };
+
+        let text = lines_to_text(&render_lines(&mb));
+
+        assert!(text.contains("google/gemini-flash-latest [via OpenRouter]"));
+        assert!(!text.contains("[via Google API]"));
     }
 }

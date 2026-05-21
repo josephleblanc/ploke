@@ -22,7 +22,7 @@ use crate::app::view::components::model_browser::{
 use crate::app_state::AppState;
 
 pub(crate) const MODEL_BROWSER_HELP_TEXT: &str = "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
-     Source badges: [openrouter]=OpenRouter catalog + provider endpoints; [google]=direct Google catalog route\n\
+     Source badges: [via OpenRouter]=OpenRouter catalog + provider endpoints; [via Google API]=direct Google catalog route\n\
      Overlapping model ids use the route shown by the selected row\n\
      Save/Load/Search:\n\
      - model save [path] [--with-keys]\n\
@@ -406,8 +406,8 @@ mod tests {
 
     #[test]
     fn model_browser_help_explains_source_badges() {
-        assert!(MODEL_BROWSER_HELP_TEXT.contains("[openrouter]=OpenRouter catalog"));
-        assert!(MODEL_BROWSER_HELP_TEXT.contains("[google]=direct Google catalog route"));
+        assert!(MODEL_BROWSER_HELP_TEXT.contains("[via OpenRouter]=OpenRouter catalog"));
+        assert!(MODEL_BROWSER_HELP_TEXT.contains("[via Google API]=direct Google catalog route"));
         assert!(MODEL_BROWSER_HELP_TEXT.contains("Overlapping model ids use the route shown"));
     }
 }

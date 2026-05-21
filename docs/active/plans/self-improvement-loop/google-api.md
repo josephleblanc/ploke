@@ -16,7 +16,7 @@ Update 2026-05-21: Native interactive TUI routing now works with direct Google. 
 
 Update 2026-05-21: The model picker now treats direct Google rows as direct routes instead of OpenRouter rows with missing providers. Google search results carry `route_source = direct_google` into `ModelBrowserItem`, pressing `s` selects the model with no provider pin, and expanding a direct row does not request OpenRouter endpoints. Fixture-backed Google model-list coverage now parses `test_data/google/openai_models.json` and verifies direct route provenance plus tool-capability filtering.
 
-Update 2026-05-21: The model picker now renders route-source badges on every row. OpenRouter-supplied rows show `[openrouter]`, direct Google rows show `[google]`, the badges use distinct colors, expanded rows show the source detail, and both overlay `? Help` plus global help explain how to read overlapping model ids.
+Update 2026-05-21: The model picker now renders route-source badges on every row. OpenRouter-supplied rows show `[via OpenRouter]`, direct Google rows show `[via Google API]`, the badges use distinct colors, expanded rows show the source detail, and both overlay `? Help` plus global help explain how to read overlapping model ids.
 
 Verdict: Google is integrated through `ploke-llm`, the `ploke-tui` model picker, the `ploke-tui` session-loop tool path, and native interactive TUI routing. It is not yet at OpenRouter parity for the `ploke-eval` headless adapter.
 
@@ -34,7 +34,7 @@ Verdict: Google is integrated through `ploke-llm`, the `ploke-tui` model picker,
 - `ploke-eval` route validation accepts direct Google routes and no longer requires Google to provide OpenRouter endpoint metadata.
 - `ploke-llm` has fixture-backed Google model-list parsing and adaptation tests for the direct model catalog.
 - `ploke-tui` model picker direct Google rows now select without provider endpoints and preserve the OpenRouter endpoint-fetch path for OpenRouter rows.
-- `ploke-tui` model picker rows show colored `[openrouter]` and `[google]` source badges, and help text explains the distinction for overlapping ids.
+- `ploke-tui` model picker rows show colored `[via OpenRouter]` and `[via Google API]` source badges, and help text explains the distinction for overlapping ids.
 - `ploke-tui` has an ignored live Google session-loop canary that proves a Google tool call can enter the normal event-bus tool execution path and complete `list_dir`.
 - Native `ploke-tui` can select `model router google`, switch to `google/gemini-2.5-flash`, submit a normal user prompt, and receive a live Google assistant response.
 
@@ -51,7 +51,7 @@ Verdict: Google is integrated through `ploke-llm`, the `ploke-tui` model picker,
 5. Done: `RuntimeConfig` now carries explicit router selection, and TUI request construction dispatches Google routes through `Google` instead of inferring every live request as OpenRouter.
 6. Done: add Google-aware API-key diagnostics and model commands, including direct Google route display and TUI `model router`.
 7. Done: add route provenance to registry rows and refresh `ploke-eval` model registry from both OpenRouter and direct Google catalogs.
-8. Done for the basic catalog/picker path: fixture-backed Google model-list tests cover direct route provenance, and the TUI model picker no longer requests OpenRouter endpoints for direct Google rows. The picker also labels each row as `[openrouter]` or `[google]` so overlapping ids remain visually distinct.
+8. Done for the basic catalog/picker path: fixture-backed Google model-list tests cover direct route provenance, and the TUI model picker no longer requests OpenRouter endpoints for direct Google rows. The picker also labels each row as `[via OpenRouter]` or `[via Google API]` so overlapping ids remain visually distinct.
 9. Partially done: live ignored tests now cover Google tool calls through `chat_step` and one `ploke-tui` session-loop tool execution, and a native interactive TUI smoke covers operator route selection plus a live Google chat response. Still missing: `ploke-eval` headless adapter.
 
 The next implementation slice is eval/runtime validation: carry direct Google through the `ploke-eval` headless adapter, then tighten any remaining persistence around active route selection.
