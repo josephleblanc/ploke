@@ -336,6 +336,10 @@ pub struct RunReplayCommand {
 pub enum RunReplaySubcommand {
     /// [debug/manual] Replay one embedding batch from a prepared run.
     Batch(ReplayMsbBatchCommand),
+    /// [debug/manual] Inspect replayable agent-turn cursors and response tapes.
+    Inspect(ReplayInspectCommand),
+    /// [debug/manual] Replay a recorded agent turn prefix, then continue live in one workspace.
+    TurnLive(ReplayTurnLiveCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -1384,6 +1388,8 @@ impl RunReplayCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
             RunReplaySubcommand::Batch(cmd) => cmd.run().await,
+            RunReplaySubcommand::Inspect(cmd) => cmd.run(),
+            RunReplaySubcommand::TurnLive(cmd) => cmd.run().await,
         }
     }
 }
@@ -2937,6 +2943,154 @@ pub struct ReplayMsbBatchCommand {
     pub batch: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ReplayTurnArtifactArg {
+    Trace,
+    Summary,
+}
+
+impl From<ReplayTurnArtifactArg> for ploke_tree::TurnArtifactKind {
+    fn from(value: ReplayTurnArtifactArg) -> Self {
+        match value {
+            ReplayTurnArtifactArg::Trace => Self::Trace,
+            ReplayTurnArtifactArg::Summary => Self::Summary,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ReplayTailArg {
+    Stop,
+    Live,
+}
+
+impl From<ReplayTailArg> for crate::replay::turn::ReplayTail {
+    fn from(value: ReplayTailArg) -> Self {
+        match value {
+            ReplayTailArg::Stop => Self::Stop,
+            ReplayTailArg::Live => Self::Live,
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Replay one recorded agent-turn prefix, then continue through the live TUI tool loop",
+    after_help = "\
+Example:
+
+  cargo run -p ploke-eval -- run replay turn-live \\
+    --run-dir ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node>/output \\
+    --workspace ~/.ploke-eval/campaigns/<campaign>/prototype1/workspaces/<workspace> \\
+    --event-index 0 --max-attempts 1 --format table
+
+This installs the recorded provider response tape resolved from the agent-turn
+cursor, submits the recorded issue prompt to the target workspace, and consumes
+the selected prefix through the normal ploke-tui session/tool path. By default
+the prefix is the full assistant-message tape and the next provider request goes
+live. Use --through-response-index or --through-event to slice the prefix, and
+use --tail stop to stop before any live provider call.
+
+The command is intentionally explicit about --run-dir and --workspace. The run
+directory supplies the historical typed records and response sidecar; the
+workspace supplies current search/code/patch behavior. Keeping those separate
+lets the operator replay a historical model prefix against the workspace they
+actually want to test.
+"
+)]
+pub struct ReplayTurnLiveCommand {
+    /// Directory containing agent-turn artifacts and llm-full-responses.jsonl.
+    #[arg(long, value_name = "DIR")]
+    pub run_dir: PathBuf,
+
+    /// Workspace whose current files, search index, and tool behavior should be used.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+
+    /// Agent-turn artifact family.
+    #[arg(long, value_enum, default_value_t = ReplayTurnArtifactArg::Trace)]
+    pub artifact_kind: ReplayTurnArtifactArg,
+
+    /// Relative agent-turn artifact path inside --run-dir.
+    #[arg(long, default_value = "agent-turn-trace.json")]
+    pub artifact_path: String,
+
+    /// Zero-based event index inside the selected agent-turn artifact.
+    #[arg(long, default_value_t = 0)]
+    pub event_index: usize,
+
+    /// Install responses from index 0 through this provider response index.
+    #[arg(long, value_name = "N", conflicts_with = "through_event")]
+    pub through_response_index: Option<usize>,
+
+    /// Use --event-index as the breakpoint event and install the prefix needed to replay through it.
+    #[arg(long, conflicts_with = "through_response_index")]
+    pub through_event: bool,
+
+    /// What to do after the recorded prefix is exhausted.
+    #[arg(long, value_enum, default_value_t = ReplayTailArg::Live)]
+    pub tail: ReplayTailArg,
+
+    /// Model id for the live tail. Defaults to the parent-patcher model selection.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug to pin for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum headless retry attempts around the live tail.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Overall timeout for the headless live probe.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Inspect replayable agent-turn cursors and provider-response sidecars",
+    after_help = "\
+Example:
+
+  cargo run -p ploke-eval -- run replay inspect \\
+    --run-dir ~/.ploke-eval/instances/prototype1/<campaign>/<target>/runs/<run> \\
+    --workspace ~/.ploke-eval/repos/<owner>/<repo> \\
+    --format table
+
+This command reads typed agent-turn artifacts and llm-full-responses.jsonl
+without executing the TUI loop or calling a live provider. Use it to choose a
+cursor and catch obvious replay health problems such as missing response
+indexes or prompt paths that point at an old workspace.
+"
+)]
+pub struct ReplayInspectCommand {
+    /// Directory containing agent-turn artifacts and llm-full-responses.jsonl.
+    #[arg(long, value_name = "DIR")]
+    pub run_dir: PathBuf,
+
+    /// Optional target workspace used only for prompt-path mismatch detection.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
+
+    /// Optional maximum number of rows to render in table mode.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// In table mode, show only requested/completed/failed tool events.
+    #[arg(long)]
+    pub tool_events_only: bool,
+
+    /// Output format: table (default) or json.
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     about = "List all agent conversation turns from a run record",
@@ -4398,6 +4552,361 @@ impl ReplayMsbBatchCommand {
             println!("{}", batch_file.display());
         })
     }
+}
+
+impl ReplayTurnLiveCommand {
+    pub async fn run(self) -> Result<(), PrepareError> {
+        // CLI responsibility stops at flag parsing, model selection, and
+        // rendering. Cursor resolution, tape installation, and headless TUI
+        // execution live in `replay::turn` / `replay::probe` so future selector
+        // commands can reuse the same probe body without copying semantics.
+        let tail: crate::replay::turn::ReplayTail = self.tail.into();
+        let model = match (tail, self.model_id, self.provider) {
+            (crate::replay::turn::ReplayTail::Stop, None, None) => None,
+            (_, model_id, provider) => {
+                Some(resolve_replay_probe_model_selection(model_id, provider)?)
+            }
+        };
+        let cursor = ploke_tree::TurnCursor {
+            artifact_kind: self.artifact_kind.into(),
+            artifact_path: self.artifact_path,
+            event_index: self.event_index,
+        };
+        let prefix_selector = if let Some(response_index) = self.through_response_index {
+            crate::replay::turn::ReplayPrefixSelector::ThroughResponseIndex { response_index }
+        } else if self.through_event {
+            crate::replay::turn::ReplayPrefixSelector::ThroughEvent {
+                cursor: cursor.clone(),
+            }
+        } else {
+            crate::replay::turn::ReplayPrefixSelector::FullTape
+        };
+        let probe = crate::replay::probe::ProbeRequest {
+            run_dir: self.run_dir,
+            workspace: self.workspace,
+            cursor,
+            prefix_selector,
+            tail,
+            budget: crate::replay::probe::ProbeBudget::new(self.max_attempts, self.timeout_secs),
+            model,
+        }
+        .run()
+        .await?;
+        print_replay_probe(&probe, self.format)
+    }
+}
+
+impl ReplayInspectCommand {
+    pub fn run(self) -> Result<(), PrepareError> {
+        let limit = self.limit;
+        let tool_events_only = self.tool_events_only;
+        let inspection = crate::replay::inspect::ReplayInspectRequest {
+            run_dir: self.run_dir,
+            workspace: self.workspace,
+        }
+        .inspect()?;
+        print_replay_inspection(&inspection, self.format, limit, tool_events_only)
+    }
+}
+
+fn resolve_replay_probe_model_selection(
+    model_id: Option<String>,
+    provider: Option<String>,
+) -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    match (model_id, provider) {
+        (Some(model_id), provider) => {
+            let model_id =
+                ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
+                    phase: "replay_probe_model_id",
+                    detail: format!("invalid model id '{model_id}': {err}"),
+                })?;
+            let provider = provider
+                .map(|provider| {
+                    ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
+                        phase: "replay_probe_provider",
+                        detail: format!("invalid provider slug '{provider}': {err}"),
+                    })
+                })
+                .transpose()?;
+            Ok(
+                prototype1_state::edit_surface::tui_adapter::ModelSelection::new(
+                    model_id, provider,
+                ),
+            )
+        }
+        (None, Some(provider)) => Err(PrepareError::InvalidBatchSelection {
+            detail: format!("replay turn-live provider '{provider}' requires --model-id"),
+        }),
+        (None, None) => load_parent_patcher_model_selection(),
+    }
+}
+
+fn print_replay_inspection(
+    inspection: &crate::replay::inspect::ReplayInspection,
+    format: InspectOutputFormat,
+    limit: Option<usize>,
+    tool_events_only: bool,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(inspection).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!("replay inspection");
+            println!("{}", "-".repeat(40));
+            println!("run_dir: {}", inspection.run_dir.display());
+            match &inspection.workspace {
+                Some(workspace) => println!(
+                    "workspace: {} (exists: {})",
+                    workspace.display(),
+                    inspection.workspace_exists.unwrap_or(false)
+                ),
+                None => println!("workspace: (not provided)"),
+            }
+            println!("steps: {}", inspection.step_count());
+            println!("quality_signals: {}", inspection.signal_count());
+            if tool_events_only {
+                println!("filter: tool events only");
+            }
+            let prompt_paths = replay_prompt_path_summary(inspection);
+            if !prompt_paths.is_empty() {
+                println!("prompt_paths:");
+                for path in prompt_paths.iter().take(4) {
+                    println!("  {path}");
+                }
+                if prompt_paths.len() > 4 {
+                    println!("  ... {} more path(s)", prompt_paths.len() - 4);
+                }
+            }
+            println!();
+            println!(
+                "{:<36} {:<16} {:<22} {:<14} {:<18} {:<24} signals",
+                "cursor", "event", "tool", "call_id", "assistant", "tape"
+            );
+            let rows = inspection
+                .steps
+                .iter()
+                .filter(|step| !tool_events_only || is_replay_tool_event(step.event_kind))
+                .collect::<Vec<_>>();
+            for step in rows.iter().take(limit.unwrap_or(usize::MAX)) {
+                println!(
+                    "{:<36} {:<16} {:<22} {:<14} {:<18} {:<24} {}",
+                    format_replay_cursor(&step.cursor),
+                    format!("{:?}", step.event_kind),
+                    step.tool_name.as_deref().unwrap_or("-"),
+                    step.call_id.as_deref().unwrap_or("-"),
+                    step.assistant_message_id
+                        .as_deref()
+                        .map(short_id)
+                        .unwrap_or_else(|| "-".to_owned()),
+                    format_tape_cell(step.tape.as_ref()),
+                    format_signal_cell(&step.quality_signals),
+                );
+            }
+            if let Some(limit) = limit {
+                if rows.len() > limit {
+                    println!("... {} more step(s) omitted by --limit", rows.len() - limit);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_replay_probe(
+    probe: &crate::replay::probe::ProbeRun,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    // Render only the library projection. Do not derive replay semantics here;
+    // `ProbeRun::tail_reached` is the authority for whether the live provider
+    // boundary was crossed after the recorded prefix.
+    match format {
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(probe).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!("replay probe");
+            println!("{}", "-".repeat(40));
+            println!("run_dir: {}", probe.run_dir.display());
+            println!("workspace: {}", probe.workspace.display());
+            println!("artifact: {}", probe.anchor.cursor.artifact_path);
+            println!("event_index: {}", probe.anchor.cursor.event_index);
+            println!("event_kind: {:?}", probe.anchor.event_kind);
+            println!("task_id: {}", probe.anchor.task_id);
+            println!("selected_model_recorded: {}", probe.anchor.selected_model);
+            println!(
+                "live_model: {}",
+                probe.live_model.as_deref().unwrap_or("(tui default)")
+            );
+            println!(
+                "live_provider: {}",
+                probe.live_provider.as_deref().unwrap_or("(model default)")
+            );
+            println!("tail: {:?}", probe.prefix.tail);
+            println!(
+                "prefix: {}",
+                format_replay_prefix_selector(&probe.prefix.selector)
+            );
+            println!(
+                "through_response_index: {}",
+                probe
+                    .prefix
+                    .through_response_index
+                    .map(|index| index.to_string())
+                    .unwrap_or_else(|| "-".to_owned())
+            );
+            println!(
+                "assistant_message_id: {}",
+                probe.anchor.assistant_message_id()
+            );
+            println!("tape: {}", probe.tape_path.display());
+            println!(
+                "tape_records: {}/{}",
+                probe.prefix.installed_records, probe.prefix.total_records
+            );
+            println!("captured_requests: {}", probe.captured_requests.len());
+            println!("live_tail_reached: {}", probe.tail_reached());
+            println!("attempts: {}", probe.attempt_count());
+            println!("terminal: {}", probe.terminal_label());
+            println!("elapsed_ms: {}", probe.elapsed_ms);
+            if let Some(last) = probe.captured_requests.last() {
+                println!("last_request_messages: {}", last.message_count);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_replay_prefix_selector(selector: &crate::replay::turn::ReplayPrefixSelector) -> String {
+    match selector {
+        crate::replay::turn::ReplayPrefixSelector::FullTape => "full_tape".to_owned(),
+        crate::replay::turn::ReplayPrefixSelector::ThroughResponseIndex { response_index } => {
+            format!("through_response:{response_index}")
+        }
+        crate::replay::turn::ReplayPrefixSelector::ThroughEvent { cursor } => {
+            format!("through_event:{}", format_replay_cursor(cursor))
+        }
+    }
+}
+
+fn format_replay_cursor(cursor: &ploke_tree::TurnCursor) -> String {
+    format!(
+        "{:?}:{}:{}",
+        cursor.artifact_kind, cursor.artifact_path, cursor.event_index
+    )
+}
+
+fn is_replay_tool_event(kind: ploke_tree::TurnEventKind) -> bool {
+    matches!(
+        kind,
+        ploke_tree::TurnEventKind::ToolRequested
+            | ploke_tree::TurnEventKind::ToolCompleted
+            | ploke_tree::TurnEventKind::ToolFailed
+    )
+}
+
+fn replay_prompt_path_summary(
+    inspection: &crate::replay::inspect::ReplayInspection,
+) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for path in inspection
+        .steps
+        .iter()
+        .flat_map(|step| step.prompt_paths.iter())
+    {
+        let exists = if path.exists { "exists" } else { "missing" };
+        let target = if path.target_workspace {
+            "target"
+        } else {
+            "not-target"
+        };
+        paths.insert(format!("{} ({exists}, {target})", path.path.display()));
+    }
+    paths.into_iter().collect()
+}
+
+fn format_tape_cell(tape: Option<&crate::replay::inspect::TapeContinuity>) -> String {
+    match tape {
+        None => "-".to_owned(),
+        Some(crate::replay::inspect::TapeContinuity::Present {
+            response_indices,
+            missing_response_indices,
+            ..
+        }) if missing_response_indices.is_empty() => {
+            format!(
+                "{} rec {}",
+                response_indices.len(),
+                format_response_indices(response_indices)
+            )
+        }
+        Some(crate::replay::inspect::TapeContinuity::Present {
+            response_indices,
+            missing_response_indices,
+            ..
+        }) => format!(
+            "{} rec missing {}",
+            response_indices.len(),
+            format_response_indices(missing_response_indices)
+        ),
+        Some(crate::replay::inspect::TapeContinuity::Unavailable { .. }) => {
+            "unavailable".to_owned()
+        }
+    }
+}
+
+fn format_response_indices(indices: &[usize]) -> String {
+    match indices {
+        [] => "[]".to_owned(),
+        [single] => single.to_string(),
+        [first, .., last] if is_contiguous_usize(indices) => format!("{first}..{last}"),
+        _ if indices.len() <= 6 => format!("{indices:?}"),
+        _ => {
+            let first = indices[0];
+            let second = indices[1];
+            let third = indices[2];
+            let last = indices[indices.len() - 1];
+            format!("[{first}, {second}, {third}, .., {last}]")
+        }
+    }
+}
+
+fn is_contiguous_usize(indices: &[usize]) -> bool {
+    indices.windows(2).all(|window| window[1] == window[0] + 1)
+}
+
+fn format_signal_cell(signals: &[crate::replay::inspect::ReplayQualitySignal]) -> String {
+    if signals.is_empty() {
+        return "-".to_owned();
+    }
+    signals
+        .iter()
+        .take(3)
+        .map(|signal| replay_signal_label(signal.kind))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn replay_signal_label(kind: crate::replay::inspect::ReplayQualitySignalKind) -> &'static str {
+    match kind {
+        crate::replay::inspect::ReplayQualitySignalKind::TapeUnavailable => "tape_unavailable",
+        crate::replay::inspect::ReplayQualitySignalKind::TapeGap => "tape_gap",
+        crate::replay::inspect::ReplayQualitySignalKind::PromptPathUnreadable => {
+            "prompt_path_unreadable"
+        }
+        crate::replay::inspect::ReplayQualitySignalKind::PromptTargetMismatch => {
+            "prompt_target_mismatch"
+        }
+    }
+}
+
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 impl TranscriptCommand {
@@ -13833,6 +14342,166 @@ mod tests {
             }) => {
                 assert_eq!(cmd.turn, Some(1));
                 assert_eq!(cmd.turn_flag, None);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_turn_live_command_parses_cursor_and_workspace() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "turn-live",
+            "--run-dir",
+            "/tmp/run",
+            "--workspace",
+            "/tmp/workspace",
+            "--artifact-kind",
+            "trace",
+            "--artifact-path",
+            "agent-turn-trace.json",
+            "--event-index",
+            "3",
+            "--model-id",
+            "openai/gpt-5",
+            "--provider",
+            "openrouter",
+            "--max-attempts",
+            "1",
+            "--timeout-secs",
+            "30",
+            "--format",
+            "json",
+        ])
+        .expect("run replay turn-live should parse");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::TurnLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.run_dir, PathBuf::from("/tmp/run"));
+                assert_eq!(cmd.workspace, PathBuf::from("/tmp/workspace"));
+                assert_eq!(cmd.artifact_kind, ReplayTurnArtifactArg::Trace);
+                assert_eq!(cmd.artifact_path, "agent-turn-trace.json");
+                assert_eq!(cmd.event_index, 3);
+                assert_eq!(cmd.through_response_index, None);
+                assert!(!cmd.through_event);
+                assert_eq!(cmd.tail, ReplayTailArg::Live);
+                assert_eq!(cmd.model_id.as_deref(), Some("openai/gpt-5"));
+                assert_eq!(cmd.provider.as_deref(), Some("openrouter"));
+                assert_eq!(cmd.max_attempts, 1);
+                assert_eq!(cmd.timeout_secs, 30);
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_turn_live_command_parses_response_prefix_and_stop_tail() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "turn-live",
+            "--run-dir",
+            "/tmp/run",
+            "--workspace",
+            "/tmp/workspace",
+            "--event-index",
+            "3",
+            "--through-response-index",
+            "8",
+            "--tail",
+            "stop",
+        ])
+        .expect("run replay turn-live should parse response prefix and stop tail");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::TurnLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.event_index, 3);
+                assert_eq!(cmd.through_response_index, Some(8));
+                assert!(!cmd.through_event);
+                assert_eq!(cmd.tail, ReplayTailArg::Stop);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_turn_live_command_parses_event_prefix() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "turn-live",
+            "--run-dir",
+            "/tmp/run",
+            "--workspace",
+            "/tmp/workspace",
+            "--event-index",
+            "11",
+            "--through-event",
+        ])
+        .expect("run replay turn-live should parse event prefix");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::TurnLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.event_index, 11);
+                assert!(cmd.through_event);
+                assert_eq!(cmd.through_response_index, None);
+                assert_eq!(cmd.tail, ReplayTailArg::Live);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_inspect_command_parses_run_workspace_and_limit() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "inspect",
+            "--run-dir",
+            "/tmp/run",
+            "--workspace",
+            "/tmp/workspace",
+            "--limit",
+            "12",
+            "--tool-events-only",
+            "--format",
+            "json",
+        ])
+        .expect("run replay inspect should parse");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::Inspect(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.run_dir, PathBuf::from("/tmp/run"));
+                assert_eq!(cmd.workspace, Some(PathBuf::from("/tmp/workspace")));
+                assert_eq!(cmd.limit, Some(12));
+                assert!(cmd.tool_events_only);
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

@@ -4,6 +4,10 @@ Reports in this directory cover debugger claims whose UI-facing witness is
 expected to come from `ploke_tree::Graph` rather than from ad hoc UI strings or
 projection-only labels.
 
+Status guide: these are archaeology/spec reports for UI-facing claims. Treat
+them as routing evidence and expected witness shape; verify current
+`ploke-tree` and `ploke-egui` code before repeating a claim as implemented.
+
 - [`artifact-identity.md`](artifact-identity.md)
   Identity surface for Artifact inspector claims, including `ArtifactId`,
   `ArtifactRef`, `TreeKeyHash`, and nearby provenance carriers.

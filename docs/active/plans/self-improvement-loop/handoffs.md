@@ -19,6 +19,8 @@ Use this as the shared restart list for the records/playback/frontend track. The
 
 - [`baseline-evidence-authority-plan.md`](baseline-evidence-authority-plan.md)
   Current plan for fixing the missing baseline record failure by making `Parent<P>` require complete parent-local baseline evidence before child fanout.
+- [`historical-replay-probe-workflow.md`](historical-replay-probe-workflow.md)
+  Intended workflow for replaying historical provider output through current tools, stepping to breakpoints, and branching live to test tool-loop recoverability.
 - [`../../agents/2026-05-09_run-playback-typed-observability-plan.md`](../../agents/2026-05-09_run-playback-typed-observability-plan.md)
   Design contract for typed `RunPlayback` / `RunPlaybackRef` projections, evidence strength, causal order, and projection authority.
 - [`../../agents/2026-05-09_ploke-records-protocol-handoff.md`](../../agents/2026-05-09_ploke-records-protocol-handoff.md)

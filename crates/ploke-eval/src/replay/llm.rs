@@ -10,7 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ploke_llm::manager::{RecordedResponseTape, ResponseIndex};
+use ploke_llm::manager::{
+    ChatStepOutcome, RecordedResponseTape, ResponseIndex, parse_chat_outcome,
+};
 use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
 use uuid::Uuid;
 
@@ -54,6 +56,77 @@ impl LoadedResponseTape {
 
     pub fn records(&self) -> &[RawFullResponseRecord] {
         &self.records
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn last_response_index(&self) -> Option<ResponseIndex> {
+        self.records
+            .last()
+            .map(RawFullResponseRecord::response_index)
+    }
+
+    pub fn empty_prefix(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            assistant_message_id: self.assistant_message_id,
+            records: Vec::new(),
+        }
+    }
+
+    pub fn prefix_through_response_index(
+        &self,
+        response_index: ResponseIndex,
+    ) -> Result<Self, PrepareError> {
+        let mut found = false;
+        let records = self
+            .records
+            .iter()
+            .filter_map(|record| {
+                let include = record.response_index() <= response_index;
+                found |= record.response_index() == response_index;
+                include.then(|| record.clone())
+            })
+            .collect::<Vec<_>>();
+
+        if !found {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "slice_llm_replay",
+                detail: format!(
+                    "assistant message '{}' does not have recorded response_index {} in '{}'",
+                    self.assistant_message_id,
+                    response_index,
+                    self.path.display()
+                ),
+            });
+        }
+
+        Ok(Self {
+            path: self.path.clone(),
+            assistant_message_id: self.assistant_message_id,
+            records,
+        })
+    }
+
+    pub fn response_index_for_tool_call(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ResponseIndex>, PrepareError> {
+        for record in &self.records {
+            let body = serde_json::to_string(record.response()).map_err(PrepareError::Serialize)?;
+            let step = parse_chat_outcome(&body).map_err(|source| PrepareError::DatabaseSetup {
+                phase: "inspect_llm_replay_tool_calls",
+                detail: source.to_string(),
+            })?;
+            if let ChatStepOutcome::ToolCalls { calls, .. } = step.outcome {
+                if calls.iter().any(|call| call.call_id.as_ref() == call_id) {
+                    return Ok(Some(record.response_index()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub fn missing_response_indices(&self) -> Vec<ResponseIndex> {
@@ -269,6 +342,30 @@ mod tests {
             message.contains("load_for_inspection"),
             "expected forensic inspection hint in error, got {message}"
         );
+    }
+
+    #[test]
+    fn loaded_response_tape_can_slice_prefix_through_response_index() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let first = response_line(assistant, 0, "first");
+        let second = response_line(assistant, 1, "second");
+        let third = response_line(assistant, 2, "third");
+        fs::write(&path, format!("{third}\n{first}\n{second}\n")).expect("write sidecar");
+
+        let loaded =
+            LoadedResponseTape::load(root.path(), &assistant.to_string()).expect("load tape");
+        let prefix = loaded
+            .prefix_through_response_index(ResponseIndex::new(1))
+            .expect("slice prefix");
+
+        let indexes = prefix
+            .records()
+            .iter()
+            .map(|record| record.response_index().get())
+            .collect::<Vec<_>>();
+        assert_eq!(indexes, vec![0, 1]);
     }
 
     #[test]

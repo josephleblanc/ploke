@@ -53,12 +53,25 @@ pub struct ResponseTapeRef<'a> {
 }
 
 /// Borrowed event-level step inside one persisted agent-turn artifact.
+///
+/// This is the fine-grained playback coordinate that downstream replay code
+/// uses to step below the coarser run/history view. It deliberately borrows
+/// from the parsed `ploke-records::agent_turn` artifact instead of inventing a
+/// smaller replay DTO: `ploke-tree` owns the read-side graph/playback view, and
+/// callers can project only the facts they need from this borrowed step.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnEventStepRef<'a> {
     pub artifact_kind: TurnArtifactKind,
     pub artifact_path: &'a str,
     pub task_id: &'a str,
     pub selected_model: &'a str,
+    /// Original task prompt from the recorded turn.
+    ///
+    /// Live replay probes resubmit this prompt to a fresh headless TUI runtime.
+    /// The provider response is replayed from tape until the selected prefix is
+    /// exhausted, while search, code reads, patch application, proposal state,
+    /// and any live tail call all come from the target workspace/runtime.
+    pub issue_prompt: &'a str,
     pub artifact_assistant_message_id: Option<&'a str>,
     pub event_index: usize,
     pub event: &'a ObservedTurnEventRecord,
@@ -173,6 +186,7 @@ pub fn turn_event_steps_from_artifact<'a>(
                 artifact_path,
                 task_id: record.task_id.as_str(),
                 selected_model: record.selected_model.as_str(),
+                issue_prompt: record.issue_prompt.as_str(),
                 artifact_assistant_message_id,
                 event_index,
                 event,
@@ -224,6 +238,7 @@ pub fn turn_event_step_at<'a>(
         artifact_path: artifact_path.as_str(),
         task_id: record.task_id.as_str(),
         selected_model: record.selected_model.as_str(),
+        issue_prompt: record.issue_prompt.as_str(),
         artifact_assistant_message_id: artifact_assistant_message_id(record),
         event_index: cursor.event_index,
         event,

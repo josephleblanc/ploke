@@ -6603,6 +6603,7 @@ dependencies = [
  "ploke-protocol",
  "ploke-records",
  "ploke-test-utils",
+ "ploke-tree",
  "ploke-tui",
  "regex",
  "reqwest",

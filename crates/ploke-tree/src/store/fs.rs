@@ -784,7 +784,13 @@ impl FsRunStore {
         }))
     }
 
-    fn load_agent_turn_records(&self) -> Result<AgentTurnRecordSet, FsRunStoreError> {
+    /// Load only persisted agent-turn artifacts from this run root.
+    ///
+    /// This deliberately does not require `scheduler.json` or other campaign
+    /// control records. Historical replay probes often point at a leaf run
+    /// artifact directory whose typed turn files and provider sidecar are
+    /// separate from the campaign control root.
+    pub fn load_agent_turn_records(&self) -> Result<AgentTurnRecordSet, FsRunStoreError> {
         let mut traces = BTreeMap::new();
         for path in expected_agent_turn_files(&self.run_root, "agent-turn-trace.json") {
             let record = self.read_json::<AgentTurnTraceRecord>(&path)?.0;

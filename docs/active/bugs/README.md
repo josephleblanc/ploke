@@ -1,7 +1,9 @@
-# Active Bugs
+# Active Bugs and Regression-Relevant Reports
 
-Current bug reports for issues that are still live, restart-relevant, or needed
-for near-term implementation planning.
+Bug reports for issues that are still live, restart-relevant, or needed for
+near-term implementation planning. Some entries are retained after mitigation
+because they pin regression tests or workflow guardrails; check the individual
+file and current code before treating a report as still open.
 
 - [`2026-03-21-indexworkspace-relative-target-regression.md`](./2026-03-21-indexworkspace-relative-target-regression.md)
   `IndexWorkspace` relative target re-resolution regression in `ploke-tui`.
