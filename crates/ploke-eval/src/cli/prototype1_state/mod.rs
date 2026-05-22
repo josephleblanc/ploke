@@ -640,9 +640,11 @@
 //!
 //! ## Persisted artifact map
 //!
-//! Operator appendix (commands, path table, glossary: scheduler generations vs History, channel vs journal,
-//! monitor list gap for `prototype1/history/`): **`PROTOTYPE1_LOOP_OPERATOR.md`** in this directory. The labelled
-//! list shipped with `loop prototype1-monitor list` is `prototype1_monitor_locations` in `cli_facing.rs`.
+//! Operator appendix (commands, path table, glossary: scheduler generations vs
+//! History, channel vs journal): `crates/ploke-eval/docs/prototype1-loop-operator.md`.
+//! The old source-side `PROTOTYPE1_LOOP_OPERATOR.md` is retained only as a
+//! redirect. The labelled local path list is `prototype1_monitor_locations` in
+//! `cli_facing.rs`.
 //!
 //! Campaign-scoped Prototype 1 state lives under:
 //!
