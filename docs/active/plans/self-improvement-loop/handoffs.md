@@ -14,6 +14,13 @@ they appear in the active route.
   Current design restart handoff for graph-backed runtime playback, agent-turn
   timelines, shared playback cursor state, and implementation guardrails.
 
+## Current Status Reviews
+
+- [`../../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md`](../../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md)
+  Time-stamped implementation status review for runtime playback as of
+  2026-05-22. Use it to reconcile the 2026-05-21 handoffs with code that landed
+  afterward.
+
 ## Active Design Sources
 
 - [`../../../workflow/evalnomicon/drafts/observability/runtime-playback/README.md`](../../../workflow/evalnomicon/drafts/observability/runtime-playback/README.md)

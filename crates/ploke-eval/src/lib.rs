@@ -33,6 +33,13 @@ pub(crate) mod successor_selection;
 pub mod target_registry;
 pub mod tracing_setup;
 
+/// Non-secret Google Cloud project identifier used as the default direct
+/// Vertex AI route for ploke-eval live tests.
+pub const DEFAULT_GOOGLE_PROJECT_ID: &str = "cs-poc-gtxw7jmtfuwfsiauziui9yx";
+
+/// Default Vertex AI location for ploke-eval direct Google live tests.
+pub const DEFAULT_GOOGLE_REGION: &str = "global";
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::sync::{Mutex, OnceLock};
@@ -45,6 +52,19 @@ pub(crate) mod test_support {
     pub(crate) fn llm_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    pub(crate) fn install_default_google_route_env() {
+        static INIT: OnceLock<()> = OnceLock::new();
+        INIT.get_or_init(|| unsafe {
+            if std::env::var_os("GOOGLE_PROJECT_ID").is_none() {
+                std::env::set_var("GOOGLE_PROJECT_ID", crate::DEFAULT_GOOGLE_PROJECT_ID);
+            }
+            if std::env::var_os("GOOGLE_REGION").is_none() {
+                std::env::set_var("GOOGLE_REGION", crate::DEFAULT_GOOGLE_REGION);
+            }
+        });
     }
 }
 

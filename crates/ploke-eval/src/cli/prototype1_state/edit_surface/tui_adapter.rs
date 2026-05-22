@@ -1862,7 +1862,11 @@ impl From<&ploke_core::rag_types::ContextStats> for ContextStatsDiagnostic {
 fn fallback_notice(messages: &[ploke_tui::llm::RequestMessage]) -> Option<String> {
     messages
         .first()
-        .filter(|message| message.content.contains("proceeding without code context"))
+        .filter(|message| {
+            let content = message.content.as_str();
+            content.contains("proceeding without code context")
+                || content.starts_with("Context mode is Off:")
+        })
         .map(|message| message.content.clone())
 }
 
@@ -3654,7 +3658,7 @@ mod tests {
 
     #[test]
     fn off_context_prompt_is_not_context_unavailable() {
-        let fallback = "Context mode is Off; workspace loaded at /tmp/candidate. Proceeding without code context.";
+        let fallback = "Context mode is Off: Context will not automatically be attached to the user message.; Context search via request_code_context is still available. workspace loaded /tmp/candidate.";
         let diagnostic = PromptDiagnostic {
             parent_id: Uuid::from_u128(9).to_string(),
             workspace: WorkspaceDiagnostic {
@@ -4973,8 +4977,9 @@ Do not call tools. Do not propose edits. This canary only checks context mode Of
             matches!(
                 diagnostic.fallback_notice.as_deref(),
                 Some(notice)
-                    if notice.starts_with("Context mode is Off; workspace loaded at ")
-                        && notice.contains("Proceeding without code context.")
+                    if notice.starts_with("Context mode is Off:")
+                        && notice.contains("request_code_context is still available")
+                        && notice.contains("workspace loaded ")
             ),
             "expected Off fallback notice, got {:?}",
             diagnostic.fallback_notice
@@ -5181,8 +5186,9 @@ Do not call tools. Do not propose edits. This canary only checks context mode Of
             matches!(
                 diagnostic.fallback_notice.as_deref(),
                 Some(notice)
-                    if notice.starts_with("Context mode is Off; workspace loaded at ")
-                        && notice.contains("Proceeding without code context.")
+                    if notice.starts_with("Context mode is Off:")
+                        && notice.contains("request_code_context is still available")
+                        && notice.contains("workspace loaded ")
             ),
             "expected intentional Off fallback notice, got {:?}; artifacts at {}",
             diagnostic.fallback_notice,

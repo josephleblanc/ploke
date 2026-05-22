@@ -10,6 +10,8 @@ artifacts before implementation claims are repeated.
 
 - [`handoffs.md`](handoffs.md)
   Current handoff list for this track, ordered by use during restart.
+- [`../../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md`](../../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md)
+  Time-stamped review of runtime playback implementation status as of 2026-05-22.
 - [`../../agents/2026-05-21_runtime-playback-observability-handoff.md`](../../agents/2026-05-21_runtime-playback-observability-handoff.md)
   Current restart packet for runtime playback, agent-turn timelines,
   graph-backed projections, shared cursor state, and implementation guardrails.

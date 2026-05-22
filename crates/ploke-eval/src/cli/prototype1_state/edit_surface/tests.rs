@@ -143,6 +143,7 @@ fn live_openrouter_env_or_skip(test_name: &str) -> Option<ploke_tui::test_harnes
 fn live_google_env_or_skip(test_name: &str) -> bool {
     use ploke_llm::router_only::google::Google;
 
+    crate::test_support::install_default_google_route_env();
     let route_config_available = Google::route_config_available().is_ok();
     let auth_config_available = Google::auth_config_available().is_ok();
     if route_config_available && auth_config_available {

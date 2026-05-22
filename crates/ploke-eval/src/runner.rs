@@ -4908,6 +4908,7 @@ mod tests {
 
     #[cfg(feature = "live_api_tests")]
     async fn live_google_route() -> LlmRoute {
+        crate::test_support::install_default_google_route_env();
         let model_id = live_google_model_id();
         let registry = crate::model_registry::fetch_google_model_registry()
             .await

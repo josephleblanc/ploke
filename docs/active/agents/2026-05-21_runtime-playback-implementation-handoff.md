@@ -7,6 +7,11 @@ Use this after reading
 [`2026-05-21_runtime-playback-observability-handoff.md`](2026-05-21_runtime-playback-observability-handoff.md).
 That file is the design contract. This file is the code-facing route.
 
+Status note: [`../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md`](../reports/2026-05-22_runtime-playback/2026-05-22_impl-status.md)
+is the time-stamped implementation review as of 2026-05-22. Use it to reconcile
+this handoff with code that landed afterward, especially stale claims in
+`Current Gaps`.
+
 For Prototype 1 replay terminology, read
 [`2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md`](2026-05-21_prototype1-self-edit-vs-eval-replay-orientation.md)
 before interpreting "self-edit patch", "eval patch", or replay

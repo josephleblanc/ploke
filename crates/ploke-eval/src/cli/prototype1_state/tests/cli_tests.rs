@@ -1346,6 +1346,7 @@ async fn live_google_broad_headless_tui_attempt_applies_edit_from_published_requ
     // This is the ploke-eval broad harness execution surface:
     // published request -> cli_facing runner -> tui_adapter -> ploke-tui llm_manager.
     // Do not replace it with a direct ChatSession canary or selector-only test.
+    crate::test_support::install_default_google_route_env();
     let model_id = live_google_headless_tui_model_id();
     let options = BroadTuiAttemptOptions::from_cli(
         Some(model_id.clone()),

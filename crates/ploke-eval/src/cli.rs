@@ -13682,6 +13682,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     #[ignore = "live Google API test for ploke-eval protocol JSON route configuration"]
     async fn live_google_protocol_json_adjudication_uses_direct_route_success_or_quota() {
+        crate::test_support::install_default_google_route_env();
         let model_id = std::env::var("PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID")
             .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
             .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());

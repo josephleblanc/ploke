@@ -128,6 +128,105 @@ fn load_agent_turn_trace_record(path: &Path) -> AgentTurnTraceRecord {
     serde_json::from_str(&text).expect("historical agent turn trace must parse")
 }
 
+fn historical_instance_root(instance_id: &str) -> PathBuf {
+    PathBuf::from("/home/brasides/.ploke-eval/instances").join(instance_id)
+}
+
+fn historical_run_dir_with(instance_id: &str, required_artifacts: &[&str]) -> PathBuf {
+    let instance_root = historical_instance_root(instance_id);
+    if required_artifacts
+        .iter()
+        .all(|artifact| instance_root.join(artifact).exists())
+    {
+        return instance_root;
+    }
+
+    let runs_dir = instance_root.join("runs");
+    let mut candidates = std::fs::read_dir(&runs_dir)
+        .unwrap_or_else(|err| panic!("read historical runs dir {}: {err}", runs_dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            required_artifacts
+                .iter()
+                .all(|artifact| path.join(artifact).exists())
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop().unwrap_or_else(|| {
+        panic!(
+            "expected historical artifacts {:?} under {} or its runs/* directories",
+            required_artifacts,
+            instance_root.display()
+        )
+    })
+}
+
+fn output_artifact_path(output_dir: &Path, artifact: &str) -> PathBuf {
+    let flat = output_dir.join(artifact);
+    if flat.exists() {
+        return flat;
+    }
+
+    let runs_dir = output_dir.join("runs");
+    let mut candidates = match std::fs::read_dir(&runs_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join(artifact))
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+    candidates.sort();
+    candidates.pop().unwrap_or(flat)
+}
+
+fn historical_run_dir_with_tool_calls(instance_id: &str, call_ids: &[&str]) -> PathBuf {
+    let instance_root = historical_instance_root(instance_id);
+    let mut candidates = vec![instance_root.clone()];
+    let runs_dir = instance_root.join("runs");
+    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        candidates.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir()),
+        );
+    }
+    candidates.sort();
+
+    let mut checked = Vec::new();
+    for candidate in candidates {
+        let trace_path = candidate.join("agent-turn-trace.json");
+        if !trace_path.exists() {
+            continue;
+        }
+        checked.push(trace_path.clone());
+        let artifact = load_agent_turn_artifact(&trace_path);
+        let has_all_calls = call_ids.iter().all(|call_id| {
+            artifact.events.iter().any(|event| {
+                matches!(
+                    event,
+                    ObservedTurnEvent::ToolRequested(record) if record.call_id == *call_id
+                )
+            })
+        });
+        if has_all_calls {
+            return candidate;
+        }
+    }
+
+    let checked = checked
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    panic!(
+        "expected historical trace for {instance_id} with call ids {call_ids:?}; checked {checked}"
+    );
+}
+
 fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequestRecord {
     artifact
         .events
@@ -602,13 +701,15 @@ fn diag_probe_name_anywhere(db: &Database, item_name: &str) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "historical diagnostic replay of eval-run artifact"]
 async fn test_apply_code_edit_historical_failure_path() {
-    const SNAPSHOT_DB: &str =
-        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-2209/final-snapshot.db";
+    const INSTANCE_ID: &str = "BurntSushi__ripgrep-2209";
     const REPO_ROOT: &str = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep";
 
+    let run_dir = historical_run_dir_with(INSTANCE_ID, &["final-snapshot.db"]);
+    let snapshot_db_path = run_dir.join("final-snapshot.db");
     assert!(
-        PathBuf::from(SNAPSHOT_DB).exists(),
-        "expected eval snapshot db to exist at {SNAPSHOT_DB}"
+        snapshot_db_path.exists(),
+        "expected eval snapshot db to exist at {}",
+        snapshot_db_path.display()
     );
     assert!(
         PathBuf::from(REPO_ROOT).exists(),
@@ -632,7 +733,7 @@ async fn test_apply_code_edit_historical_failure_path() {
     }
 
     let snapshot_db = Arc::new(
-        Database::create_new_backup_default(SNAPSHOT_DB)
+        Database::create_new_backup_default(&snapshot_db_path)
             .await
             .expect("load eval snapshot db"),
     );
@@ -813,7 +914,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
         other => panic!("expected indexing failure, got {other}"),
     }
 
-    let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
     assert!(
         indexing_status_path.exists(),
         "expected indexing status artifact at {}",
@@ -826,7 +927,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     assert_eq!(artifact.status, "failed");
     assert!(artifact.detail.contains("Parse failed for crate"));
 
-    let parse_failure_path = prepared.output_dir.join("parse-failure.json");
+    let parse_failure_path = output_artifact_path(&prepared.output_dir, "parse-failure.json");
     assert!(
         parse_failure_path.exists(),
         "expected parse failure artifact at {}",
@@ -853,14 +954,14 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 #[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
 async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
     init_tracing();
+    const INSTANCE_ID: &str = "sharkdp__fd-1121";
     const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/run.json";
-    const TURN_TRACE: &str =
-        "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/agent-turn-trace.json";
     const JOB_CALL_ID: &str = "call_86042515";
     const WALK_CALL_ID: &str = "call_80363220";
 
+    let run_dir = historical_run_dir_with_tool_calls(INSTANCE_ID, &[JOB_CALL_ID, WALK_CALL_ID]);
     let run_manifest = PathBuf::from(RUN_MANIFEST);
-    let turn_trace = PathBuf::from(TURN_TRACE);
+    let turn_trace = run_dir.join("agent-turn-trace.json");
     assert!(
         run_manifest.exists(),
         "expected historical run manifest at {}",
@@ -1001,7 +1102,7 @@ async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_ke
         "convert_keyword_2015 should get the historical replay past indexing, got: {result:?}"
     );
 
-    let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
     assert!(
         indexing_status_path.exists(),
         "expected indexing status artifact at {}",
