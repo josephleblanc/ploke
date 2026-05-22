@@ -1905,6 +1905,7 @@ fn tui_bounds_touches_requires_one_target_per_write() {
 
 #[cfg(feature = "live_api_tests")]
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live Router provider test; run explicitly with --ignored"]
 async fn live_tui_router_staged_proposal_lowers_to_checked_artifact_delta() {
     use ploke_tui::AppEvent;
     use ploke_tui::app::commands::harness::TestAppAccessor as _;

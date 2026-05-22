@@ -227,7 +227,15 @@ pub(crate) async fn run_headless_with_model(
     .await;
 
     let terminal = match outcome {
-        Ok(result) => result?,
+        Ok(Ok(terminal)) => terminal,
+        Ok(Err(source)) => {
+            if !run.has_observed_activity() {
+                return Err(source);
+            }
+            HeadlessTerminal::ToolFailed {
+                error: observed_headless_error(source),
+            }
+        }
         Err(_) => HeadlessTerminal::TimedOut {
             secs: budget.timeout_secs(),
         },
@@ -1202,7 +1210,98 @@ async fn wait_for_refresh(
             .map(|paths| join_paths(paths))
             .unwrap_or_else(|| "none".to_string())
     ));
+    if wait_for_sparse_search_refresh(runtime, changed.is_some(), turn, observer).await? {
+        return Ok(());
+    }
     wait_for_index_output(runtime, pending_events, changed.is_some(), turn, observer).await
+}
+
+async fn wait_for_sparse_search_refresh(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    changed: bool,
+    turn: u32,
+    observer: &LiveObserver,
+) -> Result<bool, Error> {
+    use ploke_db::bm25_index::bm25_service::Bm25Status;
+
+    let sparse_refresh = {
+        let cfg = runtime.state.config.read().await;
+        sparse_search_refresh_enabled(&cfg.rag.strategy, cfg.rag.strict_bm25_by_default)
+    };
+    if !sparse_refresh {
+        return Ok(false);
+    }
+
+    let Some(rag) = runtime.state.rag.as_ref().cloned() else {
+        return Err(Error::HeadlessEvent(
+            "sparse post-apply refresh requires a RAG service, but none is configured".to_string(),
+        ));
+    };
+
+    if changed {
+        observer.emit(format!("attempt {turn} sparse_refresh bm25_rebuild"));
+        rag.bm25_rebuild()
+            .await
+            .map_err(|source| Error::HeadlessEvent(format!("BM25 rebuild failed: {source}")))?;
+    } else {
+        observer.emit(format!("attempt {turn} sparse_refresh bm25_status"));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(POST_APPLY_INDEX_TIMEOUT_SECS);
+    loop {
+        runtime.app.pump_pending_events().await;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::HeadlessEvent(format!(
+                "timed out waiting for BM25 readiness after applying proposal batch after {POST_APPLY_INDEX_TIMEOUT_SECS}s"
+            )));
+        }
+
+        let status = rag
+            .bm25_status_with_timeout(remaining)
+            .await
+            .map_err(|source| Error::HeadlessEvent(format!("BM25 status failed: {source}")))?;
+        match status {
+            Bm25Status::Ready { docs } => {
+                if docs > 0 {
+                    runtime.app.pump_pending_events().await;
+                    observer.emit(format!(
+                        "attempt {turn} sparse_refresh bm25_ready docs={docs}"
+                    ));
+                    return Ok(true);
+                }
+                return Err(Error::HeadlessEvent(
+                    "BM25 index is empty after applying proposal batch".to_string(),
+                ));
+            }
+            Bm25Status::Empty => {
+                return Err(Error::HeadlessEvent(
+                    "BM25 index is empty after applying proposal batch".to_string(),
+                ));
+            }
+            Bm25Status::Error(detail) => {
+                return Err(Error::HeadlessEvent(format!(
+                    "BM25 index failed after applying proposal batch: {detail}"
+                )));
+            }
+            Bm25Status::Uninitialized | Bm25Status::Building => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+fn sparse_search_refresh_enabled(
+    strategy: &ploke_tui::user_config::RetrievalStrategyUser,
+    strict_bm25_by_default: bool,
+) -> bool {
+    match strategy {
+        ploke_tui::user_config::RetrievalStrategyUser::Sparse { strict } => {
+            *strict || strict_bm25_by_default
+        }
+        ploke_tui::user_config::RetrievalStrategyUser::Dense
+        | ploke_tui::user_config::RetrievalStrategyUser::Hybrid { .. } => false,
+    }
 }
 
 async fn wait_for_index_output(
@@ -1603,6 +1702,10 @@ impl HeadlessRun {
         evidence::Summary::from(self)
     }
 
+    fn has_observed_activity(&self) -> bool {
+        !self.attempts.is_empty() || !self.events.is_empty() || !self.prompt_diagnostics.is_empty()
+    }
+
     pub(crate) fn applied_edit(&self) -> Option<AppliedEdit> {
         let mut proposal_ids = Vec::new();
         let mut changed_paths = Vec::new();
@@ -1636,6 +1739,10 @@ impl HeadlessRun {
             terminal,
         }
     }
+}
+
+fn observed_headless_error(source: Error) -> String {
+    format!("headless runtime failed after observed activity: {source}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3254,6 +3361,82 @@ mod tests {
     }
 
     #[test]
+    fn sparse_post_apply_refresh_gate_uses_sparse_search_config() {
+        use ploke_tui::user_config::RetrievalStrategyUser;
+
+        assert!(sparse_search_refresh_enabled(
+            &RetrievalStrategyUser::Sparse { strict: true },
+            false
+        ));
+        assert!(!sparse_search_refresh_enabled(
+            &RetrievalStrategyUser::Sparse { strict: false },
+            false
+        ));
+        assert!(sparse_search_refresh_enabled(
+            &RetrievalStrategyUser::Sparse { strict: false },
+            true
+        ));
+        assert!(!sparse_search_refresh_enabled(
+            &RetrievalStrategyUser::Dense,
+            true
+        ));
+        assert!(!sparse_search_refresh_enabled(
+            &RetrievalStrategyUser::default(),
+            false
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completion() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let fixture = prepare_live_canary(
+            "sparse-post-apply-refresh",
+            "runtime refresh only; no LLM prompt is submitted",
+        )
+        .expect("prepare sparse refresh fixture");
+        let mut runtime = crate::runner::setup_workspace_tui_runtime(&fixture.workspace)
+            .await
+            .expect("start sparse refresh runtime");
+        runtime.app.pump_pending_events().await;
+
+        fs::write(
+            &fixture.src_file,
+            r#"pub fn broad_surface_canary() -> &'static str {
+    "after"
+}
+"#,
+        )
+        .expect("write changed source before refresh");
+
+        let mut pending_events = VecDeque::new();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            wait_for_refresh(
+                &mut runtime,
+                &mut pending_events,
+                1,
+                &LiveObserver { enabled: false },
+            ),
+        )
+        .await
+        .expect("sparse refresh should not wait for dense IndexingCompleted")
+        .expect("sparse refresh should succeed");
+
+        let status = runtime
+            .state
+            .rag
+            .as_ref()
+            .expect("RAG service")
+            .bm25_status()
+            .await
+            .expect("BM25 status after sparse refresh");
+        assert!(
+            matches!(status, ploke_db::bm25_index::bm25_service::Bm25Status::Ready { docs } if docs > 0),
+            "expected BM25 ready after sparse refresh, got {status:?}"
+        );
+    }
+
+    #[test]
     fn terminal_ids_use_last_applied_proposal_as_primary() {
         let first = AppliedItem::Edit(Uuid::from_u128(1));
         let second = AppliedItem::Edit(Uuid::from_u128(2));
@@ -3474,6 +3657,40 @@ mod tests {
                 attempts: 2,
                 last_feedback,
             }) if last_feedback == &feedback
+        ));
+    }
+
+    #[test]
+    fn evidence_can_preserve_observed_headless_runtime_error() {
+        let proposal_id = Uuid::from_u128(4);
+        let changed_paths = vec![PathBuf::from("crates/ploke-llm/src/types/meta.rs")];
+        let error = observed_headless_error(Error::HeadlessEvent(
+            "timed out waiting for indexing completion after applying proposal batch after 180s"
+                .to_string(),
+        ));
+        let run = HeadlessRun::from_parts_for_test(
+            vec![HeadlessAttempt::applied_for_test(
+                1,
+                proposal_id,
+                changed_paths.clone(),
+            )],
+            Some(HeadlessTerminal::ToolFailed {
+                error: error.clone(),
+            }),
+        );
+
+        assert!(run.has_observed_activity());
+        let summary = run.evidence();
+
+        assert!(matches!(
+            &summary.attempts[0].result,
+            evidence::Result::Applied { paths } if paths == &changed_paths
+        ));
+        assert!(matches!(
+            summary.terminal.as_ref(),
+            Some(evidence::Terminal::ToolFailed { error: observed })
+                if observed == &error
+                    && observed.contains("headless runtime failed after observed activity")
         ));
     }
 

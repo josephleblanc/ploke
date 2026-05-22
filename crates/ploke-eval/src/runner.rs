@@ -89,16 +89,16 @@ use crate::run_registry::{persist_registration, register_live_run, storage_roots
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
 use crate::tracing_setup::current_full_response_log_path;
 
-const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 900;
 const WAIT_HEARTBEAT_SECS: u64 = 10;
 const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
 const BM25_READY_TIMEOUT_SECS: u64 = 60;
 const HEADLESS_TUI_BM25_TIMEOUT_MS: u64 = 10_000;
 const HEADLESS_TUI_TOOL_CHAIN_LIMIT: usize = 500;
 const HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT: u32 = 128;
-const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 180;
+const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 900;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
-const STARTING_DB_CACHE_VERSION: u32 = 1;
+const STARTING_DB_CACHE_VERSION: u32 = 2;
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
 fn benchmark_chat_policy() -> ChatPolicy {
@@ -641,6 +641,8 @@ pub struct SnapshotStatusArtifact {
 pub struct StartingDbCacheMetadata {
     pub version: u32,
     pub task_id: String,
+    #[serde(default)]
+    pub repo_root: PathBuf,
     pub checkout_sha: Option<String>,
     pub embedding_provider: String,
     pub embedding_model: String,
@@ -1416,6 +1418,65 @@ fn maybe_build_msb_submission_record(
     }
 }
 
+fn ensure_msb_submission_patch_evidence(
+    fix_patch: &str,
+    patch_artifact: Option<&PatchArtifact>,
+) -> Result<(), PrepareError> {
+    if fix_patch.trim().is_empty() {
+        return Ok(());
+    }
+
+    let Some(patch_artifact) = patch_artifact else {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "non-empty MBE fix_patch requires same-run patch artifact evidence".to_string(),
+        });
+    };
+
+    if !patch_artifact.applied {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "non-empty MBE fix_patch requires an applied proposal in the same run"
+                .to_string(),
+        });
+    }
+
+    if patch_artifact.expected_file_changes.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "non-empty MBE fix_patch requires expected benchmark file evidence".to_string(),
+        });
+    }
+
+    if !patch_artifact.any_expected_file_changed {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "non-empty MBE fix_patch requires at least one expected benchmark file change"
+                .to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn record_packaging_failure(
+    run_record: &mut RunRecord,
+    registration: &mut crate::inner::registry::RunRegistration,
+    packaging_started_at: String,
+    detail: String,
+) {
+    run_record.phases.packaging = Some(PackagingPhase {
+        started_at: packaging_started_at,
+        ended_at: chrono::Utc::now().to_rfc3339(),
+        submission_artifact_state: SubmissionArtifactState::Missing,
+        msb_submission_path: None,
+        patch_projection_path: None,
+        patch_projection_check_state: PatchProjectionCheckState::NotApplicable,
+    });
+    registration.update_submission_status(None);
+    registration.update_phase(
+        RunLifecyclePhase::Packaging,
+        RunPhaseStatus::InProgress,
+        Some(detail),
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WrittenMsbSubmissionArtifact {
     path: PathBuf,
@@ -1430,10 +1491,12 @@ fn write_msb_submission_artifact(
     run_output_dir: &Path,
     run_manifest_path: &Path,
     record_path: &Path,
+    patch_artifact: Option<&PatchArtifact>,
 ) -> Result<Option<WrittenMsbSubmissionArtifact>, PrepareError> {
     let Some(record) = maybe_build_msb_submission_record(prepared, run_arm)? else {
         return Ok(None);
     };
+    ensure_msb_submission_patch_evidence(&record.fix_patch, patch_artifact)?;
 
     let path = run_output_dir.join("multi-swe-bench-submission.jsonl");
     write_jsonl_line(&path, &record)?;
@@ -1863,6 +1926,7 @@ fn starting_db_cache_metadata(
     StartingDbCacheMetadata {
         version: STARTING_DB_CACHE_VERSION,
         task_id: prepared.task_id.clone(),
+        repo_root: prepared.repo_root.clone(),
         checkout_sha: prepared
             .base_sha
             .clone()
@@ -1880,9 +1944,10 @@ fn starting_db_cache_key(
 ) -> String {
     let metadata = starting_db_cache_metadata(prepared, embedding_selection);
     let payload = format!(
-        "{version}:{task_id}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}",
+        "{version}:{task_id}:{repo_root}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}",
         version = metadata.version,
         task_id = metadata.task_id,
+        repo_root = metadata.repo_root.display(),
         checkout_sha = metadata.checkout_sha.as_deref().unwrap_or("<none>"),
         provider = metadata.embedding_provider,
         model = metadata.embedding_model,
@@ -2428,6 +2493,7 @@ impl RunMsbSingleRequest {
                 &run_output_dir,
                 &manifest_path,
                 &record_path,
+                None,
             )?;
             if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
@@ -2905,6 +2971,7 @@ impl RunMsbAgentSingleRequest {
                         phase: "get_db_timestamp",
                         detail: format!("Failed to get Cozo timestamp: {}", e),
                     })?;
+            let patch_artifact = turn_artifact.patch_artifact.clone();
             run_record.mark_time_travel(1, db_timestamp, "turn_complete");
             run_record.add_turn_from_artifact(turn_artifact, db_timestamp);
             registration.update_phase(
@@ -2946,13 +3013,70 @@ impl RunMsbAgentSingleRequest {
             persist_registration(&registration)?;
 
             let packaging_started_at = chrono::Utc::now().to_rfc3339();
-            let msb_submission_artifact = write_msb_submission_artifact(
+            let msb_submission_artifact = match write_msb_submission_artifact(
                 &prepared,
                 &run_arm,
                 &run_output_dir,
                 &manifest_path,
                 &record_path,
-            )?;
+                Some(&patch_artifact),
+            ) {
+                Ok(artifact) => artifact,
+                Err(err) => {
+                    let detail = err.to_string();
+                    steps.push("write_msb_submission_failed".to_string());
+                    record_packaging_failure(
+                        &mut run_record,
+                        &mut registration,
+                        packaging_started_at,
+                        detail.clone(),
+                    );
+                    persist_registration(&registration)?;
+
+                    finalize_run_timing(
+                        &mut run_record,
+                        setup_start_time,
+                        run_start_instant,
+                        setup_wall_clock_secs,
+                        agent_wall_clock_secs,
+                    );
+
+                    let execution_log = ExecutionLog {
+                        task_id: prepared.task_id.clone(),
+                        run_arm: run_arm.clone(),
+                        repo_root: prepared.repo_root.clone(),
+                        output_dir: run_output_dir.clone(),
+                        selected_model: selected_model_id.clone(),
+                        selected_provider: Some(selected_provider.clone()),
+                        selected_endpoint: selected_endpoint.clone(),
+                        full_response_trace: full_response_trace.clone(),
+                        steps,
+                    };
+                    if let Err(write_err) = write_json(&execution_log_path, &execution_log) {
+                        warn!(
+                            path = %execution_log_path.display(),
+                            error = %write_err,
+                            "runner phase: failed to write packaging-failure execution log"
+                        );
+                    } else if let Err(write_err) = record_last_run(&execution_log.output_dir) {
+                        warn!(
+                            output_dir = %execution_log.output_dir.display(),
+                            error = %write_err,
+                            "runner phase: failed to record packaging-failure last run"
+                        );
+                    }
+
+                    if let Err(write_err) = write_compressed_record(&record_path, &run_record) {
+                        warn!(
+                            path = %record_path.display(),
+                            error = %write_err,
+                            "runner phase: failed to write packaging-failure compressed run record"
+                        );
+                    }
+
+                    return Err(err);
+                }
+            };
             if let Some(submission) = msb_submission_artifact.as_ref() {
                 steps.push("write_msb_submission".to_string());
                 steps.push("write_benchmark_patch_projection".to_string());
@@ -4745,6 +4869,196 @@ mod tests {
         assert!(status.success(), "{label} failed with status {status}");
     }
 
+    fn msb_patch_artifact(applied: bool, any_expected_file_changed: bool) -> PatchArtifact {
+        PatchArtifact {
+            edit_proposals: if applied {
+                vec![ProposalSnapshotRecord {
+                    request_id: "request-1".to_string(),
+                    call_id: "call-1".to_string(),
+                    status: "Applied".to_string(),
+                    files: vec!["src/lib.rs".to_string()],
+                    preview_mode: "diff".to_string(),
+                }]
+            } else {
+                Vec::new()
+            },
+            create_proposals: Vec::new(),
+            applied,
+            all_proposals_applied: applied,
+            expected_file_changes: vec![ExpectedFileChangeRecord {
+                path: "src/lib.rs".to_string(),
+                existed_before: true,
+                exists_after: true,
+                before_sha256: Some("before".to_string()),
+                after_sha256: Some(
+                    if any_expected_file_changed {
+                        "after"
+                    } else {
+                        "before"
+                    }
+                    .to_string(),
+                ),
+                changed: any_expected_file_changed,
+            }],
+            any_expected_file_changed,
+            all_expected_files_changed: any_expected_file_changed,
+        }
+    }
+
+    fn msb_patch_artifact_without_expected_file_changes(applied: bool) -> PatchArtifact {
+        PatchArtifact {
+            edit_proposals: if applied {
+                vec![ProposalSnapshotRecord {
+                    request_id: "request-1".to_string(),
+                    call_id: "call-1".to_string(),
+                    status: "Applied".to_string(),
+                    files: vec!["src/lib.rs".to_string()],
+                    preview_mode: "diff".to_string(),
+                }]
+            } else {
+                Vec::new()
+            },
+            create_proposals: Vec::new(),
+            applied,
+            all_proposals_applied: applied,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: false,
+            all_expected_files_changed: false,
+        }
+    }
+
+    fn dirty_msb_prepared_for_submission(
+        tmp: &tempfile::TempDir,
+        task_id: &str,
+        number: u64,
+    ) -> (PreparedSingleRun, PathBuf) {
+        let repo_root = tmp.path().join("repo");
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(&repo_root, &["init"], "git init");
+        run_git_test(
+            &repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            &repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(&repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(&repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(&repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        fs::write(&file, "fn main() {\n    println!(\"hi\");\n}\n").expect("write modified file");
+
+        let prepared = PreparedSingleRun {
+            task_id: task_id.to_string(),
+            repo_root,
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: format!("acme__repo-{number}"),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
+            })),
+            campaign: None,
+        };
+        let run_output_dir = tmp
+            .path()
+            .join("out")
+            .join("runs")
+            .join(format!("run-{number}"));
+        fs::create_dir_all(&run_output_dir).expect("run output dir");
+        (prepared, run_output_dir)
+    }
+
+    fn clean_msb_prepared_for_submission(
+        tmp: &tempfile::TempDir,
+        task_id: &str,
+        number: u64,
+    ) -> (PreparedSingleRun, PathBuf) {
+        let repo_root = tmp.path().join("repo");
+        let src_dir = repo_root.join("src");
+        let file = src_dir.join("lib.rs");
+        fs::create_dir_all(&src_dir).expect("src dir");
+
+        run_git_test(&repo_root, &["init"], "git init");
+        run_git_test(
+            &repo_root,
+            &["config", "user.name", "Ploke Eval"],
+            "git config name",
+        );
+        run_git_test(
+            &repo_root,
+            &["config", "user.email", "ploke-eval@example.com"],
+            "git config email",
+        );
+
+        fs::write(&file, "fn main() {}\n").expect("write initial file");
+        run_git_test(&repo_root, &["add", "src/lib.rs"], "git add");
+        run_git_test(&repo_root, &["commit", "-m", "base"], "git commit");
+
+        let base_sha = git_stdout(&repo_root, &["rev-parse", "HEAD"], "git rev-parse HEAD")
+            .expect("base sha")
+            .expect("stdout")
+            .trim()
+            .to_string();
+
+        let prepared = PreparedSingleRun {
+            task_id: task_id.to_string(),
+            repo_root,
+            output_dir: tmp.path().join("out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some(base_sha),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: Some(RunSource::MultiSweBench(crate::spec::MultiSweBenchSource {
+                dataset_file: tmp.path().join("dataset.jsonl"),
+                dataset_url: None,
+                instance_id: format!("acme__repo-{number}"),
+                org: "acme".to_string(),
+                repo: "repo".to_string(),
+                number,
+                language: Some("rust".to_string()),
+                expected_patch_files: vec![PathBuf::from("src/lib.rs")],
+            })),
+            campaign: None,
+        };
+        let run_output_dir = tmp
+            .path()
+            .join("out")
+            .join("runs")
+            .join(format!("run-{number}"));
+        fs::create_dir_all(&run_output_dir).expect("run output dir");
+        (prepared, run_output_dir)
+    }
+
     fn test_eval_embedding_selection() -> EvalEmbeddingSelection {
         let model: ResponseItem = serde_json::from_value(serde_json::json!({
             "id": OPENROUTER_CODESTRAL_MODEL,
@@ -5288,6 +5602,41 @@ mod tests {
     }
 
     #[test]
+    fn starting_db_cache_miss_when_repo_root_changes() {
+        let cache_root = tempdir().expect("cache root");
+        let prepared_a = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: PathBuf::from("/tmp/shared/BurntSushi/ripgrep"),
+            output_dir: cache_root.path().join("out-a"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: Some("def456".to_string()),
+            budget: EvalBudget::default(),
+            source: None,
+            campaign: None,
+        };
+        let prepared_b = PreparedSingleRun {
+            repo_root: PathBuf::from("/tmp/node/instance-targets/campaign/BurntSushi/ripgrep"),
+            ..prepared_a.clone()
+        };
+
+        let selection = test_eval_embedding_selection();
+        assert_ne!(
+            starting_db_cache_paths_at(cache_root.path(), &prepared_a, &selection).snapshot,
+            starting_db_cache_paths_at(cache_root.path(), &prepared_b, &selection).snapshot,
+            "path-sensitive indexed DBs must not be reused across checkout roots"
+        );
+        assert_ne!(
+            starting_db_cache_metadata(&prepared_a, &selection),
+            starting_db_cache_metadata(&prepared_b, &selection)
+        );
+    }
+
+    #[test]
     fn truncate_preview_limits_length() {
         let preview = truncate_preview("abcdef", 4);
         assert_eq!(preview, "abcd...<truncated 2 chars>");
@@ -5715,6 +6064,7 @@ mod tests {
             &run_output_dir,
             &run_output_dir.join("run.json"),
             &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(true, true)),
         )
         .expect("write submission")
         .expect("submission artifact");
@@ -5814,6 +6164,7 @@ mod tests {
             &run_output_dir,
             &run_output_dir.join("run.json"),
             &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(true, true)),
         )
         .expect("write submission")
         .expect("submission artifact");
@@ -5838,6 +6189,149 @@ mod tests {
                 .contains("diff --git a/src/main.rs b/src/main.rs"),
             "submission should not invent a diff for an expected-but-unchanged file"
         );
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_rejects_nonempty_patch_without_applied_evidence() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            dirty_msb_prepared_for_submission(&tmp, "case-missing-evidence", 3);
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(false, false)),
+        )
+        .expect_err("non-empty submission must require applied same-run patch evidence");
+        let packaging_err_text = packaging_err.to_string();
+        assert!(
+            packaging_err_text.contains("same run"),
+            "error should explain same-run patch evidence requirement: {packaging_err_text}"
+        );
+        assert!(
+            !run_output_dir
+                .join("multi-swe-bench-submission.jsonl")
+                .exists(),
+            "invalid submission must not be written"
+        );
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_rejects_nonempty_patch_without_patch_artifact() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            dirty_msb_prepared_for_submission(&tmp, "case-no-patch-artifact", 4);
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            None,
+        )
+        .expect_err("non-empty submission must require a same-run patch artifact");
+        let packaging_err_text = packaging_err.to_string();
+        assert!(
+            packaging_err_text.contains("patch artifact evidence"),
+            "error should explain missing patch artifact evidence: {packaging_err_text}"
+        );
+        assert!(
+            !run_output_dir
+                .join("multi-swe-bench-submission.jsonl")
+                .exists(),
+            "invalid submission must not be written"
+        );
+        assert!(
+            !run_output_dir
+                .join("benchmark-patch-projection.json")
+                .exists(),
+            "invalid projection must not be written"
+        );
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_rejects_nonempty_patch_without_expected_file_change() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            dirty_msb_prepared_for_submission(&tmp, "case-unmatched-evidence", 5);
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(true, false)),
+        )
+        .expect_err("non-empty submission must require expected benchmark file evidence");
+        let packaging_err_text = packaging_err.to_string();
+        assert!(
+            packaging_err_text.contains("expected benchmark file change"),
+            "error should explain expected-file evidence requirement: {packaging_err_text}"
+        );
+        assert!(
+            !run_output_dir
+                .join("multi-swe-bench-submission.jsonl")
+                .exists(),
+            "invalid submission must not be written"
+        );
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_rejects_nonempty_patch_without_expected_file_list() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            dirty_msb_prepared_for_submission(&tmp, "case-empty-expected-file-evidence", 7);
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact_without_expected_file_changes(true)),
+        )
+        .expect_err("non-empty submission must require expected benchmark file evidence");
+        let packaging_err_text = packaging_err.to_string();
+        assert!(
+            packaging_err_text.contains("expected benchmark file evidence"),
+            "error should explain missing expected-file evidence: {packaging_err_text}"
+        );
+        assert!(
+            !run_output_dir
+                .join("multi-swe-bench-submission.jsonl")
+                .exists(),
+            "invalid submission must not be written"
+        );
+    }
+
+    #[test]
+    fn write_msb_submission_artifact_allows_empty_patch_without_patch_artifact() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            clean_msb_prepared_for_submission(&tmp, "case-empty-no-patch-artifact", 6);
+
+        let submission_artifact = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            None,
+        )
+        .expect("empty submission should not require patch artifact evidence")
+        .expect("submission artifact");
+
+        assert!(submission_artifact.fix_patch.trim().is_empty());
+        let line = fs::read_to_string(&submission_artifact.path).expect("read submission");
+        let parsed: MultiSweBenchSubmissionRecord =
+            serde_json::from_str(line.trim()).expect("parse submission");
+        assert!(parsed.fix_patch.trim().is_empty());
+        assert!(submission_artifact.patch_projection_path.is_file());
     }
 
     #[test]
@@ -5912,12 +6406,14 @@ mod tests {
         fs::create_dir_all(run_output_dir.join("multi-swe-bench-submission.jsonl"))
             .expect("poison submission artifact path with directory");
 
+        let run_arm = RunArm::structured_current_policy_treatment();
         let packaging_err = write_msb_submission_artifact(
             &prepared,
-            &RunArm::structured_current_policy_treatment(),
+            &run_arm,
             &run_output_dir,
             &run_output_dir.join("run.json"),
             &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(true, true)),
         )
         .expect_err("submission write should fail when target path is a directory");
         let packaging_err_text = packaging_err.to_string();
@@ -5952,6 +6448,13 @@ mod tests {
             RunPhaseStatus::InProgress,
             Some("writing benchmark submission artifact".to_string()),
         );
+        let mut run_record = RunRecord::new(&prepared, run_arm);
+        record_packaging_failure(
+            &mut run_record,
+            &mut registration,
+            chrono::Utc::now().to_rfc3339(),
+            packaging_err_text.clone(),
+        );
         registration.mark_failed(packaging_err_text.clone());
 
         assert_eq!(
@@ -5969,6 +6472,29 @@ mod tests {
         assert_eq!(
             registration.lifecycle.submission_status,
             crate::inner::registry::RunSubmissionStatus::Missing
+        );
+        assert_eq!(
+            run_record
+                .phases
+                .packaging
+                .as_ref()
+                .expect("packaging phase")
+                .submission_artifact_state,
+            SubmissionArtifactState::Missing
+        );
+        let record_path = run_output_dir.join("record.json.gz");
+        write_compressed_record(&record_path, &run_record).expect("write failure record");
+        let read_back =
+            crate::record::read_compressed_record(&record_path).expect("read failure record");
+        assert_eq!(
+            read_back
+                .phases
+                .packaging
+                .as_ref()
+                .expect("read packaging phase")
+                .submission_artifact_state,
+            SubmissionArtifactState::Missing,
+            "packaging failure should remain visible in the durable run record"
         );
         assert_ne!(
             registration.lifecycle.setup.status,

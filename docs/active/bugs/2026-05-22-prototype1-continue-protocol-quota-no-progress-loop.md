@@ -226,6 +226,12 @@ cargo test -p ploke-eval protocol_report --lib
 cargo check -p ploke-eval
 ```
 
+Rerun on 2026-05-22:
+
+```text
+cargo test -p ploke-eval protocol_report --lib -- --nocapture
+```
+
 Still pending: rerun the live Google `prototype1-continue` path and confirm the
 current partial `baseline_protocol` campaign stops with the bounded blocking
 diagnostic instead of the 256-advance guard.

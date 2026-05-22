@@ -41,3 +41,6 @@ could no longer tell what concrete action was being recommended.
   The agent diagnosed a live router test from the observed abort and config
   mismatch without first restating the test's own route branch, event wait, and
   assertion chain.
+- [`2026-05-22-iterator-advice-regressed-to-vec.md`](2026-05-22-iterator-advice-regressed-to-vec.md)
+  The agent criticized a helper for collecting into `Vec<&str>` but suggested a
+  replacement that still returned a `Vec`, contradicting the Rust review point.

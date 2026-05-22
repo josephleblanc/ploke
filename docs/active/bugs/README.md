@@ -40,7 +40,7 @@ file and current code before treating a report as still open.
 - [`2026-05-10-prototype1-successor-hydration-surface-mismatch.md`](./2026-05-10-prototype1-successor-hydration-surface-mismatch.md)
   Prototype 1 compares selected-child Artifact surface evidence against the hydrated successor Parent checkout after parent identity is committed.
 - [`2026-05-11-prototype1-mbe-shared-instance-patch-provenance.md`](./2026-05-11-prototype1-mbe-shared-instance-patch-provenance.md)
-  Prototype 1 child self-validation can export MBE `fix_patch` evidence from a shared benchmark checkout instead of a candidate-owned instance target state.
+  Prototype 1 child self-validation can export MBE `fix_patch` evidence from a shared benchmark checkout instead of a candidate-owned instance target state; source checkout now rejects non-empty submissions without same-run patch evidence, asserts child repo-cache override roots, and prevents starting-DB cache reuse across checkout roots.
 - [`2026-05-11-prototype1-workspace-except-eval-selects-archive-targets.md`](./2026-05-11-prototype1-workspace-except-eval-selects-archive-targets.md)
   Prototype 1 live edit-surface generation still uses a deterministic mock target picker; archive/core target selection was mitigated by `5f92eb6e`, and MBE validation needs rerun.
 - [`2026-05-12-prototype1-broad-harness-request-plan-erasure.md`](./2026-05-12-prototype1-broad-harness-request-plan-erasure.md)
@@ -59,5 +59,11 @@ file and current code before treating a report as still open.
   RF-08 broad-harness prompts advertise campaign evidence that the headless TUI read-root policy only partially admits, causing avoidable outside-root and missing-artifact navigation failures.
 - [`2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md`](./2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md)
   Prototype 1 `prototype1-continue` retries `baseline_protocol` after Google 429/no-progress protocol failures until the 256-advance guard fires.
+- [`2026-05-22-cargo-tool-tail-rendering-and-timeout.md`](./2026-05-22-cargo-tool-tail-rendering-and-timeout.md)
+  Cargo tool UI details showed oldest retained output and successful compile progress instead of the final test-result tail; outer tool-call timeout layering can still hide cargo output from the model.
+- [`2026-05-22-prototype1-google-post-apply-indexing-timeout.md`](./2026-05-22-prototype1-google-post-apply-indexing-timeout.md)
+  Google broad-harness attempts can apply candidate edits but time out before dense indexing emits submitted Prototype 1 result evidence.
 - [`2026-05-22-prototype1-protocol-segmentation-truncated-json.md`](./2026-05-22-prototype1-protocol-segmentation-truncated-json.md)
   Prototype 1 baseline protocol can block when Direct Google returns truncated intent-segmentation JSON before a protocol artifact is persisted.
+- [`2026-05-22-prototype1-successor-history-sealed-block-verification.md`](./2026-05-22-prototype1-successor-history-sealed-block-verification.md)
+  `p1-google-live-run-20260521-4` produced and evaluated applied children, then failed successor startup because the sealed History block did not verify before storage.

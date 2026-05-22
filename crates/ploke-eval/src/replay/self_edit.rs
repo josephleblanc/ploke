@@ -9,11 +9,13 @@
 //! tools execute against the requested workspace.
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
 
 use ploke_llm::manager::{RecordedResponse, RecordedResponseTape};
+use ploke_llm::manager::{ResponseIndex, parse_chat_outcome};
 use ploke_records::{
     agent_turn::ToolRequestRecord, llm_response::RawFullResponseRecord,
     tool_contracts::ToolArgumentsJson,
@@ -33,10 +35,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(crate) struct SelfEditProbeRequest {
     pub(crate) request_path: PathBuf,
-    pub(crate) result_path: PathBuf,
+    pub(crate) source: Source,
     pub(crate) workspace: PathBuf,
     pub(crate) event_index: usize,
     pub(crate) through_event: bool,
+    pub(crate) through_response_index: Option<ResponseIndex>,
     pub(crate) tail: ReplayTail,
     pub(crate) budget: tui_adapter::Budget,
     pub(crate) model: Option<ModelSelection>,
@@ -48,12 +51,35 @@ impl SelfEditProbeRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum Source {
+    HeadlessResult { path: PathBuf },
+    RawFullResponse { path: PathBuf },
+}
+
+impl Source {
+    fn path(&self) -> &Path {
+        match self {
+            Self::HeadlessResult { path } | Self::RawFullResponse { path } => path,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::HeadlessResult { .. } => "headless_result",
+            Self::RawFullResponse { .. } => "raw_full_response",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SelfEditProbeRun {
     pub(crate) request_path: PathBuf,
-    pub(crate) result_path: PathBuf,
+    pub(crate) source_kind: &'static str,
+    pub(crate) source_path: PathBuf,
     pub(crate) workspace: PathBuf,
     pub(crate) selected_events: usize,
+    pub(crate) selected_response_records: Option<usize>,
     pub(crate) selected_tool_requests: usize,
     pub(crate) installed_records: usize,
     pub(crate) terminal: String,
@@ -79,14 +105,14 @@ async fn run_self_edit_probe(
     request: SelfEditProbeRequest,
 ) -> Result<SelfEditProbeRun, PrepareError> {
     let published = load_published_request(&request.request_path)?;
-    let historical = load_historical_summary(&request.result_path)?;
-    let selected_events = selected_events(&historical, request.event_index, request.through_event);
-    let historical_requests = tool_requests_from_events(&selected_events)?;
-    let installed_records = match request.tail {
-        ReplayTail::Stop => historical_requests.len() + 1,
-        ReplayTail::Live | ReplayTail::LiveStep => historical_requests.len(),
-    };
-    let tape = recorded_tool_request_tape(&historical_requests, request.tail)?;
+    let replay = Replay::load(
+        &request.source,
+        request.event_index,
+        request.through_event,
+        request.through_response_index,
+    )?;
+    let installed_records = replay.installed_records(request.tail);
+    let tape = replay.tape(request.tail)?;
     install_tape(tape, request.tail);
 
     let prompt = fs::read_to_string(published.prompt_path()).map_err(|source| {
@@ -114,15 +140,100 @@ async fn run_self_edit_probe(
 
     Ok(SelfEditProbeRun {
         request_path: request.request_path,
-        result_path: request.result_path,
+        source_kind: request.source.label(),
+        source_path: request.source.path().to_path_buf(),
         workspace: request.workspace,
-        selected_events: selected_events.len(),
-        selected_tool_requests: historical_requests.len(),
+        selected_events: replay.selected_events,
+        selected_response_records: replay.selected_response_records,
+        selected_tool_requests: replay.selected_tool_requests,
         installed_records,
         terminal,
-        historical_failures: historical_failures(&historical, request.event_index),
+        historical_failures: replay.historical_failures,
         observed,
     })
+}
+
+#[derive(Debug)]
+struct Replay {
+    records: Vec<RawFullResponseRecord>,
+    selected_events: usize,
+    selected_response_records: Option<usize>,
+    selected_tool_requests: usize,
+    historical_failures: Vec<SelfEditFailure>,
+}
+
+impl Replay {
+    fn load(
+        source: &Source,
+        event_index: usize,
+        through_event: bool,
+        through_response_index: Option<ResponseIndex>,
+    ) -> Result<Self, PrepareError> {
+        match source {
+            Source::HeadlessResult { path } => {
+                if let Some(response_index) = through_response_index {
+                    return Err(run_prepare_error(
+                        "self_edit_replay_source",
+                        format!(
+                            "--through-response-index {response_index} only applies to --raw-full-response"
+                        ),
+                    ));
+                }
+                let historical = load_historical_summary(path)?;
+                let selected_events = selected_events(&historical, event_index, through_event);
+                let historical_requests = tool_requests_from_events(&selected_events)?;
+                let records = records_from_tool_requests(&historical_requests)?;
+                Ok(Self {
+                    records,
+                    selected_events: selected_events.len(),
+                    selected_response_records: None,
+                    selected_tool_requests: historical_requests.len(),
+                    historical_failures: historical_failures(&historical, event_index),
+                })
+            }
+            Source::RawFullResponse { path } => {
+                let records = load_raw_full_response_records(path)?;
+                let records = select_raw_response_records(records, through_response_index)?;
+                let selected_tool_requests = count_tool_request_records(&records)?;
+                let selected_response_records = records.len();
+                Ok(Self {
+                    records,
+                    selected_events: 0,
+                    selected_response_records: Some(selected_response_records),
+                    selected_tool_requests,
+                    historical_failures: Vec::new(),
+                })
+            }
+        }
+    }
+
+    fn installed_records(&self, tail: ReplayTail) -> usize {
+        match tail {
+            ReplayTail::Stop => self.records.len() + 1,
+            ReplayTail::Live | ReplayTail::LiveStep => self.records.len(),
+        }
+    }
+
+    fn tape(&self, tail: ReplayTail) -> Result<RecordedResponseTape, PrepareError> {
+        let mut records = self.records.clone();
+        if tail == ReplayTail::Stop {
+            let next_index = records
+                .last()
+                .map(|record| record.response_index().get().saturating_add(1))
+                .unwrap_or(0);
+            let assistant_id = records
+                .last()
+                .map(|record| record.assistant_message_id)
+                .unwrap_or_else(Uuid::new_v4);
+            records.push(stop_response_record(assistant_id, next_index)?);
+        }
+        Ok(RecordedResponseTape::new(
+            records
+                .into_iter()
+                .map(RawFullResponseRecord::into_recorded_response)
+                .collect(),
+        ))
+    }
 }
 
 fn load_published_request(path: &Path) -> Result<PublishedBroadHarnessRequest, PrepareError> {
@@ -152,6 +263,117 @@ fn load_historical_summary(path: &Path) -> Result<tui_adapter::evidence::Summary
             format!("parse headless TUI result {}: {source}", path.display()),
         )
     })
+}
+
+fn load_raw_full_response_records(path: &Path) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut records = Vec::new();
+    for (line_index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let record: RawFullResponseRecord = serde_json::from_str(trimmed).map_err(|source| {
+            run_prepare_error(
+                "self_edit_replay_raw_response",
+                format!(
+                    "parse raw provider sidecar {} line {}: {source}",
+                    path.display(),
+                    line_index + 1
+                ),
+            )
+        })?;
+        records.push(record);
+    }
+
+    if records.is_empty() {
+        return Err(run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!(
+                "raw provider sidecar {} has no response records",
+                path.display()
+            ),
+        ));
+    }
+
+    let assistant_ids = records
+        .iter()
+        .map(|record| record.assistant_message_id)
+        .collect::<BTreeSet<_>>();
+    if assistant_ids.len() != 1 {
+        return Err(run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!(
+                "raw provider sidecar {} contains {} assistant_message_id streams; provide a single self-edit attempt sidecar",
+                path.display(),
+                assistant_ids.len()
+            ),
+        ));
+    }
+
+    records.sort_by_key(|record| record.response_index());
+    let duplicates = duplicate_response_indices(&records);
+    if !duplicates.is_empty() {
+        let duplicates = duplicates
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!(
+                "raw provider sidecar {} contains duplicate response_index values: {duplicates}",
+                path.display()
+            ),
+        ));
+    }
+    let missing = missing_response_indices(&records);
+    if !missing.is_empty() {
+        let missing = missing
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!(
+                "raw provider sidecar {} is incomplete; missing response_index values: {missing}",
+                path.display()
+            ),
+        ));
+    }
+
+    Ok(records)
+}
+
+fn select_raw_response_records(
+    records: Vec<RawFullResponseRecord>,
+    through_response_index: Option<ResponseIndex>,
+) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+    let Some(through_response_index) = through_response_index else {
+        return Ok(records);
+    };
+    let mut found = false;
+    let selected = records
+        .into_iter()
+        .filter(|record| {
+            let include = record.response_index() <= through_response_index;
+            found |= record.response_index() == through_response_index;
+            include
+        })
+        .collect::<Vec<_>>();
+    if !found {
+        return Err(run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!(
+                "raw provider sidecar does not contain response_index {through_response_index}"
+            ),
+        ));
+    }
+    Ok(selected)
 }
 
 fn selected_events(
@@ -201,24 +423,15 @@ fn tool_requests_from_events(
     Ok(requests)
 }
 
-fn recorded_tool_request_tape(
+fn records_from_tool_requests(
     requests: &[ToolRequestRecord],
-    tail: ReplayTail,
-) -> Result<RecordedResponseTape, PrepareError> {
+) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
     let assistant_id = Uuid::new_v4();
     let mut records = Vec::new();
     for (index, request) in requests.iter().enumerate() {
         records.push(tool_response_record(assistant_id, index, request)?);
     }
-    if tail == ReplayTail::Stop {
-        records.push(stop_response_record(assistant_id, requests.len())?);
-    }
-    Ok(RecordedResponseTape::new(
-        records
-            .into_iter()
-            .map(RawFullResponseRecord::into_recorded_response)
-            .collect(),
-    ))
+    Ok(records)
 }
 
 fn install_tape(tape: RecordedResponseTape, tail: ReplayTail) {
@@ -321,6 +534,52 @@ fn historical_failures(
         .collect()
 }
 
+fn count_tool_request_records(records: &[RawFullResponseRecord]) -> Result<usize, PrepareError> {
+    let mut count = 0_usize;
+    for record in records {
+        let body = serde_json::to_string(record.response()).map_err(PrepareError::Serialize)?;
+        let step = parse_chat_outcome(&body).map_err(|source| {
+            run_prepare_error(
+                "self_edit_replay_raw_response",
+                format!(
+                    "parse raw response_index {}: {source}",
+                    record.response_index()
+                ),
+            )
+        })?;
+        if let ploke_llm::manager::ChatStepOutcome::ToolCalls { calls, .. } = step.outcome {
+            count += calls.len();
+        }
+    }
+    Ok(count)
+}
+
+fn missing_response_indices(records: &[RawFullResponseRecord]) -> Vec<ResponseIndex> {
+    let Some(last) = records.last().map(|record| record.response_index().get()) else {
+        return Vec::new();
+    };
+    let present = records
+        .iter()
+        .map(|record| record.response_index().get())
+        .collect::<BTreeSet<_>>();
+    (0..=last)
+        .filter(|index| !present.contains(index))
+        .map(ResponseIndex::new)
+        .collect()
+}
+
+fn duplicate_response_indices(records: &[RawFullResponseRecord]) -> Vec<ResponseIndex> {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
+    for record in records {
+        let response_index = record.response_index();
+        if !seen.insert(response_index) {
+            duplicates.insert(response_index);
+        }
+    }
+    duplicates.into_iter().collect()
+}
+
 fn terminal_label(terminal: &tui_adapter::HeadlessTerminal) -> String {
     match terminal {
         tui_adapter::HeadlessTerminal::Applied { changed_paths, .. } => {
@@ -355,4 +614,247 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     let mut truncated = text.chars().take(keep).collect::<String>();
     truncated.push_str("...");
     truncated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_full_response_source_loads_single_assistant_stream() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("llm_full_response.log");
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                response_line(assistant, 1, "stop"),
+                tool_response_line(assistant, 0)
+            ),
+        )
+        .expect("write sidecar");
+
+        let replay = Replay::load(&Source::RawFullResponse { path }, 0, false, None)
+            .expect("load raw source");
+
+        assert_eq!(replay.selected_events, 0);
+        assert_eq!(replay.selected_response_records, Some(2));
+        assert_eq!(replay.selected_tool_requests, 1);
+        assert_eq!(
+            replay
+                .records
+                .iter()
+                .map(|record| record.response_index().get())
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(replay.installed_records(ReplayTail::Stop), 3);
+    }
+
+    #[test]
+    fn raw_full_response_source_slices_through_response_index() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("llm_full_response.log");
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n{}\n",
+                tool_response_line(assistant, 0),
+                tool_response_line(assistant, 1),
+                response_line(assistant, 2, "stop"),
+            ),
+        )
+        .expect("write sidecar");
+
+        let replay = Replay::load(
+            &Source::RawFullResponse { path },
+            0,
+            false,
+            Some(ResponseIndex::new(1)),
+        )
+        .expect("load raw prefix");
+
+        assert_eq!(replay.selected_response_records, Some(2));
+        assert_eq!(replay.selected_tool_requests, 2);
+        assert_eq!(
+            replay
+                .records
+                .iter()
+                .map(|record| record.response_index().get())
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn raw_full_response_source_counts_parallel_tool_calls() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("llm_full_response.log");
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                parallel_tool_response_line(assistant, 0),
+                response_line(assistant, 1, "stop"),
+            ),
+        )
+        .expect("write sidecar");
+
+        let replay = Replay::load(&Source::RawFullResponse { path }, 0, false, None)
+            .expect("load raw source with parallel tool calls");
+
+        assert_eq!(replay.selected_response_records, Some(2));
+        assert_eq!(
+            replay.selected_tool_requests, 2,
+            "operator health output should count actual tool calls, not responses"
+        );
+    }
+
+    #[test]
+    fn raw_full_response_source_rejects_multiple_assistant_streams() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("llm_full_response.log");
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                response_line(
+                    Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa),
+                    0,
+                    "a"
+                ),
+                response_line(
+                    Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb),
+                    0,
+                    "b"
+                ),
+            ),
+        )
+        .expect("write sidecar");
+
+        let err = Replay::load(&Source::RawFullResponse { path }, 0, false, None)
+            .expect_err("mixed assistant streams should be rejected");
+
+        assert!(
+            err.to_string().contains("assistant_message_id streams"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn raw_full_response_source_rejects_duplicate_response_indices() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("llm_full_response.log");
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                response_line(assistant, 0, "a"),
+                response_line(assistant, 0, "b"),
+            ),
+        )
+        .expect("write sidecar");
+
+        let err = Replay::load(&Source::RawFullResponse { path }, 0, false, None)
+            .expect_err("duplicate response indexes should be rejected");
+
+        assert!(
+            err.to_string().contains("duplicate response_index"),
+            "unexpected error: {err}"
+        );
+    }
+
+    fn response_line(assistant_message_id: Uuid, response_index: usize, content: &str) -> String {
+        serde_json::json!({
+            "assistant_message_id": assistant_message_id,
+            "response_index": response_index,
+            "response": {
+                "id": format!("response-{response_index}"),
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": content
+                    }
+                }],
+                "created": 0,
+                "model": "test/model",
+                "object": "chat.completion"
+            }
+        })
+        .to_string()
+    }
+
+    fn tool_response_line(assistant_message_id: Uuid, response_index: usize) -> String {
+        serde_json::json!({
+            "assistant_message_id": assistant_message_id,
+            "response_index": response_index,
+            "response": {
+                "id": format!("response-{response_index}"),
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "list_dir",
+                                "arguments": "{\"dir\":\".\"}"
+                            }
+                        }]
+                    }
+                }],
+                "created": 0,
+                "model": "test/model",
+                "object": "chat.completion"
+            }
+        })
+        .to_string()
+    }
+
+    fn parallel_tool_response_line(assistant_message_id: Uuid, response_index: usize) -> String {
+        serde_json::json!({
+            "assistant_message_id": assistant_message_id,
+            "response_index": response_index,
+            "response": {
+                "id": format!("response-{response_index}"),
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "list_dir",
+                                    "arguments": "{\"dir\":\".\"}"
+                                }
+                            },
+                            {
+                                "id": "call-2",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": "{\"file\":\"Cargo.toml\"}"
+                                }
+                            }
+                        ]
+                    }
+                }],
+                "created": 0,
+                "model": "test/model",
+                "object": "chat.completion"
+            }
+        })
+        .to_string()
+    }
 }

@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use chrono::Utc;
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 use ploke_llm::Router;
 use ploke_llm::request::{endpoint::Endpoint, models::ModelRouteSource};
 use ploke_llm::router_only::HasEndpoint;
@@ -3114,6 +3114,11 @@ pub struct ReplayTurnLiveCommand {
 #[derive(Debug, Parser)]
 #[command(
     about = "Replay broad-harness self-edit tool requests through the live TUI tool loop",
+    group(
+        ArgGroup::new("self_edit_source")
+            .required(true)
+            .args(["result", "raw_full_response"])
+    ),
     after_help = "\
 Example:
 
@@ -3128,6 +3133,12 @@ published broad-harness request and historical headless-TUI evidence, rebuilds
 recorded assistant tool-call responses from historical ToolRequest events, and
 executes those requests through the current TUI tools in --workspace. It does
 not replay historical ToolCompleted or ToolFailed events.
+
+When no .headless-tui.json result exists, pass --raw-full-response with a
+single-attempt llm_full_response*.log JSONL sidecar. Raw sidecars already hold
+provider response envelopes, so replay installs those records directly. Use
+--through-response-index to stop a raw-sidecar replay at a provider response
+boundary.
 "
 )]
 pub struct ReplaySelfEditLiveCommand {
@@ -3137,19 +3148,29 @@ pub struct ReplaySelfEditLiveCommand {
 
     /// Historical .headless-tui.json result containing compact tool events.
     #[arg(long, value_name = "FILE")]
-    pub result: PathBuf,
+    pub result: Option<PathBuf>,
+
+    /// Raw llm_full_response*.log JSONL sidecar for one self-edit attempt.
+    #[arg(long, value_name = "FILE")]
+    pub raw_full_response: Option<PathBuf>,
 
     /// Workspace whose current files, search index, and tool behavior should be used.
     #[arg(long, value_name = "DIR")]
     pub workspace: PathBuf,
 
     /// Zero-based event index inside the historical headless-TUI event list.
-    #[arg(long, default_value_t = 0)]
-    pub event_index: usize,
+    ///
+    /// Applies only to --result sources. Defaults to 0 when omitted.
+    #[arg(long, value_name = "N", conflicts_with = "raw_full_response")]
+    pub event_index: Option<usize>,
 
     /// Replay historical tool requests from event 0 through --event-index.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "raw_full_response")]
     pub through_event: bool,
+
+    /// Replay raw provider responses from response_index 0 through this index.
+    #[arg(long, value_name = "N", requires = "raw_full_response")]
+    pub through_response_index: Option<usize>,
 
     /// What to do after the selected recorded prefix is exhausted.
     #[arg(long, value_enum, default_value_t = ReplayTailArg::Stop)]
@@ -4745,10 +4766,22 @@ impl ReplaySelfEditLiveCommand {
         })?;
         let probe = crate::replay::self_edit::SelfEditProbeRequest {
             request_path: self.request,
-            result_path: self.result,
+            source: match (self.result, self.raw_full_response) {
+                (Some(path), None) => crate::replay::self_edit::Source::HeadlessResult { path },
+                (None, Some(path)) => crate::replay::self_edit::Source::RawFullResponse { path },
+                _ => {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: "provide exactly one of --result or --raw-full-response"
+                            .to_string(),
+                    });
+                }
+            },
             workspace: self.workspace,
-            event_index: self.event_index,
+            event_index: self.event_index.unwrap_or(0),
             through_event: self.through_event,
+            through_response_index: self
+                .through_response_index
+                .map(ploke_llm::manager::ResponseIndex::new),
             tail,
             budget,
             model,
@@ -4912,9 +4945,16 @@ fn print_self_edit_probe(
         InspectOutputFormat::Table => {
             println!("self_edit_replay");
             println!("  request: {}", probe.request_path.display());
-            println!("  result: {}", probe.result_path.display());
+            println!(
+                "  source: {} {}",
+                probe.source_kind,
+                probe.source_path.display()
+            );
             println!("  workspace: {}", probe.workspace.display());
             println!("  selected_events: {}", probe.selected_events);
+            if let Some(records) = probe.selected_response_records {
+                println!("  selected_response_records: {records}");
+            }
             println!("  selected_tool_requests: {}", probe.selected_tool_requests);
             println!("  installed_records: {}", probe.installed_records);
             println!("  terminal: {}", probe.terminal);
@@ -6601,10 +6641,12 @@ fn clone_repo_into_cache(org: &str, repo: &str, repo_cache: &Path) -> Result<(),
     if !source.is_dir() {
         return Err(PrepareError::MissingRepoRoot(source));
     }
-    let org_dir = repo_cache.join(org);
-    let target = org_dir.join(repo);
-    fs::create_dir_all(&org_dir).map_err(|source| PrepareError::CreateOutputDir {
-        path: org_dir.clone(),
+    let target = ensure_repo_cache_clone_preflight(org, repo, &source, repo_cache)?;
+    let org_dir = target
+        .parent()
+        .expect("repo cache clone target should include org directory");
+    fs::create_dir_all(org_dir).map_err(|source| PrepareError::CreateOutputDir {
+        path: org_dir.to_path_buf(),
         source,
     })?;
     if target.exists() {
@@ -6631,6 +6673,106 @@ fn clone_repo_into_cache(org: &str, repo: &str, repo_cache: &Path) -> Result<(),
         return Err(PrepareError::GitCommandStatus {
             command: command_label,
             status: output.status.code().unwrap_or(-1),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_repo_cache_clone_preflight(
+    org: &str,
+    repo: &str,
+    source: &Path,
+    repo_cache: &Path,
+) -> Result<PathBuf, PrepareError> {
+    ensure_repo_cache_component("org", org)?;
+    ensure_repo_cache_component("repo", repo)?;
+
+    let source_root = source
+        .canonicalize()
+        .map_err(|err| PrepareError::Canonicalize {
+            path: source.to_path_buf(),
+            source: err,
+        })?;
+    let cache_root = repo_cache
+        .canonicalize()
+        .map_err(|source| PrepareError::Canonicalize {
+            path: repo_cache.to_path_buf(),
+            source,
+        })?;
+
+    if source_root.starts_with(&cache_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "repo cache override '{}' contains shared source repo '{}'",
+                cache_root.display(),
+                source_root.display()
+            ),
+        });
+    }
+
+    let target = cache_root.join(org).join(repo);
+    if target.exists() {
+        let target_root = target
+            .canonicalize()
+            .map_err(|source| PrepareError::Canonicalize {
+                path: target.clone(),
+                source,
+            })?;
+        if target_root == source_root
+            || target_root.starts_with(&source_root)
+            || source_root.starts_with(&target_root)
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "repo cache clone target '{}' overlaps shared source repo '{}'",
+                    target_root.display(),
+                    source_root.display()
+                ),
+            });
+        }
+    }
+
+    Ok(target)
+}
+
+fn ensure_repo_cache_component(label: &str, value: &str) -> Result<(), PrepareError> {
+    let mut components = Path::new(value).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => Err(PrepareError::InvalidBatchSelection {
+            detail: format!("invalid {label} component for repo cache clone: '{value}'"),
+        }),
+    }
+}
+
+fn ensure_prepared_runs_under_repo_cache(
+    runs: &[crate::spec::PreparedSingleRun],
+    repo_cache: &Path,
+) -> Result<(), PrepareError> {
+    let cache_root = repo_cache
+        .canonicalize()
+        .map_err(|source| PrepareError::Canonicalize {
+            path: repo_cache.to_path_buf(),
+            source,
+        })?;
+    for run in runs {
+        let run_root =
+            run.repo_root
+                .canonicalize()
+                .map_err(|source| PrepareError::Canonicalize {
+                    path: run.repo_root.clone(),
+                    source,
+                })?;
+        if run_root.starts_with(&cache_root) {
+            continue;
+        }
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prepared MBE run '{}' repo root '{}' escaped repo cache override '{}'",
+                run.task_id,
+                run_root.display(),
+                cache_root.display()
+            ),
         });
     }
     Ok(())
@@ -6686,6 +6828,10 @@ pub(crate) async fn advance_eval_closure(
                 budget: policy.budget.clone(),
             }
             .prepare()?;
+
+            if let Some(repo_cache) = repo_cache_override {
+                ensure_prepared_runs_under_repo_cache(&prepared.runs, repo_cache)?;
+            }
 
             for run in &mut prepared.runs {
                 run.campaign = Some(campaign_context.clone());
@@ -13513,6 +13659,27 @@ mod tests {
         crate::record::write_compressed_record(path, &record).expect("write record");
     }
 
+    fn prepared_run_with_repo_root(
+        task_id: &str,
+        repo_root: PathBuf,
+    ) -> crate::spec::PreparedSingleRun {
+        crate::spec::PreparedSingleRun {
+            task_id: task_id.to_string(),
+            repo_root,
+            output_dir: PathBuf::from("/tmp/output"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("Body".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("deadbeef".to_string()),
+            head_sha: None,
+            budget: crate::spec::EvalBudget::default(),
+            source: None,
+            campaign: None,
+        }
+    }
+
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -13680,6 +13847,146 @@ mod tests {
         ));
 
         assert!(is_retryable_intent_segmentation_error(&err));
+    }
+
+    #[test]
+    fn eval_closure_repo_cache_override_accepts_child_owned_run_roots() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_cache = tmp
+            .path()
+            .join("node")
+            .join("instance-targets")
+            .join("campaign");
+        let repo_root = repo_cache.join("BurntSushi").join("ripgrep");
+        fs::create_dir_all(&repo_root).expect("repo root");
+
+        let run = prepared_run_with_repo_root(
+            "BurntSushi__ripgrep-2209",
+            repo_root.canonicalize().expect("canonical repo root"),
+        );
+
+        ensure_prepared_runs_under_repo_cache(&[run], &repo_cache)
+            .expect("child-owned root should satisfy repo cache invariant");
+    }
+
+    #[test]
+    fn eval_closure_repo_cache_override_rejects_shared_cache_escape() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_cache = tmp
+            .path()
+            .join("node")
+            .join("instance-targets")
+            .join("campaign");
+        let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
+        fs::create_dir_all(&repo_cache).expect("repo cache");
+        fs::create_dir_all(&shared_root).expect("shared root");
+
+        let run = prepared_run_with_repo_root(
+            "BurntSushi__ripgrep-2209",
+            shared_root.canonicalize().expect("canonical shared root"),
+        );
+
+        let err = ensure_prepared_runs_under_repo_cache(&[run], &repo_cache)
+            .expect_err("shared cache root should be rejected");
+        let text = err.to_string();
+        assert!(
+            text.contains("escaped repo cache override"),
+            "error should explain repo-cache escape: {text}"
+        );
+    }
+
+    #[test]
+    fn repo_cache_clone_preflight_accepts_child_owned_cache() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("repos").join("BurntSushi").join("ripgrep");
+        let repo_cache = tmp
+            .path()
+            .join("node")
+            .join("instance-targets")
+            .join("campaign");
+        fs::create_dir_all(&source).expect("source repo");
+        fs::create_dir_all(&repo_cache).expect("repo cache");
+
+        let target =
+            ensure_repo_cache_clone_preflight("BurntSushi", "ripgrep", &source, &repo_cache)
+                .expect("child-owned clone target should be accepted");
+
+        assert_eq!(
+            target,
+            repo_cache
+                .canonicalize()
+                .expect("canonical cache")
+                .join("BurntSushi")
+                .join("ripgrep")
+        );
+    }
+
+    #[test]
+    fn repo_cache_clone_preflight_rejects_shared_cache_root() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_cache = tmp.path().join("repos");
+        let source = repo_cache.join("BurntSushi").join("ripgrep");
+        fs::create_dir_all(&source).expect("source repo");
+
+        let err = ensure_repo_cache_clone_preflight("BurntSushi", "ripgrep", &source, &repo_cache)
+            .expect_err("shared repo cache must be rejected before clone/remove work");
+        let text = err.to_string();
+        assert!(
+            text.contains("contains shared source repo"),
+            "error should explain shared-cache overlap: {text}"
+        );
+    }
+
+    #[test]
+    fn repo_cache_clone_preflight_rejects_path_components() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("repos").join("BurntSushi").join("ripgrep");
+        let repo_cache = tmp
+            .path()
+            .join("node")
+            .join("instance-targets")
+            .join("campaign");
+        fs::create_dir_all(&source).expect("source repo");
+        fs::create_dir_all(&repo_cache).expect("repo cache");
+
+        let err =
+            ensure_repo_cache_clone_preflight("BurntSushi", "../ripgrep", &source, &repo_cache)
+                .expect_err("path components should not be accepted as repo names");
+        let text = err.to_string();
+        assert!(
+            text.contains("invalid repo component"),
+            "error should explain invalid repo component: {text}"
+        );
+    }
+
+    #[test]
+    fn eval_closure_repo_cache_override_rejects_dotdot_spelled_escape() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_cache = tmp
+            .path()
+            .join("node")
+            .join("instance-targets")
+            .join("campaign");
+        let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
+        fs::create_dir_all(&repo_cache).expect("repo cache");
+        fs::create_dir_all(&shared_root).expect("shared root");
+
+        let escaped_spelling = repo_cache
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("shared")
+            .join("BurntSushi")
+            .join("ripgrep");
+        let run = prepared_run_with_repo_root("BurntSushi__ripgrep-2209", escaped_spelling);
+
+        let err = ensure_prepared_runs_under_repo_cache(&[run], &repo_cache)
+            .expect_err("canonicalized dotdot escape should be rejected");
+        let text = err.to_string();
+        assert!(
+            text.contains("escaped repo cache override"),
+            "error should explain repo-cache escape: {text}"
+        );
     }
 
     #[derive(Debug, Deserialize)]
@@ -15130,6 +15437,142 @@ mod tests {
             }
             other => panic!("unexpected command shape: {:?}", other),
         }
+    }
+
+    #[test]
+    fn run_replay_self_edit_live_command_parses_headless_result_source() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "self-edit-live",
+            "--request",
+            "/tmp/request.json",
+            "--result",
+            "/tmp/result.headless-tui.json",
+            "--workspace",
+            "/tmp/workspace",
+            "--event-index",
+            "7",
+            "--through-event",
+            "--tail",
+            "stop",
+            "--format",
+            "json",
+        ])
+        .expect("run replay self-edit-live should parse headless result source");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::SelfEditLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.request, PathBuf::from("/tmp/request.json"));
+                assert_eq!(
+                    cmd.result,
+                    Some(PathBuf::from("/tmp/result.headless-tui.json"))
+                );
+                assert_eq!(cmd.raw_full_response, None);
+                assert_eq!(cmd.workspace, PathBuf::from("/tmp/workspace"));
+                assert_eq!(cmd.event_index, Some(7));
+                assert!(cmd.through_event);
+                assert_eq!(cmd.through_response_index, None);
+                assert_eq!(cmd.tail, ReplayTailArg::Stop);
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_self_edit_live_command_parses_raw_full_response_source() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "self-edit-live",
+            "--request",
+            "/tmp/request.json",
+            "--raw-full-response",
+            "/tmp/llm_full_response.log",
+            "--workspace",
+            "/tmp/workspace",
+            "--through-response-index",
+            "15",
+            "--tail",
+            "stop",
+        ])
+        .expect("run replay self-edit-live should parse raw provider source");
+
+        match parsed.command {
+            Command::Run(RunCommand {
+                command:
+                    RunSubcommand::Replay(RunReplayCommand {
+                        command: RunReplaySubcommand::SelfEditLive(cmd),
+                    }),
+            }) => {
+                assert_eq!(cmd.request, PathBuf::from("/tmp/request.json"));
+                assert_eq!(cmd.result, None);
+                assert_eq!(
+                    cmd.raw_full_response,
+                    Some(PathBuf::from("/tmp/llm_full_response.log"))
+                );
+                assert_eq!(cmd.workspace, PathBuf::from("/tmp/workspace"));
+                assert_eq!(cmd.event_index, None);
+                assert_eq!(cmd.through_response_index, Some(15));
+                assert_eq!(cmd.tail, ReplayTailArg::Stop);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_replay_self_edit_live_raw_rejects_event_index() {
+        let err = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "self-edit-live",
+            "--request",
+            "/tmp/request.json",
+            "--raw-full-response",
+            "/tmp/llm_full_response.log",
+            "--workspace",
+            "/tmp/workspace",
+            "--event-index",
+            "7",
+        ])
+        .expect_err("raw self-edit replay must reject headless event slicing");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("raw-full-response") || err_text.contains("event-index"),
+            "error should explain source/slicing conflict: {err_text}"
+        );
+    }
+
+    #[test]
+    fn run_replay_self_edit_live_raw_rejects_through_event() {
+        let err = Cli::try_parse_from([
+            "ploke-eval",
+            "run",
+            "replay",
+            "self-edit-live",
+            "--request",
+            "/tmp/request.json",
+            "--raw-full-response",
+            "/tmp/llm_full_response.log",
+            "--workspace",
+            "/tmp/workspace",
+            "--through-event",
+        ])
+        .expect_err("raw self-edit replay must reject headless event slicing");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("raw-full-response") || err_text.contains("through-event"),
+            "error should explain source/slicing conflict: {err_text}"
+        );
     }
 
     #[test]

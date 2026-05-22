@@ -1,6 +1,7 @@
 # Prototype 1 Protocol Segmentation Truncated JSON
 
-Status: fixed in source checkout; live campaign retest pending.
+Status: fixed in source checkout; focused regression verified; live campaign
+retest pending.
 
 ## Summary
 
@@ -82,8 +83,13 @@ control surface.
 
 ## Verification
 
+Verified focused regression:
+
+```text
+cargo test -p ploke-eval intent_segmentation_truncated_json_parse_is_retryable -- --nocapture
+```
+
 Pending:
 
-- focused Rust regression tests
 - updated failed campaign profile/commitment if needed for live retest
 - live `prototype1-step` from the failed parent worktree

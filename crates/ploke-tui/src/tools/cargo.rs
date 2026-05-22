@@ -1070,28 +1070,68 @@ fn format_details(result: &CargoToolResult) -> String {
             out.push('\n');
         }
     }
-    if !result.stderr_tail.is_empty() {
+    let stderr_tail = display_stderr_tail(result);
+    if !stderr_tail.is_empty() {
         out.push_str("Stderr tail:\n");
-        for line in result.stderr_tail.iter().take(20) {
+        for line in stderr_tail {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.non_json_stdout_tail.is_empty() {
         out.push_str("Stdout tail:\n");
-        for line in result.non_json_stdout_tail.iter().take(20) {
+        for line in latest_lines(&result.non_json_stdout_tail, 20) {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.json_parse_errors_tail.is_empty() {
         out.push_str("JSON parse errors:\n");
-        for line in result.json_parse_errors_tail.iter().take(10) {
+        for line in latest_lines(&result.json_parse_errors_tail, 10) {
             out.push_str(line);
             out.push('\n');
         }
     }
     out.trim_end().to_string()
+}
+
+fn display_stderr_tail(result: &CargoToolResult) -> Vec<&str> {
+    let filtered: Vec<&str> = result
+        .stderr_tail
+        .iter()
+        .map(String::as_str)
+        .filter(|line| !is_cargo_progress_line(line))
+        .collect();
+    if !filtered.is_empty() {
+        return latest_ref_lines(&filtered, 20);
+    }
+    if result.ok {
+        return Vec::new();
+    }
+    latest_lines(&result.stderr_tail, 20)
+}
+
+fn latest_lines(lines: &[String], limit: usize) -> Vec<&str> {
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    latest_ref_lines(&refs, limit)
+}
+
+fn latest_ref_lines<'a>(lines: &[&'a str], limit: usize) -> Vec<&'a str> {
+    let start = lines.len().saturating_sub(limit);
+    lines[start..].to_vec()
+}
+
+fn is_cargo_progress_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("Blocking ")
+        || trimmed.starts_with("Building ")
+        || trimmed.starts_with("Checking ")
+        || trimmed.starts_with("Compiling ")
+        || trimmed.starts_with("Doc-tests ")
+        || trimmed.starts_with("Documenting ")
+        || trimmed.starts_with("Finished ")
+        || trimmed.starts_with("Fresh ")
+        || trimmed.starts_with("Running ")
 }
 
 fn display_exit_code(exit_code: Option<i32>) -> String {
@@ -1287,6 +1327,57 @@ mod tests {
         };
         let truncated = enforce_response_cap(&mut result, 512);
         assert!(truncated);
+    }
+
+    // regr:cargotail:22-05-26_14-10
+    #[test]
+    fn format_details_shows_latest_test_output_and_filters_success_progress() {
+        let mut stdout_tail = Vec::new();
+        stdout_tail.push("running 20 tests".to_string());
+        for index in 0..24 {
+            stdout_tail.push(format!("test sample::{index:02} ... ok"));
+        }
+        stdout_tail.push("test result: ok. 20 passed; 0 failed; 0 ignored".to_string());
+
+        let result = CargoToolResult {
+            ok: true,
+            status_reason: CargoStatusReason::Success,
+            command: CargoCommand::Test,
+            scope: CargoScope::Focused,
+            manifest_path: "/repo/crates/regex/Cargo.toml".to_string(),
+            exit_code: Some(0),
+            duration_ms: 1567,
+            summary: CargoSummary::default(),
+            diagnostics: Vec::new(),
+            stderr_tail: vec![
+                "   Compiling memchr v2.4.1".to_string(),
+                "   Compiling log v0.4.14".to_string(),
+                "   Compiling grep-regex v0.1.9 (/repo/crates/regex)".to_string(),
+                "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.24s"
+                    .to_string(),
+                "     Running unittests src/lib.rs (/repo/target/debug/deps/grep_regex)"
+                    .to_string(),
+                "   Doc-tests grep_regex".to_string(),
+            ],
+            non_json_stdout_tail: stdout_tail,
+            json_parse_errors_tail: Vec::new(),
+            raw_messages_truncated: false,
+        };
+
+        let details = format_details(&result);
+        assert!(
+            !details.contains("Stderr tail:"),
+            "successful cargo progress stderr should not dominate details:\n{details}"
+        );
+        assert!(details.contains("Stdout tail:"));
+        assert!(details.contains("test sample::23 ... ok"));
+        assert!(details.contains("test result: ok. 20 passed; 0 failed; 0 ignored"));
+        assert!(
+            !details.contains("running 20 tests"),
+            "details should show the newest retained stdout lines, not the oldest:\n{details}"
+        );
+        assert!(!details.contains("Compiling memchr"));
+        assert!(!details.contains("Running unittests"));
     }
 
     #[tokio::test]
