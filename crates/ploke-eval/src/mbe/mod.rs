@@ -1844,6 +1844,55 @@ mod tests {
         }
     }
 
+    fn final_report_with_resolved_ids(report_ids: &[&str]) -> FinalReport {
+        let ids = report_ids
+            .iter()
+            .map(|report_id| (*report_id).to_string())
+            .collect::<Vec<_>>();
+        FinalReport {
+            total_instances: ids.len(),
+            submitted_instances: ids.len(),
+            completed_instances: ids.len(),
+            incomplete_instances: 0,
+            resolved_instances: ids.len(),
+            unresolved_instances: 0,
+            empty_patch_instances: 0,
+            error_instances: 0,
+            submitted_ids: ids.clone(),
+            completed_ids: ids.clone(),
+            incomplete_ids: Vec::new(),
+            resolved_ids: ids,
+            unresolved_ids: Vec::new(),
+            empty_patch_ids: Vec::new(),
+            error_ids: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_python_that_writes_report(tmp: &Path, report: &FinalReport) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let argv_path = tmp.join("fake-python-argv.txt");
+        let report_json = serde_json::to_string_pretty(report).expect("serialize final report");
+        let fake_python = tmp.join("fake-python");
+        fs::write(
+            &fake_python,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > \"$(dirname \"$4\")/{}\" <<'JSON'\n{}\nJSON\n",
+                argv_path.display(),
+                FINAL_REPORT_FILE,
+                report_json
+            ),
+        )
+        .expect("write fake python");
+        let mut permissions = fs::metadata(&fake_python)
+            .expect("fake python metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_python, permissions).expect("chmod fake python");
+        (fake_python, argv_path)
+    }
+
     fn stage_result(passed: usize, failed: usize, skipped: usize) -> StageResult {
         let passed_tests = (0..passed)
             .map(|index| format!("passed-{index}"))
@@ -1939,6 +1988,71 @@ mod tests {
         assert_eq!(
             invocation.command_line(),
             "python3 -m multi_swe_bench.harness.run_evaluation --config '/tmp/ploke eval/mbe-evaluation-config.json'"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_harness_executes_configured_python_command_and_loads_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = request(tmp.path());
+        let (fake_python, argv_path) = fake_python_that_writes_report(
+            tmp.path(),
+            &final_report_with_resolved_id("BurntSushi/ripgrep:pr-2209"),
+        );
+
+        let run = request
+            .run_harness(fake_python.display().to_string())
+            .expect("fake harness run succeeds");
+
+        let argv = fs::read_to_string(argv_path).expect("read fake python argv");
+        assert_eq!(
+            argv,
+            format!(
+                "-m\n{}\n--config\n{}\n",
+                HARNESS_MODULE,
+                run.written.path.display()
+            )
+        );
+        assert_eq!(run.invocation.program, fake_python.display().to_string());
+        assert_eq!(run.evidence.instance_id, "BurntSushi__ripgrep-2209");
+        assert_eq!(run.evidence.verdict, Verdict::Resolved);
+        assert_eq!(run.evaluation.evidence.verdict, Verdict::Resolved);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cohort_run_harness_executes_configured_python_command_and_loads_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = cohort_request_for_2209_and_454(tmp.path());
+        let (fake_python, argv_path) = fake_python_that_writes_report(
+            tmp.path(),
+            &final_report_with_resolved_ids(&[
+                "BurntSushi/ripgrep:pr-2209",
+                "BurntSushi/ripgrep:pr-454",
+            ]),
+        );
+
+        let run = request
+            .run_harness(fake_python.display().to_string())
+            .expect("fake cohort harness run succeeds");
+
+        let argv = fs::read_to_string(argv_path).expect("read fake python argv");
+        assert_eq!(
+            argv,
+            format!(
+                "-m\n{}\n--config\n{}\n",
+                HARNESS_MODULE,
+                run.written.path.display()
+            )
+        );
+        assert_eq!(run.invocation.program, fake_python.display().to_string());
+        assert_eq!(run.report.resolved_instances, 2);
+        assert_eq!(run.evaluations.len(), 2);
+        assert!(
+            run.evaluations
+                .iter()
+                .all(|evaluation| evaluation.evidence.verdict == Verdict::Resolved)
         );
     }
 
