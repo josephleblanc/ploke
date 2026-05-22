@@ -59,3 +59,5 @@ file and current code before treating a report as still open.
   RF-08 broad-harness prompts advertise campaign evidence that the headless TUI read-root policy only partially admits, causing avoidable outside-root and missing-artifact navigation failures.
 - [`2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md`](./2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md)
   Prototype 1 `prototype1-continue` retries `baseline_protocol` after Google 429/no-progress protocol failures until the 256-advance guard fires.
+- [`2026-05-22-prototype1-protocol-segmentation-truncated-json.md`](./2026-05-22-prototype1-protocol-segmentation-truncated-json.md)
+  Prototype 1 baseline protocol can block when Direct Google returns truncated intent-segmentation JSON before a protocol artifact is persisted.

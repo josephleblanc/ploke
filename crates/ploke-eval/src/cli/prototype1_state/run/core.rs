@@ -1241,11 +1241,8 @@ async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareEr
 }
 
 async fn advance_baseline_protocol(context: &RuntimeContext) -> Result<(), PrepareError> {
-    crate::cli::advance_protocol_or_block(
-        &context.resolved_campaign,
-        &context.resolved_campaign.protocol,
-    )
-    .await
+    let protocol_policy = context.admitted_profile.profile.protocol_policy();
+    crate::cli::advance_protocol_or_block(&context.resolved_campaign, &protocol_policy).await
 }
 
 fn active_parent_ready(context: &RuntimeContext) -> Result<Parent<Ready>, PrepareError> {

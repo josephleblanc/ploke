@@ -193,7 +193,7 @@ fn default_protocol_max_concurrency() -> usize {
 }
 
 pub fn default_protocol_max_tokens() -> u32 {
-    2000
+    4000
 }
 
 impl CampaignManifest {

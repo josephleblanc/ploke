@@ -242,13 +242,13 @@ signal.
 
 ```toml
 [protocol]
-max_tokens = 2000
+max_tokens = 4000
 ```
 
 - `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
   requests admitted from this profile. This applies to the campaign-driven
   baseline protocol path, including tool-call intent segmentation, tool-call
-  review, and segment review. The default is `2000`; set it higher when a
+  review, and segment review. The default is `4000`; set it higher when a
   provider spends part of the completion budget on hidden or reported reasoning
   tokens before emitting JSON.
 

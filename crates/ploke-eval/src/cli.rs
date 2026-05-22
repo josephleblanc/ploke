@@ -11565,15 +11565,18 @@ fn tool_call_intent_segmentation_error_to_prepare(
 }
 
 fn is_retryable_intent_segmentation_error(err: &segment::IntentSegmentationError) -> bool {
-    matches!(
-        err,
+    match err {
+        segment::IntentSegmentationError::Second(ploke_protocol::MergeError::Branches(
+            ploke_protocol::FanOutError::Right(llm_error),
+        )) if llm_error.is_truncated_json_parse() => true,
         segment::IntentSegmentationError::Second(ploke_protocol::MergeError::Join(
             segment::NormalizeSegmentsError::Overlap { .. }
-                | segment::NormalizeSegmentsError::InvalidRange { .. }
-                | segment::NormalizeSegmentsError::MissingLabel { .. }
-                | segment::NormalizeSegmentsError::AmbiguousWithLabel { .. }
-        ))
-    )
+            | segment::NormalizeSegmentsError::InvalidRange { .. }
+            | segment::NormalizeSegmentsError::MissingLabel { .. }
+            | segment::NormalizeSegmentsError::AmbiguousWithLabel { .. },
+        )) => true,
+        _ => false,
+    }
 }
 
 fn tool_call_segment_review_error_to_prepare(
@@ -13664,6 +13667,19 @@ mod tests {
 
         assert!(protocol_report_made_progress(&report));
         assert!(protocol_report_allows_continue(&report));
+    }
+
+    // regr:jsonretry:22-05-26_04-26
+    #[test]
+    fn intent_segmentation_truncated_json_parse_is_retryable() {
+        let err = ploke_protocol::SequenceError::Second(ploke_protocol::MergeError::Branches(
+            ploke_protocol::FanOutError::Right(ploke_protocol::ProtocolLlmError::ParseJson {
+                detail: "EOF while parsing a string at line 9 column 48".to_string(),
+                content: r#"{"segments":[{"rationale":"The agent repeatedly reads "#.to_string(),
+            }),
+        ));
+
+        assert!(is_retryable_intent_segmentation_error(&err));
     }
 
     #[derive(Debug, Deserialize)]

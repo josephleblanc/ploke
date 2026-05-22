@@ -87,6 +87,16 @@ pub enum ProtocolLlmError {
     ParseJson { detail: String, content: String },
 }
 
+impl ProtocolLlmError {
+    pub fn is_truncated_json_parse(&self) -> bool {
+        matches!(
+            self,
+            ProtocolLlmError::ParseJson { detail, .. }
+                if detail.contains("EOF while parsing")
+        )
+    }
+}
+
 pub trait JsonAdjudicationSpec: StepSpec
 where
     Self::OutputState: DeserializeOwned,
@@ -487,6 +497,16 @@ mod tests {
                 rationale: "model swallowed the closing brace.".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn protocol_llm_error_classifies_eof_json_parse_as_truncated() {
+        let error = ProtocolLlmError::ParseJson {
+            detail: "EOF while parsing a string at line 9 column 48".to_string(),
+            content: r#"{"segments":[{"rationale":"The agent repeatedly reads "#.to_string(),
+        };
+
+        assert!(error.is_truncated_json_parse());
     }
 
     #[test]

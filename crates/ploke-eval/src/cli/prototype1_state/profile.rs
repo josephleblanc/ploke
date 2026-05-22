@@ -899,7 +899,7 @@ mode = "record-only"
 require_evidence = true
 
 [protocol]
-max_tokens = 2000
+max_tokens = 4000
 
 [execution]
 stop_after = "complete"
@@ -925,7 +925,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
-        assert_eq!(profile.protocol_policy().max_tokens, 2000);
+        assert_eq!(profile.protocol_policy().max_tokens, 4000);
         assert_eq!(
             profile.search_policy().child_budget,
             Prototype1ChildBudget { min: 6, max: 6 }
@@ -1009,7 +1009,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
     fn run_profile_protocol_defaults_max_tokens_to_campaign_default() {
         let profile = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("\n[protocol]\nmax_tokens = 2000\n", "\n"),
+            &PROFILE.replace("\n[protocol]\nmax_tokens = 4000\n", "\n"),
         )
         .expect("profile parses");
 
@@ -1023,7 +1023,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
     fn run_profile_protocol_rejects_zero_max_tokens() {
         let err = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("max_tokens = 2000", "max_tokens = 0"),
+            &PROFILE.replace("max_tokens = 4000", "max_tokens = 0"),
         )
         .expect_err("zero protocol token budget should reject");
 
