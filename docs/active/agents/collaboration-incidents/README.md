@@ -25,3 +25,6 @@ track whether skills, repo guidance, and memory actually reduce repeats.
 - [`verification-surface-drift/`](verification-surface-drift/README.md)
   Incidents where the agent blurred the distinction between CLI snapshots,
   focused renderer tests, and live interactive UI verification.
+- [`workflow-order-failures/`](workflow-order-failures/README.md)
+  Incidents where the agent performed operations in the wrong order after an
+  explicit user sequencing instruction such as committing before setup.
