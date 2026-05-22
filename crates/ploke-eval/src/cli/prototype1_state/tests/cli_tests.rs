@@ -921,6 +921,102 @@ fn admit_broad_slot_for_test(
         .expect("admit broad harness slot")
 }
 
+// regr:timeoutapplied:22-05-26_01-27
+#[test]
+fn timed_out_headless_tui_applied_attempt_writes_submitted_result_for_admission() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("src/lib.rs"),
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "before"
+}
+"#,
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "timeout applied handoff fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget { min: 1, max: 1 },
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(&repo_root, &slot.published)
+        .expect("prepare broad harness workspace");
+
+    let relpath = PathBuf::from("src/lib.rs");
+    let candidate_path = slot.published.workspace_path().join(&relpath);
+    fs::write(
+        &candidate_path,
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "after"
+}
+"#,
+    )
+    .expect("write candidate edit");
+
+    let proposal_id = uuid::Uuid::from_u128(0x45a2_e262_0000_0000_0000_000000000001);
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        vec![tui_adapter::HeadlessAttempt::applied_for_test(
+            1,
+            proposal_id,
+            vec![candidate_path.clone()],
+        )],
+        Some(tui_adapter::HeadlessTerminal::TimedOut { secs: 900 }),
+    );
+    let terminal = run.terminal().expect("terminal");
+
+    let executor = finish_broad_headless_tui_attempt(
+        &GitWorktreeBackend,
+        &slot,
+        &repo_root,
+        false,
+        &run,
+        terminal,
+    )
+    .expect("timed-out applied run should still publish submission")
+    .expect("timed-out applied run should return executor evidence");
+
+    assert_eq!(executor.run_id(), None);
+    assert_eq!(
+        executor.attempt_id(),
+        Some(proposal_id.to_string().as_str())
+    );
+    assert!(
+        slot.published.submitted_result_path().exists(),
+        "timed-out applied run must not lose submitted result at {}",
+        slot.published.submitted_result_path().display()
+    );
+    let submitted = fs::read(slot.published.submitted_result_path()).expect("read submission");
+    let submitted: SubmittedBroadHarnessResult =
+        serde_json::from_slice(&submitted).expect("decode submission");
+    submitted
+        .verify_request(&slot.published)
+        .expect("submission remains request-bound");
+
+    let outcome = GitWorktreeBackend
+        .validate_tui_attempt(&repo_root, &slot.published)
+        .expect("validate candidate workspace");
+    let diff = match outcome {
+        TuiAttemptOutcome::Accepted(diff) => diff,
+        TuiAttemptOutcome::Rejected(rejection) => {
+            panic!("expected timed-out applied workspace to be accepted, got {rejection:?}")
+        }
+    };
+    assert_eq!(diff.changed_paths(), &[relpath]);
+}
+
 #[test]
 fn tui_edit_surface_producer_creates_default_checked_candidates() {
     let tmp = tempfile::tempdir().expect("tempdir");

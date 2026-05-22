@@ -1543,6 +1543,24 @@ async fn run_broad_headless_tui_attempt_with_options(
             detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
         })?;
     write_broad_headless_tui_diagnostics(slot, &run)?;
+    finish_broad_headless_tui_attempt(
+        &backend,
+        slot,
+        repo_root,
+        use_stash_transfer,
+        &run,
+        terminal,
+    )
+}
+
+fn finish_broad_headless_tui_attempt(
+    backend: &GitWorktreeBackend,
+    slot: &HarnessRequestSlot,
+    repo_root: &Path,
+    use_stash_transfer: bool,
+    run: &tui_adapter::HeadlessRun,
+    terminal: &tui_adapter::HeadlessTerminal,
+) -> Result<Option<transaction::Executor>, PrepareError> {
     match terminal {
         tui_adapter::HeadlessTerminal::Applied {
             proposal_id,
@@ -1550,96 +1568,14 @@ async fn run_broad_headless_tui_attempt_with_options(
             request_id,
             changed_paths,
         } => {
-            let changed_paths = if use_stash_transfer {
-                let relpaths = backend
-                    .stash_to_workspace(
-                        repo_root,
-                        slot.published.workspace_path(),
-                        changed_paths,
-                        &format!(
-                            "prototype1 broad harness request {}",
-                            slot.published.request_id()
-                        ),
-                    )
-                    .map_err(|source| PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "failed to transfer headless TUI stash to candidate workspace: {source}"
-                        ),
-                    })?;
-                relpaths
-                    .into_iter()
-                    .map(|path| slot.published.workspace_path().join(path))
-                    .collect::<Vec<_>>()
-            } else {
-                changed_paths.clone()
-            };
-            let changed_files = changed_paths
-                .iter()
-                .map(|path| SubmittedFileChange {
-                    workspace_relpath: path
-                        .strip_prefix(slot.published.workspace_path())
-                        .map(Path::to_path_buf)
-                        .unwrap_or_else(|_| path.clone()),
-                    summary: "Changed by headless ploke-tui adapter attempt.".to_string(),
-                })
-                .collect::<Vec<_>>();
-            let return_evidence = SubmittedHarnessReturnEvidence {
-                authority_boundary: slot
-                    .published
-                    .request()
-                    .return_evidence
-                    .authority_boundary
-                    .clone(),
-                change_summary: SubmittedChangeSummary { changed_files },
-                guiding_evidence: slot
-                    .published
-                    .request()
-                    .evidence_roots
-                    .iter()
-                    .take(6)
-                    .map(|root| SubmittedEvidenceCitation {
-                        kind: root.kind,
-                        location: root.location.clone(),
-                        summary: "Available to the headless TUI attempt as request evidence."
-                            .to_string(),
-                    })
-                    .collect(),
-                rationale: SubmittedImprovementRationale {
-                    hypothesis:
-                        "Headless ploke-tui produced a bounded self-edit for descendant evaluation."
-                            .to_string(),
-                    expected_descendant_effect:
-                        "ploke-eval will compile and evaluate the admitted child artifact."
-                            .to_string(),
-                },
-                checks: slot
-                    .published
-                    .request()
-                    .contract
-                    .validation
-                    .commands
-                    .iter()
-                    .map(|command| SubmittedCheckRecommendation {
-                        label: command.label.clone(),
-                        command: std::iter::once(command.program.as_str())
-                            .chain(command.args.iter().map(String::as_str))
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                        success_signal: command.success.clone(),
-                    })
-                    .collect(),
-            };
-            let submitted = SubmittedBroadHarnessResult::bind(&slot.published, return_evidence)
-                .map_err(|source| PrepareError::InvalidBatchSelection {
-                    detail: format!("failed to bind headless TUI submitted result: {source:?}"),
-                })?;
-            if let Some(parent) = slot.published.submitted_result_path().parent() {
-                fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
-                    path: parent.to_path_buf(),
-                    source,
-                })?;
-            }
-            write_json_file_pretty(slot.published.submitted_result_path(), &submitted)?;
+            let changed_paths = candidate_paths_for_tui(
+                backend,
+                slot,
+                repo_root,
+                changed_paths,
+                use_stash_transfer,
+            )?;
+            write_headless_tui_submission(slot, &changed_paths)?;
             Ok(Some(transaction::Executor::new(
                 Some(request_id.to_string()),
                 Some(proposal_id.to_string()),
@@ -1678,12 +1614,132 @@ async fn run_broad_headless_tui_attempt_with_options(
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
             })
         }
-        tui_adapter::HeadlessTerminal::TimedOut { secs } => {
-            Err(PrepareError::InvalidBatchSelection {
+        tui_adapter::HeadlessTerminal::TimedOut { secs } => match run.applied_edit() {
+            Some(applied) => {
+                let changed_paths = candidate_paths_for_tui(
+                    backend,
+                    slot,
+                    repo_root,
+                    applied.changed_paths(),
+                    use_stash_transfer,
+                )?;
+                write_headless_tui_submission(slot, &changed_paths)?;
+                Ok(Some(transaction::Executor::new(
+                    None,
+                    Some(applied.proposal_id().to_string()),
+                    None,
+                )))
+            }
+            None => Err(PrepareError::InvalidBatchSelection {
                 detail: format!("headless ploke-tui timed out after {secs} seconds"),
-            })
-        }
+            }),
+        },
     }
+}
+
+fn candidate_paths_for_tui(
+    backend: &GitWorktreeBackend,
+    slot: &HarnessRequestSlot,
+    repo_root: &Path,
+    changed_paths: &[PathBuf],
+    use_stash_transfer: bool,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    if use_stash_transfer {
+        let relpaths = backend
+            .stash_to_workspace(
+                repo_root,
+                slot.published.workspace_path(),
+                changed_paths,
+                &format!(
+                    "prototype1 broad harness request {}",
+                    slot.published.request_id()
+                ),
+            )
+            .map_err(|source| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "failed to transfer headless TUI stash to candidate workspace: {source}"
+                ),
+            })?;
+        Ok(relpaths
+            .into_iter()
+            .map(|path| slot.published.workspace_path().join(path))
+            .collect())
+    } else {
+        Ok(changed_paths.to_vec())
+    }
+}
+
+fn write_headless_tui_submission(
+    slot: &HarnessRequestSlot,
+    changed_paths: &[PathBuf],
+) -> Result<(), PrepareError> {
+    let changed_files = changed_paths
+        .iter()
+        .map(|path| SubmittedFileChange {
+            workspace_relpath: path
+                .strip_prefix(slot.published.workspace_path())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|_| path.clone()),
+            summary: "Changed by headless ploke-tui adapter attempt.".to_string(),
+        })
+        .collect::<Vec<_>>();
+    let return_evidence = SubmittedHarnessReturnEvidence {
+        authority_boundary: slot
+            .published
+            .request()
+            .return_evidence
+            .authority_boundary
+            .clone(),
+        change_summary: SubmittedChangeSummary { changed_files },
+        guiding_evidence: slot
+            .published
+            .request()
+            .evidence_roots
+            .iter()
+            .take(6)
+            .map(|root| SubmittedEvidenceCitation {
+                kind: root.kind,
+                location: root.location.clone(),
+                summary: "Available to the headless TUI attempt as request evidence.".to_string(),
+            })
+            .collect(),
+        rationale: SubmittedImprovementRationale {
+            hypothesis:
+                "Headless ploke-tui produced a bounded self-edit for descendant evaluation."
+                    .to_string(),
+            expected_descendant_effect:
+                "ploke-eval will compile and evaluate the admitted child artifact.".to_string(),
+        },
+        checks: slot
+            .published
+            .request()
+            .contract
+            .validation
+            .commands
+            .iter()
+            .map(|command| SubmittedCheckRecommendation {
+                label: command.label.clone(),
+                command: std::iter::once(command.program.as_str())
+                    .chain(command.args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                success_signal: command.success.clone(),
+            })
+            .collect(),
+    };
+    let submitted =
+        SubmittedBroadHarnessResult::bind(&slot.published, return_evidence).map_err(|source| {
+            PrepareError::InvalidBatchSelection {
+                detail: format!("failed to bind headless TUI submitted result: {source:?}"),
+            }
+        })?;
+    if let Some(parent) = slot.published.submitted_result_path().parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_json_file_pretty(slot.published.submitted_result_path(), &submitted)
 }
 
 pub(crate) async fn run_broad_harness_attempt_from_request_path(

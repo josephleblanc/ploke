@@ -1602,6 +1602,61 @@ impl HeadlessRun {
     pub(crate) fn evidence(&self) -> evidence::Summary {
         evidence::Summary::from(self)
     }
+
+    pub(crate) fn applied_edit(&self) -> Option<AppliedEdit> {
+        let mut proposal_ids = Vec::new();
+        let mut changed_paths = Vec::new();
+        for attempt in &self.attempts {
+            let HeadlessAttemptResult::Applied { paths } = &attempt.result else {
+                continue;
+            };
+            let Some(proposal_id) = attempt.proposal_id else {
+                continue;
+            };
+            proposal_ids.push(proposal_id);
+            push_changed_paths(&mut changed_paths, paths.clone());
+        }
+        proposal_ids.last().copied().map(|proposal_id| AppliedEdit {
+            proposal_id,
+            proposal_ids,
+            changed_paths,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts_for_test(
+        attempts: Vec<HeadlessAttempt>,
+        terminal: Option<HeadlessTerminal>,
+    ) -> Self {
+        Self {
+            attempts,
+            events: Vec::new(),
+            debug_relay: DebugRelay::new(),
+            prompt_diagnostics: Vec::new(),
+            terminal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AppliedEdit {
+    proposal_id: Uuid,
+    proposal_ids: Vec<Uuid>,
+    changed_paths: Vec<PathBuf>,
+}
+
+impl AppliedEdit {
+    pub(crate) fn proposal_id(&self) -> Uuid {
+        self.proposal_id
+    }
+
+    pub(crate) fn proposal_ids(&self) -> &[Uuid] {
+        &self.proposal_ids
+    }
+
+    pub(crate) fn changed_paths(&self) -> &[PathBuf] {
+        &self.changed_paths
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1887,6 +1942,15 @@ impl HeadlessAttempt {
 
     pub(crate) fn result(&self) -> &HeadlessAttemptResult {
         &self.result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn applied_for_test(turn: u32, proposal_id: Uuid, paths: Vec<PathBuf>) -> Self {
+        Self {
+            turn,
+            proposal_id: Some(proposal_id),
+            result: HeadlessAttemptResult::Applied { paths },
+        }
     }
 }
 
