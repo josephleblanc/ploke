@@ -86,6 +86,7 @@ The profile rejects internally conflicting settings:
   `selection.metrics.imp_at_k.budget_k` to be nonzero.
 - `selection.metrics.persist = false` conflicts with metric-driven scoring:
   `score_points_per_imp_point != 0` or `require_for_score = true`.
+- `protocol.max_tokens` must be nonzero.
 
 ## Top Level
 
@@ -236,6 +237,20 @@ require_evidence = true
 Operational/protocol metrics decide the hard successor outcome; oracle policy
 only controls whether recorded MBE results are used as a relative traversal
 signal.
+
+## `protocol`
+
+```toml
+[protocol]
+max_tokens = 2000
+```
+
+- `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
+  requests admitted from this profile. This applies to the campaign-driven
+  baseline protocol path, including tool-call intent segmentation, tool-call
+  review, and segment review. The default is `2000`; set it higher when a
+  provider spends part of the completion budget on hidden or reported reasoning
+  tokens before emitting JSON.
 
 ## `execution`
 

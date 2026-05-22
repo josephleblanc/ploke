@@ -81,6 +81,8 @@ pub struct ProtocolCampaignPolicy {
     pub limit_runs: Option<usize>,
     #[serde(default = "default_protocol_max_concurrency")]
     pub max_concurrency: usize,
+    #[serde(default = "default_protocol_max_tokens")]
+    pub max_tokens: u32,
 }
 
 impl Default for ProtocolCampaignPolicy {
@@ -92,6 +94,7 @@ impl Default for ProtocolCampaignPolicy {
             stop_on_error: false,
             limit_runs: None,
             max_concurrency: default_protocol_max_concurrency(),
+            max_tokens: default_protocol_max_tokens(),
         }
     }
 }
@@ -187,6 +190,10 @@ fn default_true() -> bool {
 
 fn default_protocol_max_concurrency() -> usize {
     100
+}
+
+pub fn default_protocol_max_tokens() -> u32 {
+    2000
 }
 
 impl CampaignManifest {
@@ -703,7 +710,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     ));
     out.push_str("\nprotocol\n");
     out.push_str(&format!(
-        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {}\n",
+        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | max_tokens: {}\n",
         config.protocol.include_partial,
         config.protocol.include_incompatible,
         config.protocol.include_failed,
@@ -713,7 +720,8 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .limit_runs
             .map(|value| value.to_string())
             .unwrap_or_else(|| "none".to_string()),
-        config.protocol.max_concurrency
+        config.protocol.max_concurrency,
+        config.protocol.max_tokens
     ));
     out.push_str("\nframework tools\n");
     if config.framework.tools.is_empty() {

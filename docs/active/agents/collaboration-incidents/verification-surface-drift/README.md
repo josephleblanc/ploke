@@ -30,3 +30,6 @@ focused renderer tests, and live UI behavior as interchangeable.
   While adding the live Google command-harness test, the agent substituted cheap
   wiring checks and skip behavior before proving the exact live
   `llm_manager -> list_dir -> final assistant response` surface the user named.
+- [`2026-05-21-google-router-live-test-substitution.md`](2026-05-21-google-router-live-test-substitution.md)
+  While checking Google `Router` usage in `ploke-eval`, the agent let a non-live
+  selector test sit too close to the requested live API verification surface.

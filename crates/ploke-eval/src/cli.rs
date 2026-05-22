@@ -48,9 +48,9 @@ use crate::campaign::{
     CampaignManifest, CampaignOverrides, CampaignValidationCheck, EvalCampaignPolicy,
     ProtocolCampaignPolicy, ResolvedCampaignConfig, adopt_campaign_manifest_from_closure_state,
     adopt_campaign_manifest_from_registry, apply_campaign_overrides, campaign_closure_state_path,
-    campaign_manifest_path, dataset_files_from_sources, dataset_keys_from_sources, list_campaigns,
-    render_resolved_campaign_config, resolve_campaign_config, save_campaign_manifest,
-    validate_campaign_config,
+    campaign_manifest_path, dataset_files_from_sources, dataset_keys_from_sources,
+    default_protocol_max_tokens, list_campaigns, render_resolved_campaign_config,
+    resolve_campaign_config, save_campaign_manifest, validate_campaign_config,
 };
 use crate::closure::{
     ClosureClass, ClosureRecomputeRequest, closure_state_path, load_closure_state,
@@ -1723,6 +1723,7 @@ async fn execute_protocol_run_tasks(
     provider_slug: Option<String>,
     max_concurrency: usize,
     stop_on_error: bool,
+    max_tokens: u32,
 ) -> Result<ProtocolBatchExecution, PrepareError> {
     let mut executions = Vec::new();
     let mut failures = Vec::new();
@@ -1741,6 +1742,7 @@ async fn execute_protocol_run_tasks(
             model_id.clone(),
             provider_slug.clone(),
             review_permits.clone(),
+            max_tokens,
         );
     }
 
@@ -1755,6 +1757,7 @@ async fn execute_protocol_run_tasks(
                         model_id.clone(),
                         provider_slug.clone(),
                         review_permits.clone(),
+                        max_tokens,
                     );
                 }
             }
@@ -1771,6 +1774,7 @@ async fn execute_protocol_run_tasks(
                         model_id.clone(),
                         provider_slug.clone(),
                         review_permits.clone(),
+                        max_tokens,
                     );
                 }
             }
@@ -1791,6 +1795,7 @@ async fn execute_protocol_run_tasks(
                         model_id.clone(),
                         provider_slug.clone(),
                         review_permits.clone(),
+                        max_tokens,
                     );
                 }
             }
@@ -5805,7 +5810,7 @@ impl ProtocolToolCallReviewCommand {
             self.provider,
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
-            400,
+            default_protocol_max_tokens(),
         )?;
         let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
         let reviewed = protocol
@@ -5974,6 +5979,7 @@ impl ProtocolRunCommand {
                     &record_path,
                     self.model_id.clone(),
                     self.provider.clone(),
+                    default_protocol_max_tokens(),
                 )
                 .await?;
                 Some("tool_call_intent_segmentation".to_string())
@@ -5984,6 +5990,7 @@ impl ProtocolRunCommand {
                     self.model_id.clone(),
                     self.provider.clone(),
                     index,
+                    default_protocol_max_tokens(),
                 )
                 .await?;
                 Some(format!("tool_call_review[{index}]"))
@@ -5994,6 +6001,7 @@ impl ProtocolRunCommand {
                     self.model_id.clone(),
                     self.provider.clone(),
                     segment_index,
+                    default_protocol_max_tokens(),
                 )
                 .await?;
                 Some(format!("tool_call_segment_review[{segment_index}]"))
@@ -6755,12 +6763,18 @@ pub(crate) async fn advance_protocol_closure(
             plans_by_instance.insert(task.instance_id, plan);
         }
     } else {
+        for task in &tasks {
+            if let Ok(plan) = protocol_run_plan(&task.instance_id, &task.record_path) {
+                plans_by_instance.insert(task.instance_id.clone(), plan);
+            }
+        }
         let execution = execute_protocol_run_tasks(
             tasks,
             config.model_id.clone(),
             config.provider_slug.clone(),
             policy.max_concurrency,
             policy.stop_on_error,
+            policy.max_tokens,
         )
         .await?;
         failures = execution.failures;
@@ -6793,15 +6807,181 @@ pub(crate) async fn advance_protocol_closure(
     })
 }
 
+pub(crate) async fn advance_protocol_or_block(
+    config: &ResolvedCampaignConfig,
+    policy: &ProtocolCampaignPolicy,
+) -> Result<(), PrepareError> {
+    let report = advance_protocol_closure(config, policy, false).await?;
+    if protocol_report_allows_continue(&report) {
+        return Ok(());
+    }
+
+    Err(protocol_no_progress_error(config, &report))
+}
+
+fn protocol_report_allows_continue(report: &ClosureAdvanceProtocolReport) -> bool {
+    protocol_report_made_progress(report) || report.after.status == ClosureClass::Complete
+}
+
+fn protocol_report_made_progress(report: &ClosureAdvanceProtocolReport) -> bool {
+    report.segmentations_created > 0
+        || report.call_reviews_created > 0
+        || report.segment_reviews_created > 0
+        || protocol_summary_changed(&report.before, &report.after)
+}
+
+fn protocol_summary_changed(
+    before: &crate::closure::ProtocolClosureSummary,
+    after: &crate::closure::ProtocolClosureSummary,
+) -> bool {
+    before.expected_total != after.expected_total
+        || before.full_total != after.full_total
+        || before.partial_total != after.partial_total
+        || before.failed_total != after.failed_total
+        || before.missing_total != after.missing_total
+        || before.incompatible_total != after.incompatible_total
+        || before.ineligible_total != after.ineligible_total
+        || before.in_progress_total != after.in_progress_total
+        || before.status != after.status
+        || before.required_procedures != after.required_procedures
+        || before.last_transition_at != after.last_transition_at
+        || before.status_by_procedure.len() != after.status_by_procedure.len()
+        || before
+            .status_by_procedure
+            .iter()
+            .any(|(procedure, before)| {
+                after
+                    .status_by_procedure
+                    .get(procedure)
+                    .is_none_or(|after| procedure_summary_changed(before, after))
+            })
+}
+
+fn procedure_summary_changed(
+    before: &crate::closure::ProcedureClosureSummary,
+    after: &crate::closure::ProcedureClosureSummary,
+) -> bool {
+    before.expected_total != after.expected_total
+        || before.complete_total != after.complete_total
+        || before.failed_total != after.failed_total
+        || before.missing_total != after.missing_total
+        || before.incompatible_total != after.incompatible_total
+        || before.partial_total != after.partial_total
+        || before.ineligible_total != after.ineligible_total
+}
+
+fn protocol_no_progress_error(
+    config: &ResolvedCampaignConfig,
+    report: &ClosureAdvanceProtocolReport,
+) -> PrepareError {
+    PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "baseline_protocol blocked: campaign {} made no protocol progress; model {}; route {}; selected_runs={}; remaining={}; created={{segmentations:{}, call_reviews:{}, segment_reviews:{}}}; failures={}",
+            report.campaign_id,
+            config.model_id,
+            protocol_route_detail(config),
+            format_protocol_selected_runs(&report.selected_runs),
+            format_remaining_protocol_work(&report.after),
+            report.segmentations_created,
+            report.call_reviews_created,
+            report.segment_reviews_created,
+            format_protocol_failures(&report.failures),
+        ),
+    }
+}
+
+fn protocol_route_detail(config: &ResolvedCampaignConfig) -> String {
+    let route = config
+        .model_id
+        .parse::<ModelId>()
+        .ok()
+        .and_then(|model_id| resolve_protocol_route(&model_id, config.provider_slug.clone()).ok());
+    match route {
+        Some((route_source, provider_slug)) => match provider_slug {
+            Some(provider) => format!("{route_source:?}/{provider}"),
+            None => format!("{route_source:?}"),
+        },
+        None => config
+            .provider_slug
+            .as_deref()
+            .unwrap_or("unresolved")
+            .to_string(),
+    }
+}
+
+fn format_protocol_selected_runs(runs: &[ProtocolRunPlan]) -> String {
+    if runs.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut parts = runs
+        .iter()
+        .take(3)
+        .map(|run| {
+            format!(
+                "{}(segmentation_needed={}, missing_calls={}, missing_segments={})",
+                run.instance_id,
+                run.segmentation_needed,
+                run.missing_call_indices.len(),
+                run.missing_segment_indices.len()
+            )
+        })
+        .collect::<Vec<_>>();
+    if runs.len() > parts.len() {
+        parts.push(format!("+{} more", runs.len() - parts.len()));
+    }
+    parts.join(", ")
+}
+
+fn format_remaining_protocol_work(summary: &crate::closure::ProtocolClosureSummary) -> String {
+    let mut remaining = summary
+        .status_by_procedure
+        .iter()
+        .filter_map(|(procedure, status)| {
+            let incomplete = status.missing_total
+                + status.partial_total
+                + status.failed_total
+                + status.incompatible_total;
+            (incomplete > 0).then(|| {
+                format!(
+                    "{}(missing={}, partial={}, failed={}, incompatible={})",
+                    procedure,
+                    status.missing_total,
+                    status.partial_total,
+                    status.failed_total,
+                    status.incompatible_total
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if remaining.is_empty() {
+        remaining.push("none".to_string());
+    }
+    remaining.join(", ")
+}
+
+fn format_protocol_failures(failures: &[String]) -> String {
+    if failures.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut parts = failures.iter().take(3).cloned().collect::<Vec<_>>();
+    if failures.len() > parts.len() {
+        parts.push(format!("+{} more", failures.len() - parts.len()));
+    }
+    parts.join(" | ")
+}
+
 fn spawn_protocol_run_task(
     join_set: &mut JoinSet<Result<ProtocolRunExecution, PrepareError>>,
     task: ProtocolRunTask,
     model_id: String,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
+    max_tokens: u32,
 ) {
     join_set.spawn(async move {
-        execute_protocol_run_task(task, model_id, provider_slug, review_permits).await
+        execute_protocol_run_task(task, model_id, provider_slug, review_permits, max_tokens).await
     });
 }
 
@@ -6810,6 +6990,7 @@ async fn execute_protocol_run_task(
     model_id: String,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
+    max_tokens: u32,
 ) -> Result<ProtocolRunExecution, PrepareError> {
     let mut plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
         PrepareError::DatabaseSetup {
@@ -6826,6 +7007,7 @@ async fn execute_protocol_run_task(
             &task.record_path,
             Some(model_id.clone()),
             provider_slug.clone(),
+            max_tokens,
         )
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -6849,7 +7031,7 @@ async fn execute_protocol_run_task(
             provider_slug.clone(),
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
-            400,
+            max_tokens,
         )?,
         review_permits.clone(),
     )
@@ -6880,6 +7062,7 @@ async fn execute_protocol_run_task(
             Some(model_id.clone()),
             provider_slug.clone(),
             segment_index,
+            max_tokens,
         )
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -7158,6 +7341,7 @@ async fn execute_protocol_intent_segments_quiet(
     record_path: &Path,
     model_id: Option<String>,
     provider: Option<String>,
+    max_tokens: u32,
 ) -> Result<segment::SegmentedToolCallSequence, PrepareError> {
     const MAX_SEGMENTATION_ATTEMPTS: usize = 3;
 
@@ -7170,7 +7354,13 @@ async fn execute_protocol_intent_segments_quiet(
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
     let client = reqwest::Client::new();
-    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 1200)?;
+    let cfg = protocol_llm_config(
+        model_id,
+        provider,
+        120,
+        PROTOCOL_HTTP_MAX_ATTEMPTS,
+        max_tokens,
+    )?;
     let segmented = 'retry: loop {
         for attempt in 1..=MAX_SEGMENTATION_ATTEMPTS {
             let protocol = segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(
@@ -7215,6 +7405,7 @@ async fn execute_protocol_tool_call_review_quiet(
     model_id: Option<String>,
     provider: Option<String>,
     index: usize,
+    max_tokens: u32,
 ) -> Result<(), PrepareError> {
     let subject = call_review_subjects(record_path, &[index])?
         .into_iter()
@@ -7230,7 +7421,7 @@ async fn execute_protocol_tool_call_review_quiet(
             provider,
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
-            400,
+            max_tokens,
         )?,
         Arc::new(Semaphore::new(1)),
     )
@@ -7392,19 +7583,31 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     model_id: Option<String>,
     provider: Option<String>,
     segment_index: usize,
+    max_tokens: u32,
 ) -> Result<(), PrepareError> {
     let segmented = match load_latest_segmented_sequence(record_path)? {
         Some(segmented) => segmented,
         None => {
-            execute_protocol_intent_segments_quiet(record_path, model_id.clone(), provider.clone())
-                .await?
+            execute_protocol_intent_segments_quiet(
+                record_path,
+                model_id.clone(),
+                provider.clone(),
+                max_tokens,
+            )
+            .await?
         }
     };
     let subject = build_segment_review_subject(&segmented, segment_index)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
     let client = reqwest::Client::new();
-    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 1200)?;
+    let cfg = protocol_llm_config(
+        model_id,
+        provider,
+        120,
+        PROTOCOL_HTTP_MAX_ATTEMPTS,
+        max_tokens,
+    )?;
     let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
     let reviewed = protocol
         .run(subject)
@@ -7700,7 +7903,7 @@ impl ProtocolToolCallSegmentReviewCommand {
             self.provider,
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
-            1200,
+            default_protocol_max_tokens(),
         )?;
         let adjudicator = JsonAdjudicator::new(client, cfg.clone());
         let segmentation = segment::ToolCallIntentSegmentation::new(adjudicator.clone())
@@ -7838,7 +8041,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
             self.provider,
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
-            1200,
+            default_protocol_max_tokens(),
         )?;
         let protocol =
             segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
@@ -13348,6 +13551,171 @@ mod tests {
         assert!(cfg.route_source.is_openrouter());
         assert_eq!(cfg.provider_slug.as_deref(), Some("xai"));
         assert_eq!(cfg.provider_display(), "xai");
+    }
+
+    fn procedure_summary(
+        complete_total: usize,
+        missing_total: usize,
+    ) -> crate::closure::ProcedureClosureSummary {
+        crate::closure::ProcedureClosureSummary {
+            expected_total: complete_total + missing_total,
+            complete_total,
+            failed_total: 0,
+            missing_total,
+            incompatible_total: 0,
+            partial_total: 0,
+            ineligible_total: 0,
+        }
+    }
+
+    fn protocol_summary(
+        status: ClosureClass,
+        call_review_missing: usize,
+        segment_review_missing: usize,
+        last_transition_at: Option<&str>,
+    ) -> crate::closure::ProtocolClosureSummary {
+        let mut status_by_procedure = BTreeMap::new();
+        status_by_procedure.insert(
+            "tool-call-intent-segments".to_string(),
+            procedure_summary(1, 0),
+        );
+        status_by_procedure.insert(
+            "tool-call-review".to_string(),
+            procedure_summary(usize::from(call_review_missing == 0), call_review_missing),
+        );
+        status_by_procedure.insert(
+            "tool-call-segment-review".to_string(),
+            procedure_summary(
+                usize::from(segment_review_missing == 0),
+                segment_review_missing,
+            ),
+        );
+
+        crate::closure::ProtocolClosureSummary {
+            expected_total: 1,
+            full_total: usize::from(matches!(status, ClosureClass::Complete)),
+            partial_total: usize::from(matches!(status, ClosureClass::Partial)),
+            failed_total: 0,
+            missing_total: 0,
+            incompatible_total: 0,
+            ineligible_total: 0,
+            in_progress_total: 0,
+            status,
+            required_procedures: vec![
+                "tool-call-intent-segments".to_string(),
+                "tool-call-review".to_string(),
+                "tool-call-segment-review".to_string(),
+            ],
+            status_by_procedure,
+            last_transition_at: last_transition_at.map(str::to_string),
+        }
+    }
+
+    fn protocol_report(
+        before: crate::closure::ProtocolClosureSummary,
+        after: crate::closure::ProtocolClosureSummary,
+        failures: Vec<String>,
+    ) -> ClosureAdvanceProtocolReport {
+        ClosureAdvanceProtocolReport {
+            campaign_id: "campaign-google".to_string(),
+            dry_run: false,
+            before,
+            after,
+            selected_runs: vec![ProtocolRunPlan {
+                instance_id: "BurntSushi__ripgrep-2209".to_string(),
+                segmentation_needed: false,
+                missing_call_indices: vec![0, 1, 2, 3, 4],
+                missing_segment_indices: vec![0, 1, 2],
+            }],
+            executed_runs: 0,
+            segmentations_created: 0,
+            call_reviews_created: 0,
+            segment_reviews_created: 0,
+            failures,
+        }
+    }
+
+    #[test]
+    fn failed_protocol_report_with_unchanged_closure_is_no_progress() {
+        let before = protocol_summary(ClosureClass::Partial, 1, 1, Some("2026-05-22T00:20:31Z"));
+        let after = before.clone();
+        let report = protocol_report(before, after, vec!["HTTP status 429".to_string()]);
+
+        assert!(!protocol_report_made_progress(&report));
+        assert!(!protocol_report_allows_continue(&report));
+        assert!(format_remaining_protocol_work(&report.after).contains("tool-call-review"));
+        assert!(format_protocol_selected_runs(&report.selected_runs).contains("missing_calls=5"));
+    }
+
+    #[test]
+    fn unchanged_incomplete_protocol_report_without_failures_is_blocked() {
+        let before = protocol_summary(ClosureClass::Partial, 1, 1, Some("2026-05-22T00:20:31Z"));
+        let after = before.clone();
+        let report = protocol_report(before, after, Vec::new());
+
+        assert!(!protocol_report_allows_continue(&report));
+    }
+
+    #[test]
+    fn failed_protocol_report_with_changed_closure_counts_as_progress() {
+        let before = protocol_summary(ClosureClass::Partial, 1, 1, Some("2026-05-22T00:20:31Z"));
+        let after = protocol_summary(ClosureClass::Partial, 0, 1, Some("2026-05-22T00:21:31Z"));
+        let report = protocol_report(before, after, vec!["later review failed".to_string()]);
+
+        assert!(protocol_report_made_progress(&report));
+        assert!(protocol_report_allows_continue(&report));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LiveGoogleJsonOk {
+        ok: bool,
+        route: String,
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn is_google_protocol_quota_error(error: &ploke_protocol::ProtocolLlmError) -> bool {
+        let text = format!("{error:?}");
+        text.contains("RESOURCE_EXHAUSTED") || text.contains("429")
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live Google API test for ploke-eval protocol JSON route configuration"]
+    async fn live_google_protocol_json_adjudication_uses_direct_route_success_or_quota() {
+        let model_id = std::env::var("PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID")
+            .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let model_id = if model_id.contains('/') {
+            model_id
+        } else {
+            format!("google/{model_id}")
+        };
+        let cfg = protocol_llm_config(Some(model_id), Some("google".to_string()), 120, 1, 128)
+            .expect("Google protocol config");
+        assert!(cfg.route_source.is_direct_google());
+        assert!(cfg.provider_slug.is_none());
+        assert_eq!(cfg.provider_display(), "google");
+
+        let prompt = ploke_protocol::JsonChatPrompt {
+            system: "Return JSON only. Do not use markdown.".to_string(),
+            user: "Return exactly this JSON object: {\"ok\":true,\"route\":\"google\"}".to_string(),
+        };
+        let client = reqwest::Client::new();
+        let result =
+            match ploke_protocol::adjudicate_json::<LiveGoogleJsonOk>(&client, &cfg, &prompt).await
+            {
+                Ok(result) => result,
+                Err(error) if is_google_protocol_quota_error(&error) => {
+                    println!("live Google protocol JSON route reached Google quota response");
+                    return;
+                }
+                Err(error) => panic!("live Google protocol JSON adjudication failed: {error:?}"),
+            };
+
+        assert!(result.parsed.ok);
+        assert_eq!(result.parsed.route, "google");
+        assert!(result.response.model.contains("gemini"));
+        println!("live Google protocol JSON route returned sentinel JSON");
     }
 
     fn sample_run_intent(base: &Path, instances_root: &Path) -> RunIntent {

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    campaign::{ProtocolCampaignPolicy, default_protocol_max_tokens},
     cli::{
         Prototype1CandidateGenerator, Prototype1StateStopAfter, Prototype1SuccessorSelection,
         Prototype1TraversalMetrics,
@@ -41,6 +42,8 @@ pub(crate) struct Prototype1RunProfile {
     #[serde(default)]
     pub(crate) selection: Selection,
     #[serde(default)]
+    pub(crate) protocol: Protocol,
+    #[serde(default)]
     pub(crate) execution: Execution,
     #[serde(default)]
     pub(crate) control: Control,
@@ -57,6 +60,7 @@ impl Prototype1RunProfile {
         self.target.validate()?;
         self.search.validate()?;
         self.generation.validate()?;
+        self.protocol.validate()?;
         self.execution.validate()?;
         self.control.validate(&self.search)?;
         self.selection.validate(&self.target, &self.execution)?;
@@ -83,6 +87,13 @@ impl Prototype1RunProfile {
             stop_on_first_keep: self.search.stop_on_first_keep,
             require_keep_for_continuation: self.search.require_keep_for_continuation,
             explore_from_rejected: self.search.explore_from_rejected,
+        }
+    }
+
+    pub(crate) fn protocol_policy(&self) -> ProtocolCampaignPolicy {
+        ProtocolCampaignPolicy {
+            max_tokens: self.protocol.max_tokens,
+            ..ProtocolCampaignPolicy::default()
         }
     }
 }
@@ -449,6 +460,31 @@ fn default_imp_at_k_budget() -> usize {
 pub(crate) enum ArchiveScope {
     #[default]
     SelectionScope,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Protocol {
+    #[serde(default = "default_protocol_max_tokens")]
+    pub(crate) max_tokens: u32,
+}
+
+impl Protocol {
+    fn validate(self) -> Result<(), PrepareError> {
+        if self.max_tokens == 0 {
+            return Err(profile_error(
+                "protocol.max_tokens must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Protocol {
+    fn default() -> Self {
+        Self {
+            max_tokens: default_protocol_max_tokens(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -862,6 +898,9 @@ require_for_score = false
 mode = "record-only"
 require_evidence = true
 
+[protocol]
+max_tokens = 2000
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -886,6 +925,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+        assert_eq!(profile.protocol_policy().max_tokens, 2000);
         assert_eq!(
             profile.search_policy().child_budget,
             Prototype1ChildBudget { min: 6, max: 6 }
@@ -963,6 +1003,31 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn run_profile_protocol_defaults_max_tokens_to_campaign_default() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("\n[protocol]\nmax_tokens = 2000\n", "\n"),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.protocol_policy().max_tokens,
+            default_protocol_max_tokens()
+        );
+    }
+
+    #[test]
+    fn run_profile_protocol_rejects_zero_max_tokens() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("max_tokens = 2000", "max_tokens = 0"),
+        )
+        .expect_err("zero protocol token budget should reject");
+
+        assert!(err.to_string().contains("protocol.max_tokens"));
     }
 
     #[test]

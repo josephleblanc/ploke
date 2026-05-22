@@ -230,7 +230,7 @@ fn prepare_prototype1_parent_setup(
     let primary_instance_id =
         resolve_setup_primary_instance(command, profile_ref, &prepared_batch.instances)?;
 
-    let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+    let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch, profile_ref)?;
     let admitted_profile = operator_profile
         .as_ref()
         .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
@@ -3186,7 +3186,7 @@ impl Prototype1LoopControllerInput {
         let profile_ref = operator_profile.as_ref().map(|profile| &profile.profile);
         let (batch_manifest, prepared_batch) =
             prepare_or_load_prototype1_batch(command, profile_ref)?;
-        let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch)?;
+        let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch, profile_ref)?;
         let admitted_profile = operator_profile
             .as_ref()
             .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
@@ -10210,6 +10210,7 @@ fn load_prepared_batch_for_loop(
 fn prepare_prototype1_loop_campaign(
     command: &Prototype1LoopCommand,
     prepared_batch: &PreparedMsbBatch,
+    run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
     let eval_model = resolve_model_for_run(
         command
@@ -10316,9 +10317,12 @@ fn prepare_prototype1_loop_campaign(
         budget: prepared_batch.budget.clone(),
         batch_prefix: Some(prepared_batch.batch_id.clone()),
     };
+    let protocol_policy = run_profile
+        .map(profile::Prototype1RunProfile::protocol_policy)
+        .unwrap_or_default();
     manifest.protocol = ProtocolCampaignPolicy {
         stop_on_error: command.stop_on_error,
-        ..ProtocolCampaignPolicy::default()
+        ..protocol_policy
     };
     save_campaign_manifest(&manifest)?;
     let resolved = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;

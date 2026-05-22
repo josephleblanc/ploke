@@ -29,6 +29,8 @@ pub struct RunProfileRecord {
     #[serde(default)]
     pub selection: Selection,
     #[serde(default)]
+    pub protocol: Protocol,
+    #[serde(default)]
     pub execution: Execution,
     #[serde(default)]
     pub control: Control,
@@ -260,6 +262,24 @@ pub enum OracleMode {
     RelativeScore,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Protocol {
+    #[serde(default = "default_protocol_max_tokens")]
+    pub max_tokens: u32,
+}
+
+impl Default for Protocol {
+    fn default() -> Self {
+        Self {
+            max_tokens: default_protocol_max_tokens(),
+        }
+    }
+}
+
+fn default_protocol_max_tokens() -> u32 {
+    2000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Execution {
     pub stop_after: ExecutionStopAfter,
@@ -418,6 +438,9 @@ require_for_score = false
 mode = "record-only"
 require_evidence = true
 
+[protocol]
+max_tokens = 2000
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -450,6 +473,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert!(profile.selection.metrics.persist);
         assert!(profile.selection.metrics.imp_at_k.enabled);
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
+        assert_eq!(profile.protocol.max_tokens, 2000);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -470,6 +494,14 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 
         assert_eq!(parsed.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(parsed.selection.oracle.require_evidence);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_protocol_max_tokens() {
+        let profile = PROFILE.replace("\n[protocol]\nmax_tokens = 2000\n", "\n");
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.protocol.max_tokens, default_protocol_max_tokens());
     }
 
     #[test]

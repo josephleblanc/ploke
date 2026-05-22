@@ -4708,6 +4708,7 @@ mod tests {
 
     use crate::EvalBudget;
     use ploke_db::multi_embedding::schema::EmbeddingSetExt;
+    use ploke_llm::Router as _;
     use ploke_llm::response::FunctionCall;
     use ploke_tui::CancelChatToken;
     use ploke_tui::app_state::commands::StateCommand;
@@ -4891,6 +4892,150 @@ mod tests {
         ProviderKey::new("deepinfra").expect("provider key")
     }
 
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_model_id() -> ModelId {
+        let raw = std::env::var("PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID")
+            .or_else(|_| std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID"))
+            .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let model = if raw.contains('/') {
+            raw
+        } else {
+            format!("google/{raw}")
+        };
+        model.parse().expect("live Google model id")
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_route() -> LlmRoute {
+        let model_id = live_google_model_id();
+        let registry = crate::model_registry::fetch_google_model_registry()
+            .await
+            .expect("Google model registry catalog");
+        let selected_model = registry
+            .data
+            .into_iter()
+            .find(|item| item.id == model_id)
+            .unwrap_or_else(|| panic!("Google model registry catalog missing '{model_id}'"));
+        assert!(
+            selected_model.route_source.is_direct_google(),
+            "expected direct Google registry row for '{}'",
+            selected_model.id
+        );
+        assert!(
+            selected_model.supports_tools(),
+            "live Google route test requires a tool-capable model"
+        );
+
+        let google = ProviderKey::new("google").expect("google provider key");
+        let route = resolve_route_for_model(&selected_model, Some(&google))
+            .await
+            .expect("resolve direct Google route");
+        assert!(route.is_direct_google());
+        assert!(matches!(
+            route.router(),
+            ploke_llm::router_only::RouterVariants::Google(_)
+        ));
+        assert!(route.provider_key().is_none());
+        assert_eq!(route.selected_provider_slug(), "google");
+        assert!(selected_endpoint_provenance(&route).is_none());
+        route
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn is_google_quota_error(error: &ploke_llm::LlmError) -> bool {
+        let text = format!("{error:?}");
+        text.contains("RESOURCE_EXHAUSTED") || text.contains("429")
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live Google API test for ploke-eval route resolution and direct content response"]
+    async fn live_google_resolved_route_returns_content_success_or_quota() {
+        let route = live_google_route().await;
+        let request = ploke_llm::router_only::google::Google::default_chat_completion()
+            .with_model(route.model().clone())
+            .with_message(RequestMessage::new_user(
+                "Reply with the exact text: ploke-google-router-ok".to_string(),
+            ))
+            .with_max_tokens(64)
+            .with_temperature(0.0);
+        let client = reqwest::Client::new();
+        let cfg = ploke_llm::ChatHttpConfig::default();
+        let step = match ploke_llm::chat_step(&client, &request, &cfg).await {
+            Ok(step) => step,
+            Err(error) if is_google_quota_error(&error) => {
+                println!("live Google direct route reached Google quota response");
+                return;
+            }
+            Err(error) => panic!("live Google chat_step failed: {error:?}"),
+        };
+
+        match step.outcome {
+            ploke_llm::ChatStepOutcome::Content { content, .. } => {
+                let content = content.expect("Google content response");
+                assert!(
+                    content.contains("ploke-google-router-ok"),
+                    "expected sentinel content in Google response, got: {content}"
+                );
+                println!("live Google direct route returned sentinel content");
+            }
+            other => {
+                panic!("expected Google content response through ploke-eval route, got {other:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live Google API test for ploke-eval route resolution and forced tool-call response"]
+    async fn live_google_resolved_route_forces_list_dir_tool_call_success_or_quota() {
+        let route = live_google_route().await;
+        let request = ploke_llm::router_only::google::Google::default_chat_completion()
+            .with_model(route.model().clone())
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once for dir \".\". Do not answer in prose."
+                    .to_string(),
+            ))
+            .with_max_tokens(128)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![
+                <ploke_tui::tools::list_dir::ListDir as ploke_tui::tools::Tool>::tool_def(),
+            ]))
+            .with_tool_choice(Some(ploke_llm::request::endpoint::ToolChoice::Function {
+                r#type: FunctionMarker,
+                function: ploke_llm::request::endpoint::ToolChoiceFunction {
+                    name: ToolName::ListDir.as_str().to_string(),
+                },
+            }));
+        let client = reqwest::Client::new();
+        let cfg = ploke_llm::ChatHttpConfig::default();
+        let step = match ploke_llm::chat_step(&client, &request, &cfg).await {
+            Ok(step) => step,
+            Err(error) if is_google_quota_error(&error) => {
+                println!("live Google forced tool route reached Google quota response");
+                return;
+            }
+            Err(error) => panic!("live Google forced tool-call chat_step failed: {error:?}"),
+        };
+
+        match step.outcome {
+            ploke_llm::ChatStepOutcome::ToolCalls { calls, .. } => {
+                assert_eq!(calls.len(), 1, "expected exactly one Google tool call");
+                assert_eq!(calls[0].function.name, ToolName::ListDir);
+                assert!(
+                    calls[0].function.arguments.contains("\"dir\""),
+                    "expected list_dir arguments to include dir: {}",
+                    calls[0].function.arguments
+                );
+                println!("live Google direct route returned forced list_dir tool call");
+            }
+            other => {
+                panic!("expected Google tool call through ploke-eval route, got {other:?}");
+            }
+        }
+    }
+
     #[test]
     fn benchmark_runtime_config_overrides_llm_timeout() {
         let model = "google/gemini-2.5-flash"
@@ -4913,6 +5058,55 @@ mod tests {
             ChatTimeoutStrategy::Backoff { attempts: Some(3) }
         ));
         assert!(cfg.editing.auto_confirm_edits);
+    }
+
+    #[test]
+    fn direct_google_runtime_config_sets_router_without_provider_pin() {
+        let model = "google/gemini-2.5-flash"
+            .parse::<ploke_llm::ModelId>()
+            .expect("model id");
+        let route = LlmRoute::google(model.clone(), true);
+        let mut cfg = RuntimeConfig::default();
+
+        configure_eval_model_runtime(&mut cfg, &route);
+
+        assert_eq!(cfg.active_model, model);
+        assert!(matches!(
+            cfg.active_router,
+            ploke_llm::router_only::RouterVariants::Google(_)
+        ));
+        assert!(
+            cfg.model_registry.models.is_empty(),
+            "direct Google route must not create OpenRouter provider prefs"
+        );
+    }
+
+    #[test]
+    fn direct_google_execution_log_serializes_without_selected_endpoint() {
+        let model = "google/gemini-2.5-flash"
+            .parse::<ploke_llm::ModelId>()
+            .expect("model id");
+        let route = LlmRoute::google(model.clone(), true);
+        assert!(selected_endpoint_provenance(&route).is_none());
+
+        let log = ExecutionLog {
+            task_id: "case-123".to_string(),
+            run_arm: RunArm::structured_current_policy_treatment(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            selected_model: model,
+            selected_provider: Some(route.selected_provider_slug()),
+            selected_endpoint: selected_endpoint_provenance(&route),
+            full_response_trace: None,
+            steps: vec!["load_manifest".to_string()],
+        };
+
+        let value = serde_json::to_value(&log).expect("serialize execution log");
+        assert_eq!(value["selected_provider"], "google");
+        assert!(
+            value.get("selected_endpoint").is_none(),
+            "direct Google execution logs must not serialize OpenRouter endpoint provenance"
+        );
     }
 
     #[test]

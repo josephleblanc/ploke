@@ -1241,13 +1241,11 @@ async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareEr
 }
 
 async fn advance_baseline_protocol(context: &RuntimeContext) -> Result<(), PrepareError> {
-    crate::cli::advance_protocol_closure(
+    crate::cli::advance_protocol_or_block(
         &context.resolved_campaign,
         &context.resolved_campaign.protocol,
-        false,
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 fn active_parent_ready(context: &RuntimeContext) -> Result<Parent<Ready>, PrepareError> {
@@ -1814,8 +1812,8 @@ mod tests {
     use super::*;
 
     use crate::cli::prototype1_state::profile::{
-        Control, Execution, Generation, Prototype1RunProfile, RunMode, Search, Selection, Storage,
-        Target,
+        Control, Execution, Generation, Protocol, Prototype1RunProfile, RunMode, Search, Selection,
+        Storage, Target,
     };
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
@@ -1836,6 +1834,7 @@ mod tests {
             },
             generation: Generation::default(),
             selection: Selection::default(),
+            protocol: Protocol::default(),
             execution: Execution::default(),
             control: Control::default(),
         }
