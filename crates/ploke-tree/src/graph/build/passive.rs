@@ -337,7 +337,7 @@ mod tests {
 
     use ploke_records::ids::{ArtifactId, Coordinate, EntryId, OperationTarget, RuntimeId};
     use ploke_records::run_profile::{
-        Execution, ExecutionStopAfter, Generation, GenerationSource, GenerationSurface,
+        Execution, ExecutionStopAfter, Generation, GenerationSource, GenerationSurface, Protocol,
         RUN_PROFILE_COMMITMENT_SCHEMA_VERSION, RUN_PROFILE_SCHEMA_VERSION,
         RunProfileCommitmentRecord, RunProfileRecord, Search, Selection, SelectionEvidence,
         SelectionStrategy, Storage, Target, TraceJsonl,
@@ -638,6 +638,7 @@ mod tests {
                 mbe: ploke_records::run_profile::Mbe::default(),
             },
             control: ploke_records::run_profile::Control::default(),
+            protocol: Protocol::default(),
         }
     }
 }
