@@ -10,11 +10,11 @@ use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
 use crate::rag::utils::NodeKind;
-use crate::tools::{Tool, ValidatesAbolutePath};
+use crate::tools::{
+    Tool, ToolError, ToolErrorCode, ToolInvocationError, ValidatesAbolutePath, lookup_support,
+};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
-const MODULE_PATH: &str = r#"canonical module path, e.g. "crate::mod_one::nested_mod".
-    Note that this does not include the target item's identifier."#;
 const ITEM_NAME: &str = r#"The name of the item being search for, e.g.
 if looking for
 
@@ -32,7 +32,7 @@ lazy_static::lazy_static! {
             "item_name": { "type": "string", "description": ITEM_NAME },
             "file_path": { "type": "string", "description": FILE_DESC },
             "node_kind": NodeKind::schema_property(),
-            "module_path": { "type": "string", "description": MODULE_PATH },
+            "module_path": { "type": "string", "description": lookup_support::MODULE_PATH_DESC },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -90,6 +90,24 @@ impl Tool for CodeItemLookup {
         CODE_ITEM_LOOKUP_PARAMETERS.deref()
     }
 
+    fn adapt_error(err: ToolInvocationError) -> ToolError {
+        match err {
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Ui { message },
+            )) => ToolError::new(
+                ToolName::CodeItemLookup,
+                ToolErrorCode::InvalidFormat,
+                message,
+            )
+            .retry_hint(lookup_support::LOOKUP_RETRY_HINT),
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Io { message },
+            )) => ToolError::new(ToolName::CodeItemLookup, ToolErrorCode::Io, message)
+                .retry_hint(lookup_support::LOOKUP_RETRY_HINT),
+            other => other.into_tool_error(ToolName::CodeItemLookup),
+        }
+    }
+
     fn build(_ctx: &super::Ctx) -> Self
     where
         Self: Sized,
@@ -104,6 +122,16 @@ impl Tool for CodeItemLookup {
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
         }
+    }
+
+    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolInvocationError> {
+        let params: LookupParams<'a> =
+            serde_json::from_str(json).map_err(|source| ToolInvocationError::Deserialize {
+                source,
+                raw: Some(json.to_string()),
+            })?;
+        lookup_support::validate_module_path(Self::name(), params.module_path.as_ref())?;
+        Ok(params)
     }
 
     async fn execute<'de>(
@@ -179,8 +207,7 @@ for a more fuzzy search."#
 
         if mod_path.is_empty() || mod_path.first().map(|s| s.as_str()) != Some("crate") {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
-                message: r#"This tool only finds code items defined in the crate loaded as the crate focus. module_path must start with "crate", e.g. crate::module::submodule"#
-                    .to_string(),
+                message: lookup_support::module_path_error_message(params.module_path.as_ref()),
             }));
         }
 
@@ -254,7 +281,10 @@ for a more fuzzy search."#
         })?;
         let concise_context = ConciseContext {
             file_path: NodeFilepath::new(rel_path.display().to_string()),
-            canon_path: CanonPath::new(params.module_path.to_string()),
+            canon_path: CanonPath::new(lookup_support::item_canon_path(
+                params.module_path.as_ref(),
+                params.item_name.as_ref(),
+            )),
             snippet,
         };
 
@@ -344,5 +374,29 @@ mod tests {
             .collect();
         assert!(enum_vals.contains(&"method"));
         assert_eq!(enum_vals.first().copied(), Some("function"));
+    }
+
+    #[test]
+    fn invalid_module_path_fails_during_preflight_validation() {
+        let args = r#"{"file_path":"proc_macros/ploke-db-derive/src/lib.rs","item_name":"FieldSpec","module_path":"ploke_db_derive","node_kind":"struct"}"#;
+        let err = <CodeItemLookup as Tool>::deserialize_params(args)
+            .expect_err("package-name module_path should fail preflight");
+        let ToolInvocationError::Validation(err) = err else {
+            panic!("expected validation error");
+        };
+
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(err.field, Some("module_path"));
+        assert_eq!(
+            err.expected.as_deref(),
+            Some(lookup_support::MODULE_PATH_EXPECTED)
+        );
+        assert_eq!(err.received.as_deref(), Some("ploke_db_derive"));
+        assert!(
+            err.retry_hint
+                .as_deref()
+                .expect("retry hint")
+                .contains("request_code_context")
+        );
     }
 }

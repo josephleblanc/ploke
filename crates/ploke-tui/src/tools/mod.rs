@@ -55,6 +55,7 @@ pub mod error;
 pub mod get_code_edges;
 pub mod insert_rust_item;
 pub mod list_dir;
+mod lookup_support;
 pub mod ns_patch;
 pub mod ns_read;
 pub mod ui;
@@ -941,5 +942,31 @@ mod tests {
 
         assert_eq!(err.tool_name, ToolName::Cargo);
         assert!(err.error.message.contains("unknown variant"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_package_name_module_path() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_module_path"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::CodeItemLookup,
+                arguments: r#"{"file_path":"proc_macros/ploke-db-derive/src/lib.rs","item_name":"FieldSpec","module_path":"ploke_db_derive","node_kind":"struct"}"#.to_string(),
+            },
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call)
+            .expect_err("package-name module_path should fail preflight");
+
+        assert_eq!(err.tool_name, ToolName::CodeItemLookup);
+        assert_eq!(err.error.field, Some("module_path"));
+        assert_eq!(err.error.received.as_deref(), Some("ploke_db_derive"));
+        assert!(
+            err.error
+                .retry_hint
+                .as_deref()
+                .expect("retry hint")
+                .contains("request_code_context")
+        );
     }
 }
