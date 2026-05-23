@@ -450,9 +450,8 @@ impl HistoryHash {
         domain: &'static str,
         value: &T,
     ) -> Result<Self, HistoryError> {
-        let stable_value = serde_json::to_value(&HashPreimage { domain, value })
+        let bytes = serde_json::to_vec(&HashPreimage { domain, value })
             .map_err(HistoryError::StableJson)?;
-        let bytes = serde_json::to_vec(&stable_value).map_err(HistoryError::StableJson)?;
         Ok(Self::of_bytes(&bytes))
     }
 
@@ -704,8 +703,7 @@ impl FsBlockStore {
                 path: path.to_path_buf(),
                 source,
             })?;
-        let stable_value = serde_json::to_value(value).map_err(BlockStoreError::Serialize)?;
-        let mut line = serde_json::to_string(&stable_value).map_err(BlockStoreError::Serialize)?;
+        let mut line = serde_json::to_string(value).map_err(BlockStoreError::Serialize)?;
         line.push('\n');
         file.write_all(line.as_bytes())
             .map_err(|source| BlockStoreError::Write {
@@ -812,9 +810,9 @@ impl FsBlockStore {
     /// Load and verify the sealed block currently named by a checked head.
     ///
     /// This is deliberately a loader transition instead of `Deserialize` for
-    /// `Block<block::Sealed>`. The current Prototype 1 handoff blocks have no
-    /// admitted entries; until entry loading has its own transition, this method
-    /// rejects non-empty stored blocks instead of silently reconstructing them.
+    /// `Block<block::Sealed>`. The loader reconstructs admitted entries through
+    /// stored DTOs, then verifies the block against the raw entry JSON hashes
+    /// that were committed at seal time.
     pub(crate) fn sealed_head_block(
         &self,
         head: &BlockHead,
@@ -834,7 +832,13 @@ impl FsBlockStore {
             })?;
         let stored_block: StoredSealedBlock =
             serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
-        let block = stored_block.into_verified_block(path, stored.location.line_index)?;
+        let stored_entry_hashes =
+            stored_entry_hashes_from_line(line, &path, stored.location.line_index)?;
+        let block = stored_block.into_verified_block(
+            path,
+            stored.location.line_index,
+            stored_entry_hashes,
+        )?;
         block.verify_expected_hash(&head.block_hash)?;
         Ok(block)
     }
@@ -863,7 +867,13 @@ impl FsBlockStore {
             }
             let stored_block: StoredSealedBlock =
                 serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
-            let block = stored_block.into_verified_block(path.clone(), line_index as u64)?;
+            let stored_entry_hashes =
+                stored_entry_hashes_from_line(line, &path, line_index as u64)?;
+            let block = stored_block.into_verified_block(
+                path.clone(),
+                line_index as u64,
+                stored_entry_hashes,
+            )?;
             out.push((line_index as u64, block));
         }
         Ok(out)
@@ -1133,6 +1143,7 @@ impl StoredSealedBlock {
         self,
         path: PathBuf,
         line_index: u64,
+        stored_entry_hashes: Vec<HistoryHash>,
     ) -> Result<Block<block::Sealed>, BlockStoreError> {
         if self.entries.len() != self.state.header.entry_count {
             return Err(BlockStoreError::UnsupportedStoredEntries {
@@ -1153,10 +1164,39 @@ impl StoredSealedBlock {
                 _private: Private,
             },
             entries,
+            stored_entry_hashes: Some(stored_entry_hashes),
         };
         block.verify_hash()?;
         Ok(block)
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredRawEntries<'a> {
+    #[serde(borrow)]
+    entries: Vec<&'a serde_json::value::RawValue>,
+}
+
+fn stored_entry_hashes_from_line(
+    line: &str,
+    _path: &Path,
+    _line_index: u64,
+) -> Result<Vec<HistoryHash>, BlockStoreError> {
+    let raw: StoredRawEntries<'_> =
+        serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
+    Ok(raw
+        .entries
+        .into_iter()
+        .map(|entry| entry_hash_from_raw_json(entry.get()))
+        .collect())
+}
+
+fn entry_hash_from_raw_json(raw_entry: &str) -> HistoryHash {
+    let mut preimage = Vec::with_capacity(raw_entry.len() + 54);
+    preimage.extend_from_slice(b"{\"domain\":\"prototype1.history.entry.v1\",\"value\":");
+    preimage.extend_from_slice(raw_entry.as_bytes());
+    preimage.extend_from_slice(b"}");
+    HistoryHash::of_bytes(&preimage)
 }
 
 /// Stored DTOs for verified disk loading.
@@ -6196,10 +6236,18 @@ struct SealedBlockPreimage {
 /// this block is a valid authority epoch for one History store and lineage.
 /// Human or root authority is intentionally left as future policy work rather
 /// than a current block invariant.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct Block<S> {
     entries: Vec<Entry<Admitted>>,
     state: S,
+    #[serde(skip)]
+    stored_entry_hashes: Option<Vec<HistoryHash>>,
+}
+
+impl<S: PartialEq> PartialEq for Block<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries && self.state == other.state
+    }
 }
 
 impl Block<block::Open> {
@@ -6232,6 +6280,7 @@ impl Block<block::Open> {
 
         Ok(Self {
             entries: Vec::new(),
+            stored_entry_hashes: None,
             state: block::Open {
                 common: BlockCommon {
                     schema_version: SCHEMA_VERSION,
@@ -6334,6 +6383,7 @@ impl Block<block::Open> {
 
         Ok(Block {
             entries: self.entries,
+            stored_entry_hashes: None,
             state: block::Sealed {
                 header,
                 _private: Private,
@@ -6383,6 +6433,20 @@ impl Block<block::Sealed> {
         &self.entries
     }
 
+    fn entry_hashes_for_verification(&self) -> Result<Vec<HistoryHash>, HistoryError> {
+        if let Some(hashes) = &self.stored_entry_hashes {
+            if hashes.len() != self.entries.len() {
+                return Err(HistoryError::EntryCountMismatch {
+                    header: hashes.len(),
+                    actual: self.entries.len(),
+                });
+            }
+            return Ok(hashes.clone());
+        }
+
+        self.entries.iter().map(Entry::entry_hash).collect()
+    }
+
     pub(crate) fn selected_successor(&self) -> &SuccessorRef {
         &self.header().selected_successor
     }
@@ -6404,11 +6468,7 @@ impl Block<block::Sealed> {
             });
         }
 
-        let entry_hashes = self
-            .entries
-            .iter()
-            .map(Entry::entry_hash)
-            .collect::<Result<Vec<_>, _>>()?;
+        let entry_hashes = self.entry_hashes_for_verification()?;
         let entries_root =
             HistoryHash::of_domain_json("prototype1.history.entries_root.v1", &entry_hashes)?;
         if entries_root != header.entries_root {
@@ -6956,7 +7016,7 @@ pub(crate) enum BlockStoreError {
     MissingStoredBlockLine { path: PathBuf, line_index: u64 },
 
     #[error(
-        "stored History block at '{}':{} has {entry_count} entries; verified entry loading is not implemented yet",
+        "stored History block at '{}':{} header declares {entry_count} entries, but its entries array differs",
         path.display(),
         line_index
     )]
@@ -7286,36 +7346,13 @@ mod tests {
         ActorRef::Runtime(RuntimeId(uuid::Uuid::from_u128(value)))
     }
 
-    #[test]
-    #[ignore]
-    fn debug_campaign_history_root_mismatch() {
-        let path = PathBuf::from("/home/brasides/.ploke-eval/campaigns/p1-google-live-run-20260521-4/prototype1/history/blocks/segment-000000.jsonl");
-        let text = std::fs::read_to_string(&path).expect("campaign history segment");
-        let stored: StoredSealedBlock = serde_json::from_str(text.lines().next().expect("line")).expect("stored block");
-        let original_value: serde_json::Value = serde_json::from_str(text.lines().next().expect("line")).expect("stored block value");
-        std::fs::write("/tmp/original-entry.json", serde_json::to_string_pretty(&original_value["entries"][0]).expect("original json")).expect("write original");
-        let mut entries = Vec::new();
-        for stored_entry in stored.entries {
-            entries.push(stored_entry.into_entry());
-        }
-        let header = stored.state.header;
-        std::fs::write("/tmp/current-entry.json", serde_json::to_string_pretty(&entries[0]).expect("current json")).expect("write current");
-        println!("stored entries_root={}", header.entries_root.as_str());
-        let root = HistoryHash::of_domain_json(
-            "prototype1.history.entries_root.v1",
-            &entries.iter().map(|entry| entry.entry_hash().expect("entry hash")).collect::<Vec<_>>(),
-        ).expect("root");
-        println!("current root={}", root.as_str());
-        if let Some(entry) = entries.get_mut(0) {
-            if let EntryPayload::SelectionDecision(selection) = &mut entry.core.payload {
-                let saved_formula = selection.formula.take();
-                let root_no_formula = HistoryHash::of_domain_json(
-                    "prototype1.history.entries_root.v1",
-                    &entries.iter().map(|entry| entry.entry_hash().expect("entry hash")).collect::<Vec<_>>(),
-                ).expect("root no formula");
-                println!("root_no_formula={} saved_formula={:?}", root_no_formula.as_str(), saved_formula.as_ref().map(|_| "some"));
-            }
-        }
+    fn legacy_domain_json_hash<T: Serialize>(
+        domain: &'static str,
+        value: &T,
+    ) -> Result<HistoryHash, HistoryError> {
+        let bytes = serde_json::to_vec(&HashPreimage { domain, value })
+            .map_err(HistoryError::StableJson)?;
+        Ok(HistoryHash::of_bytes(&bytes))
     }
 
     #[test]
@@ -7991,6 +8028,87 @@ mod tests {
         ));
         assert_eq!(passive.entries[0].state.lineage_id.0, lineage.as_str());
         assert_eq!(passive.entries[0].state.block_height, sealed.block_height());
+
+        let head = store.lineage_state(&lineage).expect("read stored head");
+        let StoreHead::Present(head) = head.head() else {
+            panic!("stored selection decision block should be the lineage head");
+        };
+        let loaded = store
+            .sealed_head_block(head)
+            .expect("load stored selection decision block as verified sealed head");
+        loaded
+            .verify_expected_hash(sealed.block_hash())
+            .expect("loaded block verifies");
+    }
+
+    #[test]
+    fn fs_block_store_verifies_loaded_entries_with_stored_json_order() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let state = store.lineage_state(&lineage).expect("read state");
+        let mut block = open_block_from_state(&state, 0, Vec::new());
+        block
+            .admit(proposed_entry(), actor("admitter"))
+            .expect("admit entry");
+        let sealed = seal(block);
+        store.append(&state, &sealed).expect("append block");
+
+        let segment_path = store.segment_path();
+        let segment_text = fs::read_to_string(&segment_path).expect("read segment");
+        let mut stored: serde_json::Value =
+            serde_json::from_str(segment_text.trim()).expect("parse stored block");
+        let entry = stored["entries"][0].clone();
+        let state_json = serde_json::to_string(&entry["state"]).expect("entry state json");
+        let core_json = serde_json::to_string(&entry["core"]).expect("entry core json");
+        let reordered_entry = format!(r#"{{"state":{state_json},"core":{core_json}}}"#);
+        let entry_hash = entry_hash_from_raw_json(&reordered_entry);
+        assert_ne!(
+            entry_hash,
+            sealed.entries()[0]
+                .entry_hash()
+                .expect("current entry hash"),
+            "reordered stored JSON must differ from the current in-memory serialization hash"
+        );
+
+        let entries_root =
+            legacy_domain_json_hash("prototype1.history.entries_root.v1", &vec![entry_hash])
+                .expect("entries root");
+        let header = sealed.header();
+        let block_preimage = SealedBlockPreimage {
+            common: header.common.clone(),
+            crown_lock_transition: header.crown_lock_transition.clone(),
+            selected_successor: header.selected_successor.clone(),
+            selected_parent_identity: header.selected_parent_identity.clone(),
+            active_artifact: header.active_artifact.clone(),
+            claims: header.claims.clone(),
+            sealed_at: header.sealed_at,
+            entry_count: header.entry_count,
+            entries_root: entries_root.clone(),
+        };
+        let block_hash = BlockHash::from(
+            legacy_domain_json_hash("prototype1.history.block.v1", &block_preimage)
+                .expect("block hash"),
+        );
+        stored["state"]["header"]["entries_root"] =
+            serde_json::to_value(entries_root).expect("entries root value");
+        stored["state"]["header"]["block_hash"] =
+            serde_json::to_value(block_hash).expect("block hash value");
+        let stored_state_json = serde_json::to_string(&stored["state"]).expect("state json");
+        let rewritten = format!(
+            r#"{{"entries":[{reordered_entry}],"state":{stored_state_json}}}
+"#
+        );
+        fs::write(&segment_path, rewritten).expect("rewrite segment with stored entry order");
+
+        let loaded = store
+            .load_segment_verified_blocks()
+            .expect("load segment block using stored entry JSON hashes");
+        assert_eq!(loaded.len(), 1);
+        loaded[0]
+            .1
+            .verify_expected_hash(&block_hash)
+            .expect("loaded block verifies against rewritten block hash");
     }
 
     #[test]

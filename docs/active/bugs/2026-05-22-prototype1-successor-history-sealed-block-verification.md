@@ -2,7 +2,7 @@
 
 - date: 2026-05-22 local / 2026-05-22 UTC
 - campaign: `p1-google-live-run-20260521-4`
-- status: open
+- status: patched in worktree; fresh live-run validation pending
 
 ## Summary
 
@@ -70,10 +70,37 @@ crates/ploke-eval/src/cli/prototype1_process.rs::history_store.append(...)
 crates/ploke-eval/src/cli/prototype1_state/history.rs::Block::verify_hash()
 ```
 
-The immediate failure means the sealed block bytes being passed to
-`HistoryStore::append` do not verify before storage. The next investigation
-should reconstruct the selected-successor block from persisted artifacts and
-compare the sealed hash input with the verification input.
+The immediate failure means stored selected-successor blocks were being loaded
+with admitted entries and then re-hashed through the current in-memory serde
+field order. That can differ from the exact entry JSON bytes committed when the
+block was originally sealed, so the stored `entries_root` no longer matched the
+recomputed entry hashes even though the segment line itself was intact.
+
+## Resolution
+
+The loader now extracts the raw `entries` JSON values from each stored segment
+line, hashes those exact values with the `prototype1.history.entry.v1` domain,
+and carries those seal-time entry hashes on loaded sealed blocks. Verification
+therefore continues to check the stored header, `entries_root`, and block hash,
+but no longer depends on current Rust struct field order when reading historical
+blocks.
+
+Validation in this worktree:
+
+```text
+cargo test -p ploke-eval fs_block_store_ -- --nocapture
+cargo test -p ploke-eval history_candidates_reads_cross_generation_selection_payloads_with_proofs -- --nocapture
+```
+
+The observed campaign replay also now succeeds from persisted storage:
+
+```text
+./target/debug/ploke-eval history --campaign p1-google-live-run-20260521-4 selection-show --format json --row 0 --replay
+# selection_show_replay_ok=true; output bytes=6927
+```
+
+This local smoke check is documented here rather than kept as an automated test
+because it depends on a machine-local campaign path.
 
 ## Related Observations
 
@@ -93,11 +120,12 @@ History failure.
 
 ## Fix Direction
 
-1. Add a focused reproduction for the selected-successor History append path,
-   preferably from stored `p1-google-live-run-20260521-4` artifacts or from a
-   minimal block-construction fixture that reaches `HistoryStore::append`.
-2. Make block sealing and verification use one authority for the exact bytes
-   that are hashed.
+1. Done in worktree: added focused storage regression coverage using a minimal
+   block whose persisted entry JSON order differs from current in-memory serde
+   output.
+2. Done in worktree: stored-block verification now hashes the exact raw entry
+   JSON values committed in the segment line, then verifies the `entries_root`
+   and block hash from those seal-time entry hashes.
 3. Add a run doctor or hard resume guard for campaigns left with a selected
    child checkout but stale generation-0 parent identity.
 4. After the History fix, run a fresh short live Google loop from a clean parent
