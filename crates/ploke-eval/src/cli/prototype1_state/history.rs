@@ -450,8 +450,9 @@ impl HistoryHash {
         domain: &'static str,
         value: &T,
     ) -> Result<Self, HistoryError> {
-        let bytes = serde_json::to_vec(&HashPreimage { domain, value })
+        let stable_value = serde_json::to_value(&HashPreimage { domain, value })
             .map_err(HistoryError::StableJson)?;
+        let bytes = serde_json::to_vec(&stable_value).map_err(HistoryError::StableJson)?;
         Ok(Self::of_bytes(&bytes))
     }
 
@@ -703,7 +704,8 @@ impl FsBlockStore {
                 path: path.to_path_buf(),
                 source,
             })?;
-        let mut line = serde_json::to_string(value).map_err(BlockStoreError::Serialize)?;
+        let stable_value = serde_json::to_value(value).map_err(BlockStoreError::Serialize)?;
+        let mut line = serde_json::to_string(&stable_value).map_err(BlockStoreError::Serialize)?;
         line.push('\n');
         file.write_all(line.as_bytes())
             .map_err(|source| BlockStoreError::Write {
@@ -6964,7 +6966,7 @@ pub(crate) enum BlockStoreError {
         entry_count: usize,
     },
 
-    #[error("sealed block failed verification before storage")]
+    #[error("sealed block failed verification before storage: {0}")]
     Verify(#[from] HistoryError),
 
     #[error("History state map operation failed")]
@@ -7282,6 +7284,38 @@ mod tests {
 
     fn runtime_actor(value: u128) -> ActorRef {
         ActorRef::Runtime(RuntimeId(uuid::Uuid::from_u128(value)))
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_campaign_history_root_mismatch() {
+        let path = PathBuf::from("/home/brasides/.ploke-eval/campaigns/p1-google-live-run-20260521-4/prototype1/history/blocks/segment-000000.jsonl");
+        let text = std::fs::read_to_string(&path).expect("campaign history segment");
+        let stored: StoredSealedBlock = serde_json::from_str(text.lines().next().expect("line")).expect("stored block");
+        let original_value: serde_json::Value = serde_json::from_str(text.lines().next().expect("line")).expect("stored block value");
+        std::fs::write("/tmp/original-entry.json", serde_json::to_string_pretty(&original_value["entries"][0]).expect("original json")).expect("write original");
+        let mut entries = Vec::new();
+        for stored_entry in stored.entries {
+            entries.push(stored_entry.into_entry());
+        }
+        let header = stored.state.header;
+        std::fs::write("/tmp/current-entry.json", serde_json::to_string_pretty(&entries[0]).expect("current json")).expect("write current");
+        println!("stored entries_root={}", header.entries_root.as_str());
+        let root = HistoryHash::of_domain_json(
+            "prototype1.history.entries_root.v1",
+            &entries.iter().map(|entry| entry.entry_hash().expect("entry hash")).collect::<Vec<_>>(),
+        ).expect("root");
+        println!("current root={}", root.as_str());
+        if let Some(entry) = entries.get_mut(0) {
+            if let EntryPayload::SelectionDecision(selection) = &mut entry.core.payload {
+                let saved_formula = selection.formula.take();
+                let root_no_formula = HistoryHash::of_domain_json(
+                    "prototype1.history.entries_root.v1",
+                    &entries.iter().map(|entry| entry.entry_hash().expect("entry hash")).collect::<Vec<_>>(),
+                ).expect("root no formula");
+                println!("root_no_formula={} saved_formula={:?}", root_no_formula.as_str(), saved_formula.as_ref().map(|_| "some"));
+            }
+        }
     }
 
     #[test]

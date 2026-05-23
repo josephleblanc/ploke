@@ -39,7 +39,7 @@ use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
 use crate::intervention::{
     PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION, PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
     PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1BranchRegistry, Prototype1NodeRecord,
-    Prototype1RunnerRequest, Prototype1RunnerResult, Prototype1SchedulerState,
+    Prototype1RunnerRequest, Prototype1RunnerResult, Prototype1SchedulerState, branch_log,
 };
 
 const SCHEMA_VERSION: &str = "prototype1-history-preview.v2";
@@ -115,8 +115,7 @@ impl FsEvidenceStore {
                 EvidenceClass::Scheduler,
                 prototype1_scheduler_path(&self.manifest_path),
             )?,
-            branch_registry: self.preview_selection_record::<Prototype1BranchRegistry>(
-                EvidenceClass::BranchRegistry,
+            branch_registry: self.preview_branch_registry_selection_record(
                 prototype1_branch_registry_path(&self.manifest_path),
             )?,
         })
@@ -269,6 +268,23 @@ impl FsEvidenceStore {
             load_typed_record::<T>(class, path).map(Some)
         } else {
             Ok(None)
+        }
+    }
+
+    fn preview_branch_registry_selection_record(
+        &self,
+        path: PathBuf,
+    ) -> Result<Option<Stored<Prototype1BranchRegistry>>, PreviewError> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        match load_typed_record::<Prototype1BranchRegistry>(
+            EvidenceClass::BranchRegistry,
+            path.clone(),
+        ) {
+            Ok(stored) => Ok(Some(stored)),
+            Err(PreviewError::ParseRecord { .. }) => load_latest_branch_registry_snapshot(&path),
+            Err(error) => Err(error),
         }
     }
 
@@ -1917,6 +1933,49 @@ where
         },
         item,
     })
+}
+
+fn load_latest_branch_registry_snapshot(
+    path: &Path,
+) -> Result<Option<Stored<Prototype1BranchRegistry>>, PreviewError> {
+    let file = fs::File::open(path).map_err(|source| PreviewError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let reader = BufReader::new(file);
+    let mut latest = None;
+
+    for (line_index, line) in reader.lines().enumerate() {
+        let line = line.map_err(|source| PreviewError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let line_number = line_index + 1;
+        let record: branch_log::Record =
+            serde_json::from_str(trimmed).map_err(|source| PreviewError::ParseLine {
+                path: path.to_path_buf(),
+                line_number,
+                source,
+            })?;
+        if let branch_log::Body::RegistrySnapshot(registry) = record.body {
+            latest = Some(Stored {
+                pointer: EvidencePointer {
+                    class: EvidenceClass::BranchRegistry,
+                    ref_id: format!("file:{}#L{}", path.display(), line_number),
+                    path: path.to_path_buf(),
+                    line: Some(line_number),
+                    hash: HistoryHash::of_bytes(trimmed.as_bytes()),
+                },
+                item: registry,
+            });
+        }
+    }
+
+    Ok(latest)
 }
 
 fn preview_entry(

@@ -61,6 +61,8 @@ file and current code before treating a report as still open.
   Prototype 1 `prototype1-continue` retries `baseline_protocol` after Google 429/no-progress protocol failures until the 256-advance guard fires.
 - [`2026-05-22-cargo-tool-tail-rendering-and-timeout.md`](./2026-05-22-cargo-tool-tail-rendering-and-timeout.md)
   Cargo tool UI details showed oldest retained output and successful compile progress instead of the final test-result tail; outer tool-call timeout layering can still hide cargo output from the model.
+- [`2026-05-22-prototype1-history-metrics-branch-registry-parse.md`](./2026-05-22-prototype1-history-metrics-branch-registry-parse.md)
+  Prototype 1 read-only `history metrics` can fail hard on `prototype1-branch-record.v1` JSONL branch registry evidence, blocking progress inspection for an important live campaign.
 - [`2026-05-22-prototype1-google-post-apply-indexing-timeout.md`](./2026-05-22-prototype1-google-post-apply-indexing-timeout.md)
   Google broad-harness attempts can apply candidate edits but time out before dense indexing emits submitted Prototype 1 result evidence.
 - [`2026-05-22-prototype1-protocol-segmentation-truncated-json.md`](./2026-05-22-prototype1-protocol-segmentation-truncated-json.md)

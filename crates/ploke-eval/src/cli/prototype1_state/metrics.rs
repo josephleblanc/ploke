@@ -2491,6 +2491,102 @@ mod tests {
     }
 
     #[test]
+    fn metrics_degrades_branch_record_jsonl_without_registry_snapshot() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = tmp.path().join("campaign.json");
+        fs::write(&manifest, "{}").expect("manifest");
+        let prototype = tmp.path().join("prototype1");
+        let node = prototype.join("nodes/node-a");
+        fs::create_dir_all(&node).expect("node dir");
+        fs::write(
+            node.join("node.json"),
+            node_record(&prototype, "node-a", None, 1, "branch-a"),
+        )
+        .expect("node record");
+        fs::write(
+            prototype.join("branches.json"),
+            serde_json::json!({
+                "schema_version": "prototype1-branch-record.v1",
+                "recorded_at": "2026-05-22T17:51:08Z",
+                "body": {
+                    "kind": "parent_comparison",
+                    "campaign_id": "campaign-a",
+                    "instance_id": "instance-a",
+                    "source_state_id": "parent-a",
+                    "parent_branch_id": "parent-a",
+                    "target_relpath": "crates/ploke-core/tool_text/non_semantic_patch.md",
+                    "branch_id": "branch-a",
+                    "candidate_id": "candidate-a",
+                    "summary": {
+                        "baseline_campaign_id": "campaign-a",
+                        "treatment_campaign_id": "campaign-a-treatment-branch-a",
+                        "compared_instances": 1,
+                        "rejected_instances": 1,
+                        "overall_disposition": "reject",
+                        "evaluated_at": "2026-05-22T17:51:08Z"
+                    }
+                }
+            })
+            .to_string()
+                + "\n",
+        )
+        .expect("branch record jsonl");
+
+        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+
+        assert_eq!(dashboard.rows.len(), 1);
+        assert_eq!(dashboard.rows[0].node_id, "node-a");
+        assert!(!dashboard.rows[0].selected);
+    }
+
+    #[test]
+    fn metrics_reads_selection_from_branch_registry_snapshot_jsonl() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = tmp.path().join("campaign.json");
+        fs::write(&manifest, "{}").expect("manifest");
+        let prototype = tmp.path().join("prototype1");
+        let node = prototype.join("nodes/node-a");
+        fs::create_dir_all(&node).expect("node dir");
+        fs::write(
+            node.join("node.json"),
+            node_record(&prototype, "node-a", None, 1, "branch-a"),
+        )
+        .expect("node record");
+        let mut registry =
+            serde_json::from_str::<serde_json::Value>(&branch_registry_with_selections(&[
+                "branch-a",
+            ]))
+            .expect("registry json");
+        registry["kind"] = serde_json::json!("registry_snapshot");
+        fs::write(
+            prototype.join("branches.json"),
+            serde_json::json!({
+                "schema_version": "prototype1-branch-record.v1",
+                "recorded_at": "2026-05-22T17:51:08Z",
+                "body": registry
+            })
+            .to_string()
+                + "\n",
+        )
+        .expect("branch snapshot jsonl");
+
+        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+
+        assert_eq!(dashboard.rows.len(), 1);
+        assert_eq!(dashboard.rows[0].node_id, "node-a");
+        assert!(dashboard.rows[0].selected);
+        assert_eq!(
+            dashboard.rows[0].selection_authority,
+            Some("mutable_projection")
+        );
+        assert!(dashboard.rows[0].selection_sources.iter().any(|source| {
+            source.authority == "mutable_projection"
+                && source.source.class == "branch_registry"
+                && source.source.ref_id.ends_with("#L1")
+        }));
+    }
+
+    #[test]
     fn trajectory_records_one_selected_row_as_unambiguous_projection_step() {
         let dashboard = dashboard_from_nodes(
             &[
