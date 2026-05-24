@@ -7516,4 +7516,21 @@ mod tests {
         assert!(detail.contains("openai/text-embedding-3-small"));
         assert!(detail.contains("do not mix embedding models"));
     }
+
+    #[cfg(feature = "live_api_tests")]
+    #[tokio::test]
+    #[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
+    async fn live_eval_embedding_selection_preflight_uses_openrouter_env() {
+        assert!(
+            std::env::var_os("OPENROUTER_API_KEY").is_some(),
+            "OPENROUTER_API_KEY must be exported for live eval embedding preflight"
+        );
+
+        let selection = resolve_eval_embedding_selection(None, None)
+            .await
+            .expect("eval embedding selection should resolve from exported OPENROUTER_API_KEY");
+
+        assert_eq!(selection.model.id, default_eval_embedding_model_id());
+        assert!(selection.dimensions > 0);
+    }
 }

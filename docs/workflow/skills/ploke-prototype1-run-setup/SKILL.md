@@ -128,6 +128,29 @@ After setup and before any step, inspect the admitted campaign or closure state.
 If the actual `route_source` does not match the intended route, abandon that
 campaign/worktree as setup-invalid and start another fresh one.
 
+Before a live setup, step, or continue command that will call providers, verify
+provider env from the same cwd that will launch the command. Report only
+presence or absence, never values:
+
+```bash
+env | rg -q '^OPENROUTER_API_KEY='
+env | rg -q '^GOOGLE_API_KEY='
+```
+
+If the worktree shell does not inherit the provider env but the main checkout
+does, launch the already-built main binary from the main checkout and pass the
+worktree explicitly:
+
+```bash
+/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-step \
+  --repo-root ~/.ploke-eval/worktrees/<campaign> \
+  --format json
+```
+
+Use the same pattern for `prototype1-doctor` and `prototype1-continue` when
+the command needs live provider access or should be compared with provider
+preflight state. Do not infer provider readiness from a different shell/cwd.
+
 Expected setup effects:
 
 - campaign manifest under `~/.ploke-eval/campaigns/<campaign>/campaign.json`
