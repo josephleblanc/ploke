@@ -279,6 +279,11 @@ fn parse_protocol_json_content<T: DeserializeOwned>(content: &str) -> Result<T, 
                     return Ok(parsed);
                 }
             }
+            if let Some(repaired) = repair_missing_final_object_close(content, &detail) {
+                if let Ok(parsed) = parse_protocol_json_content_once::<T>(&repaired) {
+                    return Ok(parsed);
+                }
+            }
             if let Some(repaired) = repair_redundant_final_punctuation_fragment(content, &detail) {
                 if let Ok(parsed) = parse_protocol_json_content_once::<T>(&repaired) {
                     return Ok(parsed);
@@ -366,6 +371,28 @@ fn repair_unterminated_final_rationale(content: &str, detail: &str) -> Option<St
         repaired.push('}');
     }
     Some(repaired)
+}
+
+fn repair_missing_final_object_close(content: &str, detail: &str) -> Option<String> {
+    if !detail.contains("EOF while parsing an object") {
+        return None;
+    }
+
+    let trimmed = content.trim_end();
+    if !trimmed.starts_with('{')
+        || trimmed.ends_with('}')
+        || !(trimmed.contains("\"rationale\"") || trimmed.contains("\"overall_rationale\""))
+        || has_odd_unescaped_quotes(trimmed)
+    {
+        return None;
+    }
+
+    let (last_idx, last_ch) = trimmed.char_indices().next_back()?;
+    if last_ch != '"' || is_escaped_quote(trimmed, last_idx) {
+        return None;
+    }
+
+    Some(format!("{trimmed}}}"))
 }
 
 fn repair_redundant_final_punctuation_fragment(content: &str, detail: &str) -> Option<String> {
@@ -725,6 +752,28 @@ mod tests {
                 verdict: "redundant_repeat".to_string(),
                 confidence: "high".to_string(),
                 rationale: "model swallowed the closing brace.".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_repairs_missing_final_object_close_after_complete_rationale() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{
+  "verdict": "redundant_repeat",
+  "confidence": "high",
+  "rationale": "The focal call retrieves no new content and is completely redundant."
+"#,
+        )
+        .expect("parser should close the object after a complete final rationale string");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "redundant_repeat".to_string(),
+                confidence: "high".to_string(),
+                rationale: "The focal call retrieves no new content and is completely redundant."
+                    .to_string(),
             }
         );
     }

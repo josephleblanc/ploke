@@ -129,6 +129,18 @@ Resume the same campaign only after all applicable checks are true:
 - Doctor or preflight checks cover the blocker if it can recur at setup time.
 - The worktree and campaign artifacts still point to the intended run.
 - Any non-blocking residual issue is filed separately as an alive bug.
+- If the repair changed code used by `prototype1-step`, remove stale build
+  artifacts in the campaign worktree before resuming, or rebuild the campaign
+  worktree binary. A safe pattern is:
+
+  ```bash
+  cargo clean
+  /home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-step --repo-root <campaign-worktree> --format json
+  ```
+
+  Run `cargo clean` from the stale campaign worktree, not from the source
+  checkout with the fresh fix. This deletes only build artifacts; do not delete
+  run evidence or campaign artifacts unless the user explicitly asks.
 
 Do not resume a campaign whose required persisted protocol/eval/oracle evidence
 has been classified invalid. Start a fresh campaign instead.
