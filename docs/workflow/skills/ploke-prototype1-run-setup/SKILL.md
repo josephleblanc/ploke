@@ -151,6 +151,9 @@ evidence is invalid or not admissible:
 
 - record the old campaign id, worktree, and stop reason in the operator report
   or active notes;
+- run `cargo clean` in the abandoned worktree before moving on if that worktree
+  has a local `target/`, so stale build artifacts do not consume disk or
+  influence later operator checks;
 - do not run another `prototype1-step` against that worktree;
 - do not patch readers or aggregate code just to make the old run pass;
 - choose a new campaign id and neutral seed branch;
