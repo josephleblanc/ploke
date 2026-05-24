@@ -462,6 +462,7 @@ impl InspectorOpenState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InspectorPanelSection {
     Identity,
+    RunReview,
     Roles,
     PatchGeneration,
     LlmCalls,
@@ -481,6 +482,7 @@ impl InspectorPanelSection {
     pub(crate) fn title(&self) -> &'static str {
         match self {
             Self::Identity => "Identity",
+            Self::RunReview => "Run Review",
             Self::Roles => "Roles",
             Self::PatchGeneration => "Patch Generation",
             Self::LlmCalls => "LLM Calls",
@@ -650,6 +652,16 @@ pub(crate) fn render_right_inspector(
                         } else {
                             kv(ui, "selection", "not_applicable");
                         }
+
+                        ui.separator();
+                        show_inspector_section_header(
+                            ui,
+                            "Run Review",
+                            InspectorPanelSection::RunReview,
+                            selection_ref,
+                            &mut actions,
+                        );
+                        render_run_review_for_graph(ui, graph, render_cache);
 
                         ui.separator();
                         show_inspector_section_header(
@@ -1084,6 +1096,272 @@ fn cached_kv_text(
         cached_label(ui, render_cache, key);
         cached_monospace_label(ui, render_cache, value);
     });
+}
+
+pub(crate) fn render_run_review_for_graph(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    render_cache: &mut InspectorRenderCache,
+) {
+    let review = graph.run_review_evidence();
+    if !review.is_available() {
+        cached_kv_text(ui, render_cache, "run review", "not_available");
+        return;
+    }
+
+    if let Some(closure) = review.closure {
+        cached_kv_id(
+            ui,
+            render_cache,
+            "closure state",
+            closure.source_path.to_str().unwrap_or("non_utf8_path"),
+        );
+        cached_kv_id(
+            ui,
+            render_cache,
+            "campaign",
+            closure.state.campaign_id.as_str(),
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "registry",
+            closure_status_label(&closure.state.registry.status).as_str(),
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "eval",
+            closure_status_label(&closure.state.eval.status).as_str(),
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "protocol",
+            closure_status_label(&closure.state.protocol.status).as_str(),
+        );
+        if let Some(model) = closure.state.config.model_id.as_deref() {
+            cached_kv_id(ui, render_cache, "model", model);
+        }
+        if let Some(provider) = closure.state.config.provider_slug.as_deref() {
+            cached_kv_id(ui, render_cache, "provider", provider);
+        }
+        cached_kv_usize(ui, render_cache, "instances", closure.state.instances.len());
+
+        for instance in closure.state.instances.iter().take(3) {
+            ui.separator();
+            cached_kv_id(ui, render_cache, "instance", instance.instance_id.as_str());
+            cached_kv_text(
+                ui,
+                render_cache,
+                "instance eval",
+                closure_status_label(&instance.eval_status).as_str(),
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "instance protocol",
+                closure_status_label(&instance.protocol_status).as_str(),
+            );
+            if let Some(counts) = instance.protocol_counts.as_ref() {
+                cached_kv_usize(ui, render_cache, "reviewed calls", counts.reviewed_calls);
+                cached_kv_usize(ui, render_cache, "total calls", counts.total_calls);
+                cached_kv_usize(ui, render_cache, "usable segments", counts.usable_segments);
+                cached_kv_usize(ui, render_cache, "total segments", counts.total_segments);
+            }
+        }
+        if closure.state.instances.len() > 3 {
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "more instances",
+                closure.state.instances.len() - 3,
+            );
+        }
+    }
+
+    if let Some(run_records) = review.run_records {
+        ui.separator();
+        ui.label(egui::RichText::new("Run Records").strong());
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "records",
+            run_records.summary.parsed_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "turns",
+            run_records.summary.total_turn_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "tool calls",
+            run_records.summary.total_tool_call_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "failed tool calls",
+            run_records.summary.failed_tool_call_count,
+        );
+
+        let patch = review.patch_stats();
+        cached_kv_usize(ui, render_cache, "patch phases", patch.patch_phase_count);
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "empty submissions",
+            patch.empty_submission_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "nonempty submissions",
+            patch.nonempty_submission_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "edit proposals",
+            patch.edit_proposal_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "create proposals",
+            patch.create_proposal_count,
+        );
+        render_count_map(
+            ui,
+            render_cache,
+            "patch projection",
+            &patch.patch_projection_states,
+        );
+
+        for (record_key, record) in run_records.index.iter().take(2) {
+            ui.separator();
+            cached_kv_id(ui, render_cache, "record", record_key.as_str());
+            cached_kv_id(ui, render_cache, "manifest", record.manifest_id.as_str());
+            cached_kv_id(
+                ui,
+                render_cache,
+                "instance",
+                record.metadata.benchmark.instance_id.as_str(),
+            );
+            if let Some(model) = record.metadata.agent.model_id.as_deref() {
+                cached_kv_id(ui, render_cache, "record model", model);
+            }
+            if let Some(provider) = record.metadata.agent.provider.as_deref() {
+                cached_kv_id(ui, render_cache, "record provider", provider);
+            }
+            if let Some(timing) = record.timing.as_ref() {
+                cached_kv_text(
+                    ui,
+                    render_cache,
+                    "wall clock",
+                    format!("{:.3}s", timing.total_wall_clock_secs).as_str(),
+                );
+                cached_kv_optional_f64(
+                    ui,
+                    render_cache,
+                    "agent clock",
+                    timing.agent_wall_clock_secs,
+                );
+            }
+            if let Some(packaging) = record.phases.packaging.as_ref() {
+                cached_kv_text(
+                    ui,
+                    render_cache,
+                    "submission",
+                    submission_artifact_state_label(packaging.submission_artifact_state),
+                );
+                cached_kv_text(
+                    ui,
+                    render_cache,
+                    "projection",
+                    patch_projection_check_state_label(packaging.patch_projection_check_state),
+                );
+            }
+        }
+        if run_records.index.len() > 2 {
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "more records",
+                run_records.index.len() - 2,
+            );
+        }
+    }
+
+    if let Some(protocol) = review.protocol_artifacts {
+        ui.separator();
+        ui.label(egui::RichText::new("Protocol").strong());
+        cached_kv_usize(ui, render_cache, "artifacts", protocol.summary.parsed_count);
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "intent segments",
+            protocol.summary.intent_segmentation_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "call reviews",
+            protocol.summary.review_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "segment reviews",
+            protocol.summary.segment_review_count,
+        );
+
+        let stats = review.protocol_review_stats();
+        render_count_map(ui, render_cache, "overall", &stats.overall);
+        render_count_map(ui, render_cache, "redundancy", &stats.redundancy);
+        render_count_map(ui, render_cache, "recoverability", &stats.recoverability);
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "issue cases",
+            stats.issue_detection_case_count,
+        );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "interventions",
+            stats.intervention_candidate_count,
+        );
+    }
+}
+
+fn render_count_map(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    prefix: &str,
+    counts: &BTreeMap<String, usize>,
+) {
+    if counts.is_empty() {
+        cached_kv_text(ui, render_cache, prefix, "none");
+        return;
+    }
+    for (label, count) in counts {
+        let row_label = format!("{prefix}.{label}");
+        cached_kv_usize(ui, render_cache, row_label.as_str(), *count);
+    }
+}
+
+fn closure_status_label<T>(value: &T) -> String
+where
+    T: serde::Serialize + std::fmt::Debug,
+{
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{value:?}"))
 }
 
 /// archaeology:runtime-role

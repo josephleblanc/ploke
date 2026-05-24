@@ -15,6 +15,7 @@ pub mod agent_turn;
 pub mod branch;
 pub mod channel;
 pub mod child_plan;
+pub mod closure;
 pub mod evaluation;
 pub mod history;
 pub mod identity;

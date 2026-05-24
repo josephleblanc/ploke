@@ -198,6 +198,13 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                             .show(ui, |ui| {
                                 if let Some(sections) = sections {
                                     match section {
+                                        shell::InspectorPanelSection::RunReview => {
+                                            shell::render_run_review_for_graph(
+                                                ui,
+                                                self.graph,
+                                                self.inspector_render_cache,
+                                            );
+                                        }
                                         shell::InspectorPanelSection::Identity => {
                                             shell::render_identity(
                                                 ui,

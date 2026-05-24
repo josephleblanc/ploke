@@ -13,6 +13,7 @@ pub enum RecordFamily {
     SchedulerNode,
     RunnerRequest,
     RunnerResult,
+    ClosureState,
     EvaluationArtifact,
     ProtocolArtifact,
     RunProfile,

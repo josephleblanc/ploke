@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use ploke_records::agent_turn::{AgentTurnArtifactRecord, ObservedTurnEventRecord};
 use ploke_records::child_plan::ChildPlanRecord;
+use ploke_records::closure::ClosureStateRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::invocation::InvocationRecord;
 use ploke_records::journal::JournalEntry;
@@ -25,6 +26,8 @@ pub struct PassiveEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_plans: Option<ChildPlanEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<ClosureEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluations: Option<EvaluationEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_artifacts: Option<ProtocolArtifactsEvidence>,
@@ -38,6 +41,13 @@ pub struct PassiveEvidence {
     pub agent_turns: Option<AgentTurnEvidence>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub attempt_runner_results: BTreeMap<String, RunnerResultRecord>,
+}
+
+/// Read-only typed evidence loaded from campaign `closure-state.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClosureEvidence {
+    pub source_path: std::path::PathBuf,
+    pub state: ClosureStateRecord,
 }
 
 /// Typed transition journal loaded in append order from `transition-journal.jsonl`.

@@ -18,15 +18,18 @@ pub use runtime::*;
 pub use selection::*;
 pub use warning::*;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use ploke_records::ids::ArtifactId;
 use ploke_records::invocation::{InvocationRecord, Role};
+use ploke_records::protocol::ArtifactBody;
+use ploke_records::run_record::SubmissionArtifactState;
+use serde::Serialize;
 
 use crate::{
-    AgentTurnRecordSet, BranchRunRecordRef, ProtocolArtifactsEvidence, RunAttemptEvidence,
-    RunRecordEvidence,
+    AgentTurnRecordSet, BranchRunRecordRef, ClosureEvidence, ProtocolArtifactsEvidence,
+    RunAttemptEvidence, RunRecordEvidence,
 };
 
 /// Immutable read-side graph assembled from one loaded Prototype 1 run.
@@ -108,6 +111,22 @@ impl Graph {
             .and_then(|forest| forest.passive_evidence.run_records.as_ref())
     }
 
+    /// Campaign closure state loaded beside the run root, when present.
+    pub fn closure(&self) -> Option<&ClosureEvidence> {
+        self.forest
+            .as_ref()
+            .and_then(|forest| forest.passive_evidence.closure.as_ref())
+    }
+
+    /// Baseline eval/protocol evidence view for run-review UI surfaces.
+    pub fn run_review_evidence(&self) -> RunReviewEvidence<'_> {
+        RunReviewEvidence {
+            closure: self.closure(),
+            run_records: self.run_records(),
+            protocol_artifacts: self.protocol_artifacts(),
+        }
+    }
+
     /// Baseline/treatment compressed run-record refs for one evaluation branch.
     pub fn run_record_refs_for_branch<'a>(
         &'a self,
@@ -183,4 +202,154 @@ impl Graph {
                     .is_some_and(|derived| derived == artifact_id)
         })
     }
+}
+
+/// Borrowed graph-level witness for run-review evidence.
+#[derive(Debug, Clone, Copy)]
+pub struct RunReviewEvidence<'g> {
+    pub closure: Option<&'g ClosureEvidence>,
+    pub run_records: Option<&'g RunRecordEvidence>,
+    pub protocol_artifacts: Option<&'g ProtocolArtifactsEvidence>,
+}
+
+impl<'g> RunReviewEvidence<'g> {
+    pub fn is_available(&self) -> bool {
+        self.closure.is_some() || self.run_records.is_some() || self.protocol_artifacts.is_some()
+    }
+
+    pub fn protocol_review_stats(&self) -> ProtocolReviewStats {
+        let mut stats = ProtocolReviewStats::default();
+        let Some(protocol_artifacts) = self.protocol_artifacts else {
+            return stats;
+        };
+
+        for artifact in protocol_artifacts.index.values() {
+            match &artifact.body {
+                ArtifactBody::ToolCallReview(payload) => {
+                    stats.call_review_count += 1;
+                    observe_protocol_labels(
+                        &mut stats,
+                        &payload.output.overall,
+                        &payload.output.redundancy.verdict,
+                        &payload.output.recoverability.verdict,
+                    );
+                }
+                ArtifactBody::ToolCallSegmentReview(payload) => {
+                    stats.segment_review_count += 1;
+                    observe_protocol_labels(
+                        &mut stats,
+                        &payload.output.overall,
+                        &payload.output.redundancy.verdict,
+                        &payload.output.recoverability.verdict,
+                    );
+                }
+                ArtifactBody::InterventionIssueDetection(payload) => {
+                    stats.issue_detection_count += 1;
+                    stats.issue_detection_case_count += payload.output.cases.len();
+                }
+                ArtifactBody::InterventionSynthesis(payload) => {
+                    stats.intervention_synthesis_count += 1;
+                    stats.intervention_candidate_count +=
+                        payload.output.candidate_set.candidates.len();
+                }
+                ArtifactBody::InterventionApply(_) => {
+                    stats.intervention_apply_count += 1;
+                }
+                ArtifactBody::ToolCallIntentSegmentation(_) => {}
+            }
+        }
+
+        stats
+    }
+
+    pub fn patch_stats(&self) -> RunReviewPatchStats {
+        let mut stats = RunReviewPatchStats::default();
+        let Some(run_records) = self.run_records else {
+            return stats;
+        };
+
+        for record in run_records.index.values() {
+            if record.phases.patch.is_some() {
+                stats.patch_phase_count += 1;
+            }
+            if let Some(packaging) = record.phases.packaging.as_ref() {
+                match packaging.submission_artifact_state {
+                    SubmissionArtifactState::Empty => stats.empty_submission_count += 1,
+                    SubmissionArtifactState::Nonempty => stats.nonempty_submission_count += 1,
+                    _ => {}
+                }
+                let label = serde_label(&packaging.patch_projection_check_state);
+                *stats.patch_projection_states.entry(label).or_default() += 1;
+            }
+
+            for turn in &record.phases.agent_turns {
+                let Some(artifact) = turn.agent_turn_artifact.as_ref() else {
+                    continue;
+                };
+                stats.agent_turn_patch_artifact_count += 1;
+                stats.edit_proposal_count += artifact.patch_artifact.edit_proposals.len();
+                stats.create_proposal_count += artifact.patch_artifact.create_proposals.len();
+                stats.expected_file_change_count +=
+                    artifact.patch_artifact.expected_file_changes.len();
+                if artifact.patch_artifact.applied {
+                    stats.applied_patch_artifact_count += 1;
+                }
+            }
+        }
+
+        stats
+    }
+}
+
+/// Aggregate protocol-review labels derived from persisted protocol artifacts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProtocolReviewStats {
+    pub call_review_count: usize,
+    pub segment_review_count: usize,
+    pub issue_detection_count: usize,
+    pub issue_detection_case_count: usize,
+    pub intervention_synthesis_count: usize,
+    pub intervention_candidate_count: usize,
+    pub intervention_apply_count: usize,
+    pub overall: BTreeMap<String, usize>,
+    pub redundancy: BTreeMap<String, usize>,
+    pub recoverability: BTreeMap<String, usize>,
+}
+
+/// Aggregate patch/submission facts derived from compressed run records.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunReviewPatchStats {
+    pub patch_phase_count: usize,
+    pub empty_submission_count: usize,
+    pub nonempty_submission_count: usize,
+    pub agent_turn_patch_artifact_count: usize,
+    pub edit_proposal_count: usize,
+    pub create_proposal_count: usize,
+    pub expected_file_change_count: usize,
+    pub applied_patch_artifact_count: usize,
+    pub patch_projection_states: BTreeMap<String, usize>,
+}
+
+fn observe_protocol_labels(
+    stats: &mut ProtocolReviewStats,
+    overall: &(impl Serialize + std::fmt::Debug),
+    redundancy: &(impl Serialize + std::fmt::Debug),
+    recoverability: &(impl Serialize + std::fmt::Debug),
+) {
+    *stats.overall.entry(serde_label(overall)).or_default() += 1;
+    *stats.redundancy.entry(serde_label(redundancy)).or_default() += 1;
+    *stats
+        .recoverability
+        .entry(serde_label(recoverability))
+        .or_default() += 1;
+}
+
+fn serde_label<T>(value: &T) -> String
+where
+    T: Serialize + std::fmt::Debug,
+{
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{value:?}"))
 }

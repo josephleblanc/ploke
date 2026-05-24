@@ -9,6 +9,7 @@ use ploke_records::agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord};
 use ploke_records::branch::{BranchLogBody, BranchLogRecord, Prototype1BranchRegistry};
 use ploke_records::channel::{Envelope, ToChild, ToParent};
 use ploke_records::child_plan::ChildPlanRecord;
+use ploke_records::closure::ClosureStateRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
 use ploke_records::history::{EntryPayloadRecord, SealedBlockRecord};
 use ploke_records::identity::ParentIdentityRecord;
@@ -32,11 +33,11 @@ use crate::{RunForest, assemble_run_forest};
 use super::{
     AgentTurnArtifactEvidence, AgentTurnEvidence, AgentTurnEvidenceSummary, AgentTurnRecordSet,
     BranchRegistryEvidence, BranchRunRecordRef, ChannelEvidence, ChildPlanEvidence,
-    ChildPlanSummary, ComparedRunArm, EvaluationArtifactSummary, EvaluationEvidence,
-    HistoryEvidence, JsonlEvidence, JsonlRecord, PassiveEvidence, ProtocolArtifactSummary,
-    ProtocolArtifactsEvidence, RunAttemptEvidence, RunAttemptSummary, RunForestInput,
-    RunProfileEvidence, RunRecordEvidence, RunRecordSet, RunRecordStats, RunRecordSummary,
-    RunRootSummary, TransitionJournal,
+    ChildPlanSummary, ClosureEvidence, ComparedRunArm, EvaluationArtifactSummary,
+    EvaluationEvidence, HistoryEvidence, JsonlEvidence, JsonlRecord, PassiveEvidence,
+    ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunAttemptEvidence, RunAttemptSummary,
+    RunForestInput, RunProfileEvidence, RunRecordEvidence, RunRecordSet, RunRecordStats,
+    RunRecordSummary, RunRootSummary, TransitionJournal,
 };
 
 /// Read-only filesystem loader for one Prototype 1 run root.
@@ -45,6 +46,7 @@ pub struct FsRunStore {
     run_root: PathBuf,
     parent_identity_path: Option<PathBuf>,
     protocol_artifacts_dirs: Vec<PathBuf>,
+    closure_state_path: Option<PathBuf>,
 }
 
 impl FsRunStore {
@@ -53,6 +55,7 @@ impl FsRunStore {
             run_root: run_root.into(),
             parent_identity_path: None,
             protocol_artifacts_dirs: Vec::new(),
+            closure_state_path: None,
         }
     }
 
@@ -84,6 +87,11 @@ impl FsRunStore {
     {
         self.protocol_artifacts_dirs
             .extend(paths.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_closure_state_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.closure_state_path = Some(path.into());
         self
     }
 
@@ -260,15 +268,18 @@ impl FsRunStore {
     }
 
     fn load_passive_evidence(&self) -> Result<PassiveEvidence, FsRunStoreError> {
+        let closure = self.load_closure_evidence()?;
         let evaluations = self.load_evaluation_evidence()?;
-        let run_records = self.load_run_record_evidence(evaluations.as_ref())?;
-        let protocol_artifacts = self.load_protocol_artifacts_evidence(evaluations.as_ref())?;
+        let run_records = self.load_run_record_evidence(evaluations.as_ref(), closure.as_ref())?;
+        let protocol_artifacts =
+            self.load_protocol_artifacts_evidence(evaluations.as_ref(), closure.as_ref())?;
         Ok(PassiveEvidence {
             branch_registry: self.load_branch_registry_evidence()?,
             transition_journal: self.load_transition_journal_evidence()?,
             history: self.load_history_evidence()?,
             channel_envelopes: self.load_channel_evidence()?,
             child_plans: self.load_child_plan_evidence()?,
+            closure,
             evaluations,
             protocol_artifacts,
             run_records,
@@ -277,6 +288,32 @@ impl FsRunStore {
             agent_turns: self.load_agent_turn_evidence()?,
             attempt_runner_results: self.load_attempt_runner_results()?,
         })
+    }
+
+    fn load_closure_evidence(&self) -> Result<Option<ClosureEvidence>, FsRunStoreError> {
+        for path in self.closure_state_candidates() {
+            if !path.is_file() {
+                continue;
+            }
+            let state = self.read_json::<ClosureStateRecord>(&path)?;
+            return Ok(Some(ClosureEvidence {
+                source_path: path,
+                state,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn closure_state_candidates(&self) -> Vec<PathBuf> {
+        let mut paths = BTreeSet::new();
+        if let Some(path) = &self.closure_state_path {
+            paths.insert(path.clone());
+        }
+        paths.insert(self.run_root.join("closure-state.json"));
+        if let Some(parent) = self.run_root.parent() {
+            paths.insert(parent.join("closure-state.json"));
+        }
+        paths.into_iter().collect()
     }
 
     fn load_branch_registry_evidence(
@@ -492,8 +529,9 @@ impl FsRunStore {
     fn load_protocol_artifacts_evidence(
         &self,
         evaluations: Option<&EvaluationEvidence>,
+        closure: Option<&ClosureEvidence>,
     ) -> Result<Option<ProtocolArtifactsEvidence>, FsRunStoreError> {
-        let dirs = self.protocol_artifact_dirs(evaluations);
+        let dirs = self.protocol_artifact_dirs(evaluations, closure);
         let mut summary = ProtocolArtifactSummary::default();
         let mut index = BTreeMap::new();
         let mut loaded_dir = false;
@@ -527,10 +565,27 @@ impl FsRunStore {
         Ok(Some(ProtocolArtifactsEvidence { summary, index }))
     }
 
-    fn protocol_artifact_dirs(&self, evaluations: Option<&EvaluationEvidence>) -> Vec<PathBuf> {
+    fn protocol_artifact_dirs(
+        &self,
+        evaluations: Option<&EvaluationEvidence>,
+        closure: Option<&ClosureEvidence>,
+    ) -> Vec<PathBuf> {
         let mut dirs = BTreeSet::new();
         dirs.insert(self.run_root.join("protocol-artifacts"));
         dirs.extend(self.protocol_artifacts_dirs.iter().cloned());
+
+        if let Some(closure) = closure {
+            for instance in &closure.state.instances {
+                if let Some(dir) = &instance.artifacts.protocol_artifacts_dir {
+                    dirs.insert(dir.clone());
+                }
+                if let Some(record_path) = &instance.artifacts.record_path {
+                    if let Some(run_dir) = record_path.parent() {
+                        dirs.insert(run_dir.join("protocol-artifacts"));
+                    }
+                }
+            }
+        }
 
         if let Some(evaluations) = evaluations {
             for evaluation in evaluations.index.values() {
@@ -556,41 +611,48 @@ impl FsRunStore {
     fn load_run_record_evidence(
         &self,
         evaluations: Option<&EvaluationEvidence>,
+        closure: Option<&ClosureEvidence>,
     ) -> Result<Option<RunRecordEvidence>, FsRunStoreError> {
-        let Some(evaluations) = evaluations else {
-            return Ok(None);
-        };
-
         let mut summary = RunRecordSummary::default();
         let mut index: BTreeMap<String, EvalRunRecord> = BTreeMap::new();
         let mut stats: BTreeMap<String, RunRecordStats> = BTreeMap::new();
         let mut refs_by_branch: BTreeMap<String, Vec<BranchRunRecordRef>> = BTreeMap::new();
 
-        for evaluation in evaluations.index.values() {
-            for compared in &evaluation.compared_instances {
-                if let Some(record_path) = compared.baseline_record_path.as_ref() {
-                    self.load_compared_run_record(
-                        &mut summary,
-                        &mut index,
-                        &mut stats,
-                        &mut refs_by_branch,
-                        &evaluation.branch_id,
-                        &compared.instance_id,
-                        ComparedRunArm::Baseline,
-                        record_path,
-                    )?;
+        if let Some(evaluations) = evaluations {
+            for evaluation in evaluations.index.values() {
+                for compared in &evaluation.compared_instances {
+                    if let Some(record_path) = compared.baseline_record_path.as_ref() {
+                        self.load_compared_run_record(
+                            &mut summary,
+                            &mut index,
+                            &mut stats,
+                            &mut refs_by_branch,
+                            &evaluation.branch_id,
+                            &compared.instance_id,
+                            ComparedRunArm::Baseline,
+                            record_path,
+                        )?;
+                    }
+                    if let Some(record_path) = compared.treatment_record_path.as_ref() {
+                        self.load_compared_run_record(
+                            &mut summary,
+                            &mut index,
+                            &mut stats,
+                            &mut refs_by_branch,
+                            &evaluation.branch_id,
+                            &compared.instance_id,
+                            ComparedRunArm::Treatment,
+                            record_path,
+                        )?;
+                    }
                 }
-                if let Some(record_path) = compared.treatment_record_path.as_ref() {
-                    self.load_compared_run_record(
-                        &mut summary,
-                        &mut index,
-                        &mut stats,
-                        &mut refs_by_branch,
-                        &evaluation.branch_id,
-                        &compared.instance_id,
-                        ComparedRunArm::Treatment,
-                        record_path,
-                    )?;
+            }
+        }
+
+        if let Some(closure) = closure {
+            for instance in &closure.state.instances {
+                if let Some(record_path) = instance.artifacts.record_path.as_ref() {
+                    self.load_run_record_file(&mut summary, &mut index, &mut stats, record_path)?;
                 }
             }
         }
@@ -618,32 +680,10 @@ impl FsRunStore {
         arm: ComparedRunArm,
         record_path: &Path,
     ) -> Result<(), FsRunStoreError> {
-        if !record_path.is_file() {
+        let Some(record_key) = self.load_run_record_file(summary, index, stats, record_path)?
+        else {
             return Ok(());
-        }
-
-        let record_key = run_record_key(record_path);
-        if !index.contains_key(&record_key) {
-            summary.file_count += 1;
-            let record =
-                read_compressed_record(record_path).map_err(|source| FsRunStoreError::Io {
-                    path: record_path.to_path_buf(),
-                    source,
-                })?;
-            summary.parsed_count += 1;
-            if record.phases.setup.is_some() {
-                summary.records_with_setup_count += 1;
-            }
-            if record.phases.packaging.is_some() {
-                summary.records_with_packaging_count += 1;
-            }
-            let record_stats = RunRecordStats::from_record(&record);
-            summary.total_turn_count += record_stats.turn_count;
-            summary.total_tool_call_count += record_stats.tool_call_count;
-            summary.failed_tool_call_count += record_stats.failed_tool_call_count;
-            stats.insert(record_key.clone(), record_stats);
-            index.insert(record_key.clone(), record);
-        }
+        };
 
         summary.branch_ref_count += 1;
         match arm {
@@ -662,6 +702,44 @@ impl FsRunStore {
             });
 
         Ok(())
+    }
+
+    fn load_run_record_file(
+        &self,
+        summary: &mut RunRecordSummary,
+        index: &mut BTreeMap<String, EvalRunRecord>,
+        stats: &mut BTreeMap<String, RunRecordStats>,
+        record_path: &Path,
+    ) -> Result<Option<String>, FsRunStoreError> {
+        if !record_path.is_file() {
+            return Ok(None);
+        }
+
+        let record_key = run_record_key(record_path);
+        if index.contains_key(&record_key) {
+            return Ok(Some(record_key));
+        }
+
+        summary.file_count += 1;
+        let record = read_compressed_record(record_path).map_err(|source| FsRunStoreError::Io {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+        summary.parsed_count += 1;
+        if record.phases.setup.is_some() {
+            summary.records_with_setup_count += 1;
+        }
+        if record.phases.packaging.is_some() {
+            summary.records_with_packaging_count += 1;
+        }
+        let record_stats = RunRecordStats::from_record(&record);
+        summary.total_turn_count += record_stats.turn_count;
+        summary.total_tool_call_count += record_stats.tool_call_count;
+        summary.failed_tool_call_count += record_stats.failed_tool_call_count;
+        stats.insert(record_key.clone(), record_stats);
+        index.insert(record_key.clone(), record);
+
+        Ok(Some(record_key))
     }
 
     fn load_run_profile_evidence(&self) -> Result<Option<RunProfileEvidence>, FsRunStoreError> {
@@ -1281,6 +1359,53 @@ mod tests {
         fs::remove_dir_all(root).expect("remove temp run");
     }
 
+    #[test]
+    fn load_record_set_loads_parent_closure_state() {
+        let root = temp_run_root("closure-parent");
+        let prototype = root.join("prototype1");
+        fs::create_dir_all(&prototype).expect("create prototype dir");
+        fs::write(
+            prototype.join("scheduler.json"),
+            minimal_scheduler_json().to_string(),
+        )
+        .expect("write scheduler");
+        fs::write(
+            root.join("closure-state.json"),
+            minimal_closure_state_json().to_string(),
+        )
+        .expect("write closure state");
+
+        let records = FsRunStore::new(&prototype)
+            .load_record_set()
+            .expect("load record set");
+        let closure = records
+            .forest_input
+            .passive_evidence
+            .closure
+            .as_ref()
+            .expect("closure evidence");
+
+        assert_eq!(closure.source_path, root.join("closure-state.json"));
+        assert_eq!(closure.state.campaign_id, "campaign-1");
+        assert_eq!(
+            closure.state.config.model_id.as_deref(),
+            Some("google/gemini")
+        );
+        assert_eq!(closure.state.registry.mapped_total, 1);
+        assert_eq!(closure.state.eval.complete_total, 1);
+        assert_eq!(closure.state.protocol.full_total, 1);
+        assert_eq!(closure.state.instances[0].instance_id, "repo__issue-1");
+        assert_eq!(
+            closure.state.instances[0]
+                .protocol_counts
+                .as_ref()
+                .map(|counts| counts.reviewed_calls),
+            Some(2)
+        );
+
+        fs::remove_dir_all(root).expect("remove temp run");
+    }
+
     fn temp_run_root(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1298,6 +1423,86 @@ mod tests {
             "campaign_id": "campaign-1",
             "updated_at": "2026-05-12T12:00:00Z",
             "nodes": []
+        })
+    }
+
+    fn minimal_closure_state_json() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "closure-state.v1",
+            "campaign_id": "campaign-1",
+            "updated_at": "2026-05-24T00:00:00Z",
+            "config": {
+                "benchmark_family": "multi_swe_bench_rust",
+                "model_id": "google/gemini",
+                "registry_path": "/tmp/registry.json",
+                "dataset_sources": [{
+                    "path": "/tmp/slice.jsonl",
+                    "label": "slice"
+                }],
+                "required_procedures": [
+                    "tool-call-intent-segments",
+                    "tool-call-review",
+                    "tool-call-segment-review"
+                ],
+                "instances_root": "/tmp/instances",
+                "batches_root": "/tmp/batches"
+            },
+            "registry": {
+                "expected_total": 1,
+                "mapped_total": 1,
+                "missing_total": 0,
+                "ambiguous_total": 0,
+                "status": "complete"
+            },
+            "eval": {
+                "expected_total": 1,
+                "complete_total": 1,
+                "failed_total": 0,
+                "missing_total": 0,
+                "partial_total": 0,
+                "in_progress_total": 0,
+                "status": "complete"
+            },
+            "protocol": {
+                "expected_total": 1,
+                "full_total": 1,
+                "partial_total": 0,
+                "failed_total": 0,
+                "missing_total": 0,
+                "incompatible_total": 0,
+                "ineligible_total": 0,
+                "in_progress_total": 0,
+                "status": "complete",
+                "required_procedures": [
+                    "tool-call-intent-segments",
+                    "tool-call-review",
+                    "tool-call-segment-review"
+                ],
+                "status_by_procedure": {}
+            },
+            "instances": [{
+                "instance_id": "repo__issue-1",
+                "dataset_label": "slice",
+                "repo_family": "repo",
+                "registry_status": "mapped",
+                "eval_status": "complete",
+                "protocol_status": "complete",
+                "artifacts": {
+                    "record_path": "/tmp/instances/repo__issue-1/record.json.gz",
+                    "protocol_artifacts_dir": "/tmp/protocol/repo__issue-1"
+                },
+                "protocol_procedures": {
+                    "tool-call-review": "complete"
+                },
+                "protocol_counts": {
+                    "total_calls": 2,
+                    "reviewed_calls": 2,
+                    "total_segments": 1,
+                    "usable_segments": 1,
+                    "mismatched_segments": 0,
+                    "missing_segments": 0
+                }
+            }]
         })
     }
 
