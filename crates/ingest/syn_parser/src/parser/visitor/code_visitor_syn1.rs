@@ -13,7 +13,6 @@ use super::attribute_processing_syn1::{
 };
 use super::state::VisitorState;
 use super::type_processing_syn1::get_or_create_type;
-use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::{FunctionNodeId, GenerateTypeId as _, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
 use crate::parser::nodes::{
@@ -91,7 +90,7 @@ use syn1::{
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
     visit::{self, Visit},
 };
-use tracing::{error, instrument, trace}; // Import error macro
+use tracing::{error, trace}; // Import error macro
 
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
@@ -103,11 +102,6 @@ const VISITOR_TARGET_STACK_TRACE: &str = "stack_trace";
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
         Self { state }
-    }
-
-    #[instrument(target = "validate_rels", skip(self))]
-    pub(crate) fn validate_unique_rels(&self) -> bool {
-        self.state.code_graph.validate_unique_rels()
     }
 
     // Process function arguments for syn1 compatibility
@@ -208,11 +202,6 @@ impl<'a> CodeVisitor<'a> {
     fn process_generics_syn1(&mut self, _generics: &syn1::Generics) -> Vec<GenericParamNode> {
         // TODO: Implement proper syn1 version
         Vec::new()
-    }
-
-    // Update return type to use SyntacticRelation
-    pub(crate) fn relations(&self) -> &[SyntacticRelation] {
-        self.state.code_graph.relations()
     }
 
     // Helper method to extract path segments from a use tree

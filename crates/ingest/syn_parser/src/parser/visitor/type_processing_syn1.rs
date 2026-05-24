@@ -1,5 +1,4 @@
 use super::state::VisitorState;
-use crate::parser::nodes::GenerateTypeId as _;
 use crate::parser::utils::convert_type_syn1_to_syn2;
 use ploke_core::TypeId;
 

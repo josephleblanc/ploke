@@ -65,9 +65,3 @@ pub(crate) fn extract_file_level_attributes(attrs: &[syn1::Attribute]) -> Vec<At
         .collect();
     super::attribute_processing::extract_file_level_attributes(&converted)
 }
-
-/// Parses cfg expression from inner tokens.
-/// This function is syn-independent and can be re-exported from attribute_processing.
-pub fn parse_cfg_expr_from_inner_tokens(inner: &str) -> Option<super::cfg_evaluator::CfgExpr> {
-    super::attribute_processing::parse_cfg_expr_from_inner_tokens(inner)
-}
