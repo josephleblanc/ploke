@@ -1341,11 +1341,22 @@ fn live_google_headless_tui_model_id() -> String {
 
 #[cfg(feature = "live_api_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "live Google provider test for the Prototype 1 broad headless-TUI attempt path"]
-async fn live_google_broad_headless_tui_attempt_applies_edit_from_published_request() {
-    // This is the ploke-eval broad harness execution surface:
-    // published request -> cli_facing runner -> tui_adapter -> ploke-tui llm_manager.
-    // Do not replace it with a direct ChatSession canary or selector-only test.
+#[ignore = "expected-failing counterexample for the unsupported Google Vertex broad headless-TUI path"]
+async fn xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_published_request() {
+    // regr:googlevertex:23-05-26_19-10
+    //
+    // This is intentionally tracked as a counterexample, not as proof of the
+    // supported Google route. It preserves the earlier endpoint experiment:
+    // ploke-eval published request -> cli_facing runner -> tui_adapter ->
+    // vanilla ploke-tui llm_manager -> Google router configured for the Vertex
+    // OpenAI-compatible/ADC path.
+    //
+    // Keep the supported Google path covered by the direct-Google registry,
+    // model-picker, session-loop, eval-router, and protocol tests. If we later
+    // decide to support this Vertex broad-headless endpoint path, remove the
+    // tracker row in docs/active/agents/expected-failing-regression-tests.md,
+    // rename/unignore this test, and make the assertions below the positive
+    // acceptance contract for that newly supported path.
     crate::test_support::install_default_google_route_env();
     let model_id = live_google_headless_tui_model_id();
     let options = BroadTuiAttemptOptions::from_cli(

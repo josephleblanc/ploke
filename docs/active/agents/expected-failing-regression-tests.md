@@ -18,7 +18,9 @@ Every tracked regression test should have a nearby source comment:
 
 ## Active Tracker
 
-No current expected-failing or bug-pinning regression tests are tracked.
+| Marker | Status | File path | Exact test name or command | Expected result | Removal or update condition |
+| --- | --- | --- | --- | --- | --- |
+| `regr:googlevertex:23-05-26_19-10` | expected-failing | `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs` | `cargo test -p ploke-eval xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_published_request -- --ignored --nocapture` | Expected to fail before producing an admissible edit. This is a live counterexample for the unsupported Google Vertex/OpenAI-compatible broad headless-TUI path, not proof of the supported direct-Google route. | If the project intentionally supports this endpoint path later, rename/unignore the test, make it pass as a positive canary, update `docs/active/plans/self-improvement-loop/google-api.md`, and move this row to resolved. |
 
 ## Resolved Handoff Rows
 
