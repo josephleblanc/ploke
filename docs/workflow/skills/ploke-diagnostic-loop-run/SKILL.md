@@ -30,7 +30,8 @@ trace reconstruction. If the diagnostic result is loop-blocking, switch to
   `ploke-run-review` for detailed trace work.
 - If a bounded step reveals a blocker, stop advancing the campaign and use
   `ploke-blocker-repair-loop` to capture evidence, reproduce the broken
-  contract, fix it, and verify the resume gate.
+  contract when appropriate, and decide whether the run can resume or must be
+  abandoned.
 - If live API behavior is required to verify a fix or blocker, do the live API
   call. Put any Rust test that performs the call behind the `live_api_tests`
   feature, and run that gated test explicitly instead of treating a local mock
@@ -56,6 +57,14 @@ Record the current phase and allowed actions. If doctor reports blockers,
 classify them before advancing. Continue only for non-blockers or explicit
 operator-owned environment exceptions; true loop blockers hand off to
 `ploke-blocker-repair-loop`.
+
+If the current run already contains invalid, malformed, contradictory, or
+unverifiable required protocol/eval/oracle evidence, do not keep stepping it.
+Treat that as a stop-and-abandon condition for the current campaign unless the
+user explicitly asks to inspect or repair the artifact store. The fresh-run
+goal is for the same transition to succeed on the first attempt under the
+current source/workflow, not for a later reader change to reinterpret the old
+run as successful.
 
 ### 2. Inspect The Admitted Configuration
 
@@ -175,8 +184,8 @@ Before reporting a verdict, produce or preserve a compact evidence receipt:
 - `tool_visibility`: whether model-facing tool output is known to be visible
 - `worktree_state`: clean/dirty and whether changes are expected
 - `failure_class`: one primary class from the taxonomy below
-- `blocker_decision`: non-blocker filed-and-continue, blocker repair, or
-  environment/operator handoff
+- `blocker_decision`: non-blocker filed-and-continue, repair-and-resume,
+  abandon-and-restart, or environment/operator handoff
 - `next_action`: exact safe next command or implementation/reporting task
 
 The receipt can live in chat for small checks. For durable discoveries, write or
@@ -200,6 +209,9 @@ Classify blockers precisely:
   truncated, stale, misleading, or incorrectly summarized payloads.
 - `artifact_accounting`: closure, trace summary, submission, patch projection,
   or protocol artifacts disagree.
+- `invalid_transition_evidence`: required protocol, eval, oracle, History, or
+  selection evidence was persisted but is malformed, contradictory,
+  unverifiable, or not admissible for the next transition.
 - `validation_surface`: the model or framework reports validation that is weak,
   unrelated, missing, or not model-visible.
 - `repo_state`: dirty worktree, wrong branch, missing checkout, stale worktree,
@@ -211,9 +223,10 @@ failure class.
 ## What To Promote
 
 Use the diagnostic result to improve the loop. Keep the branch decision explicit:
-non-blockers can be filed as alive bugs while the loop continues, but blockers
-move to `ploke-blocker-repair-loop` and stop campaign advancement until the
-reproduction and fix are verified.
+non-blockers can be filed as alive bugs while the loop continues. Blockers move
+to `ploke-blocker-repair-loop` and stop campaign advancement. If required
+persisted transition evidence is invalid, abandon the current run and start a
+fresh campaign after any setup/source guardrail is corrected.
 
 - Add or update a bug report when the same issue could recur.
 - Add a doctor/preflight check when the blocker is detectable before paid loop
@@ -222,6 +235,8 @@ reproduction and fix are verified.
 - Update `ploke-run-review` when the artifact-reading workflow discovers a new
   high-signal review pattern.
 - Update setup docs/skills when the fix is an operator workflow guardrail.
+- Start a fresh worktree/campaign when the blocker invalidates the current
+  transition evidence.
 
 Strong doctor-check candidates include provider auth presence, route/model
 compatibility, protocol reasoning policy, protocol max-token budget, artifact

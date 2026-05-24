@@ -10,7 +10,9 @@ model/provider selection, setup admission, doctor verification, and one bounded
 advance. Pair it with `ploke-run-review` once a run root exists and the question
 turns into "what actually happened?" If setup or the first bounded step exposes
 a loop-blocking defect, hand off to `ploke-blocker-repair-loop` before advancing
-the campaign again.
+the campaign again. If the previous campaign was abandoned because required
+transition evidence became invalid, use this skill to start a new worktree and
+campaign rather than trying to salvage the old one.
 
 ## Boundaries
 
@@ -24,6 +26,9 @@ the campaign again.
   continuous execution.
 - Do not run overlapping `prototype1-step`, `prototype1-continue`, or eval
   commands against the same campaign/worktree.
+- Do not reuse an abandoned campaign/worktree for loop progress. Leave it in
+  place as evidence unless the user asks for cleanup, and create a new campaign
+  id for the next run.
 
 ## Preflight
 
@@ -124,6 +129,25 @@ branch, deleting only the mistakenly created empty parent branch, and removing
 only the partial campaign directory from that failed attempt. Do not delete or
 rewrite older campaign artifacts without explicit user approval.
 
+## Fresh Run After Abandonment
+
+When a prior run is abandoned because required protocol/eval/oracle/History
+evidence is invalid or not admissible:
+
+- record the old campaign id, worktree, and stop reason in the operator report
+  or active notes;
+- do not run another `prototype1-step` against that worktree;
+- do not patch readers or aggregate code just to make the old run pass;
+- choose a new campaign id and neutral seed branch;
+- reuse the intended profile/model/provider policy only after re-reading the
+  current files;
+- run setup and doctor from the clean worktree, then take at most one bounded
+  step.
+
+The check we want from the next run is that the transition succeeds the first
+time under the current source and admitted profile. A stale invalid artifact
+from the abandoned run is not evidence of success.
+
 ## Verify Setup
 
 Build the binary in the new worktree so doctor suggestions are runnable from
@@ -175,8 +199,8 @@ Interpret the phase transition literally. For example, `baseline_eval` to
 
 If the step reveals a non-blocking defect, file or update an alive bug and keep
 the next command explicit. If it reveals a blocker, stop the run and switch to
-`ploke-blocker-repair-loop` to reproduce and repair the broken contract before
-resuming.
+`ploke-blocker-repair-loop` to decide whether the current run can resume or
+must be abandoned and replaced with a fresh worktree/campaign.
 
 ## Immediate Post-Step Checks
 

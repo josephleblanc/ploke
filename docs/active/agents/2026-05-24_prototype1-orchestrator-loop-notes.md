@@ -318,3 +318,34 @@ Action:
 - Next action is a blocker-repair pass with a local regression around protocol
   artifact loading/aggregate planning. Do not run another live protocol step
   until this path is repaired or clearly diagnosed.
+
+## Note 10: Abandon Current Run Instead Of Salvaging Invalid State
+
+Time: 2026-05-24 11:20 UTC
+
+Operator correction:
+
+- The current segmentation-anchor issue should not be repaired as a way to
+  continue the same worktree/campaign.
+- The Prototype 1 loop is a self-editing harness, so required transition
+  evidence must be cleanly admissible when produced.
+- If required protocol evidence becomes invalid, an attempt to advance should
+  block the current run. The next operational move is a fresh worktree/campaign,
+  not changing readers so the old run can continue.
+
+Action:
+
+- Closed the blocker-repair sub-agent and removed its partial local source
+  edit.
+- Updated the diagnostic/setup/blocker skills to distinguish
+  repair-and-resume from abandon-and-restart.
+- Reclassified
+  `docs/active/bugs/2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md`
+  as an abandoned-run blocker.
+
+Next action:
+
+- Do not run another `prototype1-step` against
+  `p1-gemini35-flash-multigen-2g3x3-20260523-223658`.
+- Start a fresh Gemini 3.5 Flash worktree/campaign after re-reading the current
+  profile/model/provider files.

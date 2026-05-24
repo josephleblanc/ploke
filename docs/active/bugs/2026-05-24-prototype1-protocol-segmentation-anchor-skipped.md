@@ -1,6 +1,6 @@
 # Prototype 1 Protocol Segmentation Anchor Skipped
 
-Status: open blocker for the Gemini 3.5 Flash Prototype 1 diagnostic loop.
+Status: abandoned-run blocker; do not continue this campaign for loop progress.
 
 ## Summary
 
@@ -15,6 +15,14 @@ provider call, created no new protocol artifact, and received another malformed
 segmentation response. The malformed response is a symptom of the bad retry; the
 primary contract failure is that a stored segmentation anchor is either not
 aggregate-usable or not reported as an actionable diagnostic.
+
+Operator decision recorded 2026-05-24: do not repair this run into success by
+changing the reader/aggregate path after invalid protocol state exists. This is
+related to the state-transition and History model in
+`crates/ploke-eval/src/cli/prototype1_state/history.rs`: invalid required
+transition evidence must block admission. The correct loop action is to abandon
+this worktree/campaign as a progress source and start a fresh run where
+segmentation succeeds on the first attempt.
 
 ## Evidence
 
@@ -98,8 +106,8 @@ that causes repeat live segmentation calls:
 - if a stored segmentation artifact is valid, the aggregate loader should use it
   as the anchor and plan follow-up review;
 - if the stored artifact is invalid, identity-mismatched, or shape-skipped, the
-  status/plan output should report that diagnostic and block repair instead of
-  presenting the run as ready to re-segment.
+  status/plan output should report that diagnostic and stop the current run
+  instead of presenting it as ready to re-segment.
 
 The current split is misleading:
 
@@ -127,33 +135,34 @@ The relevant paths are:
   - `protocol_run_plan`
   - `protocol_state_for_run`
 
-## Reproduction Direction
+## Future Guardrail Direction
 
-Add a local regression that demonstrates the planner does not re-run
-segmentation when an existing stored segmentation is present but cannot be used
-as the aggregate anchor.
+If this becomes source work, add a local regression that demonstrates the
+planner does not re-run segmentation when an existing stored segmentation is
+present but cannot be used as the aggregate anchor.
 
-Good reproductions would include one of:
+Good future guardrail tests would include one of:
 
 - a stored segmentation artifact that decodes and validates, proving
   `load_protocol_aggregate_from_artifacts` can use the current artifact shape as
   the anchor;
 - a stored segmentation artifact that is unloaded, identity-mismatched, or
-  skipped, proving `protocol_run_plan` surfaces a diagnostic blocker instead of
-  returning `segmentation_needed = true`.
+  skipped, proving `protocol_run_plan` surfaces a diagnostic stop condition
+  instead of returning `segmentation_needed = true`.
 
-The repair should avoid another live provider call as part of the reproduction.
+Any such guardrail should avoid another live provider call as part of the
+reproduction, and should not make this old run admissible after the fact.
 
-## Fix Direction
+## Workflow Direction
 
-Prefer the smallest authority-bearing fix:
+For this concrete run:
 
-- make the aggregate loader accept the persisted segmentation artifact shape if
-  the artifact is valid; or
-- make the planner/status path preserve unloaded/skipped artifact diagnostics
-  and refuse to re-segment when raw stored status already sees a segmentation
-  artifact that aggregate loading cannot use.
+- keep the old artifacts as evidence;
+- do not run another `prototype1-step` against this campaign;
+- do not patch aggregate loading to reinterpret this run as success;
+- start a fresh worktree/campaign using the same intended model/profile policy
+  after re-reading the current files.
 
 Do not paper over this by only broadening malformed JSON recovery. JSON recovery
-can be a secondary resilience improvement, but it does not address why the loop
-retried segmentation after a persisted segmentation already existed.
+can be a secondary resilience improvement for future runs, but it does not make
+this persisted transition admissible.

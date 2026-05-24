@@ -1,13 +1,14 @@
 ---
 name: ploke-blocker-repair-loop
-description: Use this skill when a Prototype 1 or ploke-eval diagnostic step, run review, replay, doctor check, or protocol run finds a blocker that should stop the loop and be turned into a reproducing step/replay/protocol/doctor regression before fixing and resuming.
+description: Use this skill when a Prototype 1 or ploke-eval diagnostic step, run review, replay, doctor check, or protocol run finds a blocker that should stop the loop, preserve evidence, and either become a reproducing regression before a fresh run or mark the current run abandoned when its persisted state is invalid.
 ---
 
 # Ploke Blocker Repair Loop
 
-Use this skill when the loop hits a blocker. It is the stop-and-repair branch of
-the diagnostic workflow: preserve the evidence, reproduce the broken contract,
-fix the cause, verify the reproduction, then resume the run.
+Use this skill when the loop hits a blocker. It is the stop branch of the
+diagnostic workflow: preserve the evidence, classify whether the current run can
+be trusted, then either repair the source/workflow before a fresh run or resume
+only when the persisted run state is still valid.
 
 ## Decision Gate
 
@@ -17,7 +18,7 @@ issue before doing more loop work.
 - Non-blocker: file or update an alive bug, note the residual risk, and continue
   the loop if the next step can still produce trustworthy evidence.
 - Blocker: stop advancing the campaign. Do not keep producing run artifacts until
-  there is a reproducing test or replay and the fix has been verified.
+  the disposition is clear.
 
 Treat an issue as a blocker when any of these are true:
 
@@ -29,6 +30,28 @@ Treat an issue as a blocker when any of these are true:
 - A provider, route, request-shape, tool-contract, or artifact-accounting failure
   blocks the current run target.
 - A reported success does not prove the intended semantic operation happened.
+
+There are two blocker dispositions:
+
+- Repair-and-resume: use only when the persisted campaign state is still
+  trustworthy and the broken contract is in code, configuration, environment, or
+  an idempotent preflight. Add a reproduction, fix the source/workflow, verify,
+  then resume the same campaign.
+- Abandon-and-restart: use when the run has already admitted or persisted
+  invalid, malformed, contradictory, or unverifiable evidence for a required
+  loop transition. Do not patch readers to reinterpret that run into success.
+  Keep the evidence, mark the run/worktree as abandoned for loop purposes, fix
+  any source/workflow guardrail if one is needed, and start a fresh worktree and
+  campaign.
+
+Default to abandon-and-restart for invalid required protocol/eval/oracle
+artifacts in a self-editing Prototype 1 run. This follows the History model in
+`crates/ploke-eval/src/cli/prototype1_state/history.rs`: the loop is a
+state-transition system over self-editing artifacts, and invalid transition
+evidence must stop admission instead of being salvaged by a later reader change.
+The goal is to make reward-hacking paths hard to admit: a candidate should not
+benefit from corrupt or ambiguous evidence that only becomes acceptable after
+the controller changes its interpretation.
 
 If the blocker is external environment state only, record that directly and stop
 or hand off to the operator. Do not invent a code regression test for a condition
@@ -47,6 +70,8 @@ Before editing code, record the exact evidence surface.
   compact and evidence-backed.
 - Do not mutate active run artifacts unless the user explicitly asks for repair
   of the artifact store itself.
+- For abandon-and-restart blockers, record that the old campaign/worktree is a
+  stop-use evidence source. Do not delete it unless the user explicitly asks.
 
 ## Reproduction Ladder
 
@@ -70,13 +95,19 @@ Live provider calls are allowed only when the relevant test or command is gated
 behind `live_api_tests` or an explicit live-test opt-in, and the blocker cannot be
 validated with local replay alone.
 
+Do not write a regression whose effect is to make invalid persisted transition
+evidence acceptable for the same run. If a regression is needed after an
+abandon-and-restart decision, it should prove that the next fresh run succeeds,
+that invalid state is blocked with a clear diagnostic, or that setup/doctor
+detects the bad condition before paid loop work.
+
 ## Repair Loop
 
 1. Name the broken contract in one sentence.
 2. Add or update a bug report under `docs/active/bugs/` with the run evidence and
-   intended reproduction surface.
-3. Write the failing reproduction first, using the step, replay, protocol, or
-   doctor surface selected above.
+   intended disposition: repair-and-resume or abandon-and-restart.
+3. For repair-and-resume, write the failing reproduction first, using the step,
+   replay, protocol, or doctor surface selected above.
 4. Run the reproduction and capture the failure signal.
 5. Implement the smallest fix at the authority-bearing layer.
 6. Re-run the reproduction, then the focused tests for the touched crate or
@@ -84,15 +115,23 @@ validated with local replay alone.
 7. Update the bug report and any run-review note with the fix status, remaining
    risk, and exact resume command.
 
+For abandon-and-restart, skip current-run source salvage unless there is a
+separate local bug that will affect the fresh run. Update the bug report and
+orchestrator notes, then create a new worktree/campaign using
+`ploke-prototype1-run-setup`.
+
 ## Resume Gate
 
-Resume the loop only after all applicable checks are true:
+Resume the same campaign only after all applicable checks are true:
 
 - The reproducing test or replay now passes.
 - The admitted route, model, and protocol configuration match the intended run.
 - Doctor or preflight checks cover the blocker if it can recur at setup time.
 - The worktree and campaign artifacts still point to the intended run.
 - Any non-blocking residual issue is filed separately as an alive bug.
+
+Do not resume a campaign whose required persisted protocol/eval/oracle evidence
+has been classified invalid. Start a fresh campaign instead.
 
 ## Report Shape
 
@@ -102,6 +141,7 @@ Use this shape when reporting back:
 Blocker:
 Broken contract:
 Evidence:
+Disposition:
 Reproduction:
 Fix:
 Verification:
