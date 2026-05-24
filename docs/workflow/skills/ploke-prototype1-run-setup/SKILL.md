@@ -63,6 +63,7 @@ Resolve route and provider before setup:
 
 ```bash
 ./target/debug/ploke-eval model find <model-stem>
+./target/debug/ploke-eval model refresh
 ./target/debug/ploke-eval model providers <model-id>
 ./target/debug/ploke-eval model current
 ./target/debug/ploke-eval model parent-patcher current
@@ -71,10 +72,16 @@ Resolve route and provider before setup:
 
 Rules:
 
-- For direct Google rows, use the direct Google route and do not pin an
-  OpenRouter provider.
+- For direct Google rows, use `--route-source direct-google` and do not pin an
+  OpenRouter provider. Passing `--provider google` is acceptable when a command
+  accepts it as the explicit direct-Google sentinel; it should resolve to no
+  stored provider slug.
 - For OpenRouter catalog rows such as `google/gemini-3.5-flash`, pin a concrete
   OpenRouter provider such as `google-ai-studio` if the run should be stable.
+- If the intended route is direct Google and the registry row is missing or
+  still shows OpenRouter provenance, refresh the model registry and re-check the
+  row before setup. Do not substitute `--route-source openrouter` plus an
+  OpenRouter provider pin unless the user explicitly chooses an OpenRouter run.
 - If `prototype1-continue` has no per-command model override, set both active
   model and parent-patcher model before running:
 
@@ -104,14 +111,33 @@ checkout binary for setup if the new worktree does not have `target/debug` yet:
   --campaign <campaign> \
   --profile <profile-path> \
   --model-id <model-id> \
+  --route-source <direct-google|openrouter> \
   --provider <provider-slug> \
   --protocol-model-id <model-id> \
+  --protocol-route-source <direct-google|openrouter> \
   --protocol-provider <provider-slug> \
   --format json
 ```
 
-For direct Google, omit the OpenRouter provider pin unless the command contract
-requires `--provider google` for that route.
+For direct Google, use the route explicitly and omit the OpenRouter provider
+pin:
+
+```bash
+/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-setup \
+  --campaign <campaign> \
+  --profile <profile-path> \
+  --model-id <model-id> \
+  --route-source direct-google \
+  --provider google \
+  --protocol-model-id <model-id> \
+  --protocol-route-source direct-google \
+  --protocol-provider google \
+  --format json
+```
+
+After setup and before any step, inspect the admitted campaign or closure state.
+If the actual `route_source` does not match the intended route, abandon that
+campaign/worktree as setup-invalid and start another fresh one.
 
 Expected setup effects:
 

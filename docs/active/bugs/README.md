@@ -81,3 +81,5 @@ file and current code before treating a report as still open.
   Prototype 1 baseline protocol blocks when Gemini returns a complete intent-segmentation JSON object followed by an extra top-level closing brace.
 - [`2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md`](./2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md)
   Prototype 1 protocol status can see a stored segmentation artifact while aggregate planning skips the anchor and retries live segmentation.
+- [`2026-05-24-prototype1-eval-complete-after-aborted-turn.md`](./2026-05-24-prototype1-eval-complete-after-aborted-turn.md)
+  Prototype 1 baseline eval can export a patch and mark closure complete even when the terminal agent turn aborted without a final assistant message.

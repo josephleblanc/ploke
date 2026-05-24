@@ -349,3 +349,47 @@ Next action:
   `p1-gemini35-flash-multigen-2g3x3-20260523-223658`.
 - Start a fresh Gemini 3.5 Flash worktree/campaign after re-reading the current
   profile/model/provider files.
+
+## Note 11: First Fresh Attempt Abandoned For Wrong Route And Aborted Eval
+
+Time: 2026-05-24 21:02 UTC
+
+Fresh attempt:
+
+- Campaign: `p1-gemini35-flash-multigen-fresh-20260524-112232`.
+- Worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-multigen-fresh-20260524-112232`.
+- Model: `google/gemini-3.5-flash`.
+
+What happened:
+
+- Workspace gate passed before setup.
+- Setup and doctor succeeded mechanically.
+- A bounded `prototype1-step` moved doctor from `baseline_eval` to
+  `baseline_protocol`, and closure marked eval complete.
+- The campaign was actually admitted with `route_source = open_router`, not the
+  intended direct-Google route.
+- The recorded agent turn ended `aborted` after an OpenRouter HTTP 402
+  credit/token-limit error; the raw provider body is sensitive and should not be
+  quoted.
+- The exported patch is non-empty but only adds an unused helper in
+  `crates/printer/src/util.rs`; the original callsite remains unchanged.
+- Focused target checks pass only because the helper is unused:
+  `cargo check -p grep-printer`, `cargo test -p grep-printer`, and
+  `cargo fmt -- --check`.
+
+Interpretation:
+
+- This worktree/campaign is abandoned as setup-invalid for the direct-Google
+  lane and invalid as clean eval evidence.
+- Filed
+  `docs/active/bugs/2026-05-24-prototype1-eval-complete-after-aborted-turn.md`.
+- Updated setup/diagnostic skills so future operators refresh/verify model
+  route provenance and check terminal turn outcome before treating a patch as
+  clean eval completion.
+
+Next action:
+
+- Start another fresh campaign with explicit `--route-source direct-google`
+  after the refreshed registry shows `google/gemini-3.5-flash` as
+  `direct_google`.

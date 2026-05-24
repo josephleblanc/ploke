@@ -164,8 +164,16 @@ If a run root exists, collect:
 - `execution-log.json`;
 - `benchmark-patch-projection.json`;
 - `multi-swe-bench-submission.jsonl`;
+- `agent-turn-summary.json`, at least `terminal_record.outcome`,
+  `terminal_record.summary`, and whether `final_assistant_message` is present;
 - `final_report.json` or other MBE/oracle artifacts, if configured;
 - `record.json.gz` and trace sidecars for later run review.
+
+If the terminal record says the agent turn was aborted, or if there is no final
+assistant message, do not treat a non-empty patch projection as a clean eval
+success. Classify this as `artifact_accounting` or
+`invalid_transition_evidence`, write the evidence down, and stop before
+advancing protocol.
 
 ## Evidence Receipt
 
@@ -208,7 +216,7 @@ Classify blockers precisely:
 - `tool_contract`: tool calls completed mechanically but returned useless,
   truncated, stale, misleading, or incorrectly summarized payloads.
 - `artifact_accounting`: closure, trace summary, submission, patch projection,
-  or protocol artifacts disagree.
+  terminal turn outcome, or protocol artifacts disagree.
 - `invalid_transition_evidence`: required protocol, eval, oracle, History, or
   selection evidence was persisted but is malformed, contradictory,
   unverifiable, or not admissible for the next transition.
