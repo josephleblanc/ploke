@@ -77,3 +77,5 @@ file and current code before treating a report as still open.
   Fixed in source: Prototype 1 protocol adjudication now carries admitted reasoning policy instead of unconditionally disabling reasoning; recheck the original run with the live doctor preflight.
 - [`2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md`](./2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md)
   `prototype1-doctor --live-protocol-preflight` can falsely block reasoning-mandatory models because its 64-token canary budget is consumed by hidden reasoning before sentinel JSON is returned.
+- [`2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md`](./2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md)
+  Prototype 1 baseline protocol blocks when Gemini returns a complete intent-segmentation JSON object followed by an extra top-level closing brace.

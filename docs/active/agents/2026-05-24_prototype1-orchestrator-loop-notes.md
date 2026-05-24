@@ -161,3 +161,93 @@ Next action:
 - Unblock the loop operator task and resume with the current main-checkout
   binary. Do not use the stale worktree-local
   `./target/debug/ploke-eval` from the older campaign worktree.
+
+## Note 5: Loop Operator Resumed After Repair
+
+Time: 2026-05-24 10:46 UTC
+
+Board action:
+
+- Resolved blocker `protocol-reasoning-stale-worktree` with evidence from the
+  fixed live preflight.
+- Reactivated `loop-operator-step` for worker `loop-operator`.
+- Regenerated `.orchestrator/workers/loop-operator.md`.
+
+Source checkpoint:
+
+- Committed the live-preflight repair and notes as
+  `be08adce Fix live protocol preflight canary budget`.
+
+Dispatch:
+
+- Spawned loop-operator sub-agent `019e5997-81ec-72d3-8905-097a83d92ba0`.
+- Scope is one bounded Prototype 1 step against campaign
+  `p1-gemini35-flash-multigen-2g3x3-20260523-223658`.
+- The operator was explicitly instructed to use the current main-checkout
+  binary through `cargo run -p ploke-eval -- ...`, not the stale worktree-local
+  binary.
+
+## Note 6: Protocol Segmentation Trailing-Characters Blocker
+
+Time: 2026-05-24 10:51 UTC
+
+Loop result:
+
+- The operator ran doctor, one bounded step, and doctor again with the current
+  main-checkout binary.
+- Doctor before and after reported `phase = baseline_protocol` and
+  `blockers = []`.
+- The step exited nonzero with no protocol progress:
+  `segmentations = 0`, `call_reviews = 0`, `segment_reviews = 0`.
+
+Failure:
+
+- `tool_call_intent_segmentation` failed with
+  `failed to parse json response: trailing characters at line 62 column 1`.
+- The provider response was HTTP 200 and contained a complete segmentation JSON
+  object followed by an extra top-level closing brace.
+
+Board action:
+
+- Blocked `loop-operator-step` on
+  `protocol-segmentation-json-trailing-characters`.
+- Filed
+  `docs/active/bugs/2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md`.
+
+Next action:
+
+- Hand off to blocker repair for a protocol-level regression and the smallest
+  parser or retry-classification fix. Do not run another loop step until the
+  reproduction passes and the Gemini campaign is rechecked.
+
+## Note 7: Protocol Trailing-Brace Parser Repair Verified
+
+Time: 2026-05-24 11:35 UTC
+
+Repair:
+
+- `parse_protocol_json_content` now recovers a complete root JSON object prefix
+  only when the trailing suffix is non-empty and contains only redundant closing
+  braces plus whitespace.
+- The parser still rejects non-brace trailing text and non-object roots with
+  trailing braces, so arbitrary malformed provider output is not accepted as
+  success.
+
+Verification:
+
+- `cargo test -p ploke-protocol parse_protocol_json_content_ -- --nocapture`
+- `cargo test -p ploke-protocol parse_protocol_json_content_ -- --nocapture`
+  passed with 7 tests after the object-root narrowing.
+- `cargo test -p ploke-protocol` passed with 19 tests plus doc tests.
+- `cargo fmt --all` completed.
+
+Resume command:
+
+```text
+cargo run -p ploke-eval -- loop prototype1-step \
+  --repo-root /home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-multigen-2g3x3-20260523-223658 \
+  --format json
+```
+
+Use the current source checkout binary via `cargo run -p ploke-eval`; do not use
+the stale campaign worktree-local `./target/debug/ploke-eval`.

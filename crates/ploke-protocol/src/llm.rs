@@ -291,6 +291,12 @@ fn parse_protocol_json_content_once<T: DeserializeOwned>(content: &str) -> Resul
     match serde_json::from_str::<T>(content) {
         Ok(parsed) => Ok(parsed),
         Err(original_err) => {
+            if let Some(parsed) = parse_protocol_json_with_redundant_trailing_braces(content)
+                .map_err(|_| original_err.to_string())?
+            {
+                return Ok(parsed);
+            }
+
             let mut value: Value =
                 serde_json::from_str(content).map_err(|_| original_err.to_string())?;
 
@@ -301,6 +307,36 @@ fn parse_protocol_json_content_once<T: DeserializeOwned>(content: &str) -> Resul
             serde_json::from_value::<T>(value).map_err(|err| err.to_string())
         }
     }
+}
+
+fn parse_protocol_json_with_redundant_trailing_braces<T: DeserializeOwned>(
+    content: &str,
+) -> Result<Option<T>, String> {
+    let mut stream = serde_json::Deserializer::from_str(content).into_iter::<Value>();
+    let mut value = stream
+        .next()
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "missing root json value".to_string())?;
+    let suffix = &content[stream.byte_offset()..];
+
+    if !is_redundant_trailing_brace_suffix(suffix) {
+        return Ok(None);
+    }
+
+    if !value.is_object() {
+        return Ok(None);
+    }
+
+    normalize_protocol_json_aliases(&mut value);
+    serde_json::from_value::<T>(value)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
+fn is_redundant_trailing_brace_suffix(suffix: &str) -> bool {
+    let trimmed = suffix.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|ch| ch == '}')
 }
 
 fn repair_unterminated_final_rationale(content: &str, detail: &str) -> Option<String> {
@@ -534,6 +570,22 @@ mod tests {
         overall_rationale: String,
     }
 
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct SegmentLike {
+        start_index: usize,
+        end_index: usize,
+        status: String,
+        label: String,
+        confidence: String,
+        rationale: String,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct SegmentationLike {
+        segments: Vec<SegmentLike>,
+        overall_rationale: String,
+    }
+
     #[test]
     fn parse_protocol_json_content_recovers_capitalized_rationale_key() {
         let parsed = parse_protocol_json_content::<ReviewLike>(
@@ -598,6 +650,47 @@ mod tests {
                 rationale: "model swallowed the closing brace.".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_recovers_redundant_trailing_root_brace() {
+        let parsed = parse_protocol_json_content::<SegmentationLike>(
+            r#"{"segments":[{"start_index":0,"end_index":0,"status":"labeled","label":"locate_target","confidence":"high","rationale":"x"}],"overall_rationale":"ok"}}"#,
+        )
+        .expect("parser should recover one complete root object before a redundant trailing brace");
+
+        assert_eq!(
+            parsed,
+            SegmentationLike {
+                segments: vec![SegmentLike {
+                    start_index: 0,
+                    end_index: 0,
+                    status: "labeled".to_string(),
+                    label: "locate_target".to_string(),
+                    confidence: "high".to_string(),
+                    rationale: "x".to_string(),
+                }],
+                overall_rationale: "ok".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_rejects_non_brace_trailing_text() {
+        let err = parse_protocol_json_content::<SegmentationLike>(
+            r#"{"segments":[{"start_index":0,"end_index":0,"status":"labeled","label":"locate_target","confidence":"high","rationale":"x"}],"overall_rationale":"ok"} trailing text"#,
+        )
+        .expect_err("parser should not recover arbitrary trailing text");
+
+        assert!(format!("{err}").contains("trailing characters"));
+    }
+
+    #[test]
+    fn parse_protocol_json_content_rejects_non_object_root_with_trailing_brace() {
+        let err = parse_protocol_json_content::<Vec<String>>(r#"["ok"]}"#)
+            .expect_err("parser should only recover object-shaped protocol payloads");
+
+        assert!(format!("{err}").contains("trailing characters"));
     }
 
     #[test]
