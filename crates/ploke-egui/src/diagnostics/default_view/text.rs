@@ -72,6 +72,13 @@ impl Report<'_> {
         );
         let _ = writeln!(
             out,
+            "eval protocol: closure={}, run_records={}, protocol_artifacts={}",
+            self.eval_protocol.closure.as_str(),
+            self.eval_protocol.run_records.as_str(),
+            self.eval_protocol.protocol_artifacts.as_str()
+        );
+        let _ = writeln!(
+            out,
             "center: mode={}, nodes={}, edges={}, hidden_edges={}, synthetic_anchors_visible={}",
             self.center.mode,
             self.center.visible_node_count,

@@ -2,8 +2,8 @@ use ploke_records::evaluation::PatchProjectionCheckState;
 use ploke_records::protocol::ArtifactBody;
 use ploke_records::run_record::SubmissionArtifactState;
 use ploke_tree::{
-    graph::EvalProtocolEvidence, ClosureEvidence, ProtocolArtifactSummary,
-    ProtocolArtifactsEvidence, RunRecordEvidence, RunRecordSummary,
+    ClosureEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunRecordEvidence,
+    RunRecordSummary, graph::EvalProtocolEvidence,
 };
 
 pub(crate) struct EvalProtocolDashboard<'g> {
@@ -22,6 +22,7 @@ impl<'g> EvalProtocolDashboard<'g> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn evidence(&self) -> EvalProtocolEvidence<'g> {
         self.evidence
     }
@@ -31,7 +32,9 @@ impl<'g> EvalProtocolDashboard<'g> {
     }
 
     pub(crate) fn is_available(&self) -> bool {
-        self.evidence.is_available()
+        self.availability.closure == EvidenceState::Available
+            || self.availability.run_records == EvidenceState::Available
+            || self.availability.protocol_artifacts == EvidenceState::Available
     }
 
     pub(crate) fn closure(&self) -> Option<&'g ClosureEvidence> {
@@ -223,6 +226,7 @@ pub(crate) struct ProtocolAggregateCounts {
 pub(crate) enum EvidenceState {
     Available,
     Missing,
+    #[allow(dead_code)]
     NotApplicable,
 }
 

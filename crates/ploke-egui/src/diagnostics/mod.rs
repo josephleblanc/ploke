@@ -19,7 +19,9 @@ use crate::ui::inspector::SelectionInspector;
 use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphSelectionDetail, GraphViewDiagnostics};
 pub use default_view::{
-    CheckStatus as ContractCheckStatus, ComponentBreakdown, Layout as DefaultViewLayout,
+    CheckStatus as ContractCheckStatus, ComponentBreakdown,
+    EvalProtocolEvidence as DefaultViewEvalProtocolEvidence,
+    EvidenceStatus as ContractEvidenceStatus, Layout as DefaultViewLayout,
     Report as DefaultViewContractReport, WidthBudget as DefaultViewWidthBudget,
 };
 pub use graph_identity::GraphIdentity;
@@ -100,6 +102,7 @@ pub struct SnapshotObservation<'a> {
     pub artifact_components: Vec<ComponentBreakdown>,
     pub graph_has_content: bool,
     pub hide_unconsidered_children: bool,
+    pub eval_protocol: DefaultViewEvalProtocolEvidence,
     pub run_error: Option<String>,
     pub run: Option<RunSnapshot>,
     pub graph_identity: Option<GraphIdentity>,
@@ -112,6 +115,7 @@ impl<'a> SnapshotObservation<'a> {
         Self {
             graph_has_content: diagnostics.node_count > 0,
             hide_unconsidered_children: false,
+            eval_protocol: DefaultViewEvalProtocolEvidence::default(),
             diagnostics,
             artifact_components: Vec::new(),
             run_error: None,
@@ -134,6 +138,11 @@ impl<'a> SnapshotObservation<'a> {
 
     pub fn with_hide_unconsidered_children(mut self, hide: bool) -> Self {
         self.hide_unconsidered_children = hide;
+        self
+    }
+
+    pub fn with_eval_protocol_from_graph(mut self, graph: &ploke_tree::Graph) -> Self {
+        self.eval_protocol = DefaultViewEvalProtocolEvidence::from_graph(graph);
         self
     }
 
@@ -257,6 +266,7 @@ impl<'a> Snapshot<'a> {
             artifact_components,
             graph_has_content,
             hide_unconsidered_children,
+            eval_protocol,
             run_error,
             run,
             graph_identity,
@@ -269,6 +279,7 @@ impl<'a> Snapshot<'a> {
             hide_unconsidered_children,
             run_error,
             graph_identity,
+            eval_protocol,
             selected,
             selected_inspector,
             artifact_components,
@@ -957,6 +968,58 @@ mod tests {
     }
 
     #[test]
+    fn default_view_contract_reports_eval_protocol_availability_from_graph() {
+        let graph = graph_with_passive_evidence(ploke_tree::PassiveEvidence {
+            run_records: Some(ploke_tree::RunRecordEvidence::default()),
+            protocol_artifacts: Some(ploke_tree::ProtocolArtifactsEvidence::default()),
+            ..ploke_tree::PassiveEvidence::default()
+        });
+
+        let snapshot = Snapshot::from_observation(
+            1,
+            SnapshotObservation::new(diagnostics()).with_eval_protocol_from_graph(&graph),
+        );
+        let report = &snapshot.default_view_contract;
+
+        assert_eq!(report.schema_version, "ploke-egui.default-view-contract.v2");
+        let not_applicable_json = serde_json::to_string(&DefaultViewEvalProtocolEvidence {
+            closure: ContractEvidenceStatus::NotApplicable,
+            run_records: ContractEvidenceStatus::Missing,
+            protocol_artifacts: ContractEvidenceStatus::Available,
+        })
+        .expect("serialize eval/protocol evidence status");
+        assert!(not_applicable_json.contains("\"closure\":\"not_applicable\""));
+
+        assert_eq!(
+            report.eval_protocol.closure,
+            ContractEvidenceStatus::Missing
+        );
+        assert_eq!(
+            report.eval_protocol.run_records,
+            ContractEvidenceStatus::Available
+        );
+        assert_eq!(
+            report.eval_protocol.protocol_artifacts,
+            ContractEvidenceStatus::Available
+        );
+
+        let statuses = report
+            .checks
+            .iter()
+            .map(|check| (check.id.as_str(), check.status))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            statuses["eval-protocol-evidence-reported"],
+            ContractCheckStatus::Passed
+        );
+
+        let text = snapshot.render_text();
+        assert!(text.contains(
+            "eval protocol: closure=missing, run_records=available, protocol_artifacts=available"
+        ));
+    }
+
+    #[test]
     fn default_view_contract_text_names_failed_checks() {
         let mut diagnostics = diagnostics();
         diagnostics.mode = GraphViewMode::Lineage;
@@ -1080,6 +1143,29 @@ mod tests {
             root: SurfaceRootRecord {
                 hash: HistoryHash(value.to_owned()),
             },
+        }
+    }
+
+    fn graph_with_passive_evidence(
+        passive_evidence: ploke_tree::PassiveEvidence,
+    ) -> ploke_tree::Graph {
+        ploke_tree::Graph {
+            forest: Some(ploke_tree::RunForest {
+                campaign: ploke_tree::CampaignRef {
+                    campaign_id: "campaign".to_owned(),
+                    updated_at: "now".to_owned(),
+                },
+                roots: Vec::new(),
+                nodes: Vec::new(),
+                lanes: ploke_tree::Lanes {
+                    frontier: Vec::new(),
+                    completed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                passive_evidence,
+                diagnostics: Vec::new(),
+            }),
+            ..ploke_tree::Graph::default()
         }
     }
 }

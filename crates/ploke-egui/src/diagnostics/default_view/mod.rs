@@ -6,13 +6,14 @@ mod text;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{GraphIdentity, SelectionSnapshot};
+use crate::ui::eval_protocol::{EvalProtocolAvailability, EvalProtocolDashboard, EvidenceState};
 use crate::ui::inspector::SelectionInspectorSnapshot;
 use crate::ui::view::{GraphViewDiagnostics, artifact_tree as tree};
 
 pub use components::ComponentBreakdown;
 pub use layout::{Layout, WidthBudget};
 
-const VERSION: &str = "ploke-egui.default-view-contract.v1";
+const VERSION: &str = "ploke-egui.default-view-contract.v2";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Report<'a> {
@@ -20,6 +21,7 @@ pub struct Report<'a> {
     pub layout: Layout,
     pub graph_identity: Option<GraphIdentity>,
     pub controls: Controls,
+    pub eval_protocol: EvalProtocolEvidence,
     pub center: ArtifactTree,
     pub inspector: Inspector<'a>,
     pub timeline: Timeline,
@@ -33,6 +35,7 @@ impl<'a> Report<'a> {
         hide_unconsidered_children: bool,
         run_error: Option<String>,
         graph_identity: Option<GraphIdentity>,
+        eval_protocol: EvalProtocolEvidence,
         selected: Option<SelectionSnapshot<'a>>,
         selected_inspector: Option<SelectionInspectorSnapshot<'a>>,
         component_breakdown: Vec<ComponentBreakdown>,
@@ -66,17 +69,86 @@ impl<'a> Report<'a> {
             spans_reported: true,
             order_strength_reported: true,
         };
-        let checks = checks::build(&layout, &controls, &center, &inspector, &timeline);
+        let checks = checks::build(
+            &layout,
+            &controls,
+            &eval_protocol,
+            &center,
+            &inspector,
+            &timeline,
+        );
 
         Self {
             schema_version: VERSION.to_owned(),
             layout,
             graph_identity,
             controls,
+            eval_protocol,
             center,
             inspector,
             timeline,
             checks,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvalProtocolEvidence {
+    pub closure: EvidenceStatus,
+    pub run_records: EvidenceStatus,
+    pub protocol_artifacts: EvidenceStatus,
+}
+
+impl EvalProtocolEvidence {
+    pub(crate) fn from_graph(graph: &ploke_tree::Graph) -> Self {
+        Self::from(EvalProtocolDashboard::from_graph(graph).availability())
+    }
+}
+
+impl Default for EvalProtocolEvidence {
+    fn default() -> Self {
+        Self {
+            closure: EvidenceStatus::Missing,
+            run_records: EvidenceStatus::Missing,
+            protocol_artifacts: EvidenceStatus::Missing,
+        }
+    }
+}
+
+impl From<EvalProtocolAvailability> for EvalProtocolEvidence {
+    fn from(value: EvalProtocolAvailability) -> Self {
+        Self {
+            closure: value.closure.into(),
+            run_records: value.run_records.into(),
+            protocol_artifacts: value.protocol_artifacts.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    Available,
+    Missing,
+    NotApplicable,
+}
+
+impl EvidenceStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Missing => "missing",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+impl From<EvidenceState> for EvidenceStatus {
+    fn from(value: EvidenceState) -> Self {
+        match value {
+            EvidenceState::Available => Self::Available,
+            EvidenceState::Missing => Self::Missing,
+            EvidenceState::NotApplicable => Self::NotApplicable,
         }
     }
 }

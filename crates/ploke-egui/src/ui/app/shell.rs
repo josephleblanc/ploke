@@ -4,25 +4,25 @@ use eframe::egui;
 use std::collections::BTreeMap;
 
 use crate::ui::app::layout::INSPECTOR_MARGIN_INNER;
-use crate::ui::eval_protocol::{EvalProtocolDashboard, PatchProjectionCounts};
+use crate::ui::eval_protocol::{EvalProtocolDashboard, EvidenceState, PatchProjectionCounts};
 use crate::ui::id_display;
 use crate::ui::id_display::{InteractiveId, ShortId, TraceId};
 use crate::ui::inspector::{
-    find_run_forest_node, phase_label, response_finish_reason_label, result_class_label,
-    run_forest_node_identity, surface_apply_status_label, surface_check_status_label,
-    tool_execution_name, tool_execution_status_label, tool_execution_summary,
-    turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label, turn_outcome_tool_count,
     ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, PatchInspection,
     RoleBadgeSet, RunRecordInspection, RunRecordSlot, RunRecordTurnInspection, SelectionEdge,
-    SourceRef, UnavailableReason,
+    SourceRef, UnavailableReason, find_run_forest_node, phase_label, response_finish_reason_label,
+    result_class_label, run_forest_node_identity, surface_apply_status_label,
+    surface_check_status_label, tool_execution_name, tool_execution_status_label,
+    tool_execution_summary, turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label,
+    turn_outcome_tool_count,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
 #[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
-use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
 use ploke_tree::Graph;
+use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1111,6 +1111,26 @@ pub(crate) fn render_eval_protocol_for_graph(
         return;
     }
 
+    let availability = dashboard.availability();
+    cached_kv_text(
+        ui,
+        render_cache,
+        "closure evidence",
+        evidence_state_label(availability.closure),
+    );
+    cached_kv_text(
+        ui,
+        render_cache,
+        "run record evidence",
+        evidence_state_label(availability.run_records),
+    );
+    cached_kv_text(
+        ui,
+        render_cache,
+        "protocol evidence",
+        evidence_state_label(availability.protocol_artifacts),
+    );
+
     if let Some(closure) = dashboard.closure() {
         cached_kv_id(
             ui,
@@ -1188,8 +1208,20 @@ pub(crate) fn render_eval_protocol_for_graph(
         cached_kv_optional_usize(
             ui,
             render_cache,
+            "record files",
+            dashboard.run_records_file_count(),
+        );
+        cached_kv_optional_usize(
+            ui,
+            render_cache,
             "records",
             dashboard.run_records_parsed_count(),
+        );
+        cached_kv_optional_usize(
+            ui,
+            render_cache,
+            "branch refs",
+            dashboard.run_records_branch_ref_count(),
         );
         cached_kv_optional_usize(
             ui,
@@ -1311,6 +1343,12 @@ pub(crate) fn render_eval_protocol_for_graph(
         cached_kv_optional_usize(
             ui,
             render_cache,
+            "artifact files",
+            dashboard.protocol_artifacts_file_count(),
+        );
+        cached_kv_optional_usize(
+            ui,
+            render_cache,
             "artifacts",
             dashboard.protocol_artifacts_parsed_count(),
         );
@@ -1381,6 +1419,14 @@ fn render_patch_projection_counts(
     cached_kv_usize(ui, render_cache, "patch projection.passed", counts.passed);
     cached_kv_usize(ui, render_cache, "patch projection.failed", counts.failed);
     cached_kv_usize(ui, render_cache, "patch projection.not_run", counts.not_run);
+}
+
+fn evidence_state_label(state: EvidenceState) -> &'static str {
+    match state {
+        EvidenceState::Available => "available",
+        EvidenceState::Missing => "missing",
+        EvidenceState::NotApplicable => "not_applicable",
+    }
 }
 
 fn closure_status_label<T>(value: &T) -> String
@@ -2257,11 +2303,7 @@ fn score_profile_label(profile: ploke_records::selection::ScoreProfile) -> &'sta
 }
 
 fn bool_label(value: bool) -> &'static str {
-    if value {
-        "true"
-    } else {
-        "false"
-    }
+    if value { "true" } else { "false" }
 }
 
 fn outcome_label(outcome: ploke_records::selection::Outcome) -> &'static str {
@@ -2934,10 +2976,10 @@ mod tests {
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
 
-    use crate::benchmark::{load_graph_with_startup_profile, StartupProfile, STANDARD_RUN_ROOT};
+    use crate::benchmark::{STANDARD_RUN_ROOT, StartupProfile, load_graph_with_startup_profile};
     use crate::ui::diff::PatchDiffCache;
     use crate::ui::inspector::{
-        default_selections, GraphRevision, InspectorCache, SelectionInspector,
+        GraphRevision, InspectorCache, SelectionInspector, default_selections,
     };
     use crate::ui::view::GraphSelectionRef;
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};

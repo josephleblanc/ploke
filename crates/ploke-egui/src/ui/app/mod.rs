@@ -645,6 +645,7 @@ impl OperatorApp {
             .with_run_error(self.run_error.clone())
             .with_run(run)
             .with_graph_identity(graph_identity)
+            .with_eval_protocol_from_graph(&self.graph)
             .with_selected(selected.as_ref())
             .with_selected_inspector(selected_inspector)
             .with_artifact_components(artifact_component_breakdown(&self.graph));
@@ -701,6 +702,7 @@ impl OperatorApp {
                 .with_run_error(self.run_error.clone())
                 .with_run(run)
                 .with_graph_identity(graph_identity)
+                .with_eval_protocol_from_graph(&self.graph)
                 .with_selected(selected.as_ref())
                 .with_selected_inspector(selected_inspector)
                 .with_artifact_components(artifact_component_breakdown(&self.graph));

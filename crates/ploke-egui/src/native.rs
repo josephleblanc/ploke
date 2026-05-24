@@ -326,6 +326,7 @@ fn print_contract_report(
         )
         .with_run(run)
         .with_graph_identity(graph_identity)
+        .with_eval_protocol_from_graph(graph)
         .with_artifact_components(artifact_component_breakdown(graph));
     let snapshot = Snapshot::from_observation(1, observation);
     print!("{}", snapshot.render_text());

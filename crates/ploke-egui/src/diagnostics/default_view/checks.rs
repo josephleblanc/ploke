@@ -1,10 +1,14 @@
 use crate::ui::view::GraphViewMode;
 
-use super::{ArtifactTree, Check, CheckStatus, Controls, Inspector, Layout, LoadState, Timeline};
+use super::{
+    ArtifactTree, Check, CheckStatus, Controls, EvalProtocolEvidence, Inspector, Layout, LoadState,
+    Timeline,
+};
 
 pub(super) fn build(
     layout: &Layout,
     controls: &Controls,
+    eval_protocol: &EvalProtocolEvidence,
     center: &ArtifactTree,
     inspector: &Inspector<'_>,
     timeline: &Timeline,
@@ -95,6 +99,18 @@ pub(super) fn build(
                 "mode_selector_present={}",
                 controls.mode_selector_present
             )],
+        ),
+        check(
+            "eval-protocol-evidence-reported",
+            CheckStatus::Passed,
+            vec![
+                format!("closure={}", eval_protocol.closure.as_str()),
+                format!("run_records={}", eval_protocol.run_records.as_str()),
+                format!(
+                    "protocol_artifacts={}",
+                    eval_protocol.protocol_artifacts.as_str()
+                ),
+            ],
         ),
         check(
             "non-empty-artifact-run-renders-nodes",
