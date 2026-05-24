@@ -30,8 +30,11 @@ information and whether the run advanced toward a patch or oracle result.
    - semantic usefulness of returned payloads
 5. Drill into suspicious calls before drawing conclusions.
 6. Extract positive examples and candidate LLM-adjudication signals.
-7. Write or update the run review in `docs/active/agents/run-reviews/`.
-8. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+7. Classify action items as non-blockers or blockers. File or update alive bugs
+   for non-blockers while the loop continues; blockers hand off to
+   `ploke-blocker-repair-loop` before the campaign advances again.
+8. Write or update the run review in `docs/active/agents/run-reviews/`.
+9. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
 
 ## Required Distinctions
 
@@ -127,3 +130,5 @@ where the model had enough information to act.
 - Say when a result is mechanically complete but benchmark-useless.
 - Say when protocol completed but was not a semantic success auditor.
 - Keep action items tied to observed gaps in artifacts or tooling.
+- When the review finds a blocker, name the broken contract and point to
+  `ploke-blocker-repair-loop` instead of only listing another follow-up.

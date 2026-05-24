@@ -8,7 +8,9 @@ description: Use this skill when setting up or advancing a fresh Prototype 1 `pl
 Use this skill for the operator side of a Prototype 1 run: fresh worktree,
 model/provider selection, setup admission, doctor verification, and one bounded
 advance. Pair it with `ploke-run-review` once a run root exists and the question
-turns into "what actually happened?"
+turns into "what actually happened?" If setup or the first bounded step exposes
+a loop-blocking defect, hand off to `ploke-blocker-repair-loop` before advancing
+the campaign again.
 
 ## Boundaries
 
@@ -171,6 +173,11 @@ After it exits, run doctor again:
 Interpret the phase transition literally. For example, `baseline_eval` to
 `baseline_protocol` means eval completed and protocol has not run yet.
 
+If the step reveals a non-blocking defect, file or update an alive bug and keep
+the next command explicit. If it reveals a blocker, stop the run and switch to
+`ploke-blocker-repair-loop` to reproduce and repair the broken contract before
+resuming.
+
 ## Immediate Post-Step Checks
 
 Before giving a verdict, check:
@@ -207,6 +214,9 @@ Once a run root exists, use `ploke-run-review` for the detailed answer. Pass it:
 - target checkout
 - whether protocol has run
 - any direct verification commands already run
+
+If that review identifies a blocker rather than an ordinary follow-up, use
+`ploke-blocker-repair-loop` for the repair pass.
 
 Keep the final setup answer compact:
 

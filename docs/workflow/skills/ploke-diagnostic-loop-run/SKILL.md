@@ -11,7 +11,8 @@ Use this skill to operate a Prototype 1 loop as a diagnostic cycle:
 advance one bounded phase, read the durable artifacts, classify the result, and
 leave a clear next action. Pair it with `ploke-prototype1-run-setup` before a
 fresh campaign exists and with `ploke-run-review` once a run root needs deeper
-trace reconstruction.
+trace reconstruction. If the diagnostic result is loop-blocking, switch to
+`ploke-blocker-repair-loop` before advancing the campaign again.
 
 ## Boundaries
 
@@ -27,6 +28,9 @@ trace reconstruction.
   code/docs/skill/bug-report work is needed in the source checkout.
 - If a run root exists and the user asks "what actually happened?", switch to
   `ploke-run-review` for detailed trace work.
+- If a bounded step reveals a blocker, stop advancing the campaign and use
+  `ploke-blocker-repair-loop` to capture evidence, reproduce the broken
+  contract, fix it, and verify the resume gate.
 - If live API behavior is required to verify a fix or blocker, do the live API
   call. Put any Rust test that performs the call behind the `live_api_tests`
   feature, and run that gated test explicitly instead of treating a local mock
@@ -48,8 +52,10 @@ git worktree list
 ./target/debug/ploke-eval closure status --campaign <campaign> --format json
 ```
 
-Record the current phase and allowed actions. If doctor reports blockers, do not
-advance until the blockers are understood or the user explicitly accepts them.
+Record the current phase and allowed actions. If doctor reports blockers,
+classify them before advancing. Continue only for non-blockers or explicit
+operator-owned environment exceptions; true loop blockers hand off to
+`ploke-blocker-repair-loop`.
 
 ### 2. Inspect The Admitted Configuration
 
@@ -169,6 +175,8 @@ Before reporting a verdict, produce or preserve a compact evidence receipt:
 - `tool_visibility`: whether model-facing tool output is known to be visible
 - `worktree_state`: clean/dirty and whether changes are expected
 - `failure_class`: one primary class from the taxonomy below
+- `blocker_decision`: non-blocker filed-and-continue, blocker repair, or
+  environment/operator handoff
 - `next_action`: exact safe next command or implementation/reporting task
 
 The receipt can live in chat for small checks. For durable discoveries, write or
@@ -202,12 +210,15 @@ failure class.
 
 ## What To Promote
 
-Use the diagnostic result to improve the loop:
+Use the diagnostic result to improve the loop. Keep the branch decision explicit:
+non-blockers can be filed as alive bugs while the loop continues, but blockers
+move to `ploke-blocker-repair-loop` and stop campaign advancement until the
+reproduction and fix are verified.
 
-- Add or update a bug report when the same blocker could recur.
+- Add or update a bug report when the same issue could recur.
 - Add a doctor/preflight check when the blocker is detectable before paid loop
   work.
-- Add a regression test when the failure is local and reproducible.
+- Add a regression test when the blocker is local and reproducible.
 - Update `ploke-run-review` when the artifact-reading workflow discovers a new
   high-signal review pattern.
 - Update setup docs/skills when the fix is an operator workflow guardrail.
