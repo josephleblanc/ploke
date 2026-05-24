@@ -25,3 +25,7 @@ state without checking newer code, History records, and run artifacts.
   Follow-up review after the baseline protocol step failed, separating the
   usable eval submission and cargo-learning trace from the current protocol
   segmentation JSON trailing-characters blocker.
+- [`2026-05-24-p1-gemini35-flash-direct-profile-20260524-151353-eval.md`](2026-05-24-p1-gemini35-flash-direct-profile-20260524-151353-eval.md)
+  Focused eval-step review for the direct Google Gemini 3.5 Flash run, covering
+  thought-signature preservation, tool-call ledger parity, patch/submission
+  output, cargo visibility, weak final validation, and adjudication fields.
