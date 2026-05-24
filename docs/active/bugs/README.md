@@ -79,3 +79,5 @@ file and current code before treating a report as still open.
   `prototype1-doctor --live-protocol-preflight` can falsely block reasoning-mandatory models because its 64-token canary budget is consumed by hidden reasoning before sentinel JSON is returned.
 - [`2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md`](./2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md)
   Prototype 1 baseline protocol blocks when Gemini returns a complete intent-segmentation JSON object followed by an extra top-level closing brace.
+- [`2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md`](./2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md)
+  Prototype 1 protocol status can see a stored segmentation artifact while aggregate planning skips the anchor and retries live segmentation.

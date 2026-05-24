@@ -278,3 +278,43 @@ Interpretation:
   segmentation failure for the live Gemini campaign.
 - The loop is not complete yet; the next safe action is another bounded
   protocol step to produce one of the remaining required procedure artifacts.
+
+## Note 9: Stored Segmentation Not Aggregate-Usable
+
+Time: 2026-05-24 11:08 UTC
+
+Loop result:
+
+- The next bounded protocol step exited 1 and created no new protocol artifacts.
+- Closure remained `registry = complete`, `eval = complete`,
+  `protocol = partial`.
+- `tool-call-intent-segments` remained complete; `tool-call-review` and
+  `tool-call-segment-review` remained missing.
+
+Important status contradiction:
+
+```text
+artifact_count = 1
+segmentation_present = true
+aggregate_available = false
+next_step = intent_segmentation
+```
+
+Interpretation:
+
+- The loop should not have retried live intent segmentation while a stored
+  segmentation artifact already existed.
+- The failed retry produced another malformed segmentation response, but that is
+  a symptom. The higher-signal blocker is that the aggregate/planner path either
+  cannot use the stored segmentation anchor or fails to report why it cannot use
+  it.
+
+Action:
+
+- Blocked `loop-operator-protocol-step-2` as
+  `protocol-segmentation-anchor-skipped`.
+- Filed
+  `docs/active/bugs/2026-05-24-prototype1-protocol-segmentation-anchor-skipped.md`.
+- Next action is a blocker-repair pass with a local regression around protocol
+  artifact loading/aggregate planning. Do not run another live protocol step
+  until this path is repaired or clearly diagnosed.
