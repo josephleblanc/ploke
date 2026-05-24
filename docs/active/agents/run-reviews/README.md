@@ -29,3 +29,7 @@ state without checking newer code, History records, and run artifacts.
   Focused eval-step review for the direct Google Gemini 3.5 Flash run, covering
   thought-signature preservation, tool-call ledger parity, patch/submission
   output, cargo visibility, weak final validation, and adjudication fields.
+- [`2026-05-24-p1-gemini35-flash-direct-fresh-20260524-163447-eval.md`](2026-05-24-p1-gemini35-flash-direct-fresh-20260524-163447-eval.md)
+  Eval-step review for the fresh direct Google Gemini 3.5 Flash run, covering
+  the non-empty but behaviorally incomplete patch, hidden apply failure,
+  cargo-scope mismatch, empty successful reads, and adjudication candidates.
