@@ -8,6 +8,7 @@ pub mod app;
 pub(crate) mod charts;
 pub mod dashboard;
 pub(crate) mod diff;
+pub(crate) mod eval_protocol;
 pub(crate) mod id_display;
 pub mod inspector;
 pub(crate) mod text;

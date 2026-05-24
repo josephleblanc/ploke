@@ -69,3 +69,5 @@ file and current code before treating a report as still open.
   Prototype 1 baseline protocol can block when Direct Google returns truncated intent-segmentation JSON before a protocol artifact is persisted.
 - [`2026-05-22-prototype1-successor-history-sealed-block-verification.md`](./2026-05-22-prototype1-successor-history-sealed-block-verification.md)
   `p1-google-live-run-20260521-4` produced and evaluated applied children, then failed successor startup because the sealed History block did not verify before storage.
+- [`2026-05-24-request-code-context-silent-stale-snippet-skip.md`](./2026-05-24-request-code-context-silent-stale-snippet-skip.md)
+  `request_code_context` can silently omit stale snippets under non-strict RAG IO instead of surfacing a tool-level stale-index failure.
