@@ -26,7 +26,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command as ProcessCommand, ExitCode},
     sync::Arc,
     time::Duration,
 };
@@ -42,7 +42,78 @@ use clap::Parser;
 const EMBEDDING_MODELS_URL: &str = "https://openrouter.ai/api/v1/embeddings/models";
 const EMBEDDING_MODELS_FIXTURE: &str = "fixtures/openrouter/embeddings_models.json";
 const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.json";
+const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+const MODELS_JSON_RAW: &str = "crates/ploke-tui/data/models/all_raw.json";
+const MODELS_JSON_RAW_PRETTY: &str = "crates/ploke-tui/data/models/all_raw_pretty.json";
+const MODELS_TXT_IDS: &str = "crates/ploke-tui/data/models/all_ids_parsed.txt";
+const MODELS_JSON_ARCH: &str = "crates/ploke-tui/data/models/all_arch_parsed.json";
+const MODELS_JSON_TOP: &str = "crates/ploke-tui/data/models/all_top_parsed.json";
+const MODELS_JSON_PRICING: &str = "crates/ploke-tui/data/models/all_pricing_parsed.json";
+const GOOGLE_MODELS_JSON_RAW: &str = "crates/ploke-tui/data/models/google_raw.json";
+const GOOGLE_MODELS_JSON_PARSED: &str = "crates/ploke-tui/data/models/google_parsed.json";
+const GOOGLE_MODELS_TXT_IDS: &str = "crates/ploke-tui/data/models/google_ids_parsed.txt";
+const GOOGLE_MODELS_JSON_ARCH: &str = "crates/ploke-tui/data/models/google_arch_parsed.json";
+const GOOGLE_MODELS_JSON_TOP: &str = "crates/ploke-tui/data/models/google_top_parsed.json";
+const GOOGLE_MODELS_JSON_PRICING: &str = "crates/ploke-tui/data/models/google_pricing_parsed.json";
+const GITHUB_FIXTURE_SERDE_REPO_URL: &str = "https://github.com/serde-rs/serde.git";
+const GITHUB_FIXTURE_SERDE_REF: &str = "fa7da4a93567ed347ad0735c28e439fca688ef26";
+const GITHUB_FIXTURE_SERDE_DIR: &str = "tests/fixture_github_clones/corpus/serde";
+const GITHUB_FIXTURE_SERDE_MANIFEST: &str = "tests/fixture_github_clones/corpus/serde/Cargo.toml";
+const GITHUB_FIXTURE_SERDE_DERIVE_INTERNALS_MANIFEST: &str =
+    "tests/fixture_github_clones/corpus/serde/serde_derive_internals/Cargo.toml";
+const GITHUB_FIXTURE_SERDE_DERIVE_INTERNALS_LIB: &str =
+    "tests/fixture_github_clones/corpus/serde/serde_derive_internals/lib.rs";
+const GITHUB_FIXTURE_SERDE_REQUIRED_REL_PATHS: &[&str] = &[
+    "Cargo.toml",
+    "serde_derive_internals/Cargo.toml",
+    "serde_derive_internals/lib.rs",
+];
+const GITHUB_FIXTURE_SERDE_REQUIRED_PATHS: &[&str] = &[
+    GITHUB_FIXTURE_SERDE_MANIFEST,
+    GITHUB_FIXTURE_SERDE_DERIVE_INTERNALS_MANIFEST,
+    GITHUB_FIXTURE_SERDE_DERIVE_INTERNALS_LIB,
+];
+const GITHUB_FIXTURE_AXUM_REPO_URL: &str = "https://github.com/tokio-rs/axum.git";
+const GITHUB_FIXTURE_AXUM_REF: &str = "b99e25d01f2ffa29e5138a0cc337b6b831a41285";
+const GITHUB_FIXTURE_AXUM_DIR: &str = "tests/fixture_github_clones/corpus/axum";
+const GITHUB_FIXTURE_AXUM_MANIFEST: &str = "tests/fixture_github_clones/corpus/axum/Cargo.toml";
+const GITHUB_FIXTURE_AXUM_CRATE_MANIFEST: &str =
+    "tests/fixture_github_clones/corpus/axum/axum/Cargo.toml";
+const GITHUB_FIXTURE_AXUM_LIB: &str = "tests/fixture_github_clones/corpus/axum/axum/src/lib.rs";
+const GITHUB_FIXTURE_AXUM_REQUIRED_REL_PATHS: &[&str] =
+    &["Cargo.toml", "axum/Cargo.toml", "axum/src/lib.rs"];
+const GITHUB_FIXTURE_AXUM_REQUIRED_PATHS: &[&str] = &[
+    GITHUB_FIXTURE_AXUM_MANIFEST,
+    GITHUB_FIXTURE_AXUM_CRATE_MANIFEST,
+    GITHUB_FIXTURE_AXUM_LIB,
+];
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
+
+#[derive(Clone, Copy)]
+struct GitHubFixture {
+    label: &'static str,
+    repo_url: &'static str,
+    pinned_ref: &'static str,
+    checkout_dir: &'static str,
+    required_rel_paths: &'static [&'static str],
+}
+
+const GITHUB_FIXTURES: &[GitHubFixture] = &[
+    GitHubFixture {
+        label: "serde",
+        repo_url: GITHUB_FIXTURE_SERDE_REPO_URL,
+        pinned_ref: GITHUB_FIXTURE_SERDE_REF,
+        checkout_dir: GITHUB_FIXTURE_SERDE_DIR,
+        required_rel_paths: GITHUB_FIXTURE_SERDE_REQUIRED_REL_PATHS,
+    },
+    GitHubFixture {
+        label: "axum",
+        repo_url: GITHUB_FIXTURE_AXUM_REPO_URL,
+        pinned_ref: GITHUB_FIXTURE_AXUM_REF,
+        checkout_dir: GITHUB_FIXTURE_AXUM_DIR,
+        required_rel_paths: GITHUB_FIXTURE_AXUM_REQUIRED_REL_PATHS,
+    },
+];
 
 // Library modules
 mod cli;
@@ -101,7 +172,10 @@ fn dispatch() -> Result<(), DispatchError> {
         "recreate-backup-db" => recreate_backup_db(tail).map_err(DispatchError::Xtask),
         "repair-backup-db-schema" => repair_backup_db_schema(tail).map_err(DispatchError::Xtask),
         "setup-rag-fixtures" => setup_rag_fixtures().map_err(DispatchError::Xtask),
+        "setup-github-fixtures" => setup_github_fixtures().map_err(DispatchError::Xtask),
         "regen-embedding-models" => regen_embedding_models().map_err(DispatchError::Xtask),
+        "regen-model-catalog" => regen_model_catalog().map_err(DispatchError::Xtask),
+        "regen-google-model-catalog" => regen_google_model_catalog().map_err(DispatchError::Xtask),
         "extract-tokens-log" => extract_tokens_log(tail).map_err(DispatchError::Xtask),
         "profile-ingest" => profile_ingest::parse_profile_ingest_args(tail)
             .and_then(profile_ingest::run_profile_ingest)
@@ -131,7 +205,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command"
+         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures    Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog      Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command"
     );
 }
 
@@ -158,9 +232,19 @@ fn print_profile_ingest_help() {
     );
 }
 
+#[derive(Clone, Copy)]
+enum FixtureTarget {
+    Path(&'static str),
+    RequiredPaths {
+        primary: &'static str,
+        required: &'static [&'static str],
+    },
+    BackupFixture(&'static FixtureDb),
+}
+
 struct FixtureCheck {
     id: &'static str,
-    rel_path: &'static str,
+    target: FixtureTarget,
     description: &'static str,
     remediation: &'static str,
     integrity: Option<FixtureIntegrity>,
@@ -174,14 +258,34 @@ struct FixtureIntegrity {
 const FIXTURE_CHECKS: &[FixtureCheck] = &[
     FixtureCheck {
         id: "fixture_db_backup",
-        rel_path: FIXTURE_NODES_LOCAL_EMBEDDINGS.rel_path,
+        target: FixtureTarget::BackupFixture(&FIXTURE_NODES_LOCAL_EMBEDDINGS),
         description: "Required CozoDB backup used by AppHarness/apply_code_edit tests.",
         remediation: "Run `cargo xtask recreate-backup-db --fixture fixture_nodes_local_embeddings` and then `cargo xtask setup-rag-fixtures`.",
         integrity: None,
     },
     FixtureCheck {
+        id: "github_serde_fixture",
+        target: FixtureTarget::RequiredPaths {
+            primary: GITHUB_FIXTURE_SERDE_MANIFEST,
+            required: GITHUB_FIXTURE_SERDE_REQUIRED_PATHS,
+        },
+        description: "Ignored serde checkout used by syn_parser workspace/config regression tests.",
+        remediation: "Run `cargo xtask setup-github-fixtures` to clone the required serde fixture checkout.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "github_axum_fixture",
+        target: FixtureTarget::RequiredPaths {
+            primary: GITHUB_FIXTURE_AXUM_MANIFEST,
+            required: GITHUB_FIXTURE_AXUM_REQUIRED_PATHS,
+        },
+        description: "Ignored axum checkout used by syn_parser workspace regression tests.",
+        remediation: "Run `cargo xtask setup-github-fixtures` to clone the required axum fixture checkout.",
+        integrity: None,
+    },
+    FixtureCheck {
         id: "embedding_models_json",
-        rel_path: "fixtures/openrouter/embeddings_models.json",
+        target: FixtureTarget::Path(EMBEDDING_MODELS_FIXTURE),
         description: "Embedding models fixture used by OpenRouter embeddings tests.",
         remediation: "Run `cargo xtask regen-embedding-models` (requires network) to refresh the fixture.",
         integrity: Some(FixtureIntegrity {
@@ -189,10 +293,87 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
         }),
     },
     FixtureCheck {
+        id: "model_catalog_raw",
+        target: FixtureTarget::Path(MODELS_JSON_RAW),
+        description: "Raw OpenRouter /models catalog used by ploke-llm router tests.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "model_catalog_pretty",
+        target: FixtureTarget::Path(MODELS_JSON_RAW_PRETTY),
+        description: "Pretty-printed OpenRouter /models catalog for local inspection.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "model_ids_txt",
+        target: FixtureTarget::Path(MODELS_TXT_IDS),
+        description: "Model id list consumed by ploke-llm ModelId tests.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "model_arch_json",
+        target: FixtureTarget::Path(MODELS_JSON_ARCH),
+        description: "Model architecture slice consumed by ploke-llm Architecture tests.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "model_top_json",
+        target: FixtureTarget::Path(MODELS_JSON_TOP),
+        description: "Model top-provider slice generated from the OpenRouter catalog.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
         id: "pricing_json",
-        rel_path: "crates/ploke-tui/data/models/all_pricing_parsed.json",
+        target: FixtureTarget::Path(MODELS_JSON_PRICING),
         description: "Pricing metadata consumed by llm::request::pricing tests.",
-        remediation: "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
+        remediation: "Run `cargo xtask regen-model-catalog` (requires network) to refresh the model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_catalog_raw",
+        target: FixtureTarget::Path(GOOGLE_MODELS_JSON_RAW),
+        description: "Raw direct Google model catalog used by route-provenance tests.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_catalog_parsed",
+        target: FixtureTarget::Path(GOOGLE_MODELS_JSON_PARSED),
+        description: "Shared registry rows adapted from the direct Google model catalog.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_ids_txt",
+        target: FixtureTarget::Path(GOOGLE_MODELS_TXT_IDS),
+        description: "Direct Google model id list for setup diagnostics.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_arch_json",
+        target: FixtureTarget::Path(GOOGLE_MODELS_JSON_ARCH),
+        description: "Direct Google model architecture slice for setup diagnostics.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_top_json",
+        target: FixtureTarget::Path(GOOGLE_MODELS_JSON_TOP),
+        description: "Direct Google top-provider slice for setup diagnostics.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "google_pricing_json",
+        target: FixtureTarget::Path(GOOGLE_MODELS_JSON_PRICING),
+        description: "Direct Google pricing slice; zero-valued until explicit Google pricing is modeled.",
+        remediation: "Run `cargo xtask regen-google-model-catalog` to refresh the Google model catalog fixtures.",
         integrity: None,
     },
 ];
@@ -313,43 +494,102 @@ fn latest_tokens_log(root: &Path) -> Result<PathBuf, String> {
     }
 }
 
-// TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures() -> Result<(), XtaskError> {
     let root = workspace_root();
     println!("Verifying fixtures under {}", root.display());
     let mut missing: Vec<(&FixtureCheck, PathBuf)> = Vec::new();
     let mut drift: Vec<(&FixtureCheck, String)> = Vec::new();
+    let mut invalid: Vec<(&FixtureCheck, String)> = Vec::new();
 
     for check in FIXTURE_CHECKS {
-        let full_path = root.join(check.rel_path);
-        if !full_path.exists() {
-            println!(
-                "✘ {:<18} {} (missing)",
-                check.id,
-                display_relative(&full_path, &root)
-            );
-            missing.push((check, full_path));
-            continue;
-        }
-
-        if let Some(integrity) = &check.integrity {
-            match verify_integrity(&root, integrity) {
-                Ok(_) => println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root)),
-                Err(err) => {
+        match check.target {
+            FixtureTarget::Path(rel_path) => {
+                let full_path = root.join(rel_path);
+                if !full_path.exists() {
                     println!(
-                        "✘ {:<18} {} (drift)",
+                        "✘ {:<18} {} (missing)",
                         check.id,
                         display_relative(&full_path, &root)
                     );
-                    drift.push((check, err));
+                    missing.push((check, full_path));
+                    continue;
+                }
+
+                if let Some(integrity) = &check.integrity {
+                    match verify_integrity(&root, integrity) {
+                        Ok(_) => {
+                            println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root))
+                        }
+                        Err(err) => {
+                            println!(
+                                "✘ {:<18} {} (drift)",
+                                check.id,
+                                display_relative(&full_path, &root)
+                            );
+                            drift.push((check, err));
+                        }
+                    }
+                } else {
+                    println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
                 }
             }
-        } else {
-            println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
+            FixtureTarget::RequiredPaths { primary, required } => {
+                let primary_path = root.join(primary);
+                let missing_required = required.iter().find_map(|rel_path| {
+                    let full_path = root.join(rel_path);
+                    (!full_path.exists()).then_some(full_path)
+                });
+                if let Some(missing_path) = missing_required {
+                    println!(
+                        "✘ {:<18} {} (missing {})",
+                        check.id,
+                        display_relative(&primary_path, &root),
+                        display_relative(&missing_path, &root)
+                    );
+                    missing.push((check, missing_path));
+                } else {
+                    println!(
+                        "✔ {:<18} {}",
+                        check.id,
+                        display_relative(&primary_path, &root)
+                    );
+                }
+            }
+            FixtureTarget::BackupFixture(fixture) => {
+                match verify_registered_backup_fixture(fixture) {
+                    Ok(summary) => {
+                        let path_note = fixture_path_note(
+                            summary.path.path(),
+                            summary.path.registered_path(),
+                            &root,
+                        );
+                        println!(
+                            "✔ {:<18} {}{} | relations={} | roundtrip={}",
+                            check.id,
+                            display_relative(summary.path.path(), &root),
+                            path_note,
+                            summary.relation_count,
+                            if summary.roundtrip_ok { "ok" } else { "failed" }
+                        );
+                    }
+                    Err(err) => {
+                        let path = fixture.path();
+                        let registered_path = fixture.registered_path();
+                        let path_note = fixture_path_note(&path, &registered_path, &root);
+                        println!(
+                            "✘ {:<18} {}{} (invalid)",
+                            check.id,
+                            display_relative(&path, &root),
+                            path_note
+                        );
+                        invalid.push((check, err));
+                    }
+                }
+            }
         }
     }
 
-    if missing.is_empty() && drift.is_empty() {
+    if missing.is_empty() && drift.is_empty() && invalid.is_empty() {
         println!("All required fixtures are present.");
         Ok(())
     } else {
@@ -370,6 +610,19 @@ fn verify_fixtures() -> Result<(), XtaskError> {
         if !drift.is_empty() {
             message.push_str("\nFixture drift detected (backup no longer matches source files):\n");
             for (check, err) in &drift {
+                message.push_str(&format!(
+                    "- {id}: {desc}\n  Issue: {err}\n  Fix:   {remedy}",
+                    id = check.id,
+                    desc = check.description,
+                    err = err,
+                    remedy = check.remediation
+                ));
+                message.push('\n');
+            }
+        }
+        if !invalid.is_empty() {
+            message.push_str("\nFixture validation failed:\n");
+            for (check, err) in &invalid {
                 message.push_str(&format!(
                     "- {id}: {desc}\n  Issue: {err}\n  Fix:   {remedy}",
                     id = check.id,
@@ -973,6 +1226,163 @@ fn setup_rag_fixtures() -> Result<(), XtaskError> {
     Ok(())
 }
 
+fn setup_github_fixtures() -> Result<(), XtaskError> {
+    let root = workspace_root();
+    let mut prepared = Vec::new();
+
+    for fixture in GITHUB_FIXTURES {
+        let checkout_path = root.join(fixture.checkout_dir);
+        let action = prepare_github_fixture(*fixture, &checkout_path).map_err(XtaskError::new)?;
+
+        if let Some(missing_path) = missing_github_fixture_path(fixture, &checkout_path) {
+            return Err(XtaskError::new(format!(
+                "{} fixture checkout is incomplete after setup; missing {}",
+                fixture.label,
+                display_relative(&missing_path, &root)
+            )));
+        }
+
+        let commit =
+            git_output_in(Some(&checkout_path), &["rev-parse", "HEAD"]).map_err(|err| {
+                XtaskError::new(format!(
+                    "Failed to inspect {} fixture checkout: {err}",
+                    fixture.label
+                ))
+            })?;
+
+        prepared.push((fixture, action, commit, checkout_path));
+    }
+
+    println!("Prepared GitHub parser fixtures.");
+    for (fixture, action, commit, checkout_path) in prepared {
+        println!(
+            "  {}: action={} repo={} ref={} commit={} path={}",
+            fixture.label,
+            action,
+            fixture.repo_url,
+            fixture.pinned_ref,
+            commit,
+            display_relative(&checkout_path, &root)
+        );
+    }
+    Ok(())
+}
+
+fn prepare_github_fixture(
+    fixture: GitHubFixture,
+    checkout_path: &Path,
+) -> Result<&'static str, String> {
+    if checkout_path.exists() {
+        if !checkout_path.join(".git").is_dir() {
+            return Err(format!(
+                "{} exists but is not a git checkout; move it aside before rerunning `cargo xtask setup-github-fixtures`",
+                checkout_path.display()
+            ));
+        }
+
+        let current = git_output_in(Some(checkout_path), &["rev-parse", "HEAD"])?;
+        if current == fixture.pinned_ref {
+            return Ok("reused");
+        }
+
+        let status = git_output_in(Some(checkout_path), &["status", "--porcelain"])?;
+        if !status.is_empty() {
+            return Err(format!(
+                "{} is at {}, expected {}, and has local changes; clean it before rerunning `cargo xtask setup-github-fixtures`",
+                checkout_path.display(),
+                current,
+                fixture.pinned_ref
+            ));
+        }
+
+        git_output_in(
+            Some(checkout_path),
+            &["fetch", "--depth", "1", "origin", fixture.pinned_ref],
+        )?;
+        git_output_in(Some(checkout_path), &["checkout", "--detach", "FETCH_HEAD"])?;
+        return Ok("updated");
+    }
+
+    let parent = checkout_path.parent().ok_or_else(|| {
+        format!(
+            "Could not determine parent directory for {}",
+            checkout_path.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("create fixture parent {}: {err}", parent.display()))?;
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("{}-fixture-", fixture.label))
+        .tempdir_in(parent)
+        .map_err(|err| format!("create temporary fixture checkout dir: {err}"))?;
+    let temp_checkout = temp_dir.path().join(fixture.label);
+
+    git_output_in(Some(temp_dir.path()), &["init", fixture.label])?;
+    git_output_in(
+        Some(&temp_checkout),
+        &["remote", "add", "origin", fixture.repo_url],
+    )?;
+    git_output_in(
+        Some(&temp_checkout),
+        &["fetch", "--depth", "1", "origin", fixture.pinned_ref],
+    )?;
+    git_output_in(
+        Some(&temp_checkout),
+        &["checkout", "--detach", "FETCH_HEAD"],
+    )?;
+
+    if let Some(missing_path) = missing_github_fixture_path(&fixture, &temp_checkout) {
+        return Err(format!(
+            "cloned {} fixture is missing expected path {}",
+            fixture.label,
+            missing_path.display()
+        ));
+    }
+
+    fs::rename(&temp_checkout, checkout_path).map_err(|err| {
+        format!(
+            "move fixture checkout from {} to {}: {err}",
+            temp_checkout.display(),
+            checkout_path.display()
+        )
+    })?;
+    Ok("cloned")
+}
+
+fn missing_github_fixture_path(fixture: &GitHubFixture, checkout_path: &Path) -> Option<PathBuf> {
+    fixture
+        .required_rel_paths
+        .iter()
+        .map(|rel_path| checkout_path.join(rel_path))
+        .find(|path| !path.exists())
+}
+
+fn git_output_in(current_dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut command = ProcessCommand::new("git");
+    if let Some(dir) = current_dir {
+        command.current_dir(dir);
+    }
+    let output = command
+        .args(args)
+        .output()
+        .map_err(|err| format!("spawn git {}: {err}", args.join(" ")))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let mut message = format!("git {} failed", args.join(" "));
+        if !stderr.is_empty() {
+            message.push_str(&format!(": {stderr}"));
+        }
+        if !stdout.is_empty() {
+            message.push_str(&format!(" stdout: {stdout}"));
+        }
+        Err(message)
+    }
+}
+
 #[derive(Deserialize)]
 struct FixtureIntegrityMetadata {
     fixture_dir: Option<PathBuf>,
@@ -1220,6 +1630,207 @@ fn regen_embedding_models() -> Result<(), XtaskError> {
         display_relative(&out_path, &root),
         sha
     );
+    Ok(())
+}
+
+fn regen_model_catalog() -> Result<(), XtaskError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| XtaskError::new(format!("Failed to build HTTP client: {err}")))?;
+
+    let resp = match client
+        .get(OPENROUTER_MODELS_URL)
+        .header("Accept", "application/json")
+        .send()
+    {
+        Ok(r) => r,
+        Err(err) => {
+            return Err(XtaskError::new(format!(
+                "Failed to fetch {}: {err}",
+                OPENROUTER_MODELS_URL
+            )));
+        }
+    };
+
+    if !resp.status().is_success() {
+        return Err(XtaskError::new(format!(
+            "Unexpected status {} from {}",
+            resp.status(),
+            OPENROUTER_MODELS_URL
+        )));
+    }
+
+    let raw = resp.text().map_err(|err| {
+        XtaskError::new(format!(
+            "Failed to read response body from {}: {err}",
+            OPENROUTER_MODELS_URL
+        ))
+    })?;
+    let raw_value: serde_json::Value = serde_json::from_str(&raw).map_err(|err| {
+        XtaskError::new(format!(
+            "Failed to parse raw model catalog from {}: {err}",
+            OPENROUTER_MODELS_URL
+        ))
+    })?;
+    let parsed: ploke_llm::request::models::Response = serde_json::from_value(raw_value.clone())
+        .map_err(|err| {
+            XtaskError::new(format!(
+                "Failed to decode model catalog into ploke-llm model types: {err}"
+            ))
+        })?;
+
+    let root = workspace_root();
+    let mut written = Vec::new();
+
+    write_text_fixture(&root, MODELS_JSON_RAW, &raw, &mut written)?;
+
+    let raw_pretty = serde_json::to_string_pretty(&raw_value).map_err(|err| {
+        XtaskError::new(format!("Failed to pretty-print raw model catalog: {err}"))
+    })?;
+    write_text_fixture(&root, MODELS_JSON_RAW_PRETTY, &raw_pretty, &mut written)?;
+
+    let ids = parsed
+        .data
+        .iter()
+        .map(|item| item.id.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_text_fixture(&root, MODELS_TXT_IDS, &ids, &mut written)?;
+
+    let architecture = parsed
+        .data
+        .iter()
+        .map(|item| item.architecture.clone())
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, MODELS_JSON_ARCH, &architecture, &mut written)?;
+
+    let top_provider = parsed
+        .data
+        .iter()
+        .map(|item| item.top_provider.clone())
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, MODELS_JSON_TOP, &top_provider, &mut written)?;
+
+    let pricing = parsed
+        .data
+        .iter()
+        .map(|item| item.pricing)
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, MODELS_JSON_PRICING, &pricing, &mut written)?;
+
+    println!(
+        "✔ refreshed OpenRouter model catalog from {} (models={})",
+        OPENROUTER_MODELS_URL,
+        parsed.data.len()
+    );
+    for path in written {
+        println!("  wrote {path}");
+    }
+    Ok(())
+}
+
+fn regen_google_model_catalog() -> Result<(), XtaskError> {
+    let rt = RuntimeBuilder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| XtaskError::new(format!("Failed to build Tokio runtime: {err}")))?;
+    let typed_response = rt
+        .block_on(async {
+            <ploke_llm::router_only::google::Google as ploke_llm::router_only::HasModels>::fetch_models(
+                &reqwest::Client::new(),
+            )
+            .await
+        })
+        .map_err(|err| {
+            XtaskError::new(format!(
+                "Failed to materialize direct Google model catalog: {err}"
+            ))
+        })?;
+
+    let parsed = ploke_llm::request::models::Response {
+        data: typed_response
+            .clone()
+            .into_iter()
+            .map(ploke_llm::request::models::ResponseItem::from)
+            .collect(),
+    };
+
+    let root = workspace_root();
+    let mut written = Vec::new();
+
+    write_json_fixture(&root, GOOGLE_MODELS_JSON_RAW, &typed_response, &mut written)?;
+    write_json_fixture(&root, GOOGLE_MODELS_JSON_PARSED, &parsed, &mut written)?;
+
+    let ids = parsed
+        .data
+        .iter()
+        .map(|item| item.id.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_text_fixture(&root, GOOGLE_MODELS_TXT_IDS, &ids, &mut written)?;
+
+    let architecture = parsed
+        .data
+        .iter()
+        .map(|item| item.architecture.clone())
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, GOOGLE_MODELS_JSON_ARCH, &architecture, &mut written)?;
+
+    let top_provider = parsed
+        .data
+        .iter()
+        .map(|item| item.top_provider.clone())
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, GOOGLE_MODELS_JSON_TOP, &top_provider, &mut written)?;
+
+    let pricing = parsed
+        .data
+        .iter()
+        .map(|item| item.pricing)
+        .collect::<Vec<_>>();
+    write_json_fixture(&root, GOOGLE_MODELS_JSON_PRICING, &pricing, &mut written)?;
+
+    println!(
+        "✔ refreshed direct Google model catalog (models={})",
+        parsed.data.len()
+    );
+    for path in written {
+        println!("  wrote {path}");
+    }
+    Ok(())
+}
+
+fn write_json_fixture<T: Serialize + ?Sized>(
+    root: &Path,
+    rel_path: &str,
+    value: &T,
+    written: &mut Vec<String>,
+) -> Result<(), XtaskError> {
+    let body = serde_json::to_string_pretty(value).map_err(|err| {
+        XtaskError::new(format!("Failed to serialize fixture {}: {err}", rel_path))
+    })?;
+    write_text_fixture(root, rel_path, &body, written)
+}
+
+fn write_text_fixture(
+    root: &Path,
+    rel_path: &str,
+    body: &str,
+    written: &mut Vec<String>,
+) -> Result<(), XtaskError> {
+    let path = root.join(rel_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            XtaskError::new(format!(
+                "Unable to create fixture directory {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+    fs::write(&path, body)
+        .map_err(|err| XtaskError::new(format!("Failed to write {}: {err}", path.display())))?;
+    written.push(display_relative(&path, root));
     Ok(())
 }
 

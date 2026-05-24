@@ -783,6 +783,8 @@ pub fn analyze_file_phase2(
     // Use syn2 for Rust 2018+ editions
     let (file, legacy_rewrite) =
         try_parse_file_with_legacy_keyword_fallback(&file_content, crate_context)?;
+    #[cfg(not(feature = "convert_keyword_2015"))]
+    let _ = &legacy_rewrite;
 
     // 1. Create VisitorState with the provided context
     let mut state =
