@@ -77,6 +77,18 @@ surfaces before rerunning paid work:
 ./target/debug/ploke-eval model providers <model-id>
 ```
 
+If the suspected blocker is the protocol model/provider/request-body tuple and a
+live call is acceptable, run the explicit doctor preflight before spending a
+full protocol advance:
+
+```bash
+./target/debug/ploke-eval loop prototype1-doctor --repo-root . --live-protocol-preflight --format json
+```
+
+Treat this as paid live-provider work. It should report the model, provider,
+route source, reasoning policy, bounded outcome, and an error class without
+printing credentials.
+
 ### 3. Take One Bounded Advance
 
 Run a single phase advance from the campaign worktree:

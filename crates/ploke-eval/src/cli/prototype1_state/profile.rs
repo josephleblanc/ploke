@@ -1022,7 +1022,10 @@ mbe = { enabled = true, python = "python3", workers = 2 }
     fn run_profile_protocol_defaults_max_tokens_to_campaign_default() {
         let profile = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("\n[protocol]\nmax_tokens = 4000\n\n[protocol.reasoning]\nmode = \"omit\"\n", "\n"),
+            &PROFILE.replace(
+                "\n[protocol]\nmax_tokens = 4000\n\n[protocol.reasoning]\nmode = \"omit\"\n",
+                "\n",
+            ),
         )
         .expect("profile parses");
 

@@ -35,7 +35,7 @@ The main operator commands are in `src/cli.rs` and dispatch into
 | Command | Current role |
 | --- | --- |
 | `ploke-eval loop prototype1-setup --profile <name-or-path>` | Creates or adopts the campaign, admits `run-profile.toml`, registers the generation-0 parent node, creates the parent branch, writes `.ploke/prototype1/parent_identity.json`, and commits that identity into the active checkout. |
-| `ploke-eval loop prototype1-doctor --repo-root <parent>` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. |
+| `ploke-eval loop prototype1-doctor --repo-root <parent>` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. Add `--live-protocol-preflight` only when you explicitly want a tiny live JSON request against the admitted protocol model/provider/reasoning tuple. |
 | `ploke-eval loop prototype1-prompt --repo-root <parent>` | Prints the current broad-harness prompt for the active parent when the admitted run profile uses the broad-harness request generator. |
 | `ploke-eval loop prototype1-step --repo-root <parent>` | Advances exactly one diagnosed parent phase. Child phases run at cap 1. |
 | `ploke-eval loop prototype1-continue --repo-root <parent>` | Repeatedly advances diagnosed phases until the current turn is complete, blocked, or hands off. It has a 256-advance guard. |
@@ -189,3 +189,5 @@ cd <active-parent-checkout>
 Use `doctor` when deciding what surface to inspect next. Use `step` when you
 want one transition and a fresh status. Use `continue` only when the current
 parent checkout and binary provenance are clear.
+Use `doctor --live-protocol-preflight` when provider request shape is the
+suspected blocker and a live call is acceptable.

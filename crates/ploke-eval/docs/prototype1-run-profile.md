@@ -87,6 +87,8 @@ The profile rejects internally conflicting settings:
 - `selection.metrics.persist = false` conflicts with metric-driven scoring:
   `score_points_per_imp_point != 0` or `require_for_score = true`.
 - `protocol.max_tokens` must be nonzero.
+- `protocol.reasoning.mode = "effort"` requires
+  `protocol.reasoning.effort`; `effort` is invalid for `omit` or `disabled`.
 
 ## Top Level
 
@@ -243,6 +245,10 @@ signal.
 ```toml
 [protocol]
 max_tokens = 4000
+
+[protocol.reasoning]
+mode = "omit"
+# effort = "low"
 ```
 
 - `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
@@ -251,6 +257,23 @@ max_tokens = 4000
   review, and segment review. The default is `4000`; set it higher when a
   provider spends part of the completion budget on hidden or reported reasoning
   tokens before emitting JSON.
+- `reasoning.mode`: Request-body policy for protocol adjudication. `omit`
+  sends no reasoning control, `effort` sends the configured effort, and
+  `disabled` sends `reasoning.effort = "none"`. The default is `omit`, so the
+  protocol layer does not silently disable reasoning for every provider.
+- `reasoning.effort`: Required only when `reasoning.mode = "effort"`. Accepted
+  values follow the shared LLM enum, such as `low`, `medium`, `high`, or
+  `xhigh`.
+
+For a live route/request-shape check before spending a full loop advance, run:
+
+```bash
+./target/debug/ploke-eval loop prototype1-doctor --repo-root <parent> --live-protocol-preflight
+```
+
+That check sends a tiny JSON prompt through the admitted protocol
+model/provider/reasoning tuple and reports a bounded error class without
+printing credentials.
 
 ## `execution`
 

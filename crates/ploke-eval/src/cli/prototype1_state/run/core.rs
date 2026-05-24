@@ -519,10 +519,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
     }
 }
 
-async fn attach_protocol_live_preflight(
-    context: &RuntimeContext,
-    status: &mut ActiveParentStatus,
-) {
+async fn attach_protocol_live_preflight(context: &RuntimeContext, status: &mut ActiveParentStatus) {
     let preflight = run_protocol_live_preflight(context).await;
     if preflight.outcome == ProtocolLivePreflightOutcome::Failed {
         let detail = preflight
@@ -582,7 +579,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
     match result {
         Ok(result) if result.parsed.ok => ProtocolLivePreflight {
             outcome: ProtocolLivePreflightOutcome::Passed,
-            model_id: cfg.model_id,
+            model_id: cfg.model_id.clone(),
             provider: cfg.provider_display().to_string(),
             route_source: protocol_route_source_label(cfg.route_source).to_string(),
             reasoning: cfg.reasoning.display_label(),
@@ -591,7 +588,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
         },
         Ok(_) => ProtocolLivePreflight {
             outcome: ProtocolLivePreflightOutcome::Failed,
-            model_id: cfg.model_id,
+            model_id: cfg.model_id.clone(),
             provider: cfg.provider_display().to_string(),
             route_source: protocol_route_source_label(cfg.route_source).to_string(),
             reasoning: cfg.reasoning.display_label(),
@@ -600,7 +597,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
         },
         Err(error) => ProtocolLivePreflight {
             outcome: ProtocolLivePreflightOutcome::Failed,
-            model_id: cfg.model_id,
+            model_id: cfg.model_id.clone(),
             provider: cfg.provider_display().to_string(),
             route_source: protocol_route_source_label(cfg.route_source).to_string(),
             reasoning: cfg.reasoning.display_label(),
@@ -645,10 +642,7 @@ fn classify_protocol_preflight_error(error: &ploke_protocol::ProtocolLlmError) -
             } else {
                 "provider_request"
             };
-            format!(
-                "{class}: {}",
-                sanitize_protocol_preflight_detail(message)
-            )
+            format!("{class}: {}", sanitize_protocol_preflight_detail(message))
         }
         ploke_protocol::ProtocolLlmError::MissingContent => {
             "provider_response: response had no visible content".to_string()

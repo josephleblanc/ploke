@@ -567,7 +567,10 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             );
         let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
 
-        assert_eq!(parsed.protocol.reasoning.mode, ProtocolReasoningMode::Effort);
+        assert_eq!(
+            parsed.protocol.reasoning.mode,
+            ProtocolReasoningMode::Effort
+        );
         assert_eq!(
             parsed.protocol.reasoning.effort,
             Some(ProtocolReasoningEffort::Low)

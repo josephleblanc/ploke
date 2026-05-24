@@ -655,6 +655,73 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_json_request_omits_reasoning_by_default() {
+        let cfg = JsonLlmConfig {
+            model_id: "google/gemini-3.5-flash".to_string(),
+            route_source: ModelRouteSource::OpenRouter,
+            provider_slug: Some("google-ai-studio".to_string()),
+            timeout_secs: 42,
+            max_attempts: 1,
+            max_tokens: 64,
+            reasoning: ProtocolReasoningPolicy::omit(),
+        };
+        let prompt = JsonChatPrompt {
+            system: "Return JSON only.".to_string(),
+            user: "Return {\"ok\":true}.".to_string(),
+        };
+        let model = parse_json_model(&cfg).expect("model id");
+        let request = openrouter_json_request(model, &cfg, &prompt);
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert!(value.get("reasoning").is_none());
+        assert_eq!(value["provider"]["only"][0], "google-ai-studio");
+    }
+
+    #[test]
+    fn openrouter_json_request_can_explicitly_disable_reasoning() {
+        let cfg = JsonLlmConfig {
+            model_id: "qwen/qwen3-30b-a3b:free".to_string(),
+            route_source: ModelRouteSource::OpenRouter,
+            provider_slug: None,
+            timeout_secs: 42,
+            max_attempts: 1,
+            max_tokens: 64,
+            reasoning: ProtocolReasoningPolicy::disabled(),
+        };
+        let prompt = JsonChatPrompt {
+            system: "Return JSON only.".to_string(),
+            user: "Return {\"ok\":true}.".to_string(),
+        };
+        let model = parse_json_model(&cfg).expect("model id");
+        let request = openrouter_json_request(model, &cfg, &prompt);
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["reasoning"]["effort"], "none");
+    }
+
+    #[test]
+    fn google_json_request_can_set_reasoning_effort() {
+        let cfg = JsonLlmConfig {
+            model_id: "google/gemini-2.5-flash".to_string(),
+            route_source: ModelRouteSource::DirectGoogle,
+            provider_slug: None,
+            timeout_secs: 42,
+            max_attempts: 1,
+            max_tokens: 64,
+            reasoning: ProtocolReasoningPolicy::effort(ReasoningEffort::Low),
+        };
+        let prompt = JsonChatPrompt {
+            system: "Return JSON only.".to_string(),
+            user: "Return {\"ok\":true}.".to_string(),
+        };
+        let model = parse_json_model(&cfg).expect("model id");
+        let request = google_json_request(model, &cfg, &prompt).expect("google request");
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["reasoning"]["effort"], "low");
+    }
+
+    #[test]
     fn google_json_request_rejects_openrouter_provider_pin() {
         let cfg = JsonLlmConfig {
             model_id: "google/gemini-2.5-flash".to_string(),

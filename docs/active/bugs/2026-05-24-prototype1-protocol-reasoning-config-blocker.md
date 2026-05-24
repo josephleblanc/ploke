@@ -1,6 +1,7 @@
 # Prototype 1 Protocol Reasoning Config Blocker
 
-Status: open; blocks the Gemini 3.5 Flash loop run at `baseline_protocol`.
+Status: fixed in source; original Gemini 3.5 Flash run should be rechecked with
+the live doctor preflight before advancing `baseline_protocol` again.
 Discovered: 2026-05-24
 
 ## Summary
@@ -135,6 +136,16 @@ Implementation path to verify before editing:
    explicit effort.
 5. Add a focused regression for the current OpenRouter JSON request shape.
 
+Implemented source changes:
+
+- `ProtocolReasoningPolicy` now supports `omit`, `effort`, and `disabled`.
+- The admitted Prototype 1 run profile carries `[protocol.reasoning]`.
+- `protocol_llm_config` threads the admitted policy into `JsonLlmConfig`.
+- `base_json_request` omits reasoning by default instead of forcing
+  `ReasoningEffort::None`.
+- Focused request-shape tests cover omitted reasoning, explicit disabled
+  reasoning, and explicit effort.
+
 ## Doctor Check
 
 Add a `prototype1-doctor` preflight that validates the configured protocol
@@ -154,6 +165,12 @@ The live check should be small and diagnostic:
 This check should be optional or explicitly live-gated, but when run it should
 catch request-shape errors like `reasoning.effort = "none"` before a full loop
 advance attempts paid protocol work.
+
+Implemented command:
+
+```text
+ploke-eval loop prototype1-doctor --repo-root <parent> --live-protocol-preflight
+```
 
 ## Related Code
 
