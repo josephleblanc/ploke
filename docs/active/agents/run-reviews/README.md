@@ -17,3 +17,7 @@ state without checking newer code, History records, and run artifacts.
   Run review for the first Google live multigen setup, covering eval output,
   empty patch packaging, missing MBE oracle evidence, LLM token stats, and
   trace-level tool-result quality versus transport success.
+- [`2026-05-23-p1-gemini35-flash-multigen-2g3x3-20260523-223658.md`](2026-05-23-p1-gemini35-flash-multigen-2g3x3-20260523-223658.md)
+  Step review for the Gemini 3.5 Flash baseline eval, covering non-empty patch
+  output, focused test success, rustfmt failure, token-heavy debugging, and
+  trace/tool-quality issues before protocol adjudication.
