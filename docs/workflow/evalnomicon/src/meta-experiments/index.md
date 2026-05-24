@@ -15,4 +15,5 @@ stabilize.
 
 Current anchor notes:
 
-- [Protocol Operationalization Memory](./protocol-operationalization-memory.md)
+- [Protocol Operationalization Memory](./01-protocol-operationalization-memory.md)
+- [Protocol Implementation Experiment](./02-prototing-protocol.md)
