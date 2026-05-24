@@ -329,16 +329,13 @@ impl RunSummary {
         let evidence = graph.eval_protocol_evidence();
         let records = evidence
             .run_records
-            .map(|records| records.summary.parsed_count)
-            .unwrap_or(0);
+            .map(|records| records.summary.parsed_count);
         let protocol_artifacts = evidence
             .protocol_artifacts
-            .map(|protocol| protocol.summary.parsed_count)
-            .unwrap_or(0);
+            .map(|protocol| protocol.summary.parsed_count);
         let tool_calls = evidence
             .run_records
-            .map(|records| records.summary.total_tool_call_count)
-            .unwrap_or(0);
+            .map(|records| records.summary.total_tool_call_count);
         let closure_status = evidence
             .closure
             .map(|closure| {
@@ -353,10 +350,16 @@ impl RunSummary {
         Self {
             primary_line: closure_status,
             secondary_line: format!(
-                "{records} records | {tool_calls} calls | {protocol_artifacts} protocol artifacts"
+                "{} records | {} calls | {} protocol artifacts",
+                optional_count_label(records),
+                optional_count_label(tool_calls),
+                optional_count_label(protocol_artifacts)
             ),
             compact: format!(
-                "eval/protocol, {records} records, {tool_calls} calls, {protocol_artifacts} artifacts"
+                "eval/protocol, {} records, {} calls, {} artifacts",
+                optional_count_label(records),
+                optional_count_label(tool_calls),
+                optional_count_label(protocol_artifacts)
             ),
         }
     }
@@ -372,6 +375,12 @@ impl RunSummary {
     fn compact(&self) -> &str {
         self.compact.as_str()
     }
+}
+
+fn optional_count_label(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "not_recorded".to_owned())
 }
 
 fn serde_label<T>(value: &T) -> String
