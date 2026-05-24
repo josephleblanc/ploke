@@ -143,6 +143,60 @@ for interactive validity-sensitive work.
 For measured work, campaign + closure is often the right operator layer even if top-level help
 does not emphasize that enough.
 
+### Prototype 1 closure and protocol narrative
+
+Use this path when the user asks what happened in setup, initial eval, closure, protocol
+review, or why a model run looks good or bad.
+
+Start with durable state, not logs:
+
+```bash
+ploke-eval closure status --campaign <campaign>
+ploke-eval closure status --campaign <campaign> --format json
+```
+
+Use the JSON closure row to find the instance, `record_path`, run root, and protocol artifact
+directory. If the row has no record path, explain the missing eval state before moving on.
+
+For each resolved record:
+
+```bash
+ploke-eval inspect operational --record <record.json.gz> --format json
+ploke-eval inspect protocol-overview --record <record.json.gz> --view overview
+ploke-eval inspect protocol-overview --record <record.json.gz> --view calls
+ploke-eval inspect protocol-overview --record <record.json.gz> --view segments
+ploke-eval inspect protocol-artifacts --record <record.json.gz>
+ploke-eval inspect tool-calls --record <record.json.gz>
+ploke-eval inspect failures --record <record.json.gz>
+```
+
+At campaign scope, use:
+
+```bash
+ploke-eval inspect protocol-overview --campaign <campaign> --format json
+ploke-eval inspect tool-overview --campaign <campaign> --format json
+```
+
+Narrative order:
+
+1. closure state: registry, eval, and protocol status
+2. eval result: record present, operational metrics, failed calls, patch/submission state
+3. protocol coverage: reviewed calls, reviewed segments, missing/incompatible artifacts
+4. protocol friction: issue families, affected tools, suspicious segments
+5. local behavior: concrete tool-call sequence and failures, if any
+6. drilldown commands: exact next command for the most relevant artifact or tool call
+
+Do not flatten mechanical success and protocol friction into one verdict. A run can have
+complete eval/protocol coverage while still showing poor model behavior, repeated reads,
+search thrash, or an empty submission artifact.
+
+Use `inspect protocol-artifacts <index> --record <record.json.gz> --full` only for selected
+artifacts. Full artifact JSON can be large.
+
+Avoid `~/.ploke-eval/logs` unless typed artifacts are missing or contradict each other. In
+Codex sandboxed runs, even read-only `ploke-eval` commands may need approval because tracing
+creates normal log files under `~/.ploke-eval/logs`.
+
 ### Prototype loop
 
 Before proposing or running a prototype loop command, inspect:
