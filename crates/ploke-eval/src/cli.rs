@@ -42,6 +42,7 @@ pub(crate) mod prototype1_state;
 
 const TOOL_REVIEW_CALL_LIMIT: usize = 8;
 const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
+const PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS: usize = 3;
 const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
 
 use crate::campaign::{
@@ -5922,11 +5923,8 @@ impl ProtocolToolCallReviewCommand {
             default_protocol_max_tokens(),
             ProtocolReasoningPolicy::default(),
         )?;
-        let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
-        let reviewed = protocol
-            .run(subject)
-            .await
-            .map_err(tool_call_review_error_to_prepare)?;
+        let reviewed =
+            run_tool_call_review_with_json_retries(subject, &cfg, &client, self.index).await?;
         let persisted_path = write_protocol_artifact(
             &record_path,
             &reviewed.procedure_name,
@@ -7791,11 +7789,8 @@ async fn review_call(
     let subject_id = subject.subject_id.clone();
     let input = subject.clone();
     let client = reqwest::Client::new();
-    let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, config.clone()));
-    let reviewed = protocol
-        .run(subject)
-        .await
-        .map_err(tool_call_review_error_to_prepare)?;
+    let reviewed =
+        run_tool_call_review_with_json_retries(subject.clone(), &config, &client, index).await?;
     Ok(CallReview {
         index,
         subject_id,
@@ -7803,6 +7798,93 @@ async fn review_call(
         config,
         reviewed,
     })
+}
+
+async fn run_tool_call_review_with_json_retries(
+    subject: trace::ToolCallNeighborhood,
+    config: &JsonLlmConfig,
+    client: &reqwest::Client,
+    index: usize,
+) -> Result<
+    ploke_protocol::ProcedureRun<review::LocalAnalysisAssessment, review::ToolCallReviewArtifact>,
+    PrepareError,
+> {
+    for attempt in 1..=PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS {
+        let protocol =
+            review::ToolCallReview::new(JsonAdjudicator::new(client.clone(), config.clone()));
+        match protocol.run(subject.clone()).await {
+            Ok(reviewed) => return Ok(reviewed),
+            Err(err)
+                if is_retryable_local_analysis_review_error(&err)
+                    && attempt < PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS =>
+            {
+                eprintln!(
+                    "protocol progress: retrying tool_call_review[{index}] attempt {}/{} after malformed adjudication JSON: {}",
+                    attempt + 1,
+                    PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS,
+                    err
+                );
+            }
+            Err(err) => return Err(tool_call_review_error_to_prepare(err)),
+        }
+    }
+    unreachable!("bounded review retry loop always returns");
+}
+
+async fn run_tool_call_segment_review_with_json_retries(
+    subject: review::SegmentReviewSubject,
+    config: &JsonLlmConfig,
+    client: &reqwest::Client,
+    segment_index: usize,
+) -> Result<
+    ploke_protocol::ProcedureRun<
+        review::LocalAnalysisAssessment,
+        review::ToolCallSegmentReviewArtifact,
+    >,
+    PrepareError,
+> {
+    for attempt in 1..=PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS {
+        let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(
+            client.clone(),
+            config.clone(),
+        ));
+        match protocol.run(subject.clone()).await {
+            Ok(reviewed) => return Ok(reviewed),
+            Err(err)
+                if is_retryable_local_analysis_review_error(&err)
+                    && attempt < PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS =>
+            {
+                eprintln!(
+                    "protocol progress: retrying tool_call_segment_review[{segment_index}] attempt {}/{} after malformed adjudication JSON: {}",
+                    attempt + 1,
+                    PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS,
+                    err
+                );
+            }
+            Err(err) => return Err(tool_call_segment_review_error_to_prepare(err)),
+        }
+    }
+    unreachable!("bounded review retry loop always returns");
+}
+
+fn is_retryable_local_analysis_review_error(err: &review::ToolCallReviewError) -> bool {
+    matches!(
+        local_analysis_review_protocol_error(err),
+        Some(ploke_protocol::ProtocolLlmError::ParseJson { .. })
+    )
+}
+
+fn local_analysis_review_protocol_error(
+    err: &review::ToolCallReviewError,
+) -> Option<&ploke_protocol::ProtocolLlmError> {
+    match err {
+        ploke_protocol::SequenceError::Second(ploke_protocol::MergeError::Branches(
+            ploke_protocol::FanOutError::Left(ploke_protocol::FanOutError::Left(err))
+            | ploke_protocol::FanOutError::Left(ploke_protocol::FanOutError::Right(err))
+            | ploke_protocol::FanOutError::Right(err),
+        )) => Some(err),
+        _ => None,
+    }
 }
 
 fn write_call_review(record_path: &Path, review: CallReview) -> Result<(), PrepareError> {
@@ -7865,7 +7947,6 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     let subject = build_segment_review_subject(&segmented, segment_index)?;
     let subject_id = subject.subject_id.clone();
     let persisted_input = subject.clone();
-    let client = reqwest::Client::new();
     let cfg = protocol_llm_config(
         model_id,
         route_source,
@@ -7875,11 +7956,14 @@ async fn execute_protocol_tool_call_segment_review_quiet(
         max_tokens,
         reasoning,
     )?;
-    let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
-    let reviewed = protocol
-        .run(subject)
-        .await
-        .map_err(tool_call_segment_review_error_to_prepare)?;
+    let client = reqwest::Client::new();
+    let reviewed = run_tool_call_segment_review_with_json_retries(
+        subject.clone(),
+        &cfg,
+        &client,
+        segment_index,
+    )
+    .await?;
     write_protocol_artifact(
         record_path,
         &reviewed.procedure_name,
@@ -8174,7 +8258,7 @@ impl ProtocolToolCallSegmentReviewCommand {
             default_protocol_max_tokens(),
             ProtocolReasoningPolicy::default(),
         )?;
-        let adjudicator = JsonAdjudicator::new(client, cfg.clone());
+        let adjudicator = JsonAdjudicator::new(client.clone(), cfg.clone());
         let segmentation = segment::ToolCallIntentSegmentation::new(adjudicator.clone())
             .run(sequence_subject)
             .await
@@ -8183,11 +8267,13 @@ impl ProtocolToolCallSegmentReviewCommand {
         let subject = build_segment_review_subject(&segmentation.output, self.segment_index)?;
         let subject_id = subject.subject_id.clone();
         let persisted_input = subject.clone();
-        let protocol = review::ToolCallSegmentReview::new(adjudicator);
-        let reviewed = protocol
-            .run(subject)
-            .await
-            .map_err(tool_call_segment_review_error_to_prepare)?;
+        let reviewed = run_tool_call_segment_review_with_json_retries(
+            subject,
+            &cfg,
+            &client,
+            self.segment_index,
+        )
+        .await?;
         let persisted_path = write_protocol_artifact(
             &record_path,
             &reviewed.procedure_name,
@@ -14134,6 +14220,42 @@ mod tests {
         ));
 
         assert!(is_retryable_intent_segmentation_error(&err));
+    }
+
+    // regr:jsonretry:24-05-26_15-35
+    #[test]
+    fn tool_call_review_malformed_json_parse_is_retryable_for_all_judgment_branches() {
+        let usefulness: review::ToolCallReviewError = ploke_protocol::SequenceError::Second(
+            ploke_protocol::MergeError::Branches(ploke_protocol::FanOutError::Left(
+                ploke_protocol::FanOutError::Left(protocol_json_parse_error()),
+            )),
+        );
+        let redundancy: review::ToolCallReviewError = ploke_protocol::SequenceError::Second(
+            ploke_protocol::MergeError::Branches(ploke_protocol::FanOutError::Left(
+                ploke_protocol::FanOutError::Right(protocol_json_parse_error()),
+            )),
+        );
+        let recoverability: review::ToolCallReviewError =
+            ploke_protocol::SequenceError::Second(ploke_protocol::MergeError::Branches(
+                ploke_protocol::FanOutError::Right(protocol_json_parse_error()),
+            ));
+        let missing_content: review::ToolCallReviewError = ploke_protocol::SequenceError::Second(
+            ploke_protocol::MergeError::Branches(ploke_protocol::FanOutError::Left(
+                ploke_protocol::FanOutError::Left(ploke_protocol::ProtocolLlmError::MissingContent),
+            )),
+        );
+
+        assert!(is_retryable_local_analysis_review_error(&usefulness));
+        assert!(is_retryable_local_analysis_review_error(&redundancy));
+        assert!(is_retryable_local_analysis_review_error(&recoverability));
+        assert!(!is_retryable_local_analysis_review_error(&missing_content));
+    }
+
+    fn protocol_json_parse_error() -> ploke_protocol::ProtocolLlmError {
+        ploke_protocol::ProtocolLlmError::ParseJson {
+            detail: "expected `,` or `}` at line 5 column 3".to_string(),
+            content: "{ malformed protocol review json }".to_string(),
+        }
     }
 
     #[test]
