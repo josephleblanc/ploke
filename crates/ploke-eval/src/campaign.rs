@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use ploke_llm::{ModelId, ProviderKey};
+use ploke_protocol::ProtocolReasoningPolicy;
 use serde::{Deserialize, Serialize};
 
 use crate::closure::ClosureRecomputeRequest;
@@ -83,6 +84,8 @@ pub struct ProtocolCampaignPolicy {
     pub max_concurrency: usize,
     #[serde(default = "default_protocol_max_tokens")]
     pub max_tokens: u32,
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    pub reasoning: ProtocolReasoningPolicy,
 }
 
 impl Default for ProtocolCampaignPolicy {
@@ -95,6 +98,7 @@ impl Default for ProtocolCampaignPolicy {
             limit_runs: None,
             max_concurrency: default_protocol_max_concurrency(),
             max_tokens: default_protocol_max_tokens(),
+            reasoning: ProtocolReasoningPolicy::default(),
         }
     }
 }
@@ -710,7 +714,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     ));
     out.push_str("\nprotocol\n");
     out.push_str(&format!(
-        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | max_tokens: {}\n",
+        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | max_tokens: {} | reasoning: {}\n",
         config.protocol.include_partial,
         config.protocol.include_incompatible,
         config.protocol.include_failed,
@@ -721,7 +725,8 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .map(|value| value.to_string())
             .unwrap_or_else(|| "none".to_string()),
         config.protocol.max_concurrency,
-        config.protocol.max_tokens
+        config.protocol.max_tokens,
+        config.protocol.reasoning.display_label()
     ));
     out.push_str("\nframework tools\n");
     if config.framework.tools.is_empty() {

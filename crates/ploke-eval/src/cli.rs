@@ -20,7 +20,7 @@ use ploke_protocol::procedure::{
 };
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment, trace};
-use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure};
+use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, Procedure, ProtocolReasoningPolicy};
 use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
 use ploke_records::protocol::{InterventionApplyArtifact, InterventionIssueDetectionArtifact};
 use ploke_records::tool_contracts::{
@@ -550,7 +550,7 @@ pub enum LoopSubcommand {
     /// Create a Prototype 1 campaign and admit the current checkout as Parent(0).
     Prototype1Setup(Prototype1LoopCommand),
     /// Diagnose the active Prototype 1 parent checkout and print the next exact commands.
-    Prototype1Doctor(Prototype1ControlCommand),
+    Prototype1Doctor(Prototype1DoctorCommand),
     /// Print the broad-harness prompt for the active Prototype 1 parent checkout.
     Prototype1Prompt(Prototype1PromptCommand),
     /// Resume the active Prototype 1 parent checkout until the current turn completes or hands off.
@@ -669,6 +669,17 @@ pub struct Prototype1ControlCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(about = "Diagnose the active Prototype 1 parent checkout")]
+pub struct Prototype1DoctorCommand {
+    #[command(flatten)]
+    pub control: Prototype1ControlCommand,
+
+    /// Run a tiny live protocol JSON request using the admitted model/provider/reasoning policy.
+    #[arg(long)]
+    pub live_protocol_preflight: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -1724,6 +1735,7 @@ async fn execute_protocol_run_tasks(
     max_concurrency: usize,
     stop_on_error: bool,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<ProtocolBatchExecution, PrepareError> {
     let mut executions = Vec::new();
     let mut failures = Vec::new();
@@ -1743,6 +1755,7 @@ async fn execute_protocol_run_tasks(
             provider_slug.clone(),
             review_permits.clone(),
             max_tokens,
+            reasoning,
         );
     }
 
@@ -1758,6 +1771,7 @@ async fn execute_protocol_run_tasks(
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
+                        reasoning,
                     );
                 }
             }
@@ -1775,6 +1789,7 @@ async fn execute_protocol_run_tasks(
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
+                        reasoning,
                     );
                 }
             }
@@ -1796,6 +1811,7 @@ async fn execute_protocol_run_tasks(
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
+                        reasoning,
                     );
                 }
             }
@@ -1864,7 +1880,14 @@ async fn persist_intervention_synthesis_for_record(
         // OperationTarget here instead of relying on that fallback.
         operation_target: None,
     };
-    let cfg = protocol_llm_config(model_id, provider, 120, PROTOCOL_HTTP_MAX_ATTEMPTS, 3200)?;
+    let cfg = protocol_llm_config(
+        model_id,
+        provider,
+        120,
+        PROTOCOL_HTTP_MAX_ATTEMPTS,
+        3200,
+        ProtocolReasoningPolicy::default(),
+    )?;
     let run = synthesize_intervention_with_llm(input.clone(), cfg.clone())
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -5851,6 +5874,7 @@ impl ProtocolToolCallReviewCommand {
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
             default_protocol_max_tokens(),
+            ProtocolReasoningPolicy::default(),
         )?;
         let protocol = review::ToolCallReview::new(JsonAdjudicator::new(client, cfg.clone()));
         let reviewed = protocol
@@ -6020,6 +6044,7 @@ impl ProtocolRunCommand {
                     self.model_id.clone(),
                     self.provider.clone(),
                     default_protocol_max_tokens(),
+                    ProtocolReasoningPolicy::default(),
                 )
                 .await?;
                 Some("tool_call_intent_segmentation".to_string())
@@ -6031,6 +6056,7 @@ impl ProtocolRunCommand {
                     self.provider.clone(),
                     index,
                     default_protocol_max_tokens(),
+                    ProtocolReasoningPolicy::default(),
                 )
                 .await?;
                 Some(format!("tool_call_review[{index}]"))
@@ -6042,6 +6068,7 @@ impl ProtocolRunCommand {
                     self.provider.clone(),
                     segment_index,
                     default_protocol_max_tokens(),
+                    ProtocolReasoningPolicy::default(),
                 )
                 .await?;
                 Some(format!("tool_call_segment_review[{segment_index}]"))
@@ -6921,6 +6948,7 @@ pub(crate) async fn advance_protocol_closure(
             policy.max_concurrency,
             policy.stop_on_error,
             policy.max_tokens,
+            policy.reasoning,
         )
         .await?;
         failures = execution.failures;
@@ -7125,9 +7153,18 @@ fn spawn_protocol_run_task(
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) {
     join_set.spawn(async move {
-        execute_protocol_run_task(task, model_id, provider_slug, review_permits, max_tokens).await
+        execute_protocol_run_task(
+            task,
+            model_id,
+            provider_slug,
+            review_permits,
+            max_tokens,
+            reasoning,
+        )
+        .await
     });
 }
 
@@ -7137,6 +7174,7 @@ async fn execute_protocol_run_task(
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<ProtocolRunExecution, PrepareError> {
     let mut plan = protocol_run_plan(&task.instance_id, &task.record_path).map_err(|err| {
         PrepareError::DatabaseSetup {
@@ -7154,6 +7192,7 @@ async fn execute_protocol_run_task(
             Some(model_id.clone()),
             provider_slug.clone(),
             max_tokens,
+            reasoning,
         )
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -7178,6 +7217,7 @@ async fn execute_protocol_run_task(
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
             max_tokens,
+            reasoning,
         )?,
         review_permits.clone(),
     )
@@ -7209,6 +7249,7 @@ async fn execute_protocol_run_task(
             provider_slug.clone(),
             segment_index,
             max_tokens,
+            reasoning,
         )
         .await
         .map_err(|err| PrepareError::DatabaseSetup {
@@ -7488,6 +7529,7 @@ async fn execute_protocol_intent_segments_quiet(
     model_id: Option<String>,
     provider: Option<String>,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<segment::SegmentedToolCallSequence, PrepareError> {
     const MAX_SEGMENTATION_ATTEMPTS: usize = 3;
 
@@ -7506,6 +7548,7 @@ async fn execute_protocol_intent_segments_quiet(
         120,
         PROTOCOL_HTTP_MAX_ATTEMPTS,
         max_tokens,
+        reasoning,
     )?;
     let segmented = 'retry: loop {
         for attempt in 1..=MAX_SEGMENTATION_ATTEMPTS {
@@ -7552,6 +7595,7 @@ async fn execute_protocol_tool_call_review_quiet(
     provider: Option<String>,
     index: usize,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<(), PrepareError> {
     let subject = call_review_subjects(record_path, &[index])?
         .into_iter()
@@ -7568,6 +7612,7 @@ async fn execute_protocol_tool_call_review_quiet(
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
             max_tokens,
+            reasoning,
         )?,
         Arc::new(Semaphore::new(1)),
     )
@@ -7607,12 +7652,13 @@ fn call_review_subjects(
         .collect()
 }
 
-fn protocol_llm_config(
+pub(crate) fn protocol_llm_config(
     model_id: Option<String>,
     provider: Option<String>,
     timeout_secs: u64,
     max_attempts: u32,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
     let (route_source, provider_slug) = resolve_protocol_route(&model_id, provider)?;
@@ -7623,6 +7669,7 @@ fn protocol_llm_config(
         timeout_secs,
         max_attempts,
         max_tokens,
+        reasoning,
     })
 }
 
@@ -7730,6 +7777,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     provider: Option<String>,
     segment_index: usize,
     max_tokens: u32,
+    reasoning: ProtocolReasoningPolicy,
 ) -> Result<(), PrepareError> {
     let segmented = match load_latest_segmented_sequence(record_path)? {
         Some(segmented) => segmented,
@@ -7739,6 +7787,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
                 model_id.clone(),
                 provider.clone(),
                 max_tokens,
+                reasoning,
             )
             .await?
         }
@@ -7753,6 +7802,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
         120,
         PROTOCOL_HTTP_MAX_ATTEMPTS,
         max_tokens,
+        reasoning,
     )?;
     let protocol = review::ToolCallSegmentReview::new(JsonAdjudicator::new(client, cfg.clone()));
     let reviewed = protocol
@@ -8050,6 +8100,7 @@ impl ProtocolToolCallSegmentReviewCommand {
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
             default_protocol_max_tokens(),
+            ProtocolReasoningPolicy::default(),
         )?;
         let adjudicator = JsonAdjudicator::new(client, cfg.clone());
         let segmentation = segment::ToolCallIntentSegmentation::new(adjudicator.clone())
@@ -8188,6 +8239,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
             default_protocol_max_tokens(),
+            ProtocolReasoningPolicy::default(),
         )?;
         let protocol =
             segment::ToolCallIntentSegmentation::new(JsonAdjudicator::new(client, cfg.clone()));
@@ -13699,6 +13751,7 @@ mod tests {
             120,
             1,
             400,
+            ProtocolReasoningPolicy::default(),
         )
         .expect("protocol config");
 
@@ -13715,6 +13768,7 @@ mod tests {
             120,
             1,
             400,
+            ProtocolReasoningPolicy::default(),
         )
         .expect("protocol config");
 
@@ -14014,8 +14068,15 @@ mod tests {
         } else {
             format!("google/{model_id}")
         };
-        let cfg = protocol_llm_config(Some(model_id), Some("google".to_string()), 120, 1, 128)
-            .expect("Google protocol config");
+        let cfg = protocol_llm_config(
+            Some(model_id),
+            Some("google".to_string()),
+            120,
+            1,
+            128,
+            ProtocolReasoningPolicy::default(),
+        )
+        .expect("Google protocol config");
         assert!(cfg.route_source.is_direct_google());
         assert!(cfg.provider_slug.is_none());
         assert_eq!(cfg.provider_display(), "google");
@@ -14825,8 +14886,33 @@ mod tests {
             Command::Loop(LoopCommand {
                 command: LoopSubcommand::Prototype1Doctor(cmd),
             }) => {
-                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/repo")));
-                assert_eq!(cmd.format, InspectOutputFormat::Json);
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/repo")));
+                assert_eq!(cmd.control.format, InspectOutputFormat::Json);
+                assert!(!cmd.live_protocol_preflight);
+            }
+            other => panic!("unexpected command shape: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn loop_prototype1_doctor_live_protocol_preflight_command_parses() {
+        let parsed = Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "prototype1-doctor",
+            "--repo-root",
+            "/tmp/repo",
+            "--live-protocol-preflight",
+        ])
+        .expect("loop prototype1-doctor live preflight should parse");
+
+        match parsed.command {
+            Command::Loop(LoopCommand {
+                command: LoopSubcommand::Prototype1Doctor(cmd),
+            }) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/repo")));
+                assert_eq!(cmd.control.format, InspectOutputFormat::Table);
+                assert!(cmd.live_protocol_preflight);
             }
             other => panic!("unexpected command shape: {:?}", other),
         }

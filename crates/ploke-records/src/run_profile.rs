@@ -266,18 +266,63 @@ pub enum OracleMode {
 pub struct Protocol {
     #[serde(default = "default_protocol_max_tokens")]
     pub max_tokens: u32,
+    #[serde(default, skip_serializing_if = "ProtocolReasoning::is_omit")]
+    pub reasoning: ProtocolReasoning,
 }
 
 impl Default for Protocol {
     fn default() -> Self {
         Self {
             max_tokens: default_protocol_max_tokens(),
+            reasoning: ProtocolReasoning::default(),
         }
     }
 }
 
 fn default_protocol_max_tokens() -> u32 {
     2000
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolReasoning {
+    #[serde(default)]
+    pub mode: ProtocolReasoningMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ProtocolReasoningEffort>,
+}
+
+impl ProtocolReasoning {
+    pub fn is_omit(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for ProtocolReasoning {
+    fn default() -> Self {
+        Self {
+            mode: ProtocolReasoningMode::Omit,
+            effort: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtocolReasoningMode {
+    #[default]
+    Omit,
+    Effort,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProtocolReasoningEffort {
+    Xhigh,
+    High,
+    Medium,
+    Low,
+    Minimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -441,6 +486,9 @@ require_evidence = true
 [protocol]
 max_tokens = 2000
 
+[protocol.reasoning]
+mode = "omit"
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -474,6 +522,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert!(profile.selection.metrics.imp_at_k.enabled);
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.protocol.max_tokens, 2000);
+        assert_eq!(profile.protocol.reasoning, ProtocolReasoning::default());
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -498,10 +547,36 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 
     #[test]
     fn run_profile_toml_defaults_protocol_max_tokens() {
-        let profile = PROFILE.replace("\n[protocol]\nmax_tokens = 2000\n", "\n");
+        let profile = PROFILE.replace(
+            "\n[protocol]\nmax_tokens = 2000\n\n[protocol.reasoning]\nmode = \"omit\"\n",
+            "\n",
+        );
         let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
 
         assert_eq!(parsed.protocol.max_tokens, default_protocol_max_tokens());
+        assert_eq!(parsed.protocol.reasoning, ProtocolReasoning::default());
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_protocol_reasoning_effort() {
+        let profile = PROFILE
+            .replace("mode = \"omit\"", "mode = \"effort\"")
+            .replace(
+                "[protocol.reasoning]\nmode = \"effort\"",
+                "[protocol.reasoning]\nmode = \"effort\"\neffort = \"low\"",
+            );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.protocol.reasoning.mode, ProtocolReasoningMode::Effort);
+        assert_eq!(
+            parsed.protocol.reasoning.effort,
+            Some(ProtocolReasoningEffort::Low)
+        );
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
     }
 
     #[test]

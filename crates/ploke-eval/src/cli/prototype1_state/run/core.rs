@@ -14,7 +14,7 @@ use crate::{
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
-        Prototype1PromptCommand,
+        Prototype1DoctorCommand, Prototype1PromptCommand,
     },
     closure::load_closure_state,
     intervention::{
@@ -104,6 +104,8 @@ pub(crate) struct ActiveParentStatus {
     pub(crate) run_profile: RunProfileCommitment,
     pub(crate) effective_control: EffectiveRunControl,
     pub(crate) prompt_preflight: PromptPreflight,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) protocol_preflight: Option<ProtocolLivePreflight>,
     pub(crate) phase: DiagnosedPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) current_child: Option<CurrentChildStatus>,
@@ -140,6 +142,25 @@ pub(crate) struct PromptPreflight {
 pub(crate) enum PromptPreflightOutcome {
     Skipped,
     Pending,
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ProtocolLivePreflight {
+    pub(crate) outcome: ProtocolLivePreflightOutcome,
+    pub(crate) model_id: String,
+    pub(crate) provider: String,
+    pub(crate) route_source: String,
+    pub(crate) reasoning: String,
+    pub(crate) max_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProtocolLivePreflightOutcome {
     Passed,
     Failed,
 }
@@ -199,9 +220,13 @@ enum ExecuteMode {
     Continuous,
 }
 
-pub(crate) async fn doctor(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
-    let status = diagnose_command(&command)?;
-    render_status(command.format, &status)
+pub(crate) async fn doctor(command: Prototype1DoctorCommand) -> Result<(), PrepareError> {
+    let mut status = diagnose_command(&command.control)?;
+    if command.live_protocol_preflight {
+        let context = resolve_context(command.control.repo_root.as_deref())?;
+        attach_protocol_live_preflight(&context, &mut status).await;
+    }
+    render_status(command.control.format, &status)
 }
 
 pub(crate) async fn prompt(command: Prototype1PromptCommand) -> Result<(), PrepareError> {
@@ -291,6 +316,20 @@ fn render_status(
                 status.prompt_preflight.checked.len(),
                 status.prompt_preflight.prompt_files.len()
             );
+            if let Some(preflight) = status.protocol_preflight.as_ref() {
+                println!(
+                    "protocol_live_preflight: {} model={} provider={} route={} reasoning={} max_tokens={}",
+                    protocol_live_preflight_label(preflight.outcome),
+                    preflight.model_id,
+                    preflight.provider,
+                    preflight.route_source,
+                    preflight.reasoning,
+                    preflight.max_tokens
+                );
+                if let Some(detail) = preflight.detail.as_deref() {
+                    println!("  detail: {detail}");
+                }
+            }
             for reference in &status.prompt_preflight.checked {
                 println!(
                     "  - {} {} {}",
@@ -470,6 +509,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         run_profile: diagnosis.context.admitted_profile.commitment,
         effective_control: diagnosis.context.effective_control,
         prompt_preflight: diagnosis.prompt_preflight,
+        protocol_preflight: None,
         phase: diagnosis.phase,
         current_child: diagnosis.current_child,
         blockers: diagnosis.blockers,
@@ -477,6 +517,184 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         suggested_commands: suggested_commands(&diagnosis.context.repo_root),
         notes,
     }
+}
+
+async fn attach_protocol_live_preflight(
+    context: &RuntimeContext,
+    status: &mut ActiveParentStatus,
+) {
+    let preflight = run_protocol_live_preflight(context).await;
+    if preflight.outcome == ProtocolLivePreflightOutcome::Failed {
+        let detail = preflight
+            .detail
+            .clone()
+            .unwrap_or_else(|| "live protocol preflight failed".to_string());
+        status
+            .blockers
+            .push(format!("protocol live preflight failed: {detail}"));
+        status.phase = DiagnosedPhase::Blocked;
+        status.allowed_actions = allowed_actions_for_phase(status.phase);
+    }
+    status.protocol_preflight = Some(preflight);
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolLivePreflightOk {
+    ok: bool,
+}
+
+async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePreflight {
+    let policy = context.admitted_profile.profile.protocol_policy();
+    let max_tokens = policy.max_tokens.min(64).max(1);
+    let cfg = match crate::cli::protocol_llm_config(
+        Some(context.resolved_campaign.model_id.clone()),
+        context.resolved_campaign.provider_slug.clone(),
+        30,
+        1,
+        max_tokens,
+        policy.reasoning,
+    ) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return ProtocolLivePreflight {
+                outcome: ProtocolLivePreflightOutcome::Failed,
+                model_id: context.resolved_campaign.model_id.clone(),
+                provider: context
+                    .resolved_campaign
+                    .provider_slug
+                    .clone()
+                    .unwrap_or_else(|| "auto/openrouter".to_string()),
+                route_source: "unresolved".to_string(),
+                reasoning: policy.reasoning.display_label(),
+                max_tokens,
+                detail: Some(sanitize_protocol_preflight_detail(&err.to_string())),
+            };
+        }
+    };
+    let prompt = ploke_protocol::JsonChatPrompt {
+        system: "Return JSON only. Do not use markdown.".to_string(),
+        user: "Return exactly this JSON object: {\"ok\":true}".to_string(),
+    };
+    let client = reqwest::Client::new();
+    let result =
+        ploke_protocol::adjudicate_json::<ProtocolLivePreflightOk>(&client, &cfg, &prompt).await;
+
+    match result {
+        Ok(result) if result.parsed.ok => ProtocolLivePreflight {
+            outcome: ProtocolLivePreflightOutcome::Passed,
+            model_id: cfg.model_id,
+            provider: cfg.provider_display().to_string(),
+            route_source: protocol_route_source_label(cfg.route_source).to_string(),
+            reasoning: cfg.reasoning.display_label(),
+            max_tokens: cfg.max_tokens,
+            detail: None,
+        },
+        Ok(_) => ProtocolLivePreflight {
+            outcome: ProtocolLivePreflightOutcome::Failed,
+            model_id: cfg.model_id,
+            provider: cfg.provider_display().to_string(),
+            route_source: protocol_route_source_label(cfg.route_source).to_string(),
+            reasoning: cfg.reasoning.display_label(),
+            max_tokens: cfg.max_tokens,
+            detail: Some("live request returned parseable JSON but not the sentinel".to_string()),
+        },
+        Err(error) => ProtocolLivePreflight {
+            outcome: ProtocolLivePreflightOutcome::Failed,
+            model_id: cfg.model_id,
+            provider: cfg.provider_display().to_string(),
+            route_source: protocol_route_source_label(cfg.route_source).to_string(),
+            reasoning: cfg.reasoning.display_label(),
+            max_tokens: cfg.max_tokens,
+            detail: Some(classify_protocol_preflight_error(&error)),
+        },
+    }
+}
+
+fn protocol_route_source_label(
+    route_source: ploke_llm::request::models::ModelRouteSource,
+) -> &'static str {
+    if route_source.is_direct_google() {
+        "direct_google"
+    } else {
+        "openrouter"
+    }
+}
+
+fn protocol_live_preflight_label(outcome: ProtocolLivePreflightOutcome) -> &'static str {
+    match outcome {
+        ProtocolLivePreflightOutcome::Passed => "passed",
+        ProtocolLivePreflightOutcome::Failed => "failed",
+    }
+}
+
+fn classify_protocol_preflight_error(error: &ploke_protocol::ProtocolLlmError) -> String {
+    match error {
+        ploke_protocol::ProtocolLlmError::Request(message) => {
+            let lower = message.to_ascii_lowercase();
+            let class = if lower.contains("reasoning") {
+                "provider_request_shape"
+            } else if lower.contains("401")
+                || lower.contains("403")
+                || lower.contains("auth")
+                || lower.contains("permission")
+                || lower.contains("429")
+                || lower.contains("quota")
+                || lower.contains("resource_exhausted")
+            {
+                "provider_env"
+            } else {
+                "provider_request"
+            };
+            format!(
+                "{class}: {}",
+                sanitize_protocol_preflight_detail(message)
+            )
+        }
+        ploke_protocol::ProtocolLlmError::MissingContent => {
+            "provider_response: response had no visible content".to_string()
+        }
+        ploke_protocol::ProtocolLlmError::UnexpectedToolCalls => {
+            "provider_response: response returned tool calls instead of JSON content".to_string()
+        }
+        ploke_protocol::ProtocolLlmError::ParseJson { detail, .. } => {
+            format!(
+                "provider_response: JSON parse failed: {}",
+                sanitize_protocol_preflight_detail(detail)
+            )
+        }
+        ploke_protocol::ProtocolLlmError::InvalidModelId { detail, .. }
+        | ploke_protocol::ProtocolLlmError::InvalidConfig { detail } => {
+            format!(
+                "protocol_config: {}",
+                sanitize_protocol_preflight_detail(detail)
+            )
+        }
+    }
+}
+
+fn sanitize_protocol_preflight_detail(detail: &str) -> String {
+    let mut safe = detail.to_string();
+    for marker in [
+        "authorization",
+        "api_key",
+        "apikey",
+        "bearer",
+        "credential",
+        "credentials",
+        "\"user_id\"",
+    ] {
+        if let Some(index) = safe.to_ascii_lowercase().find(marker) {
+            safe.truncate(index);
+            safe.push_str("<redacted>");
+            break;
+        }
+    }
+    const MAX: usize = 240;
+    if safe.chars().count() > MAX {
+        safe = safe.chars().take(MAX).collect::<String>();
+        safe.push_str("...");
+    }
+    safe
 }
 
 fn allowed_actions_for_phase(phase: DiagnosedPhase) -> Vec<String> {

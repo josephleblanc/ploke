@@ -638,6 +638,7 @@ async fn live_intervention_synthesis_fans_out_replacement_candidates() {
         timeout_secs: 45,
         max_attempts: 1,
         max_tokens: 3200,
+        reasoning: ploke_protocol::ProtocolReasoningPolicy::default(),
     };
 
     let run = synthesize_intervention_with_llm(

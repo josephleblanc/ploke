@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
+use ploke_protocol::ProtocolReasoningPolicy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -93,6 +94,7 @@ impl Prototype1RunProfile {
     pub(crate) fn protocol_policy(&self) -> ProtocolCampaignPolicy {
         ProtocolCampaignPolicy {
             max_tokens: self.protocol.max_tokens,
+            reasoning: self.protocol.reasoning,
             ..ProtocolCampaignPolicy::default()
         }
     }
@@ -466,6 +468,8 @@ pub(crate) enum ArchiveScope {
 pub(crate) struct Protocol {
     #[serde(default = "default_protocol_max_tokens")]
     pub(crate) max_tokens: u32,
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    pub(crate) reasoning: ProtocolReasoningPolicy,
 }
 
 impl Protocol {
@@ -475,6 +479,7 @@ impl Protocol {
                 "protocol.max_tokens must be greater than zero",
             ));
         }
+        self.reasoning.validate().map_err(profile_error)?;
         Ok(())
     }
 }
@@ -483,6 +488,7 @@ impl Default for Protocol {
     fn default() -> Self {
         Self {
             max_tokens: default_protocol_max_tokens(),
+            reasoning: ProtocolReasoningPolicy::default(),
         }
     }
 }
@@ -901,6 +907,9 @@ require_evidence = true
 [protocol]
 max_tokens = 4000
 
+[protocol.reasoning]
+mode = "omit"
+
 [execution]
 stop_after = "complete"
 trace_jsonl = "auto"
@@ -926,6 +935,10 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
         assert_eq!(profile.protocol_policy().max_tokens, 4000);
+        assert_eq!(
+            profile.protocol_policy().reasoning,
+            ProtocolReasoningPolicy::omit()
+        );
         assert_eq!(
             profile.search_policy().child_budget,
             Prototype1ChildBudget { min: 6, max: 6 }
@@ -1009,13 +1022,17 @@ mbe = { enabled = true, python = "python3", workers = 2 }
     fn run_profile_protocol_defaults_max_tokens_to_campaign_default() {
         let profile = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("\n[protocol]\nmax_tokens = 4000\n", "\n"),
+            &PROFILE.replace("\n[protocol]\nmax_tokens = 4000\n\n[protocol.reasoning]\nmode = \"omit\"\n", "\n"),
         )
         .expect("profile parses");
 
         assert_eq!(
             profile.protocol_policy().max_tokens,
             default_protocol_max_tokens()
+        );
+        assert_eq!(
+            profile.protocol_policy().reasoning,
+            ProtocolReasoningPolicy::default()
         );
     }
 
@@ -1028,6 +1045,36 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         .expect_err("zero protocol token budget should reject");
 
         assert!(err.to_string().contains("protocol.max_tokens"));
+    }
+
+    #[test]
+    fn run_profile_protocol_accepts_reasoning_effort_policy() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE
+                .replace("mode = \"omit\"", "mode = \"effort\"")
+                .replace(
+                    "[protocol.reasoning]\nmode = \"effort\"",
+                    "[protocol.reasoning]\nmode = \"effort\"\neffort = \"low\"",
+                ),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.protocol_policy().reasoning,
+            ProtocolReasoningPolicy::effort(ploke_llm::ReasoningEffort::Low)
+        );
+    }
+
+    #[test]
+    fn run_profile_protocol_rejects_reasoning_effort_without_effort() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("mode = \"omit\"", "mode = \"effort\""),
+        )
+        .expect_err("effort mode requires an effort value");
+
+        assert!(err.to_string().contains("protocol.reasoning.effort"));
     }
 
     #[test]

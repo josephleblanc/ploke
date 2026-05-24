@@ -33,6 +33,8 @@ pub struct JsonLlmConfig {
     pub timeout_secs: u64,
     pub max_attempts: u32,
     pub max_tokens: u32,
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    pub reasoning: ProtocolReasoningPolicy,
 }
 
 impl Default for JsonLlmConfig {
@@ -44,6 +46,7 @@ impl Default for JsonLlmConfig {
             timeout_secs: 30,
             max_attempts: 1,
             max_tokens: 400,
+            reasoning: ProtocolReasoningPolicy::default(),
         }
     }
 }
@@ -56,6 +59,99 @@ impl JsonLlmConfig {
             self.provider_slug.as_deref().unwrap_or("auto/openrouter")
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolReasoningPolicy {
+    #[serde(default)]
+    pub mode: ProtocolReasoningMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+}
+
+impl ProtocolReasoningPolicy {
+    pub fn omit() -> Self {
+        Self {
+            mode: ProtocolReasoningMode::Omit,
+            effort: None,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            mode: ProtocolReasoningMode::Disabled,
+            effort: None,
+        }
+    }
+
+    pub fn effort(effort: ReasoningEffort) -> Self {
+        Self {
+            mode: ProtocolReasoningMode::Effort,
+            effort: Some(effort),
+        }
+    }
+
+    pub fn is_omit(&self) -> bool {
+        *self == Self::omit()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        match (self.mode, self.effort) {
+            (ProtocolReasoningMode::Omit | ProtocolReasoningMode::Disabled, Some(_)) => Err(
+                "protocol.reasoning.effort is only valid when protocol.reasoning.mode = \"effort\""
+                    .to_string(),
+            ),
+            (ProtocolReasoningMode::Effort, None) => Err(
+                "protocol.reasoning.effort must be set when protocol.reasoning.mode = \"effort\""
+                    .to_string(),
+            ),
+            (ProtocolReasoningMode::Effort, Some(ReasoningEffort::None)) => Err(
+                "protocol.reasoning.mode = \"effort\" cannot use effort = \"none\"; use mode = \"disabled\""
+                    .to_string(),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn as_reasoning_config(&self) -> Option<ReasoningConfig> {
+        match self.mode {
+            ProtocolReasoningMode::Omit => None,
+            ProtocolReasoningMode::Disabled => {
+                Some(ReasoningConfig::default().with_effort(ReasoningEffort::None))
+            }
+            ProtocolReasoningMode::Effort => self
+                .effort
+                .map(|effort| ReasoningConfig::default().with_effort(effort)),
+        }
+    }
+
+    pub fn display_label(&self) -> String {
+        match self.mode {
+            ProtocolReasoningMode::Omit => "omit".to_string(),
+            ProtocolReasoningMode::Disabled => "disabled".to_string(),
+            ProtocolReasoningMode::Effort => format!(
+                "effort:{}",
+                self.effort
+                    .map(|effort| format!("{effort:?}").to_ascii_lowercase())
+                    .unwrap_or_else(|| "missing".to_string())
+            ),
+        }
+    }
+}
+
+impl Default for ProtocolReasoningPolicy {
+    fn default() -> Self {
+        Self::omit()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtocolReasoningMode {
+    #[default]
+    Omit,
+    Effort,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,7 +433,7 @@ fn base_json_request<R: Router>(
     cfg: &JsonLlmConfig,
     prompt: &JsonChatPrompt,
 ) -> ChatCompRequest<R> {
-    R::default_chat_completion()
+    let request = R::default_chat_completion()
         .with_model(model)
         .with_messages(vec![
             RequestMessage::new_system(prompt.system.clone()),
@@ -345,8 +441,13 @@ fn base_json_request<R: Router>(
         ])
         .with_json_response()
         .with_max_tokens(cfg.max_tokens)
-        .with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None))
-        .non_streaming()
+        .non_streaming();
+
+    if let Some(reasoning) = cfg.reasoning.as_reasoning_config() {
+        request.with_reasoning(reasoning)
+    } else {
+        request
+    }
 }
 
 fn openrouter_json_request(
@@ -518,6 +619,7 @@ mod tests {
             timeout_secs: 42,
             max_attempts: 3,
             max_tokens: 400,
+            reasoning: ProtocolReasoningPolicy::default(),
         };
 
         let http = chat_http_config_for_json_llm(&cfg);
@@ -535,6 +637,7 @@ mod tests {
             timeout_secs: 42,
             max_attempts: 1,
             max_tokens: 64,
+            reasoning: ProtocolReasoningPolicy::default(),
         };
         let prompt = JsonChatPrompt {
             system: "Return JSON only.".to_string(),
@@ -560,6 +663,7 @@ mod tests {
             timeout_secs: 42,
             max_attempts: 1,
             max_tokens: 64,
+            reasoning: ProtocolReasoningPolicy::default(),
         };
         let prompt = JsonChatPrompt {
             system: "Return JSON only.".to_string(),

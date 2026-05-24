@@ -71,3 +71,7 @@ file and current code before treating a report as still open.
   `p1-google-live-run-20260521-4` produced and evaluated applied children, then failed successor startup because the sealed History block did not verify before storage.
 - [`2026-05-24-request-code-context-silent-stale-snippet-skip.md`](./2026-05-24-request-code-context-silent-stale-snippet-skip.md)
   `request_code_context` can silently omit stale snippets under non-strict RAG IO instead of surfacing a tool-level stale-index failure.
+- [`2026-05-24-cargo-tool-validation-and-trace-summary-ambiguity.md`](./2026-05-24-cargo-tool-validation-and-trace-summary-ambiguity.md)
+  Cargo output can be model-visible and repair-relevant while trace summaries hide it, and final cargo checks can resolve to weak focused manifests.
+- [`2026-05-24-prototype1-protocol-reasoning-config-blocker.md`](./2026-05-24-prototype1-protocol-reasoning-config-blocker.md)
+  Prototype 1 protocol adjudication unconditionally disables reasoning, blocking reasoning-required provider endpoints such as OpenRouter `google-ai-studio` for Gemini 3.5 Flash.

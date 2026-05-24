@@ -22,7 +22,8 @@ pub use core::{
 #[cfg(feature = "llm")]
 pub use llm::{
     JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, JsonLlmConfig, JsonLlmProvenance,
-    JsonLlmResult, ProtocolLlmError, adjudicate_json,
+    JsonLlmResult, ProtocolLlmError, ProtocolReasoningMode, ProtocolReasoningPolicy,
+    adjudicate_json,
 };
 pub use procedure::{
     FanOut, FanOutError, Merge, MergeError, NamedProcedure, Procedure, ProcedureExt, Sequence,
