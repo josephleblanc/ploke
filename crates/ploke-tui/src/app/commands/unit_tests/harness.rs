@@ -117,21 +117,33 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct DebugStateCommand(String);
+pub struct DebugStateCommand {
+    sequence: u64,
+    debug: String,
+}
+
 impl DebugStateCommand {
-    pub fn debug_string_from_ref(cmd: &StateCommand) -> Self {
+    pub fn debug_string_from_ref(sequence: u64, cmd: &StateCommand) -> Self {
         let debug_string = format!("{:?}", cmd);
-        Self(debug_string)
+        Self {
+            sequence,
+            debug: debug_string,
+        }
     }
 
     /// Returns the debug string representation of the StateCommand.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.debug
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidationProbeEvent {
+    sequence: u64,
     command: String,
     validation: Option<Result<(), String>>,
     /// User-facing error message (if any)
@@ -149,6 +161,10 @@ pub struct ValidationProbeEvent {
 }
 
 impl ValidationProbeEvent {
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
     pub fn command(&self) -> &str {
         &self.command
     }
@@ -218,9 +234,11 @@ impl RelayStateCmd {
             state_cmd_tx,
             debug_string_tx,
         } = self;
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
+            sequence += 1;
             // 1. Emit debug string first
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -286,8 +304,10 @@ impl ValidationRelayStateCmd {
         // Subscribe to error events for capturing user-facing errors
         let mut error_rx = event_bus.subscribe(EventPriority::Realtime);
 
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            sequence += 1;
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -389,6 +409,7 @@ impl ValidationRelayStateCmd {
             {
                 let _ = validation_tx
                     .send(ValidationProbeEvent {
+                        sequence,
                         command: cmd.discriminant().to_string(),
                         validation,
                         error_message,
@@ -1396,7 +1417,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("AddUserMessage"),
             "Debug should show AddUserMessage, got: {}",
@@ -1462,7 +1484,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("EmbedMessage"),
             "Debug should show EmbedMessage, got: {}",

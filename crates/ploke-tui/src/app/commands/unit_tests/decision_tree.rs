@@ -358,6 +358,15 @@ impl TestCase {
     fn with_error(mut self, expected: ExpectedUiError) -> Self {
         self.with_resolve_ui_error(expected)
     }
+
+    fn expects_validation_trace(&self) -> bool {
+        self.expected_resolved_load_ref_contains.is_some()
+            || self.expected_resolved_index_target_contains.is_some()
+            || self.expected_focus_root_contains.is_some()
+            || !matches!(self.expected_validation, ValidationExpectation::None)
+            || self.expected_error.message_contains.is_some()
+            || self.expected_error.recovery_suggestion.is_some()
+    }
 }
 
 impl Default for ValidationExpectation {
@@ -570,8 +579,7 @@ async fn run_test_cases(cases: &[TestCase]) {
         let mut app = rt.into_app_with_state_pwd(pwd_path).await;
         for case in group_cases {
             let trace =
-                send_command_and_collect(&mut app, case.input, &mut debug_rx, &mut validation_rx)
-                    .await;
+                send_command_and_collect(&mut app, case, &mut debug_rx, &mut validation_rx).await;
             assert_case_trace(case, &trace);
         }
     }
@@ -1020,7 +1028,12 @@ async fn run_test_case(case: &TestCase) {
         .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
         .expect("send enter");
 
-    let mut trace = collect_case_trace(&mut debug_rx, &mut validation_rx).await;
+    let mut trace = collect_case_trace(
+        &mut debug_rx,
+        &mut validation_rx,
+        case.expects_validation_trace(),
+    )
+    .await;
     trace.parsed = parsed_debug;
     app_task.abort();
     let _ = app_task.await;
@@ -1041,12 +1054,18 @@ async fn run_no_db_test_case(case: &NoDbTestCase) {
 async fn collect_case_trace(
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
     validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+    wait_for_validation: bool,
 ) -> CaseTrace {
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
+    const VALIDATION_TIMEOUT: Duration = Duration::from_secs(1);
+    const OPTIONAL_VALIDATION_TIMEOUT: Duration = Duration::from_millis(10);
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(10);
+
     let mut commands = Vec::new();
     let mut validations = Vec::new();
 
-    match timeout(Duration::from_millis(100), debug_rx.recv()).await {
-        Ok(Some(cmd)) => commands.push(cmd),
+    let first_command = match timeout(COMMAND_TIMEOUT, debug_rx.recv()).await {
+        Ok(Some(cmd)) => cmd,
         Ok(None) => {
             return CaseTrace {
                 parsed: String::new(),
@@ -1061,17 +1080,28 @@ async fn collect_case_trace(
                 validations,
             };
         }
-    }
+    };
+    let command_sequence = first_command.sequence();
+    commands.push(first_command);
 
-    if let Ok(Some(validation)) = timeout(Duration::from_millis(100), validation_rx.recv()).await {
-        validations.push(validation);
-    }
+    let initial_validation_timeout = if wait_for_validation {
+        VALIDATION_TIMEOUT
+    } else {
+        OPTIONAL_VALIDATION_TIMEOUT
+    };
+    collect_matching_validation(
+        validation_rx,
+        command_sequence,
+        initial_validation_timeout,
+        &mut validations,
+    )
+    .await;
 
     let mut idle_rounds = 0;
     while idle_rounds < 2 {
         let mut got_any = false;
 
-        match timeout(Duration::from_millis(10), debug_rx.recv()).await {
+        match timeout(IDLE_TIMEOUT, debug_rx.recv()).await {
             Ok(Some(cmd)) => {
                 commands.push(cmd);
                 got_any = true;
@@ -1080,9 +1110,11 @@ async fn collect_case_trace(
             Err(_) => {}
         }
 
-        match timeout(Duration::from_millis(10), validation_rx.recv()).await {
+        match timeout(IDLE_TIMEOUT, validation_rx.recv()).await {
             Ok(Some(validation)) => {
-                validations.push(validation);
+                if validation.sequence() == command_sequence {
+                    validations.push(validation);
+                }
                 got_any = true;
             }
             Ok(None) => break,
@@ -1101,6 +1133,30 @@ async fn collect_case_trace(
         parsed: String::new(),
         commands,
         validations,
+    }
+}
+
+async fn collect_matching_validation(
+    validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+    command_sequence: u64,
+    wait: Duration,
+    validations: &mut Vec<ValidationProbeEvent>,
+) {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) else {
+            break;
+        };
+        match timeout(remaining, validation_rx.recv()).await {
+            Ok(Some(validation)) if validation.sequence() == command_sequence => {
+                validations.push(validation);
+                break;
+            }
+            Ok(Some(_stale_validation)) => {
+                continue;
+            }
+            Ok(None) | Err(_) => break,
+        }
     }
 }
 
@@ -2295,15 +2351,17 @@ async fn test_load_validate_allows_stale_state_with_force() {
 /// Helper to send a command and collect the resulting StateCommand and events
 async fn send_command_and_collect(
     app: &mut crate::app::App,
-    command: &str,
+    case: &TestCase,
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
     validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
 ) -> CaseTrace {
+    let command = case.input;
     let parsed = parser::parse(app, command, CommandStyle::Slash);
     let parsed_debug = format!("{:?}", parsed);
     exec::execute(app, parsed);
     tokio::task::yield_now().await;
-    let mut trace = collect_case_trace(debug_rx, validation_rx).await;
+    let mut trace =
+        collect_case_trace(debug_rx, validation_rx, case.expects_validation_trace()).await;
     trace.parsed = parsed_debug;
     trace
 }
