@@ -16,4 +16,4 @@ state without checking newer code, History records, and run artifacts.
 - [`2026-05-23-p1-google-live-multigen-2g3x3-20260523-192017.md`](2026-05-23-p1-google-live-multigen-2g3x3-20260523-192017.md)
   Run review for the first Google live multigen setup, covering eval output,
   empty patch packaging, missing MBE oracle evidence, LLM token stats, and
-  protocol adjudication.
+  trace-level tool-result quality versus transport success.
