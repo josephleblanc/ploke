@@ -72,6 +72,11 @@ The profile rejects internally conflicting settings:
 - `target.instance` must be nonempty and, when `target.instances` is also set,
   must be included in `target.instances`.
 - `target.instances` must not contain empty or duplicate ids.
+- `model.id`, when present, must be a valid model id.
+- `model.provider`, when present, must be a valid provider slug.
+- `model.route_source = "direct-google"` only accepts `model.provider =
+  "google"` or no provider. OpenRouter provider pins such as
+  `google-ai-studio` are valid only with `model.route_source = "openrouter"`.
 - `search.children.min` and `search.children.max` must be nonzero, and `min`
   must not exceed `max`.
 - `generation.source = "legacy"` currently requires exactly one target
@@ -125,6 +130,32 @@ instances = ["BurntSushi__ripgrep-2209"]
   the evaluated target set.
 - `instances`: Explicit target set. If both `instance` and `instances` are set,
   `instance` must be included in `instances`.
+
+## `model`
+
+```toml
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+```
+
+- `id`: Optional default model id for Prototype 1 setup. This is the shared
+  eval/protocol model for the current baseline path unless explicit CLI flags
+  override it.
+- `route_source`: Optional default router for ambiguous model ids. Accepted
+  values are `direct-google` and `openrouter`. This disambiguates ids such as
+  `google/gemini-3.5-flash`, which can be valid through both routers.
+- `provider`: Optional provider slug. For `route_source = "direct-google"`,
+  `provider = "google"` is accepted as the direct Google sentinel and resolves
+  to no OpenRouter provider pin in the campaign manifest. For
+  `route_source = "openrouter"`, this is an OpenRouter provider pin.
+
+CLI flags keep normal precedence over this section. `--model-id`,
+`--route-source`, and `--provider` override the eval defaults; the
+`--protocol-*` flags override the corresponding protocol defaults. When the
+baseline path requires one shared model/route/provider and no protocol override
+is supplied, setup uses the resolved eval tuple for protocol as well.
 
 ## `search`
 

@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
+use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,6 +38,8 @@ pub(crate) struct Prototype1RunProfile {
     #[serde(default)]
     pub(crate) target: Target,
     #[serde(default)]
+    pub(crate) model: ModelDefaults,
+    #[serde(default)]
     pub(crate) search: Search,
     #[serde(default)]
     pub(crate) generation: Generation,
@@ -59,6 +62,7 @@ impl Prototype1RunProfile {
             )));
         }
         self.target.validate()?;
+        self.model.validate()?;
         self.search.validate()?;
         self.generation.validate()?;
         self.protocol.validate()?;
@@ -109,6 +113,97 @@ impl Default for Storage {
     fn default() -> Self {
         Self {
             worktree_root: PathBuf::from("~/.ploke-eval/worktrees"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ModelDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_profile_route_source"
+    )]
+    pub(crate) route_source: Option<ModelRouteSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider: Option<String>,
+}
+
+impl ModelDefaults {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.id.is_none() && self.route_source.is_none() && self.provider.is_none()
+    }
+
+    pub(crate) fn parsed_id(&self) -> Result<Option<ModelId>, PrepareError> {
+        self.id
+            .as_deref()
+            .map(|id| {
+                id.parse().map_err(|err| {
+                    profile_error(format!("profile.model.id '{id}' is invalid: {err}"))
+                })
+            })
+            .transpose()
+    }
+
+    fn validate(&self) -> Result<(), PrepareError> {
+        self.parsed_id()?;
+        if let Some(provider) = self.provider.as_deref() {
+            ProviderKey::new(provider).map_err(|err| {
+                profile_error(format!(
+                    "profile.model.provider '{provider}' is invalid: {err}"
+                ))
+            })?;
+        }
+        if self
+            .route_source
+            .is_some_and(|source| source.is_direct_google())
+            && let Some(provider) = self.provider.as_deref()
+            && provider != "google"
+        {
+            return Err(profile_error(format!(
+                "profile.model.route_source = direct-google does not accept OpenRouter provider '{provider}'"
+            )));
+        }
+        Ok(())
+    }
+}
+
+mod optional_profile_route_source {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::ModelRouteSource;
+
+    pub(super) fn serialize<S>(
+        value: &Option<ModelRouteSource>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(ModelRouteSource::DirectGoogle) => serializer.serialize_some("direct-google"),
+            Some(ModelRouteSource::OpenRouter) => serializer.serialize_some("openrouter"),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<ModelRouteSource>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let Some(value) = Option::<String>::deserialize(deserializer)? else {
+            return Ok(None);
+        };
+        match value.as_str() {
+            "openrouter" | "open-router" | "open_router" => Ok(Some(ModelRouteSource::OpenRouter)),
+            "direct-google" | "direct_google" | "google" => {
+                Ok(Some(ModelRouteSource::DirectGoogle))
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "invalid route source '{other}'; expected openrouter or direct-google"
+            ))),
         }
     }
 }
@@ -872,6 +967,11 @@ dataset_key = "ripgrep"
 instance = "BurntSushi__ripgrep-2209"
 instances = ["BurntSushi__ripgrep-2209"]
 
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+
 [search]
 max_generations = 15
 max_total_nodes = 96
@@ -940,6 +1040,15 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             ProtocolReasoningPolicy::omit()
         );
         assert_eq!(
+            profile.model.parsed_id().expect("model id parses").as_ref(),
+            Some(&"google/gemini-3.5-flash".parse().expect("model id"))
+        );
+        assert_eq!(
+            profile.model.route_source,
+            Some(ModelRouteSource::DirectGoogle)
+        );
+        assert_eq!(profile.model.provider.as_deref(), Some("google"));
+        assert_eq!(
             profile.search_policy().child_budget,
             Prototype1ChildBudget { min: 6, max: 6 }
         );
@@ -950,6 +1059,29 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
+    }
+
+    #[test]
+    fn run_profile_model_route_defaults_roundtrip_as_kebab_case() {
+        let profile = parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses");
+        let text = toml::to_string(&profile).expect("serialize profile");
+
+        assert!(text.contains("[model]"));
+        assert!(text.contains("route_source = \"direct-google\""));
+    }
+
+    #[test]
+    fn run_profile_model_rejects_openrouter_provider_on_direct_google_route() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("provider = \"google\"", "provider = \"google-ai-studio\""),
+        )
+        .expect_err("direct Google route should reject OpenRouter provider pins");
+
+        assert!(
+            err.to_string()
+                .contains("profile.model.route_source = direct-google")
+        );
     }
 
     #[test]

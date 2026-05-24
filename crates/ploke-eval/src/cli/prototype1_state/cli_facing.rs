@@ -10307,37 +10307,63 @@ fn prepare_prototype1_loop_campaign(
     prepared_batch: &PreparedMsbBatch,
     run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
-    let selected_eval_model = resolve_model_for_run(
-        command
-            .model_id
-            .as_deref()
-            .map(ModelId::from_str)
-            .transpose()
-            .map_err(|err| PrepareError::DatabaseSetup {
-                phase: "prototype1_loop_model_id",
-                detail: err.to_string(),
-            })?
-            .as_ref(),
-        command.use_default_model,
-    )?;
+    let profile_model = run_profile.map(|profile| &profile.model);
+    let profile_model_id = profile_model
+        .map(profile::ModelDefaults::parsed_id)
+        .transpose()?
+        .flatten();
+    let profile_model_configured = profile_model.is_some_and(|model| !model.is_empty());
+    let command_model_id = command
+        .model_id
+        .as_deref()
+        .map(ModelId::from_str)
+        .transpose()
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "prototype1_loop_model_id",
+            detail: err.to_string(),
+        })?;
+    let selected_model_id = if command_model_id.is_some() || command.use_default_model {
+        command_model_id.as_ref()
+    } else {
+        profile_model_id.as_ref()
+    };
+    let selected_eval_model = resolve_model_for_run(selected_model_id, command.use_default_model)?;
     let eval_route_source = command
         .route_source
+        .or_else(|| profile_model.and_then(|model| model.route_source))
         .unwrap_or(selected_eval_model.route_source);
     let eval_model = selected_eval_model.id;
+    let eval_provider = command
+        .provider
+        .clone()
+        .or_else(|| profile_model.and_then(|model| model.provider.clone()));
     let eval_provider_slug = resolve_loop_provider_slug(
         eval_route_source,
         &eval_model,
-        command.provider.clone(),
+        eval_provider.clone(),
         "prototype1_loop_provider",
     )?;
 
     if command.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
-        let protocol_model = resolve_protocol_model_id(command.protocol_model_id.clone())?;
+        let protocol_model = if let Some(protocol_model_id) = command.protocol_model_id.clone() {
+            resolve_protocol_model_id(Some(protocol_model_id))?
+        } else if profile_model_configured
+            || command.model_id.is_some()
+            || command.use_default_model
+        {
+            eval_model.clone()
+        } else {
+            resolve_protocol_model_id(None)?
+        };
         let protocol_route_source = command.protocol_route_source.unwrap_or(eval_route_source);
+        let protocol_provider = command
+            .protocol_provider
+            .clone()
+            .or_else(|| eval_provider.clone());
         let protocol_provider = resolve_protocol_provider_slug(
             &protocol_model,
             Some(protocol_route_source),
-            command.protocol_provider.clone(),
+            protocol_provider,
         )?;
         if protocol_model != eval_model
             || protocol_route_source != eval_route_source

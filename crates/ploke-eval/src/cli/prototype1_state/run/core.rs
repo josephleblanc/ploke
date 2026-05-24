@@ -2042,8 +2042,8 @@ mod tests {
     use super::*;
 
     use crate::cli::prototype1_state::profile::{
-        Control, Execution, Generation, Protocol, Prototype1RunProfile, RunMode, Search, Selection,
-        Storage, Target,
+        Control, Execution, Generation, ModelDefaults, Protocol, Prototype1RunProfile, RunMode,
+        Search, Selection, Storage, Target,
     };
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
@@ -2053,6 +2053,7 @@ mod tests {
             name: "test-profile".to_string(),
             storage: Storage::default(),
             target: Target::default(),
+            model: ModelDefaults::default(),
             search: Search {
                 max_generations: 4,
                 max_total_nodes: 32,

@@ -72,10 +72,12 @@ Resolve route and provider before setup:
 
 Rules:
 
-- For direct Google rows, use `--route-source direct-google` and do not pin an
-  OpenRouter provider. Passing `--provider google` is acceptable when a command
-  accepts it as the explicit direct-Google sentinel; it should resolve to no
-  stored provider slug.
+- Prefer putting the intended default route in the run profile `[model]`
+  section. Use CLI `--model-id`, `--route-source`, and `--provider` only for
+  intentional one-off overrides.
+- For direct Google rows, use `route_source = "direct-google"` and do not pin an
+  OpenRouter provider. `provider = "google"` is accepted as the explicit
+  direct-Google sentinel; it should resolve to no stored provider slug.
 - For OpenRouter catalog rows such as `google/gemini-3.5-flash`, pin a concrete
   OpenRouter provider such as `google-ai-studio` if the run should be stable.
 - If the intended route is direct Google and the registry row is missing or
@@ -110,29 +112,16 @@ checkout binary for setup if the new worktree does not have `target/debug` yet:
 /home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-setup \
   --campaign <campaign> \
   --profile <profile-path> \
-  --model-id <model-id> \
-  --route-source <direct-google|openrouter> \
-  --provider <provider-slug> \
-  --protocol-model-id <model-id> \
-  --protocol-route-source <direct-google|openrouter> \
-  --protocol-provider <provider-slug> \
   --format json
 ```
 
-For direct Google, use the route explicitly and omit the OpenRouter provider
-pin:
+For direct Google, the profile should normally carry the route:
 
-```bash
-/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-setup \
-  --campaign <campaign> \
-  --profile <profile-path> \
-  --model-id <model-id> \
-  --route-source direct-google \
-  --provider google \
-  --protocol-model-id <model-id> \
-  --protocol-route-source direct-google \
-  --protocol-provider google \
-  --format json
+```toml
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
 ```
 
 After setup and before any step, inspect the admitted campaign or closure state.
