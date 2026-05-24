@@ -2176,6 +2176,31 @@ fn parse_requested_model_id(model_id: Option<&str>) -> Result<Option<ModelId>, P
         .transpose()
 }
 
+fn provider_request_for_selected_model<'a>(
+    selected_model: &ResponseItem,
+    explicit_provider: Option<&'a ProviderKey>,
+    preferred_provider: Option<&'a ProviderKey>,
+) -> Option<&'a ProviderKey> {
+    explicit_provider.or_else(|| {
+        if selected_model.route_source.is_direct_google() {
+            None
+        } else {
+            preferred_provider
+        }
+    })
+}
+
+fn load_provider_preference_for_selected_model(
+    selected_model: &ResponseItem,
+    explicit_provider: Option<&ProviderKey>,
+) -> Result<Option<ProviderKey>, PrepareError> {
+    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
+        Ok(None)
+    } else {
+        load_provider_for_model(&selected_model.id)
+    }
+}
+
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
         let run_arm = RunArm::shell_only_control();
@@ -2187,12 +2212,14 @@ impl RunMsbSingleRequest {
         let selected_model =
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
-        let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let route = resolve_route_for_model(
+        let preferred_provider =
+            load_provider_preference_for_selected_model(&selected_model, self.provider.as_ref())?;
+        let requested_provider = provider_request_for_selected_model(
             &selected_model,
-            self.provider.as_ref().or(preferred_provider.as_ref()),
-        )
-        .await?;
+            self.provider.as_ref(),
+            preferred_provider.as_ref(),
+        );
+        let route = resolve_route_for_model(&selected_model, requested_provider).await?;
         let selected_provider = route.selected_provider_slug();
         let selected_endpoint = selected_endpoint_provenance(&route);
 
@@ -2630,12 +2657,14 @@ impl RunMsbAgentSingleRequest {
         let selected_model =
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
         let selected_model_id = selected_model.id.clone();
-        let preferred_provider = load_provider_for_model(&selected_model_id)?;
-        let route = resolve_route_for_model(
+        let preferred_provider =
+            load_provider_preference_for_selected_model(&selected_model, self.provider.as_ref())?;
+        let requested_provider = provider_request_for_selected_model(
             &selected_model,
-            self.provider.as_ref().or(preferred_provider.as_ref()),
-        )
-        .await?;
+            self.provider.as_ref(),
+            preferred_provider.as_ref(),
+        );
+        let route = resolve_route_for_model(&selected_model, requested_provider).await?;
         let selected_provider = route.selected_provider_slug();
         let selected_endpoint = selected_endpoint_provenance(&route);
 
@@ -3253,12 +3282,14 @@ async fn run_batch(
     let requested_model = parse_requested_model_id(model_id.as_deref())?;
     let selected_model = resolve_model_for_run(requested_model.as_ref(), use_default_model)?;
     let selected_model_id = selected_model.id.clone();
-    let preferred_provider = load_provider_for_model(&selected_model_id)?;
-    let route = resolve_route_for_model(
+    let preferred_provider =
+        load_provider_preference_for_selected_model(&selected_model, provider.as_ref())?;
+    let requested_provider = provider_request_for_selected_model(
         &selected_model,
-        provider.as_ref().or(preferred_provider.as_ref()),
-    )
-    .await?;
+        provider.as_ref(),
+        preferred_provider.as_ref(),
+    );
+    let route = resolve_route_for_model(&selected_model, requested_provider).await?;
     let selected_provider = route.selected_provider_slug();
 
     let summary_path = prepared.output_dir.join("batch-run-summary.json");
@@ -5204,6 +5235,77 @@ mod tests {
 
     fn test_provider_key() -> ProviderKey {
         ProviderKey::new("deepinfra").expect("provider key")
+    }
+
+    fn test_model_response_item(
+        id: &str,
+        route_source: ploke_llm::request::models::ModelRouteSource,
+    ) -> ResponseItem {
+        let mut item: ResponseItem = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "created": 0,
+            "description": "test model",
+            "architecture": {
+                "input_modalities": ["text"],
+                "modality": "text->text",
+                "output_modalities": ["text"],
+                "tokenizer": "Gemini"
+            },
+            "top_provider": {
+                "is_moderated": false
+            },
+            "pricing": {
+                "prompt": 0.0,
+                "completion": 0.0
+            },
+            "supported_parameters": ["tools"]
+        }))
+        .expect("test response item");
+        item.route_source = route_source;
+        item
+    }
+
+    #[test]
+    fn direct_google_ignores_openrouter_provider_preference() {
+        let selected_model = test_model_response_item(
+            "google/gemini-3.5-flash",
+            ploke_llm::request::models::ModelRouteSource::DirectGoogle,
+        );
+        let preferred_provider = ProviderKey::new("google-ai-studio").expect("provider key");
+
+        let requested_provider =
+            provider_request_for_selected_model(&selected_model, None, Some(&preferred_provider));
+
+        assert!(requested_provider.is_none());
+    }
+
+    #[test]
+    fn explicit_provider_is_still_validated_for_direct_google() {
+        let selected_model = test_model_response_item(
+            "google/gemini-3.5-flash",
+            ploke_llm::request::models::ModelRouteSource::DirectGoogle,
+        );
+        let explicit_provider = ProviderKey::new("google-ai-studio").expect("provider key");
+
+        let requested_provider =
+            provider_request_for_selected_model(&selected_model, Some(&explicit_provider), None);
+
+        assert_eq!(requested_provider, Some(&explicit_provider));
+    }
+
+    #[test]
+    fn openrouter_uses_preferred_provider_when_explicit_missing() {
+        let selected_model = test_model_response_item(
+            "google/gemini-3.5-flash",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let preferred_provider = ProviderKey::new("google-ai-studio").expect("provider key");
+
+        let requested_provider =
+            provider_request_for_selected_model(&selected_model, None, Some(&preferred_provider));
+
+        assert_eq!(requested_provider, Some(&preferred_provider));
     }
 
     #[cfg(feature = "live_api_tests")]

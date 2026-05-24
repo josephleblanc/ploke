@@ -11768,22 +11768,11 @@ fn resolve_protocol_route(
         ));
     }
 
-    let provider = load_provider_for_model(model_id)?;
     if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
-        if let Some(provider) = provider.as_ref()
-            && provider.slug.as_str() != "google"
-        {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "protocol_route",
-                detail: format!(
-                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
-                    provider.slug.as_str()
-                ),
-            });
-        }
         return Ok((ModelRouteSource::DirectGoogle, None));
     }
 
+    let provider = load_provider_for_model(model_id)?;
     Ok((
         ModelRouteSource::OpenRouter,
         provider.map(|provider| provider.slug.as_str().to_string()),
@@ -13768,6 +13757,8 @@ mod tests {
     use crate::run_registry::RunExecutionStatus;
     use ploke_core::ArcStr;
     use ploke_tui::chat_history::{MessageKind, MessageStatus};
+    use std::ffi::OsString;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
@@ -13848,6 +13839,34 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    struct EvalHomeGuard {
+        old: Option<OsString>,
+    }
+
+    impl EvalHomeGuard {
+        fn set_to(path: &Path) -> Self {
+            let old = std::env::var_os("PLOKE_EVAL_HOME");
+            unsafe {
+                std::env::set_var("PLOKE_EVAL_HOME", path);
+            }
+            Self { old }
+        }
+    }
+
+    impl Drop for EvalHomeGuard {
+        fn drop(&mut self) {
+            if let Some(old) = self.old.take() {
+                unsafe {
+                    std::env::set_var("PLOKE_EVAL_HOME", old);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var("PLOKE_EVAL_HOME");
+                }
+            }
+        }
+    }
+
     #[test]
     fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
         let cfg = protocol_llm_config(
@@ -13900,6 +13919,76 @@ mod tests {
         assert!(cfg.route_source.is_openrouter());
         assert_eq!(cfg.provider_slug.as_deref(), Some("google-ai-studio"));
         assert_eq!(cfg.provider_display(), "google-ai-studio");
+    }
+
+    #[test]
+    fn protocol_llm_config_ignores_openrouter_preference_for_direct_google_registry_row() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("registry.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("registry json"),
+        )
+        .expect("write registry");
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "google/gemini-3.5-flash": {
+                        "slug": "google-ai-studio"
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+
+        let cfg = protocol_llm_config(
+            Some("google/gemini-3.5-flash".to_string()),
+            None,
+            None,
+            120,
+            1,
+            400,
+            ProtocolReasoningPolicy::default(),
+        )
+        .expect("protocol config");
+
+        assert!(cfg.route_source.is_direct_google());
+        assert!(cfg.provider_slug.is_none());
+        assert_eq!(cfg.provider_display(), "google");
     }
 
     #[test]
