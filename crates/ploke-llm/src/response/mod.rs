@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::router_only::openrouter::providers::ProviderName;
 
 mod tool_call;
-pub use tool_call::ToolCall;
+pub use tool_call::{GoogleToolCallExtraContent, ToolCall, ToolCallExtraContent};
 
 use super::manager::Role;
 pub use tool_call::FunctionCall;

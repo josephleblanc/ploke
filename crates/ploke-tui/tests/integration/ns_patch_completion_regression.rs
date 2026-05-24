@@ -195,6 +195,7 @@ async fn ns_patch_stages_multiple_files_in_one_request() {
             })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
@@ -292,6 +293,7 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
                 })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
@@ -400,6 +402,7 @@ async fn ns_patch_rejects_duplicate_same_file_entries_in_one_request() {
             })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
@@ -490,6 +493,7 @@ async fn ns_patch_auto_confirm_applies_staged_patch() {
                 })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);

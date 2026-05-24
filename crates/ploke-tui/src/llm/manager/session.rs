@@ -3824,6 +3824,7 @@ mod tests {
                 name: ToolName::NsPatch,
                 arguments: r#"{"patches":[]}"#.to_string(),
             },
+            extra_content: None,
         };
 
         let mut requested_rx = event_bus.subscribe(crate::EventPriority::Realtime);

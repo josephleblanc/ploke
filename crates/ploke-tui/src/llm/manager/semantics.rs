@@ -410,6 +410,7 @@ mod tests {
                 })
                 .to_string(),
             },
+            extra_content: None,
         };
 
         let preflight_error = crate::tools::validate_and_sanitize_tool_calls(&[tool_call])

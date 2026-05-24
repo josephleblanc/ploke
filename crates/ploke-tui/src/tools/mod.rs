@@ -900,10 +900,43 @@ mod tests {
                 name: ToolName::ListDir,
                 arguments: "{\"dir\":\"src\",\"max_entries\":5}<|tool_call_end|>".to_string(),
             },
+            extra_content: None,
         };
 
         let validated = validate_and_sanitize_tool_call(&tool_call).expect("validated tool call");
 
+        assert_eq!(
+            validated.function.arguments,
+            "{\"dir\":\"src\",\"max_entries\":5}"
+        );
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_preserves_google_thought_signature() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_google_signature"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::ListDir,
+                arguments: "{\"dir\":\"src\",\"max_entries\":5}<|tool_call_end|>".to_string(),
+            },
+            extra_content: Some(ploke_llm::response::ToolCallExtraContent {
+                google: Some(ploke_llm::response::GoogleToolCallExtraContent {
+                    thought_signature: Some("opaque-google-signature".to_string()),
+                }),
+            }),
+        };
+
+        let validated = validate_and_sanitize_tool_call(&tool_call).expect("validated tool call");
+
+        assert_eq!(
+            validated
+                .extra_content
+                .as_ref()
+                .and_then(|extra| extra.google.as_ref())
+                .and_then(|google| google.thought_signature.as_deref()),
+            Some("opaque-google-signature")
+        );
         assert_eq!(
             validated.function.arguments,
             "{\"dir\":\"src\",\"max_entries\":5}"
@@ -919,6 +952,7 @@ mod tests {
                 name: ToolName::NsRead,
                 arguments: "{\"file\":\"src/lib.rs\",\"start_line\":".to_string(),
             },
+            extra_content: None,
         };
 
         let err = validate_and_sanitize_tool_call(&tool_call).expect_err("malformed json");
@@ -936,6 +970,7 @@ mod tests {
                 name: ToolName::Cargo,
                 arguments: "{\"command\":\"fmt\",\"scope\":\"workspace\"}".to_string(),
             },
+            extra_content: None,
         };
 
         let err = validate_and_sanitize_tool_call(&tool_call).expect_err("schema invalid args");
@@ -953,6 +988,7 @@ mod tests {
                 name: ToolName::CodeItemLookup,
                 arguments: r#"{"file_path":"proc_macros/ploke-db-derive/src/lib.rs","item_name":"FieldSpec","module_path":"ploke_db_derive","node_kind":"struct"}"#.to_string(),
             },
+            extra_content: None,
         };
 
         let err = validate_and_sanitize_tool_call(&tool_call)

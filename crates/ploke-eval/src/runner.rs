@@ -6801,6 +6801,7 @@ mod tests {
                         name: ToolName::ApplyCodeEdit,
                         arguments: "{}".into(),
                     },
+                    extra_content: None,
                 },
             }),
             &mut tool_request_started_at,
@@ -7364,6 +7365,7 @@ mod tests {
                     name: ToolName::ApplyCodeEdit,
                     arguments: "{}".into(),
                 },
+                extra_content: None,
             },
         }));
 

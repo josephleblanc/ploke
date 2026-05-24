@@ -158,6 +158,7 @@ fn ns_patch_tool_call(call_id: &str, file: &str, diff: &str, reasoning: &str) ->
             })
             .to_string(),
         },
+        extra_content: None,
     }
 }
 

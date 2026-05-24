@@ -593,6 +593,7 @@ impl ChatHistory {
                     // Tool args are not stored on tool results; preserve the call id and name.
                     arguments: "{}".to_string(),
                 },
+                extra_content: None,
             })
         };
 

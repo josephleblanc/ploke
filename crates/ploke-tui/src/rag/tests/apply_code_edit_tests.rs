@@ -309,6 +309,7 @@ async fn test_malformed_json_handling() {
             name: ToolName::ApplyCodeEdit,
             arguments: malformed_json.to_string(),
         },
+        extra_content: None,
     };
     let ctx = tools::Ctx {
         state: Arc::clone(&harness.state),
