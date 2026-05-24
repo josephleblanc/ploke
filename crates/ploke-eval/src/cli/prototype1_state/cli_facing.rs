@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{
     HttpBodyFailure, ModelId, ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptTimeline,
-    ProviderKey,
+    ProviderKey, request::models::ModelRouteSource,
 };
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
@@ -9895,6 +9895,7 @@ pub(crate) fn prepare_prototype1_treatment_campaign(
     manifest.dataset_sources = baseline_manifest.dataset_sources.clone();
     manifest.model_id = Some(baseline.model_id.clone());
     manifest.provider_slug = baseline.provider_slug.clone();
+    manifest.route_source = Some(baseline.route_source);
     manifest.instances_root = Some(
         baseline
             .instances_root
@@ -10238,6 +10239,44 @@ fn prototype1_benchmark_family_id(benchmark_family: BenchmarkFamily) -> &'static
     }
 }
 
+fn resolve_loop_provider_slug(
+    route_source: ModelRouteSource,
+    model_id: &ModelId,
+    provider: Option<String>,
+    phase: &'static str,
+) -> Result<Option<String>, PrepareError> {
+    if route_source.is_direct_google() {
+        if let Some(provider) = provider.as_deref()
+            && provider != "google"
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase,
+                detail: format!(
+                    "direct Google route does not accept OpenRouter provider '{provider}'"
+                ),
+            });
+        }
+        return Ok(None);
+    }
+
+    match provider {
+        Some(provider) => Ok(Some(
+            ProviderKey::new(&provider)
+                .map_err(|err| PrepareError::DatabaseSetup {
+                    phase,
+                    detail: err.to_string(),
+                })?
+                .slug
+                .as_str()
+                .to_string(),
+        )),
+        None => {
+            Ok(load_provider_for_model(model_id)?
+                .map(|provider| provider.slug.as_str().to_string()))
+        }
+    }
+}
+
 fn load_prepared_batch_for_loop(
     batch_manifest: PathBuf,
 ) -> Result<(PathBuf, PreparedMsbBatch), PrepareError> {
@@ -10268,7 +10307,7 @@ fn prepare_prototype1_loop_campaign(
     prepared_batch: &PreparedMsbBatch,
     run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
-    let eval_model = resolve_model_for_run(
+    let selected_eval_model = resolve_model_for_run(
         command
             .model_id
             .as_deref()
@@ -10280,33 +10319,40 @@ fn prepare_prototype1_loop_campaign(
             })?
             .as_ref(),
         command.use_default_model,
-    )?
-    .id;
-    let eval_provider_slug = if let Some(provider) = command.provider.clone() {
-        Some(
-            ProviderKey::new(&provider)
-                .map_err(|err| PrepareError::DatabaseSetup {
-                    phase: "prototype1_loop_provider",
-                    detail: err.to_string(),
-                })?
-                .slug
-                .as_str()
-                .to_string(),
-        )
-    } else {
-        load_provider_for_model(&eval_model)?.map(|provider| provider.slug.as_str().to_string())
-    };
+    )?;
+    let eval_route_source = command
+        .route_source
+        .unwrap_or(selected_eval_model.route_source);
+    let eval_model = selected_eval_model.id;
+    let eval_provider_slug = resolve_loop_provider_slug(
+        eval_route_source,
+        &eval_model,
+        command.provider.clone(),
+        "prototype1_loop_provider",
+    )?;
 
     if command.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
         let protocol_model = resolve_protocol_model_id(command.protocol_model_id.clone())?;
-        let protocol_provider =
-            resolve_protocol_provider_slug(&protocol_model, command.protocol_provider.clone())?;
-        if protocol_model != eval_model || protocol_provider != eval_provider_slug {
+        let protocol_route_source = command.protocol_route_source.unwrap_or(eval_route_source);
+        let protocol_provider = resolve_protocol_provider_slug(
+            &protocol_model,
+            Some(protocol_route_source),
+            command.protocol_provider.clone(),
+        )?;
+        if protocol_model != eval_model
+            || protocol_route_source != eval_route_source
+            || protocol_provider != eval_provider_slug
+        {
             return Err(PrepareError::DatabaseSetup {
                 phase: "prototype1_loop_campaign",
                 detail: format!(
-                    "prototype1 baseline arm now delegates to closure/campaign and currently requires one shared model/provider; eval={} {:?}, protocol={} {:?}",
-                    eval_model, eval_provider_slug, protocol_model, protocol_provider
+                    "prototype1 baseline arm now delegates to closure/campaign and currently requires one shared model/route/provider; eval={} {:?} {:?}, protocol={} {:?} {:?}",
+                    eval_model,
+                    eval_route_source,
+                    eval_provider_slug,
+                    protocol_model,
+                    protocol_route_source,
+                    protocol_provider
                 ),
             });
         }
@@ -10348,6 +10394,7 @@ fn prepare_prototype1_loop_campaign(
     }];
     manifest.model_id = Some(eval_model.to_string());
     manifest.provider_slug = eval_provider_slug;
+    manifest.route_source = Some(eval_route_source);
     manifest.instances_root = Some(
         command
             .instances_root

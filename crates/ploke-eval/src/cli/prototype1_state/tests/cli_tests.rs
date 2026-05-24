@@ -2437,6 +2437,7 @@ fn test_closure_state_without_record(instance_id: &str) -> crate::closure::Closu
         config: crate::closure::ClosureConfig {
             benchmark_family: BenchmarkFamily::MultiSweBenchRust,
             model_id: None,
+            route_source: None,
             provider_slug: None,
             registry_path: None,
             dataset_sources: Vec::new(),

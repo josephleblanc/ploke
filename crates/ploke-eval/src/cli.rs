@@ -1075,6 +1075,10 @@ pub struct Prototype1LoopCommand {
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
 
+    /// Explicit route source for the selected eval model.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
+
     /// Explicit embedding model id to use for eval indexing/retrieval.
     #[arg(long)]
     pub embedding_model_id: Option<String>,
@@ -1094,6 +1098,10 @@ pub struct Prototype1LoopCommand {
     /// Override the provider slug used for baseline protocol review.
     #[arg(long, value_name = "PROVIDER")]
     pub protocol_provider: Option<String>,
+
+    /// Override the route source used for baseline protocol review.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub protocol_route_source: Option<ModelRouteSource>,
 
     /// Continue the loop from a previously synthesized/applied branch in another Prototype 1 campaign.
     #[arg(long, requires = "source_branch_id")]
@@ -1731,6 +1739,7 @@ struct ProtocolBatchExecution {
 async fn execute_protocol_run_tasks(
     tasks: Vec<ProtocolRunTask>,
     model_id: String,
+    route_source: ModelRouteSource,
     provider_slug: Option<String>,
     max_concurrency: usize,
     stop_on_error: bool,
@@ -1752,6 +1761,7 @@ async fn execute_protocol_run_tasks(
             &mut join_set,
             task,
             model_id.clone(),
+            route_source,
             provider_slug.clone(),
             review_permits.clone(),
             max_tokens,
@@ -1768,6 +1778,7 @@ async fn execute_protocol_run_tasks(
                         &mut join_set,
                         task,
                         model_id.clone(),
+                        route_source,
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
@@ -1786,6 +1797,7 @@ async fn execute_protocol_run_tasks(
                         &mut join_set,
                         task,
                         model_id.clone(),
+                        route_source,
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
@@ -1808,6 +1820,7 @@ async fn execute_protocol_run_tasks(
                         &mut join_set,
                         task,
                         model_id.clone(),
+                        route_source,
                         provider_slug.clone(),
                         review_permits.clone(),
                         max_tokens,
@@ -1882,6 +1895,7 @@ async fn persist_intervention_synthesis_for_record(
     };
     let cfg = protocol_llm_config(
         model_id,
+        None,
         provider,
         120,
         PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -2852,6 +2866,16 @@ fn parse_provider_key(provider: Option<String>) -> Result<Option<ProviderKey>, P
         .transpose()
 }
 
+fn parse_model_route_source(value: &str) -> Result<ModelRouteSource, String> {
+    match value {
+        "openrouter" | "open-router" | "open_router" => Ok(ModelRouteSource::OpenRouter),
+        "direct-google" | "direct_google" | "google" => Ok(ModelRouteSource::DirectGoogle),
+        other => Err(format!(
+            "invalid route source '{other}'; expected openrouter or direct-google"
+        )),
+    }
+}
+
 fn resolve_provider_model_id(model_id: Option<String>) -> Result<ModelId, PrepareError> {
     match model_id {
         Some(model_id) => ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
@@ -3491,6 +3515,10 @@ pub struct CampaignOverrideArgs {
     #[arg(long)]
     pub provider: Option<String>,
 
+    /// Override the selected route source: openrouter or direct-google.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
+
     /// Override required protocol procedures. Repeat for multiple values.
     #[arg(long)]
     pub required_procedure: Vec<String>,
@@ -3865,6 +3893,10 @@ pub struct ProtocolRunCommand {
     #[arg(long)]
     pub provider: Option<String>,
 
+    /// Override the route source: openrouter or direct-google.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
+
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -3909,6 +3941,10 @@ pub struct ProtocolToolCallReviewCommand {
     #[arg(long)]
     pub provider: Option<String>,
 
+    /// Override the route source: openrouter or direct-google.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
+
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -3932,6 +3968,10 @@ pub struct ProtocolToolCallIntentSegmentsCommand {
     /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
     #[arg(long)]
     pub provider: Option<String>,
+
+    /// Override the route source: openrouter or direct-google.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -3960,6 +4000,10 @@ pub struct ProtocolToolCallSegmentReviewCommand {
     /// Override the provider slug. Defaults to the persisted provider for the chosen model, if any.
     #[arg(long)]
     pub provider: Option<String>,
+
+    /// Override the route source: openrouter or direct-google.
+    #[arg(long, value_name = "ROUTE", value_parser = parse_model_route_source)]
+    pub route_source: Option<ModelRouteSource>,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -5521,6 +5565,7 @@ impl CampaignOverrideArgs {
             dataset_files: self.dataset,
             model_id: self.model_id,
             provider_slug: self.provider,
+            route_source: self.route_source,
             required_procedures: self.required_procedure,
             instances_root: self.instances_root,
             batches_root: self.batches_root,
@@ -5870,6 +5915,7 @@ impl ProtocolToolCallReviewCommand {
         let client = reqwest::Client::new();
         let cfg = protocol_llm_config(
             self.model_id,
+            self.route_source,
             self.provider,
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -6042,6 +6088,7 @@ impl ProtocolRunCommand {
                 execute_protocol_intent_segments_quiet(
                     &record_path,
                     self.model_id.clone(),
+                    self.route_source,
                     self.provider.clone(),
                     default_protocol_max_tokens(),
                     ProtocolReasoningPolicy::default(),
@@ -6053,6 +6100,7 @@ impl ProtocolRunCommand {
                 execute_protocol_tool_call_review_quiet(
                     &record_path,
                     self.model_id.clone(),
+                    self.route_source,
                     self.provider.clone(),
                     index,
                     default_protocol_max_tokens(),
@@ -6065,6 +6113,7 @@ impl ProtocolRunCommand {
                 execute_protocol_tool_call_segment_review_quiet(
                     &record_path,
                     self.model_id.clone(),
+                    self.route_source,
                     self.provider.clone(),
                     segment_index,
                     default_protocol_max_tokens(),
@@ -6944,6 +6993,7 @@ pub(crate) async fn advance_protocol_closure(
         let execution = execute_protocol_run_tasks(
             tasks,
             config.model_id.clone(),
+            config.route_source,
             config.provider_slug.clone(),
             policy.max_concurrency,
             policy.stop_on_error,
@@ -7069,7 +7119,14 @@ fn protocol_route_detail(config: &ResolvedCampaignConfig) -> String {
         .model_id
         .parse::<ModelId>()
         .ok()
-        .and_then(|model_id| resolve_protocol_route(&model_id, config.provider_slug.clone()).ok());
+        .and_then(|model_id| {
+            resolve_protocol_route(
+                &model_id,
+                Some(config.route_source),
+                config.provider_slug.clone(),
+            )
+            .ok()
+        });
     match route {
         Some((route_source, provider_slug)) => match provider_slug {
             Some(provider) => format!("{route_source:?}/{provider}"),
@@ -7150,6 +7207,7 @@ fn spawn_protocol_run_task(
     join_set: &mut JoinSet<Result<ProtocolRunExecution, PrepareError>>,
     task: ProtocolRunTask,
     model_id: String,
+    route_source: ModelRouteSource,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
@@ -7159,6 +7217,7 @@ fn spawn_protocol_run_task(
         execute_protocol_run_task(
             task,
             model_id,
+            route_source,
             provider_slug,
             review_permits,
             max_tokens,
@@ -7171,6 +7230,7 @@ fn spawn_protocol_run_task(
 async fn execute_protocol_run_task(
     task: ProtocolRunTask,
     model_id: String,
+    route_source: ModelRouteSource,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
@@ -7190,6 +7250,7 @@ async fn execute_protocol_run_task(
         execute_protocol_intent_segments_quiet(
             &task.record_path,
             Some(model_id.clone()),
+            Some(route_source),
             provider_slug.clone(),
             max_tokens,
             reasoning,
@@ -7213,6 +7274,7 @@ async fn execute_protocol_run_task(
         call_subjects,
         protocol_llm_config(
             Some(model_id.clone()),
+            Some(route_source),
             provider_slug.clone(),
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -7246,6 +7308,7 @@ async fn execute_protocol_run_task(
         execute_protocol_tool_call_segment_review_quiet(
             &task.record_path,
             Some(model_id.clone()),
+            Some(route_source),
             provider_slug.clone(),
             segment_index,
             max_tokens,
@@ -7527,6 +7590,7 @@ fn batch_summary_has_failure(path: &Path) -> Result<bool, PrepareError> {
 async fn execute_protocol_intent_segments_quiet(
     record_path: &Path,
     model_id: Option<String>,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
     max_tokens: u32,
     reasoning: ProtocolReasoningPolicy,
@@ -7544,6 +7608,7 @@ async fn execute_protocol_intent_segments_quiet(
     let client = reqwest::Client::new();
     let cfg = protocol_llm_config(
         model_id,
+        route_source,
         provider,
         120,
         PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -7592,6 +7657,7 @@ async fn execute_protocol_intent_segments_quiet(
 async fn execute_protocol_tool_call_review_quiet(
     record_path: &Path,
     model_id: Option<String>,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
     index: usize,
     max_tokens: u32,
@@ -7608,6 +7674,7 @@ async fn execute_protocol_tool_call_review_quiet(
         subject,
         protocol_llm_config(
             model_id,
+            route_source,
             provider,
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -7654,6 +7721,7 @@ fn call_review_subjects(
 
 pub(crate) fn protocol_llm_config(
     model_id: Option<String>,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
     timeout_secs: u64,
     max_attempts: u32,
@@ -7661,7 +7729,7 @@ pub(crate) fn protocol_llm_config(
     reasoning: ProtocolReasoningPolicy,
 ) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
-    let (route_source, provider_slug) = resolve_protocol_route(&model_id, provider)?;
+    let (route_source, provider_slug) = resolve_protocol_route(&model_id, route_source, provider)?;
     Ok(JsonLlmConfig {
         model_id: model_id.to_string(),
         route_source,
@@ -7774,6 +7842,7 @@ fn load_latest_segmented_sequence(
 async fn execute_protocol_tool_call_segment_review_quiet(
     record_path: &Path,
     model_id: Option<String>,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
     segment_index: usize,
     max_tokens: u32,
@@ -7785,6 +7854,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
             execute_protocol_intent_segments_quiet(
                 record_path,
                 model_id.clone(),
+                route_source,
                 provider.clone(),
                 max_tokens,
                 reasoning,
@@ -7798,6 +7868,7 @@ async fn execute_protocol_tool_call_segment_review_quiet(
     let client = reqwest::Client::new();
     let cfg = protocol_llm_config(
         model_id,
+        route_source,
         provider,
         120,
         PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -8096,6 +8167,7 @@ impl ProtocolToolCallSegmentReviewCommand {
         let client = reqwest::Client::new();
         let cfg = protocol_llm_config(
             self.model_id,
+            self.route_source,
             self.provider,
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -8235,6 +8307,7 @@ impl ProtocolToolCallIntentSegmentsCommand {
         let client = reqwest::Client::new();
         let cfg = protocol_llm_config(
             self.model_id,
+            self.route_source,
             self.provider,
             120,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -11631,24 +11704,56 @@ fn resolve_protocol_model_id(model_id: Option<String>) -> Result<ModelId, Prepar
 
 fn resolve_protocol_provider_slug(
     model_id: &ModelId,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
 ) -> Result<Option<String>, PrepareError> {
-    resolve_protocol_route(model_id, provider).map(|(_, provider_slug)| provider_slug)
+    resolve_protocol_route(model_id, route_source, provider).map(|(_, provider_slug)| provider_slug)
 }
 
 fn resolve_protocol_route(
     model_id: &ModelId,
+    route_source: Option<ModelRouteSource>,
     provider: Option<String>,
 ) -> Result<(ModelRouteSource, Option<String>), PrepareError> {
+    if let Some(route_source) = route_source {
+        return match route_source {
+            ModelRouteSource::DirectGoogle => {
+                if let Some(provider) = provider.as_deref()
+                    && provider != "google"
+                {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "protocol_route",
+                        detail: format!(
+                            "direct Google route does not accept OpenRouter provider '{provider}'"
+                        ),
+                    });
+                }
+                Ok((ModelRouteSource::DirectGoogle, None))
+            }
+            ModelRouteSource::OpenRouter => {
+                let provider_slug = provider
+                    .map(|provider| {
+                        ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
+                            phase: "protocol_provider_slug",
+                            detail: err.to_string(),
+                        })
+                    })
+                    .transpose()?
+                    .map(|provider| provider.slug.as_str().to_string());
+                Ok((ModelRouteSource::OpenRouter, provider_slug))
+            }
+        };
+    }
+
     if let Some(provider) = provider {
         let parsed = ProviderKey::new(&provider).map_err(|err| PrepareError::DatabaseSetup {
             phase: "protocol_provider_slug",
             detail: err.to_string(),
         })?;
-        if parsed.slug.as_str() == "google" {
-            return Ok((ModelRouteSource::DirectGoogle, None));
-        }
         if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
+            if parsed.slug.as_str() == "google" {
+                return Ok((ModelRouteSource::DirectGoogle, None));
+            }
             return Err(PrepareError::DatabaseSetup {
                 phase: "protocol_route",
                 detail: format!(
@@ -13744,9 +13849,10 @@ mod tests {
     }
 
     #[test]
-    fn protocol_llm_config_google_provider_selects_direct_google_route() {
+    fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
         let cfg = protocol_llm_config(
             Some("google/gemini-2.5-flash".to_string()),
+            Some(ModelRouteSource::DirectGoogle),
             Some("google".to_string()),
             120,
             1,
@@ -13764,6 +13870,7 @@ mod tests {
     fn protocol_llm_config_openrouter_provider_keeps_provider_pin() {
         let cfg = protocol_llm_config(
             Some("x-ai/grok-4-fast".to_string()),
+            None,
             Some("xai".to_string()),
             120,
             1,
@@ -13775,6 +13882,43 @@ mod tests {
         assert!(cfg.route_source.is_openrouter());
         assert_eq!(cfg.provider_slug.as_deref(), Some("xai"));
         assert_eq!(cfg.provider_display(), "xai");
+    }
+
+    #[test]
+    fn protocol_llm_config_explicit_openrouter_keeps_google_ai_studio_pin() {
+        let cfg = protocol_llm_config(
+            Some("google/gemini-3.5-flash".to_string()),
+            Some(ModelRouteSource::OpenRouter),
+            Some("google-ai-studio".to_string()),
+            120,
+            1,
+            400,
+            ProtocolReasoningPolicy::default(),
+        )
+        .expect("protocol config");
+
+        assert!(cfg.route_source.is_openrouter());
+        assert_eq!(cfg.provider_slug.as_deref(), Some("google-ai-studio"));
+        assert_eq!(cfg.provider_display(), "google-ai-studio");
+    }
+
+    #[test]
+    fn protocol_llm_config_explicit_direct_google_rejects_openrouter_provider_pin() {
+        let err = protocol_llm_config(
+            Some("google/gemini-3.5-flash".to_string()),
+            Some(ModelRouteSource::DirectGoogle),
+            Some("google-ai-studio".to_string()),
+            120,
+            1,
+            400,
+            ProtocolReasoningPolicy::default(),
+        )
+        .expect_err("direct Google must reject OpenRouter provider pin");
+
+        assert!(
+            err.to_string()
+                .contains("direct Google route does not accept OpenRouter provider")
+        );
     }
 
     fn procedure_summary(
@@ -14070,6 +14214,7 @@ mod tests {
         };
         let cfg = protocol_llm_config(
             Some(model_id),
+            Some(ModelRouteSource::DirectGoogle),
             Some("google".to_string()),
             120,
             1,
@@ -15791,6 +15936,7 @@ mod tests {
             config: crate::closure::ClosureConfig {
                 benchmark_family: BenchmarkFamily::MultiSweBenchRust,
                 model_id: Some("x-ai/grok-4-fast".to_string()),
+                route_source: None,
                 provider_slug: Some("xai".to_string()),
                 registry_path: None,
                 dataset_sources: Vec::new(),

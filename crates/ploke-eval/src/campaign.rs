@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ploke_llm::{ModelId, ProviderKey};
+use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,8 @@ pub struct CampaignManifest {
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<ModelRouteSource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_procedures: Vec<String>,
     #[serde(default, alias = "runs_root", skip_serializing_if = "Option::is_none")]
@@ -109,6 +111,7 @@ pub struct CampaignOverrides {
     pub dataset_files: Vec<PathBuf>,
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
+    pub route_source: Option<ModelRouteSource>,
     pub required_procedures: Vec<String>,
     pub instances_root: Option<PathBuf>,
     pub batches_root: Option<PathBuf>,
@@ -122,6 +125,7 @@ pub struct ResolvedCampaignConfig {
     pub model_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    pub route_source: ModelRouteSource,
     pub required_procedures: Vec<String>,
     pub instances_root: PathBuf,
     pub batches_root: PathBuf,
@@ -160,6 +164,8 @@ struct StoredClosureConfig {
     #[serde(default)]
     provider_slug: Option<String>,
     #[serde(default)]
+    route_source: Option<ModelRouteSource>,
+    #[serde(default)]
     required_procedures: Vec<String>,
     #[serde(default, alias = "runs_root")]
     instances_root: Option<PathBuf>,
@@ -176,6 +182,7 @@ impl Default for StoredClosureConfig {
             dataset_sources: Vec::new(),
             model_id: None,
             provider_slug: None,
+            route_source: None,
             required_procedures: Vec::new(),
             instances_root: None,
             batches_root: None,
@@ -209,6 +216,7 @@ impl CampaignManifest {
             dataset_sources: Vec::new(),
             model_id: None,
             provider_slug: None,
+            route_source: None,
             required_procedures: default_required_procedures(),
             instances_root: None,
             batches_root: None,
@@ -225,6 +233,7 @@ impl CampaignOverrides {
             && self.dataset_files.is_empty()
             && self.model_id.is_none()
             && self.provider_slug.is_none()
+            && self.route_source.is_none()
             && self.required_procedures.is_empty()
             && self.instances_root.is_none()
             && self.batches_root.is_none()
@@ -247,6 +256,7 @@ impl ResolvedCampaignConfig {
             benchmark_family: Some(self.benchmark_family),
             model_id: Some(self.model_id.clone()),
             provider_slug: self.provider_slug.clone(),
+            route_source: Some(self.route_source),
             dataset_keys: dataset_keys_from_sources(&self.dataset_sources),
             dataset_files: dataset_files_from_sources(&self.dataset_sources),
             required_procedures: self.required_procedures.clone(),
@@ -344,6 +354,7 @@ pub fn adopt_campaign_manifest_from_closure_state(
         dataset_sources: stored.config.dataset_sources,
         model_id: stored.config.model_id,
         provider_slug: stored.config.provider_slug,
+        route_source: stored.config.route_source,
         required_procedures: normalize_required_procedures(&stored.config.required_procedures)?,
         instances_root: stored.config.instances_root,
         batches_root: stored.config.batches_root,
@@ -366,8 +377,13 @@ pub fn adopt_campaign_manifest_from_registry(
     }
 
     let active_model = load_active_model()?;
-    let provider_slug = load_provider_for_model(&active_model.model_id)?
-        .map(|provider| provider.slug.as_str().to_string());
+    let route_source = model_registry_route_source(&active_model.model_id)?.unwrap_or_default();
+    let provider_slug = if route_source.is_direct_google() {
+        None
+    } else {
+        load_provider_for_model(&active_model.model_id)?
+            .map(|provider| provider.slug.as_str().to_string())
+    };
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
@@ -376,6 +392,7 @@ pub fn adopt_campaign_manifest_from_registry(
         dataset_sources: registry.dataset_sources,
         model_id: Some(active_model.model_id.to_string()),
         provider_slug,
+        route_source: Some(route_source),
         required_procedures: default_required_procedures(),
         instances_root: Some(instances_dir()?),
         batches_root: Some(batches_dir()?),
@@ -398,6 +415,9 @@ pub fn apply_campaign_overrides(
     }
     if let Some(provider_slug) = overrides.provider_slug.clone() {
         manifest.provider_slug = Some(provider_slug);
+    }
+    if let Some(route_source) = overrides.route_source {
+        manifest.route_source = Some(route_source);
     }
     if !overrides.required_procedures.is_empty() {
         manifest.required_procedures =
@@ -483,16 +503,34 @@ pub fn resolve_campaign_config(
                 detail: err.to_string(),
             })?;
 
-    let provider_slug = overrides
+    let route_source = resolve_campaign_route_source(
+        &parsed_model_id,
+        overrides.route_source.or(manifest.route_source),
+    )?;
+    let explicit_provider = overrides
         .provider_slug
         .clone()
-        .or_else(|| manifest.provider_slug.clone())
-        .or_else(|| {
+        .or_else(|| manifest.provider_slug.clone());
+    let provider_slug = if route_source.is_direct_google() {
+        match explicit_provider.as_deref() {
+            Some("google") | None => None,
+            Some(provider) => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: format!(
+                        "direct Google route does not accept OpenRouter provider '{provider}'"
+                    ),
+                });
+            }
+        }
+    } else {
+        explicit_provider.or_else(|| {
             load_provider_for_model(&parsed_model_id)
                 .ok()
                 .flatten()
                 .map(|value| value.slug.as_str().to_string())
-        });
+        })
+    };
 
     let required_procedures = if overrides.required_procedures.is_empty() {
         normalize_required_procedures(&manifest.required_procedures)?
@@ -517,6 +555,7 @@ pub fn resolve_campaign_config(
         dataset_sources,
         model_id,
         provider_slug,
+        route_source,
         required_procedures,
         instances_root,
         batches_root,
@@ -584,19 +623,47 @@ pub async fn validate_campaign_config(
         detail: config.model_id.clone(),
     });
 
-    let requested_provider = match config.provider_slug.as_deref() {
-        Some(provider) => {
-            Some(
-                ProviderKey::new(provider).map_err(|err| PrepareError::DatabaseSetup {
-                    phase: "campaign_validate_provider",
-                    detail: err.to_string(),
-                })?,
-            )
+    checks.push(CampaignValidationCheck {
+        label: "route_source".to_string(),
+        detail: route_source_label(config.route_source).to_string(),
+    });
+
+    let selected_provider = if config.route_source.is_direct_google() {
+        if let Some(provider) = config.provider_slug.as_deref()
+            && provider != "google"
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "campaign_validate_provider",
+                detail: format!(
+                    "direct Google route does not accept OpenRouter provider '{provider}'"
+                ),
+            });
         }
-        None => None,
+        "google".to_string()
+    } else {
+        if selected_model.route_source.is_direct_google() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "campaign_validate_provider",
+                detail: format!(
+                    "OpenRouter route requested for direct-Google-only model '{}'",
+                    selected_model.id
+                ),
+            });
+        }
+        let requested_provider = match config.provider_slug.as_deref() {
+            Some(provider) => {
+                Some(
+                    ProviderKey::new(provider).map_err(|err| PrepareError::DatabaseSetup {
+                        phase: "campaign_validate_provider",
+                        detail: err.to_string(),
+                    })?,
+                )
+            }
+            None => None,
+        };
+        let route = resolve_route_for_model(&selected_model, requested_provider.as_ref()).await?;
+        route.selected_provider_slug()
     };
-    let route = resolve_route_for_model(&selected_model, requested_provider.as_ref()).await?;
-    let selected_provider = route.selected_provider_slug();
     checks.push(CampaignValidationCheck {
         label: "provider".to_string(),
         detail: if config.provider_slug.is_some() {
@@ -646,9 +713,15 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     ));
     out.push_str(&format!("model: {}\n", config.model_id));
     out.push_str(&format!(
-        "provider: {}\n",
-        config.provider_slug.as_deref().unwrap_or("auto/openrouter")
+        "route_source: {}\n",
+        route_source_label(config.route_source)
     ));
+    let provider_label = match (config.route_source, config.provider_slug.as_deref()) {
+        (source, _) if source.is_direct_google() => "direct_google".to_string(),
+        (_, Some(provider)) => provider.to_string(),
+        (_, None) => "auto/openrouter".to_string(),
+    };
+    out.push_str(&format!("provider: {provider_label}\n"));
     out.push_str(&format!(
         "instances_root: {}\n",
         config.instances_root.display()
@@ -810,6 +883,38 @@ fn active_registry_count(registry: &TargetRegistry) -> usize {
         .count()
 }
 
+fn model_registry_route_source(
+    model_id: &ModelId,
+) -> Result<Option<ModelRouteSource>, PrepareError> {
+    match load_model_registry() {
+        Ok(registry) => Ok(registry
+            .data
+            .iter()
+            .find(|item| item.id == *model_id)
+            .map(|item| item.route_source)),
+        Err(PrepareError::MissingModelRegistry(_)) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn resolve_campaign_route_source(
+    model_id: &ModelId,
+    explicit: Option<ModelRouteSource>,
+) -> Result<ModelRouteSource, PrepareError> {
+    match explicit {
+        Some(route_source) => Ok(route_source),
+        None => Ok(model_registry_route_source(model_id)?.unwrap_or_default()),
+    }
+}
+
+fn route_source_label(route_source: ModelRouteSource) -> &'static str {
+    if route_source.is_direct_google() {
+        "direct_google"
+    } else {
+        "openrouter"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,6 +932,7 @@ mod tests {
             }],
             model_id: "x-ai/grok-4-fast".to_string(),
             provider_slug: None,
+            route_source: ModelRouteSource::OpenRouter,
             required_procedures: default_required_procedures(),
             instances_root: PathBuf::from("/tmp/instances"),
             batches_root: PathBuf::from("/tmp/batches"),

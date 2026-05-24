@@ -545,6 +545,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
     let max_tokens = policy.max_tokens.min(64).max(1);
     let cfg = match crate::cli::protocol_llm_config(
         Some(context.resolved_campaign.model_id.clone()),
+        Some(context.resolved_campaign.route_source),
         context.resolved_campaign.provider_slug.clone(),
         30,
         1,

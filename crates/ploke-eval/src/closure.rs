@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use chrono::Utc;
+use ploke_llm::request::models::ModelRouteSource;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
@@ -41,6 +42,7 @@ pub struct ClosureRecomputeRequest {
     pub benchmark_family: Option<BenchmarkFamily>,
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
+    pub route_source: Option<ModelRouteSource>,
     pub dataset_keys: Vec<String>,
     pub dataset_files: Vec<PathBuf>,
     pub required_procedures: Vec<String>,
@@ -69,6 +71,8 @@ pub struct ClosureConfig {
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<ModelRouteSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_path: Option<PathBuf>,
     pub dataset_sources: Vec<ClosureDatasetSource>,
@@ -296,7 +300,7 @@ pub fn recompute_closure_state(
 pub fn render_closure_status(state: &ClosureState) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "campaign {} | updated {} | model {} | provider {}\n",
+        "campaign {} | updated {} | model {} | provider {} | route {}\n",
         state.campaign_id,
         state.updated_at,
         state.config.model_id.as_deref().unwrap_or("unspecified"),
@@ -304,6 +308,17 @@ pub fn render_closure_status(state: &ClosureState) -> String {
             .config
             .provider_slug
             .as_deref()
+            .unwrap_or("unspecified"),
+        state
+            .config
+            .route_source
+            .map(|source| {
+                if source.is_direct_google() {
+                    "direct_google"
+                } else {
+                    "openrouter"
+                }
+            })
             .unwrap_or("unspecified")
     ));
     out.push_str(&format!(
@@ -505,6 +520,9 @@ fn resolve_config(
                     .as_ref()
                     .and_then(|config| config.provider_slug.clone())
             }),
+            route_source: request
+                .route_source
+                .or_else(|| prior.as_ref().and_then(|config| config.route_source)),
             registry_path: Some(registry_path),
             dataset_sources: registry_source.dataset_sources.clone(),
             required_procedures,

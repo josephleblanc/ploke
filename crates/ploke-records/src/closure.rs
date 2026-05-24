@@ -41,6 +41,8 @@ pub struct ClosureConfigRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_path: Option<PathBuf>,
     #[serde(default)]
     pub dataset_sources: Vec<ClosureDatasetSourceRecord>,
