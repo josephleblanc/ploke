@@ -9,6 +9,7 @@ Operational skills for `§X`:
 - [experiment-cycle](experiment-cycle/SKILL.md)
 - [micro-sprint-eval-loop](micro-sprint-eval-loop/SKILL.md)
 - [ploke-eval-operator](ploke-eval-operator/SKILL.md)
+- [ploke-run-review](ploke-run-review/SKILL.md)
 - [priority-queue](priority-queue/SKILL.md)
 - [run-protocol](run-protocol/SKILL.md)
 - [postmortem-protocol](postmortem-protocol/SKILL.md)
