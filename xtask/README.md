@@ -11,6 +11,15 @@ The original multi-command `xtask` expansion spec is currently **paused** after 
 
 ## Available commands
 
+- `cargo xtask setup-fixtures`
+  - One-command setup path for ignored/generated local assets after a fresh
+    clone.
+  - Recreates missing or invalid active backup DB fixtures, stages the RAG
+    fixture into the config-dir load path, clones pinned GitHub parser
+    checkouts, materializes missing OpenRouter/Google model catalog fixtures,
+    and finishes with `cargo xtask verify-fixtures`.
+  - Network is only needed when the OpenRouter catalog, embedding model fixture,
+    or GitHub checkout fixtures are absent or need refresh.
 - `cargo xtask verify-fixtures`
   - Confirms required local assets exist before running costly tests.
   - Currently checks for:

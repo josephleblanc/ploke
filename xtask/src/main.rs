@@ -49,12 +49,28 @@ const MODELS_TXT_IDS: &str = "crates/ploke-tui/data/models/all_ids_parsed.txt";
 const MODELS_JSON_ARCH: &str = "crates/ploke-tui/data/models/all_arch_parsed.json";
 const MODELS_JSON_TOP: &str = "crates/ploke-tui/data/models/all_top_parsed.json";
 const MODELS_JSON_PRICING: &str = "crates/ploke-tui/data/models/all_pricing_parsed.json";
+const OPENROUTER_MODEL_CATALOG_PATHS: &[&str] = &[
+    MODELS_JSON_RAW,
+    MODELS_JSON_RAW_PRETTY,
+    MODELS_TXT_IDS,
+    MODELS_JSON_ARCH,
+    MODELS_JSON_TOP,
+    MODELS_JSON_PRICING,
+];
 const GOOGLE_MODELS_JSON_RAW: &str = "crates/ploke-tui/data/models/google_raw.json";
 const GOOGLE_MODELS_JSON_PARSED: &str = "crates/ploke-tui/data/models/google_parsed.json";
 const GOOGLE_MODELS_TXT_IDS: &str = "crates/ploke-tui/data/models/google_ids_parsed.txt";
 const GOOGLE_MODELS_JSON_ARCH: &str = "crates/ploke-tui/data/models/google_arch_parsed.json";
 const GOOGLE_MODELS_JSON_TOP: &str = "crates/ploke-tui/data/models/google_top_parsed.json";
 const GOOGLE_MODELS_JSON_PRICING: &str = "crates/ploke-tui/data/models/google_pricing_parsed.json";
+const GOOGLE_MODEL_CATALOG_PATHS: &[&str] = &[
+    GOOGLE_MODELS_JSON_RAW,
+    GOOGLE_MODELS_JSON_PARSED,
+    GOOGLE_MODELS_TXT_IDS,
+    GOOGLE_MODELS_JSON_ARCH,
+    GOOGLE_MODELS_JSON_TOP,
+    GOOGLE_MODELS_JSON_PRICING,
+];
 const GITHUB_FIXTURE_SERDE_REPO_URL: &str = "https://github.com/serde-rs/serde.git";
 const GITHUB_FIXTURE_SERDE_REF: &str = "fa7da4a93567ed347ad0735c28e439fca688ef26";
 const GITHUB_FIXTURE_SERDE_DIR: &str = "tests/fixture_github_clones/corpus/serde";
@@ -167,6 +183,7 @@ fn dispatch() -> Result<(), DispatchError> {
 
     let tail: Vec<String> = args.iter().skip(2).cloned().collect();
     match args[1].as_str() {
+        "setup-fixtures" => setup_fixtures().map_err(DispatchError::Xtask),
         "verify-fixtures" => verify_fixtures().map_err(DispatchError::Xtask),
         "verify-backup-dbs" => verify_backup_dbs(tail).map_err(DispatchError::Xtask),
         "recreate-backup-db" => recreate_backup_db(tail).map_err(DispatchError::Xtask),
@@ -205,7 +222,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures          Ensure required local test assets are staged\n  verify-backup-dbs       Validate registered backup DB fixtures used by tests\n  recreate-backup-db      Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures       Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures    Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models   Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog      Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log       Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest           Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help      Show detailed help for profile-ingest command"
+         Commands:\n  setup-fixtures          Prepare all ignored/generated fixtures for this checkout\n  verify-fixtures         Ensure required local test assets are staged\n  verify-backup-dbs      Validate registered backup DB fixtures used by tests\n  recreate-backup-db     Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures   Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog     Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest          Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help     Show detailed help for profile-ingest command"
     );
 }
 
@@ -492,6 +509,92 @@ fn latest_tokens_log(root: &Path) -> Result<PathBuf, String> {
             display_relative(&log_dir, root)
         )),
     }
+}
+
+fn setup_fixtures() -> Result<(), XtaskError> {
+    println!("Preparing all required local fixtures for this checkout.");
+    setup_backup_db_fixtures()?;
+    setup_rag_fixtures()?;
+    setup_github_fixtures()?;
+
+    let root = workspace_root();
+    let embedding_integrity = FixtureIntegrity {
+        metadata_rel_path: EMBEDDING_MODELS_META,
+    };
+    if !root.join(EMBEDDING_MODELS_FIXTURE).exists()
+        || verify_integrity(&root, &embedding_integrity).is_err()
+    {
+        regen_embedding_models()?;
+    } else {
+        println!(
+            "Reused embedding model fixture at {}",
+            EMBEDDING_MODELS_FIXTURE
+        );
+    }
+
+    if missing_any_rel_path(&root, OPENROUTER_MODEL_CATALOG_PATHS) {
+        regen_model_catalog()?;
+    } else {
+        println!("Reused OpenRouter model catalog fixtures.");
+    }
+
+    if missing_any_rel_path(&root, GOOGLE_MODEL_CATALOG_PATHS) {
+        regen_google_model_catalog()?;
+    } else {
+        println!("Reused direct Google model catalog fixtures.");
+    }
+
+    verify_fixtures()
+}
+
+fn setup_backup_db_fixtures() -> Result<(), XtaskError> {
+    let root = workspace_root();
+    println!("Preparing active backup DB fixtures:");
+
+    for fixture in active_backup_db_fixtures() {
+        match verify_registered_backup_fixture(fixture) {
+            Ok(summary) => {
+                let path_note =
+                    fixture_path_note(summary.path.path(), summary.path.registered_path(), &root);
+                println!(
+                    "  reused {:<32} {}{}",
+                    fixture.id,
+                    display_relative(summary.path.path(), &root),
+                    path_note
+                );
+            }
+            Err(err) => {
+                let FixtureCreationStrategy::Automated(strategy) = fixture.creation else {
+                    return Err(XtaskError::new(format!(
+                        "{} cannot be recreated automatically: {err}",
+                        fixture.id
+                    )));
+                };
+                let output_path = recreation_output_path(fixture, &root);
+                recreate_automated_fixture(fixture, strategy, &output_path).map_err(
+                    |recreate| {
+                        XtaskError::new(format!(
+                            "Failed to recreate {} after validation error ({err}): {recreate}",
+                            fixture.id
+                        ))
+                    },
+                )?;
+                println!(
+                    "  recreated {:<29} {}",
+                    fixture.id,
+                    display_relative(&output_path, &root)
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn missing_any_rel_path(root: &Path, rel_paths: &[&str]) -> bool {
+    rel_paths
+        .iter()
+        .any(|rel_path| !root.join(rel_path).exists())
 }
 
 fn verify_fixtures() -> Result<(), XtaskError> {
