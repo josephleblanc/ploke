@@ -422,9 +422,10 @@ impl Drop for WorkspaceRegistryEnvGuard {
 }
 
 struct LoadRegistrySandbox {
-    _lock: tokio::sync::MutexGuard<'static, ()>,
-    _tmp_dir: TempDir,
+    // Field drop order matters: restore registry env before releasing the lock.
     _registry_guard: WorkspaceRegistryEnvGuard,
+    _tmp_dir: TempDir,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {

@@ -13973,6 +13973,10 @@ mod tests {
 
     #[test]
     fn protocol_llm_config_openrouter_provider_keeps_provider_pin() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+
         let cfg = protocol_llm_config(
             Some("x-ai/grok-4-fast".to_string()),
             None,
