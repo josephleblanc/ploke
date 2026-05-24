@@ -172,6 +172,37 @@ Implemented command:
 ploke-eval loop prototype1-doctor --repo-root <parent> --live-protocol-preflight
 ```
 
+## 2026-05-24 Recheck Note
+
+The orchestrated loop-operator pass re-hit the same provider rejection, but the
+evidence points to stale campaign worktree provenance rather than a main-source
+regression.
+
+- Failed request log:
+  `/home/brasides/.ploke-eval/logs/ploke_eval_20260524_033013_947798.log`
+- Failed campaign worktree commit: `9087831a`
+- Failed worktree source still has
+  `.with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None))`
+  in `crates/ploke-protocol/src/llm.rs`.
+- Main checkout source has `ProtocolReasoningPolicy` and omits reasoning by
+  default.
+
+The follow-up current-source live preflight passed after
+`2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md` was
+fixed:
+
+```text
+protocol_preflight.outcome = passed
+reasoning = omit
+max_tokens = 512
+phase = baseline_protocol
+blockers = []
+```
+
+The original hard-coded `reasoning.effort = "none"` blocker is resolved in
+current source. Resume commands for this older campaign must still avoid the
+stale worktree-local binary that predates the fix.
+
 ## Related Code
 
 - `crates/ploke-protocol/src/llm.rs::base_json_request`

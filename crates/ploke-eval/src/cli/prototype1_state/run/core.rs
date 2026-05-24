@@ -540,9 +540,29 @@ struct ProtocolLivePreflightOk {
     ok: bool,
 }
 
+const PROTOCOL_LIVE_PREFLIGHT_TEXT_CANARY_MAX_TOKENS: u32 = 64;
+const PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MIN_TOKENS: u32 = 256;
+const PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MAX_TOKENS: u32 = 512;
+
+fn protocol_live_preflight_max_tokens(
+    admitted_max_tokens: u32,
+    reasoning: ploke_protocol::ProtocolReasoningPolicy,
+) -> u32 {
+    let admitted_max_tokens = admitted_max_tokens.max(1);
+    if reasoning.mode == ploke_protocol::ProtocolReasoningMode::Disabled {
+        return admitted_max_tokens.min(PROTOCOL_LIVE_PREFLIGHT_TEXT_CANARY_MAX_TOKENS);
+    }
+
+    if admitted_max_tokens <= PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MIN_TOKENS {
+        admitted_max_tokens
+    } else {
+        admitted_max_tokens.min(PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MAX_TOKENS)
+    }
+}
+
 async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePreflight {
     let policy = context.admitted_profile.profile.protocol_policy();
-    let max_tokens = policy.max_tokens.min(64).max(1);
+    let max_tokens = protocol_live_preflight_max_tokens(policy.max_tokens, policy.reasoning);
     let cfg = match crate::cli::protocol_llm_config(
         Some(context.resolved_campaign.model_id.clone()),
         Some(context.resolved_campaign.route_source),
@@ -2186,6 +2206,28 @@ mod tests {
 
         let err = profile.validate().expect_err("widening rejected");
         assert!(err.to_string().contains("widens admitted fanout"));
+    }
+
+    #[test]
+    fn protocol_live_preflight_budget_bounds_reasoning_canary() {
+        for reasoning in [
+            ploke_protocol::ProtocolReasoningPolicy::omit(),
+            ploke_protocol::ProtocolReasoningPolicy::effort(ploke_llm::ReasoningEffort::Low),
+        ] {
+            assert_eq!(protocol_live_preflight_max_tokens(0, reasoning), 1);
+            assert_eq!(protocol_live_preflight_max_tokens(128, reasoning), 128);
+            assert_eq!(protocol_live_preflight_max_tokens(300, reasoning), 300);
+            assert_eq!(protocol_live_preflight_max_tokens(4000, reasoning), 512);
+        }
+    }
+
+    #[test]
+    fn protocol_live_preflight_budget_keeps_disabled_reasoning_canary_small() {
+        let reasoning = ploke_protocol::ProtocolReasoningPolicy::disabled();
+
+        assert_eq!(protocol_live_preflight_max_tokens(0, reasoning), 1);
+        assert_eq!(protocol_live_preflight_max_tokens(16, reasoning), 16);
+        assert_eq!(protocol_live_preflight_max_tokens(4000, reasoning), 64);
     }
 
     #[test]

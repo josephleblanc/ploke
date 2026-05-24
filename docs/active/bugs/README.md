@@ -75,3 +75,5 @@ file and current code before treating a report as still open.
   Cargo output can be model-visible and repair-relevant while trace summaries hide it, and final cargo checks can resolve to weak focused manifests.
 - [`2026-05-24-prototype1-protocol-reasoning-config-blocker.md`](./2026-05-24-prototype1-protocol-reasoning-config-blocker.md)
   Fixed in source: Prototype 1 protocol adjudication now carries admitted reasoning policy instead of unconditionally disabling reasoning; recheck the original run with the live doctor preflight.
+- [`2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md`](./2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md)
+  `prototype1-doctor --live-protocol-preflight` can falsely block reasoning-mandatory models because its 64-token canary budget is consumed by hidden reasoning before sentinel JSON is returned.
