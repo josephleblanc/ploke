@@ -462,7 +462,8 @@ impl InspectorOpenState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InspectorPanelSection {
     Identity,
-    RunReview,
+    #[serde(alias = "RunReview")]
+    EvalProtocol,
     Roles,
     PatchGeneration,
     LlmCalls,
@@ -482,7 +483,7 @@ impl InspectorPanelSection {
     pub(crate) fn title(&self) -> &'static str {
         match self {
             Self::Identity => "Identity",
-            Self::RunReview => "Run Review",
+            Self::EvalProtocol => "Eval & Protocol",
             Self::Roles => "Roles",
             Self::PatchGeneration => "Patch Generation",
             Self::LlmCalls => "LLM Calls",
@@ -656,12 +657,12 @@ pub(crate) fn render_right_inspector(
                         ui.separator();
                         show_inspector_section_header(
                             ui,
-                            "Run Review",
-                            InspectorPanelSection::RunReview,
+                            "Eval & Protocol",
+                            InspectorPanelSection::EvalProtocol,
                             selection_ref,
                             &mut actions,
                         );
-                        render_run_review_for_graph(ui, graph, render_cache);
+                        render_eval_protocol_for_graph(ui, graph, render_cache);
 
                         ui.separator();
                         show_inspector_section_header(
@@ -1098,18 +1099,18 @@ fn cached_kv_text(
     });
 }
 
-pub(crate) fn render_run_review_for_graph(
+pub(crate) fn render_eval_protocol_for_graph(
     ui: &mut egui::Ui,
     graph: &Graph,
     render_cache: &mut InspectorRenderCache,
 ) {
-    let review = graph.run_review_evidence();
-    if !review.is_available() {
-        cached_kv_text(ui, render_cache, "run review", "not_available");
+    let evidence = graph.eval_protocol_evidence();
+    if !evidence.is_available() {
+        cached_kv_text(ui, render_cache, "eval protocol", "not_available");
         return;
     }
 
-    if let Some(closure) = review.closure {
+    if let Some(closure) = evidence.closure {
         cached_kv_id(
             ui,
             render_cache,
@@ -1180,9 +1181,9 @@ pub(crate) fn render_run_review_for_graph(
         }
     }
 
-    if let Some(run_records) = review.run_records {
+    if let Some(run_records) = evidence.run_records {
         ui.separator();
-        ui.label(egui::RichText::new("Run Records").strong());
+        ui.label(egui::RichText::new("Eval Run Records").strong());
         cached_kv_usize(
             ui,
             render_cache,
@@ -1208,7 +1209,7 @@ pub(crate) fn render_run_review_for_graph(
             run_records.summary.failed_tool_call_count,
         );
 
-        let patch = review.patch_stats();
+        let patch = evidence.patch_stats();
         cached_kv_usize(ui, render_cache, "patch phases", patch.patch_phase_count);
         cached_kv_usize(
             ui,
@@ -1296,7 +1297,7 @@ pub(crate) fn render_run_review_for_graph(
         }
     }
 
-    if let Some(protocol) = review.protocol_artifacts {
+    if let Some(protocol) = evidence.protocol_artifacts {
         ui.separator();
         ui.label(egui::RichText::new("Protocol").strong());
         cached_kv_usize(ui, render_cache, "artifacts", protocol.summary.parsed_count);
@@ -1319,7 +1320,7 @@ pub(crate) fn render_run_review_for_graph(
             protocol.summary.segment_review_count,
         );
 
-        let stats = review.protocol_review_stats();
+        let stats = evidence.protocol_review_stats();
         render_count_map(ui, render_cache, "overall", &stats.overall);
         render_count_map(ui, render_cache, "redundancy", &stats.redundancy);
         render_count_map(ui, render_cache, "recoverability", &stats.recoverability);

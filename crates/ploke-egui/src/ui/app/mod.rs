@@ -99,6 +99,7 @@ pub struct OperatorApp {
 
 impl OperatorApp {
     pub fn new(graph: Graph) -> Self {
+        let dashboard_tree = crate::ui::dashboard::tiles::create_default_tree_for_graph(&graph);
         Self {
             graph,
             graph_revision: GraphRevision::default(),
@@ -106,7 +107,7 @@ impl OperatorApp {
             inspector_cache: InspectorCache::default(),
             inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
-            dashboard_tree: crate::ui::dashboard::tiles::create_default_tree(),
+            dashboard_tree,
             #[cfg(not(target_arch = "wasm32"))]
             run_picker: RunPicker::from_default_root(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -150,6 +151,7 @@ impl OperatorApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_run_picker(graph: Graph, run_picker: RunPicker) -> Self {
+        let dashboard_tree = crate::ui::dashboard::tiles::create_default_tree_for_graph(&graph);
         Self {
             graph,
             graph_revision: GraphRevision::default(),
@@ -157,7 +159,7 @@ impl OperatorApp {
             inspector_cache: InspectorCache::default(),
             inspector_render_cache: shell::InspectorRenderCache::default(),
             patch_diff_cache: PatchDiffCache::default(),
-            dashboard_tree: crate::ui::dashboard::tiles::create_default_tree(),
+            dashboard_tree,
             run_picker,
             run_error: None,
             graph_snapshot: None,
@@ -234,6 +236,10 @@ impl OperatorApp {
         if let Some(tree) = eframe::get_value(storage, "ploke-egui-dashboard") {
             self.dashboard_tree = tree;
         }
+        if crate::ui::dashboard::tiles::prefers_eval_protocol_pane(&self.graph) {
+            self.dashboard_tree =
+                crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
+        }
     }
 
     fn current_run_name(&self) -> Option<&str> {
@@ -268,7 +274,7 @@ impl OperatorApp {
                 ui.separator();
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
-                render_tile_picker(ui, &mut self.dashboard_tree);
+                render_tile_picker(ui, &mut self.dashboard_tree, &self.graph);
 
                 ui.separator();
                 render_graph_facts(ui, &self.graph);
@@ -517,6 +523,7 @@ impl OperatorApp {
         if let Some(path) = self.run_picker.show(ui) {
             match graph_from_run_root(&path) {
                 Ok(graph) => {
+                    self.run_picker.record_loaded_graph(&path, &graph);
                     self.replace_graph(graph);
                     self.graph_snapshot = None;
                     self.graph_snapshot_label = None;
@@ -606,6 +613,8 @@ impl OperatorApp {
     fn replace_graph(&mut self, graph: Graph) {
         let mode = self.view.mode();
         self.graph = graph;
+        self.dashboard_tree =
+            crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
         self.graph_revision = self.graph_revision.next();
         self.view = GraphView::default();
         self.view.set_mode(mode);
@@ -1102,6 +1111,7 @@ fn elapsed_ns(start: Instant) -> u64 {
 fn render_tile_picker(
     ui: &mut egui::Ui,
     tree: &mut egui_tiles::Tree<crate::ui::dashboard::tiles::Pane>,
+    graph: &Graph,
 ) {
     ui.separator();
     ui.label("Tiles");
@@ -1110,6 +1120,7 @@ fn render_tile_picker(
 
         let options = [
             Pane::Graph,
+            Pane::EvalProtocol,
             Pane::Inspector,
             Pane::ArtifactDistribution,
             Pane::RecentActivity,
@@ -1131,7 +1142,7 @@ fn render_tile_picker(
         }
 
         if ui.button("🔄 Reset Layout").clicked() {
-            *tree = crate::ui::dashboard::tiles::create_default_tree();
+            *tree = crate::ui::dashboard::tiles::create_default_tree_for_graph(graph);
         }
     });
 }

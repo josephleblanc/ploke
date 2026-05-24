@@ -13,6 +13,8 @@ use crate::ui::{app::shell, view::GraphSelectionRef};
 pub enum Pane {
     #[default]
     Graph,
+    #[serde(alias = "RunReview")]
+    EvalProtocol,
     Inspector,
     PinnedInspector(GraphSelectionRef),
     InspectorSection(GraphSelectionRef, shell::InspectorPanelSection),
@@ -26,6 +28,7 @@ impl Pane {
     pub fn title(&self) -> String {
         match self {
             Self::Graph => "🌐 Graph".to_owned(),
+            Self::EvalProtocol => "Eval & Protocol".to_owned(),
             Self::Inspector => "🔍 Inspector".to_owned(),
             Self::PinnedInspector(_) => "📌 Inspector".to_owned(),
             Self::InspectorSection(_, section) => format!("📌 {}", section.title()),
@@ -81,6 +84,26 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
         ui.vertical(|ui| match pane {
             Pane::Graph => {
                 self.view.show(ui, self.graph);
+            }
+            Pane::EvalProtocol => {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 8,
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                shell::render_eval_protocol_for_graph(
+                                    ui,
+                                    self.graph,
+                                    self.inspector_render_cache,
+                                );
+                            });
+                    });
             }
             Pane::Inspector => {
                 ui.horizontal(|ui| {
@@ -198,8 +221,8 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                             .show(ui, |ui| {
                                 if let Some(sections) = sections {
                                     match section {
-                                        shell::InspectorPanelSection::RunReview => {
-                                            shell::render_run_review_for_graph(
+                                        shell::InspectorPanelSection::EvalProtocol => {
+                                            shell::render_eval_protocol_for_graph(
                                                 ui,
                                                 self.graph,
                                                 self.inspector_render_cache,
@@ -469,9 +492,26 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
 }
 
 pub fn create_default_tree() -> egui_tiles::Tree<Pane> {
+    create_default_tree_with_primary(Pane::Graph)
+}
+
+pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
+    let primary = if prefers_eval_protocol_pane(graph) {
+        Pane::EvalProtocol
+    } else {
+        Pane::Graph
+    };
+    create_default_tree_with_primary(primary)
+}
+
+pub fn prefers_eval_protocol_pane(graph: &Graph) -> bool {
+    graph.history.blocks.is_empty() && graph.eval_protocol_evidence().is_available()
+}
+
+fn create_default_tree_with_primary(primary: Pane) -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
-    let graph_pane = tiles.insert_pane(Pane::Graph);
+    let graph_pane = tiles.insert_pane(primary);
     let inspector_pane = tiles.insert_pane(Pane::Inspector);
 
     let graph_tab = tiles.insert_tab_tile(vec![graph_pane]);

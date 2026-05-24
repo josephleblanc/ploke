@@ -118,9 +118,9 @@ impl Graph {
             .and_then(|forest| forest.passive_evidence.closure.as_ref())
     }
 
-    /// Baseline eval/protocol evidence view for run-review UI surfaces.
-    pub fn run_review_evidence(&self) -> RunReviewEvidence<'_> {
-        RunReviewEvidence {
+    /// Baseline eval/protocol evidence view for UI surfaces.
+    pub fn eval_protocol_evidence(&self) -> EvalProtocolEvidence<'_> {
+        EvalProtocolEvidence {
             closure: self.closure(),
             run_records: self.run_records(),
             protocol_artifacts: self.protocol_artifacts(),
@@ -204,15 +204,15 @@ impl Graph {
     }
 }
 
-/// Borrowed graph-level witness for run-review evidence.
+/// Borrowed graph-level witness for eval/protocol evidence.
 #[derive(Debug, Clone, Copy)]
-pub struct RunReviewEvidence<'g> {
+pub struct EvalProtocolEvidence<'g> {
     pub closure: Option<&'g ClosureEvidence>,
     pub run_records: Option<&'g RunRecordEvidence>,
     pub protocol_artifacts: Option<&'g ProtocolArtifactsEvidence>,
 }
 
-impl<'g> RunReviewEvidence<'g> {
+impl<'g> EvalProtocolEvidence<'g> {
     pub fn is_available(&self) -> bool {
         self.closure.is_some() || self.run_records.is_some() || self.protocol_artifacts.is_some()
     }
@@ -262,8 +262,8 @@ impl<'g> RunReviewEvidence<'g> {
         stats
     }
 
-    pub fn patch_stats(&self) -> RunReviewPatchStats {
-        let mut stats = RunReviewPatchStats::default();
+    pub fn patch_stats(&self) -> EvalPatchStats {
+        let mut stats = EvalPatchStats::default();
         let Some(run_records) = self.run_records else {
             return stats;
         };
@@ -316,9 +316,9 @@ pub struct ProtocolReviewStats {
     pub recoverability: BTreeMap<String, usize>,
 }
 
-/// Aggregate patch/submission facts derived from compressed run records.
+/// Aggregate eval patch/submission facts derived from compressed run records.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RunReviewPatchStats {
+pub struct EvalPatchStats {
     pub patch_phase_count: usize,
     pub empty_submission_count: usize,
     pub nonempty_submission_count: usize,

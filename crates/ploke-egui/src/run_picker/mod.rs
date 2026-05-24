@@ -296,6 +296,10 @@ struct RunSummary {
 
 impl RunSummary {
     fn from_graph(graph: &Graph) -> Self {
+        if graph.history.blocks.is_empty() && graph.eval_protocol_evidence().is_available() {
+            return Self::from_eval_protocol_graph(graph);
+        }
+
         Self::from_counts(
             graph.artifacts.artifacts.len(),
             graph.history.blocks.len(),
@@ -321,6 +325,42 @@ impl RunSummary {
         }
     }
 
+    fn from_eval_protocol_graph(graph: &Graph) -> Self {
+        let evidence = graph.eval_protocol_evidence();
+        let records = evidence
+            .run_records
+            .map(|records| records.summary.parsed_count)
+            .unwrap_or(0);
+        let protocol_artifacts = evidence
+            .protocol_artifacts
+            .map(|protocol| protocol.summary.parsed_count)
+            .unwrap_or(0);
+        let tool_calls = evidence
+            .run_records
+            .map(|records| records.summary.total_tool_call_count)
+            .unwrap_or(0);
+        let closure_status = evidence
+            .closure
+            .map(|closure| {
+                format!(
+                    "eval {} | protocol {}",
+                    serde_label(&closure.state.eval.status),
+                    serde_label(&closure.state.protocol.status)
+                )
+            })
+            .unwrap_or_else(|| "eval/protocol evidence".to_owned());
+
+        Self {
+            primary_line: closure_status,
+            secondary_line: format!(
+                "{records} records | {tool_calls} calls | {protocol_artifacts} protocol artifacts"
+            ),
+            compact: format!(
+                "eval/protocol, {records} records, {tool_calls} calls, {protocol_artifacts} artifacts"
+            ),
+        }
+    }
+
     fn primary_line(&self) -> &str {
         self.primary_line.as_str()
     }
@@ -332,6 +372,16 @@ impl RunSummary {
     fn compact(&self) -> &str {
         self.compact.as_str()
     }
+}
+
+fn serde_label<T>(value: &T) -> String
+where
+    T: serde::Serialize + std::fmt::Debug,
+{
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{value:?}"))
 }
 
 fn discover_runs(root: &Path) -> Result<Vec<RunEntry>, std::io::Error> {
