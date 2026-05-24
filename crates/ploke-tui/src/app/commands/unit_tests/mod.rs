@@ -10,7 +10,7 @@
 use std::{collections::HashSet, str::FromStr, sync::Arc};
 
 use lazy_static::lazy_static;
-use ploke_llm::router_only::{RouterVariants, google::Google};
+use ploke_llm::router_only::{Router, RouterVariants, google::Google};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant, timeout};
@@ -204,6 +204,42 @@ fn live_google_chat_model() -> String {
     }
 }
 
+#[cfg(feature = "live_api_tests")]
+fn strict_live_tests_requested() -> bool {
+    std::env::var("PLOKE_RUN_LIVE_TESTS")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+#[cfg(feature = "live_api_tests")]
+async fn live_google_env_or_skip(test_name: &str) -> bool {
+    let route_config_available = Google::route_config_available().is_ok();
+    let auth_config_available = if route_config_available {
+        Google::resolve_bearer_token().await.is_ok()
+    } else {
+        Google::auth_config_available().is_ok()
+    };
+
+    if route_config_available && auth_config_available {
+        return true;
+    }
+
+    let missing = match (route_config_available, auth_config_available) {
+        (false, false) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC auth",
+        (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
+        (true, false) => "Google ADC auth",
+        (true, true) => unreachable!("handled above"),
+    };
+    let message = format!(
+        "skipping {test_name}: missing {missing}; direct Google live route was not exercised"
+    );
+    if strict_live_tests_requested() {
+        panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
+    }
+    eprintln!("{message}");
+    false
+}
+
 // ============================================================================
 // TEST CASE 1: /index with no db loaded at workspace root
 // ============================================================================
@@ -290,9 +326,17 @@ async fn live_google_harness_router_command_runs_list_dir_through_llm_manager() 
     // final assistant response. Do not replace it with the direct
     // `ChatSession<Google>` canary or a non-live command test.
     //
-    // It intentionally has no route/auth skip helper. With `live_api_tests`
-    // enabled, missing Google route config or ADC auth is a live-test setup
-    // failure, not a reason to silently pass this surface.
+    // The route/auth check must verify token fetch, not just ADC credential
+    // construction. Stale local ADC should skip ordinary workspace tests and
+    // fail only when PLOKE_RUN_LIVE_TESTS requests strict live execution.
+    if !live_google_env_or_skip(
+        "live_google_harness_router_command_runs_list_dir_through_llm_manager",
+    )
+    .await
+    {
+        return;
+    }
+
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
     let rt = TestRuntime::new(&fixture_db)

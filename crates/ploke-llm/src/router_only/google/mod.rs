@@ -516,9 +516,13 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
-    fn live_google_env_or_skip(test_name: &str) -> bool {
+    async fn live_google_env_or_skip(test_name: &str) -> bool {
         let route_config_available = Google::route_config_available().is_ok();
-        let auth_config_available = Google::auth_config_available().is_ok();
+        let auth_config_available = if route_config_available {
+            Google::resolve_bearer_token().await.is_ok()
+        } else {
+            Google::auth_config_available().is_ok()
+        };
 
         if route_config_available && auth_config_available {
             return true;
@@ -896,7 +900,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_google_chat_completions_smoke_success_or_quota() -> Result<()> {
         const TEST_NAME: &str = "live_google_chat_completions_smoke_success_or_quota";
-        if !live_google_env_or_skip(TEST_NAME) {
+        if !live_google_env_or_skip(TEST_NAME).await {
             return Ok(());
         }
 
@@ -963,7 +967,7 @@ mod tests {
     #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a live Google model with tool support, and quota"]
     async fn live_google_chat_step_forced_tool_call_success_or_quota() -> Result<()> {
         const TEST_NAME: &str = "live_google_chat_step_forced_tool_call_success_or_quota";
-        if !live_google_env_or_skip(TEST_NAME) {
+        if !live_google_env_or_skip(TEST_NAME).await {
             return Ok(());
         }
 
@@ -1013,7 +1017,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_google_thinking_request_returns_reasoning_success_or_quota() -> Result<()> {
         const TEST_NAME: &str = "live_google_thinking_request_returns_reasoning_success_or_quota";
-        if !live_google_env_or_skip(TEST_NAME) {
+        if !live_google_env_or_skip(TEST_NAME).await {
             return Ok(());
         }
 
@@ -1068,7 +1072,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_google_cached_content_reaches_provider_as_rejected_resource() -> Result<()> {
         const TEST_NAME: &str = "live_google_cached_content_reaches_provider_as_rejected_resource";
-        if !live_google_env_or_skip(TEST_NAME) {
+        if !live_google_env_or_skip(TEST_NAME).await {
             return Ok(());
         }
 
