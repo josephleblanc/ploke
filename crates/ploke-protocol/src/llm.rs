@@ -279,6 +279,11 @@ fn parse_protocol_json_content<T: DeserializeOwned>(content: &str) -> Result<T, 
                     return Ok(parsed);
                 }
             }
+            if let Some(repaired) = repair_redundant_final_punctuation_fragment(content, &detail) {
+                if let Ok(parsed) = parse_protocol_json_content_once::<T>(&repaired) {
+                    return Ok(parsed);
+                }
+            }
             Err(ProtocolLlmError::ParseJson {
                 detail,
                 content: content.to_string(),
@@ -361,6 +366,78 @@ fn repair_unterminated_final_rationale(content: &str, detail: &str) -> Option<St
         repaired.push('}');
     }
     Some(repaired)
+}
+
+fn repair_redundant_final_punctuation_fragment(content: &str, detail: &str) -> Option<String> {
+    if !(detail.contains("expected `,` or `}`") || detail.contains("expected ',' or '}'")) {
+        return None;
+    }
+
+    let trimmed = content.trim_end();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return None;
+    }
+
+    let close_at = trimmed.len() - 1;
+    let before_close = trimmed[..close_at].trim_end();
+    let (prefix, fragment) = split_redundant_final_punctuation_fragment(before_close)?;
+    if !is_redundant_punctuation_fragment(&fragment) {
+        return None;
+    }
+
+    let prefix = prefix.trim_end();
+    Some(format!("{prefix}}}"))
+}
+
+fn split_redundant_final_punctuation_fragment(input: &str) -> Option<(&str, String)> {
+    if !input.ends_with('"') {
+        return None;
+    }
+
+    let closing_quote = input.len() - 1;
+    if let Some(opening_quote) = input[..closing_quote]
+        .char_indices()
+        .rev()
+        .find_map(|(idx, ch)| (ch == '"' && !is_escaped_quote(input, idx)).then_some(idx))
+        && let Ok(fragment) = serde_json::from_str::<String>(&input[opening_quote..])
+    {
+        return Some((&input[..opening_quote], fragment));
+    }
+
+    let fragment_start = input
+        .rfind(|ch| ch == '\n' || ch == '\r')
+        .map_or(0, |idx| idx + 1);
+    let fragment = input[fragment_start..].trim();
+    if !fragment.ends_with('"') {
+        return None;
+    }
+
+    let fragment = fragment[..fragment.len() - 1].trim();
+    if fragment.is_empty() {
+        return None;
+    }
+    Some((&input[..fragment_start], fragment.to_string()))
+}
+
+fn is_redundant_punctuation_fragment(fragment: &str) -> bool {
+    let fragment = fragment.trim();
+    !fragment.is_empty()
+        && fragment.chars().count() <= 8
+        && fragment
+            .chars()
+            .all(|ch| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?'))
+}
+
+fn is_escaped_quote(input: &str, quote_index: usize) -> bool {
+    let mut slash_count = 0usize;
+    for byte in input[..quote_index].bytes().rev() {
+        if byte == b'\\' {
+            slash_count += 1;
+        } else {
+            break;
+        }
+    }
+    slash_count % 2 == 1
 }
 
 fn has_odd_unescaped_quotes(input: &str) -> bool {
@@ -653,6 +730,51 @@ mod tests {
     }
 
     #[test]
+    fn parse_protocol_json_content_repairs_final_punctuation_fragment_before_object_close() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{
+  "verdict": "key_progress",
+  "confidence": "high",
+  "rationale": "The full test suite successfully verified the fix."
+"."
+}"#,
+        )
+        .expect("parser should discard a redundant final punctuation fragment");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "key_progress".to_string(),
+                confidence: "high".to_string(),
+                rationale: "The full test suite successfully verified the fix.".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_protocol_json_content_repairs_dangling_final_punctuation_quote_before_object_close() {
+        let parsed = parse_protocol_json_content::<ReviewLike>(
+            r#"{
+  "verdict": "key_progress",
+  "confidence": "high",
+  "rationale": "Running the full test suite successfully is key to verifying the fix."
+."
+}"#,
+        )
+        .expect("parser should discard a dangling punctuation quote after the final rationale");
+
+        assert_eq!(
+            parsed,
+            ReviewLike {
+                verdict: "key_progress".to_string(),
+                confidence: "high".to_string(),
+                rationale: "Running the full test suite successfully is key to verifying the fix."
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn parse_protocol_json_content_recovers_redundant_trailing_root_brace() {
         let parsed = parse_protocol_json_content::<SegmentationLike>(
             r#"{"segments":[{"start_index":0,"end_index":0,"status":"labeled","label":"locate_target","confidence":"high","rationale":"x"}],"overall_rationale":"ok"}}"#,
@@ -683,6 +805,16 @@ mod tests {
         .expect_err("parser should not recover arbitrary trailing text");
 
         assert!(format!("{err}").contains("trailing characters"));
+    }
+
+    #[test]
+    fn parse_protocol_json_content_rejects_final_word_fragment_before_object_close() {
+        let err = parse_protocol_json_content::<ReviewLike>(
+            r#"{"verdict":"key_progress","confidence":"high","rationale":"ok" "extra"}"#,
+        )
+        .expect_err("parser should not discard arbitrary final string fragments");
+
+        assert!(format!("{err}").contains("expected"));
     }
 
     #[test]
