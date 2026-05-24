@@ -251,3 +251,30 @@ cargo run -p ploke-eval -- loop prototype1-step \
 
 Use the current source checkout binary via `cargo run -p ploke-eval`; do not use
 the stale campaign worktree-local `./target/debug/ploke-eval`.
+
+## Note 8: Protocol Segmentation Persisted After Repair
+
+Time: 2026-05-24 11:00 UTC
+
+Loop result:
+
+- The resumed loop operator used the current source checkout at `3949c88e`.
+- Doctor before the step was clean: `phase = baseline_protocol`,
+  `blockers = []`.
+- The bounded step exited 0.
+- Doctor after the step still reported `phase = baseline_protocol`, but closure
+  state advanced from protocol `missing` to protocol `partial`.
+
+Persisted evidence:
+
+- `tool-call-intent-segments` is now complete.
+- `tool-call-review` and `tool-call-segment-review` remain missing.
+- New protocol artifact:
+  `/home/brasides/.ploke-eval/protocol/prototype1/p1-gemini35-flash-multigen-2g3x3-20260523-223658/BurntSushi__ripgrep-2209/runs/run-1779602498508-structured-current-policy-ed4a409a/1779620303372_tool_call_intent_segmentation_BurntSushi__ripgrep-2209.json`
+
+Interpretation:
+
+- This validates that the parser repair unblocked the original protocol
+  segmentation failure for the live Gemini campaign.
+- The loop is not complete yet; the next safe action is another bounded
+  protocol step to produce one of the remaining required procedure artifacts.
