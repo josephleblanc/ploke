@@ -27,6 +27,10 @@ trace reconstruction.
   code/docs/skill/bug-report work is needed in the source checkout.
 - If a run root exists and the user asks "what actually happened?", switch to
   `ploke-run-review` for detailed trace work.
+- If live API behavior is required to verify a fix or blocker, do the live API
+  call. Put any Rust test that performs the call behind the `live_api_tests`
+  feature, and run that gated test explicitly instead of treating a local mock
+  as sufficient evidence.
 
 ## Diagnostic Cycle
 
@@ -88,6 +92,27 @@ full protocol advance:
 Treat this as paid live-provider work. It should report the model, provider,
 route source, reasoning policy, bounded outcome, and an error class without
 printing credentials.
+
+When the live behavior belongs in test coverage, use the existing live-test
+pattern:
+
+```rust
+#[tokio::test]
+#[cfg(feature = "live_api_tests")]
+#[ignore = "live provider test"]
+async fn live_provider_case() {
+    // perform the real provider request
+}
+```
+
+Run the live test directly with the feature enabled:
+
+```bash
+cargo test -p <crate> --features live_api_tests <test_name> -- --ignored --nocapture
+```
+
+If sandboxing or network policy blocks the command, request approval and rerun
+the same gated live test.
 
 ### 3. Take One Bounded Advance
 

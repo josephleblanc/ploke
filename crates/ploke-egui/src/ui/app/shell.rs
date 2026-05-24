@@ -4,24 +4,25 @@ use eframe::egui;
 use std::collections::BTreeMap;
 
 use crate::ui::app::layout::INSPECTOR_MARGIN_INNER;
+use crate::ui::eval_protocol::{EvalProtocolDashboard, PatchProjectionCounts};
 use crate::ui::id_display;
 use crate::ui::id_display::{InteractiveId, ShortId, TraceId};
 use crate::ui::inspector::{
+    find_run_forest_node, phase_label, response_finish_reason_label, result_class_label,
+    run_forest_node_identity, surface_apply_status_label, surface_check_status_label,
+    tool_execution_name, tool_execution_status_label, tool_execution_summary,
+    turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label, turn_outcome_tool_count,
     ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, PatchInspection,
     RoleBadgeSet, RunRecordInspection, RunRecordSlot, RunRecordTurnInspection, SelectionEdge,
-    SourceRef, UnavailableReason, find_run_forest_node, phase_label, response_finish_reason_label,
-    result_class_label, run_forest_node_identity, surface_apply_status_label,
-    surface_check_status_label, tool_execution_name, tool_execution_status_label,
-    tool_execution_summary, turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label,
-    turn_outcome_tool_count,
+    SourceRef, UnavailableReason,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
 #[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
-use ploke_tree::Graph;
 use ploke_tree::graph::{AgentTurnArtifactMetadata, ParentCreateAttempt, ParentCreateLookup};
+use ploke_tree::Graph;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1104,13 +1105,13 @@ pub(crate) fn render_eval_protocol_for_graph(
     graph: &Graph,
     render_cache: &mut InspectorRenderCache,
 ) {
-    let evidence = graph.eval_protocol_evidence();
-    if !evidence.is_available() {
+    let dashboard = EvalProtocolDashboard::from_graph(graph);
+    if !dashboard.is_available() {
         cached_kv_text(ui, render_cache, "eval protocol", "not_available");
         return;
     }
 
-    if let Some(closure) = evidence.closure {
+    if let Some(closure) = dashboard.closure() {
         cached_kv_id(
             ui,
             render_cache,
@@ -1181,35 +1182,35 @@ pub(crate) fn render_eval_protocol_for_graph(
         }
     }
 
-    if let Some(run_records) = evidence.run_records {
+    if let Some(run_records) = dashboard.run_records() {
         ui.separator();
         ui.label(egui::RichText::new("Eval Run Records").strong());
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "records",
-            run_records.summary.parsed_count,
+            dashboard.run_records_parsed_count(),
         );
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "turns",
-            run_records.summary.total_turn_count,
+            dashboard.run_records_total_turn_count(),
         );
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "tool calls",
-            run_records.summary.total_tool_call_count,
+            dashboard.run_records_total_tool_call_count(),
         );
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "failed tool calls",
-            run_records.summary.failed_tool_call_count,
+            dashboard.run_records_failed_tool_call_count(),
         );
 
-        let patch = evidence.patch_stats();
+        let patch = dashboard.eval_patch_counts();
         cached_kv_usize(ui, render_cache, "patch phases", patch.patch_phase_count);
         cached_kv_usize(
             ui,
@@ -1235,12 +1236,19 @@ pub(crate) fn render_eval_protocol_for_graph(
             "create proposals",
             patch.create_proposal_count,
         );
-        render_count_map(
+        cached_kv_usize(
             ui,
             render_cache,
-            "patch projection",
-            &patch.patch_projection_states,
+            "expected file changes",
+            patch.expected_file_change_count,
         );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "applied patch artifacts",
+            patch.applied_patch_artifact_count,
+        );
+        render_patch_projection_counts(ui, render_cache, &patch.patch_projection);
 
         for (record_key, record) in run_records.index.iter().take(2) {
             ui.separator();
@@ -1297,33 +1305,41 @@ pub(crate) fn render_eval_protocol_for_graph(
         }
     }
 
-    if let Some(protocol) = evidence.protocol_artifacts {
+    if dashboard.protocol_artifacts().is_some() {
         ui.separator();
         ui.label(egui::RichText::new("Protocol").strong());
-        cached_kv_usize(ui, render_cache, "artifacts", protocol.summary.parsed_count);
-        cached_kv_usize(
+        cached_kv_optional_usize(
+            ui,
+            render_cache,
+            "artifacts",
+            dashboard.protocol_artifacts_parsed_count(),
+        );
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "intent segments",
-            protocol.summary.intent_segmentation_count,
+            dashboard.protocol_artifacts_intent_segmentation_count(),
         );
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "call reviews",
-            protocol.summary.review_count,
+            dashboard.protocol_artifacts_review_count(),
         );
-        cached_kv_usize(
+        cached_kv_optional_usize(
             ui,
             render_cache,
             "segment reviews",
-            protocol.summary.segment_review_count,
+            dashboard.protocol_artifacts_segment_review_count(),
         );
 
-        let stats = evidence.protocol_review_stats();
-        render_count_map(ui, render_cache, "overall", &stats.overall);
-        render_count_map(ui, render_cache, "redundancy", &stats.redundancy);
-        render_count_map(ui, render_cache, "recoverability", &stats.recoverability);
+        let stats = dashboard.protocol_aggregate_counts();
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "issue detections",
+            stats.issue_detection_count,
+        );
         cached_kv_usize(
             ui,
             render_cache,
@@ -1336,23 +1352,35 @@ pub(crate) fn render_eval_protocol_for_graph(
             "interventions",
             stats.intervention_candidate_count,
         );
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "intervention applies",
+            stats.intervention_apply_count,
+        );
     }
 }
 
-fn render_count_map(
+fn render_patch_projection_counts(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
-    prefix: &str,
-    counts: &BTreeMap<String, usize>,
+    counts: &PatchProjectionCounts,
 ) {
-    if counts.is_empty() {
-        cached_kv_text(ui, render_cache, prefix, "none");
-        return;
-    }
-    for (label, count) in counts {
-        let row_label = format!("{prefix}.{label}");
-        cached_kv_usize(ui, render_cache, row_label.as_str(), *count);
-    }
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "patch projection.not_recorded",
+        counts.not_recorded,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "patch projection.not_applicable",
+        counts.not_applicable,
+    );
+    cached_kv_usize(ui, render_cache, "patch projection.passed", counts.passed);
+    cached_kv_usize(ui, render_cache, "patch projection.failed", counts.failed);
+    cached_kv_usize(ui, render_cache, "patch projection.not_run", counts.not_run);
 }
 
 fn closure_status_label<T>(value: &T) -> String
@@ -2229,7 +2257,11 @@ fn score_profile_label(profile: ploke_records::selection::ScoreProfile) -> &'sta
 }
 
 fn bool_label(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
+    if value {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 fn outcome_label(outcome: ploke_records::selection::Outcome) -> &'static str {
@@ -2902,10 +2934,10 @@ mod tests {
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
 
-    use crate::benchmark::{STANDARD_RUN_ROOT, StartupProfile, load_graph_with_startup_profile};
+    use crate::benchmark::{load_graph_with_startup_profile, StartupProfile, STANDARD_RUN_ROOT};
     use crate::ui::diff::PatchDiffCache;
     use crate::ui::inspector::{
-        GraphRevision, InspectorCache, SelectionInspector, default_selections,
+        default_selections, GraphRevision, InspectorCache, SelectionInspector,
     };
     use crate::ui::view::GraphSelectionRef;
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
