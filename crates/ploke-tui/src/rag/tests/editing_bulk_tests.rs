@@ -229,7 +229,7 @@ async fn deny_pending_edits_marks_all_pending_denied() {
 
 #[tokio::test]
 #[cfg(feature = "test_harness")]
-async fn approve_edits_marks_mixed_result_ns_batch_as_failed() {
+async fn approve_edits_marks_mixed_result_ns_batch_as_partially_applied() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let tmp = tempdir().expect("tempdir");
     let ok_path = tmp.path().join("notes.txt");
@@ -333,8 +333,8 @@ async fn approve_edits_marks_mixed_result_ns_batch_as_failed() {
         .get(&proposal_id)
         .expect("proposal should still exist after apply");
     assert!(
-        matches!(proposal.status, EditProposalStatus::Failed(_)),
-        "mixed-result ns batches should be surfaced as Failed; got {:?}",
+        matches!(proposal.status, EditProposalStatus::PartiallyApplied(_)),
+        "mixed-result ns batches should be surfaced as PartiallyApplied; got {:?}",
         proposal.status
     );
 

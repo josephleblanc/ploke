@@ -63,6 +63,7 @@ fn render_approvals_simple_test(
                 EditProposalStatus::Approved => "Approved",
                 EditProposalStatus::Denied => "Denied",
                 EditProposalStatus::Applied => "Applied",
+                EditProposalStatus::PartiallyApplied(_) => "PartiallyApplied",
                 EditProposalStatus::Failed(_) => "Failed",
                 EditProposalStatus::Stale(_) => "Stale",
             };

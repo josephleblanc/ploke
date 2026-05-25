@@ -404,6 +404,7 @@ struct Candidate {
 struct BatchOutcome {
     applied: Vec<AppliedItem>,
     changed_paths: Vec<PathBuf>,
+    mutated: bool,
     feedbacks: Vec<String>,
     retry: Option<String>,
 }
@@ -967,10 +968,11 @@ async fn settle_staged_batch(
     };
     outcome.applied.extend(applied_outcome.applied);
     outcome.changed_paths.extend(applied_outcome.changed_paths);
+    outcome.mutated |= applied_outcome.mutated;
     if applied_outcome.retry.is_some() {
         outcome.retry = applied_outcome.retry;
     }
-    if !outcome.applied.is_empty() {
+    if !outcome.applied.is_empty() || outcome.mutated {
         if let Err(error) = wait_for_refresh(runtime, pending_events, turn, observer).await {
             record_post_approval_indeterminate(run, turn, observer, &selected, &error.to_string());
             return Err(error);
@@ -1210,6 +1212,22 @@ async fn wait_for_selected(
                     observer.emit(format!("attempt {turn} proposal_applied id={}", item.id()));
                     outcome.applied.push(item.applied());
                     push_changed_paths(&mut outcome.changed_paths, paths);
+                }
+                EditProposalStatus::PartiallyApplied(reason) => {
+                    run.attempts.push(HeadlessAttempt {
+                        turn,
+                        proposal_id: Some(item.id()),
+                        result: HeadlessAttemptResult::Rejected {
+                            reason: reason.clone(),
+                        },
+                    });
+                    observer.emit(format!(
+                        "attempt {turn} proposal_partially_applied id={} reason={}",
+                        item.id(),
+                        truncate_chars(&reason, 240)
+                    ));
+                    outcome.mutated = true;
+                    outcome.retry = Some(reason);
                 }
                 EditProposalStatus::Failed(reason) | EditProposalStatus::Stale(reason) => {
                     run.attempts.push(HeadlessAttempt {

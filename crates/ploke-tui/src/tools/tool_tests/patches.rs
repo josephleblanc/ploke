@@ -377,6 +377,92 @@ async fn ns_patch_rejects_fuzzy_same_file_repair_after_applied_proposal_before_s
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_allows_fuzzy_same_file_after_non_mutating_failed_proposal() {
+    let _guard = ns_patch_event_test_lock().lock().await;
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db)
+        .spawn_state_manager()
+        .spawn_event_bus()
+        .spawn_llm_manager();
+
+    let state = rt.state_arc();
+    let events = rt.events_builder().build_event_bus_only();
+    let mut realtime_rx = events.event_bus_events.realtime_tx_rx;
+
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("same-file-failed-no-mutation");
+    let fixture_path =
+        write_named_fixture(&workspace_root, "notes.txt", "alpha\nbeta\ngamma\ndelta\n");
+    configure_temp_workspace(&state, &workspace_root).await;
+
+    let _app = rt.into_app_with_state_pwd(workspace_root.clone()).await;
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let parent_id = Uuid::new_v4();
+    let failed_request_id = Uuid::new_v4();
+    let failed_call_id = ArcStr::from("ns-patch-prior-non-mutating-failure");
+    let initial_hash = FileHash::from_bytes(
+        fs::read(&fixture_path)
+            .expect("read initial fixture for expected hash")
+            .as_slice(),
+    );
+    let mut failed_proposal = make_ns_batch_proposal(
+        failed_request_id,
+        parent_id,
+        failed_call_id,
+        &fixture_path,
+        initial_hash,
+        &[FIRST_SAME_FILE_DIFF],
+    );
+    failed_proposal.status =
+        EditProposalStatus::Failed("No non-semantic edits were applied".to_string());
+    let failed_proposal_id = failed_proposal.proposal_id;
+    state
+        .proposals
+        .write()
+        .await
+        .insert(failed_proposal_id, failed_proposal);
+
+    let new_request_id = Uuid::new_v4();
+    let new_call = same_file_tool_call(
+        "ns-patch-after-non-mutating-failure",
+        SECOND_SAME_FILE_DIFF,
+        "Stage a same-file patch after a failed proposal that did not touch disk",
+    );
+
+    let staged = stage_tool_call_via_llm_manager(
+        new_request_id,
+        parent_id,
+        new_call.clone(),
+        &mut realtime_rx,
+    )
+    .await;
+    assert!(
+        staged.ok,
+        "a non-mutating failed proposal must not poison later same-file staging"
+    );
+
+    let new_proposal_id = derive_edit_proposal_id(new_request_id, &new_call.call_id);
+    let proposals = state.proposals.read().await;
+    assert!(
+        matches!(
+            proposals
+                .get(&new_proposal_id)
+                .map(|proposal| &proposal.status),
+            Some(EditProposalStatus::Pending)
+        ),
+        "new same-file proposal should be staged after non-mutating failure"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture_path).expect("read file after staging"),
+        "alpha\nbeta\ngamma\ndelta\n",
+        "staging after a non-mutating failure must not change the file"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ns_patch_malformed_diff_emits_one_failure_and_stages_zero_proposals() {
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
@@ -876,12 +962,12 @@ async fn ns_patch_same_file_batch_partially_applies_then_fails_due_to_shared_sta
     let terminal_status = wait_for_proposal_status(&state, proposal_id, |status| {
         matches!(
             status,
-            EditProposalStatus::Applied | EditProposalStatus::Failed(_)
+            EditProposalStatus::Applied | EditProposalStatus::PartiallyApplied(_)
         )
     })
     .await;
     match terminal_status {
-        EditProposalStatus::Failed(message) => {
+        EditProposalStatus::PartiallyApplied(message) => {
             assert!(
                 message.contains("Partially applied non-semantic edits"),
                 "same-file batch should surface as partial apply failure, got: {message}"

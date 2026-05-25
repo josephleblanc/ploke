@@ -1440,8 +1440,8 @@ async fn collect_patch_artifact_with_expected(
     };
 
     let has_any_proposals = !edit_proposals.is_empty() || !create_proposals.is_empty();
-    let applied = edit_proposals.iter().any(|p| p.status == "Applied")
-        || create_proposals.iter().any(|p| p.status == "Applied");
+    let applied = edit_proposals.iter().any(proposal_status_is_mutation)
+        || create_proposals.iter().any(proposal_status_is_mutation);
     let all_proposals_applied = has_any_proposals
         && edit_proposals.iter().all(|p| p.status == "Applied")
         && create_proposals.iter().all(|p| p.status == "Applied");
@@ -1467,9 +1467,14 @@ fn proposal_status_label(status: &EditProposalStatus) -> &'static str {
         EditProposalStatus::Approved => "Approved",
         EditProposalStatus::Denied => "Denied",
         EditProposalStatus::Applied => "Applied",
+        EditProposalStatus::PartiallyApplied(_) => "PartiallyApplied",
         EditProposalStatus::Failed(_) => "Failed",
         EditProposalStatus::Stale(_) => "Stale",
     }
+}
+
+fn proposal_status_is_mutation(proposal: &ProposalSnapshotRecord) -> bool {
+    matches!(proposal.status.as_str(), "Applied" | "PartiallyApplied")
 }
 
 fn expected_patch_files(prepared: &PreparedSingleRun) -> Vec<PathBuf> {
@@ -2106,7 +2111,7 @@ fn validation_changed_paths(repo_root: &Path, patch_artifact: &PatchArtifact) ->
         .edit_proposals
         .iter()
         .chain(patch_artifact.create_proposals.iter())
-        .filter(|proposal| proposal.status == "Applied")
+        .filter(|proposal| proposal_status_is_mutation(proposal))
     {
         for path in &proposal.files {
             push_unique_changed_path(
@@ -7380,16 +7385,17 @@ mod tests {
         let state = Arc::new(state);
         {
             let mut proposals = state.proposals.write().await;
+            let request_id = uuid::Uuid::new_v4();
+            let call_id = ploke_core::ArcStr::from("edit-call-partial");
             proposals.insert(
-                ploke_core::PROJECT_NAMESPACE_UUID,
+                ploke_tui::app_state::core::derive_edit_proposal_id(request_id, &call_id),
                 EditProposal {
                     proposal_id: ploke_tui::app_state::core::derive_edit_proposal_id(
-                        ploke_core::PROJECT_NAMESPACE_UUID,
-                        &ploke_core::ArcStr::from("edit-call"),
+                        request_id, &call_id,
                     ),
-                    request_id: ploke_core::PROJECT_NAMESPACE_UUID,
+                    request_id,
                     parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
-                    call_id: ploke_core::ArcStr::from("edit-call"),
+                    call_id,
                     proposed_at_ms: 1,
                     edits: Vec::new(),
                     files: vec![PathBuf::from("src/lib.rs")],
@@ -7397,33 +7403,7 @@ mod tests {
                     preview: DiffPreview::UnifiedDiff {
                         text: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".to_string(),
                     },
-                    status: EditProposalStatus::Applied,
-                    is_semantic: true,
-                },
-            );
-            let failed_request_id = uuid::Uuid::new_v4();
-            let failed_call_id = ploke_core::ArcStr::from("edit-call-failed");
-            proposals.insert(
-                ploke_tui::app_state::core::derive_edit_proposal_id(
-                    failed_request_id,
-                    &failed_call_id,
-                ),
-                EditProposal {
-                    proposal_id: ploke_tui::app_state::core::derive_edit_proposal_id(
-                        failed_request_id,
-                        &failed_call_id,
-                    ),
-                    request_id: failed_request_id,
-                    parent_id: ploke_core::PROJECT_NAMESPACE_UUID,
-                    call_id: failed_call_id,
-                    proposed_at_ms: 2,
-                    edits: Vec::new(),
-                    files: vec![PathBuf::from("src/lib.rs")],
-                    edits_ns: Vec::new(),
-                    preview: DiffPreview::UnifiedDiff {
-                        text: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".to_string(),
-                    },
-                    status: EditProposalStatus::Failed("boom".to_string()),
+                    status: EditProposalStatus::PartiallyApplied("applied 1/2 files".to_string()),
                     is_semantic: true,
                 },
             );

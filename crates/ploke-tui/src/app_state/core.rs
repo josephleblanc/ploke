@@ -329,6 +329,9 @@ pub enum EditProposalStatus {
     Approved,
     Denied,
     Applied,
+    /// Some writes in the proposal reached disk, but the proposal did not apply cleanly.
+    /// This is terminal mutation evidence, not an ordinary no-op failure.
+    PartiallyApplied(String),
     Failed(String),
     /// Stale indicates the workspace changed enough that the proposal likely no longer applies.
     /// TODO: wire to validation/DB checks to detect stale edits vs. live workspace content.
@@ -342,6 +345,7 @@ impl EditProposalStatus {
             EditProposalStatus::Approved => "Approved",
             EditProposalStatus::Denied => "Denied",
             EditProposalStatus::Applied => "Applied",
+            EditProposalStatus::PartiallyApplied(_) => "PartiallyApplied",
             EditProposalStatus::Failed(_) => "Failed",
             EditProposalStatus::Stale(_) => "Stale",
         }

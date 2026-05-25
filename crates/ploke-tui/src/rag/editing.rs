@@ -68,6 +68,14 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, pro
             add_msg_imm(msg).await;
             return;
         }
+        EditProposalStatus::PartiallyApplied(_) => {
+            let msg = format!(
+                "Edits already partially applied for request_id {}",
+                request_id
+            );
+            add_msg_imm(msg).await;
+            return;
+        }
         EditProposalStatus::Denied => {
             let msg = format!("Edits already denied for request_id {}", request_id);
             add_msg_imm(msg).await;
@@ -209,7 +217,7 @@ async fn apply_ns_edit(
             if applied_ok {
                 proposal.status = EditProposalStatus::Applied;
             } else if applied_any {
-                proposal.status = EditProposalStatus::Failed(format!(
+                proposal.status = EditProposalStatus::PartiallyApplied(format!(
                     "Partially applied non-semantic edits: applied {applied}/{file_count} files"
                 ));
             } else {
@@ -642,6 +650,13 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, propos
             let msg = format!("Edits already applied for request_id {}", request_id);
             add_msg_imm(msg).await;
         }
+        EditProposalStatus::PartiallyApplied(_) => {
+            let msg = format!(
+                "Edits already partially applied for request_id {}",
+                request_id
+            );
+            add_msg_imm(msg).await;
+        }
     }
 }
 
@@ -863,6 +878,12 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
             add_msg_imm(msg).await;
             return;
         }
+        EditProposalStatus::PartiallyApplied(e) => {
+            let msg =
+                format!("Creations already partially applied for request_id {request_id}: {e}");
+            add_msg_imm(msg).await;
+            return;
+        }
         EditProposalStatus::Denied => {
             let msg = format!("Creations already denied for request_id {request_id}");
             add_msg_imm(msg).await;
@@ -1065,6 +1086,13 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
         }
         EditProposalStatus::Applied => {
             let msg = format!("Creations already applied for request_id {}", request_id);
+            add_msg_imm(msg).await;
+        }
+        EditProposalStatus::PartiallyApplied(_) => {
+            let msg = format!(
+                "Creations already partially applied for request_id {}",
+                request_id
+            );
             add_msg_imm(msg).await;
         }
     }

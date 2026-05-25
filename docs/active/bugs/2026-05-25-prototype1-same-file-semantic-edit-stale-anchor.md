@@ -65,6 +65,23 @@ steps. This addresses the related failure mode where a same-file edit leaves
 retrieval stale and the model sees missing context without a stale-index signal.
 It does not replace the same-file proposal planning work above.
 
+Follow-up fixed on 2026-05-25: partial non-semantic mutation is no longer stored
+as an ordinary `Failed` proposal. Mixed-result `ns_patch` batches now settle as
+`PartiallyApplied`, remain terminal, force Prototype 1 headless refresh waiting,
+and are recorded as mutation evidence without being treated as cleanly applied
+candidate admission. The same-file fuzzy stale guard now keys off mutating
+settled proposals (`Applied` or `PartiallyApplied`) rather than all failed/stale
+proposals, so no-op failures do not poison later same-file staging.
+
+Regression coverage:
+
+```text
+cargo test -p ploke-tui ns_patch_same_file_batch_partially_applies_then_fails_due_to_shared_stale_anchor -- --nocapture
+cargo test -p ploke-tui ns_patch_allows_fuzzy_same_file_after_non_mutating_failed_proposal -- --nocapture
+cargo test -p ploke-tui approve_edits_marks_mixed_result_ns_batch_as_partially_applied -- --nocapture
+cargo test -p ploke-eval collect_patch_artifact_marks_partial_apply_as_applied_but_not_all_applied -- --nocapture
+```
+
 ## Affected Surface
 
 - `crates/ploke-tui/src/tools/insert_rust_item.rs`

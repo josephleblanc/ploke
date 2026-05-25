@@ -226,6 +226,7 @@ impl ApprovalsFilter {
                 status,
                 EditProposalStatus::Pending
                     | EditProposalStatus::Failed(_)
+                    | EditProposalStatus::PartiallyApplied(_)
                     | EditProposalStatus::Stale(_)
             ),
             PendingOnly => matches!(status, EditProposalStatus::Pending),
@@ -284,9 +285,10 @@ fn status_rank(status: &EditProposalStatus) -> usize {
     match status {
         EditProposalStatus::Pending => 0,
         EditProposalStatus::Failed(_) => 1,
-        EditProposalStatus::Stale(_) => 2,
-        EditProposalStatus::Approved | EditProposalStatus::Applied => 3,
-        EditProposalStatus::Denied => 4,
+        EditProposalStatus::PartiallyApplied(_) => 2,
+        EditProposalStatus::Stale(_) => 3,
+        EditProposalStatus::Approved | EditProposalStatus::Applied => 4,
+        EditProposalStatus::Denied => 5,
     }
 }
 
@@ -294,6 +296,7 @@ fn status_style(status: &EditProposalStatus) -> Style {
     match status {
         EditProposalStatus::Pending => Style::new().fg(Color::Cyan),
         EditProposalStatus::Failed(_) => Style::new().fg(Color::Red),
+        EditProposalStatus::PartiallyApplied(_) => Style::new().fg(Color::LightRed),
         EditProposalStatus::Stale(_) => Style::new().fg(Color::Yellow),
         EditProposalStatus::Approved | EditProposalStatus::Applied => {
             Style::new().fg(Color::DarkGray)
