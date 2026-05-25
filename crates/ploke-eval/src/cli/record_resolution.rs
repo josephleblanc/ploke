@@ -281,16 +281,10 @@ mod tests {
     use crate::inner::registry::RunRegistration;
     use crate::run_registry::RunExecutionStatus;
     use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn hold_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        env_lock()
+        crate::test_support::env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

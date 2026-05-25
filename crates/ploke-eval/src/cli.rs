@@ -13873,7 +13873,6 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -13941,13 +13940,8 @@ mod tests {
         }
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn hold_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        env_lock()
+        crate::test_support::env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

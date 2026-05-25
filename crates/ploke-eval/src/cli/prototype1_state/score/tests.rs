@@ -996,7 +996,9 @@ impl Drop for EvalHomeGuard {
 }
 
 fn eval_home_guard(root: &Path) -> EvalHomeGuard {
-    let lock = crate::test_support::env_lock().lock().expect("env lock");
+    let lock = crate::test_support::env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let previous = std::env::var_os("PLOKE_EVAL_HOME");
     unsafe {
         std::env::set_var("PLOKE_EVAL_HOME", root);
