@@ -196,7 +196,7 @@ fn mock_embedding(text: &str, dimensions: usize) -> Vec<f32> {
         .collect()
 }
 
-fn shutdown_callback_manager(shutdown: &crossbeam_channel::Sender<()>) {
+pub(crate) fn shutdown_callback_manager(shutdown: &crossbeam_channel::Sender<()>) {
     match shutdown.send(()) {
         Ok(_) => tracing::debug!("Sending shutdown message"),
         Err(e) => tracing::error!("Cannot send shutdown message, other side dropped: {e}"),
