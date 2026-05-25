@@ -426,6 +426,7 @@ async fn run_attempt(
     let mut policy_feedbacks = Vec::<String>::new();
     let mut policy_repair_turns = 0_u32;
     let mut batches = HashMap::<Uuid, ToolBatch>::new();
+    let mut tool_requests = HashMap::<String, (String, String)>::new();
     let mut pending_events = VecDeque::<ploke_tui::AppEvent>::new();
 
     loop {
@@ -489,6 +490,13 @@ async fn run_attempt(
                     tool: tool_call.function.name.as_str().to_string(),
                     arguments: tool_call.function.arguments.clone(),
                 });
+                tool_requests.insert(
+                    tool_call.call_id.to_string(),
+                    (
+                        tool_call.function.name.as_str().to_string(),
+                        tool_call.function.arguments.clone(),
+                    ),
+                );
                 observer.emit(format!(
                     "attempt {turn} tool_request call_id={} tool={} args={}",
                     tool_call.call_id,
@@ -514,6 +522,20 @@ async fn run_attempt(
                         content: content.clone(),
                     },
                 });
+                let call_id_text = call_id.to_string();
+                if let Some((tool, arguments)) = tool_requests.get(&call_id_text)
+                    && tool == "cargo"
+                    && let Some(validation) =
+                        observe_cargo_validation(run, &call_id_text, arguments, &content)
+                {
+                    observer.emit(format!(
+                        "attempt {turn} cargo_validation call_id={} ok={} status={} command={}",
+                        call_id,
+                        validation.ok,
+                        validation.status_reason,
+                        validation.display_command
+                    ));
+                }
                 observer.emit(format!(
                     "attempt {turn} tool_completed call_id={} content={}",
                     call_id,
@@ -724,6 +746,14 @@ async fn run_attempt(
                         "attempt {turn} recovered_tool_failure_after_apply {}",
                         truncate_chars(&feedback, 240)
                     ));
+                }
+
+                if let Some(feedback) = latest_failed_cargo_validation_feedback(run) {
+                    observer.emit(format!(
+                        "attempt {turn} validation_failed_after_apply {}",
+                        truncate_chars(&feedback, 240)
+                    ));
+                    return Ok(AttemptEnd::RetryFailure(feedback));
                 }
 
                 let (proposal_id, applied_proposal_ids) =
@@ -1662,6 +1692,7 @@ fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
 pub(crate) struct HeadlessRun {
     attempts: Vec<HeadlessAttempt>,
     events: Vec<Event>,
+    validations: Vec<CargoValidationObservation>,
     debug_relay: DebugRelay,
     prompt_diagnostics: Vec<PromptDiagnostic>,
     terminal: Option<HeadlessTerminal>,
@@ -1672,6 +1703,7 @@ impl HeadlessRun {
         Self {
             attempts: Vec::new(),
             events: Vec::new(),
+            validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             terminal: None,
@@ -1684,6 +1716,10 @@ impl HeadlessRun {
 
     pub(crate) fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    pub(crate) fn validations(&self) -> &[CargoValidationObservation] {
+        &self.validations
     }
 
     pub(crate) fn terminal(&self) -> Option<&HeadlessTerminal> {
@@ -1734,6 +1770,7 @@ impl HeadlessRun {
         Self {
             attempts,
             events: Vec::new(),
+            validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             terminal,
@@ -1743,6 +1780,148 @@ impl HeadlessRun {
 
 fn observed_headless_error(source: Error) -> String {
     format!("headless runtime failed after observed activity: {source}")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CargoValidationObservation {
+    call_id: String,
+    command: String,
+    display_command: String,
+    ok: bool,
+    status_reason: String,
+    exit_code: Option<i32>,
+    manifest_path: String,
+    errors: u32,
+    warnings: u32,
+}
+
+impl CargoValidationObservation {
+    fn failure_feedback(&self) -> Option<String> {
+        if self.ok {
+            return None;
+        }
+        Some(format!(
+            "Cargo validation failed after applying edits: `{}` exited {:?} with status `{}` (errors: {}, warnings: {}). Repair the failure before claiming success.",
+            self.display_command, self.exit_code, self.status_reason, self.errors, self.warnings
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct CargoRequestArgs {
+    command: Option<String>,
+    package: Option<String>,
+    all_features: Option<bool>,
+    no_default_features: Option<bool>,
+    features: Option<Vec<String>>,
+    target: Option<String>,
+    profile: Option<String>,
+    release: Option<bool>,
+    lib: Option<bool>,
+    tests: Option<bool>,
+    bins: Option<bool>,
+    examples: Option<bool>,
+    benches: Option<bool>,
+    test_args: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoResultProjection {
+    ok: bool,
+    status_reason: String,
+    command: String,
+    manifest_path: String,
+    exit_code: Option<i32>,
+    summary: CargoSummaryProjection,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoSummaryProjection {
+    errors: u32,
+    warnings: u32,
+}
+
+fn observe_cargo_validation(
+    run: &mut HeadlessRun,
+    call_id: &str,
+    arguments: &str,
+    content: &str,
+) -> Option<CargoValidationObservation> {
+    let result = serde_json::from_str::<CargoResultProjection>(content).ok()?;
+    let args = serde_json::from_str::<CargoRequestArgs>(arguments).unwrap_or_default();
+    let observation = CargoValidationObservation {
+        call_id: call_id.to_string(),
+        command: result.command.clone(),
+        display_command: display_cargo_command(&args, &result.command),
+        ok: result.ok,
+        status_reason: result.status_reason,
+        exit_code: result.exit_code,
+        manifest_path: result.manifest_path,
+        errors: result.summary.errors,
+        warnings: result.summary.warnings,
+    };
+    run.validations.push(observation.clone());
+    Some(observation)
+}
+
+fn display_cargo_command(args: &CargoRequestArgs, result_command: &str) -> String {
+    let mut parts = vec![
+        "cargo".to_string(),
+        args.command
+            .clone()
+            .unwrap_or_else(|| result_command.to_string()),
+    ];
+    if let Some(package) = &args.package {
+        parts.push("-p".to_string());
+        parts.push(package.clone());
+    }
+    if args.all_features.unwrap_or(false) {
+        parts.push("--all-features".to_string());
+    }
+    if args.no_default_features.unwrap_or(false) {
+        parts.push("--no-default-features".to_string());
+    }
+    if let Some(features) = &args.features
+        && !features.is_empty()
+    {
+        parts.push("--features".to_string());
+        parts.push(features.join(","));
+    }
+    if let Some(target) = &args.target {
+        parts.push("--target".to_string());
+        parts.push(target.clone());
+    }
+    if let Some(profile) = &args.profile {
+        parts.push("--profile".to_string());
+        parts.push(profile.clone());
+    }
+    if args.release.unwrap_or(false) {
+        parts.push("--release".to_string());
+    }
+    for (enabled, flag) in [
+        (args.lib, "--lib"),
+        (args.tests, "--tests"),
+        (args.bins, "--bins"),
+        (args.examples, "--examples"),
+        (args.benches, "--benches"),
+    ] {
+        if enabled.unwrap_or(false) {
+            parts.push(flag.to_string());
+        }
+    }
+    if let Some(test_args) = &args.test_args
+        && !test_args.is_empty()
+    {
+        parts.push("--".to_string());
+        parts.extend(test_args.iter().cloned());
+    }
+    parts.join(" ")
+}
+
+fn latest_failed_cargo_validation_feedback(run: &HeadlessRun) -> Option<String> {
+    run.validations()
+        .last()
+        .and_then(CargoValidationObservation::failure_feedback)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2153,8 +2332,8 @@ pub(crate) mod evidence {
     use uuid::Uuid;
 
     use super::{
-        DebugRelay, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, MAX_EVIDENCE_EVENT_CHARS,
-        truncate_chars,
+        CargoValidationObservation, DebugRelay, HeadlessAttemptResult, HeadlessRun,
+        HeadlessTerminal, MAX_EVIDENCE_EVENT_CHARS, truncate_chars,
     };
 
     /// Compact executor observations. Backend admission must still validate the
@@ -2165,6 +2344,8 @@ pub(crate) mod evidence {
         pub(crate) terminal: Option<Terminal>,
         #[serde(default)]
         pub(crate) events: Vec<Event>,
+        #[serde(default)]
+        pub(crate) validations: Vec<CargoValidation>,
         #[serde(default)]
         pub(crate) debug_relay: DebugRelaySummary,
         #[serde(default)]
@@ -2182,6 +2363,19 @@ pub(crate) mod evidence {
     pub(crate) struct Text {
         pub(crate) chars: usize,
         pub(crate) preview: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub(crate) struct CargoValidation {
+        pub(crate) call_id: String,
+        pub(crate) command: String,
+        pub(crate) display_command: String,
+        pub(crate) ok: bool,
+        pub(crate) status_reason: String,
+        pub(crate) exit_code: Option<i32>,
+        pub(crate) manifest_path: String,
+        pub(crate) errors: u32,
+        pub(crate) warnings: u32,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2337,8 +2531,29 @@ pub(crate) mod evidence {
                 attempts: value.attempts.iter().map(Attempt::from).collect(),
                 terminal: value.terminal.as_ref().map(Terminal::from),
                 events: value.events.iter().map(Event::from).collect(),
+                validations: value
+                    .validations
+                    .iter()
+                    .map(CargoValidation::from)
+                    .collect(),
                 debug_relay: DebugRelaySummary::from(&value.debug_relay),
                 prompt_diagnostics: value.prompt_diagnostics.iter().map(Prompt::from).collect(),
+            }
+        }
+    }
+
+    impl From<&CargoValidationObservation> for CargoValidation {
+        fn from(value: &CargoValidationObservation) -> Self {
+            Self {
+                call_id: value.call_id.clone(),
+                command: value.command.clone(),
+                display_command: value.display_command.clone(),
+                ok: value.ok,
+                status_reason: value.status_reason.clone(),
+                exit_code: value.exit_code,
+                manifest_path: value.manifest_path.clone(),
+                errors: value.errors,
+                warnings: value.warnings,
             }
         }
     }
@@ -3317,6 +3532,117 @@ mod tests {
     }
 
     #[test]
+    fn failed_cargo_tool_result_becomes_structured_validation_feedback() {
+        let mut run = HeadlessRun::new();
+        let arguments = r#"{"command":"test","package":"syn_parser"}"#;
+        let content = r#"{
+            "ok": false,
+            "status_reason": "tests_failed_or_runtime",
+            "command": "test",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 101,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+
+        let observation =
+            observe_cargo_validation(&mut run, "call-cargo", arguments, content).expect("cargo");
+
+        assert!(!observation.ok);
+        assert_eq!(observation.display_command, "cargo test -p syn_parser");
+        assert_eq!(
+            latest_failed_cargo_validation_feedback(&run).as_deref(),
+            Some(
+                "Cargo validation failed after applying edits: `cargo test -p syn_parser` exited Some(101) with status `tests_failed_or_runtime` (errors: 0, warnings: 0). Repair the failure before claiming success."
+            )
+        );
+        let evidence = run.evidence();
+        assert_eq!(evidence.validations.len(), 1);
+        assert_eq!(
+            evidence.validations[0].display_command,
+            "cargo test -p syn_parser"
+        );
+        assert!(!evidence.validations[0].ok);
+    }
+
+    #[test]
+    fn later_successful_cargo_result_clears_latest_failure_gate() {
+        let mut run = HeadlessRun::new();
+        let failed = r#"{
+            "ok": false,
+            "status_reason": "tests_failed_or_runtime",
+            "command": "test",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 101,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+        let passed = r#"{
+            "ok": true,
+            "status_reason": "success",
+            "command": "test",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 0,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+
+        observe_cargo_validation(
+            &mut run,
+            "call-failed",
+            r#"{"command":"test","package":"syn_parser"}"#,
+            failed,
+        )
+        .expect("failed cargo");
+        observe_cargo_validation(
+            &mut run,
+            "call-passed",
+            r#"{"command":"test","package":"syn_parser"}"#,
+            passed,
+        )
+        .expect("passed cargo");
+
+        assert!(latest_failed_cargo_validation_feedback(&run).is_none());
+        assert_eq!(run.evidence().validations.len(), 2);
+    }
+
+    #[test]
     fn select_disjoint_keeps_newest_file_disjoint_candidates() {
         let workspace = Path::new("/repo");
         let newer_same_file = Candidate {
@@ -3583,6 +3909,7 @@ mod tests {
                 },
             }],
             events: Vec::new(),
+            validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             terminal: Some(HeadlessTerminal::Applied {
@@ -3635,6 +3962,7 @@ mod tests {
                 },
             }],
             events: Vec::new(),
+            validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             terminal: Some(HeadlessTerminal::Exhausted {
@@ -3854,6 +4182,7 @@ mod tests {
         let run = HeadlessRun {
             attempts: Vec::new(),
             events: Vec::new(),
+            validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: vec![diagnostic],
             terminal: Some(HeadlessTerminal::ContextUnavailable {
