@@ -100,7 +100,7 @@ file and current code before treating a report as still open.
 - [`2026-05-25-headless-tui-timeout-submission-admission.md`](./2026-05-25-headless-tui-timeout-submission-admission.md)
   Fixed in source: Prototype 1 broad headless-TUI attempts no longer publish submitted child results after a timed-out turn with failed cargo validation; the live campaign that exposed this still contains tainted r3 evidence.
 - [`2026-05-25-prototype1-observe-child-stale-hang.md`](./2026-05-25-prototype1-observe-child-stale-hang.md)
-  Fixed in source: `observe_child` no longer waits forever when a child stops producing channel output/result evidence, and doctor/replay classify stale pending observe states.
+  Fixed in source: `observe_child` no longer waits forever when a child stops producing channel output/result evidence, doctor/replay classify stale pending observe states, and doctor now blocks acknowledged dead-child state before observe starts.
 - [`2026-05-25-prototype1-observe-child-success-sidecar-race.md`](./2026-05-25-prototype1-observe-child-success-sidecar-race.md)
   Fixed in source: `observe_child` no longer treats a successful runner-result sidecar as terminal before the treatment-bearing channel result arrives.
 - [`2026-05-25-prototype1-broad-headless-google-401-slot-thrash.md`](./2026-05-25-prototype1-broad-headless-google-401-slot-thrash.md)

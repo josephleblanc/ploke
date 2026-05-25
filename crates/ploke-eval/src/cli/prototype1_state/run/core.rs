@@ -58,7 +58,7 @@ use crate::cli::prototype1_state::{
     identity::{ParentIdentity, load_parent_identity_optional, parent_identity_relpath},
     inner::At,
     journal::{
-        CompletionEntry, JournalEntry, PrototypeJournal, SpawnEntry,
+        CompletionEntry, JournalEntry, PrototypeJournal, SpawnEntry, SpawnObservation, SpawnPhase,
         prototype1_transition_journal_path,
     },
     parent::{
@@ -1396,6 +1396,14 @@ fn load_child_snapshots(
             ));
         }
         if let Some(runtime_id) = runtime_id {
+            extend_dead_running_child_blockers(
+                &entries,
+                &node.node_id,
+                node.status,
+                &node.node_dir,
+                runtime_id,
+                blockers,
+            );
             extend_stale_observe_blockers(
                 &entries,
                 &node.node_id,
@@ -1460,6 +1468,55 @@ fn latest_runtime_for_node(entries: &[JournalEntry], node_id: &str) -> Option<Ru
         }
         _ => None,
     })
+}
+
+fn extend_dead_running_child_blockers(
+    entries: &[JournalEntry],
+    node_id: &str,
+    node_status: Prototype1NodeStatus,
+    node_dir: &Path,
+    runtime_id: RuntimeId,
+    blockers: &mut Vec<String>,
+) {
+    if node_status != Prototype1NodeStatus::Running {
+        return;
+    }
+    if pending_observe_for_runtime(entries, node_id, runtime_id).is_some() {
+        return;
+    }
+
+    let runner_result_path =
+        crate::cli::prototype1_state::invocation::result_path(node_dir, runtime_id);
+    if runner_result_path.exists() {
+        return;
+    }
+
+    let Some(spawn) = latest_spawn_for_runtime(entries, runtime_id) else {
+        return;
+    };
+    if spawn.refs.node_id != node_id
+        || spawn.phase != SpawnPhase::Observed
+        || !matches!(spawn.result, Some(SpawnObservation::Acknowledged))
+    {
+        return;
+    }
+    let Some(child_pid) = spawn.child_pid else {
+        return;
+    };
+    if pid_alive(child_pid) {
+        return;
+    }
+
+    let stream_state = spawn
+        .streams
+        .as_ref()
+        .map(stream_freshness_detail)
+        .unwrap_or_else(|| "stream files are unknown".to_string());
+    blockers.push(format!(
+        "node '{node_id}' is running for runtime '{runtime_id}', but child pid {child_pid} \
+         is not visible and no runner result exists at '{}'; {stream_state}",
+        runner_result_path.display()
+    ));
 }
 
 fn extend_stale_observe_blockers(
@@ -2704,6 +2761,34 @@ mod tests {
         assert!(blockers[0].contains("child pid is unknown"));
     }
 
+    #[test]
+    fn dead_acknowledged_running_child_adds_doctor_blocker_before_observe() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let node_id = "node-dead-child";
+        let entries = vec![spawn_observed_entry(
+            node_id,
+            runtime_id,
+            temp.path(),
+            u32::MAX,
+        )];
+        let mut blockers = Vec::new();
+
+        extend_dead_running_child_blockers(
+            &entries,
+            node_id,
+            Prototype1NodeStatus::Running,
+            temp.path(),
+            runtime_id,
+            &mut blockers,
+        );
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("node 'node-dead-child' is running"));
+        assert!(blockers[0].contains("child pid 4294967295 is not visible"));
+        assert!(blockers[0].contains("results/"));
+    }
+
     fn observe_before_entry(
         node_id: &str,
         runtime_id: RuntimeId,
@@ -2747,6 +2832,54 @@ mod tests {
             child_lifecycle: ChildRuntimeLifecycle::Acknowledged,
             runner_result_path: runner_result_path.to_path_buf(),
             result: None,
+        })
+    }
+
+    fn spawn_observed_entry(
+        node_id: &str,
+        runtime_id: RuntimeId,
+        node_dir: &Path,
+        child_pid: u32,
+    ) -> JournalEntry {
+        use crate::cli::prototype1_state::event::{
+            ChildRuntimeLifecycle, LineageMark, Paths, Refs, World,
+        };
+
+        JournalEntry::SpawnChild(SpawnEntry {
+            runtime_id,
+            phase: SpawnPhase::Observed,
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(0),
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: node_id.to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state".to_string(),
+                branch_id: "branch".to_string(),
+                candidate_id: "candidate".to_string(),
+                branch_label: "branch".to_string(),
+                spec_id: "spec".to_string(),
+            },
+            paths: Paths {
+                repo_root: node_dir.to_path_buf(),
+                workspace_root: node_dir.to_path_buf(),
+                binary_path: node_dir.join("ploke-eval"),
+                target_relpath: PathBuf::from("src/lib.rs"),
+                absolute_path: node_dir.join("src/lib.rs"),
+            },
+            world: World {
+                node_status: Prototype1NodeStatus::Running,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Child,
+                child_lifecycle: Some(ChildRuntimeLifecycle::Acknowledged),
+            },
+            child_lifecycle: ChildRuntimeLifecycle::Acknowledged,
+            parent_pid: std::process::id(),
+            child_pid: Some(child_pid),
+            argv: vec!["loop".to_string(), "prototype1-runner".to_string()],
+            streams: None,
+            result: Some(SpawnObservation::Acknowledged),
         })
     }
 }
