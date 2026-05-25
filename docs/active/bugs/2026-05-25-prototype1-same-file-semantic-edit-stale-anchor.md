@@ -14,6 +14,25 @@ This is related to same-file stale-anchor bugs already observed in headless
 resolves `crate::util::Replacer::replace_all` from stale DB state and fails
 during write.
 
+## Current Status
+
+Partially fixed in source. `stage_semantic_edit_proposal` now treats
+`read_full_verified` failure as a terminal staging failure for semantic edits:
+the tool emits `ToolCallFailed` and does not create a pending proposal when the
+DB-derived `expected_file_hash` does not verify against the live file.
+
+Regression coverage:
+
+```text
+cargo test -q -p ploke-tui apply_code_edit_rejects_stale_semantic_anchor_before_staging -- --nocapture
+```
+
+Broader same-file composition remains a design risk: multiple same-file
+proposals can still be staged before an earlier auto-confirmed proposal has
+finished applying and refreshing the index. That should be handled as proposal
+set/file-version planning, not by weakening the stale-anchor rejection added
+here.
+
 ## Affected Surface
 
 - `crates/ploke-tui/src/tools/insert_rust_item.rs`
@@ -118,11 +137,13 @@ crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs:1061
 The observed failure means at least one of these is still true in the live eval
 path:
 
-- `insert_rust_item` same-file applies do not produce a sufficiently visible
-  DB refresh before the next canonical edit resolves;
-- the next tool call can race ahead of post-apply rescan visibility;
-- same-file semantic edits can remain staged/admissible even after an earlier
-  applied edit invalidates their anchors.
+- already-stale canonical semantic anchors were allowed to stage because
+  `stage_semantic_edit_proposal` substituted `"<unreadable or binary file>"`
+  when `read_full_verified` rejected the expected file hash;
+- the next tool call may still race ahead of post-apply rescan visibility if it
+  stages before the earlier same-file proposal has actually applied;
+- same-file semantic edit composition is still represented as independent
+  proposals rather than a per-file versioned proposal set.
 
 ## Relationship To `record.rs`
 
@@ -153,12 +174,11 @@ a missing call-site update when the intended same-file follow-up edit failed.
 
 ## Fix Direction
 
-- Add a regression that replays this sequence:
-  `insert_rust_item` applied to a file, followed by canonical
-  `apply_code_edit` against a node in that same file.
-- Assert the second edit either resolves with the refreshed file hash or fails
-  before staged success is reported.
-- Ensure post-apply rescan visibility is a hard boundary for same-file
-  canonical edits in eval/headless tool loops.
-- Consider carrying touched-path/version state through the edit proposal
-  lifecycle so stale same-file proposals can be rejected before apply.
+- Keep the new stale-anchor regression as fixed-contract coverage:
+  `apply_code_edit_rejects_stale_semantic_anchor_before_staging`.
+- Add replay coverage for the historical Prototype 1 run shape if the current
+  replay surfaces can reproduce it without a live provider.
+- Ensure post-apply rescan visibility or proposal-set planning is a hard
+  boundary for same-file canonical edits in eval/headless tool loops.
+- Carry touched-path/version state through the edit proposal lifecycle so
+  stale same-file proposals can be composed, delayed, or rejected before apply.

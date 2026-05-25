@@ -154,7 +154,32 @@ pub async fn stage_semantic_edit_proposal(
             .await
         {
             Ok(Ok(s)) => s,
-            _ => "<unreadable or binary file>".to_string(),
+            Ok(Err(err)) => {
+                let msg = format!(
+                    "Cannot stage {} for {} because the file version could not be verified: {err}. Refresh or re-resolve the target before submitting another semantic edit.",
+                    name.as_str(),
+                    path.display()
+                );
+                tool_call_params.tool_call_failed_error(ToolError::new(
+                    name,
+                    ToolErrorCode::Io,
+                    msg,
+                ));
+                return None;
+            }
+            Err(err) => {
+                let msg = format!(
+                    "Cannot stage {} for {} because the file could not be read for verification: {err}.",
+                    name.as_str(),
+                    path.display()
+                );
+                tool_call_params.tool_call_failed_error(ToolError::new(
+                    name,
+                    ToolErrorCode::Io,
+                    msg,
+                ));
+                return None;
+            }
         };
         tracing::debug!(?before);
 

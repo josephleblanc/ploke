@@ -989,6 +989,73 @@ async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn apply_code_edit_rejects_stale_semantic_anchor_before_staging() {
+    use crate::{AppEvent, EventPriority};
+
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let request_id = Uuid::new_v4();
+    let target_path = workspace_root().join(ORIGINAL_FIXTURE);
+    let mut current = std::fs::read_to_string(&target_path).expect("read fixture target");
+    current.push_str("\npub const STALE_SEMANTIC_ANCHOR_MARKER: usize = 1;\n");
+    std::fs::write(&target_path, current).expect("mutate fixture target after db load");
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub stale_anchor: bool, }",
+        Some(0.9f32),
+    );
+    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
+    let proposal_id = apply_code_edit_tool(params).await;
+
+    assert!(
+        proposal_id.is_none(),
+        "stale semantic anchors should fail before staging"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "stale semantic anchors should not leave a pending proposal"
+    );
+
+    let mut seen_errors = Vec::new();
+    let mut found_failure = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(50), event_rx.recv()).await {
+            Ok(Ok(AppEvent::System(crate::app_state::events::SystemEvent::ToolCallFailed {
+                error,
+                ..
+            }))) => {
+                let wire = crate::tools::ToolErrorWire::parse(&error)
+                    .expect("ToolCallFailed should carry structured tool error wire");
+                seen_errors.push(wire.llm.message.clone());
+                if wire.llm.code == crate::tools::ToolErrorCode::Io
+                    && wire
+                        .llm
+                        .message
+                        .contains("file version could not be verified")
+                {
+                    found_failure = true;
+                    break;
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+    assert!(
+        found_failure,
+        "stale semantic anchors should emit a model-visible failure before staging; seen errors: {seen_errors:#?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tool_result_structure() {
     let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
