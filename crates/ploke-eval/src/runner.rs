@@ -50,6 +50,7 @@ use ploke_records::evaluation::{
     SubmissionPatchRef,
 };
 use ploke_records::record::ToRecord;
+use ploke_records::tool_contracts::{PersistedToolCallArguments, ToolCallArguments};
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
@@ -99,6 +100,8 @@ const HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT: u32 = 128;
 const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 900;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 2;
+const VALIDATION_AUDIT_SCHEMA_V1: &str = "agent-validation-audit.v1";
+const VALIDATION_AUDIT_FILE: &str = "validation-audit.json";
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
 fn benchmark_chat_policy() -> ChatPolicy {
@@ -333,6 +336,8 @@ pub struct RunArtifactPaths {
     pub msb_submission: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_projection: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_audit: Option<PathBuf>,
     /// Path to the compressed RunRecord (`record.json.gz`).
     /// Added in Phase 1 for comprehensive run persistence and replay.
     pub record_path: Option<PathBuf>,
@@ -854,6 +859,47 @@ pub struct PatchArtifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentValidationAudit {
+    pub schema_version: String,
+    pub checked_at: String,
+    pub changed_paths: Vec<String>,
+    pub cargo_calls: Vec<CargoValidationCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_cargo_call: Option<CargoValidationCall>,
+    pub successful_cargo_covering_changed_files: bool,
+    pub final_cargo_covers_changed_files: bool,
+    pub fmt_check_observed: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CargoValidationCall {
+    pub event_index: usize,
+    pub call_id: String,
+    pub command: String,
+    pub requested_scope: Option<String>,
+    pub resolved_scope: String,
+    pub package: Option<String>,
+    pub manifest_path: String,
+    pub ok: bool,
+    pub covers_changed_files: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CargoRequestProjection {
+    requested_scope: Option<String>,
+    package: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoResultProjection {
+    ok: bool,
+    command: String,
+    scope: String,
+    manifest_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExpectedFileChangeRecord {
     pub path: String,
     pub existed_before: bool,
@@ -1272,6 +1318,10 @@ fn build_agent_issue_prompt(prepared: &PreparedSingleRun) -> String {
         out.push('\n');
     }
     out.push_str("\nUse the repository tools to inspect the code, make the minimal fix, and finish by producing the patch output.");
+    out.push_str("\n\nValidation reporting rules:\n");
+    out.push_str("- Prefer package-qualified cargo validation for the package(s) touched by your patch. A bare cargo command may run against the focused crate and is not workspace-wide evidence.\n");
+    out.push_str("- In the final response, name the exact cargo command and manifest/package shown by the tool result. Do not call a run workspace-wide unless the tool result used the intended workspace/package target.\n");
+    out.push_str("- Do not claim formatting or cargo fmt was checked unless a formatting tool result exists; the cargo tool only runs check/test.");
     out
 }
 
@@ -1916,6 +1966,154 @@ fn hash_file_contents(path: &Path) -> Result<Option<String>, PrepareError> {
 
 fn hex_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn build_agent_validation_audit(
+    prepared: &PreparedSingleRun,
+    artifact: &AgentTurnArtifact,
+) -> AgentValidationAudit {
+    let changed_paths: Vec<String> = artifact
+        .patch_artifact
+        .expected_file_changes
+        .iter()
+        .filter(|change| change.changed)
+        .map(|change| change.path.clone())
+        .collect();
+    let mut cargo_requests: HashMap<String, CargoRequestProjection> = HashMap::new();
+    let mut cargo_calls = Vec::new();
+
+    for (event_index, event) in artifact.events.iter().enumerate() {
+        match event {
+            ObservedTurnEvent::ToolRequested(record) if record.tool == "cargo" => {
+                cargo_requests.insert(
+                    record.call_id.clone(),
+                    decode_cargo_request_projection(&record.arguments),
+                );
+            }
+            ObservedTurnEvent::ToolCompleted(record) if record.tool == "cargo" => {
+                let Ok(result) = serde_json::from_str::<CargoResultProjection>(&record.content)
+                else {
+                    continue;
+                };
+                let request = cargo_requests.get(&record.call_id);
+                let covers_changed_files = cargo_manifest_covers_changed_paths(
+                    &prepared.repo_root,
+                    &result.manifest_path,
+                    &changed_paths,
+                );
+                cargo_calls.push(CargoValidationCall {
+                    event_index,
+                    call_id: record.call_id.clone(),
+                    command: result.command,
+                    requested_scope: request.and_then(|req| req.requested_scope.clone()),
+                    resolved_scope: result.scope,
+                    package: request.and_then(|req| req.package.clone()),
+                    manifest_path: result.manifest_path,
+                    ok: result.ok,
+                    covers_changed_files,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let final_cargo_call = cargo_calls.last().cloned();
+    let successful_cargo_covering_changed_files = cargo_calls
+        .iter()
+        .any(|call| call.ok && call.covers_changed_files);
+    let final_cargo_covers_changed_files = final_cargo_call
+        .as_ref()
+        .is_some_and(|call| call.covers_changed_files);
+    let fmt_check_observed = false;
+    let mut warnings = Vec::new();
+    if !changed_paths.is_empty() {
+        if cargo_calls.is_empty() {
+            warnings.push("no cargo check/test tool result recorded for changed files".to_string());
+        } else if !successful_cargo_covering_changed_files {
+            warnings.push(
+                "no successful cargo check/test result covered the changed files".to_string(),
+            );
+        }
+        if let Some(call) = final_cargo_call.as_ref()
+            && !call.covers_changed_files
+        {
+            warnings.push(format!(
+                "final cargo {} resolved to manifest '{}' which does not cover changed paths: {}",
+                call.command,
+                call.manifest_path,
+                changed_paths.join(", ")
+            ));
+        }
+    }
+    if !fmt_check_observed {
+        warnings.push(
+            "no formatting check evidence recorded; do not claim cargo fmt/rustfmt passed"
+                .to_string(),
+        );
+    }
+
+    AgentValidationAudit {
+        schema_version: VALIDATION_AUDIT_SCHEMA_V1.to_string(),
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        changed_paths,
+        cargo_calls,
+        final_cargo_call,
+        successful_cargo_covering_changed_files,
+        final_cargo_covers_changed_files,
+        fmt_check_observed,
+        warnings,
+    }
+}
+
+fn decode_cargo_request_projection(
+    arguments: &ploke_records::tool_contracts::ToolArgumentsJson,
+) -> CargoRequestProjection {
+    match arguments.decode_for_tool("cargo") {
+        PersistedToolCallArguments::Decoded(ToolCallArguments::Cargo(args)) => {
+            CargoRequestProjection {
+                requested_scope: Some(cargo_scope_label(args.scope).to_string()),
+                package: args.package,
+            }
+        }
+        _ => CargoRequestProjection {
+            requested_scope: None,
+            package: None,
+        },
+    }
+}
+
+fn cargo_scope_label(scope: ploke_tui::tools::cargo::CargoScope) -> &'static str {
+    match scope {
+        ploke_tui::tools::cargo::CargoScope::Focused => "focused",
+        ploke_tui::tools::cargo::CargoScope::Workspace => "workspace",
+    }
+}
+
+fn cargo_manifest_covers_changed_paths(
+    repo_root: &Path,
+    manifest_path: &str,
+    changed_paths: &[String],
+) -> bool {
+    if changed_paths.is_empty() {
+        return false;
+    }
+    let manifest_path = Path::new(manifest_path);
+    let workspace_manifest = repo_root.join("Cargo.toml");
+    if manifest_path == workspace_manifest {
+        return true;
+    }
+    let Some(manifest_dir) = manifest_path.parent() else {
+        return false;
+    };
+    changed_paths.iter().any(|changed_path| {
+        let changed_path = Path::new(changed_path);
+        let absolute_changed_path = if changed_path.is_absolute() {
+            changed_path.to_path_buf()
+        } else {
+            repo_root.join(changed_path)
+        };
+        absolute_changed_path.starts_with(manifest_dir)
+    })
 }
 
 fn starting_db_cache_metadata(
@@ -2621,6 +2819,7 @@ impl RunMsbSingleRequest {
                 snapshot_status: snapshot_status_path.clone(),
                 msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
                 patch_projection: registration.artifacts.patch_projection.clone(),
+                validation_audit: None,
                 record_path: Some(record_path.clone()),
                 full_response_trace: None,
             })
@@ -2689,6 +2888,7 @@ impl RunMsbAgentSingleRequest {
         let indexing_failure_db = run_output_dir.join("indexing-failure.db");
         let turn_trace_path = run_output_dir.join("agent-turn-trace.json");
         let turn_summary_path = run_output_dir.join("agent-turn-summary.json");
+        let validation_audit_path = run_output_dir.join(VALIDATION_AUDIT_FILE);
         let full_response_trace_path = run_output_dir.join("llm-full-responses.jsonl");
         let record_path = run_output_dir.join("record.json.gz");
         let full_response_trace_source = current_full_response_log_path().map(Path::to_path_buf);
@@ -2712,6 +2912,7 @@ impl RunMsbAgentSingleRequest {
         )?;
         registration.artifacts.turn_trace = Some(turn_trace_path.clone());
         registration.artifacts.turn_summary = Some(turn_summary_path.clone());
+        registration.artifacts.validation_audit = Some(validation_audit_path.clone());
         registration.artifacts.full_response_trace = Some(full_response_trace_path.clone());
         registration.mark_execution_started(Some("run setup started".to_string()));
         persist_registration(&registration)?;
@@ -2969,7 +3170,10 @@ impl RunMsbAgentSingleRequest {
             )
             .await?;
             write_agent_turn_summary(&turn_summary_path, &turn_artifact)?;
+            let validation_audit = build_agent_validation_audit(&prepared, &turn_artifact);
+            write_json(&validation_audit_path, &validation_audit)?;
             steps.push("benchmark_turn_completed".to_string());
+            steps.push("write_validation_audit".to_string());
             let full_response_trace = match (
                 full_response_trace_source.as_ref(),
                 full_response_trace_start,
@@ -3149,7 +3353,10 @@ impl RunMsbAgentSingleRequest {
             registration.update_phase(
                 RunLifecyclePhase::Validation,
                 RunPhaseStatus::Skipped,
-                Some("validation not executed in current run".to_string()),
+                Some(format!(
+                    "runner validation not executed; agent tool validation audit written to {}",
+                    validation_audit_path.display()
+                )),
             );
             persist_registration(&registration)?;
 
@@ -3209,6 +3416,7 @@ impl RunMsbAgentSingleRequest {
                     snapshot_status: snapshot_status_path.clone(),
                     msb_submission: msb_submission_artifact.map(|artifact| artifact.path),
                     patch_projection: registration.artifacts.patch_projection.clone(),
+                    validation_audit: Some(validation_audit_path.clone()),
                     record_path: Some(record_path.clone()),
                     full_response_trace,
                 },
@@ -5897,6 +6105,171 @@ mod tests {
         assert!(prompt.contains("abc123"));
         assert!(prompt.contains("Fix the thing"));
         assert!(prompt.contains("The body text."));
+        assert!(prompt.contains("A bare cargo command may run against the focused crate"));
+        assert!(prompt.contains("Do not claim formatting or cargo fmt was checked"));
+    }
+
+    fn validation_prepared_run(repo_root: PathBuf) -> PreparedSingleRun {
+        PreparedSingleRun {
+            task_id: "case-validation".to_string(),
+            repo_root,
+            output_dir: PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix validation".to_string()),
+                body: Some("Body".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("base".to_string()),
+            head_sha: None,
+            budget: EvalBudget::default(),
+            source: None,
+            campaign: None,
+        }
+    }
+
+    fn validation_patch_artifact(changed_path: &str) -> PatchArtifact {
+        PatchArtifact {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied: true,
+            all_proposals_applied: true,
+            expected_file_changes: vec![ExpectedFileChangeRecord {
+                path: changed_path.to_string(),
+                existed_before: true,
+                exists_after: true,
+                before_sha256: Some("before".to_string()),
+                after_sha256: Some("after".to_string()),
+                changed: true,
+            }],
+            any_expected_file_changed: true,
+            all_expected_files_changed: true,
+        }
+    }
+
+    fn validation_turn_artifact(
+        changed_path: &str,
+        events: Vec<ObservedTurnEvent>,
+    ) -> AgentTurnArtifact {
+        AgentTurnArtifact {
+            task_id: "case-validation".to_string(),
+            selected_model: ploke_llm::ModelId::from(ploke_llm::ModelKey::default()),
+            issue_prompt: "prompt".to_string(),
+            user_message_id: "user-validation".to_string(),
+            events,
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: validation_patch_artifact(changed_path),
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        }
+    }
+
+    fn cargo_request(
+        call_id: &str,
+        command: &str,
+        scope: &str,
+        package: Option<&str>,
+    ) -> ObservedTurnEvent {
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "command".to_string(),
+            serde_json::Value::String(command.to_string()),
+        );
+        args.insert(
+            "scope".to_string(),
+            serde_json::Value::String(scope.to_string()),
+        );
+        if let Some(package) = package {
+            args.insert(
+                "package".to_string(),
+                serde_json::Value::String(package.to_string()),
+            );
+        }
+        ObservedTurnEvent::ToolRequested(ToolRequestRecord {
+            request_id: format!("req-{call_id}"),
+            parent_id: format!("parent-{call_id}"),
+            call_id: call_id.to_string(),
+            tool: "cargo".to_string(),
+            arguments: serde_json::Value::Object(args).to_string().into(),
+        })
+    }
+
+    fn cargo_completed(
+        call_id: &str,
+        command: &str,
+        scope: &str,
+        manifest_path: PathBuf,
+        ok: bool,
+    ) -> ObservedTurnEvent {
+        let content = serde_json::json!({
+            "ok": ok,
+            "command": command,
+            "scope": scope,
+            "manifest_path": manifest_path.display().to_string()
+        })
+        .to_string();
+        ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
+            request_id: format!("req-{call_id}"),
+            parent_id: format!("parent-{call_id}"),
+            call_id: call_id.to_string(),
+            tool: "cargo".to_string(),
+            content,
+            ui_payload: None,
+            latency_ms: 1,
+        })
+    }
+
+    #[test]
+    fn validation_audit_flags_final_cargo_manifest_that_misses_changed_file() {
+        let repo_root = PathBuf::from("/tmp/ripgrep");
+        let prepared = validation_prepared_run(repo_root.clone());
+        let changed_path = "crates/printer/src/util.rs";
+        let events = vec![
+            cargo_request("call-1", "test", "focused", Some("grep-printer")),
+            cargo_completed(
+                "call-1",
+                "test",
+                "workspace",
+                repo_root.join("Cargo.toml"),
+                true,
+            ),
+            cargo_request("call-2", "test", "focused", None),
+            cargo_completed(
+                "call-2",
+                "test",
+                "focused",
+                repo_root.join("crates/globset/Cargo.toml"),
+                true,
+            ),
+        ];
+        let artifact = validation_turn_artifact(changed_path, events);
+
+        let audit = build_agent_validation_audit(&prepared, &artifact);
+
+        assert_eq!(audit.changed_paths, vec![changed_path.to_string()]);
+        assert_eq!(audit.cargo_calls.len(), 2);
+        assert!(audit.successful_cargo_covering_changed_files);
+        assert!(!audit.final_cargo_covers_changed_files);
+        assert_eq!(
+            audit
+                .final_cargo_call
+                .as_ref()
+                .map(|call| call.package.as_ref()),
+            Some(None)
+        );
+        assert!(
+            audit
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("crates/globset/Cargo.toml"))
+        );
+        assert!(
+            audit
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("no formatting check evidence recorded"))
+        );
     }
 
     #[test]
