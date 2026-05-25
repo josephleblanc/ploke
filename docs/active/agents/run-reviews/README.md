@@ -38,6 +38,20 @@ state without checking newer code, History records, and run artifacts.
   clean route/preflight setup, non-empty patch output, target-test success,
   rustfmt failure, weak cargo-check resolution, and protocol follow-up.
 - [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-eval.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-eval.md)
-  Eval-step review for the next direct Google baseline, covering non-empty
-  patch output, missing protocol, stale content/hash tool failures, suspect
-  regression-test repair, absent fmt, and weak final validation scope.
+  Eval and protocol review for the next direct Google baseline, covering
+  completed baseline protocol after the reasoning-default fix, protocol
+  over-crediting, stale content/hash tool failures, suspect regression-test
+  repair, absent fmt, and weak final validation scope.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-1.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-1.md)
+  First child-plan broad-harness attempt review for `node-b19077fc35c373b5`,
+  covering the applied `ploke-core` canonicalization-cache patch, tool-failure
+  recovery, staged/apply lifecycle, validation drift, and adjudication
+  candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-2.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-2.md)
+  Second child-plan broad-harness attempt review for `node-b19077fc35c373b5`,
+  covering the applied `syn_parser` performance patch, stale same-file
+  content/hash recovery, failed final validation, and adjudication candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-3.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-child-attempt-3.md)
+  Third child-plan broad-harness attempt review for `node-b19077fc35c373b5`,
+  covering the committed `ploke-transform` batching patch, timeout-after-stage
+  lifecycle gap, missing post-final validation, and adjudication candidates.

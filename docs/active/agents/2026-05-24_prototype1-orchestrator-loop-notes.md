@@ -604,3 +604,50 @@ Next action:
 
 - Commit the controller/doc checkpoint.
 - Continue with one bounded step from `child_plan`.
+
+## Note 16: Child Plan Produced Three Children Then Blocked On Unmaterialized Slots
+
+Time: 2026-05-25 04:12 UTC
+
+Campaign:
+
+- `p1-gemini35-flash-direct-fresh-20260524-193515`
+
+Attempted action:
+
+- Ran one bounded `prototype1-step` from `child_plan`.
+
+What happened:
+
+- The child budget is exactly three (`min = 3`, `max = 3`).
+- The step produced three broad-harness child commits:
+  - `node-b19077fc35c373b5` -> `f5c5ba3f`
+  - `node-b19077fc35c373b5-r2` -> `fdc7d55c`
+  - `node-b19077fc35c373b5-r3` -> `c1cd3143`
+- Separate run-review workers were dispatched for each completed child attempt.
+- r1 is useful/admissible loop evidence but not benchmark-improving yet.
+- r2 is useful/admissible loop evidence but had failed changed-crate validation
+  while the model still claimed success.
+- r3 produced a real `ploke-transform` batching commit, but its child-attempt
+  review classifies it as suspicious loop evidence: terminal state was
+  `timed_out`, the compact event ledger lacks a final applied completion for
+  the `imports.rs` edit, and no validation ran after that final edit.
+
+Blocker:
+
+- Doctor now reports `phase = blocked` because prompt files for `r4` through
+  `r9` were published, but the corresponding candidate workspaces were never
+  materialized.
+- The prompt-preflight failure is correct for the persisted artifact state, but
+  the controller should not publish live prompt obligations for slots it does
+  not materialize under a three-child budget.
+
+Follow-up:
+
+- Filed
+  `docs/active/bugs/2026-05-25-prototype1-child-plan-publishes-unmaterialized-slots.md`.
+- Dispatched a source fix worker for the r2 failed-validation/admission issue;
+  the worker patched `tui_adapter.rs` so failed cargo validation becomes
+  structured evidence and blocks clean `Applied`.
+- Next repair lane is a controller regression for unmaterialized published
+  slots.

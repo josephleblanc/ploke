@@ -93,3 +93,5 @@ file and current code before treating a report as still open.
   Prototype 1 baseline eval can fail during embedding preflight when launched from a credential-empty worktree, while `prototype1-step` reports a clean doctor-shaped phase summary.
 - [`2026-05-25-parent-patcher-direct-google-provider-preference.md`](./2026-05-25-parent-patcher-direct-google-provider-preference.md)
   Fixed in source: broad headless-TUI parent patching now ignores stale OpenRouter provider preferences for direct-Google registry rows while explicit provider pins still validate.
+- [`2026-05-25-prototype1-child-plan-publishes-unmaterialized-slots.md`](./2026-05-25-prototype1-child-plan-publishes-unmaterialized-slots.md)
+  Prototype 1 child planning can publish prompt files for broad-harness slots whose candidate workspaces were never materialized, causing doctor prompt preflight to block further progress.
