@@ -43,6 +43,10 @@ state without checking newer code, History records, and run artifacts.
   stale missing-protocol finding with full protocol artifacts, malformed
   adjudication JSON repair visibility, same-file edit failure credit, cargo
   scope visibility, and benchmark-usefulness limits.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-node-15006265e24b3b9b-run-1779711015972-treatment-eval.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-node-15006265e24b3b9b-run-1779711015972-treatment-eval.md)
+  Treatment child eval review for `node-15006265e24b3b9b`, reconstructing
+  non-empty patch projection, cargo evidence versus the final claim, tool
+  failure recovery, and the observe-child sidecar evidence-loss race.
 - [`2026-05-25-p1-gemini35-flash-direct-15g2x3-isolated-20260525-113746-burntsushi-ripgrep-2209-run-1779709154252-eval.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-isolated-20260525-113746-burntsushi-ripgrep-2209-run-1779709154252-eval.md)
   Isolated baseline eval review for `BurntSushi__ripgrep-2209`, separating
   non-empty patch export from an aborted agent turn, final red validation,
@@ -53,3 +57,17 @@ state without checking newer code, History records, and run artifacts.
   stale same-file edit recovery, validation-driven production repair, final
   cargo coverage, summary projection gaps, weak test proof, and patch usefulness
   against the issue/gold shape while separating later protocol artifacts.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-node-e803fd3e8d51dde6-run-1779711015527-structured-current-policy-1880bedc.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-node-e803fd3e8d51dde6-run-1779711015527-structured-current-policy-1880bedc.md)
+  Selected-child handoff review for `branch-821e452418987122`, reconstructing
+  treatment patch export, cargo validation, metric-only `keep` selection,
+  same-file edit recovery, and future LLM adjudication signals.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-baseline-run-1779712736739.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-baseline-run-1779712736739.md)
+  Baseline eval review for `node-57e8487f70ce4abc`, reconstructing non-empty
+  patch/submission output, failed-but-recovered `apply_code_edit` behavior,
+  cargo scope evidence, weak issue-shaped test proof, protocol incompleteness,
+  and operator-status accounting gaps.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-baseline-protocol-run-1779712736739.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-baseline-protocol-run-1779712736739.md)
+  Protocol follow-up for the same baseline run, proving all three required
+  protocol stages completed, classifying four repaired malformed adjudicator
+  JSON outputs, preserving useful LLM-adjudication examples, and separating
+  protocol completion from stale operator projections.
