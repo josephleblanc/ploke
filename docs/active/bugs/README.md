@@ -58,7 +58,7 @@ file and current code before treating a report as still open.
 - [`2026-05-19-rf-08-headless-tui-evidence-read-roots.md`](./2026-05-19-rf-08-headless-tui-evidence-read-roots.md)
   RF-08 broad-harness prompts advertise campaign evidence that the headless TUI read-root policy only partially admits, causing avoidable outside-root and missing-artifact navigation failures.
 - [`2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md`](./2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md)
-  Prototype 1 `prototype1-continue` retries `baseline_protocol` after Google 429/no-progress protocol failures until the 256-advance guard fires.
+  Prototype 1 no-progress protocol quota handling; `prototype1-step` now live-verifies the blocking diagnostic, and protocol tool-review fanout is configurable while `prototype1-continue` still needs live verification.
 - [`2026-05-22-cargo-tool-tail-rendering-and-timeout.md`](./2026-05-22-cargo-tool-tail-rendering-and-timeout.md)
   Cargo tool UI details showed oldest retained output and successful compile progress instead of the final test-result tail; outer tool-call timeout layering can still hide cargo output from the model.
 - [`2026-05-22-prototype1-history-metrics-branch-registry-parse.md`](./2026-05-22-prototype1-history-metrics-branch-registry-parse.md)
@@ -101,3 +101,5 @@ file and current code before treating a report as still open.
   Fixed in source: Prototype 1 broad headless-TUI attempts no longer publish submitted child results after a timed-out turn with failed cargo validation; the live campaign that exposed this still contains tainted r3 evidence.
 - [`2026-05-25-prototype1-observe-child-stale-hang.md`](./2026-05-25-prototype1-observe-child-stale-hang.md)
   Fixed in source: `observe_child` no longer waits forever when a child stops producing channel output/result evidence, and doctor/replay classify stale pending observe states.
+- [`2026-05-25-prototype1-observe-child-success-sidecar-race.md`](./2026-05-25-prototype1-observe-child-success-sidecar-race.md)
+  Fixed in source: `observe_child` no longer treats a successful runner-result sidecar as terminal before the treatment-bearing channel result arrives.

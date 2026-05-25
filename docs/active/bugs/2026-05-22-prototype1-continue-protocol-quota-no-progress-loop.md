@@ -1,6 +1,6 @@
 # Prototype 1 Continue Loops On Protocol Quota With No Progress
 
-Status: fixed in code; pending live Google loop verification
+Status: fixed in code; step path live-verified, continue path pending live verification with safer review fanout
 Discovered: 2026-05-22
 
 ## Summary
@@ -218,6 +218,89 @@ Implemented on 2026-05-22:
 - A protocol report with incomplete status and unchanged closure summary now
   returns a blocking `PrepareError`; a report with failures but changed closure
   summary is still treated as progress.
+
+## Live Verification: 2026-05-25 Step Path
+
+Campaign:
+
+```text
+p1-gemini35-flash-direct-15g2x3-clean-20260525-120225
+```
+
+Run:
+
+```text
+run-1779710592442-structured-current-policy-8bcdf6e0
+```
+
+The first baseline protocol step made partial progress before a Google 429:
+
+```text
+protocol.status = partial
+tool-call-intent-segments = complete
+tool-call-review = missing
+tool-call-segment-review = missing
+protocol_counts.total_calls = 77
+protocol_counts.total_segments = 13
+```
+
+The protocol artifact directory contained exactly one segmentation artifact and
+no review artifacts:
+
+```text
+tool_call_intent_segmentation artifacts: 1
+tool_call_review artifacts: 0
+tool_call_segment_review artifacts: 0
+```
+
+A second bounded `prototype1-step` attempted the remaining review work, hit a
+fresh direct-Google 429, created no new artifacts, and exited nonzero with the
+expected blocking diagnostic:
+
+```text
+batch selection is invalid: baseline_protocol blocked: campaign
+p1-gemini35-flash-direct-15g2x3-clean-20260525-120225 made no protocol progress;
+model google/gemini-3.5-flash; route DirectGoogle;
+remaining=tool-call-review(...), tool-call-segment-review(...);
+created={segmentations:0, call_reviews:0, segment_reviews:0}
+```
+
+That verifies the bounded `prototype1-step` no-progress path. It does not yet
+prove that `prototype1-continue` stops after the same condition without
+re-entering the phase, because the live campaign was intentionally paused
+instead of spending more provider calls under quota exhaustion.
+
+## Mitigation: Configurable Tool Review Fanout
+
+The same 2026-05-25 run also showed that the remaining protocol work was all in
+tool-call review and segment review:
+
+```text
+selected_runs=BurntSushi__ripgrep-2209(segmentation_needed=false, missing_calls=77, missing_segments=13)
+remaining=tool-call-review(...), tool-call-segment-review(...)
+```
+
+Before the mitigation, the per-run tool-call review fanout was hard-coded:
+
+```text
+TOOL_REVIEW_CALL_LIMIT = 8
+```
+
+That limit is separate from campaign `protocol.max_concurrency`; this campaign
+had only one run, so run-level concurrency could not reduce the number of
+simultaneous per-call review adjudications.
+
+Source now exposes the per-run fanout as a run-profile knob:
+
+```toml
+[protocol]
+tool_review_parallelism = 1
+```
+
+The default remains `8`, preserving the old behavior for existing profiles. New
+direct-Google loop profiles can lower it to `1` or `2` to trade runtime for a
+smaller burst against the provider quota. This is a mitigation, not a complete
+retry/backoff policy for HTTP 429.
 
 Verified non-live with:
 

@@ -277,6 +277,7 @@ signal.
 ```toml
 [protocol]
 max_tokens = 4000
+tool_review_parallelism = 8
 
 [protocol.reasoning]
 mode = "omit"
@@ -289,6 +290,11 @@ mode = "omit"
   review, and segment review. The default is `4000`; set it higher when a
   provider spends part of the completion budget on hidden or reported reasoning
   tokens before emitting JSON.
+- `tool_review_parallelism`: Maximum number of tool-call review adjudications
+  that may be in flight at once within a single protocol run. This is distinct
+  from campaign-level run concurrency. Lower it, for example to `1` or `2`, for
+  providers that return quota/rate-limit errors during the review fanout. The
+  default is `8`.
 - `reasoning.mode`: Request-body policy for protocol adjudication. `omit`
   sends no reasoning control, `effort` sends the configured effort, and
   `disabled` sends `reasoning.effort = "none"`. The default is `omit`, so the

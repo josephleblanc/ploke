@@ -113,13 +113,16 @@ Relevant files:
 | Tool-call segment review timeout | `120s` | Not exposed on the command surface | Segment review first runs segmentation with the same `120s` config |
 | Generic intervention synthesis timeout | `120s` | Not exposed on the command surface | `intervention_synthesis` CLI path calls `protocol_llm_config(..., 120, ...)` |
 | Protocol HTTP max attempts | `1` | Hard-coded | `PROTOCOL_HTTP_MAX_ATTEMPTS` is passed with all of the above |
+| Tool-call review parallelism | `8` | Prototype 1 run profile `[protocol].tool_review_parallelism` | Limits in-flight per-call review adjudications within one protocol run |
 
 Relevant files:
 
 - `crates/ploke-eval/src/cli.rs`
   Defines `TOOL_CALL_REVIEW_TIMEOUT_SECS`, `PROTOCOL_HTTP_MAX_ATTEMPTS`, and
   the protocol/intervention paths that pass `120` or the tool-review constant
-  into `protocol_llm_config`.
+  into `protocol_llm_config`. Campaign-driven protocol execution also carries
+  the admitted profile's `tool_review_parallelism` into the per-run review
+  semaphore.
 
 ## Registry, embedding, and provider setup
 

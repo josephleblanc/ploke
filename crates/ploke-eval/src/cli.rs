@@ -40,7 +40,6 @@ mod prototype1_process;
 /// campaign layout under `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`.
 pub(crate) mod prototype1_state;
 
-const TOOL_REVIEW_CALL_LIMIT: usize = 8;
 const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
 const PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS: usize = 3;
 const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
@@ -1743,6 +1742,7 @@ async fn execute_protocol_run_tasks(
     route_source: ModelRouteSource,
     provider_slug: Option<String>,
     max_concurrency: usize,
+    tool_review_parallelism: usize,
     stop_on_error: bool,
     max_tokens: u32,
     reasoning: ProtocolReasoningPolicy,
@@ -1750,9 +1750,10 @@ async fn execute_protocol_run_tasks(
     let mut executions = Vec::new();
     let mut failures = Vec::new();
     let max_concurrency = max_concurrency.max(1);
+    let tool_review_parallelism = tool_review_parallelism.max(1);
     let mut pending = tasks.into_iter().collect::<VecDeque<_>>();
     let mut join_set = JoinSet::new();
-    let review_permits = Arc::new(Semaphore::new(TOOL_REVIEW_CALL_LIMIT));
+    let review_permits = Arc::new(Semaphore::new(tool_review_parallelism));
 
     while join_set.len() < max_concurrency {
         let Some(task) = pending.pop_front() else {
@@ -7007,6 +7008,7 @@ pub(crate) async fn advance_protocol_closure(
             config.route_source,
             config.provider_slug.clone(),
             policy.max_concurrency,
+            policy.tool_review_parallelism,
             policy.stop_on_error,
             policy.max_tokens,
             policy.reasoning,

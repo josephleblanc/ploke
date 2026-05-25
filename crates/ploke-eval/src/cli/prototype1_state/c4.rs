@@ -307,19 +307,28 @@ impl Intervention<C4, C5> for ObserveChild {
             let observed = if observed.1.is_some() {
                 observed.1
             } else if runner_result_path.exists() {
-                Some(ChildResultPayload {
-                    runner_result: load_runner_result_at(
-                        &runner_result_path,
-                        OperatorProjectionRead::cli_operator(),
-                    )
-                    .map_err(|source| {
-                        CommitError::Transition(ObserveChildError::LoadRunnerResult {
-                            path: runner_result_path.clone(),
-                            detail: source.to_string(),
-                        })
-                    })?,
-                    treatment: None,
-                })
+                let runner_result = load_runner_result_at(
+                    &runner_result_path,
+                    OperatorProjectionRead::cli_operator(),
+                )
+                .map_err(|source| {
+                    CommitError::Transition(ObserveChildError::LoadRunnerResult {
+                        path: runner_result_path.clone(),
+                        detail: source.to_string(),
+                    })
+                })?;
+                // The sidecar result file is written before the terminal channel
+                // payload. It is enough to observe failed children, but successful
+                // children must keep waiting for the channel `Result`, because
+                // treatment evidence is not stored in the sidecar projection.
+                if runner_result.disposition == Prototype1RunnerDisposition::Succeeded {
+                    None
+                } else {
+                    Some(ChildResultPayload {
+                        runner_result,
+                        treatment: None,
+                    })
+                }
             } else {
                 None
             };
@@ -445,5 +454,239 @@ impl Intervention<C4, C5> for ObserveChild {
 
             thread::sleep(RESULT_POLL);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::marker::PhantomData;
+    use std::thread;
+    use std::time::Duration;
+
+    use tempfile::tempdir;
+
+    use crate::campaign::EvalCampaignPolicy;
+    use crate::cli::prototype1_state::c1::{
+        Acknowledged, Artifact, Binary, Child as ChildLineage, Parent as ParentLineage, Present,
+        Prototype,
+    };
+    use crate::cli::prototype1_state::child::Child as RuntimeChild;
+    use crate::cli::prototype1_state::event::{ContentHash, Paths, Refs, RuntimeId};
+    use crate::intervention::{
+        Prototype1NodeRecord, Prototype1NodeStatus, Prototype1RunnerDisposition,
+        Prototype1RunnerRequest, Prototype1RunnerResult, ResolvedTreatmentBranch,
+        TreatmentBranchNode, TreatmentBranchStatus,
+    };
+    use crate::target_registry::BenchmarkFamily;
+
+    use super::super::channel::{Endpoints, FileTransport};
+    use super::super::invocation::{channel_root, result_path};
+    use super::super::journal::PrototypeJournal;
+    use super::*;
+
+    fn runner_result(runtime: &C4) -> Prototype1RunnerResult {
+        Prototype1RunnerResult {
+            schema_version: "prototype1-treatment-node.v1".to_string(),
+            campaign_id: runtime.campaign_id.clone(),
+            node_id: runtime.node.node_id.clone(),
+            generation: runtime.node.generation,
+            branch_id: runtime.node.branch_id.clone(),
+            status: Prototype1NodeStatus::Succeeded,
+            disposition: Prototype1RunnerDisposition::Succeeded,
+            treatment_campaign_id: Some("treatment-campaign".to_string()),
+            evaluation_artifact_path: None,
+            detail: None,
+            exit_code: Some(0),
+            stdout_excerpt: None,
+            stderr_excerpt: None,
+            recorded_at: "2026-05-25T00:00:00Z".to_string(),
+        }
+    }
+
+    fn treatment_evidence() -> Prototype1TreatmentEvidence {
+        Prototype1TreatmentEvidence {
+            baseline_campaign_id: "campaign".to_string(),
+            branch_id: "branch".to_string(),
+            treatment_campaign_id: "treatment-campaign".to_string(),
+            treatment_campaign_manifest: "treatment/campaign.json".into(),
+            treatment_closure_state_path: "treatment/closure-state.json".into(),
+            eval_policy: EvalCampaignPolicy::default(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            instances: Vec::new(),
+        }
+    }
+
+    fn resolved_branch() -> ResolvedTreatmentBranch {
+        ResolvedTreatmentBranch {
+            instance_id: "instance".to_string(),
+            source_state_id: "source".to_string(),
+            parent_branch_id: None,
+            target_relpath: "src/lib.rs".into(),
+            source_content: "fn old() {}\n".to_string(),
+            source_content_hash: "source-hash".to_string(),
+            selected_branch_id: Some("branch".to_string()),
+            branch: TreatmentBranchNode {
+                branch_id: "branch".to_string(),
+                candidate_id: "candidate".to_string(),
+                patch_id: None,
+                branch_label: "candidate branch".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "fn new() {}\n".to_string(),
+                proposed_content_hash: "proposed-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: TreatmentBranchStatus::Applied,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+            },
+        }
+    }
+
+    fn c4(root: &std::path::Path, runtime_id: RuntimeId) -> C4 {
+        let node_dir = root.join("node");
+        let workspace_root = root.join("workspace");
+        let binary_path = node_dir.join("bin/ploke-eval");
+        let target_relpath = std::path::PathBuf::from("src/lib.rs");
+        let node = Prototype1NodeRecord {
+            schema_version: "prototype1-node.v1".to_string(),
+            node_id: "node".to_string(),
+            parent_node_id: Some("parent".to_string()),
+            generation: 1,
+            instance_id: "instance".to_string(),
+            source_state_id: "source".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: "branch".to_string(),
+            candidate_id: "candidate".to_string(),
+            target_relpath: target_relpath.clone(),
+            node_dir: node_dir.clone(),
+            workspace_root: workspace_root.clone(),
+            binary_path: binary_path.clone(),
+            runner_request_path: node_dir.join("runner-request.json"),
+            runner_result_path: node_dir.join("runner-result.json"),
+            status: Prototype1NodeStatus::Running,
+            created_at: "2026-05-25T00:00:00Z".to_string(),
+            updated_at: "2026-05-25T00:00:00Z".to_string(),
+        };
+        let request = Prototype1RunnerRequest {
+            schema_version: "prototype1-runner-request.v1".to_string(),
+            campaign_id: "campaign".to_string(),
+            node_id: "node".to_string(),
+            generation: 1,
+            instance_id: "instance".to_string(),
+            source_state_id: "source".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            branch_id: "branch".to_string(),
+            target_relpath: target_relpath.clone(),
+            workspace_root: workspace_root.clone(),
+            binary_path: binary_path.clone(),
+            stop_on_error: false,
+            runner_args: Vec::new(),
+        };
+
+        Prototype {
+            campaign_id: "campaign".to_string(),
+            campaign_manifest_path: root.join("campaign.json"),
+            node,
+            request,
+            resolved: resolved_branch(),
+            artifact: Artifact {
+                repo_root: workspace_root,
+                target_relpath,
+                source_content_hash: ContentHash("source-hash".to_string()),
+                current_content_hash: ContentHash("proposed-hash".to_string()),
+                proposed_content_hash: ContentHash("proposed-hash".to_string()),
+                _lineage: PhantomData::<ChildLineage>,
+            },
+            binary: Binary {
+                parent_running: true,
+                child_path: binary_path,
+                child_runtime: Some(runtime_id),
+                _lineage: PhantomData::<ParentLineage>,
+                _child: PhantomData::<Present>,
+                _ack: PhantomData::<Acknowledged>,
+            },
+        }
+    }
+
+    fn send_terminal_channel_result_after_delay(
+        runtime: &C4,
+        runner_result: Prototype1RunnerResult,
+        treatment: Prototype1TreatmentEvidence,
+    ) -> thread::JoinHandle<()> {
+        let runtime_id = runtime.binary.child_runtime.expect("runtime id");
+        let endpoints = Endpoints::new(
+            channel_root(&runtime.node.node_dir, runtime_id),
+            runtime.campaign_id.clone(),
+            runtime.node.node_id.clone(),
+            runtime_id,
+        );
+        let refs = Refs {
+            campaign_id: runtime.campaign_id.clone(),
+            node_id: runtime.node.node_id.clone(),
+            instance_id: runtime.node.instance_id.clone(),
+            source_state_id: runtime.node.source_state_id.clone(),
+            branch_id: runtime.node.branch_id.clone(),
+            candidate_id: runtime.node.candidate_id.clone(),
+            branch_label: runtime.resolved.branch.branch_label.clone(),
+            spec_id: runtime.resolved.branch.synthesized_spec_id.clone(),
+        };
+        let paths = Paths {
+            repo_root: runtime.artifact.repo_root.clone(),
+            workspace_root: runtime.node.workspace_root.clone(),
+            binary_path: runtime.node.binary_path.clone(),
+            target_relpath: runtime.node.target_relpath.clone(),
+            absolute_path: runtime
+                .node
+                .workspace_root
+                .join(&runtime.node.target_relpath),
+        };
+        let journal_path = runtime.node.node_dir.join("child-token-journal.jsonl");
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            let child = RuntimeChild::new(journal_path, runtime_id, 1, refs, paths, 100)
+                .ready()
+                .expect("child ready")
+                .evaluating()
+                .expect("child evaluating");
+            Channel::for_child(&child, endpoints, FileTransport)
+                .send_terminal_result(runner_result, Some(treatment))
+                .expect("send terminal result");
+        })
+    }
+
+    #[test]
+    fn observe_child_waits_for_treatment_channel_result_after_success_sidecar() {
+        let temp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let runtime = c4(temp.path(), runtime_id);
+        let runner_result = runner_result(&runtime);
+        let runner_result_path = result_path(&runtime.node.node_dir, runtime_id);
+        std::fs::create_dir_all(runner_result_path.parent().expect("result parent"))
+            .expect("create results dir");
+        std::fs::write(
+            &runner_result_path,
+            serde_json::to_string(&runner_result).expect("serialize runner result"),
+        )
+        .expect("write sidecar runner result");
+
+        let sender =
+            send_terminal_channel_result_after_delay(&runtime, runner_result, treatment_evidence());
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let outcome = ObserveChild::new(Duration::from_secs(2))
+            .transition(runtime, &mut journal)
+            .expect("observe child");
+
+        sender.join().expect("sender thread");
+        let Outcome::Advanced(next) = outcome;
+        assert!(matches!(next.observed, ObservedChild::Succeeded(_)));
     }
 }

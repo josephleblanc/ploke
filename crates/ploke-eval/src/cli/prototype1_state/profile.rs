@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    campaign::{ProtocolCampaignPolicy, default_protocol_max_tokens},
+    campaign::{
+        ProtocolCampaignPolicy, default_protocol_max_tokens,
+        default_protocol_tool_review_parallelism,
+    },
     cli::{
         Prototype1CandidateGenerator, Prototype1StateStopAfter, Prototype1SuccessorSelection,
         Prototype1TraversalMetrics,
@@ -100,6 +103,7 @@ impl Prototype1RunProfile {
     pub(crate) fn protocol_policy(&self) -> ProtocolCampaignPolicy {
         ProtocolCampaignPolicy {
             max_tokens: self.protocol.max_tokens,
+            tool_review_parallelism: self.protocol.tool_review_parallelism,
             reasoning: self.protocol.reasoning,
             ..ProtocolCampaignPolicy::default()
         }
@@ -565,6 +569,8 @@ pub(crate) enum ArchiveScope {
 pub(crate) struct Protocol {
     #[serde(default = "default_protocol_max_tokens")]
     pub(crate) max_tokens: u32,
+    #[serde(default = "default_protocol_tool_review_parallelism")]
+    pub(crate) tool_review_parallelism: usize,
     #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_auto")]
     pub(crate) reasoning: ProtocolReasoningPolicy,
 }
@@ -576,6 +582,11 @@ impl Protocol {
                 "protocol.max_tokens must be greater than zero",
             ));
         }
+        if self.tool_review_parallelism == 0 {
+            return Err(profile_error(
+                "protocol.tool_review_parallelism must be greater than zero",
+            ));
+        }
         self.reasoning.validate().map_err(profile_error)?;
         Ok(())
     }
@@ -585,6 +596,7 @@ impl Default for Protocol {
     fn default() -> Self {
         Self {
             max_tokens: default_protocol_max_tokens(),
+            tool_review_parallelism: default_protocol_tool_review_parallelism(),
             reasoning: ProtocolReasoningPolicy::default(),
         }
     }
@@ -1024,6 +1036,7 @@ require_evidence = true
 
 [protocol]
 max_tokens = 4000
+tool_review_parallelism = 2
 
 [protocol.reasoning]
 mode = "omit"
@@ -1054,6 +1067,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
         assert_eq!(profile.protocol_policy().max_tokens, 4000);
+        assert_eq!(profile.protocol_policy().tool_review_parallelism, 2);
         assert_eq!(
             profile.protocol_policy().reasoning,
             ProtocolReasoningPolicy::omit()
@@ -1209,7 +1223,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         let profile = parse_profile(
             Path::new("profile.toml"),
             &PROFILE.replace(
-                "\n[protocol]\nmax_tokens = 4000\n\n[protocol.reasoning]\nmode = \"omit\"\n",
+                "\n[protocol]\nmax_tokens = 4000\ntool_review_parallelism = 2\n\n[protocol.reasoning]\nmode = \"omit\"\n",
                 "\n",
             ),
         )
@@ -1218,6 +1232,10 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(
             profile.protocol_policy().max_tokens,
             default_protocol_max_tokens()
+        );
+        assert_eq!(
+            profile.protocol_policy().tool_review_parallelism,
+            default_protocol_tool_review_parallelism()
         );
         assert_eq!(
             profile.protocol_policy().reasoning,
@@ -1234,6 +1252,17 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         .expect_err("zero protocol token budget should reject");
 
         assert!(err.to_string().contains("protocol.max_tokens"));
+    }
+
+    #[test]
+    fn run_profile_protocol_rejects_zero_tool_review_parallelism() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("tool_review_parallelism = 2", "tool_review_parallelism = 0"),
+        )
+        .expect_err("zero protocol tool review parallelism should reject");
+
+        assert!(err.to_string().contains("protocol.tool_review_parallelism"));
     }
 
     #[test]

@@ -84,6 +84,8 @@ pub struct ProtocolCampaignPolicy {
     pub limit_runs: Option<usize>,
     #[serde(default = "default_protocol_max_concurrency")]
     pub max_concurrency: usize,
+    #[serde(default = "default_protocol_tool_review_parallelism")]
+    pub tool_review_parallelism: usize,
     #[serde(default = "default_protocol_max_tokens")]
     pub max_tokens: u32,
     #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_auto")]
@@ -99,6 +101,7 @@ impl Default for ProtocolCampaignPolicy {
             stop_on_error: false,
             limit_runs: None,
             max_concurrency: default_protocol_max_concurrency(),
+            tool_review_parallelism: default_protocol_tool_review_parallelism(),
             max_tokens: default_protocol_max_tokens(),
             reasoning: ProtocolReasoningPolicy::default(),
         }
@@ -201,6 +204,10 @@ fn default_true() -> bool {
 
 fn default_protocol_max_concurrency() -> usize {
     100
+}
+
+pub fn default_protocol_tool_review_parallelism() -> usize {
+    8
 }
 
 pub fn default_protocol_max_tokens() -> u32 {
@@ -787,7 +794,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
     ));
     out.push_str("\nprotocol\n");
     out.push_str(&format!(
-        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | max_tokens: {} | reasoning: {}\n",
+        "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | tool_review_parallelism: {} | max_tokens: {} | reasoning: {}\n",
         config.protocol.include_partial,
         config.protocol.include_incompatible,
         config.protocol.include_failed,
@@ -798,6 +805,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .map(|value| value.to_string())
             .unwrap_or_else(|| "none".to_string()),
         config.protocol.max_concurrency,
+        config.protocol.tool_review_parallelism,
         config.protocol.max_tokens,
         config.protocol.reasoning.display_label()
     ));
