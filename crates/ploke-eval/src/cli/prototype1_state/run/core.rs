@@ -1,9 +1,10 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
 
 use serde::{Deserialize, Serialize};
@@ -52,11 +53,14 @@ use crate::cli::prototype1_state::{
         BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
         ProtectedCoreAnchor, PublishedBroadHarnessRequest,
     },
-    event::{ContentHash, RuntimeId},
+    event::{ContentHash, RuntimeId, TransitionId},
     history::{ArtifactSurface, surface_attempt},
     identity::{ParentIdentity, load_parent_identity_optional, parent_identity_relpath},
     inner::At,
-    journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
+    journal::{
+        CompletionEntry, JournalEntry, PrototypeJournal, SpawnEntry,
+        prototype1_transition_journal_path,
+    },
     parent::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
@@ -515,7 +519,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         current_child: diagnosis.current_child,
         blockers: diagnosis.blockers,
         allowed_actions: allowed_actions_for_phase(diagnosis.phase),
-        suggested_commands: suggested_commands(&diagnosis.context.repo_root),
+        suggested_commands: suggested_commands(diagnosis.phase, &diagnosis.context.repo_root),
         notes,
     }
 }
@@ -532,6 +536,7 @@ async fn attach_protocol_live_preflight(context: &RuntimeContext, status: &mut A
             .push(format!("protocol live preflight failed: {detail}"));
         status.phase = DiagnosedPhase::Blocked;
         status.allowed_actions = allowed_actions_for_phase(status.phase);
+        status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
     }
     status.protocol_preflight = Some(preflight);
 }
@@ -725,17 +730,20 @@ fn allowed_actions_for_phase(phase: DiagnosedPhase) -> Vec<String> {
     }
 }
 
-fn suggested_commands(repo_root: &Path) -> Vec<String> {
-    vec![
-        format!(
-            "cd {} && ./target/debug/ploke-eval loop prototype1-continue --repo-root .",
-            repo_root.display()
-        ),
-        format!(
-            "cd {} && ./target/debug/ploke-eval loop prototype1-step --repo-root .",
-            repo_root.display()
-        ),
-    ]
+fn suggested_commands(phase: DiagnosedPhase, repo_root: &Path) -> Vec<String> {
+    match phase {
+        DiagnosedPhase::Blocked | DiagnosedPhase::Complete => Vec::new(),
+        _ => vec![
+            format!(
+                "cd {} && ./target/debug/ploke-eval loop prototype1-continue --repo-root .",
+                repo_root.display()
+            ),
+            format!(
+                "cd {} && ./target/debug/ploke-eval loop prototype1-step --repo-root .",
+                repo_root.display()
+            ),
+        ],
+    }
 }
 
 fn prompt_preflight_label(outcome: PromptPreflightOutcome) -> &'static str {
@@ -1380,6 +1388,19 @@ fn load_child_snapshots(
                 node.node_id
             ));
         }
+        if let Some(runtime_id) = runtime_id {
+            extend_stale_observe_blockers(
+                &entries,
+                &node.node_id,
+                runtime_id,
+                context
+                    .admitted_profile
+                    .profile
+                    .execution
+                    .observe_child_stale_after(),
+                blockers,
+            );
+        }
         let evaluation_report = load_evaluation_report(&context.manifest_path, &node.branch_id)?;
         let artifact_surface = if matches!(
             node.status,
@@ -1432,6 +1453,102 @@ fn latest_runtime_for_node(entries: &[JournalEntry], node_id: &str) -> Option<Ru
         }
         _ => None,
     })
+}
+
+fn extend_stale_observe_blockers(
+    entries: &[JournalEntry],
+    node_id: &str,
+    runtime_id: RuntimeId,
+    stale_after: Duration,
+    blockers: &mut Vec<String>,
+) {
+    let Some(before) = pending_observe_for_runtime(entries, node_id, runtime_id) else {
+        return;
+    };
+    let now = crate::cli::prototype1_state::event::RecordedAt::now();
+    let age_ms = now.0.saturating_sub(before.recorded_at.0) as u64;
+    if before.runner_result_path.exists() {
+        return;
+    }
+    if age_ms < stale_after.as_millis() as u64 {
+        return;
+    }
+
+    let spawn = latest_spawn_for_runtime(entries, runtime_id);
+    let child_pid = spawn.and_then(|entry| entry.child_pid);
+    let pid_state = child_pid
+        .map(|pid| {
+            if pid_alive(pid) {
+                format!("child pid {pid} is still visible")
+            } else {
+                format!("child pid {pid} is not visible")
+            }
+        })
+        .unwrap_or_else(|| "child pid is unknown".to_string());
+    let stream_state = spawn
+        .and_then(|entry| entry.streams.as_ref())
+        .map(stream_freshness_detail)
+        .unwrap_or_else(|| "stream files are unknown".to_string());
+
+    blockers.push(format!(
+        "node '{node_id}' observe_child is stale/hung for runtime '{runtime_id}': \
+         observe_child:before is {age_ms}ms old, runner result is missing at '{}', \
+         {pid_state}, {stream_state}",
+        before.runner_result_path.display()
+    ));
+}
+
+fn pending_observe_for_runtime<'a>(
+    entries: &'a [JournalEntry],
+    node_id: &str,
+    runtime_id: RuntimeId,
+) -> Option<&'a CompletionEntry> {
+    let mut pending = BTreeMap::<TransitionId, &CompletionEntry>::new();
+    for entry in entries {
+        let JournalEntry::ObserveChild(entry) = entry else {
+            continue;
+        };
+        if entry.refs.node_id != node_id || entry.runtime_id != runtime_id {
+            continue;
+        }
+        match entry.phase {
+            crate::intervention::CommitPhase::Before => {
+                pending.insert(entry.transition_id, entry);
+            }
+            crate::intervention::CommitPhase::After => {
+                pending.remove(&entry.transition_id);
+            }
+        }
+    }
+    pending.into_values().max_by_key(|entry| entry.recorded_at)
+}
+
+fn latest_spawn_for_runtime<'a>(
+    entries: &'a [JournalEntry],
+    runtime_id: RuntimeId,
+) -> Option<&'a SpawnEntry> {
+    entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::SpawnChild(entry) if entry.runtime_id == runtime_id => Some(entry),
+        _ => None,
+    })
+}
+
+fn stream_freshness_detail(streams: &crate::cli::prototype1_state::journal::Streams) -> String {
+    let latest = [&streams.stdout, &streams.stderr]
+        .into_iter()
+        .filter_map(|path| fs::metadata(path).ok()?.modified().ok())
+        .max();
+    let Some(latest) = latest else {
+        return "stdout/stderr files have no readable modification time".to_string();
+    };
+    match SystemTime::now().duration_since(latest) {
+        Ok(age) => format!("stdout/stderr last changed {}ms ago", age.as_millis()),
+        Err(_) => "stdout/stderr modification time is in the future".to_string(),
+    }
+}
+
+fn pid_alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).exists()
 }
 
 fn latest_successor_marker(
@@ -1668,6 +1785,11 @@ fn advance_one_child(
                 baseline,
                 branch_log_gate,
                 crate::cli::Prototype1StateStopAfter::Materialize,
+                context
+                    .admitted_profile
+                    .profile
+                    .execution
+                    .observe_child_stale_after(),
                 snapshot.plan_index,
                 snapshot.plan_child,
             )?;
@@ -1711,11 +1833,17 @@ fn advance_one_child(
             let c4 = resume_c4(context, &snapshot)?;
             let mut journal =
                 PrototypeJournal::new(prototype1_transition_journal_path(&context.manifest_path));
-            match ObserveChild::new()
-                .transition(c4, &mut journal)
-                .map_err(|err| PrepareError::InvalidBatchSelection {
-                    detail: format!("prototype1-step observe failed: {err:?}"),
-                })? {
+            match ObserveChild::new(
+                context
+                    .admitted_profile
+                    .profile
+                    .execution
+                    .observe_child_stale_after(),
+            )
+            .transition(c4, &mut journal)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!("prototype1-step observe failed: {err:?}"),
+            })? {
                 crate::intervention::Outcome::Advanced(c5) => {
                     if let ObservedChild::Succeeded(successful) = &c5.observed {
                         let report = compare_observed_child_treatment(
@@ -2414,5 +2542,103 @@ mod tests {
             terminal_phase_from_marker(SuccessorMarkerState::Terminal),
             DiagnosedPhase::Complete
         );
+    }
+
+    #[test]
+    fn blocked_and_complete_phases_do_not_suggest_advance_commands() {
+        let repo_root = Path::new("/tmp/prototype1");
+
+        for phase in [DiagnosedPhase::Blocked, DiagnosedPhase::Complete] {
+            assert_eq!(allowed_actions_for_phase(phase), vec!["doctor"]);
+            assert!(suggested_commands(phase, repo_root).is_empty());
+        }
+    }
+
+    #[test]
+    fn runnable_phases_suggest_advance_commands() {
+        let repo_root = Path::new("/tmp/prototype1");
+        let commands = suggested_commands(DiagnosedPhase::Observe, repo_root);
+
+        assert_eq!(
+            allowed_actions_for_phase(DiagnosedPhase::Observe),
+            vec!["doctor", "continue", "step"]
+        );
+        assert_eq!(commands.len(), 2);
+        assert!(commands[0].contains("prototype1-continue"));
+        assert!(commands[1].contains("prototype1-step"));
+    }
+
+    #[test]
+    fn stale_observe_before_adds_doctor_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let node_id = "node-stale-observe";
+        let runner_result_path = temp.path().join("missing-result.json");
+        let entries = vec![observe_before_entry(
+            node_id,
+            runtime_id,
+            &runner_result_path,
+            crate::cli::prototype1_state::event::RecordedAt(0),
+        )];
+        let mut blockers = Vec::new();
+
+        extend_stale_observe_blockers(
+            &entries,
+            node_id,
+            runtime_id,
+            Duration::from_secs(10),
+            &mut blockers,
+        );
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("observe_child is stale/hung"));
+        assert!(blockers[0].contains("missing-result.json"));
+        assert!(blockers[0].contains("child pid is unknown"));
+    }
+
+    fn observe_before_entry(
+        node_id: &str,
+        runtime_id: RuntimeId,
+        runner_result_path: &Path,
+        recorded_at: crate::cli::prototype1_state::event::RecordedAt,
+    ) -> JournalEntry {
+        use crate::cli::prototype1_state::event::{
+            ChildRuntimeLifecycle, LineageMark, Paths, Refs, World,
+        };
+
+        JournalEntry::ObserveChild(CompletionEntry {
+            transition_id: TransitionId::new(),
+            runtime_id,
+            phase: crate::intervention::CommitPhase::Before,
+            recorded_at,
+            generation: 1,
+            refs: Refs {
+                campaign_id: "campaign".to_string(),
+                node_id: node_id.to_string(),
+                instance_id: "instance".to_string(),
+                source_state_id: "state".to_string(),
+                branch_id: "branch".to_string(),
+                candidate_id: "candidate".to_string(),
+                branch_label: "branch".to_string(),
+                spec_id: "spec".to_string(),
+            },
+            paths: Paths {
+                repo_root: runner_result_path.parent().unwrap().to_path_buf(),
+                workspace_root: runner_result_path.parent().unwrap().to_path_buf(),
+                binary_path: runner_result_path.parent().unwrap().join("ploke-eval"),
+                target_relpath: PathBuf::from("src/lib.rs"),
+                absolute_path: runner_result_path.parent().unwrap().join("src/lib.rs"),
+            },
+            world: World {
+                node_status: Prototype1NodeStatus::Running,
+                running_binary: true,
+                running_lineage: LineageMark::Parent,
+                artifact_lineage: LineageMark::Child,
+                child_lifecycle: Some(ChildRuntimeLifecycle::Acknowledged),
+            },
+            child_lifecycle: ChildRuntimeLifecycle::Acknowledged,
+            runner_result_path: runner_result_path.to_path_buf(),
+            result: None,
+        })
     }
 }

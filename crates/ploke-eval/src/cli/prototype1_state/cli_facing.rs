@@ -943,6 +943,7 @@ impl CandidateGenerationConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Prototype1StateRunShape {
     stop_after: Prototype1StateStopAfter,
+    observe_child_stale_after: Duration,
     candidate_generation: CandidateGenerationConfig,
     successor_selection: Prototype1SuccessorSelection,
     successor_selection_seed: u64,
@@ -956,6 +957,7 @@ impl Prototype1StateRunShape {
     fn from_command(command: &Prototype1StateCommand) -> Self {
         Self {
             stop_after: command.stop_after,
+            observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
             candidate_generation: CandidateGenerationConfig::from_command(command),
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
@@ -969,6 +971,7 @@ impl Prototype1StateRunShape {
     fn from_profile(profile: &profile::Prototype1RunProfile) -> Self {
         Self {
             stop_after: profile.execution.state_stop_after(),
+            observe_child_stale_after: profile.execution.observe_child_stale_after(),
             candidate_generation: CandidateGenerationConfig::from_profile_generation(
                 profile.generation,
             ),
@@ -7571,6 +7574,7 @@ pub(crate) fn run_planned_child(
     parent_baseline: CompleteBaseline,
     branch_log_gate: Arc<Mutex<()>>,
     stop_after: Prototype1StateStopAfter,
+    observe_child_stale_after: Duration,
     plan_index: usize,
     child: ChildFiles,
 ) -> Result<PlannedChildOutcome, PrepareError> {
@@ -7769,14 +7773,14 @@ pub(crate) fn run_planned_child(
                             if stop_after == Prototype1StateStopAfter::Spawn {
                                 "spawned".to_string()
                             } else {
-                                match ObserveChild::new().transition(c4, &mut journal).map_err(
-                                    |err| {
+                                match ObserveChild::new(observe_child_stale_after)
+                                    .transition(c4, &mut journal)
+                                    .map_err(|err| {
                                         prototype1_state_transition_error(
                                             "prototype1_state_complete",
                                             format!("{err:?}"),
                                         )
-                                    },
-                                )? {
+                                    })? {
                                     Outcome::Rejected(rejected) => {
                                         debug!(
                                             target: EXECUTION_DEBUG_TARGET,
@@ -7879,6 +7883,7 @@ async fn run_child_fanout(
     parent_identity: &ParentIdentity,
     parent_baseline: &CompleteBaseline,
     stop_after: Prototype1StateStopAfter,
+    observe_child_stale_after: Duration,
     child_schedule_mode: Prototype1ChildScheduleMode,
     child_budget: Prototype1ChildBudget,
     plan_index_offset: usize,
@@ -7941,6 +7946,7 @@ async fn run_child_fanout(
                     parent_baseline,
                     branch_log_gate,
                     stop_after,
+                    observe_child_stale_after,
                     plan_index,
                     child,
                 )
@@ -8002,6 +8008,7 @@ async fn run_adaptive_child_fanout(
     parent_identity: &ParentIdentity,
     parent_baseline: &CompleteBaseline,
     child_budget: Prototype1ChildBudget,
+    observe_child_stale_after: Duration,
     children: Vec<ChildFiles>,
     rejected_surface_attempts: &[surface_attempt::Evidence],
     selection_seed: u64,
@@ -8035,6 +8042,7 @@ async fn run_adaptive_child_fanout(
             parent_identity,
             parent_baseline,
             Prototype1StateStopAfter::Complete,
+            observe_child_stale_after,
             Prototype1ChildScheduleMode::FullBatch,
             child_budget,
             next,
@@ -9510,6 +9518,7 @@ impl Prototype1StateCommand {
                 &parent_identity,
                 &parent_baseline,
                 child_budget,
+                run_shape.observe_child_stale_after,
                 children,
                 &rejected_surface_attempts,
                 run_shape.successor_selection_seed,
@@ -9526,6 +9535,7 @@ impl Prototype1StateCommand {
                 &parent_identity,
                 &parent_baseline,
                 run_shape.stop_after,
+                run_shape.observe_child_stale_after,
                 child_schedule_mode,
                 child_budget,
                 0,

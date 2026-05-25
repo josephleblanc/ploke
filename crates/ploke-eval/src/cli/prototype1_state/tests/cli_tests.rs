@@ -11,8 +11,11 @@ use crate::cli::{
 };
 use crate::intervention::Prototype1NodeRecord;
 use ploke_records::identity::ParentIdentityRecord;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -444,6 +447,7 @@ seed = 7
 
 [execution]
 stop_after = "complete"
+observe_child_stale_after_secs = 17
 "#;
     let parsed =
         toml::from_str::<profile::Prototype1RunProfile>(profile_text).expect("profile parses");
@@ -467,6 +471,7 @@ stop_after = "complete"
         Prototype1TraversalMetrics::OperationalAndProtocol
     );
     assert_eq!(shape.successor_selection_seed, 7);
+    assert_eq!(shape.observe_child_stale_after, Duration::from_secs(17));
     assert_eq!(
         shape.successor_oracle_mode,
         crate::successor_selection::OracleMode::RecordOnly

@@ -84,6 +84,7 @@ The profile rejects internally conflicting settings:
 - `execution.mbe.enabled = true` requires at least one configured target
   instance, a nonempty `execution.mbe.python`, and nonzero
   `execution.mbe.workers`.
+- `execution.observe_child_stale_after_secs` must be nonzero.
 - `selection.oracle.mode = "relative-score"` with
   `selection.oracle.require_evidence = true` requires MBE to be enabled and at
   least one configured target instance.
@@ -311,6 +312,7 @@ printing credentials.
 ```toml
 [execution]
 stop_after = "complete"
+observe_child_stale_after_secs = 600
 trace_jsonl = "auto"
 debug_tools = false
 mbe = { enabled = true, python = "python3", workers = 2 }
@@ -319,6 +321,9 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 - `stop_after`: Parent execution stop. `materialize` stops after child workspace
   materialization; `build` stops after child binary build; `spawn` stops after
   spawning the child; `complete` runs evaluation, selection, and handoff.
+- `observe_child_stale_after_secs`: Maximum time the parent waits in
+  `observe_child` for child result evidence before treating the child as stale
+  or hung. Defaults to `600` seconds. Must be nonzero.
 - `trace_jsonl`: Trace recording behavior. `inherit` follows the command or
   environment default; `auto` enables the standard trace artifact; `off`
   disables trace JSONL.

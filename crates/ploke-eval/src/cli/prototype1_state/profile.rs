@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use chrono::Utc;
@@ -25,6 +26,7 @@ use crate::{
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
 pub(crate) const RUN_PROFILE_COMMITMENT_SCHEMA_VERSION: &str =
     "prototype1-run-profile-commitment.v1";
+pub(crate) const DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS: u64 = 10 * 60;
 
 const RUN_PROFILE_FILE: &str = "run-profile.toml";
 const RUN_PROFILE_COMMITMENT_FILE: &str = "run-profile.commitment.json";
@@ -612,6 +614,8 @@ fn default_oracle_require_evidence() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Execution {
     pub(crate) stop_after: ExecutionStopAfter,
+    #[serde(default = "default_observe_child_stale_after_secs")]
+    pub(crate) observe_child_stale_after_secs: u64,
     #[serde(default)]
     pub(crate) trace_jsonl: TraceJsonl,
     #[serde(default)]
@@ -622,6 +626,11 @@ pub(crate) struct Execution {
 
 impl Execution {
     fn validate(&self) -> Result<(), PrepareError> {
+        if self.observe_child_stale_after_secs == 0 {
+            return Err(profile_error(
+                "execution.observe_child_stale_after_secs must be greater than zero",
+            ));
+        }
         self.mbe.validate()
     }
 
@@ -633,17 +642,26 @@ impl Execution {
             ExecutionStopAfter::Complete => Prototype1StateStopAfter::Complete,
         }
     }
+
+    pub(crate) fn observe_child_stale_after(&self) -> Duration {
+        Duration::from_secs(self.observe_child_stale_after_secs)
+    }
 }
 
 impl Default for Execution {
     fn default() -> Self {
         Self {
             stop_after: ExecutionStopAfter::Complete,
+            observe_child_stale_after_secs: default_observe_child_stale_after_secs(),
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
             mbe: Mbe::default(),
         }
     }
+}
+
+fn default_observe_child_stale_after_secs() -> u64 {
+    DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1012,6 +1030,7 @@ mode = "omit"
 
 [execution]
 stop_after = "complete"
+observe_child_stale_after_secs = 600
 trace_jsonl = "auto"
 debug_tools = true
 mbe = { enabled = true, python = "python3", workers = 2 }
@@ -1056,9 +1075,44 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.execution.state_stop_after(),
             Prototype1StateStopAfter::Complete
         );
+        assert_eq!(
+            profile.execution.observe_child_stale_after(),
+            Duration::from_secs(600)
+        );
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
+    }
+
+    #[test]
+    fn run_profile_execution_rejects_zero_observe_child_stale_after() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "observe_child_stale_after_secs = 600",
+                "observe_child_stale_after_secs = 0",
+            ),
+        )
+        .expect_err("zero stale-observe threshold should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("execution.observe_child_stale_after_secs")
+        );
+    }
+
+    #[test]
+    fn run_profile_execution_defaults_observe_child_stale_after() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("observe_child_stale_after_secs = 600\n", ""),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.execution.observe_child_stale_after(),
+            Duration::from_secs(DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS)
+        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -53,12 +54,16 @@ use super::event::{
     RuntimeId, TransitionId, World,
 };
 use super::identity::ParentIdentity;
+use super::profile::DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS;
 use crate::branch_evaluation::BranchDisposition;
 use crate::intervention::{
     CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
 };
 use crate::projection::OperatorProjectionRead;
 use crate::spec::PrepareError;
+
+pub(crate) const DEFAULT_OBSERVE_CHILD_STALE_AFTER: Duration =
+    Duration::from_secs(DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS);
 
 /// Append-only machine-readable journal entry for `C1 -> C2`
 /// materialization.
@@ -602,6 +607,14 @@ impl PrototypeJournal {
     pub(crate) fn replay_observe_child(
         &self,
     ) -> Result<Vec<CompletionReplay>, PrototypeJournalError> {
+        self.replay_observe_child_at(RecordedAt::now(), DEFAULT_OBSERVE_CHILD_STALE_AFTER)
+    }
+
+    pub(crate) fn replay_observe_child_at(
+        &self,
+        now: RecordedAt,
+        stale_after: Duration,
+    ) -> Result<Vec<CompletionReplay>, PrototypeJournalError> {
         let mut grouped = BTreeMap::<TransitionId, CompletionPhases>::new();
 
         for entry in self.load_entries()? {
@@ -630,6 +643,13 @@ impl PrototypeJournal {
                         PendingCompletion::TerminalResultWrittenUnobserved(
                             classify_pending_completion(&before.runner_result_path)?,
                         )
+                    } else if pending_observe_age(before.recorded_at, now)
+                        >= stale_after.as_millis() as u64
+                    {
+                        PendingCompletion::StaleOrHung {
+                            age_ms: pending_observe_age(before.recorded_at, now),
+                            stale_after_ms: stale_after.as_millis() as u64,
+                        }
                     } else {
                         PendingCompletion::ResultPending
                     };
@@ -1038,7 +1058,12 @@ pub(crate) enum CompletionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingCompletion {
     ResultPending,
+    StaleOrHung { age_ms: u64, stale_after_ms: u64 },
     TerminalResultWrittenUnobserved(ObservedChildTerminal),
+}
+
+fn pending_observe_age(recorded_at: RecordedAt, now: RecordedAt) -> u64 {
+    now.0.saturating_sub(recorded_at.0) as u64
 }
 
 #[derive(Debug, Error)]
@@ -1568,6 +1593,80 @@ mod tests {
                     disposition: PendingCompletion::TerminalResultWrittenUnobserved(
                         ObservedChildTerminal::Failed
                     ),
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_marks_missing_runner_result_as_stale_or_hung() {
+        let tmp = tempdir().expect("tempdir");
+        let transition_id = TransitionId::new();
+        let runtime_id = RuntimeId::new();
+        let runner_result_path = tmp.path().join("missing-runner-result.json");
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::ObserveChild(sample_completion_entry(
+                transition_id,
+                CommitPhase::Before,
+                runtime_id,
+                &runner_result_path,
+                None,
+            )))
+            .expect("append completion before");
+
+        let replay = journal
+            .replay_observe_child_at(RecordedAt(1_777_091_211_000), Duration::from_secs(10))
+            .expect("replay observe child");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            CompletionReplay {
+                outcome: CompletionOutcome::Pending {
+                    disposition: PendingCompletion::StaleOrHung {
+                        age_ms: 11_000,
+                        stale_after_ms: 10_000
+                    },
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_observe_child_uses_default_stale_threshold() {
+        let tmp = tempdir().expect("tempdir");
+        let transition_id = TransitionId::new();
+        let runtime_id = RuntimeId::new();
+        let runner_result_path = tmp.path().join("missing-runner-result.json");
+
+        let mut journal = PrototypeJournal::new(tmp.path().join("transition-journal.jsonl"));
+        journal
+            .append(JournalEntry::ObserveChild(sample_completion_entry(
+                transition_id,
+                CommitPhase::Before,
+                runtime_id,
+                &runner_result_path,
+                None,
+            )))
+            .expect("append completion before");
+
+        let replay = journal
+            .replay_observe_child()
+            .expect("replay observe child");
+
+        assert_eq!(replay.len(), 1);
+        assert!(matches!(
+            &replay[0],
+            CompletionReplay {
+                outcome: CompletionOutcome::Pending {
+                    disposition: PendingCompletion::StaleOrHung {
+                        stale_after_ms: 600_000,
+                        ..
+                    },
                 },
                 ..
             }

@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -13,12 +13,15 @@ use crate::cli::prototype1_state::cli_facing::Prototype1TreatmentEvidence;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
     Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface,
+    load_runner_result_at,
 };
+use crate::projection::OperatorProjectionRead;
 
 use super::c3::C4;
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::event::{
-    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, TransitionId, World,
+    ChildRuntimeLifecycle, ObservedChildTerminal, Paths, RecordedAt, Refs, RuntimeId, TransitionId,
+    World,
 };
 use super::invocation::{channel_root, result_path};
 use super::journal::{CompletionEntry, JournalEntry, ObservedChildResult, PrototypeJournal};
@@ -126,6 +129,17 @@ pub(crate) enum ObserveChildError {
     MissingTreatmentEvidence { node_id: String },
     #[error("failed to read child channel: {detail}")]
     ReadChannel { detail: String },
+    #[error("failed to load child runner result '{path}': {detail}")]
+    LoadRunnerResult { path: PathBuf, detail: String },
+    #[error(
+        "timed out after {waited_ms}ms waiting for child result for node '{node_id}' runtime '{runtime_id}' at '{runner_result_path}'"
+    )]
+    TimedOutWaitingForResult {
+        node_id: String,
+        runtime_id: RuntimeId,
+        waited_ms: u64,
+        runner_result_path: PathBuf,
+    },
 }
 
 /// Surface over the child-to-parent channel used by child-completion observation.
@@ -150,12 +164,14 @@ impl Surface<C4> for ChildChannelSurface {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ObserveChild {
     transition_id: TransitionId,
+    stale_after: Duration,
 }
 
 impl ObserveChild {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(stale_after: Duration) -> Self {
         Self {
             transition_id: TransitionId::new(),
+            stale_after,
         }
     }
 }
@@ -282,11 +298,32 @@ impl Intervention<C4, C5> for ObserveChild {
             FileTransport,
         );
         let mut channel_cursor = Cursor::start();
+        let started = Instant::now();
+        let runner_result_path = result_path(&from.node.node_dir, runtime_id);
         loop {
             let observed = child_result_from_channel(&parent_channel, channel_cursor)
                 .map_err(CommitError::Transition)?;
             channel_cursor = observed.0;
-            if let Some(observed) = observed.1 {
+            let observed = if observed.1.is_some() {
+                observed.1
+            } else if runner_result_path.exists() {
+                Some(ChildResultPayload {
+                    runner_result: load_runner_result_at(
+                        &runner_result_path,
+                        OperatorProjectionRead::cli_operator(),
+                    )
+                    .map_err(|source| {
+                        CommitError::Transition(ObserveChildError::LoadRunnerResult {
+                            path: runner_result_path.clone(),
+                            detail: source.to_string(),
+                        })
+                    })?,
+                    treatment: None,
+                })
+            } else {
+                None
+            };
+            if let Some(observed) = observed {
                 if let Some(wait) = wait.take() {
                     wait.success();
                 }
@@ -390,6 +427,20 @@ impl Intervention<C4, C5> for ObserveChild {
                     "observed successful child treatment evidence"
                 );
                 return Ok(Outcome::Advanced(next));
+            }
+
+            if started.elapsed() >= self.stale_after {
+                if let Some(wait) = wait.take() {
+                    wait.timed_out();
+                }
+                return Err(CommitError::Transition(
+                    ObserveChildError::TimedOutWaitingForResult {
+                        node_id: from.node.node_id.clone(),
+                        runtime_id,
+                        waited_ms: started.elapsed().as_millis() as u64,
+                        runner_result_path: runner_result_path.clone(),
+                    },
+                ));
             }
 
             thread::sleep(RESULT_POLL);
