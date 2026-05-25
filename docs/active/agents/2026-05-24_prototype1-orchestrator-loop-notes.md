@@ -393,3 +393,48 @@ Next action:
 - Start another fresh campaign with explicit `--route-source direct-google`
   after the refreshed registry shows `google/gemini-3.5-flash` as
   `direct_google`.
+
+## Note 12: Fresh Direct-Google Setup Blocked By Worktree Env Launch
+
+Time: 2026-05-25 02:10 UTC
+
+Fresh attempt:
+
+- Campaign: `p1-gemini35-flash-direct-fresh-20260524-190016`.
+- Worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-fresh-20260524-190016`.
+- Parent node: `node-d7757d356141f9f1`.
+- Route: `google/gemini-3.5-flash` via `direct_google`.
+
+What happened:
+
+- Workspace gate passed before setup.
+- Setup and doctor succeeded.
+- `prototype1-doctor --live-protocol-preflight` passed with
+  `provider = google`, `route_source = direct_google`, and `reasoning = omit`.
+- The bounded step was launched from the new worktree using its local binary.
+- That worktree launch environment did not expose the provider credentials that
+  are present from the source checkout launch environment.
+- Baseline eval failed before a model turn during OpenRouter-backed eval
+  embedding preflight for `mistralai/codestral-embed-2505`.
+- `prototype1-step --format json` returned a doctor-shaped report with
+  `phase = baseline_eval` and `blockers = []`; the eval failure was visible
+  only after reading closure status.
+- The abandoned worktree was cleaned with `cargo clean`, removing 7.6 GiB of
+  build artifacts.
+
+Interpretation:
+
+- This does not invalidate the direct-Google chat/protocol route; the live
+  protocol canary passed.
+- The campaign is abandoned as clean evidence because the first baseline eval
+  transition failed for operator launch-env reasons.
+- Filed
+  `docs/active/bugs/2026-05-25-prototype1-step-env-cwd-preflight-reporting.md`.
+
+Next action:
+
+- Start another fresh campaign/worktree.
+- Launch live setup/doctor/step commands from `/home/brasides/code/ploke`, using
+  `/home/brasides/code/ploke/target/debug/ploke-eval --repo-root <fresh-worktree>`
+  where applicable so the command inherits the env-bearing source checkout.

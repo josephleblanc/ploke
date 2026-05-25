@@ -89,3 +89,5 @@ file and current code before treating a report as still open.
   Prototype 1 protocol can mark an edit segment successful from staged tool summaries while a later hidden apply failure leaves the final patch behaviorally incomplete.
 - [`2026-05-25-prototype1-same-file-semantic-edit-stale-anchor.md`](./2026-05-25-prototype1-same-file-semantic-edit-stale-anchor.md)
   Source now rejects already-stale canonical semantic edit anchors before staging; broader same-file proposal composition remains a Prototype 1 risk.
+- [`2026-05-25-prototype1-step-env-cwd-preflight-reporting.md`](./2026-05-25-prototype1-step-env-cwd-preflight-reporting.md)
+  Prototype 1 baseline eval can fail during embedding preflight when launched from a credential-empty worktree, while `prototype1-step` reports a clean doctor-shaped phase summary.
