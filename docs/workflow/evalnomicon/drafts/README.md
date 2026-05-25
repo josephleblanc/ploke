@@ -24,3 +24,6 @@ stay short inside each topic.
   Timing projection, run-tree browser, and typestate hardening review notes.
 - [`eval/`](eval/)
   Eval triage policy for smoke/baseline failure classification.
+- [`start-here/`](start-here/)
+  Working entrypoint for Prototype 1 loop stages, operator workflow, evidence
+  surfaces, and source map.
