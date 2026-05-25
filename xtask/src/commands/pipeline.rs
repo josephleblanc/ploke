@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use clap::{Args, Subcommand};
@@ -15,6 +16,8 @@ use super::{CommandContext, XtaskError};
 use crate::display_relative;
 
 const DEFAULT_REGISTRY: &str = "docs/workflow/pipeline-registry.jsonl";
+const DEFAULT_HOOK_STATE: &str = ".codex/pipeline-hook-context-state.json";
+const DEFAULT_HOOK_COOLDOWN_SECS: u64 = 20 * 60;
 
 /// Commands for the durable pipeline/function registry.
 #[derive(Debug, Clone, Subcommand)]
@@ -107,6 +110,14 @@ pub struct PipelineHookContext {
     #[arg(long, default_value = DEFAULT_REGISTRY, value_name = "PATH")]
     registry: PathBuf,
 
+    /// Hook cooldown state path. Defaults to .codex/pipeline-hook-context-state.json.
+    #[arg(long, default_value = DEFAULT_HOOK_STATE, value_name = "PATH")]
+    state_path: PathBuf,
+
+    /// Suppress each matching registry row for this many seconds after emission.
+    #[arg(long, default_value_t = DEFAULT_HOOK_COOLDOWN_SECS)]
+    cooldown_secs: u64,
+
     /// Maximum matched records included in hook context.
     #[arg(long, default_value_t = 5)]
     max_matches: usize,
@@ -149,7 +160,8 @@ impl PipelineHookContext {
             return Ok(None);
         }
 
-        let matches = hook_matches(&loaded.entries, &haystack.to_lowercase(), self.max_matches);
+        let matches = hook_matches(&loaded.entries, &haystack.to_lowercase());
+        let matches = self.apply_cooldown(ctx, matches)?;
         if matches.is_empty() {
             return Ok(None);
         }
@@ -160,6 +172,43 @@ impl PipelineHookContext {
                 additional_context: render_hook_context(&matches),
             },
         }))
+    }
+
+    fn apply_cooldown(
+        &self,
+        ctx: &CommandContext,
+        matches: Vec<HookMatch>,
+    ) -> Result<Vec<HookMatch>, XtaskError> {
+        if matches.is_empty() {
+            return Ok(matches);
+        }
+        if self.cooldown_secs == 0 {
+            return Ok(matches.into_iter().take(self.max_matches).collect());
+        }
+
+        let root = ctx.workspace_root()?;
+        let state_path = resolve_path(root, &self.state_path);
+        let now = unix_epoch_secs();
+        let mut state = HookCooldownState::load_best_effort(&state_path);
+        let allowed = matches
+            .into_iter()
+            .filter(|hook_match| state.should_emit(&hook_match.row_key, now, self.cooldown_secs))
+            .take(self.max_matches)
+            .collect::<Vec<_>>();
+
+        for hook_match in &allowed {
+            state.mark_emitted(
+                hook_match.row_key.clone(),
+                hook_match.record.key(),
+                now,
+                self.cooldown_secs,
+            );
+        }
+        if !allowed.is_empty() {
+            state.store_best_effort(&state_path);
+        }
+
+        Ok(allowed)
     }
 }
 
@@ -286,6 +335,18 @@ struct CodexHookSpecificOutput {
     hook_event_name: String,
     #[serde(rename = "additionalContext")]
     additional_context: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct HookCooldownState {
+    rows: BTreeMap<String, HookCooldownRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct HookCooldownRow {
+    record: Option<String>,
+    last_emitted_epoch_secs: u64,
+    cooldown_secs: u64,
 }
 
 fn list(ctx: &CommandContext, registry: &Path) -> Result<PipelineOutput, XtaskError> {
@@ -596,6 +657,7 @@ fn validate_source_symbol(
 
 #[derive(Debug)]
 struct HookMatch {
+    row_key: String,
     record: RegistryRecord,
     pipeline: Option<RegistryRecord>,
 }
@@ -620,7 +682,7 @@ fn hook_event_text(event: &serde_json::Value) -> String {
         .join("\n")
 }
 
-fn hook_matches(entries: &[RegistryEntry], haystack: &str, max_matches: usize) -> Vec<HookMatch> {
+fn hook_matches(entries: &[RegistryEntry], haystack: &str) -> Vec<HookMatch> {
     let pipelines = entries
         .iter()
         .filter_map(|entry| {
@@ -661,14 +723,18 @@ fn hook_matches(entries: &[RegistryEntry], haystack: &str, max_matches: usize) -
             }
 
             Some(HookMatch {
+                row_key: hook_row_key(entry),
                 record: record.clone(),
                 pipeline: pipelines
                     .get(pipeline_id.as_str())
                     .map(|record| (*record).clone()),
             })
         })
-        .take(max_matches)
         .collect()
+}
+
+fn hook_row_key(entry: &RegistryEntry) -> String {
+    format!("jsonl-line:{}", entry.line)
 }
 
 fn render_hook_context(matches: &[HookMatch]) -> String {
@@ -733,6 +799,55 @@ fn unique_strings<'a>(values: impl Iterator<Item = &'a String>) -> Vec<&'a str> 
         .map(String::as_str)
         .filter(|value| seen.insert(*value))
         .collect()
+}
+
+impl HookCooldownState {
+    fn load_best_effort(path: &Path) -> Self {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+            .unwrap_or_default()
+    }
+
+    fn should_emit(&self, row_key: &str, now_epoch_secs: u64, cooldown_secs: u64) -> bool {
+        self.rows
+            .get(row_key)
+            .map(|row| now_epoch_secs.saturating_sub(row.last_emitted_epoch_secs) >= cooldown_secs)
+            .unwrap_or(true)
+    }
+
+    fn mark_emitted(
+        &mut self,
+        row_key: String,
+        record: Option<String>,
+        now_epoch_secs: u64,
+        cooldown_secs: u64,
+    ) {
+        self.rows.insert(
+            row_key,
+            HookCooldownRow {
+                record,
+                last_emitted_epoch_secs: now_epoch_secs,
+                cooldown_secs,
+            },
+        );
+    }
+
+    fn store_best_effort(&self, path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(content) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(path, content);
+        }
+    }
+}
+
+fn unix_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 fn resolve_path(root: &Path, path: &Path) -> PathBuf {
@@ -854,8 +969,11 @@ mod tests {
     #[test]
     fn pipeline_hook_context_emits_codex_additional_context() {
         let ctx = CommandContext::new().expect("CommandContext");
+        let temp = tempfile::tempdir().expect("tempdir");
         let cmd = PipelineHookContext {
             registry: PathBuf::from(DEFAULT_REGISTRY),
+            state_path: temp.path().join("pipeline-hook-state.json"),
+            cooldown_secs: DEFAULT_HOOK_COOLDOWN_SECS,
             max_matches: 5,
         };
         let input = serde_json::json!({
@@ -886,5 +1004,13 @@ mod tests {
         assert!(context.contains("prototype1.edit_tool_gated_refresh"));
         assert!(context.contains("should_wait_for_settled_edit"));
         assert!(context.contains("tui-approve-deny-pipeline.md"));
+
+        let suppressed = cmd
+            .output_for_event(&ctx, &input)
+            .expect("second hook context should execute");
+        assert!(
+            suppressed.is_none(),
+            "same registry row should be suppressed within cooldown"
+        );
     }
 }

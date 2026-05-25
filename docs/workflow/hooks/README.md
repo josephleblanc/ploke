@@ -13,6 +13,16 @@ It reads Codex hook event JSON on stdin, checks
 `hookSpecificOutput.additionalContext` when a prompt or tool input mentions
 registered pipeline code.
 
+To avoid flooding the transcript, the command suppresses each matched registry
+row for 20 minutes after it emits. Cooldown state is stored in:
+
+```text
+.codex/pipeline-hook-context-state.json
+```
+
+The timer is keyed by JSONL row, so one noisy function does not suppress other
+pipeline entries.
+
 Example `.codex/config.toml` wiring:
 
 ```toml

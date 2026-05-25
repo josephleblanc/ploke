@@ -66,4 +66,7 @@ target/debug/xtask pipeline hook-context
 
 That command reads the hook event JSON on stdin and emits
 `hookSpecificOutput.additionalContext` when registered pipeline code is
-mentioned. Keep hooks as a consumer of this registry, not the registry itself.
+mentioned. The hook command stores a per-JSONL-row cooldown state at
+`.codex/pipeline-hook-context-state.json` and suppresses repeated rows for 20
+minutes by default. Keep hooks as a consumer of this registry, not the registry
+itself.
