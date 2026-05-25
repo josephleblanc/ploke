@@ -133,6 +133,13 @@ fn dump_trace_if_requested(trace: &[String]) {
     }
 }
 
+fn json_fixture<T>(text: &str) -> T
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_str(text).expect("fixture deserializes")
+}
+
 fn state_command_without_ids() -> Prototype1StateCommand {
     Prototype1StateCommand {
         campaign: None,
@@ -2773,6 +2780,249 @@ fn test_completed_outcome(
         artifact_surface: Some(ArtifactSurface::test(&node.node_id)),
         node,
     }
+}
+
+#[test]
+fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
+    const NODE_ID: &str = "node-15006265e24b3b9b";
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let parent_identity: ParentIdentity = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/parent_identity.json"
+    ));
+    let closure: crate::closure::ClosureState = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/baseline_closure_state.json"
+    ));
+    let child_plan: ChildPlanFiles = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/child_plan_node-f4cf695decef97df.json"
+    ));
+    let node: Prototype1NodeRecord = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/node.json"
+    ));
+    let runner_request: crate::intervention::Prototype1RunnerRequest = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/runner-request.json"
+    ));
+    let runner_result: crate::intervention::Prototype1RunnerResult = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/runner-result.json"
+    ));
+
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("node-150 child plan entry");
+    assert_eq!(child_plan.parent_node_id(), parent_identity.node_id());
+    assert_eq!(child.node_record().node_id, node.node_id);
+    assert_eq!(child.node_record().branch_id, node.branch_id);
+    assert_eq!(child.runner_request().node_id, runner_request.node_id);
+    assert_eq!(child.runner_request().branch_id, runner_request.branch_id);
+    assert_eq!(
+        child.runner_request().runner_args,
+        runner_request.runner_args
+    );
+    assert_eq!(child.runner_request().workspace_root, PathBuf::from("."));
+    assert!(
+        runner_request
+            .workspace_root
+            .ends_with("prototype1/workspaces/edit-harness/node-f4cf695decef97df-r6")
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+    assert_eq!(runner_result.status, node.status);
+
+    let terminal =
+        include_str!("../../../tests/fixtures/prototype1-node-150-handoff/child-to-parent.jsonl")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<
+                    crate::cli::prototype1_state::channel::Envelope<
+                        crate::cli::prototype1_state::channel::ToParent,
+                    >,
+                >(line)
+                .expect("channel envelope")
+            })
+            .find_map(|envelope| match envelope.body() {
+                crate::cli::prototype1_state::channel::ToParent::Result {
+                    runner_result,
+                    treatment,
+                } => Some((
+                    envelope.runtime_id().to_string(),
+                    runner_result.clone(),
+                    treatment
+                        .clone()
+                        .expect("successful child result carries treatment"),
+                )),
+                _ => None,
+            })
+            .expect("terminal channel result");
+    assert_eq!(terminal.1, runner_result);
+    assert_eq!(terminal.2.branch_id, node.branch_id);
+    assert_eq!(
+        terminal.2.treatment_campaign_id,
+        "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+    );
+    let treatment_record_path = tmp.path().join("treatment-record.json.gz");
+    fs::write(
+        &treatment_record_path,
+        include_bytes!(
+            "../../../tests/fixtures/prototype1-node-150-handoff/treatment-record.json.gz"
+        ),
+    )
+    .expect("write treatment record fixture");
+    let treatment_record =
+        crate::record::read_compressed_record(&treatment_record_path).expect("treatment record");
+    assert_eq!(
+        Some(treatment_record.operational_metrics()),
+        terminal.2.instances[0].metrics
+    );
+
+    let baseline_record_path = tmp.path().join("baseline-record.json.gz");
+    fs::write(
+        &baseline_record_path,
+        include_bytes!(
+            "../../../tests/fixtures/prototype1-node-150-handoff/baseline-record.json.gz"
+        ),
+    )
+    .expect("write baseline record fixture");
+    let baseline_record =
+        crate::record::read_compressed_record(&baseline_record_path).expect("baseline record");
+    let baseline_metrics = baseline_record.operational_metrics();
+    let baseline_row = closure
+        .instances
+        .iter()
+        .find(|row| {
+            terminal
+                .2
+                .instances
+                .iter()
+                .any(|treatment| treatment.instance_id == row.instance_id)
+        })
+        .expect("matching baseline closure row");
+    let instance_ids = vec![baseline_row.instance_id.clone()];
+    let parent_baseline = CompleteBaseline::complete(
+        closure.campaign_id.clone(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        prototype1_eval_set_id(
+            &closure.campaign_id,
+            &closure.campaign_id,
+            closure.config.benchmark_family,
+            &closure.config.dataset_sources,
+            &terminal.2.eval_policy,
+            &instance_ids,
+        ),
+        vec![BaselineInstance {
+            instance_id: baseline_row.instance_id.clone(),
+            registration_path: baseline_row.artifacts.registration_path.clone(),
+            record_path: baseline_record_path,
+            metrics: baseline_metrics,
+        }],
+    )
+    .expect("complete baseline from real closure row and record");
+
+    let branch_log_gate = Mutex::new(());
+    let report = compare_observed_child_treatment(
+        parent_identity.campaign_id(),
+        &manifest_path,
+        &parent_baseline,
+        child.resolved(),
+        &terminal.2,
+        &branch_log_gate,
+    )
+    .expect("parent compares historical child treatment");
+    assert_eq!(report.branch_id, node.branch_id);
+    assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: format!("completed:{:?}", report.overall_disposition),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("historical child has broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node,
+    };
+    let profile = toml::from_str::<profile::Prototype1RunProfile>(
+        r#"
+schema_version = "prototype1-run-profile.v1"
+name = "historical-node-150-handoff"
+
+[selection]
+strategy = "generation-local"
+evidence = "operational"
+seed = 0
+"#,
+    )
+    .expect("profile parses");
+    profile.validate().expect("profile validates");
+
+    let (decision, material) = select_successor_for_profile(
+        &manifest_path,
+        &parent_identity,
+        std::slice::from_ref(&outcome),
+        &[],
+        &profile,
+    )
+    .expect("selector runs")
+    .expect("selector chooses node-150");
+    assert_eq!(decision.candidate_node_id, NODE_ID);
+    assert_eq!(
+        decision.selected_branch_id.as_deref(),
+        Some(outcome.node.branch_id.as_str())
+    );
+    assert!(material.selected_from_generation_outcomes);
+
+    let (selection, trace) = collect_traces(|| {
+        select_artifact_for_handoff(&decision, &material)
+            .expect("current generation selection admits an Artifact carrier")
+    });
+    dump_trace_if_requested(&trace);
+
+    assert_eq!(selection.selected().node().node_id, NODE_ID);
+    assert_eq!(selection.selected().branch_id(), outcome.node.branch_id);
+    assert_eq!(
+        selection.selected().source(),
+        state_selection::Source::CurrentGeneration
+    );
+    assert_eq!(
+        selection.selected().primary_runtime_id(),
+        outcome.child_runtime.as_deref()
+    );
+    assert_eq!(
+        selection.selected().resolved().branch.branch_id,
+        outcome.resolved.branch.branch_id
+    );
+    assert!(trace_contains(
+        &trace,
+        &[
+            "span:select_artifact_for_handoff",
+            "selected_from_generation_outcomes=true",
+        ],
+    ));
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event:ploke_exec",
+            "hydrated selected Artifact payload for successor handoff",
+            "node_id=node-15006265e24b3b9b",
+            "source=CurrentGeneration",
+        ],
+    ));
 }
 
 #[test]

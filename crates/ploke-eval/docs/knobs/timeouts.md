@@ -145,7 +145,7 @@ Relevant files:
 | --- | ---: | --- | --- |
 | Child ready wait in `c3` | `10s` | Hard-coded | Polls child/channel every `50ms`; records `ReadyTimedOut` if the child does not send `Ready` |
 | Successor ready wait | `10s` | Hard-coded | Polls child/channel every `50ms`; kills and waits the child on timeout; records successor `TimedOut` |
-| Child result observation in `c4` | unbounded | None | Polls result files every `100ms`; no timeout was found in this loop |
+| Child result observation in `c4` | `execution.observe_child_stale_after_secs` from the admitted run profile | Run profile | Polls the per-runtime child channel every `100ms`; result files are reconstruction evidence, not lifecycle authority |
 
 Relevant files:
 

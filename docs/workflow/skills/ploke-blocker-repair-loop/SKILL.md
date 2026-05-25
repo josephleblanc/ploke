@@ -81,9 +81,18 @@ needed.
 1. Step-level regression: use when the blocker is in phase advancement,
    scheduling, closure state, transition recording, route admission, or artifact
    accounting.
+   For parent/child observe failures such as `MissingTreatmentEvidence`, the
+   contract is the transition/evidence reader, not the model/tool loop. Recreate
+   the historical sidecar/channel/journal shape and prove the current
+   controller waits for the treatment-bearing terminal channel result before
+   completing observation.
 2. Replay-level regression: use when recorded model output, tool calls, or
    headless TUI behavior must pass through the live session/tool loop again.
    Recorded-provider replay is preferred over direct tool-result injection.
+   For Prototype 1 blockers found in a live self-edit or benchmark-eval run,
+   local recorded replay is necessary but not sufficient: after the local replay
+   passes, run a same-target live replay/probe before declaring the blocker
+   cleared for fresh loop work.
 3. Protocol-level regression: use when the blocker is in segmentation,
    adjudication, oracle evidence, MBE integration, request shaping, or prompt
    contract behavior.
@@ -91,9 +100,55 @@ needed.
    costly run, such as an invalid route/model configuration or required live API
    setting.
 
-Live provider calls are allowed only when the relevant test or command is gated
-behind `live_api_tests` or an explicit live-test opt-in, and the blocker cannot be
-validated with local replay alone.
+Correctness beats API-cost minimization. If the blocker depends on live provider
+behavior, request shape, routing, quota handling, or provider-auth semantics,
+verify it with the real provider rather than a mock. Gate Rust tests that make
+live calls behind `live_api_tests` or an explicit live-test opt-in, and do not
+claim the blocker is fixed from local replay alone when live behavior is the
+contract under test.
+
+Same-target live replay/probe means rerunning the historical target through the
+current broad headless TUI path, not starting an unrelated fresh campaign. Use
+the existing replay surfaces when available:
+
+```bash
+./target/debug/ploke-eval run replay self-edit-live \
+  --request <published-broad-harness-request.json> \
+  --result <historical.headless-tui.json> \
+  --workspace <isolated-target-checkout> \
+  --tail live-step \
+  --max-attempts 1 \
+  --timeout-secs <bounded> \
+  --format json
+```
+
+If the headless result is missing but a raw provider sidecar exists, use
+`--raw-full-response <llm_full_response.jsonl>` with `--through-response-index`
+as the breakpoint. If the right surface is a benchmark eval turn rather than a
+broad self-edit request, use `run replay turn-live`. If replay artifacts are
+insufficient, use `loop prototype1-harness attempt` only against an isolated
+checkout/request pair whose `.git` does not point back at the primary repo.
+
+Do not use live self-edit replay as proof for parent/child handoff blockers.
+For observe-child or successor-handoff blockers, read the actual transition
+evidence first:
+
+- `prototype1/transition-journal.jsonl`
+- `prototype1/nodes/<node>/node.json`
+- `prototype1/nodes/<node>/invocations/<runtime>.json`
+- `prototype1/nodes/<node>/runner-result.json`
+- `prototype1/nodes/<node>/results/<runtime>.json`
+- `prototype1/nodes/<node>/channels/<runtime>/child-to-parent.jsonl`
+- `prototype1/evaluations/<branch>.json`, when present
+- `prototype1/history/`, `successor-ready/`, and `successor-completion/` for
+  successor handoff failures
+
+Then choose a step-level or journal/transition replay that exercises the same
+reader/admission path. For a successful child, a minimal success sidecar is not
+complete treatment evidence unless it points to or embeds the treatment result
+the parent needs to compare against baseline. The regression should fail if the
+parent can complete observation from the success sidecar alone while the
+treatment-bearing channel `Result` is still pending or unread.
 
 Do not write a regression whose effect is to make invalid persisted transition
 evidence acceptable for the same run. If a regression is needed after an
@@ -106,13 +161,24 @@ detects the bad condition before paid loop work.
 1. Name the broken contract in one sentence.
 2. Add or update a bug report under `docs/active/bugs/` with the run evidence and
    intended disposition: repair-and-resume or abandon-and-restart.
-3. For repair-and-resume, write the failing reproduction first, using the step,
+3. If operating as orchestrator and the operator wants the live loop to keep
+   moving, delegate the source repair to a bounded worker with explicit file
+   ownership while the orchestrator continues monitoring or stepping the loop.
+4. For repair-and-resume, write the failing reproduction first, using the step,
    replay, protocol, or doctor surface selected above.
-4. Run the reproduction and capture the failure signal.
-5. Implement the smallest fix at the authority-bearing layer.
-6. Re-run the reproduction, then the focused tests for the touched crate or
+5. Run the reproduction and capture the failure signal.
+6. Implement the smallest fix at the authority-bearing layer.
+7. Re-run the reproduction, then the focused tests for the touched crate or
    workflow.
-7. Update the bug report and any run-review note with the fix status, remaining
+8. For Prototype 1 blockers exposed by live model/tool behavior, run the
+   same-target live replay/probe after local replay passes. If it cannot run due
+   to quota, auth, or missing artifacts, record that explicitly; do not treat
+   the blocker as fully cleared.
+9. For parent observe, selection, or successor handoff blockers, replay or step
+   the historical transition/evidence shape after the local regression passes.
+   The acceptance condition is that the controller reaches the next intended
+   phase using the same evidence class that failed in the live run.
+10. Update the bug report and any run-review note with the fix status, remaining
    risk, and exact resume command.
 
 For abandon-and-restart, skip current-run source salvage unless there is a
@@ -125,6 +191,9 @@ orchestrator notes, then create a new worktree/campaign using
 Resume the same campaign only after all applicable checks are true:
 
 - The reproducing test or replay now passes.
+- If the blocker was in parent observation, selection, or successor handoff, the
+  historical transition/evidence replay or equivalent step proof now reaches the
+  next intended phase.
 - The admitted route, model, and protocol configuration match the intended run.
 - Doctor or preflight checks cover the blocker if it can recur at setup time.
 - The worktree and campaign artifacts still point to the intended run.

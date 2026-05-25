@@ -187,6 +187,7 @@ record Child<Evaluating>
 run treatment branch evaluation
 write runner result
 record Child<ResultWritten>
+send terminal ToParent::Result { runner_result, treatment }
 exit
 ```
 
@@ -213,13 +214,13 @@ the child writes a runner result.
 ### 5. Parent Observes the Child Result
 
 After the child has reached ready, `ObserveChild::transition` waits for the
-result path recorded in the transition journal:
+terminal per-runtime child channel result:
 
 ```text
 loop:
-  if child result path exists:
-    load runner result
-    load evaluation report when runner succeeded
+  if child-to-parent channel has ToParent::Result:
+    read runner_result from the channel payload
+    require treatment evidence when runner_result succeeded
     append ObserveChild after-entry with observed result
     return
   sleep RESULT_POLL
@@ -253,15 +254,16 @@ Relevant code:
 
 Current post-ready behavior:
 
-- parent waits for `Child<ResultWritten>`
+- parent waits for terminal `ToParent::Result` on the per-runtime child channel
 - parent sleeps between polls
-- no post-ready observation deadline was visible in the discovery pass
+- post-ready observation is bounded by `execution.observe_child_stale_after_secs`
 - no child `try_wait` check was visible in this observation loop
 
 Consequence: if the child reaches ready, then exits or stops making progress
-before writing a runner result, the parent can wait indefinitely. If the child
-is alive but slow because of provider retries, the parent waits for the full
-duration.
+before sending terminal channel evidence, the parent blocks until the configured
+stale deadline and then reports a transition timeout. If the child is alive but
+slow because of provider retries, the parent waits for the configured observe
+deadline.
 
 This explains why long provider waits show up as long parent observe spans.
 
@@ -316,11 +318,10 @@ Current visible parent-side timeouts:
 
 Current missing or unclear parent-side timeouts:
 
-- no visible deadline for `Child<Ready> -> Child<ResultWritten>`
 - no visible child process status check while observing child result
 - unclear child cleanup on child-ready timeout
 
-The missing post-ready deadline is important for reliability. A long provider
+The child observation deadline is important for reliability. A long provider
 wait should be allowed only up to an explicit child-evaluation budget. A child
 runtime that exits or stops making progress should become a durable failed
 child result, not an infinite parent wait.
@@ -493,17 +494,17 @@ roughly:
 ```
 
 This is inefficient but bounded at the LLM/TUI layers. The parent observe loop
-then waits for the whole duration because it has no separate
-`Child<ResultWritten>` deadline.
+then waits up to the configured `execution.observe_child_stale_after_secs`
+deadline for terminal child channel evidence.
 
 Example 3: parent wait with no result record.
 
 The parent sees `Child<Ready>` and enters `ObserveChild::transition`. If the
 child process exits after ready, loses the ability to append
-`Child<ResultWritten>`, or blocks forever in evaluation, the current parent loop
-keeps polling the journal for a result path. Because that loop does not visibly
-check child process status or a result deadline, this is a reliability risk even
-when lower-level HTTP and chat-step retries are bounded.
+terminal `ToParent::Result`, or blocks forever in evaluation, the current parent
+loop keeps polling the per-runtime channel until the configured stale deadline.
+Because that loop does not visibly check child process status, this remains a
+reliability risk even when lower-level HTTP and chat-step retries are bounded.
 
 ## Timeout Questions To Decide
 
@@ -516,7 +517,8 @@ These questions should be answered before changing defaults:
 3. Should body/read timeout be retried the same way as send/connect timeout?
 4. Should timeout exhaustion produce a distinct terminal reason from semantic
    branch rejection?
-5. What deadline should bound `Child<Ready> -> Child<ResultWritten>`?
+5. Should the child observation deadline be separate from the provider/tool-loop
+   budget, and how should those budgets compose?
 6. Should child-ready timeout kill and wait the child process, matching
    successor-ready timeout behavior?
 7. Which timeout facts must be stored as durable run evidence rather than

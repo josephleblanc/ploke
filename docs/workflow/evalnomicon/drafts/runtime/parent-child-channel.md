@@ -2,15 +2,23 @@
 
 Date: 2026-05-05
 
-This draft records the current Prototype 1 parent/child filesystem communication
+This draft records the Prototype 1 parent/child filesystem communication
 surface and the intended direction for replacing the scattered file protocol
 with a role-indexed runtime channel contract.
 
+Hard rule: parent/child lifecycle state must be driven by the per-runtime
+`Channel`, not by compatibility projections. Files such as the shared transition
+journal, latest runner-result projections, branch registries, scheduler views,
+diagnostic streams, and monitor tables are for later reconstruction,
+observability, and debugging. They must not become the authority that advances
+parent/child state.
+
 ## Current Shape
 
-The live child path does not currently communicate through one type-level
-parent/child channel. It uses several filesystem surfaces, each with its own
-producer/consumer convention.
+The live child path is partially migrated to a type-level parent/child channel.
+It still uses several filesystem surfaces, each with its own producer/consumer
+convention, but C3/C4 now use the per-runtime channel for ready/evaluating and
+terminal child observation.
 
 ### Parent To Child
 
@@ -62,7 +70,7 @@ producer/consumer convention.
 ### Child To Parent
 
 - `transition-journal.jsonl`
-  - Current role: shared append-only transition stream.
+  - Current role: shared append-only transition projection.
   - Code: `Child<S>` stores one `journal_path` and appends lifecycle entries in
     `crates/ploke-eval/src/cli/prototype1_state/child.rs:183`.
   - Code: child transitions write `Child<Ready>`, `Child<Evaluating>`, and
@@ -70,19 +78,22 @@ producer/consumer convention.
     `crates/ploke-eval/src/cli/prototype1_state/child.rs:144`,
     `crates/ploke-eval/src/cli/prototype1_state/child.rs:151`, and
     `crates/ploke-eval/src/cli/prototype1_state/child.rs:159`.
-  - Code: parent discovers result paths by reading the shared journal in
-    `crates/ploke-eval/src/cli/prototype1_state/c4.rs:227`.
+  - Code: C4 appends `ObserveChild(Before/After)` entries as reconstruction
+    evidence after using the per-runtime channel in
+    `crates/ploke-eval/src/cli/prototype1_state/c4.rs`.
   - Assessment: entries identify `runtime_id` and node refs, but the file is
-    shared across children. This is the main fanout race surface.
+    shared across children. It is a reconstruction surface and fanout race
+    surface, not parent/child lifecycle authority.
 
 - `nodes/<node-id>/results/<runtime-id>.json`
   - Current role: attempt-scoped terminal runner result.
   - Code: child writes this in
     `crates/ploke-eval/src/cli/prototype1_process.rs:1626`.
-  - Code: parent loads it after journal discovery in
-    `crates/ploke-eval/src/cli/prototype1_state/c4.rs:311`.
-  - Assessment: this is the cleanest current per-child/per-attempt result
-    surface.
+  - Code: the terminal channel `Result` embeds the runner result and, on
+    success, the treatment evidence needed by parent comparison.
+  - Assessment: this is useful reconstruction evidence for one attempt. It
+    should not by itself advance successful parent observation because it does
+    not carry treatment evidence.
 
 - `nodes/<node-id>/runner-result.json`
   - Current role: latest node-level result projection.
@@ -90,16 +101,14 @@ producer/consumer convention.
     `crates/ploke-eval/src/intervention/scheduler.rs:260`.
   - Code: attempt result write also updates this projection in
     `crates/ploke-eval/src/cli/prototype1_process.rs:1629`.
-  - Assessment: per-node mutable projection, not the best evidence for a
-    concrete attempt.
+  - Assessment: per-node mutable projection. It is for reconstruction and
+    operator display only; it must not drive parent/child state.
 
 - `evaluations/<branch-id>.json`
-  - Current role: branch comparison report written during child evaluation and
-    loaded by the parent when the runner result succeeded.
-  - Code: parent loads the evaluation artifact after loading the runner result
-    in `crates/ploke-eval/src/cli/prototype1_state/c4.rs:328`.
-  - Assessment: evaluation evidence referenced by the terminal result, not the
-    primary child lifecycle channel.
+  - Current role: branch comparison report written by the parent after a
+    successful channel observation carries treatment evidence.
+  - Assessment: comparison evidence and later reconstruction surface, not a
+    child-to-parent lifecycle channel.
 
 - `branches.json`
   - Current role: branch registry plus latest evaluation summaries.
@@ -138,6 +147,12 @@ This causes three recurring problems:
 - The authority to use a communication surface is not consistently carried by a
   role/state type. Some paths are type-shaped, but many are just filesystem
   conventions passed through invocation records or environment variables.
+
+The repair direction is deliberately narrow: projections may be written and
+read for later reconstruction, but they must not decide live lifecycle
+advancement. Any path that advances parent/child state from a projection should
+be treated as migration debt or a bug unless a typed transition explicitly
+converts channel evidence into that projection.
 
 ## Intended Channel Model
 
@@ -202,18 +217,18 @@ The parent/child runtime protocol should keep four categories separate:
     with the same compiled protocol contract.
 
 - attempt result
-  - Terminal child evidence for one concrete runtime attempt.
+  - Reconstruction evidence for one concrete runtime attempt.
   - For the file transport migration this is
     `nodes/<node-id>/results/<runtime-id>.json`.
-  - A `ResultWritten` channel message points at this evidence; it does not
-    replace it.
+  - A `ResultWritten` channel message points at this evidence for compatibility
+    readers. It is not the lifecycle message for new parent observation.
 
 - projections
   - Shared journal entries, scheduler updates, latest-node runner results,
     branch registry summaries, monitor tables, and diagnostic streams.
   - These are views or compatibility surfaces derived from protocol evidence.
-    They should not become the authority for a child attempt unless a specific
-    transition says so.
+    They should not become the authority for a child attempt. Their job is
+    reconstruction, observability, and post-run analysis.
 
 - evaluation telemetry
   - Structured observations emitted by work that happens inside child
@@ -276,20 +291,21 @@ The expected terminal flow is:
 Child<Evaluating>:
   run evaluation
   write attempt result
-  send ToParent::ResultWritten { result_ref }
+  send ToParent::Result { runner_result, treatment? }
   exit
 
 Parent:
-  observe ToParent::ResultWritten { result_ref }
-  load attempt result
+  observe ToParent::Result from the per-runtime Channel
   classify child outcome
+  compare treatment evidence for successful children
   write journal/scheduler/history projections
 ```
 
-The ordering matters. The attempt result is terminal evidence. The
-`ResultWritten` message is notification and reference. The old shared journal
-entry is a migration projection. A channel write failure must not prevent the
-child from leaving terminal evidence that the parent can recover.
+The ordering matters. `ToParent::Result` is the lifecycle message. Attempt
+results, compatibility `ResultWritten { result_ref }` messages, and old shared
+journal entries are reconstruction surfaces. New execution handoff should use
+the direct `Result` payload so successful children cannot be observed without
+treatment evidence.
 
 During `run evaluation`, the child may call subsystems that emit their own
 structured external observations. For example, the LLM chat-step path records
@@ -319,17 +335,17 @@ Child<Starting | Ready | Evaluating>:
 The parent should handle terminal conditions in this order of authority:
 
 ```text
-1. attempt result exists for this runtime
-2. child channel reports ResultWritten/Failed/Exited
+1. child channel reports Result/Failed/Exited for this runtime
+2. bounded observation timeout expires
 3. child process status says the process exited
-4. bounded observation timeout expires
-5. compatibility projections such as the old shared journal
+4. compatibility projections are read only to reconstruct what happened
 ```
 
 The exact implementation may poll more than one surface in the same loop, but
-it should not wait indefinitely after the child process exits. A post-ready
-child that exits without `ResultWritten` should become durable failed child
-evidence, not an unbounded parent wait.
+only the per-runtime channel should advance parent/child lifecycle state. It
+should not wait indefinitely after the child process exits. A post-ready child
+that exits without a channel terminal message should become durable failed child
+evidence through an explicit transition, not through ad hoc projection reads.
 
 Telemetry may influence operator display, timeout diagnostics, and later
 adaptive policy, but it should not by itself advance the child lifecycle state.
@@ -417,6 +433,10 @@ enum ParentToChild {
 enum ChildToParent {
     Ready,
     Evaluating,
+    Result {
+        runner_result: RunnerResult,
+        treatment: Option<TreatmentEvidence>,
+    },
     ResultWritten { result_ref: ResultRef },
     Failed,
     Exited,
@@ -424,8 +444,9 @@ enum ChildToParent {
 ```
 
 The attempt result payload can remain a separate content/evidence artifact at
-first. `ChildToParent::ResultWritten` should point at it by ref/path/hash rather
-than inline all evaluation output.
+first. `ChildToParent::Result` is the lifecycle message. `ResultWritten` is a
+compatibility/reconstruction notification only and should not drive
+parent/child state.
 
 ## File Transport Projection
 
@@ -459,7 +480,9 @@ role carrier that can write to it.
 
 3. Move child lifecycle communication from direct shared-journal appends to the
    per-attempt channel:
-   `Ready`, `Evaluating`, `ResultWritten`, `Failed`, `Exited`.
+   `Ready`, `Evaluating`, terminal `Result { runner_result, treatment }`,
+   `Failed`, `Exited`. Compatibility `ResultWritten` records may still point at
+   result artifacts, but must not be lifecycle authority.
 
 4. Keep writing `transition-journal.jsonl` as a projection during migration,
    but make it downstream of channel messages rather than the primary
@@ -469,7 +492,8 @@ role carrier that can write to it.
    compatibility projection of that envelope.
 
 6. Keep `nodes/<node-id>/results/<runtime-id>.json` as the attempt result
-   payload/ref. Prefer it over `runner-result.json` for selection and timing.
+   payload/ref. Read it for reconstruction and post-observation analysis, not
+   as a substitute for the terminal channel result.
 
 7. Treat `scheduler.json`, `branches.json`, and `runner-result.json` as
    projections. They should not be required for parent/child communication once

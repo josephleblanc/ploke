@@ -14,7 +14,8 @@
   observation, and timeout behavior.
 - [`parent-child-channel.md`](parent-child-channel.md)
   Plan for replacing scattered parent/child filesystem communication with a
-  role-indexed runtime channel contract and transport adapters.
+  role-indexed runtime channel contract, transport adapters, and the invariant
+  that projections are for reconstruction rather than lifecycle authority.
 - [`artifact-runtime-lineage.md`](artifact-runtime-lineage.md)
   Historical/archive-candidate note on Runtime/Artifact lineage coordinates and
   operator provenance.

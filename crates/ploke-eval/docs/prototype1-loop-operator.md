@@ -60,7 +60,7 @@ loop. `doctor` reports one of these phases:
 | `materialize` | At least one planned child is still `Planned`; the next action stages its workspace/artifact surface. | `nodes/<node-id>/worktree/`, `node.json`, `transition-journal.jsonl` |
 | `build` | At least one child is `WorkspaceStaged`; the next action builds the child runtime. | `nodes/<node-id>/bin/`, `nodes/<node-id>/target/`, `node.json`, `transition-journal.jsonl` |
 | `spawn` | At least one child is `BinaryBuilt`; the next action writes an invocation and spawns the runtime. | `nodes/<node-id>/invocations/<runtime-id>.json`, `nodes/<node-id>/channels/<runtime-id>/`, `transition-journal.jsonl` |
-| `observe` | At least one child is `Running`; the next action observes terminal child result and compares treatment evidence. | `nodes/<node-id>/runner-result.json`, `nodes/<node-id>/results/<runtime-id>.json`, `evaluations/<branch-id>.json`, `transition-journal.jsonl` |
+| `observe` | At least one child is `Running`; the next action observes terminal channel result and compares treatment evidence. | `nodes/<node-id>/channels/<runtime-id>/child-to-parent.jsonl`, `nodes/<node-id>/results/<runtime-id>.json`, `evaluations/<branch-id>.json`, `transition-journal.jsonl` |
 | `select` | All planned children are terminal and selection can be recorded. | `transition-journal.jsonl`, History preview inputs, child evaluation reports |
 | `handoff` | A selected successor can be installed, sealed into History, spawned from the active checkout, and acknowledged. | active checkout, `.ploke/prototype1/parent_identity.json`, `history/`, `successor-ready/`, `successor-completion/`, successor streams |
 | `complete` | No next active phase is available for this parent turn. | Read-only state summary |
@@ -115,7 +115,7 @@ Campaign-local files under `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`:
 | `evaluations/<branch-id>.json` | Treatment-vs-baseline branch evaluation report. |
 | `nodes/<node-id>/node.json` | Scheduler-owned node record. |
 | `nodes/<node-id>/runner-request.json` | Runner request payload for one node. |
-| `nodes/<node-id>/runner-result.json` | Latest runner outcome used by the parent/controller path. |
+| `nodes/<node-id>/runner-result.json` | Latest runner outcome projection for reconstruction and operator display. |
 | `nodes/<node-id>/invocations/<runtime-id>.json` | Attempt-scoped child or successor bootstrap contract. |
 | `nodes/<node-id>/results/<runtime-id>.json` | Attempt-scoped runtime result mirror. |
 | `nodes/<node-id>/channels/<runtime-id>/parent-to-child.jsonl` | Parent-to-child channel messages for the invocation. |
@@ -166,8 +166,9 @@ Files outside the `prototype1/` subtree:
 - Treat `transition-journal.jsonl` as the append-only transition replay stream,
   but query it narrowly.
 - Treat `scheduler.json`, `branches.json`, node JSON, runner request/result
-  files, and CLI tables as operational projections unless the consuming
-  transition explicitly names them.
+  files, and CLI tables as operational projections. Parent/child lifecycle
+  observation should be driven by the per-runtime channel, not by these
+  projections.
 - Treat invocation, ready, completion, channel, and stream files as
   attempt-scoped transport/debug evidence.
 - Do not infer live egui or live runtime behavior from a CLI projection.

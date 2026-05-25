@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-15006265e24b3b9b",
+  "parent_node_id": "node-f4cf695decef97df",
+  "generation": 1,
+  "instance_id": "481f9cff-2f02-4f06-9ffd-c39f79f4a3a6",
+  "source_state_id": "prototype1-parent-p1-gemini35-flash-direct-15g2x3-20260525-035000-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:8eb6462bf60bd181c84909c95dcf10c83b1bf851"
+  },
+  "base_artifact_id": "artifact:git-commit:8eb6462bf60bd181c84909c95dcf10c83b1bf851",
+  "patch_id": "broad-harness:broad-harness-request:node-f4cf695decef97df:r6",
+  "derived_artifact_id": "artifact:git-commit:dfdd7eb33d1a78b63ee0fba1ca80b81d84521090",
+  "parent_branch_id": "prototype1-parent-p1-gemini35-flash-direct-15g2x3-20260525-035000-gen0",
+  "branch_id": "branch-c56614c6e6a63aa9",
+  "candidate_id": "broad-harness-g1-03",
+  "target_relpath": "crates/ingest/syn_parser/src/parser/visitor/mod.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/prototype1/nodes/node-15006265e24b3b9b",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/prototype1/workspaces/edit-harness/node-f4cf695decef97df-r6",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/prototype1/nodes/node-15006265e24b3b9b/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/prototype1/nodes/node-15006265e24b3b9b/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/prototype1/nodes/node-15006265e24b3b9b/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-05-25T12:06:51.780593895+00:00",
+  "updated_at": "2026-05-25T12:16:36.930506159+00:00"
+}

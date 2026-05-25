@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Staged for parent/child channel migration; live C3/C4 still use the transition journal.
+#![allow(dead_code)] // Staged for parent/child channel migration; some compatibility projections remain.
 
 //! Role-indexed parent/child runtime channel.
 //!
@@ -565,10 +565,11 @@ where
     S: CanSend<message::ResultWritten>,
     T: Transport,
 {
-    /// Send path-based `Child<ResultWritten>` evidence and advance the channel state.
+    /// Send path-based `Child<ResultWritten>` compatibility evidence.
     ///
     /// This is retained for compatibility with the artifact-backed handoff.
-    /// New execution handoff should prefer `send_terminal_result`.
+    /// It must not be used as terminal lifecycle authority; new execution
+    /// handoff should use `send_terminal_result`.
     pub(crate) fn send_result_written(
         self,
         runner_result_path: PathBuf,

@@ -72,7 +72,9 @@ Most transition journal entries use `phase: before` and `phase: after`.
 
 For `observe_child`, `before` is especially important: the parent has started
 waiting for a child result and has recorded the expected runner result path.
-The parent checks the child channel first and then the expected result file.
+The parent polls the child channel for the terminal `ToParent::Result`. Result
+files are reconstruction evidence and should not advance parent/child lifecycle
+state.
 
 ## Observe Child Probe
 
@@ -83,12 +85,11 @@ parent has C4
 child runtime id is known
 parent appended ObserveChild(Before, result = None)
 parent is polling child-to-parent.jsonl for ToParent::Result
-parent is also checking results/<runtime-id>.json as a fallback
 ```
 
-The poll interval is 100ms. If neither a channel `result` nor the expected
-result file appears within `OBSERVE_CHILD_STALE_AFTER`, currently ten minutes,
-the observe transition reports a stale or hung child.
+The poll interval is 100ms. If no channel `result` appears within the admitted
+profile's `execution.observe_child_stale_after_secs`, the observe transition
+reports a stale or hung child.
 
 The child side may be in one of several states.
 
@@ -154,7 +155,8 @@ still in eval closure, protocol closure, or post-closure evidence assembly.
 
 ### 4. Result File Exists But Channel Has No Result
 
-This is a fallback state, not proof that the parent will wait forever.
+This is a projection-only state. It is useful evidence for reconstruction, but
+it is not parent/child lifecycle authority.
 
 The child writes both:
 
@@ -164,13 +166,12 @@ nodes/<node-id>/runner-result.json
 ```
 
 before it sends the terminal channel message. During `observe_child`, the parent
-checks the channel first. If no `result` message is present but the expected
-attempt result file exists, the parent loads the attempt result from disk.
+waits for the channel `result` message.
 
-That fallback is enough to observe a failed child result. It is not enough to
-observe a successful treatment, because the result file does not carry the
-treatment evidence payload needed for comparison. A succeeded runner result
-without channel treatment evidence causes `MissingTreatmentEvidence`.
+A result file without a channel `result` means the child reached at least the
+result-write projection, but the parent should keep waiting until the channel
+`result` arrives or the observe timeout expires. A succeeded runner result
+without channel treatment evidence cannot be compared against baseline.
 
 Check:
 
@@ -192,9 +193,10 @@ The channel `result` body includes:
 If `runner_result.disposition` is not `Succeeded`, the parent records an
 `ObservedChildResult::Failed` and the node should become `Failed`.
 
-If `runner_result.disposition` is `Succeeded` but `treatment` is missing, the
-parent observe transition errors with `MissingTreatmentEvidence`. A successful
-runner result without treatment evidence is not enough for comparison.
+If the channel `result` has `runner_result.disposition = Succeeded` but
+`treatment` is missing, the parent observe transition errors with
+`MissingTreatmentEvidence`. A successful runner result without treatment
+evidence is not enough for comparison.
 
 If `runner_result.disposition` is `Succeeded` and `treatment` is present, the
 parent moves to `C5`, appends `ObserveChild(After, TreatmentComplete)`, and then
@@ -468,8 +470,8 @@ stderr, not through a separate validation-success file.
 | eval run root has partial artifacts, no `record.json.gz` | child is inside eval setup/indexing/agent turn/packaging or eval failed before durable completion |
 | protocol artifacts exist, closure protocol still missing | protocol artifacts may lead the closure projection; inspect artifact dir and projection freshness |
 | treatment campaign closure complete, no result file | child is building/validating treatment evidence or attaching oracle evidence |
-| failed attempt result exists, channel has no `result` | parent can observe the failure from the result-file fallback |
-| succeeded attempt result exists, channel has no `result` | parent can load the result, but success observation lacks treatment evidence and will error |
+| failed attempt result exists, channel has no `result` | child wrote a failure projection, but parent lifecycle observation still waits for channel `result` |
+| succeeded attempt result exists, channel has no `result` | child wrote a success projection, but parent lifecycle observation still waits for channel `result` with treatment evidence |
 | channel has `result`, no `ObserveChild(After)` | parent has not consumed the result yet, parent is stalled, or journal append failed |
 | `ObserveChild(After, Failed)` | child terminal failure was observed |
 | `ObserveChild(After, TreatmentComplete)` | child success was observed; parent comparison should follow |

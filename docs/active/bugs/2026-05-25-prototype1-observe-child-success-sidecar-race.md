@@ -1,6 +1,7 @@
 # Prototype1 Observe Child Success Sidecar Race
 
-Status: fixed in source; verify on the next fresh or safely resumed run.
+Status: open; current source has a channel-only C4 observation fix plus
+historical regression guards, but live fresh-run verification is still pending.
 Severity: loop blocker.
 
 ## Symptom
@@ -34,18 +35,18 @@ visible first.
 
 ## Broken Contract
 
-`C4 -> C5` treated the successful sidecar runner-result projection as a terminal
-observation even though successful children require treatment evidence, and the
+`C4 -> C5` treated runner-result projections as terminal observation evidence
+even though parent/child lifecycle state should be driven by the per-runtime
+channel. Successful children additionally require treatment evidence, and that
 treatment evidence only exists in the terminal channel `Result` payload.
 
-The sidecar is sufficient to observe failed children, but not successful
-children.
+The sidecar is reconstruction evidence. It should not advance C4 by itself.
 
 ## Fix
 
-`crates/ploke-eval/src/cli/prototype1_state/c4.rs` now keeps waiting when it
-sees a successful sidecar result without a channel terminal payload. Failed
-sidecar results still complete through the existing fallback path.
+`ObserveChild` now keeps waiting when it sees a sidecar result or compatibility
+`ResultWritten` projection without the terminal channel payload. It advances C4
+only from `ToParent::Result`.
 
 Regression test:
 
@@ -55,7 +56,41 @@ cargo test -p ploke-eval observe_child_waits_for_treatment_channel_result_after_
 
 The test writes a successful sidecar result first, delays the channel terminal
 `Result`, and verifies `ObserveChild` waits for the treatment-bearing channel
-payload instead of failing with `MissingTreatmentEvidence`.
+payload.
+
+Additional authority tests:
+
+```bash
+cargo test -p ploke-eval observe_child_times_out_on_success_sidecar_without_channel_result -- --nocapture
+cargo test -p ploke-eval observe_child_ignores_result_written_projection_for_success -- --nocapture
+cargo test -p ploke-eval observe_child_rejects_success_channel_result_without_treatment -- --nocapture
+```
+
+These tests prove that a sidecar alone does not advance C4, a compatibility
+`ResultWritten` message does not advance C4, and a successful channel `Result`
+without treatment evidence fails explicitly instead of entering comparison.
+
+That synthetic test is necessary but no longer sufficient. A fixture-backed
+historical transition/evidence regression now uses the actual sidecar/channel
+shape from:
+
+- Campaign: `p1-gemini35-flash-direct-15g2x3-20260525-035000`
+- Node: `node-15006265e24b3b9b`
+- Runtime: `8d4f99c6-c167-4c02-90d6-2055b174c34e`
+
+Additional regression test:
+
+```bash
+cargo test -p ploke-eval observe_child_replays_node_150_success_sidecar_then_historical_treatment_channel -- --nocapture
+```
+
+This test writes the historical successful sidecar first, delays the exact
+historical treatment-bearing channel record, and verifies `ObserveChild`
+advances to a successful observation instead of failing with
+`MissingTreatmentEvidence`.
+
+The bug remains open until a fresh live run verifies the parent can complete
+this observe/comparison path and continue without hitting the same blocker.
 
 ## Resume Notes
 

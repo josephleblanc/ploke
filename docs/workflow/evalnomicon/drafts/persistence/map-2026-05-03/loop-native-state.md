@@ -148,7 +148,7 @@ jq '{schema_version, role, campaign_id, node_id, runtime_id, journal_path, activ
 - Path pattern: `~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/results/<runtime-id>.json`.
 - Type/schema: `Prototype1RunnerResult`; same schema as latest runner result.
 - Writers: `record_attempt_runner_result` writes attempt result via `write_runner_result_at`, then writes latest runner-result projection (`crates/ploke-eval/src/cli/prototype1_process.rs:1595`).
-- Readers/CLI: `ObserveChild` discovers attempt result through `Child<ResultWritten>` journal records and loads it (`crates/ploke-eval/src/cli/prototype1_state/c4.rs:227`, `:304`); history-preview imports `AttemptResult`.
+- Readers/CLI: `ObserveChild` advances from terminal per-runtime child channel evidence; attempt result files are loaded for reconstruction and history-preview imports `AttemptResult`.
 - Join IDs: `runtime_id` from filename and child journal, plus `campaign_id`, `node_id`, `branch_id`, `evaluation_artifact_path`.
 - Evidence status: attempt-scoped raw result; more authoritative for a concrete runtime attempt than latest `runner-result.json`.
 - Safe inspection:
@@ -295,7 +295,7 @@ tail -n 80 ~/.ploke-eval/logs/prototype1_observation_<run-id>.jsonl | jq -R 'fro
 
 ## Reader Surfaces
 
-- `ploke-eval loop prototype1-state --repo-root . [--handoff-invocation <path>]`: live parent/successor path. It reads parent identity, scheduler, branch registry, child plan, node/request/result files, transition journal, and History state. This command advances state; do not use it as inspection.
+- `ploke-eval loop prototype1-state --repo-root . [--handoff-invocation <path>]`: live parent/successor path. It reads parent identity, scheduler, branch registry, child plan, the per-runtime child channel, and History state. Node/request/result files and transition journal records remain reconstruction surfaces; they must not replace terminal channel evidence. This command advances state; do not use it as inspection.
 - `ploke-eval loop prototype1-runner --invocation <path>`: inspects an invocation; with `--execute`, executes a child invocation and writes attempt/latest runner results.
 - `ploke-eval loop prototype1-runner --campaign <campaign> --node-id <node>`: inspects a node/request/result; with `--execute`, legacy node runner execution path.
 - `ploke-eval loop prototype1-branch status/show`: reads branch registry without changing it. `apply` mutates checkout and registry.

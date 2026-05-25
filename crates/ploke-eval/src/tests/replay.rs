@@ -951,14 +951,18 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
+// NOTE: we don't want to ignore these anymore, that is a bad pattern. they end up just getting forgotten.
+// better is to use this pattern.
+#[cfg(feature = "replay_tests")]
 async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
     init_tracing();
     const INSTANCE_ID: &str = "sharkdp__fd-1121";
+    // TODO: change these to point towards a local git-entered fixture of the previous live run record.
     const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/run.json";
     const JOB_CALL_ID: &str = "call_86042515";
     const WALK_CALL_ID: &str = "call_80363220";
 
+    // TODO: update helper function as well.
     let run_dir = historical_run_dir_with_tool_calls(INSTANCE_ID, &[JOB_CALL_ID, WALK_CALL_ID]);
     let run_manifest = PathBuf::from(RUN_MANIFEST);
     let turn_trace = run_dir.join("agent-turn-trace.json");
@@ -973,6 +977,7 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
         turn_trace.display()
     );
 
+    // TODO: a lot of the following could be turned into either another helper or a test macro
     let historical = load_prepared_single_run(&run_manifest);
     let trace = load_agent_turn_artifact(&turn_trace);
     let job_request = find_tool_request(&trace, JOB_CALL_ID);
@@ -1010,6 +1015,10 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     }
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
+    // NOTE: this is fine so far, but you're really under-utilizing the test
+    // harness. if we really want to be testing something meaningful here this
+    // can all be going through the test harness, or maybe tui_adapter functions
+    // or something, I'd need to look at tui_adapter.rs more to say.
     replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &job_request)
         .await
         .expect("historical job non_semantic_patch replay should execute");
@@ -1025,6 +1034,8 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     let walk_request_id = Uuid::parse_str(&walk_request.request_id).expect("walk request id uuid");
     let walk_call_id: ploke_core::ArcStr = walk_request.call_id.clone().into();
     let walk_proposal_id = derive_edit_proposal_id(walk_request_id, &walk_call_id);
+
+    // same here, should go through test harness
     let walk_err =
         replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &walk_request)
             .await

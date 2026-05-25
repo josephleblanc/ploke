@@ -75,7 +75,8 @@ A(R) ⊆ A(role(Ψ), state(Ψ)) ⊆ A(role(Ψ))
 State narrows role authority. The runtime is constrained by the state currently
 held along its admitted path, not by a runtime-global role label. For example,
 `Child<Starting>` may acknowledge startup, while `Child<Evaluating>` may write
-evaluation progress and eventually cross to `Child<ResultWritten>`.
+evaluation progress, persist a `Child<ResultWritten>` projection, and send the
+terminal child-channel `Result` that the parent observes.
 
 ### Disjoint Mutable Surfaces
 
@@ -127,7 +128,9 @@ Role<S> -> Role<S'> emits record(S -> S')
 
 The record should not be an arbitrary status write. This is why
 `Child<Ready>`, `Child<Evaluating>`, and `Child<ResultWritten>` matter: the
-record is evidence of a typed transition, not just monitoring text.
+record is evidence of a typed child-side transition, not just monitoring text.
+For parent/child lifecycle observation, the terminal per-runtime channel
+`Result` remains the authority-bearing message.
 
 ### Transport Substitution
 

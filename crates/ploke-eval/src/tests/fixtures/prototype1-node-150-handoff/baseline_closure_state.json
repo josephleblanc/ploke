@@ -1,0 +1,124 @@
+{
+  "schema_version": "closure-state.v1",
+  "campaign_id": "p1-gemini35-flash-direct-15g2x3-20260525-035000",
+  "updated_at": "2026-05-25T11:16:31.284095001+00:00",
+  "config": {
+    "benchmark_family": "multi_swe_bench_rust",
+    "model_id": "google/gemini-3.5-flash",
+    "route_source": "direct_google",
+    "registry_path": "/home/brasides/.ploke-eval/registries/multi-swe-bench-rust.json",
+    "dataset_sources": [
+      {
+        "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/slice.jsonl",
+        "label": "slice"
+      }
+    ],
+    "required_procedures": [
+      "tool-call-intent-segments",
+      "tool-call-review",
+      "tool-call-segment-review"
+    ],
+    "instances_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000",
+    "batches_root": "/home/brasides/.ploke-eval/batches/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000"
+  },
+  "registry": {
+    "expected_total": 1,
+    "mapped_total": 1,
+    "missing_total": 0,
+    "ambiguous_total": 0,
+    "status": "complete"
+  },
+  "eval": {
+    "expected_total": 1,
+    "complete_total": 1,
+    "failed_total": 0,
+    "missing_total": 0,
+    "partial_total": 0,
+    "in_progress_total": 0,
+    "status": "complete",
+    "last_transition_at": "2026-05-25T11:16:30.468+00:00"
+  },
+  "protocol": {
+    "expected_total": 1,
+    "full_total": 1,
+    "partial_total": 0,
+    "failed_total": 0,
+    "missing_total": 0,
+    "incompatible_total": 0,
+    "ineligible_total": 0,
+    "in_progress_total": 0,
+    "status": "complete",
+    "required_procedures": [
+      "tool-call-intent-segments",
+      "tool-call-review",
+      "tool-call-segment-review"
+    ],
+    "status_by_procedure": {
+      "tool-call-intent-segments": {
+        "expected_total": 1,
+        "complete_total": 1,
+        "failed_total": 0,
+        "missing_total": 0,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      },
+      "tool-call-review": {
+        "expected_total": 1,
+        "complete_total": 1,
+        "failed_total": 0,
+        "missing_total": 0,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      },
+      "tool-call-segment-review": {
+        "expected_total": 1,
+        "complete_total": 1,
+        "failed_total": 0,
+        "missing_total": 0,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      }
+    },
+    "last_transition_at": "2026-05-25T11:16:30.468+00:00"
+  },
+  "instances": [
+    {
+      "instance_id": "BurntSushi__ripgrep-2209",
+      "dataset_label": "slice",
+      "repo_family": "BurntSushi__ripgrep",
+      "registry_status": "mapped",
+      "eval_status": "complete",
+      "protocol_status": "complete",
+      "artifacts": {
+        "registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1779706500140-structured-current-policy-bc499ae1.json",
+        "run_manifest": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/run.json",
+        "run_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1",
+        "record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/record.json.gz",
+        "execution_log": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/execution-log.json",
+        "indexing_status": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/indexing-status.json",
+        "parse_failure": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/parse-failure.json",
+        "snapshot_status": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/snapshot-status.json",
+        "msb_submission": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/multi-swe-bench-submission.jsonl",
+        "protocol_artifacts_dir": "/home/brasides/.ploke-eval/protocol/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1",
+        "protocol_anchor": "/home/brasides/.ploke-eval/protocol/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/BurntSushi__ripgrep-2209/runs/run-1779706500140-structured-current-policy-bc499ae1/1779707417745_tool_call_intent_segmentation_BurntSushi__ripgrep-2209.json"
+      },
+      "protocol_procedures": {
+        "tool-call-intent-segments": "complete",
+        "tool-call-review": "complete",
+        "tool-call-segment-review": "complete"
+      },
+      "protocol_counts": {
+        "total_calls": 86,
+        "reviewed_calls": 86,
+        "total_segments": 12,
+        "usable_segments": 12,
+        "mismatched_segments": 0,
+        "missing_segments": 0
+      },
+      "last_event_at": "2026-05-25T11:16:30.468+00:00"
+    }
+  ]
+}

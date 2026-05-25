@@ -3848,7 +3848,7 @@ fn prototype1_monitor_locations(
             label: "latest runner result",
             path: prototype_root.join("nodes/<node-id>/runner-result.json"),
             volatility: "node-scoped JSON; overwritten or cleared before a fresh attempt",
-            description: "Latest runner outcome used by the parent/controller.",
+            description: "Latest runner outcome projection for display and reconstruction.",
         },
         Prototype1MonitorLocation {
             label: "runtime invocation",

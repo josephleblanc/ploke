@@ -13,9 +13,7 @@ use crate::cli::prototype1_state::cli_facing::Prototype1TreatmentEvidence;
 use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome, Prototype1NodeRecord,
     Prototype1RunnerDisposition, Prototype1RunnerResult, RecordStore, Surface,
-    load_runner_result_at,
 };
-use crate::projection::OperatorProjectionRead;
 
 use super::c3::C4;
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
@@ -129,8 +127,6 @@ pub(crate) enum ObserveChildError {
     MissingTreatmentEvidence { node_id: String },
     #[error("failed to read child channel: {detail}")]
     ReadChannel { detail: String },
-    #[error("failed to load child runner result '{path}': {detail}")]
-    LoadRunnerResult { path: PathBuf, detail: String },
     #[error(
         "timed out after {waited_ms}ms waiting for child result for node '{node_id}' runtime '{runtime_id}' at '{runner_result_path}'"
     )]
@@ -304,34 +300,7 @@ impl Intervention<C4, C5> for ObserveChild {
             let observed = child_result_from_channel(&parent_channel, channel_cursor)
                 .map_err(CommitError::Transition)?;
             channel_cursor = observed.0;
-            let observed = if observed.1.is_some() {
-                observed.1
-            } else if runner_result_path.exists() {
-                let runner_result = load_runner_result_at(
-                    &runner_result_path,
-                    OperatorProjectionRead::cli_operator(),
-                )
-                .map_err(|source| {
-                    CommitError::Transition(ObserveChildError::LoadRunnerResult {
-                        path: runner_result_path.clone(),
-                        detail: source.to_string(),
-                    })
-                })?;
-                // The sidecar result file is written before the terminal channel
-                // payload. It is enough to observe failed children, but successful
-                // children must keep waiting for the channel `Result`, because
-                // treatment evidence is not stored in the sidecar projection.
-                if runner_result.disposition == Prototype1RunnerDisposition::Succeeded {
-                    None
-                } else {
-                    Some(ChildResultPayload {
-                        runner_result,
-                        treatment: None,
-                    })
-                }
-            } else {
-                None
-            };
+            let observed = observed.1;
             if let Some(observed) = observed {
                 if let Some(wait) = wait.take() {
                     wait.success();
@@ -517,6 +486,16 @@ mod tests {
         }
     }
 
+    fn failed_runner_result(runtime: &C4) -> Prototype1RunnerResult {
+        let mut result = runner_result(runtime);
+        result.status = Prototype1NodeStatus::Failed;
+        result.disposition = Prototype1RunnerDisposition::TreatmentFailed;
+        result.treatment_campaign_id = None;
+        result.detail = Some("synthetic treatment failure".to_string());
+        result.exit_code = Some(1);
+        result
+    }
+
     fn resolved_branch() -> ResolvedTreatmentBranch {
         ResolvedTreatmentBranch {
             instance_id: "instance".to_string(),
@@ -617,10 +596,35 @@ mod tests {
         }
     }
 
-    fn send_terminal_channel_result_after_delay(
+    fn historical_node_150_c4(root: &std::path::Path) -> C4 {
+        let runtime_id: RuntimeId = "8d4f99c6-c167-4c02-90d6-2055b174c34e"
+            .parse()
+            .expect("historical runtime id");
+        let mut runtime = c4(root, runtime_id);
+        runtime.campaign_id = "p1-gemini35-flash-direct-15g2x3-20260525-035000".to_string();
+        runtime.node.node_id = "node-15006265e24b3b9b".to_string();
+        runtime.node.generation = 1;
+        runtime.node.branch_id = "branch-c56614c6e6a63aa9".to_string();
+        runtime.node.candidate_id = "broad-harness-g1-03".to_string();
+        runtime.node.status = Prototype1NodeStatus::Running;
+        runtime.request.campaign_id = runtime.campaign_id.clone();
+        runtime.request.node_id = runtime.node.node_id.clone();
+        runtime.request.generation = runtime.node.generation;
+        runtime.request.branch_id = runtime.node.branch_id.clone();
+        runtime.resolved.selected_branch_id = Some(runtime.node.branch_id.clone());
+        runtime.resolved.branch.branch_id = runtime.node.branch_id.clone();
+        runtime.resolved.branch.candidate_id = runtime.node.candidate_id.clone();
+        runtime.resolved.branch.branch_label =
+            "broad harness edit broad-harness-request:node-f4cf695decef97df:r6".to_string();
+        runtime.resolved.branch.synthesized_spec_id =
+            "prototype1:broad-headless-tui-adapter-v1".to_string();
+        runtime
+    }
+
+    fn send_terminal_channel_payload_after_delay(
         runtime: &C4,
         runner_result: Prototype1RunnerResult,
-        treatment: Prototype1TreatmentEvidence,
+        treatment: Option<Prototype1TreatmentEvidence>,
     ) -> thread::JoinHandle<()> {
         let runtime_id = runtime.binary.child_runtime.expect("runtime id");
         let endpoints = Endpoints::new(
@@ -658,9 +662,153 @@ mod tests {
                 .evaluating()
                 .expect("child evaluating");
             Channel::for_child(&child, endpoints, FileTransport)
-                .send_terminal_result(runner_result, Some(treatment))
+                .send_terminal_result(runner_result, treatment)
                 .expect("send terminal result");
         })
+    }
+
+    fn send_terminal_channel_result_after_delay(
+        runtime: &C4,
+        runner_result: Prototype1RunnerResult,
+        treatment: Prototype1TreatmentEvidence,
+    ) -> thread::JoinHandle<()> {
+        send_terminal_channel_payload_after_delay(runtime, runner_result, Some(treatment))
+    }
+
+    fn send_result_written_projection(runtime: &C4, runner_result_path: PathBuf) {
+        let runtime_id = runtime.binary.child_runtime.expect("runtime id");
+        let endpoints = Endpoints::new(
+            channel_root(&runtime.node.node_dir, runtime_id),
+            runtime.campaign_id.clone(),
+            runtime.node.node_id.clone(),
+            runtime_id,
+        );
+        let refs = Refs {
+            campaign_id: runtime.campaign_id.clone(),
+            node_id: runtime.node.node_id.clone(),
+            instance_id: runtime.node.instance_id.clone(),
+            source_state_id: runtime.node.source_state_id.clone(),
+            branch_id: runtime.node.branch_id.clone(),
+            candidate_id: runtime.node.candidate_id.clone(),
+            branch_label: runtime.resolved.branch.branch_label.clone(),
+            spec_id: runtime.resolved.branch.synthesized_spec_id.clone(),
+        };
+        let paths = Paths {
+            repo_root: runtime.artifact.repo_root.clone(),
+            workspace_root: runtime.node.workspace_root.clone(),
+            binary_path: runtime.node.binary_path.clone(),
+            target_relpath: runtime.node.target_relpath.clone(),
+            absolute_path: runtime
+                .node
+                .workspace_root
+                .join(&runtime.node.target_relpath),
+        };
+        let child = RuntimeChild::new(
+            runtime.node.node_dir.join("child-token-journal.jsonl"),
+            runtime_id,
+            1,
+            refs,
+            paths,
+            100,
+        )
+        .ready()
+        .expect("child ready")
+        .evaluating()
+        .expect("child evaluating");
+        Channel::for_child(&child, endpoints, FileTransport)
+            .send_result_written(runner_result_path)
+            .expect("send result-written projection");
+    }
+
+    #[test]
+    fn observe_child_times_out_on_success_sidecar_without_channel_result() {
+        let temp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let runtime = c4(temp.path(), runtime_id);
+        let runner_result = runner_result(&runtime);
+        let runner_result_path = result_path(&runtime.node.node_dir, runtime_id);
+        std::fs::create_dir_all(runner_result_path.parent().expect("result parent"))
+            .expect("create results dir");
+        std::fs::write(
+            &runner_result_path,
+            serde_json::to_string(&runner_result).expect("serialize runner result"),
+        )
+        .expect("write sidecar runner result");
+
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let err = ObserveChild::new(Duration::from_millis(1))
+            .transition(runtime, &mut journal)
+            .expect_err("sidecar success projection must not advance C4");
+
+        assert!(matches!(
+            err,
+            CommitError::Transition(ObserveChildError::TimedOutWaitingForResult { .. })
+        ));
+    }
+
+    #[test]
+    fn observe_child_ignores_result_written_projection_for_success() {
+        let temp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let runtime = c4(temp.path(), runtime_id);
+        let runner_result = runner_result(&runtime);
+        let runner_result_path = result_path(&runtime.node.node_dir, runtime_id);
+        std::fs::create_dir_all(runner_result_path.parent().expect("result parent"))
+            .expect("create results dir");
+        std::fs::write(
+            &runner_result_path,
+            serde_json::to_string(&runner_result).expect("serialize runner result"),
+        )
+        .expect("write sidecar runner result");
+        send_result_written_projection(&runtime, runner_result_path);
+
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let err = ObserveChild::new(Duration::from_millis(1))
+            .transition(runtime, &mut journal)
+            .expect_err("ResultWritten projection must not advance C4");
+
+        assert!(matches!(
+            err,
+            CommitError::Transition(ObserveChildError::TimedOutWaitingForResult { .. })
+        ));
+    }
+
+    #[test]
+    fn observe_child_rejects_success_channel_result_without_treatment() {
+        let temp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let runtime = c4(temp.path(), runtime_id);
+        let runner_result = runner_result(&runtime);
+        let sender = send_terminal_channel_payload_after_delay(&runtime, runner_result, None);
+
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let err = ObserveChild::new(Duration::from_secs(2))
+            .transition(runtime, &mut journal)
+            .expect_err("successful channel result without treatment must not advance C4");
+
+        sender.join().expect("sender thread");
+        assert!(matches!(
+            err,
+            CommitError::Transition(ObserveChildError::MissingTreatmentEvidence { .. })
+        ));
+    }
+
+    #[test]
+    fn observe_child_advances_failed_channel_result_without_treatment() {
+        let temp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let runtime = c4(temp.path(), runtime_id);
+        let runner_result = failed_runner_result(&runtime);
+        let sender = send_terminal_channel_payload_after_delay(&runtime, runner_result, None);
+
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let outcome = ObserveChild::new(Duration::from_secs(2))
+            .transition(runtime, &mut journal)
+            .expect("failed channel result should advance C4 as failed");
+
+        sender.join().expect("sender thread");
+        let Outcome::Advanced(next) = outcome;
+        assert!(matches!(next.observed, ObservedChild::Failed(_)));
     }
 
     #[test]
@@ -688,5 +836,50 @@ mod tests {
         sender.join().expect("sender thread");
         let Outcome::Advanced(next) = outcome;
         assert!(matches!(next.observed, ObservedChild::Succeeded(_)));
+    }
+
+    #[test]
+    fn observe_child_replays_node_150_success_sidecar_then_historical_treatment_channel() {
+        let temp = tempdir().expect("tempdir");
+        let runtime = historical_node_150_c4(temp.path());
+        let runtime_id = runtime.binary.child_runtime.expect("runtime id");
+        let runner_result_path = result_path(&runtime.node.node_dir, runtime_id);
+        std::fs::create_dir_all(runner_result_path.parent().expect("result parent"))
+            .expect("create results dir");
+        std::fs::write(
+            &runner_result_path,
+            include_str!("../../tests/fixtures/prototype1-node-150-handoff/runner-result.json"),
+        )
+        .expect("write historical sidecar runner result");
+
+        let channel_path =
+            channel_root(&runtime.node.node_dir, runtime_id).join("child-to-parent.jsonl");
+        let sender = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            std::fs::create_dir_all(channel_path.parent().expect("channel parent"))
+                .expect("create channel dir");
+            std::fs::write(
+                &channel_path,
+                include_str!(
+                    "../../tests/fixtures/prototype1-node-150-handoff/child-to-parent.jsonl"
+                ),
+            )
+            .expect("write historical terminal channel result");
+        });
+
+        let mut journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        let outcome = ObserveChild::new(Duration::from_secs(2))
+            .transition(runtime, &mut journal)
+            .expect("observe historical child");
+
+        sender.join().expect("sender thread");
+        let Outcome::Advanced(next) = outcome;
+        let ObservedChild::Succeeded(success) = next.observed else {
+            panic!("historical child should be observed as succeeded");
+        };
+        assert_eq!(
+            success.treatment.treatment_campaign_id,
+            "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+        );
     }
 }

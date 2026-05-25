@@ -18,6 +18,7 @@ Operational skills for `§X`:
 - [priority-queue](priority-queue/SKILL.md)
 - [run-protocol](run-protocol/SKILL.md)
 - [postmortem-protocol](postmortem-protocol/SKILL.md)
+- [type-reuse-discipline](type-reuse-discipline/SKILL.md)
 
 Maintenance skills:
 
