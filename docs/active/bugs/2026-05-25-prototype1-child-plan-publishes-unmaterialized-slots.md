@@ -119,3 +119,17 @@ Verification:
 cargo test -p ploke-eval prompt_preflight_skips_unused_published_slot_workspaces_after_child_plan
 cargo test -p ploke-eval prompt_preflight
 ```
+
+After rebuilding `ploke-eval`, a doctor check against the original campaign no
+longer reports the r4-r9 workspaces as blockers:
+
+```text
+prompt_preflight.outcome = passed
+phase = materialize
+blockers = []
+notes = published broad-harness prompt ... r4-r9 is not referenced by the child plan; candidate workspace checks skipped
+```
+
+This verifies the diagnostic path, not the cleanliness of the old campaign as
+benchmark evidence. The campaign still contains child attempts that were
+reviewed as suspicious under the previous admission behavior.
