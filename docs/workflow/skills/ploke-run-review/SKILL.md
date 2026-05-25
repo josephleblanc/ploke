@@ -70,6 +70,65 @@ must not be cited as successful reviews.
 11. Write or update the run review in `docs/active/agents/run-reviews/`.
 12. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
 
+## Scout Fan-Out Before Full Review
+
+For broad or active Prototype 1 runs, use a fan-out/fan-in scout pass before
+spending frontier review effort on full synthesis. The scout pass is an
+existence and red-flag check, not a durable run review.
+
+Use lightweight/high-reasoning agents for scouts, for example a small high
+reasoning model or `gpt-5.3-codex-spark` with high reasoning when available.
+If the runtime has `gpt-5.5-mini` with high reasoning, that is also a suitable
+scout model. Reserve `gpt-5.5` with `xhigh` reasoning, or the strongest
+available reviewer, for the fan-in synthesis and any active run-review report.
+
+Recommended scout shards:
+
+- Authority and scheduler scout:
+  `history/blocks`, `transition-journal.jsonl`, parent identity, run profile,
+  scheduler projection, and obvious contradictions between them.
+- Node/runtime scout:
+  `node.json`, `runner-request.json`, `runner-result.json`,
+  `results/*.json`, `invocations/*.json`, channels, streams, host process
+  evidence, and stale-running/stale-observe symptoms.
+- Broad-harness/edit scout:
+  edit request/result JSON, headless TUI trace, candidate workspace git state,
+  proposal ids, staged/applied/failed/stale lifecycle, protected surface, and
+  cargo/tool output visibility.
+- Run-root/model scout:
+  run registration, `record.json.gz`, `agent-turn-*`,
+  `llm-full-responses.jsonl`, validation audit, benchmark patch projection,
+  Multi-SWE-bench submission, and model/provider provenance.
+- Protocol/eval/selection scout:
+  closure state, protocol artifacts, evaluation artifacts, MBE/oracle evidence,
+  selection History payloads, metric/formula records, and projection failures.
+
+Each scout should return only:
+
+- the exact root, node, runtime id, branch id, run id, or attempt it checked;
+- a compact checklist using the status labels from
+  `record-persistence-checklist.md`;
+- concrete red flags with file/path evidence;
+- "no red flag found" only for the shard it actually inspected;
+- whether a full run-review follow-up is needed.
+
+Do not let scouts write or update durable active reviews. Their output is input
+to fan-in only. A full reviewer must still apply the quality gate: prove the
+execution path, reconstruct at least one concrete trace chain, verify at least
+one suspicious tool result against an artifact or checkout, and separate
+mechanical completion from benchmark usefulness.
+
+During fan-in, promote scout findings into one of these outcomes:
+
+- no full review needed yet because the run is still in progress and the
+  checked surfaces are internally consistent;
+- full run review needed for a completed attempt, run root, or suspicious
+  child;
+- non-blocking alive bug needed for a reproducible observability or lifecycle
+  gap;
+- blocker-repair handoff needed because required transition, eval, protocol,
+  oracle, or model/tool evidence is invalid, contradictory, or misleading.
+
 ## Record Inventory Before Missing-Record Claims
 
 Before writing that evidence is missing, check the runtime-playback inventory:
