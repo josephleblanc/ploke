@@ -100,7 +100,7 @@ const HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT: u32 = 128;
 const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 900;
 const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
 const STARTING_DB_CACHE_VERSION: u32 = 2;
-const VALIDATION_AUDIT_SCHEMA_V1: &str = "agent-validation-audit.v1";
+const VALIDATION_AUDIT_SCHEMA_V2: &str = "agent-validation-audit.v2";
 const VALIDATION_AUDIT_FILE: &str = "validation-audit.json";
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
@@ -863,6 +863,7 @@ pub struct AgentValidationAudit {
     pub schema_version: String,
     pub checked_at: String,
     pub changed_paths: Vec<String>,
+    pub patch_quality: PatchQualityAudit,
     pub cargo_calls: Vec<CargoValidationCall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_cargo_call: Option<CargoValidationCall>,
@@ -870,6 +871,29 @@ pub struct AgentValidationAudit {
     pub final_cargo_covers_changed_files: bool,
     pub fmt_check_observed: bool,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchQualityAudit {
+    pub changed_path_count: usize,
+    pub test_changed_path_count: usize,
+    pub production_changed_path_count: usize,
+    pub test_only_changed_paths: bool,
+    pub edit_request_count: usize,
+    pub test_edit_request_count: usize,
+    pub production_edit_request_count: usize,
+    pub mostly_test_edit_requests: bool,
+    pub expected_output_edit_candidates: Vec<ExpectedOutputEditCandidate>,
+    pub red_flags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExpectedOutputEditCandidate {
+    pub event_index: usize,
+    pub call_id: String,
+    pub tool: String,
+    pub path: String,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -889,6 +913,12 @@ pub struct CargoValidationCall {
 struct CargoRequestProjection {
     requested_scope: Option<String>,
     package: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditRequestProjection {
+    path: String,
+    body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1979,6 +2009,7 @@ fn build_agent_validation_audit(
         .filter(|change| change.changed)
         .map(|change| change.path.clone())
         .collect();
+    let patch_quality = build_patch_quality_audit(artifact, &changed_paths);
     let mut cargo_requests: HashMap<String, CargoRequestProjection> = HashMap::new();
     let mut cargo_calls = Vec::new();
 
@@ -2051,11 +2082,13 @@ fn build_agent_validation_audit(
                 .to_string(),
         );
     }
+    warnings.extend(patch_quality.red_flags.iter().cloned());
 
     AgentValidationAudit {
-        schema_version: VALIDATION_AUDIT_SCHEMA_V1.to_string(),
+        schema_version: VALIDATION_AUDIT_SCHEMA_V2.to_string(),
         checked_at: chrono::Utc::now().to_rfc3339(),
         changed_paths,
+        patch_quality,
         cargo_calls,
         final_cargo_call,
         successful_cargo_covering_changed_files,
@@ -2063,6 +2096,172 @@ fn build_agent_validation_audit(
         fmt_check_observed,
         warnings,
     }
+}
+
+fn build_patch_quality_audit(
+    artifact: &AgentTurnArtifact,
+    changed_paths: &[String],
+) -> PatchQualityAudit {
+    let changed_path_count = changed_paths.len();
+    let test_changed_path_count = changed_paths
+        .iter()
+        .filter(|path| path_looks_test_scoped(path))
+        .count();
+    let production_changed_path_count = changed_path_count.saturating_sub(test_changed_path_count);
+
+    let mut edit_request_count = 0;
+    let mut test_edit_request_count = 0;
+    let mut production_edit_request_count = 0;
+    let mut expected_output_edit_candidates = Vec::new();
+
+    for (event_index, event) in artifact.events.iter().enumerate() {
+        let ObservedTurnEvent::ToolRequested(record) = event else {
+            continue;
+        };
+        for edit in decode_edit_request_projections(&record.tool, &record.arguments) {
+            edit_request_count += 1;
+            let test_scoped =
+                path_looks_test_scoped(&edit.path) || body_looks_test_scoped(&edit.body);
+            if test_scoped {
+                test_edit_request_count += 1;
+            } else {
+                production_edit_request_count += 1;
+            }
+
+            if edit_looks_like_expected_output_change(&edit.body) {
+                expected_output_edit_candidates.push(ExpectedOutputEditCandidate {
+                    event_index,
+                    call_id: record.call_id.clone(),
+                    tool: record.tool.clone(),
+                    path: edit.path,
+                    evidence: expected_output_evidence(&edit.body),
+                });
+            }
+        }
+    }
+
+    let test_only_changed_paths = changed_path_count > 0 && production_changed_path_count == 0;
+    let mostly_test_edit_requests =
+        edit_request_count > 0 && test_edit_request_count > production_edit_request_count;
+    let mut red_flags = Vec::new();
+    if test_only_changed_paths {
+        red_flags.push("patch changed only test-scoped paths".to_string());
+    }
+    if mostly_test_edit_requests {
+        red_flags.push(format!(
+            "edit requests were mostly test-scoped ({test_edit_request_count}/{edit_request_count})"
+        ));
+    }
+    if !expected_output_edit_candidates.is_empty() {
+        red_flags.push(
+            "edit request looks like a test expected-output/assertion change; inspect whether behavior changed"
+                .to_string(),
+        );
+    }
+
+    PatchQualityAudit {
+        changed_path_count,
+        test_changed_path_count,
+        production_changed_path_count,
+        test_only_changed_paths,
+        edit_request_count,
+        test_edit_request_count,
+        production_edit_request_count,
+        mostly_test_edit_requests,
+        expected_output_edit_candidates,
+        red_flags,
+    }
+}
+
+fn decode_edit_request_projections(
+    tool: &str,
+    arguments: &ploke_records::tool_contracts::ToolArgumentsJson,
+) -> Vec<EditRequestProjection> {
+    match arguments.decode_for_tool(tool) {
+        PersistedToolCallArguments::Decoded(ToolCallArguments::ApplyCodeEdit(args)) => args
+            .edits
+            .into_iter()
+            .map(|edit| EditRequestProjection {
+                path: edit.file,
+                body: edit.code,
+            })
+            .collect(),
+        PersistedToolCallArguments::Decoded(ToolCallArguments::InsertRustItem(args)) => {
+            vec![EditRequestProjection {
+                path: args.file,
+                body: args.code,
+            }]
+        }
+        PersistedToolCallArguments::Decoded(ToolCallArguments::CreateFile(args)) => {
+            vec![EditRequestProjection {
+                path: args.file_path,
+                body: args.content,
+            }]
+        }
+        PersistedToolCallArguments::Decoded(ToolCallArguments::NsPatch(args)) => args
+            .patches
+            .into_iter()
+            .map(|patch| EditRequestProjection {
+                path: patch.file,
+                body: format!("{}\n{}", patch.reasoning, patch.diff),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn path_looks_test_scoped(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    lower.contains("/tests/")
+        || lower.contains("/test/")
+        || lower.ends_with("_test.rs")
+        || lower.ends_with("_tests.rs")
+        || lower.ends_with(".test.rs")
+        || lower.ends_with(".tests.rs")
+}
+
+fn body_looks_test_scoped(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("#[test]")
+        || lower.contains("assert_eq!")
+        || lower.contains("assert_ne!")
+        || lower.contains("expected")
+        || lower.contains("insta::")
+}
+
+fn edit_looks_like_expected_output_change(body: &str) -> bool {
+    if !body_looks_test_scoped(body) {
+        return false;
+    }
+    let removed_expected = body.lines().any(diff_removed_line_looks_expected);
+    let added_expected = body.lines().any(diff_added_line_looks_expected);
+    removed_expected && added_expected
+}
+
+fn diff_removed_line_looks_expected(line: &str) -> bool {
+    line.starts_with('-') && !line.starts_with("---") && line_looks_expected_value(line)
+}
+
+fn diff_added_line_looks_expected(line: &str) -> bool {
+    line.starts_with('+') && !line.starts_with("+++") && line_looks_expected_value(line)
+}
+
+fn line_looks_expected_value(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains('"')
+        || lower.contains("expected")
+        || lower.contains("assert_eq!")
+        || lower.contains("snapshot")
+}
+
+fn expected_output_evidence(body: &str) -> String {
+    body.lines()
+        .filter(|line| {
+            diff_removed_line_looks_expected(line) || diff_added_line_looks_expected(line)
+        })
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn decode_cargo_request_projection(
@@ -6220,6 +6419,28 @@ mod tests {
         })
     }
 
+    fn ns_patch_request(
+        call_id: &str,
+        file: &str,
+        diff: &str,
+        reasoning: &str,
+    ) -> ObservedTurnEvent {
+        let args = serde_json::json!({
+            "patches": [{
+                "file": file,
+                "diff": diff,
+                "reasoning": reasoning,
+            }]
+        });
+        ObservedTurnEvent::ToolRequested(ToolRequestRecord {
+            request_id: format!("req-{call_id}"),
+            parent_id: format!("parent-{call_id}"),
+            call_id: call_id.to_string(),
+            tool: "non_semantic_patch".to_string(),
+            arguments: args.to_string().into(),
+        })
+    }
+
     #[test]
     fn validation_audit_flags_final_cargo_manifest_that_misses_changed_file() {
         let repo_root = PathBuf::from("/tmp/ripgrep");
@@ -6269,6 +6490,45 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("no formatting check evidence recorded"))
+        );
+    }
+
+    #[test]
+    fn validation_audit_flags_expected_output_patch_candidates() {
+        let repo_root = PathBuf::from("/tmp/ripgrep");
+        let prepared = validation_prepared_run(repo_root.clone());
+        let changed_path = "crates/printer/src/util.rs";
+        let events = vec![ns_patch_request(
+            "call-patch",
+            changed_path,
+            r#"@@
+ #[test]
+ fn replacement_lookahead_bug_2208() {
+-    assert_eq!(actual, "1:foo\n3:foo\n");
++    assert_eq!(actual, "1:foo\n2:foo\n");
+ }
+"#,
+            "adjust expected output after the focused regression failed",
+        )];
+        let artifact = validation_turn_artifact(changed_path, events);
+
+        let audit = build_agent_validation_audit(&prepared, &artifact);
+
+        assert_eq!(audit.patch_quality.edit_request_count, 1);
+        assert_eq!(audit.patch_quality.test_edit_request_count, 1);
+        assert_eq!(audit.patch_quality.production_edit_request_count, 0);
+        assert!(audit.patch_quality.mostly_test_edit_requests);
+        assert_eq!(audit.patch_quality.expected_output_edit_candidates.len(), 1);
+        let candidate = &audit.patch_quality.expected_output_edit_candidates[0];
+        assert_eq!(candidate.call_id, "call-patch");
+        assert_eq!(candidate.tool, "non_semantic_patch");
+        assert_eq!(candidate.path, changed_path);
+        assert!(candidate.evidence.contains("1:foo\\n3:foo"));
+        assert!(
+            audit
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("expected-output/assertion change"))
         );
     }
 
