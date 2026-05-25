@@ -407,6 +407,8 @@ pub enum PrepareError {
     Serialize(serde_json::Error),
     #[error("database setup failed during '{phase}': {detail}")]
     DatabaseSetup { phase: &'static str, detail: String },
+    #[error("provider unavailable during '{phase}': {detail}")]
+    ProviderUnavailable { phase: &'static str, detail: String },
     #[error("timed out waiting for '{phase}' after {secs} seconds")]
     Timeout { phase: &'static str, secs: u64 },
     #[error("event stream closed while waiting for '{phase}'")]

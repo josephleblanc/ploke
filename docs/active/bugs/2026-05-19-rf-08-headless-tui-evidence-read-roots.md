@@ -55,6 +55,12 @@ from writing to protected or output-owned paths.
 - [`node-81bd26e4b6222d08-r9.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-smoke-broad-harness-1x3-20260519-1/prototype1/messages/edit-harness-result/node-81bd26e4b6222d08-r9.headless-tui.json>)
   repeated the missing-node-artifact pattern for
   `nodes/node-81bd26e4b6222d08-r9/runner-result.json`.
+- 2026-05-25 recurrence:
+  [`node-57e8487f70ce4abc.headless-tui.json`](</home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824/prototype1/messages/edit-harness-result/node-57e8487f70ce4abc.headless-tui.json>)
+  rejected `list_dir` on the enclosing
+  `/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824/prototype1`
+  directory as outside configured roots, even though the prompt told the agent
+  to inspect `/prototype1/nodes` for prior attempt history.
 
 ## Current Code Path
 

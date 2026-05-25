@@ -1613,7 +1613,8 @@ fn finish_broad_headless_tui_attempt(
             })
         }
         tui_adapter::HeadlessTerminal::ProviderUnavailable { reason } => {
-            Err(PrepareError::InvalidBatchSelection {
+            Err(PrepareError::ProviderUnavailable {
+                phase: "broad_headless_tui_attempt",
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
             })
         }
@@ -7359,6 +7360,9 @@ async fn resolve_child_plan(
                         match run_broad_headless_tui_attempt(slot).await {
                             Ok(value) => {
                                 executor = value;
+                            }
+                            Err(source @ PrepareError::ProviderUnavailable { .. }) => {
+                                return Err(source);
                             }
                             Err(source) => {
                                 warn!(

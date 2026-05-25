@@ -624,39 +624,53 @@ async fn run_attempt(
                 }
             }
             AppEvent::MessageUpdated(message) => {
-                let assistant_error = {
+                let error_message = {
                     let chat = runtime.state.chat.0.read().await;
                     chat.messages.get(&message.0).and_then(|message| {
-                        if !matches!(
-                            message.kind,
-                            ploke_tui::chat_history::MessageKind::Assistant
-                        ) {
-                            return None;
-                        }
                         if !matches!(
                             message.status,
                             ploke_tui::chat_history::MessageStatus::Error { .. }
                         ) {
                             return None;
                         }
-                        Some((message.id, message.content.clone()))
+                        let provider_reason = provider_failure_from_message(
+                            message.kind,
+                            &message.status,
+                            &message.content,
+                        );
+                        Some((
+                            message.id,
+                            message.kind,
+                            message.content.clone(),
+                            provider_reason,
+                        ))
                     })
                 };
-                let Some((message_id, content)) = assistant_error else {
+                let Some((message_id, kind, content, message_provider_failure)) = error_message
+                else {
                     continue;
                 };
-                run.events.push(Event::AssistantMessage {
-                    id: message_id.to_string(),
-                    status: "error".to_string(),
-                    content: content.clone(),
-                });
-                observer.emit(format!(
-                    "attempt {turn} assistant_error id={} content={}",
-                    message_id,
-                    truncate_chars(&content, 240)
-                ));
+                if matches!(kind, ploke_tui::chat_history::MessageKind::Assistant) {
+                    run.events.push(Event::AssistantMessage {
+                        id: message_id.to_string(),
+                        status: "error".to_string(),
+                        content: content.clone(),
+                    });
+                    observer.emit(format!(
+                        "attempt {turn} assistant_error id={} content={}",
+                        message_id,
+                        truncate_chars(&content, 240)
+                    ));
+                } else {
+                    observer.emit(format!(
+                        "attempt {turn} message_error kind={} id={} content={}",
+                        kind,
+                        message_id,
+                        truncate_chars(&content, 240)
+                    ));
+                }
                 if provider_failure.is_none() {
-                    provider_failure = provider_unavailable_reason(&content);
+                    provider_failure = message_provider_failure;
                 }
             }
             AppEvent::System(SystemEvent::ChatTurnFinished {
@@ -679,6 +693,9 @@ async fn run_attempt(
                     attempts,
                     truncate_chars(&summary, 240)
                 ));
+                if provider_failure.is_none() {
+                    provider_failure = provider_failure_from_chat(runtime).await;
+                }
                 if let Some(reason) = provider_failure.take() {
                     return Ok(AttemptEnd::Terminal(
                         HeadlessTerminal::ProviderUnavailable { reason },
@@ -1463,6 +1480,34 @@ fn provider_unavailable_reason(content: &str) -> Option<String> {
         return Some(content.to_string());
     }
     None
+}
+
+fn provider_failure_from_message(
+    kind: ploke_tui::chat_history::MessageKind,
+    status: &ploke_tui::chat_history::MessageStatus,
+    content: &str,
+) -> Option<String> {
+    let ploke_tui::chat_history::MessageStatus::Error { description } = status else {
+        return None;
+    };
+    if !matches!(
+        kind,
+        ploke_tui::chat_history::MessageKind::Assistant
+            | ploke_tui::chat_history::MessageKind::System
+            | ploke_tui::chat_history::MessageKind::SysInfo
+    ) {
+        return None;
+    }
+    provider_unavailable_reason(content).or_else(|| provider_unavailable_reason(description))
+}
+
+async fn provider_failure_from_chat(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+) -> Option<String> {
+    let chat = runtime.state.chat.0.read().await;
+    chat.messages.values().find_map(|message| {
+        provider_failure_from_message(message.kind, &message.status, &message.content)
+    })
 }
 
 fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
@@ -3924,6 +3969,51 @@ mod tests {
         assert!(feedback.contains("Previous attempt aborted before staging an edit"));
         assert!(!feedback.contains("stage one small concrete source edit"));
         assert!(!feedback.contains("error_id=abc"));
+    }
+
+    #[test]
+    fn system_message_google_401_is_provider_unavailable() {
+        let content = r#"Error: API error (status 401): [{
+  "error": {
+    "code": 401,
+    "message": "Request had invalid authentication credentials.",
+    "status": "UNAUTHENTICATED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "ACCESS_TOKEN_TYPE_UNSUPPORTED"
+      }
+    ]
+  }
+}]
+Suggested action: Verify API credentials and retry."#;
+        let status = ploke_tui::chat_history::MessageStatus::Error {
+            description: "API error (status 401)".to_string(),
+        };
+
+        let reason = provider_failure_from_message(
+            ploke_tui::chat_history::MessageKind::System,
+            &status,
+            content,
+        )
+        .expect("system provider error should stop the headless attempt");
+
+        assert!(reason.contains("status 401"));
+        assert!(reason.contains("ACCESS_TOKEN_TYPE_UNSUPPORTED"));
+    }
+
+    #[test]
+    fn completed_system_message_is_not_provider_unavailable() {
+        let status = ploke_tui::chat_history::MessageStatus::Completed;
+
+        assert!(
+            provider_failure_from_message(
+                ploke_tui::chat_history::MessageKind::System,
+                &status,
+                "Error: API error (status 401)"
+            )
+            .is_none()
+        );
     }
 
     #[test]

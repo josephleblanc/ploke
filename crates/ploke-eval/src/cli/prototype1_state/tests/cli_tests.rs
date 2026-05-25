@@ -926,6 +926,54 @@ fn admit_broad_slot_for_test(
         .expect("admit broad harness slot")
 }
 
+#[test]
+fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "provider unavailable fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget { min: 1, max: 1 },
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let reason = "Error: API error (status 401): UNAUTHENTICATED".to_string();
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        Vec::new(),
+        Some(tui_adapter::HeadlessTerminal::ProviderUnavailable {
+            reason: reason.clone(),
+        }),
+    );
+    let terminal = run.terminal().expect("terminal");
+
+    let err = finish_broad_headless_tui_attempt(
+        &GitWorktreeBackend,
+        &slot,
+        &repo_root,
+        false,
+        &run,
+        terminal,
+    )
+    .expect_err("provider errors must stop child planning");
+
+    let PrepareError::ProviderUnavailable { phase, detail } = err else {
+        panic!("expected typed provider unavailable error, got {err:?}");
+    };
+    assert_eq!(phase, "broad_headless_tui_attempt");
+    assert!(detail.contains(&reason), "unexpected detail: {detail}");
+}
+
 // regr:timeoutapplied:22-05-26_01-27
 #[test]
 fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission() {

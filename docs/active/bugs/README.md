@@ -103,3 +103,5 @@ file and current code before treating a report as still open.
   Fixed in source: `observe_child` no longer waits forever when a child stops producing channel output/result evidence, and doctor/replay classify stale pending observe states.
 - [`2026-05-25-prototype1-observe-child-success-sidecar-race.md`](./2026-05-25-prototype1-observe-child-success-sidecar-race.md)
   Fixed in source: `observe_child` no longer treats a successful runner-result sidecar as terminal before the treatment-bearing channel result arrives.
+- [`2026-05-25-prototype1-broad-headless-google-401-slot-thrash.md`](./2026-05-25-prototype1-broad-headless-google-401-slot-thrash.md)
+  Prototype 1 broad headless-TUI child planning retried direct-Google HTTP 401 provider failures as ordinary no-edit/slot failures instead of stopping as an environment blocker.
