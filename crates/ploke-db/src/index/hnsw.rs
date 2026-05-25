@@ -269,7 +269,7 @@ mod tests {
     use crate::create_index_primary;
     use crate::hnsw_all_types;
     use crate::utils::test_utils::TEST_DB_NODES;
-    use ploke_test_utils::{FIXTURE_NODES_CANONICAL, backup_fixture_path_or_seed};
+    use ploke_test_utils::FIXTURE_NODES_CANONICAL;
     use tokio::sync::Mutex;
 
     use lazy_static::lazy_static;
@@ -282,7 +282,7 @@ mod tests {
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
 
-        let target_file = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
+        let target_file = FIXTURE_NODES_CANONICAL.checked_path()?.into_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
         let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
@@ -307,7 +307,7 @@ mod tests {
     async fn test_hnsw_init_from_backup_error() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
 
-        let target_file = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
+        let target_file = FIXTURE_NODES_CANONICAL.checked_path()?.into_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
         let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)

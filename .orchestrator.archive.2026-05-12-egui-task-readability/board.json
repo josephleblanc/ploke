@@ -1,0 +1,2600 @@
+{
+  "schema_version": "orchestrator-board.v1",
+  "created_at": "2026-05-12T01:44:56.874022782+00:00",
+  "updated_at": "2026-05-12T17:03:01.057802016+00:00",
+  "packet_dir": ".orchestrator/workers",
+  "lanes": {
+    "docs": {
+      "id": "docs",
+      "owned_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md",
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md"
+      ],
+      "notes": [
+        "Docs lane updates durable planning, inventory, survey, and handoff files only."
+      ]
+    },
+    "edit-model-retainer": {
+      "id": "edit-model-retainer",
+      "owned_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-eval/src/cli/prototype1_state/mod.rs"
+      ],
+      "notes": [
+        "Read-only retainer for the robust edit-surface model; stale broad transition plan is not target guidance."
+      ]
+    },
+    "edit-surface-admission": {
+      "id": "edit-surface-admission",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md"
+      ],
+      "notes": [
+        "Admission lane owns backend/TUI authority admission and backend side of evidence joins."
+      ]
+    },
+    "edit-surface-authority": {
+      "id": "edit-surface-authority",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-retain-model.md",
+        ".orchestrator/reports/esm-map-eval-code.md"
+      ],
+      "notes": [
+        "Implementation lane for model.md SurfaceGrant authority carrier; no broad request files."
+      ]
+    },
+    "edit-surface-cli": {
+      "id": "edit-surface-cli",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md"
+      ],
+      "notes": [
+        "CLI-facing lane only supplies upstream admission arguments and removes old Grant::new test/helper use; no backend/history edits."
+      ]
+    },
+    "edit-surface-history": {
+      "id": "edit-surface-history",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "notes": [
+        "History lane owns typed SurfaceEvidence grant/check evidence shape."
+      ]
+    },
+    "edit-surface-integration": {
+      "id": "edit-surface-integration",
+      "owned_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "notes": [
+        "Read-only coordination lane; implementation is split across admission and History lanes."
+      ]
+    },
+    "edit-surface-parent-runtime": {
+      "id": "edit-surface-parent-runtime",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/parent.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-cli-supply-edit-admission.md"
+      ],
+      "notes": [
+        "Parent runtime lane adds typed RuntimeId to Parent role state; no CLI/backend/history edits."
+      ]
+    },
+    "edit-surface-review": {
+      "id": "edit-surface-review",
+      "owned_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-surfacegrant-coordinate-policy.md",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+      ],
+      "notes": [
+        "Read-only review lane for edit-surface authority patches."
+      ]
+    },
+    "edit-surface-scout": {
+      "id": "edit-surface-scout",
+      "owned_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs"
+      ],
+      "notes": [
+        "Read-only map of eval-owned carriers against model.md."
+      ]
+    },
+    "graph": {
+      "id": "graph",
+      "owned_edit": [
+        "crates/ploke-tree/src/graph"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Graph builders/types own graph assembly; no store loading or ploke-eval edits."
+      ]
+    },
+    "loader": {
+      "id": "loader",
+      "owned_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/lib.rs"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Loader lane discovers files and fills RunRecordSet/passive evidence only."
+      ]
+    },
+    "projection": {
+      "id": "projection",
+      "owned_edit": [
+        "crates/ploke-tree/src/playback",
+        "crates/ploke-tree/src/browser.rs"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Projection lane renders/derives playback views from loaded graph/store facts."
+      ]
+    },
+    "records": {
+      "id": "records",
+      "owned_edit": [
+        "crates/ploke-records/src/tool_contracts.rs",
+        "crates/ploke-tui/src/tools",
+        "crates/ploke-tui/src/rag/tools.rs"
+      ],
+      "docs": [
+        "docs/active/plans/self-improvement-loop/typed-persistence-spine/implementation-slices.md"
+      ],
+      "notes": [
+        "Records lane owns shared passive DTO boundaries and the TUI tool surfaces they re-export from."
+      ]
+    },
+    "retainer": {
+      "id": "retainer",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "notes": [
+        "Read-only retainer lane for bounded lookup and orientation questions."
+      ]
+    },
+    "review": {
+      "id": "review",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "notes": [
+        "Read-only review lane; reviewers do not own edit surfaces."
+      ]
+    },
+    "tui-boundary-scout": {
+      "id": "tui-boundary-scout",
+      "owned_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-tui/src/tools/code_edit.rs",
+        "crates/ploke-tui/src/rag/tools.rs",
+        "crates/ploke-tui/src/rag/editing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "notes": [
+        "Read-only map of ploke-tui as harness/projection, not authority."
+      ]
+    }
+  },
+  "workers": {
+    "edit-model-retainer": {
+      "id": "edit-model-retainer",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-model-retainer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-admission-worker": {
+      "id": "edit-surface-admission-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-admission-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-cli-worker": {
+      "id": "edit-surface-cli-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-cli-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-final-reviewer": {
+      "id": "edit-surface-final-reviewer",
+      "role": "reviewer",
+      "active": null,
+      "queue": [],
+      "packet_path": null,
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-history-worker": {
+      "id": "edit-surface-history-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-history-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-integration-worker": {
+      "id": "edit-surface-integration-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-integration-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-parent-runtime-worker": {
+      "id": "edit-surface-parent-runtime-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-parent-runtime-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-reviewer": {
+      "id": "edit-surface-reviewer",
+      "role": "reviewer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-reviewer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-scout": {
+      "id": "edit-surface-scout",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-scout.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "edit-surface-worker": {
+      "id": "edit-surface-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/edit-surface-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "retainer": {
+      "id": "retainer",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/retainer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "reviewer-graph": {
+      "id": "reviewer-graph",
+      "role": "reviewer",
+      "active": "review-tool-transport-home-risks",
+      "queue": [],
+      "packet_path": ".orchestrator/workers/reviewer-graph.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "tui-boundary-scout": {
+      "id": "tui-boundary-scout",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/tui-boundary-scout.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-graph-build": {
+      "id": "worker-graph-build",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/worker-graph-build.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-graph-types": {
+      "id": "worker-graph-types",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/worker-graph-types.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-records": {
+      "id": "worker-records",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/worker-records.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-store": {
+      "id": "worker-store",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/worker-store.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    }
+  },
+  "tasks": {
+    "design-canonical-tool-transport-home": {
+      "id": "design-canonical-tool-transport-home",
+      "lane": "retainer",
+      "title": "Map canonical passive tool transport ownership options",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md"
+      ],
+      "acceptance": [
+        "Read-only report identifies current owners, dependency edges, and lowest-drift shared-home option without copying DTOs"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/design-canonical-tool-transport-home.retainer.md"
+      ],
+      "blockers": []
+    },
+    "docs-refresh-graph-ingestion-staleness": {
+      "id": "docs-refresh-graph-ingestion-staleness",
+      "lane": "docs",
+      "title": "Refresh graph-ingestion docs for stale child-plan/run-profile rows",
+      "priority": 2,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-build"
+      },
+      "allowed_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md",
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md"
+      ],
+      "forbidden_edit": [
+        "crates",
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/retainer-orientation-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Docs identify child-plan and run-profile rows as already typed/loaded/ingested where current code supports it",
+        "No source code edits",
+        "No legacy compatibility work is introduced"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-docs-refresh-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "esm-admission-coordinate-policy": {
+      "id": "esm-admission-coordinate-policy",
+      "lane": "edit-surface-admission",
+      "title": "Wire real coordinate and policy into edit-surface admission",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-admission-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-map-eval-code.md",
+        ".orchestrator/reports/esm-map-tui-boundary.md",
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md"
+      ],
+      "acceptance": [
+        "Backend/TUI admission constructs authority-bearing grants from real runtime/artifact coordinate and policy identity, not synthetic defaults or prompt/child-plan files.",
+        "If a caller lacks coordinate/policy, change the local API in owned files to require it rather than falling back to material-only Grant.",
+        "ploke-tui remains harness/projection; eval owns grant/check authority.",
+        "Report any required upstream parent/request edit as a blocker with exact file:line evidence, not as an accepted deferral."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-admission-coordinate-policy.md"
+      ],
+      "blockers": []
+    },
+    "esm-backend-pass-checked-grant-evidence": {
+      "id": "esm-backend-pass-checked-grant-evidence",
+      "lane": "edit-surface-admission",
+      "title": "Pass checked SurfaceGrant evidence from backend",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-admission-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "acceptance": [
+        "CheckedSurfaceEdit::surface_evidence passes the actual checked coordinate/policy/grant evidence through the History API instead of string-only policy recovery.",
+        "Backend checked authority and TUI apply authority remain aligned.",
+        "No edits outside backend.rs and edit_surface/tui.rs; if History API is not ready, report exact blocker."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-backend-pass-checked-grant-evidence.md"
+      ],
+      "blockers": []
+    },
+    "esm-cli-final-admission-integration": {
+      "id": "esm-cli-final-admission-integration",
+      "lane": "edit-surface-cli",
+      "title": "Finalize CLI edit-surface admission integration",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-cli-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-cli-supply-edit-admission.md",
+        ".orchestrator/reports/esm-parent-runtime-id-carrier.md"
+      ],
+      "acceptance": [
+        "Production deterministic TUI path passes real EditSurfaceAdmission using parent runtime id and parent checkout target Artifact identity.",
+        "No prompt/request/TUI/child-plan state is used as authority.",
+        "edit_surface test filter passes."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-cli-final-admission-integration.md"
+      ],
+      "blockers": []
+    },
+    "esm-cli-supply-edit-admission": {
+      "id": "esm-cli-supply-edit-admission",
+      "lane": "edit-surface-cli",
+      "title": "Supply edit-surface admission at CLI-facing callsites",
+      "priority": 1,
+      "state": {
+        "state": "blocked",
+        "blocker": "esm-cli-live-admission-missing-coordinate"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md"
+      ],
+      "acceptance": [
+        "Update cli_facing.rs callsites to pass real EditSurfaceAdmission coordinate and policy into validate_edit_surface_candidate.",
+        "Do not synthesize authority from prompt files, child-plan paths, request files, or TUI status; if real runtime/artifact coordinate is unavailable, report blocker with exact file:line.",
+        "Remove/replace remaining cli_facing.rs surface::Grant::new helper use with authority-bearing construction if it is a test helper; no material-only Grant.",
+        "No edits outside cli_facing.rs."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-cli-supply-edit-admission.md"
+      ],
+      "blockers": [
+        "esm-cli-live-admission-missing-coordinate"
+      ]
+    },
+    "esm-core-mandatory-surfacegrant": {
+      "id": "esm-core-mandatory-surfacegrant",
+      "lane": "edit-surface-authority",
+      "title": "Make SurfaceGrant authority mandatory and check-preserving",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md"
+      ],
+      "acceptance": [
+        "Remove Option<GrantAuthority>; normal Grant/SurfaceGrant must require coordinate and policy authority.",
+        "Material-only bounds, if needed for helper logic, must be a distinct non-authority adapter and must not be constructible as Grant.",
+        "Check must preserve grant authority/provenance so downstream apply/History can cite it.",
+        "Focused tests prove broad/request-style construction cannot mint non-authority Grant, narrow preserves authority, and checked path exposes coordinate/policy."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-core-mandatory-surfacegrant.md"
+      ],
+      "blockers": []
+    },
+    "esm-final-authority-erasure-fix": {
+      "id": "esm-final-authority-erasure-fix",
+      "lane": "edit-surface-integration",
+      "title": "Eliminate final edit-surface authority erasure",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-final-authority-erasure-fix.md"
+      ],
+      "acceptance": [
+        "No optional GrantAuthority, no authority-less Apply construction, checked grants persist coordinate and policy authority with typed RuntimeId, and focused edit_surface tests pass."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-final-authority-erasure-fix.md",
+        ".orchestrator/reports/esm-final-authority-erasure-review.md"
+      ],
+      "blockers": []
+    },
+    "esm-history-checked-grant-api": {
+      "id": "esm-history-checked-grant-api",
+      "lane": "edit-surface-history",
+      "title": "Make SurfaceEvidence checked API accept typed grant authority",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-history-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "acceptance": [
+        "SurfaceEvidence::checked or equivalent takes typed grant/check evidence and no longer hardcodes grant: None for checked edit-surface evidence.",
+        "Keep existing History tests typed; update local History tests to construct the named grant/check evidence carrier.",
+        "No serde_json::Value, no prompt/child-plan/request-file authority, and no edits outside history.rs."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-history-checked-grant-api.md"
+      ],
+      "blockers": []
+    },
+    "esm-history-surfacegrant-evidence": {
+      "id": "esm-history-surfacegrant-evidence",
+      "lane": "edit-surface-history",
+      "title": "Persist grant coordinate and policy in surface evidence",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-history-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-map-eval-code.md",
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md"
+      ],
+      "acceptance": [
+        "SurfaceEvidence or its typed sub-records include coordinate/grant/policy evidence as named Rust types, not serde_json::Value or ad hoc projection fields.",
+        "Proposal remains intermediate; persisted evidence ties admitted artifact transition to checked SurfaceGrant authority.",
+        "History records do not treat prompt path, child plan path, request file, or TUI status as authority.",
+        "If history needs backend/check API changes outside this lane, report exact blocker rather than adding lossy compatibility fields."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "blockers": []
+    },
+    "esm-join-grant-evidence-backend-history": {
+      "id": "esm-join-grant-evidence-backend-history",
+      "lane": "edit-surface-integration",
+      "title": "Join checked grant authority into History evidence",
+      "priority": 1,
+      "state": {
+        "state": "blocked",
+        "blocker": "esm-integration-cross-lane-invalid"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-admission-coordinate-policy.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "acceptance": [
+        "SurfaceEvidence::checked or equivalent accepts typed grant/check evidence derived from the actual checked SurfaceGrant, not policy strings plus grant: None.",
+        "CheckedSurfaceEdit::surface_evidence passes original coordinate/policy/grant authority into History using named Rust types.",
+        "TUI apply authority and backend checked authority remain aligned; no prompt/child-plan/request-file authority.",
+        "No edits outside backend.rs, history.rs, and edit_surface/tui.rs."
+      ],
+      "reports": [],
+      "blockers": [
+        "esm-integration-cross-lane-invalid"
+      ]
+    },
+    "esm-map-eval-code": {
+      "id": "esm-map-eval-code",
+      "lane": "edit-surface-scout",
+      "title": "Map eval-owned edit-surface code to model.md",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-scout"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs"
+      ],
+      "acceptance": [
+        "Return exact file:line ranges for SurfaceGrant/Grant, Proposal/EditProposal, Check/CheckedProposal, ArtifactDelta, SurfaceEvidence, surface_attempt, and OperationCoordinate equivalents.",
+        "Identify drift where code treats request/prompt/child-plan files as authority instead of SurfaceGrant+check+History evidence.",
+        "No edits; include smallest verification commands."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-map-eval-code.md"
+      ],
+      "blockers": []
+    },
+    "esm-map-tui-boundary": {
+      "id": "esm-map-tui-boundary",
+      "lane": "tui-boundary-scout",
+      "title": "Map ploke-tui harness boundary to model.md",
+      "priority": 2,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "tui-boundary-scout"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-tui/src/tools/code_edit.rs",
+        "crates/ploke-tui/src/rag/tools.rs",
+        "crates/ploke-tui/src/rag/editing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs"
+      ],
+      "acceptance": [
+        "Return exact file:line ranges where TUI stages EditProposal, resolves WriteSnippetData, applies edits, and eval lowers/checks TUI evidence.",
+        "Separate harness/projection facts from authority facts, using model.md terminology.",
+        "No edits; include smallest verification commands."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-map-tui-boundary.md"
+      ],
+      "blockers": []
+    },
+    "esm-parent-runtime-id-carrier": {
+      "id": "esm-parent-runtime-id-carrier",
+      "lane": "edit-surface-parent-runtime",
+      "title": "Carry RuntimeId on Parent role state",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-parent-runtime-worker"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/parent.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-cli-supply-edit-admission.md"
+      ],
+      "acceptance": [
+        "Parent<S> carries a typed loop_graph::RuntimeId for the running parent Runtime and exposes it through an accessor.",
+        "All Parent state transitions preserve runtime_id structurally; tests/helpers construct Parent with runtime_id.",
+        "Do not encode runtime identity in ParentIdentity.instance_id or prompt/request files.",
+        "No edits outside parent.rs."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-parent-runtime-id-carrier.md"
+      ],
+      "blockers": []
+    },
+    "esm-retain-model": {
+      "id": "esm-retain-model",
+      "lane": "edit-model-retainer",
+      "title": "Retain edit-surface model invariants",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-model-retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        "crates/ploke-eval/src/cli/prototype1_state/mod.rs"
+      ],
+      "acceptance": [
+        "Report the model.md authority chain, lossy reductions to refuse, and 2-6 month structural carriers in <=120 lines.",
+        "Explicitly ignore docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md as target guidance."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-retain-model.md"
+      ],
+      "blockers": []
+    },
+    "esm-review-authority-chain-final": {
+      "id": "esm-review-authority-chain-final",
+      "lane": "edit-surface-review",
+      "title": "Final review of edit-surface authority chain",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-final-reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/history.rs"
+      ],
+      "acceptance": [
+        "Review that Grant authority is mandatory, not Optional, and material-only filters are not accepted as SurfaceGrant.",
+        "Review that admission uses real coordinate/policy authority or reports exact upstream blockers instead of synthetic fallback.",
+        "Review that Check/apply/History preserve coordinate, policy, and grant evidence through named Rust types.",
+        "Return findings ordered by severity with exact file:line references and an accept/fix decision; no edits."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-review-authority-chain-final.md"
+      ],
+      "blockers": []
+    },
+    "esm-review-surfacegrant-coordinate-policy": {
+      "id": "esm-review-surfacegrant-coordinate-policy",
+      "lane": "edit-surface-review",
+      "title": "Review SurfaceGrant coordinate/policy patch",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "edit-surface-reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-retain-model.md",
+        ".orchestrator/reports/esm-map-eval-code.md",
+        ".orchestrator/reports/esm-surfacegrant-coordinate-policy.md",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+      ],
+      "acceptance": [
+        "Review the patch for correctness, semantic alignment with model.md, structural naming, authority/provenance risks, and test adequacy.",
+        "No edits; return findings ordered by severity with exact file:line references and recommended accept/fix decision."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md"
+      ],
+      "blockers": []
+    },
+    "esm-surfacegrant-coordinate-policy": {
+      "id": "esm-surfacegrant-coordinate-policy",
+      "lane": "edit-surface-authority",
+      "title": "Bind SurfaceGrant to coordinate and policy",
+      "priority": 1,
+      "state": {
+        "state": "blocked",
+        "blocker": "esm-surfacegrant-optional-authority-invalid"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_request.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs",
+        "crates/ploke-eval/src/cli/prototype1_state/parent.rs",
+        "docs/active/agents/2026-05-12_broad-bounded-surface-transition-plan.md"
+      ],
+      "docs": [
+        "docs/workflow/evalnomicon/drafts/edit-surface/model.md",
+        ".orchestrator/reports/esm-retain-model.md",
+        ".orchestrator/reports/esm-map-eval-code.md"
+      ],
+      "acceptance": [
+        "Add or strengthen a model-facing SurfaceGrant authority carrier binding coordinate, policy identity, and existing material Grant/Check semantics.",
+        "Preserve existing backend/TUI callsites; do not require broad request or child-plan changes in this slice.",
+        "Add focused tests in edit_surface/tests.rs proving coordinate target artifact mismatch is rejected and accepted grants expose coordinate/policy.",
+        "No edits outside allowed files."
+      ],
+      "reports": [
+        ".orchestrator/reports/esm-surfacegrant-coordinate-policy.md"
+      ],
+      "blockers": [
+        "esm-surfacegrant-optional-authority-invalid"
+      ]
+    },
+    "graph-build-ingest-attempt-results": {
+      "id": "graph-build-ingest-attempt-results",
+      "lane": "graph",
+      "title": "Attach attempt-scoped runner results and passive operation source evidence",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-build"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph/build.rs",
+        "crates/ploke-tree/src/graph/build"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui",
+        "crates/ploke-tree/src/store"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Graph consumes PassiveEvidence::attempt_runner_results from RunRecordSet",
+        "Passive invocation/request/result operations carry source evidence or locators",
+        "No filesystem discovery or History authority drift in graph build"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "graph-build-ingest-run-attempts": {
+      "id": "graph-build-ingest-run-attempts",
+      "lane": "graph",
+      "title": "Attach loaded run attempt metadata to Graph evidence",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-build"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph/build.rs",
+        "crates/ploke-tree/src/graph/build"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui",
+        "crates/ploke-tree/src/store"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-store-run-attempts-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Graph consumes PassiveEvidence::run_attempts only from RunRecordSet",
+        "No filesystem discovery or deserialization in graph builder",
+        "Run attempts attach as evidence/metadata and not History authority"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "graph-build-membership-selected-scope": {
+      "id": "graph-build-membership-selected-scope",
+      "lane": "graph",
+      "title": "Remove label-only selected membership fallback in graph selection",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-build"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph/build/selection",
+        "crates/ploke-tree/src/graph/build/selection.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui",
+        "crates/ploke-tree/src/store"
+      ],
+      "docs": [
+        "docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md"
+      ],
+      "acceptance": [
+        "Graph selection membership resolution does not assign selected membership by label-only fallback",
+        "Candidate-set root or recorded candidate identity governs selected membership attachment",
+        "No store, records, or ploke-eval edits"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "graph-build-split-passive-ingestion": {
+      "id": "graph-build-split-passive-ingestion",
+      "lane": "graph",
+      "title": "Split graph builders and attach loaded passive evidence",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-build"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph/build.rs",
+        "crates/ploke-tree/src/graph/build"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui",
+        "crates/ploke-tree/src/store"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Graph::from_records remains the only assembly entry point",
+        "Builder consumes only already-loaded RunRecordSet fields",
+        "History ordering remains primary and passive evidence does not become authority"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-graph-build-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "graph-types-organize-core": {
+      "id": "graph-types-organize-core",
+      "lane": "graph",
+      "title": "Organize ploke-tree graph domain types around core graph objects",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-types"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph/types.rs",
+        "crates/ploke-tree/src/graph/types"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md"
+      ],
+      "acceptance": [
+        "Graph remains the central immutable read-side object",
+        "Types preserve Artifact, Runtime, Operation, History, and evidence distinctions",
+        "No builder or loader behavior changes"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-graph-types-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "playback-fine-module-split": {
+      "id": "playback-fine-module-split",
+      "lane": "projection",
+      "title": "Split oversized playback fine module",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-types"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/playback/fine.rs",
+        "crates/ploke-tree/src/playback/fine",
+        "crates/ploke-tree/src/playback/mod.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/graph"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "fine.rs is split into focused submodules without behavior changes",
+        "Public playback API remains compatible for current callers",
+        "Focused projection tests still pass"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "projection-membership-remove-label-fallback": {
+      "id": "projection-membership-remove-label-fallback",
+      "lane": "projection",
+      "title": "Remove remaining label-only selected membership fallback in playback",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-types"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/playback/fine.rs",
+        "crates/ploke-tree/src/browser.rs",
+        "crates/ploke-tree/src/playback/mod.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/graph"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-membership-projection-2026-05-12.md"
+      ],
+      "acceptance": [
+        "selected_applies_to no longer treats label equality alone as sufficient",
+        "Selected membership applies only through coordinate/selection input evidence",
+        "Projection tests cover the no-coordinate label-only case"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "projection-membership-review-repair": {
+      "id": "projection-membership-review-repair",
+      "lane": "projection",
+      "title": "Repair scoped membership projection review findings",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-types"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/browser.rs",
+        "crates/ploke-tree/src/playback"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/graph/types"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-membership-projection-2026-05-12.md",
+        "docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md"
+      ],
+      "acceptance": [
+        "Public fine playback preserves candidate_set_root where available",
+        "Selected membership does not fall back to label-only matching for duplicate labels",
+        "No ploke-eval or ploke-records edits"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "projection-membership-scoped-keys": {
+      "id": "projection-membership-scoped-keys",
+      "lane": "projection",
+      "title": "Preserve set-scoped candidate membership in browser and fine playback",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph-types"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/browser.rs",
+        "crates/ploke-tree/src/playback"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/graph/types"
+      ],
+      "docs": [
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md",
+        "docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Browser/fine playback no longer treats bare membership_id as globally unique where set scope is available",
+        "No vector-index membership matching remains in touched playback path",
+        "No ploke-eval edits"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "records-rag-retry-context-cleanup": {
+      "id": "records-rag-retry-context-cleanup",
+      "lane": "records",
+      "title": "Replace RAG tool retry-context JSON with typed ToolRetryContext",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-records"
+      },
+      "allowed_edit": [
+        "crates/ploke-tui/src/rag/tools.rs",
+        "crates/ploke-tui/src/tools/error.rs",
+        "crates/ploke-records/src/tool_contracts.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md"
+      ],
+      "acceptance": [
+        "RAG retry-context callsites use ToolRetryContext instead of serde_json::json!",
+        "Temporary From<serde_json::Value> retry-context bridge is removed if no longer needed",
+        "No ploke-eval edits"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "records-tool-ui-contract-boundary": {
+      "id": "records-tool-ui-contract-boundary",
+      "lane": "records",
+      "title": "Type shared tool UI/error contract boundary for agent turns",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-records"
+      },
+      "allowed_edit": [
+        "crates/ploke-tui/src/tools",
+        "crates/ploke-records/src/tool_contracts.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "No ploke-eval edits",
+        "Any shared tool UI/error type is exposed through ploke_records::tool_contracts",
+        "No production serde_json::Value remains in the shared persisted tool error payload path being introduced"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-records-tool-ui-contract-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "records-tool-ui-contract-review-repair": {
+      "id": "records-tool-ui-contract-review-repair",
+      "lane": "records",
+      "title": "Repair typed tool UI/error contract review findings",
+      "priority": 1,
+      "state": {
+        "state": "blocked",
+        "blocker": "rag-retry-context-outside-surface"
+      },
+      "allowed_edit": [
+        "crates/ploke-tui/src/tools",
+        "crates/ploke-records/src/tool_contracts.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-records-tool-ui-contract-2026-05-11.md"
+      ],
+      "acceptance": [
+        "Serde deserialization initializes typed LLM error inspection/index consistently",
+        "Compatibility for existing ToolErrorCode wire spelling is preserved or explicitly typed",
+        "No production serde_json::Value remains in retry-context construction path introduced by this boundary"
+      ],
+      "reports": [],
+      "blockers": [
+        "rag-retry-context-outside-surface"
+      ]
+    },
+    "retainer-graph-ingestion-map": {
+      "id": "retainer-graph-ingestion-map",
+      "lane": "retainer",
+      "title": "Locate exact graph ingestion source ranges and prior reports on demand",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Read-only: report exact files/ranges and avoid broad file dumps",
+        "Answer location questions for main thread and workers",
+        "Flag stale assumptions after five questions so the retainer can be refreshed"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/retainer-orientation-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "retainer-node-results-passive-shape": {
+      "id": "retainer-node-results-passive-shape",
+      "lane": "retainer",
+      "title": "Locate passive shape for nodes results JSON",
+      "priority": 2,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Read-only: identify writer/type shape for nodes/*/results/*.json if current",
+        "Report whether ploke-records already owns the shape or what exact missing passive type is needed",
+        "Avoid reading generated run files wholesale"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "retainer-runtimeid-assertion-map": {
+      "id": "retainer-runtimeid-assertion-map",
+      "lane": "retainer",
+      "title": "Map RuntimeId graph test failure to exact fix surface",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-graph-types-2026-05-11.md"
+      ],
+      "acceptance": [
+        "Read-only: identify exact failing assertion and RuntimeId API options",
+        "Report minimal allowed edit surface and verification command",
+        "Avoid broad file reads"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/retainer-runtimeid-assertion-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "review-graph-attempt-results-final": {
+      "id": "review-graph-attempt-results-final",
+      "lane": "review",
+      "title": "Review graph attempt-results ingestion",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check attempt_runner_results are ingested, operation evidence has source locators, and no authority drift",
+        "Write report only if findings are substantive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-graph-membership-selected-scope": {
+      "id": "review-graph-membership-selected-scope",
+      "lane": "review",
+      "title": "Review graph selected-membership fallback repair",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check no label-only selected-membership fallback remains in graph selection",
+        "Write report only if findings are substantive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-graph-run-attempt-ingestion": {
+      "id": "review-graph-run-attempt-ingestion",
+      "lane": "review",
+      "title": "Review graph run-attempt ingestion",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-store-run-attempts-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check operation identity joins, no authority drift, no filesystem/deserialization in graph build",
+        "Write report only if findings are substantive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-graph-types-operation-index": {
+      "id": "review-graph-types-operation-index",
+      "lane": "review",
+      "title": "Review graph type split and OperationIndex semantics",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-graph-types-2026-05-11.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md",
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check OperationIndex, History entry placement, clone/allocation behavior, and Graph central-object semantics",
+        "Write report under docs/active/agents/ploke-tree-graph-ingestion/"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "review-graph-wave-boundaries": {
+      "id": "review-graph-wave-boundaries",
+      "lane": "review",
+      "title": "Review first graph-ingestion wave for boundary and allocation regressions",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check disjoint write surfaces, unnecessary clones, Value field-walking, and History authority drift",
+        "Write report under docs/active/agents/ploke-tree-graph-ingestion/"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "review-playback-fine-module-split": {
+      "id": "review-playback-fine-module-split",
+      "lane": "review",
+      "title": "Review playback fine module split",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check split preserved public API and avoided behavior changes",
+        "Check fine.rs is now a small facade and submodules are cohesive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-projection-membership-final": {
+      "id": "review-projection-membership-final",
+      "lane": "review",
+      "title": "Final review scoped membership projection repair",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-membership-projection-2026-05-12.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check public and browser playback preserve candidate_set_root and no label-only selected-membership fallback remains in playback",
+        "Write report only if findings are substantive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-projection-membership-scoped-keys": {
+      "id": "review-projection-membership-scoped-keys",
+      "lane": "review",
+      "title": "Review scoped membership projection repair",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/bugs/2026-05-09-prototype1-history-traversal-membership-mismatch.md",
+        "docs/active/agents/2026-05-11_ploke-egui-graph-import-boundary-handoff.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check set-scoped membership is preserved and no vector-index matching remains",
+        "Write report under docs/active/agents/ploke-tree-graph-ingestion/ only if findings are substantive"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-membership-projection-2026-05-12.md"
+      ],
+      "blockers": []
+    },
+    "review-records-tool-ui-contract": {
+      "id": "review-records-tool-ui-contract",
+      "lane": "review",
+      "title": "Review typed tool UI/error contract boundary",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-records-tool-ui-contract-2026-05-11.md",
+        "docs/active/plans/self-improvement-loop/typed-persistence-spine/implementation-slices.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check dependency boundary, serde_json::Value removal, compatibility, and public API shape",
+        "Write report under docs/active/agents/ploke-tree-graph-ingestion/"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md"
+      ],
+      "blockers": []
+    },
+    "review-records-tool-ui-final": {
+      "id": "review-records-tool-ui-final",
+      "lane": "review",
+      "title": "Final review typed tool UI/error contract after RAG cleanup",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-graph"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md"
+      ],
+      "acceptance": [
+        "Report only unless explicitly reassigned to implement",
+        "Check no retry-context Value bridge/json! remains and direct serde still initializes typed payload",
+        "Write report only if findings are substantive"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-tool-transport-home-risks": {
+      "id": "review-tool-transport-home-risks",
+      "lane": "review",
+      "title": "Review risks for canonical passive tool transport home",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/reviewer-graph-tool-ui-contract-2026-05-11.md"
+      ],
+      "acceptance": [
+        "Read-only risk report covers API drift, dependency hygiene, serde compatibility, and no-copy invariant"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-tool-transport-home-risks.md"
+      ],
+      "blockers": []
+    },
+    "store-load-attempt-results": {
+      "id": "store-load-attempt-results",
+      "lane": "loader",
+      "title": "Load nodes results attempt runner result files into RunRecordSet",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-store"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/lib.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui",
+        "crates/ploke-tui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md"
+      ],
+      "acceptance": [
+        "Store loader scans nodes/*/results/*.json as RunnerResultRecord without adding new passive DTOs",
+        "Attempt-scoped results remain separate from latest runner-result projections",
+        "No graph semantics or filesystem discovery outside store loading"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "store-load-run-attempt-metadata": {
+      "id": "store-load-run-attempt-metadata",
+      "lane": "loader",
+      "title": "Load runner request/result/invocation metadata into RunRecordSet",
+      "priority": 1,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-store"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/lib.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-egui",
+        "crates/ploke-tui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/2026-05-11_3a2ea733-persisted-surface-survey.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Only store/loading code discovers run-file paths or deserializes run files",
+        "Loaded fields land in RunRecordSet or PassiveEvidence without graph semantics",
+        "No ploke-eval edits"
+      ],
+      "reports": [
+        "docs/active/agents/ploke-tree-graph-ingestion/worker-store-run-attempts-2026-05-11.md"
+      ],
+      "blockers": []
+    }
+  },
+  "blockers": {
+    "esm-cli-live-admission-missing-coordinate": {
+      "id": "esm-cli-live-admission-missing-coordinate",
+      "task_id": "esm-cli-supply-edit-admission",
+      "kind": "missing_type",
+      "summary": "Live deterministic cli_facing path calls validate_edit_surface_candidate without real parent runtime_id and target artifact_id in scope for EditSurfaceAdmission.",
+      "evidence": [
+        ".orchestrator/reports/esm-cli-supply-edit-admission.md"
+      ],
+      "proposed_unblock": "Thread or derive the real operation coordinate from parent/runtime/artifact state before the production validation call; do not synthesize from prompt/request/TUI state.",
+      "created_at": "2026-05-12T16:06:17.843904178+00:00"
+    },
+    "esm-integration-cross-lane-invalid": {
+      "id": "esm-integration-cross-lane-invalid",
+      "task_id": "esm-join-grant-evidence-backend-history",
+      "kind": "ambiguous_owner",
+      "summary": "Backend/history grant-evidence join spans two owned edit lanes; board validation rejects a cross-lane implementation task.",
+      "evidence": [
+        ".orchestrator/reports/esm-admission-coordinate-policy.md",
+        ".orchestrator/reports/esm-history-surfacegrant-evidence.md"
+      ],
+      "proposed_unblock": "Split into a History API task and an admission backend caller task with disjoint owned surfaces.",
+      "created_at": "2026-05-12T15:53:46.831565276+00:00"
+    },
+    "esm-surfacegrant-optional-authority-invalid": {
+      "id": "esm-surfacegrant-optional-authority-invalid",
+      "task_id": "esm-surfacegrant-coordinate-policy",
+      "kind": "other",
+      "summary": "Grant authority is optional, so legacy broad/material-only paths still mint non-authority grants; check also erases grant authority.",
+      "evidence": [
+        ".orchestrator/reports/esm-review-surfacegrant-coordinate-policy.md"
+      ],
+      "proposed_unblock": "Replace optional authority with mandatory SurfaceGrant authority and preserve authority through Check/apply/History, or isolate material-only bounds behind a distinct non-authority adapter.",
+      "created_at": "2026-05-12T15:27:31.677819315+00:00"
+    },
+    "rag-retry-context-outside-surface": {
+      "id": "rag-retry-context-outside-surface",
+      "task_id": "records-tool-ui-contract-review-repair",
+      "kind": "safety_boundary",
+      "summary": "Remaining retry-context json! callsites are in crates/ploke-tui/src/rag/tools.rs, outside the repair packet edit surface",
+      "evidence": [
+        "crates/ploke-tui/src/rag/tools.rs:533",
+        "crates/ploke-tui/src/rag/tools.rs:569"
+      ],
+      "proposed_unblock": "Run a focused follow-up allowing crates/ploke-tui/src/rag/tools.rs plus tools/error.rs",
+      "created_at": "2026-05-12T02:07:36.623434254+00:00"
+    }
+  },
+  "events": [
+    {
+      "at": "2026-05-12T01:53:05.933393520+00:00",
+      "summary": "task docs-refresh-graph-ingestion-staleness completed"
+    },
+    {
+      "at": "2026-05-12T01:53:23.796473355+00:00",
+      "summary": "task review-graph-types-operation-index added to lane review"
+    },
+    {
+      "at": "2026-05-12T01:53:28.467392088+00:00",
+      "summary": "task review-graph-types-operation-index assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T01:53:34.000330185+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T01:53:38.508527752+00:00",
+      "summary": "task retainer-runtimeid-assertion-map added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T01:53:41.737754468+00:00",
+      "summary": "task retainer-runtimeid-assertion-map assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T01:53:45.334947837+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T01:54:08.560610367+00:00",
+      "summary": "task projection-membership-scoped-keys added to lane projection"
+    },
+    {
+      "at": "2026-05-12T01:54:15.254839468+00:00",
+      "summary": "task projection-membership-scoped-keys assigned to worker-graph-types active"
+    },
+    {
+      "at": "2026-05-12T01:54:17.965867408+00:00",
+      "summary": "packet generated for worker-graph-types"
+    },
+    {
+      "at": "2026-05-12T01:54:54.525002671+00:00",
+      "summary": "task store-load-run-attempt-metadata completed"
+    },
+    {
+      "at": "2026-05-12T01:55:06.349615379+00:00",
+      "summary": "task graph-build-ingest-run-attempts added to lane graph"
+    },
+    {
+      "at": "2026-05-12T01:55:10.414806647+00:00",
+      "summary": "task graph-build-ingest-run-attempts assigned to worker-graph-build active"
+    },
+    {
+      "at": "2026-05-12T01:55:13.840019601+00:00",
+      "summary": "packet generated for worker-graph-build"
+    },
+    {
+      "at": "2026-05-12T01:56:06.593020570+00:00",
+      "summary": "task retainer-runtimeid-assertion-map completed"
+    },
+    {
+      "at": "2026-05-12T01:57:46.380620892+00:00",
+      "summary": "task review-graph-types-operation-index completed"
+    },
+    {
+      "at": "2026-05-12T01:58:12.675284642+00:00",
+      "summary": "task records-tool-ui-contract-boundary completed"
+    },
+    {
+      "at": "2026-05-12T01:58:22.741490547+00:00",
+      "summary": "task review-records-tool-ui-contract added to lane review"
+    },
+    {
+      "at": "2026-05-12T01:58:26.038975669+00:00",
+      "summary": "task review-records-tool-ui-contract assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T01:58:34.220078210+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:02:30.755513366+00:00",
+      "summary": "task projection-membership-scoped-keys completed"
+    },
+    {
+      "at": "2026-05-12T02:02:30.805561364+00:00",
+      "summary": "task review-records-tool-ui-contract completed"
+    },
+    {
+      "at": "2026-05-12T02:02:45.721222239+00:00",
+      "summary": "task records-tool-ui-contract-review-repair added to lane records"
+    },
+    {
+      "at": "2026-05-12T02:02:50.675136039+00:00",
+      "summary": "task records-tool-ui-contract-review-repair assigned to worker-records active"
+    },
+    {
+      "at": "2026-05-12T02:02:53.761400161+00:00",
+      "summary": "packet generated for worker-records"
+    },
+    {
+      "at": "2026-05-12T02:03:00.356523262+00:00",
+      "summary": "task review-projection-membership-scoped-keys added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:03:03.796248360+00:00",
+      "summary": "task review-projection-membership-scoped-keys assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:03:08.160630297+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:03:54.460559438+00:00",
+      "summary": "task graph-build-ingest-run-attempts completed"
+    },
+    {
+      "at": "2026-05-12T02:04:00.960899426+00:00",
+      "summary": "task review-graph-run-attempt-ingestion added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:04:06.265337593+00:00",
+      "summary": "task review-graph-run-attempt-ingestion assigned to reviewer-graph queue"
+    },
+    {
+      "at": "2026-05-12T02:04:12.358870194+00:00",
+      "summary": "task retainer-node-results-passive-shape added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T02:04:20.936298694+00:00",
+      "summary": "task retainer-node-results-passive-shape assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T02:04:29.222564059+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T02:06:04.766133785+00:00",
+      "summary": "task retainer-node-results-passive-shape completed"
+    },
+    {
+      "at": "2026-05-12T02:06:15.027900884+00:00",
+      "summary": "task store-load-attempt-results added to lane loader"
+    },
+    {
+      "at": "2026-05-12T02:06:24.937844776+00:00",
+      "summary": "task store-load-attempt-results assigned to worker-store active"
+    },
+    {
+      "at": "2026-05-12T02:06:30.876690172+00:00",
+      "summary": "packet generated for worker-store"
+    },
+    {
+      "at": "2026-05-12T02:06:46.843129208+00:00",
+      "summary": "task review-projection-membership-scoped-keys completed"
+    },
+    {
+      "at": "2026-05-12T02:06:53.257362275+00:00",
+      "summary": "task projection-membership-review-repair added to lane projection"
+    },
+    {
+      "at": "2026-05-12T02:06:56.934008749+00:00",
+      "summary": "task projection-membership-review-repair assigned to worker-graph-types active"
+    },
+    {
+      "at": "2026-05-12T02:07:00.166721+00:00",
+      "summary": "packet generated for worker-graph-types"
+    },
+    {
+      "at": "2026-05-12T02:07:04.944786280+00:00",
+      "summary": "task review-graph-run-attempt-ingestion assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:07:08.648782846+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:07:36.623455885+00:00",
+      "summary": "task records-tool-ui-contract-review-repair blocked by rag-retry-context-outside-surface"
+    },
+    {
+      "at": "2026-05-12T02:07:43.316810493+00:00",
+      "summary": "task records-rag-retry-context-cleanup added to lane records"
+    },
+    {
+      "at": "2026-05-12T02:07:48.964311227+00:00",
+      "summary": "task records-rag-retry-context-cleanup assigned to worker-records active"
+    },
+    {
+      "at": "2026-05-12T02:07:53.582875065+00:00",
+      "summary": "packet generated for worker-records"
+    },
+    {
+      "at": "2026-05-12T02:10:57.715593647+00:00",
+      "summary": "task records-rag-retry-context-cleanup completed"
+    },
+    {
+      "at": "2026-05-12T02:11:14.970474430+00:00",
+      "summary": "task review-graph-run-attempt-ingestion completed"
+    },
+    {
+      "at": "2026-05-12T02:11:26.580769552+00:00",
+      "summary": "task store-load-attempt-results completed"
+    },
+    {
+      "at": "2026-05-12T02:11:43.617312084+00:00",
+      "summary": "task graph-build-ingest-attempt-results added to lane graph"
+    },
+    {
+      "at": "2026-05-12T02:11:48.923682942+00:00",
+      "summary": "task graph-build-ingest-attempt-results assigned to worker-graph-build active"
+    },
+    {
+      "at": "2026-05-12T02:11:54.711879781+00:00",
+      "summary": "packet generated for worker-graph-build"
+    },
+    {
+      "at": "2026-05-12T02:12:07.197932872+00:00",
+      "summary": "task review-records-tool-ui-final added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:12:13.604974357+00:00",
+      "summary": "task review-records-tool-ui-final assigned to reviewer-graph queue"
+    },
+    {
+      "at": "2026-05-12T02:12:20.969301998+00:00",
+      "summary": "task review-records-tool-ui-final assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:12:25.512805218+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:14:47.280209145+00:00",
+      "summary": "task projection-membership-review-repair completed"
+    },
+    {
+      "at": "2026-05-12T02:15:07.400086413+00:00",
+      "summary": "task review-projection-membership-final added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:15:14.154922176+00:00",
+      "summary": "task review-projection-membership-final assigned to reviewer-graph queue"
+    },
+    {
+      "at": "2026-05-12T02:15:29.618031525+00:00",
+      "summary": "task review-records-tool-ui-final completed"
+    },
+    {
+      "at": "2026-05-12T02:15:37.398760272+00:00",
+      "summary": "task review-projection-membership-final assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:15:42.871717188+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:16:17.805727745+00:00",
+      "summary": "task graph-build-ingest-attempt-results completed"
+    },
+    {
+      "at": "2026-05-12T02:16:30.726142800+00:00",
+      "summary": "task graph-build-membership-selected-scope added to lane graph"
+    },
+    {
+      "at": "2026-05-12T02:16:40.466152815+00:00",
+      "summary": "task graph-build-membership-selected-scope assigned to worker-graph-build active"
+    },
+    {
+      "at": "2026-05-12T02:16:44.377421326+00:00",
+      "summary": "packet generated for worker-graph-build"
+    },
+    {
+      "at": "2026-05-12T02:16:56.755206222+00:00",
+      "summary": "task review-graph-attempt-results-final added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:17:05.119499263+00:00",
+      "summary": "task review-graph-attempt-results-final assigned to reviewer-graph queue"
+    },
+    {
+      "at": "2026-05-12T02:19:19.178454151+00:00",
+      "summary": "task review-projection-membership-final completed"
+    },
+    {
+      "at": "2026-05-12T02:19:27.521954902+00:00",
+      "summary": "task projection-membership-remove-label-fallback added to lane projection"
+    },
+    {
+      "at": "2026-05-12T02:19:31.739967931+00:00",
+      "summary": "task projection-membership-remove-label-fallback assigned to worker-graph-types active"
+    },
+    {
+      "at": "2026-05-12T02:19:38.503199319+00:00",
+      "summary": "packet generated for worker-graph-types"
+    },
+    {
+      "at": "2026-05-12T02:19:55.333726817+00:00",
+      "summary": "task review-graph-attempt-results-final assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:20:00.003326457+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:20:43.766265644+00:00",
+      "summary": "task graph-build-membership-selected-scope completed"
+    },
+    {
+      "at": "2026-05-12T02:20:49.193583583+00:00",
+      "summary": "task review-graph-membership-selected-scope added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:20:55.082930794+00:00",
+      "summary": "task review-graph-membership-selected-scope assigned to reviewer-graph queue"
+    },
+    {
+      "at": "2026-05-12T02:22:56.208926851+00:00",
+      "summary": "task projection-membership-remove-label-fallback completed"
+    },
+    {
+      "at": "2026-05-12T02:23:06.136075625+00:00",
+      "summary": "task playback-fine-module-split added to lane projection"
+    },
+    {
+      "at": "2026-05-12T02:23:14.269612639+00:00",
+      "summary": "task playback-fine-module-split assigned to worker-graph-types active"
+    },
+    {
+      "at": "2026-05-12T02:23:18.869432708+00:00",
+      "summary": "packet generated for worker-graph-types"
+    },
+    {
+      "at": "2026-05-12T02:23:52.346724478+00:00",
+      "summary": "task review-graph-attempt-results-final completed"
+    },
+    {
+      "at": "2026-05-12T02:27:15.424570366+00:00",
+      "summary": "task review-graph-membership-selected-scope assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:27:24.123472890+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:29:31.026836270+00:00",
+      "summary": "task review-graph-membership-selected-scope completed"
+    },
+    {
+      "at": "2026-05-12T02:30:18.641134279+00:00",
+      "summary": "task playback-fine-module-split completed"
+    },
+    {
+      "at": "2026-05-12T02:30:31.614401273+00:00",
+      "summary": "task review-playback-fine-module-split added to lane review"
+    },
+    {
+      "at": "2026-05-12T02:30:36.774079060+00:00",
+      "summary": "task review-playback-fine-module-split assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T02:30:49.086460124+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T02:34:43.650563036+00:00",
+      "summary": "task review-playback-fine-module-split completed"
+    },
+    {
+      "at": "2026-05-12T03:36:24.731906371+00:00",
+      "summary": "lane graph set"
+    },
+    {
+      "at": "2026-05-12T03:36:30.244851622+00:00",
+      "summary": "lane loader set"
+    },
+    {
+      "at": "2026-05-12T03:36:34.248952594+00:00",
+      "summary": "lane projection set"
+    },
+    {
+      "at": "2026-05-12T03:36:38.839189309+00:00",
+      "summary": "lane records set"
+    },
+    {
+      "at": "2026-05-12T03:36:43.890972227+00:00",
+      "summary": "lane docs set"
+    },
+    {
+      "at": "2026-05-12T04:22:46.947659432+00:00",
+      "summary": "lane review set"
+    },
+    {
+      "at": "2026-05-12T04:22:46.981087854+00:00",
+      "summary": "lane retainer set"
+    },
+    {
+      "at": "2026-05-12T06:08:28.524215241+00:00",
+      "summary": "task design-canonical-tool-transport-home added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T06:08:33.538771421+00:00",
+      "summary": "task design-canonical-tool-transport-home assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T06:08:36.063087449+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T06:08:59.287683050+00:00",
+      "summary": "task review-tool-transport-home-risks added to lane review"
+    },
+    {
+      "at": "2026-05-12T06:09:05.318914017+00:00",
+      "summary": "task review-tool-transport-home-risks assigned to reviewer-graph active"
+    },
+    {
+      "at": "2026-05-12T06:09:10.198894575+00:00",
+      "summary": "packet generated for reviewer-graph"
+    },
+    {
+      "at": "2026-05-12T06:11:33.960943380+00:00",
+      "summary": "task design-canonical-tool-transport-home completed"
+    },
+    {
+      "at": "2026-05-12T06:11:38.530827813+00:00",
+      "summary": "task review-tool-transport-home-risks reviewed"
+    },
+    {
+      "at": "2026-05-12T14:55:48.359849329+00:00",
+      "summary": "worker edit-model-retainer set to Retainer"
+    },
+    {
+      "at": "2026-05-12T14:55:48.399822023+00:00",
+      "summary": "worker edit-surface-scout set to Retainer"
+    },
+    {
+      "at": "2026-05-12T14:55:48.404002067+00:00",
+      "summary": "lane edit-model-retainer set"
+    },
+    {
+      "at": "2026-05-12T14:55:48.406674048+00:00",
+      "summary": "lane edit-surface-scout set"
+    },
+    {
+      "at": "2026-05-12T14:55:48.450270772+00:00",
+      "summary": "worker tui-boundary-scout set to Retainer"
+    },
+    {
+      "at": "2026-05-12T14:55:48.456212277+00:00",
+      "summary": "lane tui-boundary-scout set"
+    },
+    {
+      "at": "2026-05-12T14:56:14.866926185+00:00",
+      "summary": "task esm-retain-model added to lane edit-model-retainer"
+    },
+    {
+      "at": "2026-05-12T14:56:14.917262402+00:00",
+      "summary": "task esm-map-eval-code added to lane edit-surface-scout"
+    },
+    {
+      "at": "2026-05-12T14:56:14.967334914+00:00",
+      "summary": "task esm-map-tui-boundary added to lane tui-boundary-scout"
+    },
+    {
+      "at": "2026-05-12T14:56:26.848524224+00:00",
+      "summary": "task esm-retain-model assigned to edit-model-retainer active"
+    },
+    {
+      "at": "2026-05-12T14:56:26.898721140+00:00",
+      "summary": "task esm-map-eval-code assigned to edit-surface-scout active"
+    },
+    {
+      "at": "2026-05-12T14:56:26.950310542+00:00",
+      "summary": "task esm-map-tui-boundary assigned to tui-boundary-scout active"
+    },
+    {
+      "at": "2026-05-12T14:56:38.932991993+00:00",
+      "summary": "packet generated for edit-model-retainer"
+    },
+    {
+      "at": "2026-05-12T14:56:38.983923629+00:00",
+      "summary": "packet generated for tui-boundary-scout"
+    },
+    {
+      "at": "2026-05-12T14:56:39.033986632+00:00",
+      "summary": "packet generated for edit-surface-scout"
+    },
+    {
+      "at": "2026-05-12T14:58:29.316970728+00:00",
+      "summary": "task esm-retain-model completed"
+    },
+    {
+      "at": "2026-05-12T15:04:03.718931300+00:00",
+      "summary": "task esm-map-tui-boundary completed"
+    },
+    {
+      "at": "2026-05-12T15:06:37.225922155+00:00",
+      "summary": "task esm-map-eval-code completed"
+    },
+    {
+      "at": "2026-05-12T15:07:30.926767436+00:00",
+      "summary": "worker edit-surface-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T15:07:30.976827334+00:00",
+      "summary": "lane edit-surface-authority set"
+    },
+    {
+      "at": "2026-05-12T15:07:46.179322148+00:00",
+      "summary": "task esm-surfacegrant-coordinate-policy added to lane edit-surface-authority"
+    },
+    {
+      "at": "2026-05-12T15:07:55.913390361+00:00",
+      "summary": "task esm-surfacegrant-coordinate-policy assigned to edit-surface-worker active"
+    },
+    {
+      "at": "2026-05-12T15:07:55.963559695+00:00",
+      "summary": "packet generated for edit-surface-worker"
+    },
+    {
+      "at": "2026-05-12T15:17:27.001421139+00:00",
+      "summary": "task esm-surfacegrant-coordinate-policy completed"
+    },
+    {
+      "at": "2026-05-12T15:17:47.681580997+00:00",
+      "summary": "worker edit-surface-reviewer set to Reviewer"
+    },
+    {
+      "at": "2026-05-12T15:17:47.706055812+00:00",
+      "summary": "lane edit-surface-review set"
+    },
+    {
+      "at": "2026-05-12T15:18:17.410285772+00:00",
+      "summary": "task esm-review-surfacegrant-coordinate-policy added to lane edit-surface-review"
+    },
+    {
+      "at": "2026-05-12T15:18:17.417149007+00:00",
+      "summary": "task esm-review-surfacegrant-coordinate-policy assigned to edit-surface-reviewer active"
+    },
+    {
+      "at": "2026-05-12T15:18:17.450650852+00:00",
+      "summary": "packet generated for edit-surface-reviewer"
+    },
+    {
+      "at": "2026-05-12T15:27:23.192106672+00:00",
+      "summary": "task esm-review-surfacegrant-coordinate-policy completed"
+    },
+    {
+      "at": "2026-05-12T15:27:31.677842478+00:00",
+      "summary": "task esm-surfacegrant-coordinate-policy blocked by esm-surfacegrant-optional-authority-invalid"
+    },
+    {
+      "at": "2026-05-12T15:28:19.762883968+00:00",
+      "summary": "lane edit-surface-admission set"
+    },
+    {
+      "at": "2026-05-12T15:28:26.896200174+00:00",
+      "summary": "lane edit-surface-history set"
+    },
+    {
+      "at": "2026-05-12T15:28:34.855921005+00:00",
+      "summary": "worker edit-surface-admission-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T15:28:34.906410427+00:00",
+      "summary": "worker edit-surface-final-reviewer set to Reviewer"
+    },
+    {
+      "at": "2026-05-12T15:28:34.957445184+00:00",
+      "summary": "worker edit-surface-history-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T15:28:55.495105877+00:00",
+      "summary": "task esm-core-mandatory-surfacegrant added to lane edit-surface-authority"
+    },
+    {
+      "at": "2026-05-12T15:29:12.491034491+00:00",
+      "summary": "task esm-admission-coordinate-policy added to lane edit-surface-admission"
+    },
+    {
+      "at": "2026-05-12T15:29:28.610343713+00:00",
+      "summary": "task esm-history-surfacegrant-evidence added to lane edit-surface-history"
+    },
+    {
+      "at": "2026-05-12T15:29:36.979011672+00:00",
+      "summary": "task esm-core-mandatory-surfacegrant assigned to edit-surface-worker active"
+    },
+    {
+      "at": "2026-05-12T15:29:40.412617050+00:00",
+      "summary": "task esm-admission-coordinate-policy assigned to edit-surface-admission-worker active"
+    },
+    {
+      "at": "2026-05-12T15:29:45.162282719+00:00",
+      "summary": "task esm-history-surfacegrant-evidence assigned to edit-surface-history-worker active"
+    },
+    {
+      "at": "2026-05-12T15:29:53.162536835+00:00",
+      "summary": "packet generated for edit-surface-worker"
+    },
+    {
+      "at": "2026-05-12T15:29:53.165305668+00:00",
+      "summary": "packet generated for edit-surface-history-worker"
+    },
+    {
+      "at": "2026-05-12T15:29:53.214651200+00:00",
+      "summary": "packet generated for edit-surface-admission-worker"
+    },
+    {
+      "at": "2026-05-12T15:32:26.843511233+00:00",
+      "summary": "task esm-review-authority-chain-final added to lane edit-surface-review"
+    },
+    {
+      "at": "2026-05-12T15:48:46.904586790+00:00",
+      "summary": "task esm-core-mandatory-surfacegrant completed"
+    },
+    {
+      "at": "2026-05-12T15:49:53.256012208+00:00",
+      "summary": "task esm-history-surfacegrant-evidence completed"
+    },
+    {
+      "at": "2026-05-12T15:51:18.488963022+00:00",
+      "summary": "task esm-admission-coordinate-policy completed"
+    },
+    {
+      "at": "2026-05-12T15:51:55.937686775+00:00",
+      "summary": "lane edit-surface-cli set"
+    },
+    {
+      "at": "2026-05-12T15:51:55.988525531+00:00",
+      "summary": "lane edit-surface-integration set"
+    },
+    {
+      "at": "2026-05-12T15:51:56.039515480+00:00",
+      "summary": "lane edit-surface-history set"
+    },
+    {
+      "at": "2026-05-12T15:52:01.559235311+00:00",
+      "summary": "lane edit-surface-admission set"
+    },
+    {
+      "at": "2026-05-12T15:52:08.529837716+00:00",
+      "summary": "worker edit-surface-integration-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T15:52:08.579880914+00:00",
+      "summary": "worker edit-surface-cli-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T15:52:22.351108754+00:00",
+      "summary": "task esm-cli-supply-edit-admission added to lane edit-surface-cli"
+    },
+    {
+      "at": "2026-05-12T15:52:37.200076302+00:00",
+      "summary": "task esm-join-grant-evidence-backend-history added to lane edit-surface-integration"
+    },
+    {
+      "at": "2026-05-12T15:52:47.033448007+00:00",
+      "summary": "task esm-join-grant-evidence-backend-history assigned to edit-surface-integration-worker active"
+    },
+    {
+      "at": "2026-05-12T15:52:47.083871579+00:00",
+      "summary": "task esm-cli-supply-edit-admission assigned to edit-surface-cli-worker active"
+    },
+    {
+      "at": "2026-05-12T15:52:56.968447406+00:00",
+      "summary": "packet generated for edit-surface-cli-worker"
+    },
+    {
+      "at": "2026-05-12T15:52:57.016929223+00:00",
+      "summary": "packet generated for edit-surface-integration-worker"
+    },
+    {
+      "at": "2026-05-12T15:53:36.871489563+00:00",
+      "summary": "lane edit-surface-admission set"
+    },
+    {
+      "at": "2026-05-12T15:53:36.918867146+00:00",
+      "summary": "lane edit-surface-integration set"
+    },
+    {
+      "at": "2026-05-12T15:53:36.969146285+00:00",
+      "summary": "lane edit-surface-history set"
+    },
+    {
+      "at": "2026-05-12T15:53:46.831590292+00:00",
+      "summary": "task esm-join-grant-evidence-backend-history blocked by esm-integration-cross-lane-invalid"
+    },
+    {
+      "at": "2026-05-12T15:54:15.407444011+00:00",
+      "summary": "task esm-history-checked-grant-api added to lane edit-surface-history"
+    },
+    {
+      "at": "2026-05-12T15:54:15.457442785+00:00",
+      "summary": "task esm-backend-pass-checked-grant-evidence added to lane edit-surface-admission"
+    },
+    {
+      "at": "2026-05-12T15:54:35.680295776+00:00",
+      "summary": "task esm-cli-supply-edit-admission assigned to edit-surface-cli-worker active"
+    },
+    {
+      "at": "2026-05-12T15:54:35.730446454+00:00",
+      "summary": "task esm-history-checked-grant-api assigned to edit-surface-history-worker active"
+    },
+    {
+      "at": "2026-05-12T15:54:35.781510631+00:00",
+      "summary": "task esm-backend-pass-checked-grant-evidence assigned to edit-surface-admission-worker queue"
+    },
+    {
+      "at": "2026-05-12T15:54:52.884149865+00:00",
+      "summary": "packet generated for edit-surface-cli-worker"
+    },
+    {
+      "at": "2026-05-12T15:54:52.887921251+00:00",
+      "summary": "packet generated for edit-surface-admission-worker"
+    },
+    {
+      "at": "2026-05-12T15:54:52.934707903+00:00",
+      "summary": "packet generated for edit-surface-history-worker"
+    },
+    {
+      "at": "2026-05-12T16:06:10.500430113+00:00",
+      "summary": "task esm-cli-supply-edit-admission completed"
+    },
+    {
+      "at": "2026-05-12T16:06:17.843930638+00:00",
+      "summary": "task esm-cli-supply-edit-admission blocked by esm-cli-live-admission-missing-coordinate"
+    },
+    {
+      "at": "2026-05-12T16:10:29.235441105+00:00",
+      "summary": "worker edit-surface-parent-runtime-worker set to Worker"
+    },
+    {
+      "at": "2026-05-12T16:10:29.285552822+00:00",
+      "summary": "lane edit-surface-parent-runtime set"
+    },
+    {
+      "at": "2026-05-12T16:10:43.021686282+00:00",
+      "summary": "task esm-parent-runtime-id-carrier added to lane edit-surface-parent-runtime"
+    },
+    {
+      "at": "2026-05-12T16:10:50.188899132+00:00",
+      "summary": "packet generated for edit-surface-parent-runtime-worker"
+    },
+    {
+      "at": "2026-05-12T16:10:50.238899502+00:00",
+      "summary": "task esm-parent-runtime-id-carrier assigned to edit-surface-parent-runtime-worker active"
+    },
+    {
+      "at": "2026-05-12T16:12:06.105355461+00:00",
+      "summary": "task esm-history-checked-grant-api completed"
+    },
+    {
+      "at": "2026-05-12T16:12:13.273442046+00:00",
+      "summary": "packet generated for edit-surface-admission-worker"
+    },
+    {
+      "at": "2026-05-12T16:12:13.323847621+00:00",
+      "summary": "task esm-backend-pass-checked-grant-evidence assigned to edit-surface-admission-worker active"
+    },
+    {
+      "at": "2026-05-12T16:20:11.673473754+00:00",
+      "summary": "task esm-parent-runtime-id-carrier completed"
+    },
+    {
+      "at": "2026-05-12T16:22:10.271326733+00:00",
+      "summary": "task esm-backend-pass-checked-grant-evidence completed"
+    },
+    {
+      "at": "2026-05-12T16:34:15.280777227+00:00",
+      "summary": "task esm-cli-final-admission-integration added to lane edit-surface-cli"
+    },
+    {
+      "at": "2026-05-12T16:34:29.816262182+00:00",
+      "summary": "task esm-cli-final-admission-integration assigned to edit-surface-cli-worker active"
+    },
+    {
+      "at": "2026-05-12T16:34:36.782253414+00:00",
+      "summary": "task esm-cli-final-admission-integration completed"
+    },
+    {
+      "at": "2026-05-12T16:45:07.656221478+00:00",
+      "summary": "task esm-review-authority-chain-final assigned to edit-surface-final-reviewer active"
+    },
+    {
+      "at": "2026-05-12T16:45:07.662011223+00:00",
+      "summary": "task esm-review-authority-chain-final completed"
+    },
+    {
+      "at": "2026-05-12T16:59:45.877304931+00:00",
+      "summary": "task esm-final-authority-erasure-fix added to lane edit-surface-integration"
+    },
+    {
+      "at": "2026-05-12T16:59:51.603480123+00:00",
+      "summary": "task esm-final-authority-erasure-fix completed"
+    },
+    {
+      "at": "2026-05-12T17:03:01.057786186+00:00",
+      "summary": "task esm-final-authority-erasure-fix reviewed"
+    }
+  ]
+}

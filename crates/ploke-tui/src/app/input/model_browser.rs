@@ -66,7 +66,11 @@ pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> 
                 }
             } else if let Some(item) = mb.items.get_mut(mb.selected) {
                 item.expanded = !item.expanded;
-                if item.expanded && item.providers.is_empty() && !item.loading_providers {
+                if item.expanded
+                    && !item.direct_route
+                    && item.providers.is_empty()
+                    && !item.loading_providers
+                {
                     item.loading_providers = true;
                     actions.push(OverlayAction::RequestModelEndpoints {
                         model_id: item.id.clone(),
@@ -76,13 +80,16 @@ pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> 
         }
         KeyCode::Char('l') => {
             if let Some(item) = mb.items.get_mut(mb.selected) {
-                if item.expanded {
+                if item.direct_route {
+                    item.expanded = true;
+                    mb.provider_select_active = false;
+                } else if item.expanded {
                     mb.provider_select_active = true;
                     mb.provider_selected = 0;
                 } else {
                     item.expanded = true;
                 }
-                if item.providers.is_empty() && !item.loading_providers {
+                if !item.direct_route && item.providers.is_empty() && !item.loading_providers {
                     item.loading_providers = true;
                     actions.push(OverlayAction::RequestModelEndpoints {
                         model_id: item.id.clone(),
@@ -100,7 +107,12 @@ pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> 
         }
         KeyCode::Char('s') => {
             if let Some(item) = mb.items.get_mut(mb.selected) {
-                if item.providers.is_empty() {
+                if item.direct_route {
+                    actions.push(OverlayAction::SelectModel {
+                        model_id: item.id.clone(),
+                        provider: None,
+                    });
+                } else if item.providers.is_empty() {
                     if !item.loading_providers {
                         item.loading_providers = true;
                         item.pending_select = true;
@@ -124,4 +136,90 @@ pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> 
         _ => {}
     }
     actions
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+    use crate::app::view::components::model_browser::ModelBrowserItem;
+    use crate::llm::ModelId;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn browser_with_item(direct_route: bool) -> ModelBrowserState {
+        ModelBrowserState {
+            visible: true,
+            keyword: "gemini".to_string(),
+            items: vec![ModelBrowserItem {
+                id: ModelId::from_str("google/gemini-2.5-flash").expect("model id"),
+                name: None,
+                context_length: None,
+                input_cost: Some(0.0),
+                output_cost: Some(0.0),
+                supports_tools: true,
+                providers: Vec::new(),
+                direct_route,
+                expanded: false,
+                loading_providers: false,
+                pending_select: false,
+            }],
+            selected: 0,
+            help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 0,
+        }
+    }
+
+    #[test]
+    fn direct_google_selects_without_requesting_endpoints() {
+        let mut browser = browser_with_item(true);
+
+        let actions = handle_model_browser_input(&mut browser, key(KeyCode::Char('s')));
+
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            OverlayAction::SelectModel { model_id, provider } => {
+                assert_eq!(model_id.to_string(), "google/gemini-2.5-flash");
+                assert!(provider.is_none());
+            }
+            other => panic!("expected direct model selection, got {other:?}"),
+        }
+        assert!(!browser.items[0].loading_providers);
+        assert!(!browser.items[0].pending_select);
+    }
+
+    #[test]
+    fn direct_google_expand_does_not_request_endpoints() {
+        let mut browser = browser_with_item(true);
+
+        let actions = handle_model_browser_input(&mut browser, key(KeyCode::Enter));
+
+        assert!(actions.is_empty(), "unexpected actions: {actions:?}");
+        assert!(browser.items[0].expanded);
+        assert!(!browser.items[0].loading_providers);
+    }
+
+    #[test]
+    fn openrouter_row_still_requests_endpoints_before_selection() {
+        let mut browser = browser_with_item(false);
+
+        let actions = handle_model_browser_input(&mut browser, key(KeyCode::Char('s')));
+
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0],
+            OverlayAction::RequestModelEndpoints { model_id }
+                if model_id.to_string() == "google/gemini-2.5-flash"
+        ));
+        assert!(browser.items[0].loading_providers);
+        assert!(browser.items[0].pending_select);
+    }
 }

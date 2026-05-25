@@ -1,5 +1,3 @@
-mod tracing_setup;
-
 use clap::{Parser, error::ErrorKind};
 use ploke_eval::Cli;
 use std::process::ExitCode;
@@ -18,6 +16,6 @@ async fn main() -> ExitCode {
         }
     };
 
-    let _log_guard = tracing_setup::init_tracing(cli.debug_tools);
+    let _log_guard = ploke_eval::tracing_setup::init_tracing(cli.debug_tools);
     cli.run().await
 }

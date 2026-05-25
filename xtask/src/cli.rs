@@ -17,7 +17,10 @@
 //! cargo xtask --format json parse stats ./my-crate
 //! ```
 
-use crate::commands::{CommandContext, OutputFormat, XtaskError, db::Db, parse::Parse};
+use crate::commands::{
+    CommandContext, OutputFormat, XtaskError, check::Check, db::Db, orchestrate::Orchestrate,
+    parse::Parse,
+};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -80,6 +83,14 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Check(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
+            Commands::Orchestrate(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
             Commands::HelpTopic(cmd) => {
                 cmd.print_help();
                 return Ok(());
@@ -119,6 +130,16 @@ pub enum Commands {
     /// - bm25-rebuild: Build text index
     #[command(subcommand)]
     Db(Db),
+
+    /// Repository convention checks
+    ///
+    /// Commands for tripwires that guard structural naming and other repo rules.
+    #[command(subcommand)]
+    Check(Check),
+
+    /// Coordinate sub-agent worker slots, task queues, blockers, and packets
+    #[command(subcommand)]
+    Orchestrate(Orchestrate),
 
     /// Display detailed help for topics
     ///
@@ -163,13 +184,15 @@ OPTIONS:
     -V, --version            Print version
 
 COMMANDS:
-    parse    Parse source code and analyze structure
-    db       Database operations and queries
-    help     Display help information
+    parse         Parse source code and analyze structure
+    db            Database operations and queries
+    orchestrate   Coordinate sub-agent worker slots and task queues
+    help          Display help information
 
 EXAMPLES:
     cargo xtask parse discovery ./my-crate
     cargo xtask --format json db count-nodes
+    cargo xtask orchestrate status
     cargo xtask help examples
 
 For more help on a specific command:

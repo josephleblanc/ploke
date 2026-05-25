@@ -4,7 +4,16 @@ pub(crate) use manager::ChatHistoryTarget;
 pub use manager::events::{
     ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,
 };
-pub use manager::{ChatEvt, LlmEvent, RequestMessage};
+pub use manager::{
+    ChatEvt, LlmEvent, Prototype1TraceContext, RequestMessage, set_prototype1_trace_context,
+};
+#[cfg(feature = "test_harness")]
+pub use manager::{
+    RequestTapGuard, ResponseTapGuard, clear_recorded_response_tape, clear_request_tap,
+    clear_response_tap, install_recorded_response_prefix_then_live,
+    install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
+    install_request_tap, install_response_tap,
+};
 
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;

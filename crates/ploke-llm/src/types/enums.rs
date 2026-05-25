@@ -69,6 +69,7 @@ string_enum_with_unknown!(
         IncludeReasoning => "include_reasoning",
         LogitBias => "logit_bias",
         Logprobs => "logprobs",
+        MaxCompletionTokens => "max_completion_tokens",
         MaxTokens => "max_tokens",
         MinP => "min_p",
         PresencePenalty => "presence_penalty",
@@ -91,6 +92,17 @@ string_enum_with_unknown!(
         ReasoningEffort => "reasoning_effort"
     }
 );
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Xhigh,
+    High,
+    Medium,
+    Low,
+    Minimal,
+    None,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -158,6 +170,8 @@ string_enum_with_unknown!(
         TextImageFileToTextImage => "text+image+file->text+image",
         TextImageFileAudioVideoToText => "text+image+file+audio+video->text",
         TextImageFileAudioVideoToTextImage => "text+image+file+audio+video->text+image",
+        TextImageToEmbeddings => "text+image->embeddings",
+        TextImageFileAudioVideoToEmbeddings => "text+image+file+audio+video->embeddings",
         TextToEmbeddings => "text->embeddings"
     }
 );

@@ -13,14 +13,18 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
-use crate::app_state::core::{BeforeAfter, DiffPreview, EditProposal, EditProposalStatus};
+use crate::app_state::core::{
+    BeforeAfter, DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
+};
 
 /// Creates test proposals in bulk for performance testing
 fn create_bulk_test_proposals(count: usize) -> HashMap<Uuid, EditProposal> {
     let mut proposals = HashMap::with_capacity(count);
 
     for i in 0..count {
-        let id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let call_id = format!("perf-test-{}", i);
+        let proposal_id = derive_edit_proposal_id(request_id, &call_id.clone().into());
         let status = match i % 4 {
             0 => EditProposalStatus::Pending,
             1 => EditProposalStatus::Applied,
@@ -49,9 +53,10 @@ fn create_bulk_test_proposals(count: usize) -> HashMap<Uuid, EditProposal> {
         };
 
         let proposal = EditProposal {
-            request_id: id,
+            proposal_id,
+            request_id,
             parent_id: Uuid::new_v4(),
-            call_id: format!("perf-test-{}", i).into(),
+            call_id: call_id.into(),
             proposed_at_ms: 1234567890 + i as i64,
             edits: vec![],
             edits_ns: vec![],
@@ -61,7 +66,7 @@ fn create_bulk_test_proposals(count: usize) -> HashMap<Uuid, EditProposal> {
             is_semantic: true,
         };
 
-        proposals.insert(id, proposal);
+        proposals.insert(proposal_id, proposal);
     }
 
     proposals
@@ -235,11 +240,14 @@ mod performance_tests {
                     let mut proposals = state_for_mutation.proposals.write().await;
 
                     // Add new proposal
-                    let new_id = Uuid::new_v4();
+                    let request_id = Uuid::new_v4();
+                    let call_id = format!("mutation-{}", i);
+                    let proposal_id = derive_edit_proposal_id(request_id, &call_id.clone().into());
                     let proposal = EditProposal {
-                        request_id: new_id,
+                        proposal_id,
+                        request_id,
                         parent_id: Uuid::new_v4(),
-                        call_id: format!("mutation-{}", i).into(),
+                        call_id: call_id.into(),
                         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                         edits: vec![],
                         edits_ns: vec![],
@@ -250,7 +258,7 @@ mod performance_tests {
                         status: EditProposalStatus::Pending,
                         is_semantic: true,
                     };
-                    proposals.insert(new_id, proposal);
+                    proposals.insert(proposal_id, proposal);
 
                     // Remove old proposal if too many
                     if proposals.len() > 60 {
@@ -308,7 +316,9 @@ mod performance_tests {
     async fn test_edge_cases_extreme_data() {
         // Test with very large diff content
         let mut proposals = HashMap::new();
-        let id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let call_id = "large-diff-test".to_string();
+        let proposal_id = derive_edit_proposal_id(request_id, &call_id.clone().into());
 
         // Create a very large diff (but still reasonable)
         let large_diff = (0..100)
@@ -316,9 +326,10 @@ mod performance_tests {
             .collect::<String>();
 
         let proposal = EditProposal {
-            request_id: id,
+            proposal_id,
+            request_id,
             parent_id: Uuid::new_v4(),
-            call_id: "large-diff-test".into(),
+            call_id: call_id.into(),
             proposed_at_ms: chrono::Utc::now().timestamp_millis(),
             edits: vec![],
             edits_ns: vec![],
@@ -327,7 +338,7 @@ mod performance_tests {
             status: EditProposalStatus::Pending,
             is_semantic: true,
         };
-        proposals.insert(id, proposal);
+        proposals.insert(proposal_id, proposal);
 
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
         let io_handle = ploke_io::IoManagerHandle::new();

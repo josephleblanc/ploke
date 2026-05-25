@@ -99,6 +99,7 @@ const HELP_TAIL: &str = r#"    Keyboard shortcuts (Normal mode):
       ↑/↓ or j/k - Navigate
       Enter/Space - Expand/collapse details
       s - Select and set active model
+      [via OpenRouter] rows use OpenRouter provider endpoints; [via Google API] rows use direct Google routes
       q/Esc - Close
 
     Embedding Browser (opened via 'embedding search <keyword>'):
@@ -259,7 +260,13 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         Model,
         "model search",
         "model search <model-name>",
-        "Search OpenRouter models and open the interactive browser"
+        "Search the active router's models and open the interactive browser"
+    ),
+    command_entry!(
+        Model,
+        "model router",
+        "model router [openrouter|google]",
+        "Show or set the active chat/model-list router"
     ),
     command_entry!(
         Model,
@@ -271,7 +278,7 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         Model,
         "model providers",
         "model providers <model_id>",
-        "List provider endpoints for a model and show tool support and slugs"
+        "List OpenRouter provider endpoints or direct Google route information"
     ),
     command_entry!(
         Provider,
@@ -477,6 +484,8 @@ mod tests {
         assert!(help.contains("Workspace commands:"));
         assert!(help.contains("Keyboard shortcuts (Normal mode):"));
         assert!(help.contains("Model Browser (opened via 'model search <keyword>'):"));
+        assert!(help.contains("[via OpenRouter] rows use OpenRouter provider endpoints"));
+        assert!(help.contains("[via Google API] rows use direct Google routes"));
     }
 
     #[test]

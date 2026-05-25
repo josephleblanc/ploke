@@ -35,8 +35,9 @@ pub async fn load_proposals(state: &Arc<AppState>) {
         && let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content)
     {
         let mut map: HashMap<uuid::Uuid, EditProposal> = HashMap::new();
-        for p in list.into_iter() {
-            map.insert(p.request_id, p);
+        for mut p in list.into_iter() {
+            p.normalize_proposal_id();
+            map.insert(p.proposal_id, p);
         }
         let mut guard = state.proposals.write().await;
         *guard = map;
@@ -96,8 +97,9 @@ pub async fn load_proposals_from_path(state: &Arc<AppState>, path: &Path) {
         && let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content)
     {
         let mut map: HashMap<uuid::Uuid, EditProposal> = HashMap::new();
-        for p in list.into_iter() {
-            map.insert(p.request_id, p);
+        for mut p in list.into_iter() {
+            p.normalize_proposal_id();
+            map.insert(p.proposal_id, p);
         }
         let mut guard = state.proposals.write().await;
         *guard = map;

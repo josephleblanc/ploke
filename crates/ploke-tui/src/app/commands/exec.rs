@@ -17,9 +17,11 @@ use crate::app::App;
 use crate::app_state::IndexTargetDir;
 use crate::app_state::StateCommand;
 use crate::app_state::commands::{IndexCmd, LoadCmd, WorkspaceCmd};
+use crate::llm::Router;
 use crate::llm::request::endpoint::EndpointsResponse;
+use crate::llm::router_only::google::Google;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
-use crate::llm::router_only::{HasEndpoint, HasModels};
+use crate::llm::router_only::{HasEndpoint, HasModels, RouterVariants};
 use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, chat_history::MessageKind, emit_app_event};
@@ -87,6 +89,7 @@ pub fn execute(app: &mut App, command: Command) {
             // Delegate to existing state manager path to broadcast and apply
             app.send_cmd(StateCommand::SwitchModel { alias_or_id: alias });
         }
+        Command::ModelRouter(router) => set_or_show_model_router(app, router),
         Command::ModelRefresh { remote } => {
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
@@ -294,10 +297,10 @@ pub fn execute(app: &mut App, command: Command) {
             ));
         }
         Command::EditApprove(id) => {
-            app.send_cmd(StateCommand::ApproveEdits { request_id: id });
+            app.send_cmd(StateCommand::ApproveEdits { proposal_id: id });
         }
         Command::EditDeny(id) => {
-            app.send_cmd(StateCommand::DenyEdits { request_id: id });
+            app.send_cmd(StateCommand::DenyEdits { proposal_id: id });
         }
         Command::CreateApprove(id) => {
             app.send_cmd(StateCommand::ApproveCreations { request_id: id });
@@ -488,15 +491,24 @@ fn list_models_async(app: &App) {
         let cfg = state.config.read().await;
         use crate::llm::ProviderSlug as _;
         let active = cfg.active_model.to_string();
+        let active_router = router_label(cfg.active_router);
         let eps = cfg
             .model_registry
             .models
             .get(&cfg.active_model.key)
             .map(|mp| mp.selected_endpoints.clone())
             .unwrap_or_default();
-        let mut lines = vec![format!("Active model: {}", active)];
+        let mut lines = vec![
+            format!("Active model: {}", active),
+            format!("Active router: {}", active_router),
+        ];
         if eps.is_empty() {
-            lines.push("No pinned provider endpoints; router default will be used.".to_string());
+            if matches!(cfg.active_router, RouterVariants::Google(_)) {
+                lines.push("Direct Google route uses no provider endpoints.".to_string());
+            } else {
+                lines
+                    .push("No pinned provider endpoints; router default will be used.".to_string());
+            }
         } else {
             lines.push("Pinned provider endpoints (in selection order):".to_string());
             for ek in eps {
@@ -514,19 +526,70 @@ fn list_models_async(app: &App) {
     });
 }
 
+fn set_or_show_model_router(app: &App, router: Option<String>) {
+    let state = app.state.clone();
+    let cmd_tx = app.cmd_tx.clone();
+    tokio::spawn(async move {
+        let msg = match router.as_deref().map(str::trim) {
+            None | Some("") => {
+                let cfg = state.config.read().await;
+                format!("Active model router: {}", router_label(cfg.active_router))
+            }
+            Some("openrouter") | Some("open-router") | Some("open_router") => {
+                let mut cfg = state.config.write().await;
+                cfg.active_router = RouterVariants::OpenRouter(OpenRouter);
+                "Active model router: openrouter".to_string()
+            }
+            Some("google") | Some("gemini") => {
+                let mut cfg = state.config.write().await;
+                cfg.active_router = RouterVariants::Google(Google);
+                "Active model router: google".to_string()
+            }
+            Some(value) => format!(
+                "Unknown model router '{}'. Expected one of: openrouter, google",
+                value
+            ),
+        };
+
+        let _ = cmd_tx
+            .send(StateCommand::AddMessageImmediate {
+                msg,
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            })
+            .await;
+    });
+}
+
+fn router_label(router: RouterVariants) -> &'static str {
+    match router {
+        RouterVariants::OpenRouter(_) => "openrouter",
+        RouterVariants::Google(_) => "google",
+        RouterVariants::Anthropic(_) => "anthropic",
+    }
+}
+
 fn check_api_keys(app: &App) {
-    let key_msg = match std::env::var("OPENROUTER_API_KEY") {
-        Ok(key) if !key.trim().is_empty() => {
-            let prefix: String = key.chars().take(6).collect();
-            let masked = if key.chars().count() > 6 {
-                format!("{prefix}...")
-            } else {
-                prefix
-            };
-            format!("OpenRouter API key found: {masked}")
+    fn key_line(label: &str, env_name: &str) -> String {
+        match std::env::var(env_name) {
+            Ok(key) if !key.trim().is_empty() => {
+                let prefix: String = key.chars().take(6).collect();
+                let masked = if key.chars().count() > 6 {
+                    format!("{prefix}...")
+                } else {
+                    prefix
+                };
+                format!("{label} API key found: {masked}")
+            }
+            _ => format!("{label} API key not found in {env_name}."),
         }
-        _ => "OpenRouter API key not found in OPENROUTER_API_KEY.".to_string(),
-    };
+    }
+
+    let key_msg = [
+        key_line("OpenRouter", OpenRouter::API_KEY_NAME),
+        key_line("Google", Google::API_KEY_NAME),
+    ]
+    .join("\n");
 
     app.send_cmd(StateCommand::AddMessageImmediate {
         msg: key_msg,
@@ -535,10 +598,36 @@ fn check_api_keys(app: &App) {
     });
 }
 
+fn openrouter_api_key_missing_msg() -> String {
+    format!(
+        "Missing {}. Set it and try again (e.g., export {}=...)",
+        OpenRouter::API_KEY_NAME,
+        OpenRouter::API_KEY_NAME
+    )
+}
+
+fn models_response_from_google(
+    response: <Google as HasModels>::Response,
+) -> llm::request::models::Response {
+    llm::request::models::Response {
+        data: response.into_iter().map(Into::into).collect(),
+    }
+}
+
+fn direct_google_provider_lines(model_id: &str) -> Vec<String> {
+    vec![
+        format!("Direct Google route for model '{}':", model_id),
+        "  No provider endpoints are used for this route.".to_string(),
+        "  - google [direct]".to_string(),
+        "  Tool support is a model capability on this route, not endpoint metadata.".to_string(),
+    ]
+}
+
 fn show_model_search_help(app: &App) {
     let msg = "Usage: model search <keyword>\n\
 Examples:\n  model search gemini\n  model search claude\n  model search qwen\n\
-This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.";
+This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.\n\
+Rows are labeled by route source: [via OpenRouter] means the model came from OpenRouter, even if its id starts with google/; [via Google API] means direct Google.";
     app.send_cmd(StateCommand::AddMessageImmediate {
         msg: msg.to_string(),
         kind: MessageKind::SysInfo,
@@ -567,27 +656,9 @@ fn list_model_providers_async(app: &App, model_id: &str) {
     tokio::spawn(async move {
         let span = info_span!("list_model_providers", model_id = model_id.as_str());
         let _guard = span.enter();
-        // Resolve API key and base URL
-        let (api_key, base_url) = (
-            std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
-            openrouter_url(),
-        );
-
-        if api_key.is_empty() {
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
-            return;
-        }
-
-        let client = Client::new();
         use std::str::FromStr;
-        let typed_model = match crate::llm::ModelId::from_str(&model_id) {
-            Ok(m) => OpenRouterModelId::from(m),
+        let parsed_model = match crate::llm::ModelId::from_str(&model_id) {
+            Ok(m) => m,
             Err(_) => {
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
@@ -599,6 +670,32 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                 return;
             }
         };
+
+        let active_router = { state.config.read().await.active_router };
+        if matches!(active_router, RouterVariants::Google(_)) {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: direct_google_provider_lines(&model_id).join("\n"),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+
+        if OpenRouter::resolve_api_key().is_err() {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: openrouter_api_key_missing_msg(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+
+        let client = Client::new();
+        let typed_model = OpenRouterModelId::from(parsed_model);
         match OpenRouter::fetch_model_endpoints(&client, typed_model).await {
             // First get the endpoints from openrouter, using
             // typed endpoint entry from `/models/:author/:slug/endpoints`,
@@ -663,50 +760,63 @@ fn open_model_search(app: &mut App, keyword: &str) {
     tokio::spawn(async move {
         let span = debug_span!("open_model_search", keyword = keyword_str.as_str());
         let _guard = span.enter();
-        // Resolve API key from configured OpenRouter provider or env
-        let (api_key, base_url) = (
-            std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
-            openrouter_url(),
-        );
 
-        if api_key.is_empty() {
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
-            return;
-        }
-
+        let active_router = { state.config.read().await.active_router };
         let client = Client::new();
-        match OpenRouter::fetch_models(&client).await {
-            Ok(models_resp) => {
-                let total_models = models_resp.data.len();
-                let models_arc = Arc::new(models_resp);
-                let search_kw = ArcStr::from(keyword_str);
-                emit_app_event(AppEvent::Llm(LlmEvent::Models(models::Event::Response {
-                    models: Some(models_arc),
-                    // search_kw is ArcStr, which uses Arc::clone under the hood
-                    search_keyword: Some(search_kw.clone()),
-                })))
-                .await;
-                debug!(
-                    ?search_kw,
-                    total = total_models,
-                    "model search results enqueued on event bus"
-                );
+        let models_resp = if matches!(active_router, RouterVariants::Google(_)) {
+            match Google::fetch_models(&client).await {
+                Ok(models_resp) => models_response_from_google(models_resp),
+                Err(e) => {
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: format!("Failed to query Google models: {}", e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                    return;
+                }
             }
-            Err(e) => {
+        } else {
+            if OpenRouter::resolve_api_key().is_err() {
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
-                        msg: format!("Failed to query OpenRouter models: {}", e),
+                        msg: openrouter_api_key_missing_msg(),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     })
                     .await;
+                return;
             }
+            match OpenRouter::fetch_models(&client).await {
+                Ok(models_resp) => models_resp,
+                Err(e) => {
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: format!("Failed to query OpenRouter models: {}", e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                    return;
+                }
+            }
+        };
+
+        {
+            let total_models = models_resp.data.len();
+            let models_arc = Arc::new(models_resp);
+            let search_kw = ArcStr::from(keyword_str);
+            emit_app_event(AppEvent::Llm(LlmEvent::Models(models::Event::Response {
+                models: Some(models_arc),
+                search_keyword: Some(search_kw.clone()),
+            })))
+            .await;
+            debug!(
+                ?search_kw,
+                total = total_models,
+                "model search results enqueued on event bus"
+            );
         }
     });
 }

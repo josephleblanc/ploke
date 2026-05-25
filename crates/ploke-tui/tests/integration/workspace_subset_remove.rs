@@ -14,8 +14,7 @@ use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::fixture_dbs::WS_FIXTURE_01_CANONICAL;
 use ploke_test_utils::{
-    PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, backup_db_snapshot_fixture_dir, fresh_backup_fixture_db,
-    workspace_root,
+    PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, fresh_backup_fixture_db, workspace_root,
 };
 use ploke_tui as tui;
 use ploke_tui::app_state::IndexTargetDir;
@@ -28,7 +27,9 @@ use tui::app_state::{
 };
 use tui::chat_history::ChatHistory;
 use tui::event_bus::{EventBus, EventBusCaps};
-use tui::user_config::{WorkspaceRegistry, WorkspaceRegistryEntry};
+use tui::user_config::{
+    PLOKE_WORKSPACE_REGISTRY_PATH_ENV, WorkspaceRegistry, WorkspaceRegistryEntry,
+};
 
 fn fixture_lock() -> &'static StdMutex<()> {
     static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
@@ -38,26 +39,39 @@ fn fixture_lock() -> &'static StdMutex<()> {
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
     old_snapshot_fixture_dir: Option<String>,
+    old_registry_path: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
-        let snapshot_fixture_dir = backup_db_snapshot_fixture_dir();
+        let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+        let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
         unsafe {
             std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             std::env::set_var("XDG_CONFIG_HOME", path);
+            std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
         }
         Self {
             old_xdg,
             old_snapshot_fixture_dir,
+            old_registry_path,
         }
     }
 }
 
 impl Drop for XdgConfigHomeGuard {
     fn drop(&mut self) {
+        if let Some(old_registry_path) = self.old_registry_path.take() {
+            unsafe {
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old_registry_path);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
+            }
+        }
         if let Some(old_xdg) = self.old_xdg.take() {
             unsafe {
                 std::env::set_var("XDG_CONFIG_HOME", old_xdg);
@@ -160,7 +174,7 @@ fn function_node_id(db: &Database, function_name: &str) -> uuid::Uuid {
 #[tokio::test]
 async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = crate::config_home_lock().lock().await;
+    let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 
@@ -320,7 +334,7 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
 #[tokio::test]
 async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = crate::config_home_lock().lock().await;
+    let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 
@@ -552,7 +566,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
 #[tokio::test]
 async fn workspace_load_crates_conflict_preserves_runtime_state() {
     let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _config_lock = crate::config_home_lock().lock().await;
+    let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
 

@@ -46,6 +46,7 @@ ploke-rag = { path = "../ploke-rag" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 cargo_metadata = "0.18"
+syn = { workspace = true }
 
 # common
 ploke-core = { path = "../ploke-core", features = ["json"] }
@@ -115,11 +116,13 @@ loom = "0.7"
 
 [features]
 default = [
+    "tool_contracts",
     "test_harness",
     "live_api_tests",
     "ploke-llm-refactor",
     "typed_type_graph",
 ]
+tool_contracts = []
 flakey_test = ["live_api_tests"]
 # tests that wait a few seconds for a reply
 long_test = ["live_api_tests"]
@@ -133,7 +136,9 @@ typed_type_graph = [
     "ploke-db/typed_type_graph",
     "ploke-rag/typed_type_graph",
 ]
+demo = []
 json_visitor = []
+convert_keyword_2015 = ["syn_parser/convert_keyword_2015"]
 xxx = []
 loom = []
 

@@ -32,6 +32,8 @@ pub fn openrouter_url() -> reqwest::Url {
     OPENROUTER_URL.clone()
 }
 
+pub const PLOKE_WORKSPACE_REGISTRY_PATH_ENV: &str = "PLOKE_WORKSPACE_REGISTRY_PATH";
+
 #[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
     NeoVim,
@@ -481,9 +483,16 @@ impl WorkspaceRegistry {
     }
 
     pub fn default_registry_path() -> std::path::PathBuf {
+        if let Some(path) =
+            std::env::var_os(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).filter(|path| !path.is_empty())
+        {
+            return std::path::PathBuf::from(path);
+        }
+
         std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
-            .or_else(dirs::config_local_dir)
+            .or_else(dirs::config_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("ploke")
             .join("workspaces.toml")
@@ -570,6 +579,8 @@ pub struct ChatPolicy {
     #[serde(default = "default_tool_call_chain_limit")]
     pub tool_call_chain_limit: usize,
     #[serde(default)]
+    pub tool_loop_mode: ToolLoopMode,
+    #[serde(default)]
     pub retry_without_tools_on_404: bool,
     #[serde(default = "default_chat_timeout_strategy")]
     pub timeout_strategy: ChatTimeoutStrategy,
@@ -579,8 +590,12 @@ pub struct ChatPolicy {
     pub error_retry_limit: u32,
     #[serde(default = "default_length_retry_limit")]
     pub length_retry_limit: u32,
+    #[serde(default = "default_repair_attempt_limit")]
+    pub repair_attempt_limit: u32,
     #[serde(default = "default_length_continue_prompt")]
     pub length_continue_prompt: String,
+    #[serde(default)]
+    pub tool_replay: ToolReplayPolicy,
 }
 
 impl Default for ChatPolicy {
@@ -588,12 +603,15 @@ impl Default for ChatPolicy {
         Self {
             tool_call_timeout_secs: default_tool_call_timeout_secs(),
             tool_call_chain_limit: default_tool_call_chain_limit(),
+            tool_loop_mode: ToolLoopMode::default(),
             retry_without_tools_on_404: false,
             timeout_strategy: default_chat_timeout_strategy(),
             timeout_base_secs: default_timeout_base_secs(),
             error_retry_limit: default_error_retry_limit(),
             length_retry_limit: default_length_retry_limit(),
+            repair_attempt_limit: default_repair_attempt_limit(),
             length_continue_prompt: default_length_continue_prompt(),
+            tool_replay: ToolReplayPolicy::default(),
         }
     }
 }
@@ -606,16 +624,50 @@ impl ChatPolicy {
         let timeout_base_secs = self.timeout_base_secs.clamp(5, 600);
         let error_retry_limit = self.error_retry_limit.min(10);
         let length_retry_limit = self.length_retry_limit.min(5);
+        let repair_attempt_limit = self.repair_attempt_limit.clamp(1, 500);
         let timeout_strategy = self.timeout_strategy.validated();
         Self {
             tool_call_timeout_secs,
             tool_call_chain_limit,
+            tool_loop_mode: self.tool_loop_mode,
             retry_without_tools_on_404: self.retry_without_tools_on_404,
             timeout_strategy,
             timeout_base_secs,
             error_retry_limit,
             length_retry_limit,
+            repair_attempt_limit,
             length_continue_prompt: self.length_continue_prompt,
+            tool_replay: self.tool_replay.validated(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolLoopMode {
+    #[default]
+    Auto,
+    Gated,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolReplayPolicy {
+    #[serde(default = "default_tool_replay_max_file_lines")]
+    pub max_file_lines: usize,
+}
+
+impl Default for ToolReplayPolicy {
+    fn default() -> Self {
+        Self {
+            max_file_lines: default_tool_replay_max_file_lines(),
+        }
+    }
+}
+
+impl ToolReplayPolicy {
+    fn validated(self) -> Self {
+        Self {
+            max_file_lines: self.max_file_lines.clamp(20, 2_000),
         }
     }
 }
@@ -856,6 +908,10 @@ fn default_tool_call_chain_limit() -> usize {
     100
 }
 
+fn default_tool_replay_max_file_lines() -> usize {
+    200
+}
+
 fn default_chat_timeout_strategy() -> ChatTimeoutStrategy {
     ChatTimeoutStrategy::FixedRetry { attempts: 3 }
 }
@@ -870,6 +926,10 @@ fn default_error_retry_limit() -> u32 {
 
 fn default_length_retry_limit() -> u32 {
     1
+}
+
+fn default_repair_attempt_limit() -> u32 {
+    4
 }
 
 fn default_length_continue_prompt() -> String {
@@ -924,12 +984,14 @@ mod tests {
             [chat_policy]
             tool_call_timeout_secs = 45
             tool_call_chain_limit = 50
+            tool_loop_mode = "gated"
             retry_without_tools_on_404 = true
             timeout_base_secs = 20
             error_retry_limit = 4
             length_retry_limit = 2
             length_continue_prompt = "go on"
             timeout_strategy = { FixedRetry = { attempts = 2 } }
+            tool_replay = { max_file_lines = 120 }
 
             [rag]
             top_k = 20
@@ -955,6 +1017,8 @@ mod tests {
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
         assert_eq!(cfg.tool_retries, 3);
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
+        assert_eq!(cfg.chat_policy.tool_loop_mode, ToolLoopMode::Gated);
+        assert_eq!(cfg.chat_policy.tool_replay.max_file_lines, 120);
         assert_eq!(cfg.rag.top_k, 20);
         assert_eq!(cfg.rag.per_part_max_tokens, 160);
         assert_eq!(cfg.context_management.mode, CtxMode::Light);
@@ -975,5 +1039,24 @@ mod tests {
     fn runtime_config_preserves_default_llm_timeout() {
         let runtime_cfg: RuntimeConfig = UserConfig::default().into();
         assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn chat_policy_validation_clamps_tool_replay_limits() {
+        let validated = ChatPolicy {
+            tool_replay: ToolReplayPolicy { max_file_lines: 5 },
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(validated.tool_replay.max_file_lines, 20);
+
+        let validated = ChatPolicy {
+            tool_replay: ToolReplayPolicy {
+                max_file_lines: 10_000,
+            },
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(validated.tool_replay.max_file_lines, 2_000);
     }
 }

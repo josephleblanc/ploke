@@ -2,7 +2,8 @@
 source: crates/ploke-tui/tests/integration/ui_model_browser_snapshot.rs
 expression: text
 ---
-> deepseek/deepseek-chat-v3.1 — DeepSeek: DeepSeek V3.1
+> deepseek/deepseek-chat-v3.1 — DeepSeek: DeepSeek V3.1 [via OpenRouter]
+    source: OpenRouter catalog
     context_length: 163840
     supports_tools: true
     pricing: in=$0.200 out=$0.800

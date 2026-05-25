@@ -27,7 +27,10 @@ use ploke_db::{Database, bm25_index};
 use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, shared_backup_fixture_db, workspace_root};
+use ploke_test_utils::{
+    FIXTURE_NODES_LOCAL_EMBEDDINGS, fresh_backup_fixture_db, shared_backup_fixture_db,
+    workspace_root,
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -51,16 +54,27 @@ pub struct AppHarness {
 impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
     pub async fn spawn() -> color_eyre::Result<Self> {
-        // Config + registry
-        let config = UserConfig::default();
-        let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
-        let tool_verbosity = runtime_cfg.tool_verbosity;
-
-        // DB from shared fixture
         let db_handle = TEST_DB_NODES
             .as_ref()
             .expect("TEST_DB_NODES must initialize")
             .clone();
+        Self::spawn_with_db(db_handle).await
+    }
+
+    /// Spawn the App with a fresh `fixture_nodes` database instance.
+    ///
+    /// Use this for tests that apply edits or otherwise mutate DB state. Read-only
+    /// tests can use [`Self::spawn`] to reuse the shared fixture database.
+    pub async fn spawn_fresh_fixture_nodes() -> color_eyre::Result<Self> {
+        let db_handle = Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?);
+        Self::spawn_with_db(db_handle).await
+    }
+
+    async fn spawn_with_db(db_handle: Arc<Database>) -> color_eyre::Result<Self> {
+        // Config + registry
+        let config = UserConfig::default();
+        let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
+        let tool_verbosity = runtime_cfg.tool_verbosity;
 
         // IO + EventBus
         let io_handle = ploke_io::IoManagerHandle::new();

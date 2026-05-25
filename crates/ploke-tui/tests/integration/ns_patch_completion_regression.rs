@@ -6,6 +6,7 @@ use ploke_core::ArcStr;
 use ploke_core::rag_types::ApplyCodeEditResult;
 use ploke_core::tool_types::{FunctionMarker, ToolName};
 use ploke_llm::response::{FunctionCall, ToolCall};
+use ploke_tui::app_state::core::derive_edit_proposal_id;
 use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::test_utils::new_test_harness::AppHarness;
 use ploke_tui::{AppEvent, EventPriority};
@@ -69,6 +70,15 @@ const SIMPLE_NS_PATCH_DIFF: &str = r#"--- a/notes.txt
 -beta
 +delta
  gamma
+"#;
+
+const TODO_NS_PATCH_DIFF: &str = r#"--- a/todo.txt
++++ b/todo.txt
+@@ -1,3 +1,3 @@
+ one
+-two
++done
+ three
 "#;
 
 async fn configure_temp_workspace(harness: &AppHarness, workspace_root: &Path) {
@@ -140,10 +150,122 @@ fn write_ripgrep_fixture(workspace_root: &Path) -> PathBuf {
 }
 
 fn write_simple_fixture(workspace_root: &Path) -> PathBuf {
-    let file_path = workspace_root.join("notes.txt");
-    fs::create_dir_all(workspace_root).expect("create workspace root");
-    fs::write(&file_path, "alpha\nbeta\ngamma\n").expect("write simple fixture");
+    write_named_fixture(workspace_root, "notes.txt", "alpha\nbeta\ngamma\n")
+}
+
+fn write_named_fixture(workspace_root: &Path, relative_path: &str, contents: &str) -> PathBuf {
+    let file_path = workspace_root.join(relative_path);
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).expect("create fixture parent");
+    }
+    fs::write(&file_path, contents).expect("write named fixture");
     file_path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_stages_multiple_files_in_one_request() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("ripgrep");
+    let _notes_path = write_simple_fixture(&workspace_root);
+    let _todo_path = write_named_fixture(&workspace_root, "todo.txt", "one\ntwo\nthree\n");
+    configure_temp_workspace(&harness, &workspace_root).await;
+
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let call_id = ArcStr::from("ns-patch-multi-file");
+    let tool_call = ToolCall {
+        call_id: call_id.clone(),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::NsPatch,
+            arguments: serde_json::json!({
+                "patches": [
+                    {
+                        "file": "notes.txt",
+                        "diff": SIMPLE_NS_PATCH_DIFF,
+                        "reasoning": "Batch coverage for notes.txt",
+                    },
+                    {
+                        "file": "todo.txt",
+                        "diff": TODO_NS_PATCH_DIFF,
+                        "reasoning": "Batch coverage for todo.txt",
+                    }
+                ]
+            })
+            .to_string(),
+        },
+        extra_content: None,
+    };
+
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+    harness
+        .event_bus
+        .send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }));
+
+    let mut completed_event: Option<ApplyCodeEditResult> = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match timeout(Duration::from_millis(100), event_rx.recv()).await {
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                content,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                let parsed_event: ApplyCodeEditResult =
+                    serde_json::from_str(&content).expect("parse ToolCallCompleted payload");
+                completed_event = Some(parsed_event);
+                break;
+            }
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                error,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                panic!("ns_patch unexpectedly failed: {error}");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+
+    let completed_event = completed_event.expect("expected ToolCallCompleted event for ns_patch");
+    assert!(completed_event.ok, "completion event should report success");
+    assert_eq!(completed_event.staged, 2, "should stage both patch entries");
+    assert_eq!(
+        completed_event.files,
+        vec!["notes.txt".to_string(), "todo.txt".to_string()],
+        "completion event should preserve requested relative paths"
+    );
+
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
+    let proposal = harness
+        .state
+        .proposals
+        .read()
+        .await
+        .get(&proposal_id)
+        .cloned()
+        .expect("ns_patch should stage a proposal");
+    assert_eq!(
+        proposal.edits_ns.len(),
+        2,
+        "proposal should store both ns edits"
+    );
+    assert_eq!(
+        proposal.files,
+        vec![
+            workspace_root.join("notes.txt"),
+            workspace_root.join("todo.txt")
+        ],
+        "proposal should resolve both file paths inside the temp workspace"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -171,6 +293,7 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
                 })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
@@ -226,12 +349,13 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
         "completion event should preserve the ripgrep relative file path"
     );
 
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     let proposal = harness
         .state
         .proposals
         .read()
         .await
-        .get(&request_id)
+        .get(&proposal_id)
         .cloned()
         .expect("ns_patch should stage a proposal");
     assert_eq!(
@@ -243,6 +367,99 @@ async fn ns_patch_emits_completed_event_for_exact_ripgrep_diff() {
         proposal.files,
         vec![workspace_root.join("crates/printer/src/util.rs")],
         "proposal should resolve the ripgrep file path inside the temp workspace"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_rejects_duplicate_same_file_entries_in_one_request() {
+    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let temp_dir = tempdir().expect("temp workspace");
+    let workspace_root = temp_dir.path().join("ripgrep");
+    let fixture_path = write_simple_fixture(&workspace_root);
+    configure_temp_workspace(&harness, &workspace_root).await;
+
+    let request_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let call_id = ArcStr::from("ns-patch-duplicate-same-file");
+    let tool_call = ToolCall {
+        call_id: call_id.clone(),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::NsPatch,
+            arguments: serde_json::json!({
+                "patches": [
+                    {
+                        "file": "notes.txt",
+                        "diff": SIMPLE_NS_PATCH_DIFF,
+                        "reasoning": "First hunk for notes.txt",
+                    },
+                    {
+                        "file": "notes.txt",
+                        "diff": SIMPLE_NS_PATCH_DIFF,
+                        "reasoning": "Second hunk for notes.txt",
+                    }
+                ]
+            })
+            .to_string(),
+        },
+        extra_content: None,
+    };
+
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+    harness
+        .event_bus
+        .send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }));
+
+    let mut failure: Option<String> = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match timeout(Duration::from_millis(100), event_rx.recv()).await {
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                error,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                failure = Some(error);
+                break;
+            }
+            Ok(Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: event_request_id,
+                call_id: event_call_id,
+                ..
+            }))) if event_request_id == request_id && event_call_id == call_id => {
+                panic!("ns_patch unexpectedly completed for duplicate same-file entries");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+
+    let failure = failure.expect("expected ToolCallFailed event for duplicate same-file batch");
+    assert!(
+        failure.contains("combine them into one unified diff per file"),
+        "failure should explain the supported same-file contract: {failure}"
+    );
+
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
+    assert!(
+        harness
+            .state
+            .proposals
+            .read()
+            .await
+            .get(&proposal_id)
+            .is_none(),
+        "duplicate same-file entries should not stage a proposal"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture_path).expect("read fixture after failure"),
+        "alpha\nbeta\ngamma\n",
+        "duplicate same-file entries should leave the file unchanged"
     );
 }
 
@@ -276,6 +493,7 @@ async fn ns_patch_auto_confirm_applies_staged_patch() {
                 })
             .to_string(),
         },
+        extra_content: None,
     };
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
@@ -330,7 +548,7 @@ async fn ns_patch_auto_confirm_applies_staged_patch() {
                 .proposals
                 .read()
                 .await
-                .get(&request_id)
+                .get(&derive_edit_proposal_id(request_id, &call_id))
                 .cloned();
             panic!(
                 "expected auto-confirmed ns_patch to modify file; final proposal state: {proposal:?}"

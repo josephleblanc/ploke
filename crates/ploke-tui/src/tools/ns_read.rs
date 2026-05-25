@@ -7,7 +7,7 @@ use std::{borrow::Cow, ops::Deref as _, path::PathBuf};
 use ploke_core::file_hash::FileHash;
 use serde::{Deserialize, Serialize};
 
-use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
+use super::{ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 use crate::{tools::ToolResult, tools::tool_ui_error, utils::path_scoping};
 use ploke_io::{ReadFileRequest, ReadFileResponse, ReadRange, ReadStrategy};
 use tokio::fs;
@@ -57,6 +57,7 @@ pub struct NsReadParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct NsReadParamsOwned {
     pub file: String,
     pub start_line: Option<u32>,
@@ -86,8 +87,8 @@ impl super::Tool for NsRead {
         ToolName::NsRead
     }
 
-    fn description() -> ToolDescr {
-        ToolDescr::NsRead
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {

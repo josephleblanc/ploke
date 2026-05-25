@@ -117,21 +117,33 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct DebugStateCommand(String);
+pub struct DebugStateCommand {
+    sequence: u64,
+    debug: String,
+}
+
 impl DebugStateCommand {
-    pub fn debug_string_from_ref(cmd: &StateCommand) -> Self {
+    pub fn debug_string_from_ref(sequence: u64, cmd: &StateCommand) -> Self {
         let debug_string = format!("{:?}", cmd);
-        Self(debug_string)
+        Self {
+            sequence,
+            debug: debug_string,
+        }
     }
 
     /// Returns the debug string representation of the StateCommand.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.debug
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidationProbeEvent {
+    sequence: u64,
     command: String,
     validation: Option<Result<(), String>>,
     /// User-facing error message (if any)
@@ -149,6 +161,10 @@ pub struct ValidationProbeEvent {
 }
 
 impl ValidationProbeEvent {
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
     pub fn command(&self) -> &str {
         &self.command
     }
@@ -218,9 +234,11 @@ impl RelayStateCmd {
             state_cmd_tx,
             debug_string_tx,
         } = self;
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
+            sequence += 1;
             // 1. Emit debug string first
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -286,8 +304,10 @@ impl ValidationRelayStateCmd {
         // Subscribe to error events for capturing user-facing errors
         let mut error_rx = event_bus.subscribe(EventPriority::Realtime);
 
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            sequence += 1;
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -389,6 +409,7 @@ impl ValidationRelayStateCmd {
             {
                 let _ = validation_tx
                     .send(ValidationProbeEvent {
+                        sequence,
                         command: cmd.discriminant().to_string(),
                         validation,
                         error_message,
@@ -905,8 +926,7 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         }
     }
 
-    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
-    pub fn into_app(self, pwd: PathBuf) -> App {
+    fn app(&self, pwd: PathBuf) -> App {
         App::new(
             self.inner.command_style,
             Arc::clone(&self.inner.state),
@@ -919,10 +939,30 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         )
     }
 
+    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
+    pub fn into_app(self, pwd: PathBuf) -> App {
+        self.app(pwd)
+    }
+
     /// Build the [`App`] handle after seeding `SystemState.pwd` for fast-path tests.
     pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
         self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
         self.into_app(pwd)
+    }
+
+    /// Spawn a real terminal frontend attached to this runtime.
+    #[cfg(feature = "demo")]
+    pub async fn spawn_terminal_app(&self, pwd: PathBuf) -> tokio::task::JoinHandle<()> {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        let app = self.app(pwd);
+        tokio::spawn(async move {
+            let terminal = ratatui::init();
+            let result = app.run(terminal).await;
+            ratatui::restore();
+            if let Err(error) = result {
+                tracing::error!(%error, "demo terminal app exited with error");
+            }
+        })
     }
 
     pub fn state_arc(&self) -> Arc<AppState> {
@@ -931,6 +971,10 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
 
     pub fn event_bus_arc(&self) -> Arc<EventBus> {
         Arc::clone(&self.inner.event_bus)
+    }
+
+    pub fn command_sender(&self) -> mpsc::Sender<StateCommand> {
+        self.inner.cmd_tx.clone()
     }
 
     /// Convenience wrapper that returns the app wrapped in `Arc<Mutex<App>>`.
@@ -1034,6 +1078,31 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
         fixture_db: &Arc<ploke_db::Database>,
         processor: EmbeddingProcessor,
     ) -> Self {
+        Self::new_with_embedding_processor_and_rag_config(
+            fixture_db,
+            processor,
+            RagConfig::default(),
+        )
+    }
+
+    /// Create a lightweight runtime with a caller-supplied BM25 timeout.
+    pub fn new_with_embedding_processor_and_bm25_timeout(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        bm25_timeout_ms: u64,
+    ) -> Self {
+        let mut rag_config = RagConfig::default();
+        rag_config.bm25_timeout_ms = bm25_timeout_ms;
+        rag_config.strict_bm25_by_default = true;
+        Self::new_with_embedding_processor_and_rag_config(fixture_db, processor, rag_config)
+    }
+
+    /// Create a lightweight runtime with caller-supplied embedding and RAG settings.
+    fn new_with_embedding_processor_and_rag_config(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        rag_config: RagConfig,
+    ) -> Self {
         let config = UserConfig::default();
         let runtime_cfg: RuntimeConfig = config.clone().into();
         let tool_verbosity = runtime_cfg.tool_verbosity;
@@ -1069,7 +1138,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
             db_handle.clone(),
             Arc::clone(&embedding_runtime),
             io_handle.clone(),
-            RagConfig::default(),
+            rag_config,
         ) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(_e) => None,
@@ -1348,7 +1417,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("AddUserMessage"),
             "Debug should show AddUserMessage, got: {}",
@@ -1414,7 +1484,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("EmbedMessage"),
             "Debug should show EmbedMessage, got: {}",

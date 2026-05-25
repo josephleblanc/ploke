@@ -351,6 +351,7 @@ mod tests {
                 name: ToolName::ApplyCodeEdit,
                 arguments: "{}".to_string(),
             },
+            extra_content: None,
         };
 
         bus.send(AppEvent::System(SystemEvent::ToolCallRequested {

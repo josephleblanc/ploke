@@ -4,21 +4,23 @@
 mod tests;
 
 pub(super) mod cli;
+pub mod google;
 pub mod openrouter;
 
 use crate::manager::RequestMessage;
 use crate::manager::Role;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::Error as _};
 use serde_json;
 use tracing::warn;
 
 use ploke_core::tool_types::ToolDefinition;
 
 use super::{
-    EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
-    request::{ChatCompReqCore, endpoint::ToolChoice, models},
+    EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey, ReasoningConfig,
+    request::{ChatCompReqCore, JsonObjMarker, endpoint::ToolChoice, models},
 };
+use crate::{HTTP_REFERER, HTTP_TITLE};
 mod anthropic {
     use super::*;
     // Note: Placeholder, just an example for now
@@ -48,15 +50,15 @@ pub trait HasModels: Router {
         client: &reqwest::Client,
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
         async {
-            let url = Self::MODELS_URL;
-            let api_key = Self::resolve_api_key()?;
+            let url = Self::models_url()?;
+            let api_key = Self::resolve_bearer_token().await?;
 
             let resp = client
                 .get(url)
                 .bearer_auth(api_key)
                 .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
+                .header("HTTP-Referer", HTTP_REFERER)
+                .header("X-Title", HTTP_TITLE)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -151,14 +153,14 @@ pub trait HasEndpoint: Router {
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::EpResponse>> + Send {
         async {
             let url = Self::endpoints_url(model);
-            let api_key = Self::resolve_api_key()?;
+            let api_key = Self::resolve_bearer_token().await?;
 
             let resp = client
                 .get(url)
                 .bearer_auth(api_key)
                 .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
+                .header("HTTP-Referer", HTTP_REFERER)
+                .header("X-Title", HTTP_TITLE)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -176,6 +178,7 @@ pub trait HasEndpoint: Router {
 pub enum RouterVariants {
     OpenRouter(openrouter::OpenRouter),
     Anthropic(anthropic::Anthropic),
+    Google(google::Google),
 }
 
 impl Default for RouterVariants {
@@ -188,6 +191,14 @@ pub trait RouterModelId: From<ModelId> {
     fn into_key(self) -> ModelKey;
     fn key(&self) -> &ModelKey;
     fn into_url_format(self) -> String;
+
+    fn request_model_string(model: &ModelId) -> String {
+        Self::from(model.clone()).into_url_format()
+    }
+
+    fn model_id_from_request_string(model: &str) -> Result<ModelId, crate::IdError> {
+        ModelId::from_str(model)
+    }
 }
 
 pub trait Router:
@@ -246,10 +257,19 @@ pub trait Router:
     // that is not common to both native model APIs like OpenAI and true routers like OpenRouter.
     const PROVIDERS_URL: &str;
 
-    fn resolve_api_key() -> Result<String, std::env::VarError> {
-        // 1. Check provider-specific env var if specified
-        let key_name = Self::API_KEY_NAME;
-        std::env::var(key_name)
+    fn resolve_api_key() -> Result<String, crate::LlmError>;
+
+    fn resolve_bearer_token()
+    -> impl std::future::Future<Output = Result<String, crate::LlmError>> + Send {
+        async { Self::resolve_api_key() }
+    }
+
+    fn completion_url() -> Result<&'static str, crate::LlmError> {
+        Ok(Self::COMPLETION_URL)
+    }
+
+    fn models_url() -> Result<&'static str, crate::LlmError> {
+        Ok(Self::MODELS_URL)
     }
 
     fn endpoints_url(model: Self::RouterModelId) -> String {
@@ -327,7 +347,7 @@ pub fn default_messages() -> Vec<RequestMessage> {
 
 // TODO: Add a GhostData field for validation or use a custom serde method to build the request
 // and use `Option` on the bundled fields we want to flatten.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ChatCompRequest<R>
 where
     R: Router,
@@ -343,13 +363,11 @@ where
     /// in all cases if used as the `model` in the API request. E.g. for OpenRouter, there is an
     /// optional variant case, `{author}/{model}:{variant}` where `:{variant}` is optional, and so
     /// using this `ModelKey` would remove this distinction in requests.
-    #[serde(skip, default)]
     pub model_key: Option<ModelKey>,
     /// Core copletion request items that are common to all routers. This field is flattened into
     /// `ChatCompReq` so the common fields appear in the json request as fields of
     /// `ChatCompRequest`, kept separate here for modularization of different kinds of parameters
     /// that may vary differently across routers.
-    #[serde(flatten)]
     pub core: ChatCompReqCore,
     /// The parameters that may be set for this router. This is the set of LLMParameters that are
     /// common to all routers.
@@ -360,20 +378,133 @@ where
     // `CommonLLMParams` and `RouterLlmParams` or something, where the router-specific options will
     // follow a similar pattern to including the other router-specific parameters as in the
     // `Router` trait.
-    #[serde(flatten)]
     pub llm_params: LLMParameters,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
     /// NOTE: The `ToolsChoice` used below may or may not be unique to OpenRouter, determine when
     /// adding a new router/native API if we need to split `ToolChoice` off into another trait in
     /// the same pattern as `ChatCompRequest<R: ApiRoute>`
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
 
     // Router-specific fields merged at the top level
-    #[serde(flatten)]
     pub router: R::CompletionFields,
+}
+
+#[derive(Deserialize)]
+struct RawChatCompRequest<R>
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    #[serde(flatten)]
+    core: RawChatCompReqCore,
+    #[serde(flatten)]
+    llm_params: LLMParameters,
+    tools: Option<Vec<ToolDefinition>>,
+    tool_choice: Option<ToolChoice>,
+    #[serde(flatten)]
+    router: R::CompletionFields,
+}
+
+#[derive(Deserialize)]
+struct RawChatCompReqCore {
+    #[serde(default = "default_messages")]
+    messages: Vec<RequestMessage>,
+    prompt: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    response_format: Option<JsonObjMarker>,
+    stop: Option<Vec<String>>,
+    stream: Option<bool>,
+}
+
+fn merge_serialized_fields<T>(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    value: &T,
+) -> Result<(), serde_json::Error>
+where
+    T: Serialize,
+{
+    match serde_json::to_value(value)? {
+        serde_json::Value::Object(fields) => {
+            map.extend(fields);
+            Ok(())
+        }
+        _ => Err(serde::ser::Error::custom(
+            "flattened chat completion request section must serialize as an object",
+        )),
+    }
+}
+
+impl<R> Serialize for ChatCompRequest<R>
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut fields = serde_json::Map::new();
+
+        merge_serialized_fields(&mut fields, &self.core).map_err(S::Error::custom)?;
+        fields.insert(
+            "model".to_string(),
+            serde_json::Value::String(R::RouterModelId::request_model_string(&self.core.model)),
+        );
+        merge_serialized_fields(&mut fields, &self.llm_params).map_err(S::Error::custom)?;
+
+        if let Some(tools) = &self.tools {
+            fields.insert(
+                "tools".to_string(),
+                serde_json::to_value(tools).map_err(S::Error::custom)?,
+            );
+        }
+        if let Some(tool_choice) = &self.tool_choice {
+            fields.insert(
+                "tool_choice".to_string(),
+                serde_json::to_value(tool_choice).map_err(S::Error::custom)?,
+            );
+        }
+
+        merge_serialized_fields(&mut fields, &self.router).map_err(S::Error::custom)?;
+        fields.serialize(serializer)
+    }
+}
+
+impl<'de, R> Deserialize<'de> for ChatCompRequest<R>
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize + Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawChatCompRequest::<R>::deserialize(deserializer)?;
+        let model = match raw.core.model {
+            Some(model) => R::RouterModelId::model_id_from_request_string(&model)
+                .map_err(serde::de::Error::custom)?,
+            None => ModelId::default(),
+        };
+        let model_key = model.key.clone();
+
+        Ok(Self {
+            model_key: Some(model_key),
+            core: ChatCompReqCore {
+                messages: raw.core.messages,
+                prompt: raw.core.prompt,
+                model,
+                response_format: raw.core.response_format,
+                stop: raw.core.stop,
+                stream: raw.core.stream,
+            },
+            llm_params: raw.llm_params,
+            tools: raw.tools,
+            tool_choice: raw.tool_choice,
+            router: raw.router,
+        })
+    }
 }
 
 impl<R> ChatCompRequest<R>
@@ -436,6 +567,7 @@ where
 
     /// Set the model for the completion request
     pub fn with_model(mut self, model: ModelId) -> Self {
+        self.model_key = Some(model.key.clone());
         self.core = self.core.with_model(model);
         self
     }
@@ -507,6 +639,11 @@ where
     /// Set top_k parameter - Range: [1, Infinity) Not available for OpenAI models
     pub fn with_top_k(mut self, top_k: f32) -> Self {
         self.llm_params = self.llm_params.with_top_k(top_k);
+        self
+    }
+
+    pub fn with_reasoning(mut self, reasoning: ReasoningConfig) -> Self {
+        self.llm_params = self.llm_params.with_reasoning(reasoning);
         self
     }
 

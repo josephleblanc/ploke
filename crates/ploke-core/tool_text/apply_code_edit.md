@@ -1,0 +1,1 @@
+Apply canonical code edits to one or more semantic targets identified by canonical path. Use `node_type=method` for associated items, and `node_type=function` for primary items. If you need help locating the target, use `code_item_lookup` or `code_item_edges`; use `non_semantic_patch` for direct text edits.

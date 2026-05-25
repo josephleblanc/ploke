@@ -6,15 +6,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use syn_parser::discovery::CrateContext;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
 use crate::llm::registry::user_prefs::RegistryPrefs;
+use crate::llm::router_only::RouterVariants;
 use crate::llm::{ModelId, ModelKey};
 use crate::user_config::{
     ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning,
     MessageVerbosityProfile, MessageVerbosityProfiles, RagUserConfig, UserConfig,
 };
+use crate::utils::parse_errors::FlattenedParserDiagnostic;
+use crate::utils::path_scoping::WriteScope;
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
@@ -41,7 +45,7 @@ pub struct AppState {
     pub embedder: Arc<EmbeddingRuntime>,
     pub io_handle: IoManagerHandle,
 
-    // In-memory registry for staged code-edit proposals (M1)
+    // In-memory registry for staged code-edit proposals (M1), keyed by proposal_id.
     pub proposals: RwLock<HashMap<Uuid, EditProposal>>,
     // In-memory registry for staged file-creation proposals
     pub create_proposals: RwLock<HashMap<Uuid, CreateProposal>>,
@@ -202,6 +206,8 @@ pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
     pub model_registry: RegistryPrefs,
     pub active_model: ModelId,
+    #[serde(default)]
+    pub active_router: RouterVariants,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub tool_verbosity: ToolVerbosity,
@@ -261,6 +267,7 @@ impl From<UserConfig> for RuntimeConfig {
             llm_params,
             model_registry: registry,
             active_model: ModelId::from(ModelKey::default()),
+            active_router: RouterVariants::default(),
             editing,
             command_style: uc.command_style,
             tool_verbosity: uc.tool_verbosity,
@@ -356,6 +363,8 @@ pub enum DiffPreview {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditProposal {
+    #[serde(default = "default_edit_proposal_id")]
+    pub proposal_id: Uuid,
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub call_id: ArcStr,
@@ -367,6 +376,22 @@ pub struct EditProposal {
     pub status: EditProposalStatus,
     /// Whether or not the proposal is for a semantic edit.
     pub is_semantic: bool,
+}
+
+fn default_edit_proposal_id() -> Uuid {
+    Uuid::nil()
+}
+
+pub fn derive_edit_proposal_id(request_id: Uuid, call_id: &ArcStr) -> Uuid {
+    Uuid::new_v5(&request_id, format!("edit-proposal:{call_id}").as_bytes())
+}
+
+impl EditProposal {
+    pub fn normalize_proposal_id(&mut self) {
+        if self.proposal_id.is_nil() {
+            self.proposal_id = derive_edit_proposal_id(self.request_id, &self.call_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -556,7 +581,7 @@ impl LoadedWorkspaceState {
 
 #[derive(Debug, Clone)]
 pub struct LoadedCrateState {
-    pub info: CrateInfo,
+    pub context: CrateContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,6 +602,9 @@ pub struct SystemStatus {
     pub(crate) last_parse_failure: Option<ParseFailure>,
     pub(crate) last_parse_success_ms: Option<i64>,
     pub(crate) pwd: PathBuf,
+    pub(crate) extra_read_roots: Vec<PathBuf>,
+    pub(crate) write_scope: Option<WriteScope>,
+    pub(crate) write_denials: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -584,6 +612,7 @@ pub struct ParseFailure {
     pub target_dir: PathBuf,
     pub message: String,
     pub occurred_at_ms: i64,
+    pub diagnostics: Vec<FlattenedParserDiagnostic>,
 }
 
 impl SystemStatus {
@@ -620,7 +649,7 @@ impl SystemStatus {
     pub fn loaded_crate_roots(&self) -> Vec<PathBuf> {
         self.loaded_crates
             .values()
-            .map(|lc| lc.info.root_path.clone())
+            .map(|lc| lc.context.root_path.clone())
             .collect()
     }
 
@@ -628,21 +657,21 @@ impl SystemStatus {
         !self.loaded_crates.is_empty()
     }
 
-    /// Backward-compatible accessor: returns the first loaded crate's info.
+    /// Backward-compatible accessor: returns the first loaded crate's context.
     /// Callers that need a specific crate should use `loaded_crate(id)`.
-    pub fn focused_crate(&self) -> Option<&CrateInfo> {
-        self.loaded_crates.values().next().map(|lc| &lc.info)
+    pub fn focused_crate(&self) -> Option<&CrateContext> {
+        self.loaded_crates.values().next().map(|lc| &lc.context)
     }
 
     /// Backward-compatible accessor: returns the first loaded crate's root path.
     /// Callers that need a specific crate root should use `loaded_crate(id)`.
     pub fn focused_crate_root(&self) -> Option<PathBuf> {
-        self.focused_crate().map(|info| info.root_path.clone())
+        self.focused_crate().map(|ctx| ctx.root_path.clone())
     }
 
     /// Backward-compatible accessor: returns the first loaded crate's name.
     pub fn focused_crate_name(&self) -> Option<&str> {
-        self.focused_crate().map(|info| info.name.as_str())
+        self.focused_crate().map(|ctx| ctx.name.as_str())
     }
 
     /// Set initial pwd at application start
@@ -690,12 +719,37 @@ impl SystemStatus {
             self.crate_versions.entry(info.id).or_insert(0);
             self.workspace_freshness
                 .insert(info.id, WorkspaceFreshness::Fresh);
-            self.loaded_crates
-                .insert(info.id, LoadedCrateState { info: info.clone() });
+            self.loaded_crates.insert(
+                info.id,
+                LoadedCrateState {
+                    context: CrateContext {
+                        id: info.id,
+                        name: info.name.clone(),
+                        version: String::new(),
+                        namespace: info.namespace,
+                        root_path: info.root_path.clone(),
+                        files: Vec::new(),
+                        targets: Vec::new(),
+                        features: syn_parser::discovery::Features::default(),
+                        dependencies: syn_parser::discovery::Dependencies::default(),
+                        dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                        workspace_path: None,
+                    },
+                },
+            );
         }
 
         self.loaded_workspace = Some(loaded_workspace);
         focus_id
+    }
+
+    pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
+        self.extra_read_roots = roots;
+    }
+
+    pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
+        self.write_scope = scope;
+        self.write_denials.clear();
     }
 
     /// Registers a crate root into loaded state. If the root is already a member
@@ -707,8 +761,24 @@ impl SystemStatus {
         {
             let id = info.id;
             self.crate_versions.entry(id).or_insert(0);
-            self.loaded_crates
-                .insert(id, LoadedCrateState { info: info.clone() });
+            self.loaded_crates.insert(
+                id,
+                LoadedCrateState {
+                    context: CrateContext {
+                        id: info.id,
+                        name: info.name.clone(),
+                        version: String::new(),
+                        namespace: info.namespace,
+                        root_path: info.root_path.clone(),
+                        files: Vec::new(),
+                        targets: Vec::new(),
+                        features: syn_parser::discovery::Features::default(),
+                        dependencies: syn_parser::discovery::Dependencies::default(),
+                        dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+                        workspace_path: None,
+                    },
+                },
+            );
             return id;
         }
 
@@ -718,14 +788,29 @@ impl SystemStatus {
     /// Loads a single crate as a standalone (no workspace) environment.
     /// Clears any previous loaded workspace and crate state.
     fn load_standalone_crate(&mut self, root: PathBuf) -> CrateId {
-        let info = CrateInfo::from_root_path(root.clone());
-        let id = info.id;
+        let context = CrateContext {
+            id: CrateId::from_root_path(&root),
+            name: root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown".to_string()),
+            version: String::new(),
+            namespace: CrateId::from_root_path(&root).uuid(),
+            root_path: root.clone(),
+            files: Vec::new(),
+            targets: Vec::new(),
+            features: syn_parser::discovery::Features::default(),
+            dependencies: syn_parser::discovery::Dependencies::default(),
+            dev_dependencies: syn_parser::discovery::DevDependencies::default(),
+            workspace_path: None,
+        };
+        let id = context.id;
         self.loaded_workspace = Some(LoadedWorkspaceState::from_member_roots(
             root,
-            vec![info.root_path.clone()],
+            vec![context.root_path.clone()],
         ));
         self.loaded_crates.clear();
-        self.loaded_crates.insert(id, LoadedCrateState { info });
+        self.loaded_crates.insert(id, LoadedCrateState { context });
         self.crate_versions.entry(id).or_insert(0);
         self.workspace_freshness
             .insert(id, WorkspaceFreshness::Fresh);
@@ -807,10 +892,20 @@ impl SystemStatus {
     }
 
     pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
+        self.record_parse_failure_with_diagnostics(target_dir, message, Vec::new());
+    }
+
+    pub fn record_parse_failure_with_diagnostics(
+        &mut self,
+        target_dir: PathBuf,
+        message: String,
+        diagnostics: Vec<FlattenedParserDiagnostic>,
+    ) {
         self.last_parse_failure = Some(ParseFailure {
             target_dir,
             message,
             occurred_at_ms: Utc::now().timestamp_millis(),
+            diagnostics,
         });
     }
 
@@ -842,6 +937,7 @@ impl SystemStatus {
             roots.push(ws);
         }
         roots.extend(self.loaded_workspace_member_roots());
+        roots.extend(self.extra_read_roots.iter().cloned());
         roots.extend(extra_read_roots.iter().cloned());
         let mut seen = BTreeSet::new();
         roots.retain(|root| seen.insert(root.clone()));
@@ -862,6 +958,15 @@ impl SystemStatus {
             .or_else(|| self.focused_crate_root())?;
         let policy = self.derive_path_policy(&[])?;
         Some((primary_root, policy))
+    }
+
+    pub fn write_path_context(&self) -> Option<(PathBuf, PathPolicy, Option<WriteScope>)> {
+        let (primary_root, policy) = self.tool_path_context()?;
+        Some((primary_root, policy, self.write_scope.clone()))
+    }
+
+    pub fn note_write_denial(&mut self, key: String) -> bool {
+        !self.write_denials.insert(key)
     }
 }
 
@@ -1000,6 +1105,11 @@ impl<'a> SystemTxn<'a> {
         self.state.has_loaded_crates()
     }
 
+    /// Returns the loaded workspace root, when one is available.
+    pub fn loaded_workspace_root(&self) -> Option<PathBuf> {
+        self.state.loaded_workspace_root()
+    }
+
     /// Returns a vector of all loaded crate IDs.
     pub fn loaded_crate_ids(&self) -> Vec<CrateId> {
         self.state.loaded_crates.keys().copied().collect()
@@ -1025,6 +1135,17 @@ impl<'a> SystemTxn<'a> {
         self.state.record_parse_failure(target_dir, message);
     }
 
+    /// Record a parse failure with nested parser diagnostics preserved.
+    pub fn record_parse_failure_with_diagnostics(
+        &mut self,
+        target_dir: PathBuf,
+        message: String,
+        diagnostics: Vec<FlattenedParserDiagnostic>,
+    ) {
+        self.state
+            .record_parse_failure_with_diagnostics(target_dir, message, diagnostics);
+    }
+
     /// Set workspace freshness for a crate.
     pub fn set_workspace_freshness(&mut self, crate_id: CrateId, freshness: WorkspaceFreshness) {
         self.state.set_workspace_freshness(crate_id, freshness);
@@ -1047,6 +1168,18 @@ impl<'a> SystemTxn<'a> {
     ) {
         self.state
             .set_loaded_workspace(workspace_root, member_roots, focused_root);
+    }
+
+    pub fn set_extra_read_roots(&mut self, roots: Vec<PathBuf>) {
+        self.state.set_extra_read_roots(roots);
+    }
+
+    pub fn set_write_scope(&mut self, scope: Option<WriteScope>) {
+        self.state.set_write_scope(scope);
+    }
+
+    pub fn note_write_denial(&mut self, key: String) -> bool {
+        self.state.note_write_denial(key)
     }
 
     /// Derive the path policy from the current workspace state.
@@ -1131,6 +1264,25 @@ mod tests {
             .expect("tool path context should be available");
         assert_eq!(primary, workspace_root);
         assert_eq!(tool_policy.roots, policy.roots);
+    }
+
+    #[test]
+    fn tool_path_context_preserves_extra_read_roots() {
+        let mut status = SystemStatus::default();
+        let workspace_root = std::env::temp_dir().join("ploke_test_workspace_extra_roots");
+        let member = workspace_root.join("crate_a");
+        let evidence = std::env::temp_dir().join("ploke_test_evidence_root");
+
+        status.set_loaded_workspace(workspace_root.clone(), vec![member.clone()], Some(member));
+        status.set_extra_read_roots(vec![evidence.clone()]);
+
+        let (_primary, policy) = status
+            .tool_path_context()
+            .expect("tool path context should include extra read roots");
+        assert!(
+            policy.roots.contains(&evidence),
+            "extra read roots must be visible to workspace tools"
+        );
     }
 
     #[test]

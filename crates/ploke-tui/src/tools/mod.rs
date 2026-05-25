@@ -12,7 +12,7 @@ use crate::{
 };
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,6 +23,7 @@ use crate::{
     app_state::{AppState, events::SystemEvent},
     rag::utils::ToolCallParams,
 };
+use color_eyre::eyre::eyre;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use ploke_core::{
@@ -38,6 +39,9 @@ use syn_parser::parser::nodes::NodePath;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod tool_tests;
+
 pub mod request_code_context;
 pub use request_code_context::{
     RequestCodeContext, RequestCodeContextGat, RequestCodeContextInput,
@@ -49,15 +53,21 @@ pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
 pub mod get_code_edges;
+pub mod insert_rust_item;
 pub mod list_dir;
+mod lookup_support;
 pub mod ns_patch;
 pub mod ns_read;
 pub mod ui;
 pub mod validators;
 
 pub use error::{
-    Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, allowed_tool_names,
-    tool_io_error, tool_ui_error,
+    Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, ToolLlmErrorPayload,
+    ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField, ToolRetryContextValue,
+    allowed_tool_names, tool_io_error, tool_ui_error,
+};
+pub use ploke_core::rag_types::{
+    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult,
 };
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
@@ -67,9 +77,9 @@ pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 pub use ploke_core::tool_types::ToolName;
 
 // NOTE:ploke-llm
-// moved ToolDescr into ploke-core to make available to `ploke-llm` as we refactor ploke-tui::llm
-// into ploke-llm
-pub use ploke_core::tool_types::ToolDescr;
+// tool descriptions now live in ploke-core as first-class text artifacts so both ploke-tui and
+// ploke-llm can share the same guidance surface.
+pub use ploke_core::tool_descriptions::ToolDescription;
 
 // NOTE:ploke-llm
 // moved into ploke-core for shared access
@@ -150,6 +160,77 @@ pub struct ToolResult {
     pub ui_payload: Option<ToolUiPayload>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolCallPreflightError {
+    pub call_id: ArcStr,
+    pub tool_name: ToolName,
+    pub rejected_arguments: String,
+    pub error: ToolError,
+}
+
+impl ToolCallPreflightError {
+    pub fn format_for_audience(&self, audience: Audience) -> String {
+        format!(
+            "{}\nRejected arguments: {}",
+            self.error.format_for_audience(audience),
+            self.rejected_arguments
+        )
+    }
+}
+
+pub fn validate_and_sanitize_tool_calls(
+    tool_calls: &[ToolCall],
+) -> Result<Vec<ToolCall>, ToolCallPreflightError> {
+    tool_calls
+        .iter()
+        .map(validate_and_sanitize_tool_call)
+        .collect()
+}
+
+pub fn validate_and_sanitize_tool_call(
+    tool_call: &ToolCall,
+) -> Result<ToolCall, ToolCallPreflightError> {
+    let mut sanitized = tool_call.clone();
+    sanitized.function.arguments = sanitize_tool_args(&sanitized.function.arguments);
+    validate_tool_args(sanitized.function.name, &sanitized.function.arguments).map_err(
+        |error| ToolCallPreflightError {
+            call_id: sanitized.call_id.clone(),
+            tool_name: sanitized.function.name,
+            rejected_arguments: crate::tools::error::truncate_for_error(
+                &sanitized.function.arguments,
+                1024,
+            ),
+            error,
+        },
+    )?;
+    Ok(sanitized)
+}
+
+fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> {
+    match tool_name {
+        ToolName::RequestCodeContext => validate_tool_args_with::<RequestCodeContextGat>(args),
+        ToolName::ApplyCodeEdit => validate_tool_args_with::<GatCodeEdit>(args),
+        ToolName::InsertRustItem => {
+            validate_tool_args_with::<insert_rust_item::InsertRustItem>(args)
+        }
+        ToolName::CreateFile => validate_tool_args_with::<create_file::CreateFile>(args),
+        ToolName::NsPatch => validate_tool_args_with::<ns_patch::NsPatch>(args),
+        ToolName::NsRead => validate_tool_args_with::<ns_read::NsRead>(args),
+        ToolName::CodeItemLookup => {
+            validate_tool_args_with::<code_item_lookup::CodeItemLookup>(args)
+        }
+        ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
+        ToolName::Cargo => validate_tool_args_with::<cargo::CargoTool>(args),
+        ToolName::ListDir => validate_tool_args_with::<list_dir::ListDir>(args),
+    }
+}
+
+fn validate_tool_args_with<T: Tool>(args: &str) -> Result<(), ToolError> {
+    T::deserialize_params(args)
+        .map(|_| ())
+        .map_err(T::adapt_error)
+}
+
 // potential alternative for static dispatch, might be helpful for macro
 pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::Result<()> {
     // TODO: Implement this as the Clone method for Ctx
@@ -177,13 +258,19 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
         args = %args,
         "tool_call_request"
     );
+    preflight_write_paths(name, &args, &ctx)
+        .await
+        .map_err(|err| {
+            emit_tool_error(&ctx, err.clone());
+            eyre!(err.format_for_audience(Audience::System))
+        })?;
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
             let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
                 .map_err(|err| {
                     let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
                     request_code_context::RequestCodeContextGat::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -199,7 +286,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                         ToolInvocationError::Exec(e),
                     );
                     RequestCodeContextGat::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -212,7 +299,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = code_edit::GatCodeEdit::deserialize_params(&args).map_err(|err| {
                 let terr = code_edit::GatCodeEdit::adapt_error(err);
                 code_edit::GatCodeEdit::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -226,7 +313,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
                     GatCodeEdit::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -235,11 +322,40 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             code_edit::GatCodeEdit::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
+        ToolName::InsertRustItem => {
+            let params =
+                insert_rust_item::InsertRustItem::deserialize_params(&args).map_err(|err| {
+                    let terr = insert_rust_item::InsertRustItem::adapt_error(err);
+                    insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = insert_rust_item::InsertRustItem::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr =
+                        insert_rust_item::InsertRustItem::adapt_error(ToolInvocationError::Exec(e));
+                    insert_rust_item::InsertRustItem::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            insert_rust_item::InsertRustItem::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
         ToolName::CreateFile => {
             let params = create_file::CreateFile::deserialize_params(&args).map_err(|err| {
                 let terr = create_file::CreateFile::adapt_error(err);
                 create_file::CreateFile::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -253,7 +369,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
                     create_file::CreateFile::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -266,7 +382,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = ns_patch::NsPatch::deserialize_params(&args).map_err(|err| {
                 let terr = ns_patch::NsPatch::adapt_error(err);
                 ns_patch::NsPatch::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -280,7 +396,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
                     ns_patch::NsPatch::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -293,7 +409,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = ns_read::NsRead::deserialize_params(&args).map_err(|err| {
                 let terr = ns_read::NsRead::adapt_error(err);
                 ns_read::NsRead::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -307,7 +423,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
                     ns_read::NsRead::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -321,7 +437,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 code_item_lookup::CodeItemLookup::deserialize_params(&args).map_err(|err| {
                     let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
                     code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -336,7 +452,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                     let terr =
                         code_item_lookup::CodeItemLookup::adapt_error(ToolInvocationError::Exec(e));
                     code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -350,7 +466,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 get_code_edges::CodeItemEdges::deserialize_params(&args).map_err(|err| {
                     let terr = get_code_edges::CodeItemEdges::adapt_error(err);
                     get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -365,7 +481,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                     let terr =
                         get_code_edges::CodeItemEdges::adapt_error(ToolInvocationError::Exec(e));
                     get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -378,7 +494,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = list_dir::ListDir::deserialize_params(&args).map_err(|err| {
                 let terr = list_dir::ListDir::adapt_error(err);
                 list_dir::ListDir::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -392,7 +508,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = list_dir::ListDir::adapt_error(ToolInvocationError::Exec(e));
                     list_dir::ListDir::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -405,7 +521,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = cargo::CargoTool::deserialize_params(&args).map_err(|err| {
                 let terr = cargo::CargoTool::adapt_error(err);
                 cargo::CargoTool::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -419,7 +535,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 .map_err(|e| {
                     let terr = cargo::CargoTool::adapt_error(ToolInvocationError::Exec(e));
                     cargo::CargoTool::emit_err(&ctx, terr.clone());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
@@ -429,6 +545,188 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
     }
+}
+
+const WRITE_POLICY_RETRY_HINT: &str = "Choose a workspace source file that is inside the writable surface. Do not edit protected manifests/configs such as Cargo.toml or .cargo/config.toml; if a dependency or config change is needed, explain it instead of retrying the same path.";
+const WRITE_POLICY_REPEAT_HINT: &str = "This exact write target was already denied in this run. Do not retry it; choose an allowed Rust/source file or finish with an explanation.";
+
+async fn preflight_write_paths(
+    tool_name: ToolName,
+    args: &str,
+    ctx: &Ctx,
+) -> Result<(), ToolError> {
+    let Some(paths) = write_paths_from_args(tool_name, args) else {
+        return Ok(());
+    };
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let Some((primary_root, policy, scope)) = ctx
+        .state
+        .with_system_read(|sys| sys.write_path_context())
+        .await
+    else {
+        return Err(ToolError::new(
+            tool_name,
+            ToolErrorCode::InvalidFormat,
+            "No workspace is loaded for write-tool path preflight",
+        )
+        .field(write_path_field(tool_name))
+        .retry_hint("Load a workspace before using edit tools.")
+        .retry_context(ToolRetryContext::new().field("input_paths", paths)));
+    };
+
+    let mut denied = Vec::new();
+    for input in paths {
+        let requested = PathBuf::from(&input);
+        match path_scoping::resolve_write_path(
+            requested.as_path(),
+            &primary_root,
+            &policy,
+            scope.as_ref(),
+        ) {
+            Ok(_) => {}
+            Err(reason) => denied.push((input, reason)),
+        }
+    }
+    if denied.is_empty() {
+        return Ok(());
+    }
+
+    let key = write_denial_key(tool_name, &denied);
+    let repeated = ctx
+        .state
+        .with_system_txn(|txn| txn.note_write_denial(key))
+        .await
+        .result;
+
+    Err(write_policy_error(
+        tool_name,
+        &primary_root,
+        &denied,
+        repeated,
+    ))
+}
+
+fn write_paths_from_args(tool_name: ToolName, args: &str) -> Option<Vec<String>> {
+    match tool_name {
+        ToolName::ApplyCodeEdit => {
+            code_edit::GatCodeEdit::deserialize_params(args)
+                .ok()
+                .map(|params| {
+                    params
+                        .edits
+                        .iter()
+                        .map(|edit| edit.file.clone().into_owned())
+                        .collect()
+                })
+        }
+        ToolName::InsertRustItem => insert_rust_item::InsertRustItem::deserialize_params(args)
+            .ok()
+            .map(|params| vec![params.file.into_owned()]),
+        ToolName::CreateFile => create_file::CreateFile::deserialize_params(args)
+            .ok()
+            .map(|params| vec![params.file_path.into_owned()]),
+        ToolName::NsPatch => ns_patch::NsPatch::deserialize_params(args)
+            .ok()
+            .map(|params| {
+                params
+                    .patches
+                    .iter()
+                    .map(|patch| patch.file.clone().into_owned())
+                    .collect()
+            }),
+        _ => None,
+    }
+}
+
+fn write_policy_error(
+    tool_name: ToolName,
+    primary_root: &Path,
+    denied: &[(String, String)],
+    repeated: bool,
+) -> ToolError {
+    let paths = denied
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let reasons = denied
+        .iter()
+        .map(|(_, reason)| reason.clone())
+        .collect::<Vec<_>>();
+    let mut unique_reasons = BTreeSet::new();
+    unique_reasons.extend(reasons.iter().cloned());
+    let reason_text = unique_reasons.into_iter().join("; ");
+    let path_text = paths.iter().join(", ");
+    let message = if repeated {
+        format!(
+            "Repeated protected or out-of-scope write path denied before execution: {path_text}"
+        )
+    } else {
+        format!(
+            "Write path denied before executing `{}`: {path_text}. Reason: {reason_text}",
+            tool_name.as_str()
+        )
+    };
+
+    ToolError::new(tool_name, ToolErrorCode::InvalidFormat, message)
+        .field(write_path_field(tool_name))
+        .expected("workspace-root-relative path inside the writable surface")
+        .received(path_text)
+        .retry_hint(if repeated {
+            WRITE_POLICY_REPEAT_HINT
+        } else {
+            WRITE_POLICY_RETRY_HINT
+        })
+        .retry_context(
+            ToolRetryContext::new()
+                .field("input_paths", paths)
+                .field("reasons", reasons)
+                .field("workspace_root", primary_root.display().to_string())
+                .field("repeated", repeated)
+                .field(
+                    "allowed_alternatives",
+                    vec![
+                        "edit a Rust/source file inside the writable surface",
+                        "avoid Cargo.toml and .cargo/config.toml",
+                        "state required manifest/config changes in prose",
+                    ],
+                ),
+        )
+}
+
+fn write_denial_key(tool_name: ToolName, denied: &[(String, String)]) -> String {
+    let mut parts = denied
+        .iter()
+        .map(|(path, reason)| format!("{path}\u{1f}{reason}"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    format!("{}:{}", tool_name.as_str(), parts.join("\u{1e}"))
+}
+
+fn write_path_field(tool_name: ToolName) -> &'static str {
+    match tool_name {
+        ToolName::CreateFile => "file_path",
+        ToolName::NsPatch => "patches.file",
+        ToolName::ApplyCodeEdit => "edits.file",
+        ToolName::InsertRustItem => "file",
+        _ => "path",
+    }
+}
+
+fn emit_tool_error(ctx: &Ctx, error: ToolError) {
+    let ui_payload = Some(ToolUiPayload::from_error(ctx.call_id.clone(), &error));
+    let _ = ctx
+        .event_bus
+        .realtime_tx
+        .send(crate::AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id: ctx.request_id,
+            parent_id: ctx.parent_id,
+            call_id: ctx.call_id.clone(),
+            error: error.to_wire_string(),
+            ui_payload,
+        }));
 }
 
 const TOOL_ARG_SUFFIXES: [&str; 1] = ["<|tool_call_end|>"];
@@ -460,7 +758,7 @@ pub trait Tool {
         Self: 'de;
 
     fn name() -> ToolName;
-    fn description() -> ToolDescr;
+    fn description() -> ToolDescription;
     fn schema() -> &'static serde_json::Value;
 
     fn build(ctx: &Ctx) -> Self
@@ -477,7 +775,7 @@ pub trait Tool {
     fn tool_def() -> ToolDefinition {
         ToolFunctionDef {
             name: Self::name(),
-            description: Self::description(),
+            description: Self::description().to_string(),
             parameters: Self::schema().clone(),
         }
         .into()
@@ -565,6 +863,7 @@ mod tests {
             "request_code_context"
         );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
+        assert_eq!(ToolName::InsertRustItem.as_str(), "insert_rust_item");
         assert_eq!(ToolName::CreateFile.as_str(), "create_file");
     }
 
@@ -574,7 +873,7 @@ mod tests {
             r#type: FunctionMarker,
             function: ToolFunctionDef {
                 name: ToolName::ApplyCodeEdit,
-                description: ToolDescr::ApplyCodeEdit,
+                description: ToolName::ApplyCodeEdit.description().to_string(),
                 parameters: json!({"type": "object"}),
             },
         };
@@ -590,5 +889,120 @@ mod tests {
             Some("apply_code_edit")
         );
         assert!(f.contains_key("parameters"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_strips_suffix_tokens() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_suffix"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::ListDir,
+                arguments: "{\"dir\":\"src\",\"max_entries\":5}<|tool_call_end|>".to_string(),
+            },
+            extra_content: None,
+        };
+
+        let validated = validate_and_sanitize_tool_call(&tool_call).expect("validated tool call");
+
+        assert_eq!(
+            validated.function.arguments,
+            "{\"dir\":\"src\",\"max_entries\":5}"
+        );
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_preserves_google_thought_signature() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_google_signature"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::ListDir,
+                arguments: "{\"dir\":\"src\",\"max_entries\":5}<|tool_call_end|>".to_string(),
+            },
+            extra_content: Some(ploke_llm::response::ToolCallExtraContent {
+                google: Some(ploke_llm::response::GoogleToolCallExtraContent {
+                    thought_signature: Some("opaque-google-signature".to_string()),
+                }),
+            }),
+        };
+
+        let validated = validate_and_sanitize_tool_call(&tool_call).expect("validated tool call");
+
+        assert_eq!(
+            validated
+                .extra_content
+                .as_ref()
+                .and_then(|extra| extra.google.as_ref())
+                .and_then(|google| google.thought_signature.as_deref()),
+            Some("opaque-google-signature")
+        );
+        assert_eq!(
+            validated.function.arguments,
+            "{\"dir\":\"src\",\"max_entries\":5}"
+        );
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_malformed_json() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_json"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::NsRead,
+                arguments: "{\"file\":\"src/lib.rs\",\"start_line\":".to_string(),
+            },
+            extra_content: None,
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call).expect_err("malformed json");
+
+        assert_eq!(err.tool_name, ToolName::NsRead);
+        assert!(err.error.message.contains("failed to parse tool arguments"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_schema_invalid_args() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_schema"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::Cargo,
+                arguments: "{\"command\":\"fmt\",\"scope\":\"workspace\"}".to_string(),
+            },
+            extra_content: None,
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call).expect_err("schema invalid args");
+
+        assert_eq!(err.tool_name, ToolName::Cargo);
+        assert!(err.error.message.contains("unknown variant"));
+    }
+
+    #[test]
+    fn validate_and_sanitize_tool_call_rejects_package_name_module_path() {
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("call_bad_module_path"),
+            call_type: FunctionMarker,
+            function: ploke_llm::response::FunctionCall {
+                name: ToolName::CodeItemLookup,
+                arguments: r#"{"file_path":"proc_macros/ploke-db-derive/src/lib.rs","item_name":"FieldSpec","module_path":"ploke_db_derive","node_kind":"struct"}"#.to_string(),
+            },
+            extra_content: None,
+        };
+
+        let err = validate_and_sanitize_tool_call(&tool_call)
+            .expect_err("package-name module_path should fail preflight");
+
+        assert_eq!(err.tool_name, ToolName::CodeItemLookup);
+        assert_eq!(err.error.field, Some("module_path"));
+        assert_eq!(err.error.received.as_deref(), Some("ploke_db_derive"));
+        assert!(
+            err.error
+                .retry_hint
+                .as_deref()
+                .expect("retry hint")
+                .contains("request_code_context")
+        );
     }
 }

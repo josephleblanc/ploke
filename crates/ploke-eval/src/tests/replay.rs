@@ -1,28 +1,37 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
     time::Duration,
 };
 
 use ploke_db::{Database, NodeType};
+use ploke_records::agent_turn::{AgentTurnTraceRecord, ObservedTurnEventRecord};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
-    app_state::{AppState, events::SystemEvent},
+    app_state::{AppState, core::derive_edit_proposal_id, events::SystemEvent},
     rag::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
     },
-    tools::{ToolErrorCode, ToolErrorWire, ToolName},
+    tools::{Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName, ns_patch::NsPatch},
     user_config::{ChatPolicy, ChatTimeoutStrategy},
 };
 use serde::Deserialize;
 use tempfile::tempdir;
+use tracing_subscriber::fmt::SubscriberBuilder;
 use uuid::Uuid;
 
 use crate::{
-    PreparedSingleRun, RunMsbAgentSingleRequest, runner::IndexingStatusArtifact, spec::PrepareError,
+    PreparedSingleRun,
+    replay::llm::LoadedResponseTape,
+    runner::{
+        AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RepoStateArtifact,
+        RunMsbSingleRequest, ToolRequestRecord, setup_replay_runtime,
+    },
+    spec::PrepareError,
 };
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +67,14 @@ fn benchmark_chat_policy() -> ChatPolicy {
         ..Default::default()
     };
     policy.validated()
+}
+
+fn init_tracing() {
+    let _ = SubscriberBuilder::default()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(true)
+        .with_test_writer()
+        .try_init();
 }
 
 impl RecordedApplyCodeEditToolRequest {
@@ -99,6 +116,307 @@ fn load_recorded_apply_code_edit_request() -> RecordedApplyCodeEditToolRequest {
 fn load_prepared_single_run(path: &Path) -> PreparedSingleRun {
     let text = std::fs::read_to_string(path).expect("read historical run manifest");
     serde_json::from_str(&text).expect("historical run manifest must parse")
+}
+
+fn load_agent_turn_artifact(path: &Path) -> AgentTurnArtifact {
+    let text = std::fs::read_to_string(path).expect("read historical agent turn artifact");
+    serde_json::from_str(&text).expect("historical agent turn artifact must parse")
+}
+
+fn load_agent_turn_trace_record(path: &Path) -> AgentTurnTraceRecord {
+    let text = std::fs::read_to_string(path).expect("read historical agent turn trace");
+    serde_json::from_str(&text).expect("historical agent turn trace must parse")
+}
+
+fn historical_instance_root(instance_id: &str) -> PathBuf {
+    PathBuf::from("/home/brasides/.ploke-eval/instances").join(instance_id)
+}
+
+fn historical_run_dir_with(instance_id: &str, required_artifacts: &[&str]) -> PathBuf {
+    let instance_root = historical_instance_root(instance_id);
+    if required_artifacts
+        .iter()
+        .all(|artifact| instance_root.join(artifact).exists())
+    {
+        return instance_root;
+    }
+
+    let runs_dir = instance_root.join("runs");
+    let mut candidates = std::fs::read_dir(&runs_dir)
+        .unwrap_or_else(|err| panic!("read historical runs dir {}: {err}", runs_dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            required_artifacts
+                .iter()
+                .all(|artifact| path.join(artifact).exists())
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop().unwrap_or_else(|| {
+        panic!(
+            "expected historical artifacts {:?} under {} or its runs/* directories",
+            required_artifacts,
+            instance_root.display()
+        )
+    })
+}
+
+fn output_artifact_path(output_dir: &Path, artifact: &str) -> PathBuf {
+    let flat = output_dir.join(artifact);
+    if flat.exists() {
+        return flat;
+    }
+
+    let runs_dir = output_dir.join("runs");
+    let mut candidates = match std::fs::read_dir(&runs_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join(artifact))
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+    candidates.sort();
+    candidates.pop().unwrap_or(flat)
+}
+
+fn historical_run_dir_with_tool_calls(instance_id: &str, call_ids: &[&str]) -> PathBuf {
+    let instance_root = historical_instance_root(instance_id);
+    let mut candidates = vec![instance_root.clone()];
+    let runs_dir = instance_root.join("runs");
+    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        candidates.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir()),
+        );
+    }
+    candidates.sort();
+
+    let mut checked = Vec::new();
+    for candidate in candidates {
+        let trace_path = candidate.join("agent-turn-trace.json");
+        if !trace_path.exists() {
+            continue;
+        }
+        checked.push(trace_path.clone());
+        let artifact = load_agent_turn_artifact(&trace_path);
+        let has_all_calls = call_ids.iter().all(|call_id| {
+            artifact.events.iter().any(|event| {
+                matches!(
+                    event,
+                    ObservedTurnEvent::ToolRequested(record) if record.call_id == *call_id
+                )
+            })
+        });
+        if has_all_calls {
+            return candidate;
+        }
+    }
+
+    let checked = checked
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    panic!(
+        "expected historical trace for {instance_id} with call ids {call_ids:?}; checked {checked}"
+    );
+}
+
+fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequestRecord {
+    artifact
+        .events
+        .iter()
+        .find_map(|event| match event {
+            ObservedTurnEvent::ToolRequested(record) if record.call_id == call_id => {
+                Some(record.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing ToolRequested record for call_id {call_id}"))
+}
+
+#[test]
+#[ignore = "real-run replay completeness check for p1-broad-batch-admission-20260518-1"]
+fn test_real_run_full_response_sidecar_exposes_missing_malformed_tool_arg_response() {
+    const RUN_DIR: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-broad-batch-admission-20260518-1/BurntSushi__ripgrep-2209/runs/run-1779088559136-structured-current-policy-6d8a8756";
+    const ASSISTANT_MESSAGE_ID: &str = "9a1a7000-dc4e-4c50-b00f-cb2fdc60f77d";
+    const REPAIR_CALL_ID: &str = "chatcmpl-tool-981ea94a5aab5a0d";
+
+    let run_dir = Path::new(RUN_DIR);
+    assert!(run_dir.exists(), "expected real run dir at {RUN_DIR}");
+    let repo_state_path = run_dir.join("repo-state.json");
+    let checkpoint_db_path = run_dir.join("indexing-checkpoint.db");
+    let trace_path = run_dir.join("agent-turn-trace.json");
+    assert!(
+        checkpoint_db_path.exists(),
+        "expected starting DB snapshot at {}",
+        checkpoint_db_path.display()
+    );
+
+    let repo_state: RepoStateArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&repo_state_path).expect("read repo-state.json"),
+    )
+    .expect("repo-state.json must parse");
+    assert!(
+        repo_state.repo_root.exists(),
+        "expected recorded repo root to exist at {}",
+        repo_state.repo_root.display()
+    );
+
+    let trace = load_agent_turn_trace_record(&trace_path);
+    let repair_debug = trace.0.events.iter().any(|event| match event {
+        ObservedTurnEventRecord::DebugCommand(message) => {
+            message.contains("Provider emitted invalid arguments")
+                && message.contains("request_code_context")
+                && message.contains("WrongType")
+        }
+        _ => false,
+    });
+    assert!(
+        repair_debug,
+        "agent-turn trace should contain the malformed request_code_context repair message"
+    );
+
+    let corrected_tool_requested = trace.0.events.iter().any(|event| match event {
+        ObservedTurnEventRecord::ToolRequested(request) => {
+            request.call_id == REPAIR_CALL_ID && request.tool == "request_code_context"
+        }
+        _ => false,
+    });
+    assert!(
+        corrected_tool_requested,
+        "agent-turn trace should contain the corrected request_code_context call"
+    );
+
+    let strict_error = LoadedResponseTape::load(run_dir, ASSISTANT_MESSAGE_ID)
+        .expect_err("default replay admission should reject this incomplete sidecar");
+    let strict_message = strict_error.to_string();
+    assert!(
+        strict_message.contains("missing response_index values: 34"),
+        "strict replay admission should name the missing malformed response, got {strict_message}"
+    );
+
+    let loaded = LoadedResponseTape::load_for_inspection(run_dir, ASSISTANT_MESSAGE_ID)
+        .expect("inspection load should allow incomplete historical sidecar");
+    let response_indexes = loaded
+        .records()
+        .iter()
+        .map(|record| record.response_index().get())
+        .collect::<Vec<_>>();
+    assert!(
+        response_indexes.contains(&33) && response_indexes.contains(&35),
+        "expected sidecar to surround the missing malformed response, got {response_indexes:?}"
+    );
+    let missing = loaded
+        .missing_response_indices()
+        .into_iter()
+        .map(|index| index.get())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        missing,
+        vec![34],
+        "current sidecar cannot faithfully replay the malformed-provider repair turn"
+    );
+}
+
+fn run_git(repo_root: &Path, args: &[&str], label: &str) {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .status()
+        .unwrap_or_else(|err| panic!("{label}: failed to spawn git: {err}"));
+    assert!(
+        status.success(),
+        "{label}: git exited with status {:?}",
+        status.code()
+    );
+}
+
+fn git_stdout(repo_root: &Path, args: &[&str], label: &str) -> String {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .output()
+        .unwrap_or_else(|err| panic!("{label}: failed to spawn git: {err}"));
+    assert!(
+        output.status.success(),
+        "{label}: git exited with status {:?}",
+        output.status.code()
+    );
+    String::from_utf8(output.stdout).expect("git stdout should be utf-8")
+}
+
+fn clone_repo_for_replay(source_repo: &Path, dest_repo: &Path) {
+    let source = source_repo
+        .to_str()
+        .expect("historical source repo path should be utf-8");
+    let dest = dest_repo
+        .to_str()
+        .expect("replay destination repo path should be utf-8");
+    let status = Command::new("git")
+        .args(["clone", "--quiet", "--no-local", source, dest])
+        .status()
+        .expect("spawn git clone for replay");
+    assert!(
+        status.success(),
+        "git clone for replay failed with status {:?}",
+        status.code()
+    );
+}
+
+async fn replay_ns_patch_request(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+) -> Result<(), ploke_error::Error> {
+    let request_id = Uuid::parse_str(&request.request_id).expect("request_id should be a uuid");
+    let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid");
+    let ctx = Ctx {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        call_id: ploke_core::ArcStr::from(request.call_id.clone()),
+    };
+
+    let params = NsPatch::deserialize_params(request.arguments.as_str())
+        .expect("historical non_semantic_patch payload should deserialize");
+    let ploke_tui::tools::ToolResult {
+        content,
+        ui_payload,
+    } = NsPatch::execute(params, ctx.clone()).await?;
+    NsPatch::emit_completed(&ctx, content, ui_payload);
+    Ok(())
+}
+
+async fn wait_for_terminal_proposal_status(
+    state: &Arc<AppState>,
+    proposal_id: Uuid,
+) -> ploke_tui::app_state::core::EditProposalStatus {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(status) = {
+                let proposals = state.proposals.read().await;
+                proposals
+                    .get(&proposal_id)
+                    .map(|proposal| proposal.status.clone())
+            } {
+                match status {
+                    ploke_tui::app_state::core::EditProposalStatus::Pending
+                    | ploke_tui::app_state::core::EditProposalStatus::Approved => {}
+                    other => return other,
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("proposal should reach a terminal status within timeout")
 }
 
 /// Debug aid for this replay: show the DB resolution behavior around `canon` parsing.
@@ -383,13 +701,15 @@ fn diag_probe_name_anywhere(db: &Database, item_name: &str) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "historical diagnostic replay of eval-run artifact"]
 async fn test_apply_code_edit_historical_failure_path() {
-    const SNAPSHOT_DB: &str =
-        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-2209/final-snapshot.db";
+    const INSTANCE_ID: &str = "BurntSushi__ripgrep-2209";
     const REPO_ROOT: &str = "/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep";
 
+    let run_dir = historical_run_dir_with(INSTANCE_ID, &["final-snapshot.db"]);
+    let snapshot_db_path = run_dir.join("final-snapshot.db");
     assert!(
-        PathBuf::from(SNAPSHOT_DB).exists(),
-        "expected eval snapshot db to exist at {SNAPSHOT_DB}"
+        snapshot_db_path.exists(),
+        "expected eval snapshot db to exist at {}",
+        snapshot_db_path.display()
     );
     assert!(
         PathBuf::from(REPO_ROOT).exists(),
@@ -413,7 +733,7 @@ async fn test_apply_code_edit_historical_failure_path() {
     }
 
     let snapshot_db = Arc::new(
-        Database::create_new_backup_default(SNAPSHOT_DB)
+        Database::create_new_backup_default(&snapshot_db_path)
             .await
             .expect("load eval snapshot db"),
     );
@@ -544,9 +864,12 @@ async fn test_apply_code_edit_historical_failure_path() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "historical diagnostic replay of ripgrep setup failure"]
-async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact() {
+#[cfg(not(feature = "convert_keyword_2015"))]
+async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact_without_convert_keyword_2015()
+ {
+    init_tracing();
     const SOURCE_MANIFEST: &str =
-        "/home/brasides/.ploke-eval/runs/BurntSushi__ripgrep-1642/run.json";
+        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
 
     assert!(
         PathBuf::from(SOURCE_MANIFEST).exists(),
@@ -555,6 +878,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 
     let temp = tempdir().expect("tempdir");
     let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
+    prepared.task_id = format!("{}-without-convert-keyword-2015", prepared.task_id);
     prepared.output_dir = temp.path().join("out");
     std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
 
@@ -565,10 +889,15 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     )
     .expect("write replay manifest");
 
-    let err = RunMsbAgentSingleRequest {
+    // WARN: keep this negative-path replay while `convert_keyword_2015` remains
+    // feature-gated. It documents the original historical failure without the
+    // fallback enabled.
+    let err = RunMsbSingleRequest {
         run_manifest: replay_manifest,
+        batch_id: None,
         index_debug_snapshots: false,
         use_default_model: true,
+        model_id: None,
         provider: None,
     }
     .run()
@@ -585,7 +914,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
         other => panic!("expected indexing failure, got {other}"),
     }
 
-    let indexing_status_path = prepared.output_dir.join("indexing-status.json");
+    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
     assert!(
         indexing_status_path.exists(),
         "expected indexing status artifact at {}",
@@ -597,4 +926,194 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     .expect("parse indexing status artifact");
     assert_eq!(artifact.status, "failed");
     assert!(artifact.detail.contains("Parse failed for crate"));
+
+    let parse_failure_path = output_artifact_path(&prepared.output_dir, "parse-failure.json");
+    assert!(
+        parse_failure_path.exists(),
+        "expected parse failure artifact at {}",
+        parse_failure_path.display()
+    );
+    let parse_failure: crate::runner::ParseFailureArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&parse_failure_path).expect("read parse failure artifact"),
+    )
+    .expect("parse parse failure artifact");
+    let concrete_source_path = parse_failure
+        .diagnostics
+        .iter()
+        .filter_map(|diag| diag.source_path.as_ref())
+        .find(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .cloned()
+        .expect("historical ripgrep replay should surface a concrete failing rust source path");
+    eprintln!(
+        "REPLAY_DIAG: ripgrep historical setup concrete failing source path={}",
+        concrete_source_path.display()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical diagnostic replay of fd-1121 non-semantic patch partial-apply runtime flow"]
+async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow() {
+    init_tracing();
+    const INSTANCE_ID: &str = "sharkdp__fd-1121";
+    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/sharkdp__fd-1121/run.json";
+    const JOB_CALL_ID: &str = "call_86042515";
+    const WALK_CALL_ID: &str = "call_80363220";
+
+    let run_dir = historical_run_dir_with_tool_calls(INSTANCE_ID, &[JOB_CALL_ID, WALK_CALL_ID]);
+    let run_manifest = PathBuf::from(RUN_MANIFEST);
+    let turn_trace = run_dir.join("agent-turn-trace.json");
+    assert!(
+        run_manifest.exists(),
+        "expected historical run manifest at {}",
+        run_manifest.display()
+    );
+    assert!(
+        turn_trace.exists(),
+        "expected historical turn trace at {}",
+        turn_trace.display()
+    );
+
+    let historical = load_prepared_single_run(&run_manifest);
+    let trace = load_agent_turn_artifact(&turn_trace);
+    let job_request = find_tool_request(&trace, JOB_CALL_ID);
+    let walk_request = find_tool_request(&trace, WALK_CALL_ID);
+
+    let temp = tempdir().expect("tempdir");
+    let replay_repo_root = temp.path().join("fd-replay");
+    let replay_output_dir = temp.path().join("replay-output");
+    clone_repo_for_replay(&historical.repo_root, &replay_repo_root);
+
+    let mut prepared = historical.clone();
+    prepared.repo_root = replay_repo_root.clone();
+    prepared.output_dir = replay_output_dir.clone();
+
+    run_git(
+        &prepared.repo_root,
+        &["reset", "--hard"],
+        "git reset --hard",
+    );
+    if let Some(base_sha) = prepared.base_sha.as_deref() {
+        run_git(
+            &prepared.repo_root,
+            &["checkout", "--detach", base_sha],
+            "git checkout --detach base sha",
+        );
+    }
+
+    let (_app, state, _config_guard) = setup_replay_runtime(&prepared)
+        .await
+        .expect("setup replay runtime for fd-1121");
+    {
+        let mut cfg = state.config.write().await;
+        cfg.editing.auto_confirm_edits = true;
+        cfg.chat_policy = benchmark_chat_policy();
+    }
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &job_request)
+        .await
+        .expect("historical job non_semantic_patch replay should execute");
+    let job_request_id = Uuid::parse_str(&job_request.request_id).expect("job request id uuid");
+    let job_call_id: ploke_core::ArcStr = job_request.call_id.clone().into();
+    let job_proposal_id = derive_edit_proposal_id(job_request_id, &job_call_id);
+    let job_status = wait_for_terminal_proposal_status(&state, job_proposal_id).await;
+    assert_eq!(
+        job_status,
+        ploke_tui::app_state::core::EditProposalStatus::Applied
+    );
+
+    let walk_request_id = Uuid::parse_str(&walk_request.request_id).expect("walk request id uuid");
+    let walk_call_id: ploke_core::ArcStr = walk_request.call_id.clone().into();
+    let walk_proposal_id = derive_edit_proposal_id(walk_request_id, &walk_call_id);
+    let walk_err =
+        replay_ns_patch_request(Arc::clone(&state), Arc::clone(&event_bus), &walk_request)
+            .await
+            .expect_err("historical walk non_semantic_patch replay should fail before staging");
+    let walk_err_text = walk_err.to_string();
+    assert!(
+        walk_err_text.contains("Patch applied partially"),
+        "historical walk replay should fail with partial-apply error, got: {walk_err_text}"
+    );
+    let walk_proposal = {
+        let proposals = state.proposals.read().await;
+        proposals.get(&walk_proposal_id).cloned()
+    };
+    assert!(
+        walk_proposal.is_none(),
+        "historical walk replay should not stage a proposal after strict rejection"
+    );
+
+    let diff = git_stdout(
+        &prepared.repo_root,
+        &["diff", "--no-ext-diff"],
+        "git diff after replay",
+    );
+    assert!(
+        diff.contains("diff --git a/src/exec/job.rs b/src/exec/job.rs"),
+        "replayed repo diff should include src/exec/job.rs:\n{diff}"
+    );
+    assert!(
+        !diff.contains("diff --git a/src/walk.rs b/src/walk.rs"),
+        "replayed repo diff should exclude src/walk.rs after failed apply:\n{diff}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical diagnostic replay of ripgrep setup success with convert_keyword_2015"]
+#[cfg(feature = "convert_keyword_2015")]
+async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_keyword_2015() {
+    init_tracing();
+    const SOURCE_MANIFEST: &str =
+        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
+
+    assert!(
+        PathBuf::from(SOURCE_MANIFEST).exists(),
+        "expected historical run manifest at {SOURCE_MANIFEST}"
+    );
+
+    let temp = tempdir().expect("tempdir");
+    let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
+    prepared.task_id = format!("{}-with-convert-keyword-2015", prepared.task_id);
+    prepared.output_dir = temp.path().join("out");
+    std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
+
+    let replay_manifest = temp.path().join("run.json");
+    std::fs::write(
+        &replay_manifest,
+        serde_json::to_string_pretty(&prepared).expect("serialize replay manifest"),
+    )
+    .expect("write replay manifest");
+
+    // WARN: this replay exists to prove why `convert_keyword_2015` exists.
+    // The only stable contract here is that setup no longer stops at indexing.
+    let result = RunMsbSingleRequest {
+        run_manifest: replay_manifest,
+        batch_id: None,
+        index_debug_snapshots: false,
+        use_default_model: true,
+        model_id: None,
+        provider: None,
+    }
+    .run()
+    .await;
+
+    assert!(
+        !matches!(result, Err(PrepareError::IndexingFailed { .. })),
+        "convert_keyword_2015 should get the historical replay past indexing, got: {result:?}"
+    );
+
+    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
+    assert!(
+        indexing_status_path.exists(),
+        "expected indexing status artifact at {}",
+        indexing_status_path.display()
+    );
+    let artifact: IndexingStatusArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&indexing_status_path).expect("read indexing status artifact"),
+    )
+    .expect("parse indexing status artifact");
+    assert_ne!(
+        artifact.status, "failed",
+        "historical replay should not stop at indexing failure with convert_keyword_2015"
+    );
 }

@@ -1,15 +1,18 @@
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
-use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool};
+use crate::rag::editing::approve_edits;
+use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool, resolve_code_edit_request};
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
-use ploke_core::rag_types::ApplyCodeEditResult;
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, rag_types::ApplyCodeEditResult};
 use ploke_db::NodeType;
+use ploke_db::helpers::graph_resolve_exact;
+use ploke_io::read::generate_hash_for_file;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
 use similar::TextDiff;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use uuid::Uuid;
 // ============================================================================
@@ -56,6 +59,39 @@ fn restore_fixture() {
     });
 }
 
+struct FixtureRestoreGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+fn fixture_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+impl FixtureRestoreGuard {
+    fn new() -> Self {
+        let lock = fixture_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        restore_fixture();
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for FixtureRestoreGuard {
+    fn drop(&mut self) {
+        restore_fixture();
+    }
+}
+
+async fn spawn_fixture_harness() -> (FixtureRestoreGuard, AppHarness) {
+    let guard = FixtureRestoreGuard::new();
+    let harness = AppHarness::spawn_fresh_fixture_nodes()
+        .await
+        .expect("spawn fresh fixture harness");
+    (guard, harness)
+}
+
 // Helper functions for test setup
 fn create_canonical_edit_request(
     file_path: &str,
@@ -95,6 +131,13 @@ async fn create_test_tool_params(
     })
 }
 
+fn test_proposal_id(request_id: Uuid) -> Uuid {
+    crate::app_state::core::derive_edit_proposal_id(
+        request_id,
+        &ploke_core::ArcStr::from("test_call_id"),
+    )
+}
+
 // ============================================================================
 // Phase 1: Input Validation & Idempotency Tests
 // ============================================================================
@@ -102,7 +145,7 @@ async fn create_test_tool_params(
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "test_harness")]
 async fn test_duplicate_request_detection() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Create a valid edit request using known fixture data
@@ -139,7 +182,8 @@ async fn test_duplicate_request_detection() {
     // Verify proposal was created (database must be loaded for this to work)
     {
         let proposals = harness.state.proposals.read().await;
-        if !proposals.contains_key(&request_id) {
+        let proposal_id = test_proposal_id(request_id);
+        if !proposals.contains_key(&proposal_id) {
             // Debug information to understand what went wrong
             println!("DEBUG: No proposal found for request_id: {}", request_id);
             println!(
@@ -178,7 +222,7 @@ async fn test_duplicate_request_detection() {
         let proposals = harness.state.proposals.read().await;
         assert_eq!(proposals.len(), 1, "Should not create duplicate proposals");
         assert!(
-            proposals.get(&request_id).is_some(),
+            proposals.get(&test_proposal_id(request_id)).is_some(),
             "Original proposal should still exist"
         );
     }
@@ -188,7 +232,7 @@ async fn test_duplicate_request_detection() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_empty_edits_validation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
@@ -242,7 +286,7 @@ async fn test_empty_edits_validation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_malformed_json_handling() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     use crate::{AppEvent, EventPriority};
@@ -265,6 +309,7 @@ async fn test_malformed_json_handling() {
             name: ToolName::ApplyCodeEdit,
             arguments: malformed_json.to_string(),
         },
+        extra_content: None,
     };
     let ctx = tools::Ctx {
         state: Arc::clone(&harness.state),
@@ -320,9 +365,7 @@ async fn test_malformed_json_handling() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_success() {
-    let harness = AppHarness::spawn()
-        .await
-        .expect("spawn harness - requires database backup");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use known struct from fixture_nodes (must exist in database backup)
@@ -344,7 +387,7 @@ async fn test_canonical_resolution_success() {
     // Verify proposal was created successfully (proves database resolution worked)
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect(
+        let proposal = proposals.get(&test_proposal_id(request_id)).expect(
             "Proposal should be created - failure indicates database resolution failed. \
                 Verify fixture_nodes backup exists and contains SampleStruct",
         );
@@ -372,8 +415,137 @@ async fn test_canonical_resolution_success() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_write_data_without_staging() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub new_field: i32, }",
+        Some(0.95),
+    );
+
+    let before_count = harness.state.proposals.read().await.len();
+    let writes = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect("canonical resolver returns write data");
+    let after_count = harness.state.proposals.read().await.len();
+
+    assert_eq!(
+        before_count, after_count,
+        "resolver must not stage proposals"
+    );
+    assert_eq!(writes.len(), 1);
+    let write = &writes[0];
+    assert_eq!(write.name, "crate::structs::SampleStruct");
+    assert!(write.file_path.to_string_lossy().contains("structs.rs"));
+    assert!(write.start_byte < write.end_byte);
+    assert_eq!(
+        write.replacement,
+        "pub struct SampleStruct { pub field: String, pub new_field: i32, }"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_splice_write_data_without_staging() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let expected_file_hash = TrackingHash(Uuid::new_v4());
+    let edit_request = ApplyCodeEditRequest {
+        edits: vec![Edit::Splice {
+            file_path: "src/structs.rs".to_string(),
+            expected_file_hash,
+            start_byte: 0,
+            end_byte: 6,
+            replacement: "// sample".to_string(),
+            namespace: PROJECT_NAMESPACE_UUID,
+        }],
+        confidence: Some(0.7),
+    };
+
+    let writes = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect("splice resolver returns write data");
+
+    assert_eq!(writes.len(), 1);
+    let write = &writes[0];
+    assert_eq!(write.expected_file_hash, expected_file_hash);
+    assert_eq!(write.start_byte, 0);
+    assert_eq!(write.end_byte, 6);
+    assert_eq!(write.replacement, "// sample");
+    assert!(
+        write
+            .file_path
+            .to_string_lossy()
+            .ends_with("src/structs.rs")
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver must not stage splice proposals"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_rejects_outside_tool_path_without_staging() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let edit_request = create_canonical_edit_request(
+        "../fixture_nodes_copy/src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, }",
+        Some(0.9),
+    );
+
+    let err = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect_err("outside path must reject");
+
+    assert!(
+        err.message.contains("invalid path"),
+        "unexpected resolver error: {err:?}"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver failure must not stage proposals"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_code_edit_request_returns_ambiguity_error_without_staging() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let edit_request = create_canonical_edit_request(
+        "src/impls.rs",
+        "crate::impls::SimpleStruct::trait_method",
+        NodeType::Method,
+        "fn trait_method(&self) -> i32 { 42 }",
+        Some(0.9),
+    );
+
+    let err = resolve_code_edit_request(&harness.state, &edit_request)
+        .await
+        .expect_err("ambiguous method target must reject");
+
+    assert!(
+        err.message.contains("Ambiguous") || err.message.contains("multiple"),
+        "unexpected resolver error: {err:?}"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "resolver failure must not stage proposals"
+    );
+
+    restore_fixture();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_not_found() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use non-existent canonical path
@@ -405,7 +577,7 @@ async fn test_canonical_resolution_not_found() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_wrong_node_type() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Try to resolve SampleStruct as a Function (wrong type)
@@ -437,7 +609,7 @@ async fn test_canonical_resolution_wrong_node_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_fallback_resolver() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Use a canonical path that might not match exactly due to path resolution
@@ -461,7 +633,7 @@ async fn test_canonical_fallback_resolver() {
     {
         let proposals = harness.state.proposals.read().await;
         let proposal = proposals
-            .get(&request_id)
+            .get(&test_proposal_id(request_id))
             .expect("Fallback resolution should work");
         assert_eq!(proposal.status, EditProposalStatus::Pending);
         assert!(!proposal.edits.is_empty(), "Should have resolved edits");
@@ -475,7 +647,7 @@ async fn test_canonical_fallback_resolver() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unified_diff_preview_generation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set preview mode to Diff
     {
@@ -501,7 +673,9 @@ async fn test_unified_diff_preview_generation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Should generate unified diff preview
         match &proposal.preview {
@@ -520,7 +694,7 @@ async fn test_unified_diff_preview_generation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_codeblock_preview_generation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set preview mode to CodeBlock
     {
@@ -546,7 +720,9 @@ async fn test_codeblock_preview_generation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Should generate code block preview
         match &proposal.preview {
@@ -573,7 +749,7 @@ async fn test_codeblock_preview_generation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_preview_truncation() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Set low preview line limit
     {
@@ -603,7 +779,9 @@ async fn test_preview_truncation() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Check that preview is truncated
         match &proposal.preview {
@@ -649,7 +827,7 @@ async fn test_preview_truncation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_proposal_creation_and_storage() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -670,7 +848,7 @@ async fn test_proposal_creation_and_storage() {
     {
         let proposals = harness.state.proposals.read().await;
         let proposal = proposals
-            .get(&request_id)
+            .get(&test_proposal_id(request_id))
             .expect("Proposal should be created");
 
         // Verify all proposal fields are populated correctly
@@ -693,7 +871,7 @@ async fn test_proposal_creation_and_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_auto_confirm_workflow() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
 
     // Enable auto-confirm
     {
@@ -722,7 +900,9 @@ async fn test_auto_confirm_workflow() {
 
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Auto-approval should have completed and applied the edit
         assert_eq!(proposal.status, EditProposalStatus::Applied);
@@ -731,8 +911,153 @@ async fn test_auto_confirm_workflow() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "test_harness")]
+async fn test_manual_approve_marks_semantic_edit_failed_when_file_changed_after_staging() {
+    use crate::app_state::core::EditProposal;
+    use crate::rag::editing::approve_edits;
+    use chrono::Utc;
+    use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
+    use ploke_io::read::read_and_compute_filehash;
+    use std::{fs, path::PathBuf};
+    use tempfile::tempdir;
+
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let request_id = Uuid::new_v4();
+    let tmp = tempdir().expect("tempdir");
+    let file_path = tmp.path().join("staged_semantic_edit.rs");
+    let initial = "fn before() {}\n";
+    fs::write(&file_path, initial).expect("write initial temp file");
+
+    let file_hash = read_and_compute_filehash(&file_path, PROJECT_NAMESPACE_UUID)
+        .await
+        .expect("compute file hash");
+
+    {
+        let mut proposals = harness.state.proposals.write().await;
+        let call_id = ArcStr::from("test_call_id");
+        let proposal_id = crate::app_state::core::derive_edit_proposal_id(request_id, &call_id);
+        proposals.insert(
+            proposal_id,
+            EditProposal {
+                proposal_id,
+                request_id,
+                parent_id: Uuid::new_v4(),
+                call_id,
+                proposed_at_ms: Utc::now().timestamp_millis(),
+                edits: vec![WriteSnippetData {
+                    id: Uuid::new_v4(),
+                    name: "staged_semantic_edit".to_string(),
+                    file_path: file_path.clone(),
+                    expected_file_hash: file_hash.hash,
+                    start_byte: 0,
+                    end_byte: initial.len(),
+                    replacement: "fn after() {}\n".to_string(),
+                    namespace: PROJECT_NAMESPACE_UUID,
+                }],
+                edits_ns: vec![],
+                files: vec![PathBuf::from(&file_path)],
+                preview: DiffPreview::UnifiedDiff {
+                    text: String::new(),
+                },
+                status: EditProposalStatus::Pending,
+                is_semantic: true,
+            },
+        );
+    }
+
+    fs::write(&file_path, "pub const EXTERNAL_MUTATION: usize = 1;\n")
+        .expect("mutate temp file after staging");
+
+    approve_edits(
+        &harness.state,
+        &harness.event_bus,
+        test_proposal_id(request_id),
+    )
+    .await;
+
+    {
+        let proposals = harness.state.proposals.read().await;
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("proposal should exist");
+        assert!(
+            matches!(proposal.status, EditProposalStatus::Failed(_)),
+            "semantic proposal should fail when file changed after staging, got {:?}",
+            proposal.status
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn apply_code_edit_rejects_stale_semantic_anchor_before_staging() {
+    use crate::{AppEvent, EventPriority};
+
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let request_id = Uuid::new_v4();
+    let target_path = workspace_root().join(ORIGINAL_FIXTURE);
+    let mut current = std::fs::read_to_string(&target_path).expect("read fixture target");
+    current.push_str("\npub const STALE_SEMANTIC_ANCHOR_MARKER: usize = 1;\n");
+    std::fs::write(&target_path, current).expect("mutate fixture target after db load");
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub stale_anchor: bool, }",
+        Some(0.9f32),
+    );
+    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
+    let proposal_id = apply_code_edit_tool(params).await;
+
+    assert!(
+        proposal_id.is_none(),
+        "stale semantic anchors should fail before staging"
+    );
+    assert!(
+        harness.state.proposals.read().await.is_empty(),
+        "stale semantic anchors should not leave a pending proposal"
+    );
+
+    let mut seen_errors = Vec::new();
+    let mut found_failure = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(50), event_rx.recv()).await {
+            Ok(Ok(AppEvent::System(crate::app_state::events::SystemEvent::ToolCallFailed {
+                error,
+                ..
+            }))) => {
+                let wire = crate::tools::ToolErrorWire::parse(&error)
+                    .expect("ToolCallFailed should carry structured tool error wire");
+                seen_errors.push(wire.llm.message.clone());
+                if wire.llm.code == crate::tools::ToolErrorCode::Io
+                    && wire
+                        .llm
+                        .message
+                        .contains("file version could not be verified")
+                {
+                    found_failure = true;
+                    break;
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+    assert!(
+        found_failure,
+        "stale semantic anchors should emit a model-visible failure before staging; seen errors: {seen_errors:#?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tool_result_structure() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -753,7 +1078,9 @@ async fn test_tool_result_structure() {
     // Verify proposal exists and can be used to construct tool result
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect("Proposal should exist");
+        let proposal = proposals
+            .get(&test_proposal_id(request_id))
+            .expect("Proposal should exist");
 
         // Simulate the tool result construction logic from apply_code_edit_tool
         let primary_root = harness
@@ -797,13 +1124,60 @@ async fn test_tool_result_structure() {
     restore_fixture();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn semantic_approval_refreshes_file_hash_before_returning() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let request_id = Uuid::new_v4();
+
+    let edit_request = create_canonical_edit_request(
+        "src/structs.rs",
+        "crate::structs::SampleStruct",
+        NodeType::Struct,
+        "pub struct SampleStruct { pub field: String, pub refreshed: bool, }",
+        Some(0.9f32),
+    );
+
+    let arguments = serde_json::to_value(&edit_request).expect("serialize request");
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
+
+    apply_code_edit_tool(params).await;
+    approve_edits(
+        &harness.state,
+        &harness.event_bus,
+        test_proposal_id(request_id),
+    )
+    .await;
+
+    let target_path = workspace_root().join(ORIGINAL_FIXTURE);
+    let mut resolved = graph_resolve_exact(
+        &harness.state.db,
+        NodeType::Struct.relation_str(),
+        &target_path,
+        &["crate".to_string(), "structs".to_string()],
+        "SampleStruct",
+    )
+    .expect("resolve edited struct");
+    assert_eq!(resolved.len(), 1, "edited struct should resolve uniquely");
+
+    let node = resolved.remove(0);
+    let actual_hash = generate_hash_for_file(&target_path, node.namespace)
+        .await
+        .expect("compute live file hash");
+    assert_eq!(
+        node.file_tracking_hash, actual_hash,
+        "approve_edits should not return until the rescanned file hash matches the live file"
+    );
+}
+
 // ============================================================================
 // Phase 5: Multiple Files and Batch Processing Tests
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_files_batch_processing() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Create edit request with multiple files (structs and enums from fixture_nodes)
@@ -837,7 +1211,7 @@ async fn test_multiple_files_batch_processing() {
 
         // Either both edits succeed (creating 1 proposal with 2 edits),
         // or only the valid ones succeed (depends on fixture data)
-        if let Some(proposal) = proposals.get(&request_id) {
+        if let Some(proposal) = proposals.get(&test_proposal_id(request_id)) {
             assert!(
                 !proposal.edits.is_empty(),
                 "Should have at least one successful edit"
@@ -878,7 +1252,7 @@ async fn test_multiple_files_batch_processing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unsupported_node_type() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
@@ -939,7 +1313,7 @@ async fn test_unsupported_node_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invalid_canonical_path_format() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     let edit_request = create_canonical_edit_request(
@@ -974,9 +1348,7 @@ async fn test_invalid_canonical_path_format() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_complete_canonical_edit_flow_integration() {
-    let harness = AppHarness::spawn()
-        .await
-        .expect("spawn harness - this test requires the complete fixture database backup");
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
     let request_id = Uuid::new_v4();
 
     // Set up configuration
@@ -1011,7 +1383,7 @@ async fn test_complete_canonical_edit_flow_integration() {
     // Comprehensive verification
     {
         let proposals = harness.state.proposals.read().await;
-        let proposal = proposals.get(&request_id).expect(
+        let proposal = proposals.get(&test_proposal_id(request_id)).expect(
             "Integration test should create proposal. Failure indicates:\n\
                 1. Database backup missing or empty\n\
                 2. fixture_nodes not properly parsed\n\

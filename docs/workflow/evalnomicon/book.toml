@@ -1,0 +1,6 @@
+[book]
+title = "Evalnomicon"
+authors = ["brasides"]
+language = "en"
+multilingual = false
+src = "src"

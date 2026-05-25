@@ -6,7 +6,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
-use crate::app_state::core::{BeforeAfter, DiffPreview, EditProposal, EditProposalStatus};
+use crate::app_state::core::{
+    BeforeAfter, DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
+};
 
 /// Test basic truncation functionality without panics
 #[tokio::test(flavor = "multi_thread")]
@@ -14,11 +16,13 @@ async fn test_truncation_controls_no_panic() {
     // Create a mock app state with a proposal
     let mut proposals = HashMap::new();
     let id = Uuid::new_v4();
+    let call_id = crate::ArcStr::from("test-truncation");
 
     let proposal = EditProposal {
+        proposal_id: derive_edit_proposal_id(id, &call_id),
         request_id: id,
         parent_id: Uuid::new_v4(),
-        call_id: "test-truncation".into(),
+        call_id,
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         edits_ns: vec![],

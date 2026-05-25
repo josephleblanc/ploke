@@ -23,6 +23,7 @@ use ploke_core::ArcStr;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_tui::app_state::core::{
     AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig, SystemState,
+    derive_edit_proposal_id,
 };
 use tokio::sync::RwLock;
 use tokio::time::{Duration, timeout};
@@ -56,10 +57,13 @@ async fn proposals_save_and_load_roundtrip() {
     });
 
     let req_id = uuid::Uuid::new_v4();
+    let call_id = ArcStr::from("test_tool_call:0");
+    let proposal_id = derive_edit_proposal_id(req_id, &call_id);
     let proposal = EditProposal {
+        proposal_id,
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: ArcStr::from("test_tool_call:0"),
+        call_id,
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         edits_ns: vec![],
@@ -72,7 +76,7 @@ async fn proposals_save_and_load_roundtrip() {
     };
     {
         let mut guard = state.proposals.write().await;
-        guard.insert(req_id, proposal);
+        guard.insert(proposal_id, proposal);
     }
 
     timeout(
@@ -98,10 +102,10 @@ async fn proposals_save_and_load_roundtrip() {
     .expect("load_proposals_from_path timed out");
     let guard = state.proposals.read().await;
     assert_eq!(guard.len(), 1, "should reload one proposal");
-    assert!(
-        guard.get(&req_id).is_some(),
-        "reloaded proposal should match id"
-    );
+    let reloaded = guard
+        .get(&proposal_id)
+        .expect("reloaded proposal should match proposal id");
+    assert_eq!(reloaded.request_id, req_id, "request id should round-trip");
 }
 
 #[tokio::test]

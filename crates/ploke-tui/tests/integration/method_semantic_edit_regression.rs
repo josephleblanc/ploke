@@ -6,6 +6,7 @@ use ploke_core::tool_types::ToolName;
 use ploke_db::NodeType;
 use ploke_tui::{
     AppEvent, EventPriority,
+    app_state::core::derive_edit_proposal_id,
     app_state::events::SystemEvent,
     rag::{
         tools::apply_code_edit_tool,
@@ -43,6 +44,10 @@ fn build_params(
         typed_req,
         call_id: ArcStr::from("method-semantic-edit-regression"),
     }
+}
+
+fn proposal_id_for(request_id: Uuid) -> Uuid {
+    derive_edit_proposal_id(request_id, &ArcStr::from("method-semantic-edit-regression"))
 }
 
 async fn recv_matching_event(
@@ -117,7 +122,7 @@ async fn apply_code_edit_accepts_method_targets() {
 
     let proposals = harness.state.proposals.read().await;
     let proposal = proposals
-        .get(&request_id)
+        .get(&proposal_id_for(request_id))
         .expect("method edit should stage a proposal");
     assert!(proposal.is_semantic);
     assert_eq!(
@@ -195,7 +200,7 @@ async fn apply_code_edit_returns_structured_method_hint_for_function_mismatch() 
 
     let proposals = harness.state.proposals.read().await;
     assert!(
-        !proposals.contains_key(&request_id),
+        !proposals.contains_key(&proposal_id_for(request_id)),
         "function mismatch should not stage a proposal"
     );
 }

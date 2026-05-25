@@ -1,0 +1,28 @@
+{
+  "id": "gen-1775826235-5zvUu6iI0trh2jfrYlEI",
+  "object": "chat.completion",
+  "created": 1775826235,
+  "model": "qwen/qwen3.6-plus-04-02",
+  "provider": "Alibaba",
+  "system_fingerprint": null,
+  "choices": [
+    {
+      "index": 0,
+      "logprobs": null,
+      "finish_reason": "stop",
+      "native_finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "reasoning": "Good. I see the `replace_with_captures_at` definition. Let me see the full implementation and understand the issue.\n\nThe problem described in the task is:\n1. In multiline mode, the printer extends the buffer by `MAX_LOOK_AHEAD` bytes to allow look-around in regex to work\n2. For simple searching, matches past `range.end` are rejected (the `find_iter_at_in_context` function does this with `if m.start() >= range.end { return false; }`)\n3. But for replacements (`replace_with_captures_at`), there's no such rejection - the replacement function doesn't have a way to filter matches past `range.end`\n4. This causes duplicative replacements in multiline mode - the extra bytes beyond `range.end` get matched and replaced"
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 25354,
+    "completion_tokens": 168,
+    "total_tokens": 25522,
+    "cost": 0.00856765,
+    "is_byok": false,
+    "estimated_tokens": 25400
+  }
+}

@@ -36,6 +36,12 @@ members = [
     "crates/ingest/ploke-mbe",
     "crates/ingest/ploke-transform",
     "crates/ingest/ploke-embed",
+    "crates/ploke-protocol",
+    "crates/ploke-records",
+    "crates/ploke-egui",
+    "crates/ploke-tree",
+    "crates/ploke-tree-browser",
+    "crates/ploke-tree-egui",
     "crates/ploke-eval",
     "crates/ploke-db",
     "crates/common",
@@ -55,6 +61,8 @@ members = [
     "proc_macros/ploke-db-derive",
     # Add more modules as needed
 ]
+# The TUI is the release-facing default member; `ploke-eval` and
+# `ploke-protocol` remain internal/non-release-facing tooling crates.
 default-members = ["crates/ploke-tui"]
 
 [workspace.package]
@@ -69,6 +77,12 @@ ploke-db = { path = "crates/ploke-db" }
 common = { path = "crates/common" }
 ploke-test-utils = { path = "crates/test-utils" }
 ploke-core = { path = "crates/ploke-core" }
+ploke-protocol = { path = "crates/ploke-protocol" }
+ploke-records = { path = "crates/ploke-records" }
+ploke-egui = { path = "crates/ploke-egui" }
+ploke-tree = { path = "crates/ploke-tree" }
+ploke-tree-browser = { path = "crates/ploke-tree-browser", default-features = false }
+ploke-tree-egui = { path = "crates/ploke-tree-egui" }
 syn-parser-macros = { path = "proc_macros/syn_parser/syn_parser_macros" }
 ploke-test-macros = { path = "proc_macros/syn_parser/ploke-test-macros" }
 derive-test-helpers = { path = "proc_macros/syn_parser/derive_test_helpers" }
@@ -89,6 +103,7 @@ serde_json = "1"
 ron = "0.11"
 toml = "0.9"
 cargo_toml = "0.22"
+clap = { version = "4.5", features = ["derive"] }
 
 # Concurrency and parallelism
 rayon = "1.10.0"
@@ -120,7 +135,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Convenience
 itertools = "0.14"
 
-# pre-caching 
+# pre-caching
 lazy_static = "1.5.0"
 
 mpatch = "1.3"

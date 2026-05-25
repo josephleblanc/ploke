@@ -24,6 +24,8 @@ pub const FINISH_REASON_TARGET: &str = "finish-reason";
 pub const TOOL_CALL_TARGET: &str = "tool-calls";
 /// Dedicated target for token estimation vs usage diagnostics (opt-in)
 pub const TOKENS_TARGET: &str = "tokens";
+/// Dedicated target for raw serialized full chat responses.
+pub const FULL_RESPONSE_TARGET: &str = "llm-full-response";
 
 pub struct LoggingGuards {
     /// Guard for the main app log

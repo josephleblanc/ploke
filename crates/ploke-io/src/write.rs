@@ -137,6 +137,23 @@ impl From<String> for Diff {
     }
 }
 
+pub fn try_apply_ns_diff_to_content(
+    diff: &str,
+    original_content: &str,
+    options: PatchApplyOptions,
+) -> Result<mpatch::InMemoryResult, IoError> {
+    let parsed_patch = mpatch::parse_single_patch(diff).map_err(|e| {
+        tracing::error!("Error in parse_single_patch: {}", e);
+        IoError::NsPatchError(e.to_string())
+    })?;
+    let patch_options = mpatch::ApplyOptions::from(options);
+    mpatch::try_apply_patch_to_content(&parsed_patch, Some(original_content), &patch_options)
+        .map_err(|e| {
+            tracing::error!("Error in try_apply_patch_to_content: {}", e);
+            IoError::NsPatchError(e.to_string())
+        })
+}
+
 #[tracing::instrument]
 async fn process_one_write_ns(
     req: NsWriteSnippetData,
@@ -230,14 +247,7 @@ async fn process_one_write_ns(
         diff_bytes = diff.as_ref().len(),
         "process_one_write_ns parsing patch"
     );
-    let parsed_patch = mpatch::parse_single_patch(diff.as_ref()).map_err(|e| {
-        tracing::error!("Error in parse_single_patch: {}", e.to_string());
-        PlokeError::from(IoError::NsPatchError(e.to_string()))
-    })?;
-    let patch_options = mpatch::ApplyOptions {
-        dry_run: options.dry_run,
-        fuzz_factor: options.fuzz_factor,
-    };
+    let patch_options = mpatch::ApplyOptions::from(options);
 
     // TODO: Add a similar lock/read/write with atomic edits, similar to below `process_one_write`
     let apply_started_at = Instant::now();
@@ -258,12 +268,27 @@ async fn process_one_write_ns(
                 kind: e.kind(),
                 source: Arc::new(e),
             })?;
-    let patch_result =
-        mpatch::try_apply_patch_to_content(&parsed_patch, Some(&original_content), &patch_options)
-            .map_err(|e| {
-                tracing::error!("Error in try_apply_patch_to_content: {}", e);
-                PlokeError::from(IoError::NsPatchError(e.to_string()))
-            })?;
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        file = %file_path.display(),
+        patch_api = "try_apply_patch_to_content",
+        dry_run = patch_options.dry_run,
+        fuzz_factor = patch_options.fuzz_factor,
+        "ns_patch: before try_apply_patch_to_content"
+    );
+    let patch_result = try_apply_ns_diff_to_content(diff.as_ref(), &original_content, options)
+        .map_err(|e| {
+            tracing::error!(
+                target: "ns-patch",
+                request_id = %request_id,
+                file = %file_path.display(),
+                patch_api = "try_apply_patch_to_content",
+                error = %e,
+                "ns_patch: try_apply_patch_to_content failed"
+            );
+            PlokeError::from(e)
+        })?;
     debug!(
         target: "dbg_tools",
         request_id = %request_id,

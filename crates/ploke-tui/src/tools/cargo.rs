@@ -1,8 +1,9 @@
 //! Cargo tool integration for running `cargo check` or `cargo test` with JSON diagnostics.
 //!
 //! This tool shells out to `cargo` with `--message-format=json` and parses the line-delimited
-//! JSON stream to extract compiler diagnostics and artifact counts. Non-JSON output is kept in
-//! bounded tails to aid debugging when build scripts or test binaries emit extra text.
+//! JSON stream to extract compiler diagnostics and artifact counts. Warning diagnostics are
+//! omitted from the response by default; non-JSON output is kept in bounded tails to aid debugging
+//! when build scripts or test binaries emit extra text.
 //!
 //! # Usage
 //!
@@ -40,7 +41,7 @@ use tokio::{
 };
 
 use super::{
-    Tool, ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
+    Tool, ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
     ToolUiPayload, ToolVerbosity, tool_io_error, tool_ui_error,
 };
 use crate::tracing_setup::TOOL_CALL_TARGET;
@@ -67,6 +68,8 @@ const BINS_DESC: &str = "Check/test all binary targets (--bins).";
 const EXAMPLES_DESC: &str = "Check/test all example targets (--examples).";
 const BENCHES_DESC: &str = "Check/test all bench targets (--benches).";
 const TEST_ARGS_DESC: &str = "Arguments for the test binary (only for cargo test).";
+const INCLUDE_WARNINGS_DESC: &str =
+    "Include compiler warning diagnostics in the response diagnostics list.";
 
 lazy_static::lazy_static! {
     static ref CARGO_PARAMETERS: serde_json::Value = serde_json::json!({
@@ -130,6 +133,11 @@ lazy_static::lazy_static! {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": TEST_ARGS_DESC
+            },
+            "include_warnings": {
+                "type": "boolean",
+                "description": INCLUDE_WARNINGS_DESC,
+                "default": false
             }
         },
         "required": ["command"],
@@ -220,9 +228,12 @@ pub struct CargoToolParams<'a> {
     pub benches: bool,
     #[serde(default, borrow)]
     pub test_args: Option<Vec<Cow<'a, str>>>,
+    #[serde(default)]
+    pub include_warnings: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoToolParamsOwned {
     pub command: CargoCommand,
     pub scope: CargoScope,
@@ -239,12 +250,15 @@ pub struct CargoToolParamsOwned {
     pub examples: bool,
     pub benches: bool,
     pub test_args: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_warnings: bool,
 }
 
 /// Result payload emitted by the cargo tool.
 ///
 /// Diagnostics are capped for size safety; tails contain the last observed non-JSON output.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoToolResult {
     pub ok: bool,
     pub status_reason: CargoStatusReason,
@@ -263,6 +277,7 @@ pub struct CargoToolResult {
 
 /// Summary counts derived from cargo JSON messages.
 #[derive(Debug, Clone, Serialize, Default)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoSummary {
     pub errors: u32,
     pub warnings: u32,
@@ -273,6 +288,7 @@ pub struct CargoSummary {
 
 /// Condensed diagnostic for LLM/UI consumption.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoDiagnostic {
     pub level: String,
     pub message: String,
@@ -283,6 +299,7 @@ pub struct CargoDiagnostic {
 
 /// Source span attached to a diagnostic.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CargoSpan {
     pub file_name: String,
     pub line_start: u32,
@@ -294,6 +311,7 @@ pub struct CargoSpan {
 
 /// Final status category for a cargo invocation.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 #[serde(rename_all = "snake_case")]
 pub enum CargoStatusReason {
     Success,
@@ -353,8 +371,8 @@ impl Tool for CargoTool {
         ToolName::Cargo
     }
 
-    fn description() -> ToolDescr {
-        ToolDescr::Cargo
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {
@@ -388,6 +406,7 @@ impl Tool for CargoTool {
                 .test_args
                 .as_ref()
                 .map(|v| v.iter().map(|s| s.to_string()).collect()),
+            include_warnings: params.include_warnings,
         }
     }
 
@@ -427,6 +446,7 @@ impl Tool for CargoTool {
             examples = params.examples,
             benches = params.benches,
             test_args = ?params.test_args.as_ref().map(|v| v.iter().map(|s| s.as_ref()).collect::<Vec<_>>()),
+            include_warnings = params.include_warnings,
         )
     )]
     async fn execute<'de>(
@@ -580,7 +600,7 @@ impl Tool for CargoTool {
             .take()
             .ok_or_else(|| tool_io_error("Failed to capture cargo stderr".to_string()))?;
 
-        let stdout_task = tokio::spawn(read_stdout(stdout));
+        let stdout_task = tokio::spawn(read_stdout(stdout, params.include_warnings));
         let stderr_task = tokio::spawn(read_stderr(stderr));
 
         let (tool_verbosity, tooling) = {
@@ -824,6 +844,7 @@ async fn load_metadata(
 
 async fn read_stdout(
     stdout: tokio::process::ChildStdout,
+    include_warnings: bool,
 ) -> Result<StdoutState, ploke_error::Error> {
     let mut state = StdoutState::default();
     let mut lines = BufReader::new(stdout).lines();
@@ -832,15 +853,15 @@ async fn read_stdout(
         .await
         .map_err(|err| tool_io_error(format!("stdout read failed: {err}")))?
     {
-        parse_stdout_line(&line, &mut state);
+        parse_stdout_line(&line, &mut state, include_warnings);
     }
     Ok(state)
 }
 
-fn parse_stdout_line(line: &str, state: &mut StdoutState) {
+fn parse_stdout_line(line: &str, state: &mut StdoutState, include_warnings: bool) {
     if line.starts_with('{') {
         match serde_json::from_str::<Message>(line) {
-            Ok(msg) => handle_message(msg, state),
+            Ok(msg) => handle_message(msg, state, include_warnings),
             Err(err) => {
                 if push_tail(
                     &mut state.json_parse_errors_tail,
@@ -860,7 +881,7 @@ fn parse_stdout_line(line: &str, state: &mut StdoutState) {
     }
 }
 
-fn handle_message(msg: Message, state: &mut StdoutState) {
+fn handle_message(msg: Message, state: &mut StdoutState, include_warnings: bool) {
     match msg {
         Message::CompilerMessage(msg) => {
             let diag = msg.message;
@@ -878,9 +899,11 @@ fn handle_message(msg: Message, state: &mut StdoutState) {
                 }
                 _ => {}
             }
-            if state.diagnostics.len() < MAX_DIAGNOSTICS {
+            if include_diagnostic(&diag.level, include_warnings)
+                && state.diagnostics.len() < MAX_DIAGNOSTICS
+            {
                 state.diagnostics.push(convert_diagnostic(diag));
-            } else {
+            } else if include_diagnostic(&diag.level, include_warnings) {
                 state.raw_messages_truncated = true;
             }
         }
@@ -891,6 +914,16 @@ fn handle_message(msg: Message, state: &mut StdoutState) {
             state.summary.other_messages += 1;
         }
     }
+}
+
+fn include_diagnostic(
+    level: &cargo_metadata::diagnostic::DiagnosticLevel,
+    include_warnings: bool,
+) -> bool {
+    !matches!(
+        level,
+        cargo_metadata::diagnostic::DiagnosticLevel::Warning if !include_warnings
+    )
 }
 
 fn convert_diagnostic(diag: cargo_metadata::diagnostic::Diagnostic) -> CargoDiagnostic {
@@ -1037,28 +1070,68 @@ fn format_details(result: &CargoToolResult) -> String {
             out.push('\n');
         }
     }
-    if !result.stderr_tail.is_empty() {
+    let stderr_tail = display_stderr_tail(result);
+    if !stderr_tail.is_empty() {
         out.push_str("Stderr tail:\n");
-        for line in result.stderr_tail.iter().take(20) {
+        for line in stderr_tail {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.non_json_stdout_tail.is_empty() {
         out.push_str("Stdout tail:\n");
-        for line in result.non_json_stdout_tail.iter().take(20) {
+        for line in latest_lines(&result.non_json_stdout_tail, 20) {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.json_parse_errors_tail.is_empty() {
         out.push_str("JSON parse errors:\n");
-        for line in result.json_parse_errors_tail.iter().take(10) {
+        for line in latest_lines(&result.json_parse_errors_tail, 10) {
             out.push_str(line);
             out.push('\n');
         }
     }
     out.trim_end().to_string()
+}
+
+fn display_stderr_tail(result: &CargoToolResult) -> Vec<&str> {
+    let filtered: Vec<&str> = result
+        .stderr_tail
+        .iter()
+        .map(String::as_str)
+        .filter(|line| !is_cargo_progress_line(line))
+        .collect();
+    if !filtered.is_empty() {
+        return latest_ref_lines(&filtered, 20);
+    }
+    if result.ok {
+        return Vec::new();
+    }
+    latest_lines(&result.stderr_tail, 20)
+}
+
+fn latest_lines(lines: &[String], limit: usize) -> Vec<&str> {
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    latest_ref_lines(&refs, limit)
+}
+
+fn latest_ref_lines<'a>(lines: &[&'a str], limit: usize) -> Vec<&'a str> {
+    let start = lines.len().saturating_sub(limit);
+    lines[start..].to_vec()
+}
+
+fn is_cargo_progress_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("Blocking ")
+        || trimmed.starts_with("Building ")
+        || trimmed.starts_with("Checking ")
+        || trimmed.starts_with("Compiling ")
+        || trimmed.starts_with("Doc-tests ")
+        || trimmed.starts_with("Documenting ")
+        || trimmed.starts_with("Finished ")
+        || trimmed.starts_with("Fresh ")
+        || trimmed.starts_with("Running ")
 }
 
 fn display_exit_code(exit_code: Option<i32>) -> String {
@@ -1154,6 +1227,7 @@ mod tests {
             examples: false,
             benches: false,
             test_args: None,
+            include_warnings: false,
         };
 
         let mut with_package = base.clone();
@@ -1185,8 +1259,8 @@ mod tests {
     #[test]
     fn parse_stdout_line_handles_non_json_and_invalid_json() {
         let mut state = StdoutState::default();
-        parse_stdout_line("not-json", &mut state);
-        parse_stdout_line("{oops", &mut state);
+        parse_stdout_line("not-json", &mut state, false);
+        parse_stdout_line("{oops", &mut state, false);
         assert_eq!(state.non_json_stdout_tail.len(), 1);
         assert_eq!(state.json_parse_errors_tail.len(), 1);
     }
@@ -1194,8 +1268,32 @@ mod tests {
     #[test]
     fn parse_stdout_line_handles_build_finished() {
         let mut state = StdoutState::default();
-        parse_stdout_line(r#"{"reason":"build-finished","success":true}"#, &mut state);
+        parse_stdout_line(
+            r#"{"reason":"build-finished","success":true}"#,
+            &mut state,
+            false,
+        );
         assert_eq!(state.summary.other_messages, 1);
+    }
+
+    #[test]
+    fn deserialize_params_defaults_warning_diagnostics_off() {
+        let params = CargoTool::deserialize_params(r#"{"command":"check"}"#).unwrap();
+        assert!(!params.include_warnings);
+
+        let params =
+            CargoTool::deserialize_params(r#"{"command":"check","include_warnings":true}"#)
+                .unwrap();
+        assert!(params.include_warnings);
+    }
+
+    #[test]
+    fn include_diagnostic_respects_warning_flag() {
+        use cargo_metadata::diagnostic::DiagnosticLevel;
+
+        assert!(!include_diagnostic(&DiagnosticLevel::Warning, false));
+        assert!(include_diagnostic(&DiagnosticLevel::Warning, true));
+        assert!(include_diagnostic(&DiagnosticLevel::Error, false));
     }
 
     #[test]
@@ -1229,6 +1327,57 @@ mod tests {
         };
         let truncated = enforce_response_cap(&mut result, 512);
         assert!(truncated);
+    }
+
+    // regr:cargotail:22-05-26_14-10
+    #[test]
+    fn format_details_shows_latest_test_output_and_filters_success_progress() {
+        let mut stdout_tail = Vec::new();
+        stdout_tail.push("running 20 tests".to_string());
+        for index in 0..24 {
+            stdout_tail.push(format!("test sample::{index:02} ... ok"));
+        }
+        stdout_tail.push("test result: ok. 20 passed; 0 failed; 0 ignored".to_string());
+
+        let result = CargoToolResult {
+            ok: true,
+            status_reason: CargoStatusReason::Success,
+            command: CargoCommand::Test,
+            scope: CargoScope::Focused,
+            manifest_path: "/repo/crates/regex/Cargo.toml".to_string(),
+            exit_code: Some(0),
+            duration_ms: 1567,
+            summary: CargoSummary::default(),
+            diagnostics: Vec::new(),
+            stderr_tail: vec![
+                "   Compiling memchr v2.4.1".to_string(),
+                "   Compiling log v0.4.14".to_string(),
+                "   Compiling grep-regex v0.1.9 (/repo/crates/regex)".to_string(),
+                "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.24s"
+                    .to_string(),
+                "     Running unittests src/lib.rs (/repo/target/debug/deps/grep_regex)"
+                    .to_string(),
+                "   Doc-tests grep_regex".to_string(),
+            ],
+            non_json_stdout_tail: stdout_tail,
+            json_parse_errors_tail: Vec::new(),
+            raw_messages_truncated: false,
+        };
+
+        let details = format_details(&result);
+        assert!(
+            !details.contains("Stderr tail:"),
+            "successful cargo progress stderr should not dominate details:\n{details}"
+        );
+        assert!(details.contains("Stdout tail:"));
+        assert!(details.contains("test sample::23 ... ok"));
+        assert!(details.contains("test result: ok. 20 passed; 0 failed; 0 ignored"));
+        assert!(
+            !details.contains("running 20 tests"),
+            "details should show the newest retained stdout lines, not the oldest:\n{details}"
+        );
+        assert!(!details.contains("Compiling memchr"));
+        assert!(!details.contains("Running unittests"));
     }
 
     #[tokio::test]

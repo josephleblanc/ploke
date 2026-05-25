@@ -315,9 +315,11 @@ pub(crate) fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) 
     let is_pending = tool_payload_status(payload)
         .map(|status| status.eq_ignore_ascii_case("pending"))
         .unwrap_or(true);
-    matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch)
-        && payload.error.is_none()
-        && payload.request_id.is_some()
+    matches!(
+        payload.tool,
+        ToolName::ApplyCodeEdit | ToolName::InsertRustItem | ToolName::NsPatch
+    ) && payload.error.is_none()
+        && payload.proposal_id.is_some()
         && is_pending
 }
 
@@ -492,12 +494,17 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
 
     fn tool_message() -> Message {
+        let request_id = Uuid::new_v4();
+        let call_id = ploke_core::ArcStr::from("call-1");
         let payload = crate::tools::ToolUiPayload::new(
             ToolName::ApplyCodeEdit,
-            "call-1".into(),
+            call_id.clone(),
             "edit staged",
         )
-        .with_request_id(Uuid::new_v4())
+        .with_request_id(request_id)
+        .with_proposal_id(crate::app_state::core::derive_edit_proposal_id(
+            request_id, &call_id,
+        ))
         .with_field("status", "pending");
 
         Message {

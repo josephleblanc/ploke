@@ -2,7 +2,6 @@ use super::App;
 use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
 use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
-use crate::app_state::IndexTargetDir;
 use crate::app_state::events::SystemEvent;
 use crate::error::ErrorSeverity;
 use crate::llm::{LlmEvent, ProviderKey};
@@ -251,9 +250,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                SystemEvent::ReIndex { workspace } => {
-                    app.send_cmd(StateCommand::IndexTargetDir {
-                        target_dir: Some(IndexTargetDir::from(workspace)),
+                SystemEvent::ReIndex { target } => {
+                    app.send_cmd(StateCommand::IndexTarget {
+                        target: Some(target),
                         needs_parse: false,
                     });
                 }

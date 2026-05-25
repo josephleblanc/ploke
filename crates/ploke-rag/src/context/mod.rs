@@ -20,10 +20,7 @@ use ploke_core::{
         NodeFilepath, TypeContextInfo,
     },
 };
-use ploke_db::{
-    Database, NodeType,
-    get_by_id::{GetNodeInfo, NodePaths},
-};
+use ploke_db::{Database, NodeType, get_by_id::NodePaths};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -204,17 +201,15 @@ pub async fn assemble_context_with_type_context(
     // Dedup by UUID while preserving order.
     let (dedup_ids, dedup_removed) = stable_dedup_ids_ordered(&ordered_ids);
 
-    // Fetch embedding metadata in the requested order.
-    let nodes: Vec<EmbeddingData> = db
-        .get_nodes_ordered(dedup_ids.clone())
+    // Fetch file/span metadata in the requested order. This intentionally does not require
+    // embedding-set membership because sparse retrieval can return valid node ids before dense
+    // embedding rows exist.
+    let context_nodes = db
+        .get_snippet_context_nodes_ordered(dedup_ids.clone())
         .map_err(|e| RagError::Embed(e.to_string()))?;
+    let (nodes, node_paths): (Vec<EmbeddingData>, Vec<NodePaths>) =
+        context_nodes.into_iter().unzip();
     let node_ids: Vec<Uuid> = nodes.iter().map(|node| node.id).collect();
-
-    let node_paths: Vec<Result<NodePaths, ploke_db::DbError>> = nodes
-        .iter()
-        .map(|p| db.paths_from_id(p.id))
-        .map(|db_row| db_row.and_then(|r| r.try_into()))
-        .collect();
 
     let file_paths = nodes
         .iter()
@@ -229,12 +224,13 @@ pub async fn assemble_context_with_type_context(
 
     // Build preliminary parts (with placeholder file path and no ranges for now).
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
+    let mut skipped_io_errors = 0usize;
     for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
         let id = node_ids
             .get(i)
             .copied()
             .ok_or_else(|| RagError::Search(format!("mismatched batch index {}", i)))?;
-        let NodePaths { file, canon } = node_paths.map_err(RagError::Db)?;
+        let NodePaths { file, canon } = node_paths;
 
         match res {
             Ok(text) => {
@@ -260,6 +256,7 @@ pub async fn assemble_context_with_type_context(
                         id, e
                     )));
                 } else {
+                    skipped_io_errors += 1;
                     debug!("Skipping snippet for {} due to IO error: {:?}", id, e);
                 }
             }
@@ -302,9 +299,26 @@ pub async fn assemble_context_with_type_context(
         }
     }
 
+    Ok(apply_token_budget(
+        parts,
+        budget,
+        tokenizer,
+        dedup_removed,
+        skipped_io_errors,
+    ))
+}
+
+fn apply_token_budget(
+    parts: Vec<ContextPart>,
+    budget: &TokenBudget,
+    tokenizer: &dyn TokenCounter,
+    dedup_removed: usize,
+    skipped_io_errors: usize,
+) -> AssembledContext {
     // Token budgeting (water-filling).
     let mut stats = ContextStats {
         dedup_removed,
+        skipped_io_errors,
         ..Default::default()
     };
 
@@ -332,8 +346,8 @@ pub async fn assemble_context_with_type_context(
             continue;
         }
 
-        // Enforce total cap
-        if budget.max_total < part_tokens {
+        // Enforce total cap.
+        if stats.total_tokens.saturating_add(part_tokens) > budget.max_total {
             // No more room.
             break;
         }
@@ -344,7 +358,6 @@ pub async fn assemble_context_with_type_context(
             .entry(part.file_path.clone())
             .and_modify(|t| *t += part_tokens)
             .or_insert(part_tokens);
-        let remaining_total = budget.max_total.saturating_sub(part_tokens);
         stats.total_tokens = stats.total_tokens.saturating_add(part_tokens);
         admitted.push(part);
     }
@@ -352,10 +365,10 @@ pub async fn assemble_context_with_type_context(
     stats.parts = admitted.len();
     stats.files = per_file_used.len();
 
-    Ok(AssembledContext {
+    AssembledContext {
         parts: admitted,
         stats,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -386,6 +399,27 @@ mod tests {
     }
 
     #[test]
+    fn budgeting_obeys_accumulated_total_limit() {
+        let tk = ApproxCharTokenizer;
+        let budget = TokenBudget {
+            max_total: 4,
+            per_file_max: 100,
+            per_part_max: 2,
+        };
+        let parts = vec![
+            test_part(1, "src/a.rs", "abcdefgh"),
+            test_part(2, "src/b.rs", "ijklmnop"),
+            test_part(3, "src/c.rs", "qrstuvwx"),
+        ];
+
+        let ctx = apply_token_budget(parts, &budget, &tk, 0, 0);
+
+        assert_eq!(ctx.parts.len(), 2);
+        assert_eq!(ctx.stats.parts, 2);
+        assert!(ctx.stats.total_tokens <= budget.max_total);
+    }
+
+    #[test]
     fn dedup_preserves_order() {
         let ids = vec![
             Uuid::from_u128(1),
@@ -400,5 +434,18 @@ mod tests {
             vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)]
         );
         assert_eq!(removed, 2);
+    }
+
+    fn test_part(id: u128, file_path: &str, text: &str) -> ContextPart {
+        ContextPart {
+            id: Uuid::from_u128(id),
+            file_path: NodeFilepath(file_path.to_string()),
+            canon_path: CanonPath(format!("test::{id}")),
+            ranges: Vec::new(),
+            kind: ContextPartKind::Code,
+            text: text.to_string(),
+            score: 1.0,
+            modality: Modality::Sparse,
+        }
     }
 }

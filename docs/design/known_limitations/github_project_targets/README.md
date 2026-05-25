@@ -21,7 +21,7 @@ underlying reason.
    - document the limitation and add an intermediate mitigation / extension
      point.
 5. Record the result in a document created from
-   [issue_template.md](/home/brasides/code/ploke/docs/design/known_limitations/github_project_targets/issue_template.md).
+   [issue_template.md](issue_template.md).
 
 ## Document scope
 

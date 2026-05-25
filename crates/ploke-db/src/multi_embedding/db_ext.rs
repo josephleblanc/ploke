@@ -1454,7 +1454,7 @@ mod tests {
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
-    use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, backup_fixture_path_or_seed};
+    use ploke_test_utils::FIXTURE_NODES_LOCAL_EMBEDDINGS;
     use tracing::Level;
 
     use crate::{
@@ -1491,7 +1491,7 @@ mod tests {
     pub(crate) fn load_registered_fixture_nodes_local_embeddings(
         db: &Database,
     ) -> Result<(), PlokeError> {
-        let fixture_path = backup_fixture_path_or_seed(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let fixture_path = FIXTURE_NODES_LOCAL_EMBEDDINGS.checked_path()?.into_path();
         import_fixture_with_embeddings(db, &fixture_path, "fixture_nodes")
     }
 

@@ -12,6 +12,13 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
+/// Shared tracing target for cross-crate execution debugging during eval and tool runs.
+///
+/// Operator surfaces such as `ploke-eval --debug-tools` can enable this target to follow one
+/// execution path across crates. Keep durable logs on this target sparse and sanity-oriented;
+/// prefer removing temporary callsites after diagnosis.
+pub const EXECUTION_DEBUG_TARGET: &str = "ploke_exec";
+
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +38,8 @@ pub mod rag_types;
 pub mod workspace;
 pub mod workspace_glob;
 
+#[cfg(feature = "json")]
+pub mod tool_descriptions;
 #[cfg(feature = "json")]
 pub mod tool_types;
 
@@ -111,6 +120,7 @@ mod ids {
     // Import TypeKind into the ids module scope
     use crate::{IdConversionError, TypeKind}; // Add IdConversionError
 
+    #[cfg(feature = "cozo")]
     use cozo::{DataValue, UuidWrapper};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -461,30 +471,35 @@ mod ids {
     }
 
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for &TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TrackingHash {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.0))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for CanonId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for PubPathId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))

@@ -1,0 +1,1 @@
+Insert a new Rust item into an existing Rust file. Use this when the target item does not already exist. Supports file-scope insertion plus module, trait, and inherent impl containers in parseable Rust files.

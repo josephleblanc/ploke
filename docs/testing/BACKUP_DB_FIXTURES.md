@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-17
-Last updated: 2026-05-17
+Last reviewed: 2026-05-25
+Last updated: 2026-05-25
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -14,6 +14,19 @@ Runtime fixture loading uses `$XDG_CONFIG_HOME/ploke/db_snapshot_fixtures`, or
 `PLOKE_DB_SNAPSHOT_FIXTURE_DIR` to override this location for tests or unusual
 local setups. The files under `tests/backup_dbs/` are committed seed artifacts;
 they are not the normal runtime load location.
+
+Backup DB fixture identity has two parts:
+
+- the registry entry in
+  [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
+- the fixture path scope
+
+Checkout-local fixtures may contain absolute source roots, so registry loads
+prefer a generated root-scoped file under `tests/backup_dbs/local/` when one
+exists. Their committed registered path is a fallback and compatibility anchor,
+not proof that the DB is valid for every worktree. Operational path-only
+consumers must call `FixtureDb::checked_path()` so the effective path is loaded
+and validated before it is copied or staged.
 
 ## Review cadence
 
@@ -33,16 +46,22 @@ recreation guidance:
 - `cargo xtask verify-backup-dbs --fixture <id>`
   - scopes validation to one fixture
 - `cargo xtask recreate-backup-db --fixture <id>`
-  - recreates automated fixtures to a new dated filename under the shared DB
-    snapshot fixture directory
+  - recreates automated checkout-local fixtures to a deterministic root-scoped
+    filename under `tests/backup_dbs/local/`
+  - recreates automated shared-snapshot fixtures to a new dated filename under
+    the shared DB snapshot fixture directory
+  - recreates automated legacy registered-path fixtures to a new dated filename
+    under `tests/backup_dbs/`
   - prints exact manual recreation steps for fixtures that are not hermetic yet
 - `cargo xtask fixtures ensure --snapshots`
-  - ensures current active and typed graph snapshots exist in the shared DB
-    snapshot fixture directory
+  - ensures current active and typed graph fixtures are available without
+    sharing checkout-local DB rows
   - runs active fixture validation in the normal profile, then invokes a
     typed-only xtask pass for typed graph fixtures
-  - stages committed seed artifacts from `tests/backup_dbs/` when a shared
-    snapshot is missing
+  - creates or repairs checkout-local active fixtures under
+    `tests/backup_dbs/local/`
+  - stages committed seed artifacts from `tests/backup_dbs/` only when a
+    shared-snapshot fixture is missing
   - refuses to overwrite differing shared snapshots
   - validates staged snapshots strictly, so stale schema seeds fail loudly
 - `cargo xtask fixtures ensure --typed`
@@ -51,8 +70,11 @@ recreation guidance:
   - stages typed graph seed snapshots into the shared DB snapshot fixture
     directory
 - `cargo xtask fixtures regenerate --all`
-  - regenerates every automated active and typed graph fixture directly into
-    the shared DB snapshot fixture directory using the registered filenames
+  - regenerates every automated active and typed graph fixture into its
+    scope-specific output location
+  - writes checkout-local fixtures under `tests/backup_dbs/local/`
+  - writes shared-snapshot fixtures under the shared DB snapshot fixture
+    directory using the registered filenames
   - skips manual legacy/orphaned snapshots
   - runs active fixtures in the normal profile, then invokes a typed-only xtask
     pass for typed graph fixtures
@@ -64,21 +86,26 @@ recreation guidance:
     `verify-backup-dbs`, not as a substitute for full regeneration
 
 Operator workflow details live in
-[docs/how-to/recreate-backup-db-fixtures.md](/home/brasides/code/ploke/docs/how-to/recreate-backup-db-fixtures.md).
+[docs/how-to/recreate-backup-db-fixtures.md](../how-to/recreate-backup-db-fixtures.md).
 
 ## Shared helper API
 
 Immutable backup consumers should load fixtures through the registry-backed
 helpers in
-[crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs):
+[crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs):
 
 - `shared_backup_fixture_db(&FIXTURE_...)`
   - loads from the shared DB snapshot fixture directory, validates, and caches
     an immutable `Arc<Database>` for reuse
 - `fresh_backup_fixture_db(&FIXTURE_...)`
-  - creates a fresh in-memory `Database` from the shared DB snapshot fixture
-    directory while still enforcing the registry’s import mode, embedding
-    expectations, and index setup
+  - creates a fresh in-memory `Database` from a registered fixture while still
+    enforcing the registry’s import mode, embedding expectations, and index
+    setup
+- `load_backup_fixture_db(&FIXTURE_...)`
+  - returns both the checked effective path and the loaded `Database`
+- `FIXTURE_....checked_path()`
+  - validates the effective backup path for path-only consumers such as fixture
+    staging or test registry snapshots
 
 The registry file is the source of truth for fixture metadata and filenames.
 Test code should reference fixture constants there instead of hard-coding backup
@@ -113,10 +140,53 @@ One exception currently remains for `ploke-db` lib-unit tests: because
 `ploke-test-utils` depends on `ploke-db`, those unit-test modules cannot consume
 `shared_backup_fixture_db(...)` directly without hitting a duplicate-crate type
 split for `Database`. In that case, use the shared registry constant (for
-example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
+example `FIXTURE_NODES_CANONICAL.checked_path()?`) with a crate-local loader.
 
 Test isolation note:
 
+- Tests that mutate DB state loaded from a backup fixture must use
+  `fresh_backup_fixture_db(&FIXTURE_...)` or a harness built on top of it.
+  Do not use `shared_backup_fixture_db(...)` for tests that approve edits,
+  refresh file hashes, write embeddings, update indexes, or otherwise change
+  fixture-backed DB relations. Shared fixtures are for read-only consumers.
+- Tests that mutate checked-in source fixtures associated with a backup DB
+  also need a restore guard around the source file or tree. The DB and source
+  isolation are separate: a fresh DB prevents cross-test database state leaks,
+  while the restore guard prevents concurrent source-file edits from racing.
+  A module-local pattern that has worked is:
+
+```rust
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+struct FixtureRestoreGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+fn fixture_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+impl FixtureRestoreGuard {
+    fn new() -> Self {
+        let lock = fixture_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        restore_fixture();
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for FixtureRestoreGuard {
+    fn drop(&mut self) {
+        restore_fixture();
+    }
+}
+```
+
+  Keep this guard scoped to the test duration. If multiple modules or test
+  binaries mutate the same checked-in fixture tree, move the lock helper to a
+  shared test utility instead of duplicating per-module locks.
 - Tests that temporarily override `XDG_CONFIG_HOME` to point
   `WorkspaceRegistry::default_registry_path()` at a temp directory must
   serialize that mutation across the full workspace test run.
@@ -161,17 +231,17 @@ Test isolation note:
   - used as the canonical parsed graph fixture for `fixture_nodes`
 - Tests using this fixture:
   - `ploke-db`
-    - [crates/ploke-db/src/utils/test_utils.rs](/home/brasides/code/ploke/crates/ploke-db/src/utils/test_utils.rs): shared mutable `Arc<Mutex<Database>>`
-    - [crates/ploke-db/src/bm25_index/mod.rs](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs): shared immutable `Arc<Database>` via crate-local loader keyed by `FIXTURE_NODES_CANONICAL`
-    - [crates/ploke-db/src/index/hnsw.rs](/home/brasides/code/ploke/crates/ploke-db/src/index/hnsw.rs): fresh mutable DB per test
-    - [crates/ploke-db/src/multi_embedding/hnsw_ext.rs](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/hnsw_ext.rs): fresh mutable DB per test
-    - [crates/ploke-db/benches/resolver_bench.rs](/home/brasides/code/ploke/crates/ploke-db/benches/resolver_bench.rs): immutable benchmark input
+    - [crates/ploke-db/src/utils/test_utils.rs](../../crates/ploke-db/src/utils/test_utils.rs): shared mutable `Arc<Mutex<Database>>`
+    - [crates/ploke-db/src/bm25_index/mod.rs](../../crates/ploke-db/src/bm25_index/mod.rs): shared immutable `Arc<Database>` via crate-local loader keyed by `FIXTURE_NODES_CANONICAL`
+    - [crates/ploke-db/src/index/hnsw.rs](../../crates/ploke-db/src/index/hnsw.rs): fresh mutable DB per test
+    - [crates/ploke-db/src/multi_embedding/hnsw_ext.rs](../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs): fresh mutable DB per test
+    - [crates/ploke-db/benches/resolver_bench.rs](../../crates/ploke-db/benches/resolver_bench.rs): immutable benchmark input
   - `ploke-rag`
     - legacy direct-path use removed; immutable consumers should use the local-embedding fixture helper instead
   - `ploke-tui`
-    - [crates/ploke-tui/src/test_harness.rs](/home/brasides/code/ploke/crates/ploke-tui/src/test_harness.rs): shared mutable app harness DB
-    - [crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs): shared mutable DB for live-tool scaffolding
-    - [crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs): fixture dependency note, immutable expectations
+    - [crates/ploke-tui/src/test_harness.rs](../../crates/ploke-tui/src/test_harness.rs): shared mutable app harness DB
+    - [crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs](../../crates/ploke-tui/src/app/commands/exec_real_tools_live_tests.rs): shared mutable DB for live-tool scaffolding
+    - [crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs](../../crates/ploke-tui/src/rag/tests/apply_code_edit_tests.rs): fixture dependency note, immutable expectations
 - Notes:
   - older backups remain on disk (for example `fixture_nodes_canonical_2026-05-06.sqlite`) but the active registry entry points at the 2026-05-17 snapshot
 
@@ -192,12 +262,12 @@ Test isolation note:
     local model revision
 - Tests using this fixture:
   - `ploke-rag`
-    - [crates/ploke-rag/src/core/unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs): shared immutable DB plus fresh immutable imports via `fresh_backup_fixture_db`
-    - [crates/ploke-rag/tests/integration_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/tests/integration_tests.rs): shared immutable DB via `shared_backup_fixture_db`
+    - [crates/ploke-rag/src/core/unit_tests.rs](../../crates/ploke-rag/src/core/unit_tests.rs): shared immutable DB plus fresh immutable imports via `fresh_backup_fixture_db`
+    - [crates/ploke-rag/tests/integration_tests.rs](../../crates/ploke-rag/tests/integration_tests.rs): shared immutable DB via `shared_backup_fixture_db`
   - `ploke-tui`
-    - [crates/ploke-tui/src/test_utils/new_test_harness.rs](/home/brasides/code/ploke/crates/ploke-tui/src/test_utils/new_test_harness.rs): shared immutable headless harness DB via `shared_backup_fixture_db`
-    - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via harness
-    - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
+    - [crates/ploke-tui/src/test_utils/new_test_harness.rs](../../crates/ploke-tui/src/test_utils/new_test_harness.rs): shared immutable headless harness DB via `shared_backup_fixture_db`; mutating edit tests use a fresh harness DB via `fresh_backup_fixture_db`
+    - [crates/ploke-tui/tests/get_code_edges_regression.rs](../../crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via harness
+    - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](../../crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
 - Notes:
   - older backups remain on disk (for example `fixture_nodes_local_embeddings_2026-05-06.sqlite`) but the active registry entry points at the 2026-05-17 snapshot
 
@@ -211,7 +281,7 @@ Test isolation note:
 - Tests using this fixture:
   - none
 - Notes:
-  - only a commented-out reference remains in [crates/ploke-rag/src/core/unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs)
+  - only a commented-out reference remains in [crates/ploke-rag/src/core/unit_tests.rs](../../crates/ploke-rag/src/core/unit_tests.rs)
   - keep under review until explicitly removed or reintroduced
 
 ## `ploke_db_primary_2026-05-06.sqlite`
@@ -227,7 +297,7 @@ Test isolation note:
   - its contents will move with `crates/ploke-db` as that crate changes over time
 - Tests using this fixture:
   - `ploke-tui`
-    - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
+    - [crates/ploke-tui/tests/get_code_edges_regression.rs](../../crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
 
 ## `ws_fixture_01_canonical_2026-05-17.sqlite`
 
@@ -241,7 +311,7 @@ Test isolation note:
     workspace-fixture recreation path
 - Tests using this fixture:
   - `ploke-test-utils`
-    - [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs): registry lookup and strict-load witness for the active workspace fixture
+    - [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs): registry lookup and strict-load witness for the active workspace fixture
 - Notes:
   - this fixture is the canonical plain workspace backup required by the
     workspace rollout readiness gate
@@ -278,8 +348,10 @@ registry-backed place instead of in local symlinks under
 Run `cargo run -p xtask --features typed_type_graph -- recreate-backup-db
 --fixture <id>` to clone or reuse the pinned checkout, check out the recorded
 commit, parse and transform the crate with typed type graph relations enabled,
-write the dated backup under `tests/backup_dbs/`, and verify that the generated
-backup imports with the current schema.
+write the dated backup under the fixture's configured shared-snapshot path, and
+verify that the generated backup imports with the current schema. Copy a
+reviewed snapshot into `tests/backup_dbs/` only when it should become a
+committed seed artifact.
 
 The `corpus_*_openrouter_embeddings` variants use the same source-pinned
 checkouts, then run the OpenRouter embedding indexer before backup. They are
@@ -502,8 +574,8 @@ Expected searchable corpus embedding config:
 
 - When a fixture changes, update:
   - this document
-  - [AGENTS.md](/home/brasides/code/ploke/AGENTS.md)
-  - the shared registry in [crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs)
+  - [AGENTS.md](../../AGENTS.md)
+  - the shared registry in [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
 - Run `cargo xtask verify-backup-dbs` after schema or fixture changes.
 - Use `cargo xtask recreate-backup-db --fixture <id>` instead of ad hoc copying
   whenever the registry already defines a recreation path.

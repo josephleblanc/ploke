@@ -37,12 +37,14 @@ pub struct CanonicalEditBorrowed<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CodeEditParamsOwned {
     pub edits: Vec<CanonicalEditOwned>,
     pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct CanonicalEditOwned {
     pub file: String,
     pub canon: String,
@@ -58,8 +60,8 @@ impl super::Tool for GatCodeEdit {
     fn name() -> super::ToolName {
         super::ToolName::ApplyCodeEdit
     }
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::ApplyCodeEdit
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         CODE_EDIT_PARAMETERS.deref()
@@ -120,18 +122,23 @@ impl super::Tool for GatCodeEdit {
             typed_req,
             call_id,
         };
-        apply_code_edit_tool(params_env).await;
+        let proposal_id = apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        print_code_edit_results(&ctx, request_id, ToolName::ApplyCodeEdit).await
+        print_code_edit_results(&ctx, proposal_id, request_id, ToolName::ApplyCodeEdit).await
     }
 }
 
 pub async fn print_code_edit_results(
     ctx: &Ctx,
+    proposal_id: Option<Uuid>,
     request_id: Uuid,
     tool_name: ToolName,
 ) -> Result<ToolResult, ploke_error::Error> {
-    let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
+    let proposal_opt = if let Some(proposal_id) = proposal_id {
+        ctx.state.proposals.read().await.get(&proposal_id).cloned()
+    } else {
+        None
+    };
     if let Some(prop) = proposal_opt {
         let primary_root = ctx
             .state
@@ -180,6 +187,7 @@ pub async fn print_code_edit_results(
             structured_result.files.len()
         );
         let ui_payload = super::ToolUiPayload::new(tool_name, ctx.call_id.clone(), summary)
+            .with_proposal_id(prop.proposal_id)
             .with_request_id(request_id)
             .with_field("status", "pending")
             .with_field("staged", structured_result.staged.to_string())
@@ -325,12 +333,16 @@ mod tests {
             .and_then(|desc| desc.as_str())
             .expect("canon schema description");
 
+        // Verify node_type description mentions method as a valid node type
         assert!(
+            node_type.to_lowercase().contains("method"),
+            "node_type description should mention 'method' as a valid node type, got: {}",
             node_type
-                .to_lowercase()
-                .contains("methods are valid direct targets")
         );
-        assert!(!node_type.to_lowercase().contains("not direct targets"));
+        assert!(
+            !node_type.to_lowercase().contains("not direct targets"),
+            "node_type description should not contain negative guidance"
+        );
         assert!(canon.contains("Type::method"));
     }
 }
@@ -366,10 +378,10 @@ mod gat_tests {
     #[test]
     fn name_desc_and_schema_present() {
         assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
-        assert!(matches!(
+        assert_eq!(
             GatCodeEdit::description(),
-            ToolDescr::ApplyCodeEdit
-        ));
+            ToolName::ApplyCodeEdit.description()
+        );
         let schema = GatCodeEdit::schema();
         assert!(schema.as_object().unwrap().contains_key("properties"));
     }

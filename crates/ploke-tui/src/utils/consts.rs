@@ -14,5 +14,5 @@ pub(crate) const TOOL_CALL_CHAIN_LIMIT: u32 = 15;
 // --- debug consts ---
 //
 // Used for debug targets with tracing
-pub(crate) const DEBUG_TOOLS: &str = "dbg_tools";
+pub(crate) const DEBUG_TOOLS: &str = ploke_core::EXECUTION_DEBUG_TARGET;
 pub(crate) const DBG_EVENTS: &str = "dbg_events";

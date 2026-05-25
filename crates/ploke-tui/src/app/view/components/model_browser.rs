@@ -40,6 +40,7 @@ pub struct ModelBrowserItem {
     pub output_cost: Option<f64>,
     pub supports_tools: bool,
     pub providers: Vec<ModelProviderRow>,
+    pub direct_route: bool,
     pub expanded: bool,
     // Runtime flags for async provider loading and deferred selection
     pub loading_providers: bool,
@@ -151,7 +152,7 @@ pub fn render_model_browser<'a>(
     frame.render_widget(ratatui::widgets::Clear, rect);
 
     // Split overlay into body + footer (help)
-    let footer_height = if mb.help_visible { 6 } else { 1 };
+    let footer_height = if mb.help_visible { 8 } else { 1 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
@@ -174,6 +175,10 @@ pub fn render_model_browser<'a>(
     // Selected row highlighting
     let selected_style = Style::new().fg(Color::Black).bg(Color::LightCyan);
     let detail_style = Style::new().fg(Color::Blue).dim();
+    let openrouter_source_style = Style::new().fg(Color::LightMagenta).bold();
+    let google_source_style = Style::new().fg(Color::LightGreen).bold();
+    let selected_openrouter_source_style = Style::new().fg(Color::Black).bg(Color::LightMagenta);
+    let selected_google_source_style = Style::new().fg(Color::Black).bg(Color::LightGreen);
 
     for (i, it) in mb.items.iter().enumerate() {
         let title = if let Some(name) = &it.name {
@@ -185,11 +190,23 @@ pub fn render_model_browser<'a>(
         } else {
             it.id.to_string()
         };
+        let is_selected = i == mb.selected;
+        let source_label = if it.direct_route {
+            "[via Google API]"
+        } else {
+            "[via OpenRouter]"
+        };
+        let source_style = match (it.direct_route, is_selected) {
+            (true, true) => selected_google_source_style,
+            (true, false) => google_source_style,
+            (false, true) => selected_openrouter_source_style,
+            (false, false) => openrouter_source_style,
+        };
 
         let mut line = Line::from(vec![
             Span::styled(
-                if i == mb.selected { ">" } else { " " },
-                if i == mb.selected {
+                if is_selected { ">" } else { " " },
+                if is_selected {
                     selected_style
                 } else {
                     overlay_style
@@ -198,15 +215,17 @@ pub fn render_model_browser<'a>(
             Span::raw(" "),
             Span::styled(
                 title,
-                if i == mb.selected {
+                if is_selected {
                     selected_style
                 } else {
                     overlay_style
                 },
             ),
+            Span::raw(" "),
+            Span::styled(source_label, source_style),
         ]);
         // Ensure entire line style is applied (for background fill)
-        line.style = if i == mb.selected {
+        line.style = if is_selected {
             selected_style
         } else {
             overlay_style
@@ -215,6 +234,21 @@ pub fn render_model_browser<'a>(
 
         if it.expanded {
             // Indented details for readability while navigating (preserve spaces; do not trim)
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "    source: {}",
+                    if it.direct_route {
+                        "Google API direct catalog"
+                    } else {
+                        "OpenRouter catalog"
+                    }
+                ),
+                if it.direct_route {
+                    google_source_style
+                } else {
+                    openrouter_source_style
+                },
+            )));
             lines.push(Line::from(Span::styled(
                 format!(
                     "    context_length: {}",
@@ -241,9 +275,18 @@ pub fn render_model_browser<'a>(
                 detail_style,
             )));
 
-            // Provider breakdown (with loading/empty states)
-            lines.push(Line::from(Span::styled("    providers:", detail_style)));
-            if it.loading_providers {
+            if it.direct_route {
+                lines.push(Line::from(Span::styled(
+                    "    route: direct; provider endpoints are not used",
+                    detail_style,
+                )));
+            } else {
+                // Provider breakdown (with loading/empty states)
+                lines.push(Line::from(Span::styled("    providers:", detail_style)));
+            }
+            if it.direct_route {
+                // route line rendered above
+            } else if it.loading_providers {
                 lines.push(Line::from(Span::styled("      (loading…)", detail_style)));
             } else if it.providers.is_empty() {
                 lines.push(Line::from(Span::styled("      (none)", detail_style)));
@@ -275,12 +318,15 @@ pub fn render_model_browser<'a>(
 }
 
 /// Provider item height:
-///     context_length + supports_tools + pricing
-const PROVIDER_DETAILS_HEIGHT: usize = 3;
+///     source + context_length + supports_tools + pricing
+const PROVIDER_DETAILS_HEIGHT: usize = 4;
 
 pub fn model_browser_detail_lines(it: &ModelBrowserItem) -> usize {
     if !it.expanded {
         return 0;
+    }
+    if it.direct_route {
+        return PROVIDER_DETAILS_HEIGHT + 1;
     }
     let providers_rows = if it.loading_providers || it.providers.is_empty() {
         1
@@ -493,9 +539,122 @@ impl TestModelItem {
             output_cost: self.output_cost,
             supports_tools: self.supports_tools,
             providers,
+            direct_route: false,
             expanded: self.expanded,
             loading_providers: self.loading_providers,
             pending_select: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use ratatui::{Terminal, backend::TestBackend};
+
+    use super::*;
+
+    fn model_item(id: &str, direct_route: bool, expanded: bool) -> ModelBrowserItem {
+        ModelBrowserItem {
+            id: ModelId::from_str(id).expect("model id"),
+            name: None,
+            context_length: Some(1_048_576),
+            input_cost: Some(0.0),
+            output_cost: Some(0.0),
+            supports_tools: true,
+            providers: Vec::new(),
+            direct_route,
+            expanded,
+            loading_providers: false,
+            pending_select: false,
+        }
+    }
+
+    fn render_lines(mb: &ModelBrowserState) -> Vec<Line<'static>> {
+        let backend = TestBackend::new(100, 25);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut lines = Vec::new();
+        terminal
+            .draw(|frame| {
+                let (_, _, _, rendered) = render_model_browser(frame, mb);
+                lines = rendered;
+            })
+            .expect("draw");
+        lines
+    }
+
+    fn lines_to_text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn source_badges_and_details_distinguish_openrouter_from_google_rows() {
+        let mb = ModelBrowserState {
+            visible: true,
+            keyword: "gemini".to_string(),
+            items: vec![
+                model_item("google/gemini-2.5-flash", false, true),
+                model_item("google/gemini-2.5-pro", true, true),
+            ],
+            selected: 0,
+            help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 25,
+        };
+
+        let lines = render_lines(&mb);
+        let text = lines_to_text(&lines);
+
+        assert!(text.contains("google/gemini-2.5-flash [via OpenRouter]"));
+        assert!(text.contains("google/gemini-2.5-pro [via Google API]"));
+        assert!(text.contains("source: OpenRouter catalog"));
+        assert!(text.contains("source: Google API direct catalog"));
+        assert!(text.contains("route: direct; provider endpoints are not used"));
+
+        let openrouter_style = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .find(|span| span.content.as_ref() == "[via OpenRouter]")
+            .expect("openrouter badge")
+            .style;
+        let google_style = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .find(|span| span.content.as_ref() == "[via Google API]")
+            .expect("google badge")
+            .style;
+        assert_ne!(openrouter_style, google_style);
+    }
+
+    #[test]
+    fn google_author_model_from_openrouter_is_labeled_as_openrouter_supplied() {
+        let mb = ModelBrowserState {
+            visible: true,
+            keyword: "gemini".to_string(),
+            items: vec![model_item("google/gemini-flash-latest", false, false)],
+            selected: 0,
+            help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 25,
+        };
+
+        let text = lines_to_text(&render_lines(&mb));
+
+        assert!(text.contains("google/gemini-flash-latest [via OpenRouter]"));
+        assert!(!text.contains("[via Google API]"));
     }
 }

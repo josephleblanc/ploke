@@ -9,7 +9,7 @@ syn_parser = { path = "../syn_parser" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
-ploke-core = { path = "../../ploke-core" }
+ploke-core = { path = "../../ploke-core", features = ["cozo"] }
 ploke-common = { path = "../../common" }
 uuid = { workspace = true }
 

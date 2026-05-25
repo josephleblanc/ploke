@@ -22,6 +22,8 @@ pub struct ContextStats {
     pub parts: usize,
     pub truncated_parts: usize,
     pub dedup_removed: usize,
+    #[serde(default)]
+    pub skipped_io_errors: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,8 +125,10 @@ impl Modality {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCodeContextArgs {
     pub search_term: String,
+    #[serde(default, alias = "token_budget")]
+    pub token_budget_per_result: Option<u32>,
     #[serde(default)]
-    pub token_budget: Option<u32>,
+    pub token_budget_total: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +137,10 @@ pub struct RequestCodeContextResult {
     pub search_term: String,
     pub top_k: usize,
     pub kind: ContextPartKind,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub next_steps: Vec<String>,
     pub context: Vec<ConciseContext>,
 }
 
@@ -151,6 +159,8 @@ impl RequestCodeContextResult {
             search_term: m.search_term,
             top_k: m.top_k,
             kind: m.kind,
+            note: None,
+            next_steps: Vec::new(),
             context,
         }
     }

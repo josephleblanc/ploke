@@ -388,12 +388,26 @@ impl RagService {
     /// Query BM25 actor for current status with a client-side timeout.
     #[instrument(skip(self), fields(timeout_ms = BM25_TIMEOUT_MS))]
     pub async fn bm25_status(&self) -> Result<Bm25Status, RagError> {
+        self.bm25_status_with_timeout(Duration::from_millis(self.cfg.bm25_timeout_ms))
+            .await
+    }
+
+    /// Query BM25 actor for current status with a caller-supplied timeout.
+    ///
+    /// Long-running setup paths may have just queued a rebuild and need to wait
+    /// behind that rebuild rather than treating the normal interactive timeout
+    /// as a fatal actor failure.
+    #[instrument(skip(self), fields(timeout_ms = timeout_duration.as_millis()))]
+    pub async fn bm25_status_with_timeout(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<Bm25Status, RagError> {
         let (tx, rx) = oneshot::channel();
         self.bm_embedder
             .send(Bm25Cmd::Status { resp: tx })
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 status command: {}", e)))?;
-        match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
+        match timeout(timeout_duration, rx).await {
             Ok(Ok(Ok(status))) => Ok(status),
             Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
             Ok(Err(recv_err)) => Err(RagError::Channel(format!(
@@ -402,7 +416,7 @@ impl RagService {
             ))),
             Err(_) => Err(RagError::Channel(format!(
                 "timeout waiting for BM25 status ({} ms)",
-                self.cfg.bm25_timeout_ms
+                timeout_duration.as_millis()
             ))),
         }
     }
@@ -769,7 +783,7 @@ impl RagService {
             let ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
             let nodes = self
                 .db
-                .get_nodes_ordered(ids.clone())
+                .get_snippet_nodes_ordered(ids.clone())
                 .map_err(|e| RagError::Embed(e.to_string()))?;
             let texts = io.get_snippets_batch(nodes).await.map_err(|e| {
                 RagError::Search(format!("get_snippets_batch failed for rerank: {:?}", e))

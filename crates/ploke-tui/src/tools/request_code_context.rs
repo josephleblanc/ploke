@@ -1,19 +1,26 @@
 use ploke_core::rag_types::{
-    AssembledContext, AssembledMeta, ConciseContext, RequestCodeContextResult,
+    AssembledContext, AssembledMeta, ConciseContext, ContextStats, RequestCodeContextResult,
 };
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
 use super::*;
 use ploke_core::RetrievalScope;
 
-// Canonical schema: RequestCodeContextArgs { token_budget, hint }
+// Canonical schema: RequestCodeContextArgs {
+//     token_budget_per_result,
+//     token_budget_total,
+//     search_term
+// }
 pub struct RequestCodeContext {
     rag: Arc<RagService>,
 }
 
 #[derive(Clone, PartialOrd, PartialEq, Deserialize)]
 pub struct RequestCodeContextInput {
-    pub token_budget: u32,
+    #[serde(default, alias = "token_budget")]
+    pub token_budget_per_result: Option<u32>,
+    #[serde(default)]
+    pub token_budget_total: Option<u32>,
     #[serde(default)]
     pub search_term: Option<String>,
 }
@@ -24,16 +31,84 @@ lazy_static::lazy_static! {
             "properties": {
                 "search_term": {
                     "type": "string",
-                    "description": "Search term guides which code guide hybrid semantic search and bm25."
+                    "description": "Search query for code graph retrieval. Good values include identifiers, module names, file names, error names, type names, or concise code terms."
                 },
-                "token_budget": {
+                "token_budget_per_result": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Optional maximum tokens of code context to return, sane defaults"
+                    "description": "Optional maximum tokens per returned code snippet."
+                },
+                "token_budget_total": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional maximum total tokens across all returned snippets."
                 }
             }
         }
     );
+}
+
+fn zero_result_note(search_term: &str) -> String {
+    format!(
+        "No indexed snippets matched `{search_term}`. This tool is broad retrieval, not exact symbol lookup."
+    )
+}
+
+fn zero_result_next_steps() -> Vec<String> {
+    vec![
+        "Retry with an exact symbol, type, method, module, or error name if you know one."
+            .to_string(),
+        "If you know the area but not the symbol, use list_dir or read_file on likely directories/files."
+            .to_string(),
+        "If you know the item name, switch to code_item_lookup for exact-definition lookup."
+            .to_string(),
+    ]
+}
+
+fn stale_context_next_steps() -> Vec<String> {
+    vec![
+        "Refresh or re-resolve the target before relying on this context.".to_string(),
+        "Use read_file for the suspected file if you need the current live content immediately."
+            .to_string(),
+        "Retry request_code_context after the workspace index has been refreshed.".to_string(),
+    ]
+}
+
+fn summarize_request_code_context_result(
+    result: &mut RequestCodeContextResult,
+    stats: &ContextStats,
+) -> String {
+    if result.context.is_empty() {
+        if stats.skipped_io_errors > 0 {
+            result.note = Some(format!(
+                "Context degraded: skipped {} snippets because indexed file hashes did not match the live files.",
+                stats.skipped_io_errors
+            ));
+            result.next_steps = stale_context_next_steps();
+            format!(
+                "Context degraded: 0 snippets returned, {} stale snippets skipped",
+                stats.skipped_io_errors
+            )
+        } else {
+            result.note = Some(zero_result_note(&result.search_term));
+            result.next_steps = zero_result_next_steps();
+            "No code context found (0 snippets)".to_string()
+        }
+    } else if stats.skipped_io_errors > 0 {
+        result.note = Some(format!(
+            "Context degraded: returned {} snippets but skipped {} stale snippets whose indexed file hashes did not match the live files.",
+            result.context.len(),
+            stats.skipped_io_errors
+        ));
+        result.next_steps = stale_context_next_steps();
+        format!(
+            "Context degraded: {} snippets returned, {} stale snippets skipped",
+            result.context.len(),
+            stats.skipped_io_errors
+        )
+    } else {
+        format!("Context assembled: {} snippets", result.context.len())
+    }
 }
 
 // --- GAT-based tool impl ---
@@ -41,14 +116,20 @@ use std::borrow::Cow;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RequestCodeContextParams<'a> {
-    pub token_budget: Option<u32>,
+    #[serde(default, alias = "token_budget")]
+    pub token_budget_per_result: Option<u32>,
+    #[serde(default)]
+    pub token_budget_total: Option<u32>,
     #[serde(borrow)]
     pub search_term: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestCodeContextParamsOwned {
-    pub token_budget: Option<u32>,
+    #[serde(default, alias = "token_budget")]
+    pub token_budget_per_result: Option<u32>,
+    #[serde(default)]
+    pub token_budget_total: Option<u32>,
     pub search_term: Option<String>,
 }
 
@@ -69,8 +150,8 @@ impl super::Tool for RequestCodeContextGat {
     fn name() -> ToolName {
         ToolName::RequestCodeContext
     }
-    fn description() -> ToolDescr {
-        ToolDescr::RequestCodeContext
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         REQUEST_CODE_CONTEXT_PARAMETERS.deref()
@@ -82,7 +163,8 @@ impl super::Tool for RequestCodeContextGat {
 
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         RequestCodeContextParamsOwned {
-            token_budget: params.token_budget,
+            token_budget_per_result: params.token_budget_per_result,
+            token_budget_total: params.token_budget_total,
             search_term: params.search_term.as_ref().map(|s| s.to_string()),
         }
     }
@@ -91,7 +173,7 @@ impl super::Tool for RequestCodeContextGat {
         params: Self::Params<'de>,
         ctx: Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
-        use crate::rag::utils::calc_top_k_for_budget;
+        use crate::rag::utils::{calc_top_k_for_budget, max_results_for_budget};
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
         if let Some(parse_failure) = ctx
             .state
@@ -137,11 +219,23 @@ impl super::Tool for RequestCodeContextGat {
             ));
         };
         let cfg = ctx.state.config.read().await;
-        let token_budget = params.token_budget.unwrap_or(cfg.token_limit);
-        let top_k = calc_top_k_for_budget(token_budget).min(cfg.rag.top_k);
+        let token_budget_total = params.token_budget_total.unwrap_or(cfg.token_limit).max(1);
+        let token_budget_per_result = params
+            .token_budget_per_result
+            .unwrap_or(cfg.rag.per_part_max_tokens as u32)
+            .max(1);
+        let per_result_max = (token_budget_per_result as usize)
+            .min(token_budget_total as usize)
+            .max(1);
+        let top_k = calc_top_k_for_budget(token_budget_total)
+            .min(max_results_for_budget(
+                token_budget_total,
+                token_budget_per_result,
+            ))
+            .min(cfg.rag.top_k);
         let budget = TokenBudget {
-            max_total: token_budget as usize,
-            per_part_max: cfg.rag.per_part_max_tokens,
+            max_total: token_budget_total as usize,
+            per_part_max: per_result_max,
             ..Default::default()
         };
         let strategy = cfg.rag.strategy.to_runtime();
@@ -162,12 +256,30 @@ impl super::Tool for RequestCodeContextGat {
             kind: ContextPartKind::Code,
         };
         tracing::debug!(?parts, ?stats);
-        let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
-        let summary = format!("Context assembled: {} snippets", result.context.len());
-        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+        let mut result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
+        let summary = summarize_request_code_context_result(&mut result, &stats);
+        let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
+            .with_field(
+                "token_budget_per_result",
+                token_budget_per_result.to_string(),
+            )
+            .with_field("token_budget_total", token_budget_total.to_string())
             .with_field("top_k", result.top_k.to_string())
             .with_field("returned", result.context.len().to_string());
+        if let Some(note) = result.note.as_ref() {
+            let details = std::iter::once(note.as_str().to_string())
+                .chain(
+                    result
+                        .next_steps
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, step)| format!("{}. {}", idx + 1, step)),
+                )
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui_payload = ui_payload.with_details(details);
+        }
         let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
             content: serialized,
@@ -193,21 +305,70 @@ mod gat_tests {
 
     #[test]
     fn params_deserialize_and_into_owned() {
-        let raw = r#"{"token_budget":512,"search_term":"foo bar"}"#;
+        let raw =
+            r#"{"token_budget_per_result":512,"token_budget_total":1536,"search_term":"foo bar"}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
-        assert_eq!(params.token_budget, Some(512));
+        assert_eq!(params.token_budget_per_result, Some(512));
+        assert_eq!(params.token_budget_total, Some(1536));
         assert_eq!(params.search_term.as_deref(), Some("foo bar"));
         let owned = RequestCodeContextGat::into_owned(&params);
-        assert_eq!(owned.token_budget, Some(512));
+        assert_eq!(owned.token_budget_per_result, Some(512));
+        assert_eq!(owned.token_budget_total, Some(1536));
         assert_eq!(owned.search_term.as_deref(), Some("foo bar"));
     }
 
     #[test]
     fn params_missing_search_term_still_parses() {
+        let raw = r#"{"token_budget_per_result":256,"token_budget_total":768}"#;
+        let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
+        assert_eq!(params.token_budget_per_result, Some(256));
+        assert_eq!(params.token_budget_total, Some(768));
+        assert!(params.search_term.is_none());
+    }
+
+    #[test]
+    fn legacy_token_budget_alias_maps_to_per_result() {
         let raw = r#"{"token_budget":256}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
-        assert_eq!(params.token_budget, Some(256));
+        assert_eq!(params.token_budget_per_result, Some(256));
+        assert!(params.token_budget_total.is_none());
         assert!(params.search_term.is_none());
+    }
+
+    #[test]
+    fn stale_snippet_skips_are_model_visible_degraded_context() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "helpers".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+        let stats = ContextStats {
+            skipped_io_errors: 1,
+            ..Default::default()
+        };
+
+        let summary = summarize_request_code_context_result(&mut result, &stats);
+
+        assert_eq!(
+            summary,
+            "Context degraded: 0 snippets returned, 1 stale snippets skipped"
+        );
+        assert!(result.ok);
+        assert!(
+            result
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("indexed file hashes did not match"))
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Refresh or re-resolve"))
+        );
     }
 
     #[test]
@@ -216,10 +377,10 @@ mod gat_tests {
             RequestCodeContextGat::name(),
             ToolName::RequestCodeContext
         ));
-        assert!(matches!(
+        assert_eq!(
             RequestCodeContextGat::description(),
-            ToolDescr::RequestCodeContext
-        ));
+            ToolName::RequestCodeContext.description()
+        );
         let schema = RequestCodeContextGat::schema();
         let obj = schema.as_object().expect("schema obj");
         assert!(obj.contains_key("properties"));
@@ -234,18 +395,23 @@ mod gat_tests {
             "type": "function",
             "function": {
                 "name": "request_code_context",
-                "description": "Request additional code context from the repository up to a token budget.",
+                "description": "Search the indexed workspace code graph and return ranked code snippets within per-result and total token budgets. Use this as the default broad code search when you have identifiers, module or file names, error names, type names, or other code terms but do not yet know an exact path. It currently uses sparse vector search with BM25 over the loaded workspace.\n",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "search_term": {
                             "type": "string",
-                            "description": "Search term guides which code guide hybrid semantic search and bm25."
+                            "description": "Search query for code graph retrieval. Good values include identifiers, module names, file names, error names, type names, or concise code terms."
                         },
-                        "token_budget": {
+                        "token_budget_per_result": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Optional maximum tokens of code context to return, sane defaults"
+                            "description": "Optional maximum tokens per returned code snippet."
+                        },
+                        "token_budget_total": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Optional maximum total tokens across all returned snippets."
                         }
                     }
                 }

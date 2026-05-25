@@ -198,7 +198,7 @@ fn insert_sample_embeddings(
     let relation_exists = !relations
         .rows
         .iter()
-        .all(|row| (row[0].get_str() == Some("code_embeddings")));
+        .all(|row| row[0].get_str() == Some("code_embeddings"));
 
     println!("relation_exists: {}", relation_exists);
     let code_embeddings_def = relations

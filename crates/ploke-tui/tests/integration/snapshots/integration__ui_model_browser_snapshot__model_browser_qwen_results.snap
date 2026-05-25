@@ -2,15 +2,17 @@
 source: crates/ploke-tui/tests/integration/ui_model_browser_snapshot.rs
 expression: text
 ---
-> qwen/qwen-2.5-1.5b-instruct — Qwen2.5 1.5B Instruct
+> qwen/qwen-2.5-1.5b-instruct — Qwen2.5 1.5B Instruct [via OpenRouter]
+    source: OpenRouter catalog
     context_length: 32768
     supports_tools: true
     pricing: in=$0.080 out=$0.200
     providers:
       - SiliconFlow in=$0.080 out=$0.200 ctx=32768 tools=true
       > Alibaba in=$0.070 out=$0.180 ctx=32768 tools=true
-  qwen/qwen-2.5-7b-instruct — Qwen2.5 7B Instruct
-  qwen/qwen-2.5-32b-instruct — Qwen2.5 32B Instruct
+  qwen/qwen-2.5-7b-instruct — Qwen2.5 7B Instruct [via OpenRouter]
+  qwen/qwen-2.5-32b-instruct — Qwen2.5 32B Instruct [via OpenRouter]
+    source: OpenRouter catalog
     context_length: 32768
     supports_tools: true
     pricing: in=$1.200 out=$3.600

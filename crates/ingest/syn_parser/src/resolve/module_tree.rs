@@ -3,12 +3,16 @@ use std::collections::hash_map::Entry;
 use crate::parser::diagnostics::{TRACE_TARGET_PRUNE, emit_json_diagnostic};
 use crate::parser::graph::{GraphAccess, GraphNode};
 use crate::parser::nodes::{
-    ImplNodeId, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait, UnresolvedNode, UnresolvedNodeId,
+    ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait, UnresolvedNode, UnresolvedNodeId,
     UnresolvedReason,
 };
+
 use crate::parser::types::VisibilityKind;
 
 use super::*;
+
+#[cfg(feature = "validate")]
+use crate::parser::nodes::ImplNodeId;
 
 impl LogDataStructure for ModuleTree {}
 impl RelationIndexer for ModuleTree {
@@ -41,10 +45,12 @@ impl LogTree for ModuleTree {
         &self.modules
     }
 
+    #[cfg(feature = "validate")]
     fn pending_imports(&self) -> &Vec<PendingImport> {
         &self.pending_imports
     }
 
+    #[cfg(feature = "validate")]
     fn pending_exports(&self) -> Option<&Vec<PendingExport>> {
         self.pending_exports.as_ref()
     }
@@ -2323,6 +2329,7 @@ impl ModuleTree {
     }
 
     /// Checks for duplicates among all relations
+    #[cfg(feature = "validate")]
     pub(crate) fn validate_unique_rels(&self) -> bool {
         let rels = &self.tree_relations();
         let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
@@ -2355,6 +2362,7 @@ impl ModuleTree {
     /// Contains relations with `impl` targets.
     // WARN: Note that this is due to the known limitation documented here:
     // - See known limitation #8 in ploke/docs/plans/uuid_refactor/02c_phase2_known_limitations.md
+    #[cfg(feature = "validate")]
     pub(crate) fn validate_nonunique_rels(&self) -> bool {
         let rels = &self.tree_relations();
         let mut dup_impls = Vec::new();

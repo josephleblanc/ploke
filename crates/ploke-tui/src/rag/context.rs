@@ -174,32 +174,65 @@ pub async fn process_with_rag(
     let outcome = state
         .with_system_txn(|txn| {
             let loaded = txn.has_loaded_crates();
+            let workspace_root = txn.loaded_workspace_root();
             let first = !txn.no_workspace_tip_shown();
             if !loaded {
                 txn.mark_no_workspace_tip_shown();
             }
-            (loaded, first)
+            (loaded, workspace_root, first)
         })
         .await;
-    let (crate_loaded, first_tip) = outcome.result;
+    let (crate_loaded, workspace_root, first_tip) = outcome.result;
     // If no crate is loaded, surface a user-facing tip in chat
     if !crate_loaded && first_tip {
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;
     }
     let mut formatted: Vec<RequestMessage> = Vec::with_capacity(messages.len() + 1);
-    let fallback_note = if ctx_mode == CtxMode::Off {
-        "Context mode is Off; proceeding without code context."
-    } else {
-        "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG."
+    let context_off =
+        "Context mode is Off: Context will not automatically be attached to the user message.";
+    let context_on = match ctx_mode {
+        CtxMode::Off => {
+            "Context mode is Off: Context will not automatically be attached to the user message."
+        }
+        CtxMode::Light => {
+            "Context mode set to Light, truncted context will be automatically added to user message."
+        }
+        CtxMode::Heavy => {
+            "Context mode set to Heavy, verbose context will be automatically added to user message."
+        }
     };
-    formatted.push(RequestMessage::new_system(fallback_note.to_string()));
+    let fallback_note = match (ctx_mode, workspace_root.as_ref(), crate_loaded) {
+        (CtxMode::Off, Some(root), _) => {
+            format!(
+                "{context_off}; {workspace_note}.",
+                workspace_note = format_args!("Context search via request_code_context is still available. workspace loaded {}",
+                    root.display())
+            )
+        }
+        (CtxMode::Off, None, _) => {
+            format!("{context_off}; Context search via request_code_context is still available.")
+        }
+        (_, Some(root), _) => {
+            format!(
+                "Workspace loaded at {};",
+                root.display()
+            )
+        }
+        (_, None, false) => {
+            "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.".to_string()
+        }
+        (_, None, true) => {
+            "Workspace state is loaded, but no workspace root is available; proceeding without code context.".to_string()
+        }
+    };
+    formatted.push(RequestMessage::new_system(fallback_note.clone()));
     formatted.extend(messages.into_iter());
     let mut fallback_plan_messages = plan_messages;
     let tokenizer = ApproxCharTokenizer::default();
     fallback_plan_messages.push(ContextPlanMessage {
         message_id: None,
         kind: MessageKind::System,
-        estimated_tokens: tokenizer.count(fallback_note),
+        estimated_tokens: tokenizer.count(&fallback_note),
     });
     let fallback_excluded_messages = excluded_plan_messages;
     let context_plan = build_context_plan(
@@ -426,6 +459,7 @@ mod tests {
                 parts: 1,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 
@@ -666,6 +700,7 @@ mod tests {
                 parts: 2,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 

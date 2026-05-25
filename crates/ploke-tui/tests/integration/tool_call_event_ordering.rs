@@ -42,6 +42,7 @@ async fn tool_call_events_preserve_order_in_headless_app() {
             name: ToolName::ApplyCodeEdit,
             arguments: "{}".to_string(),
         },
+        extra_content: None,
     };
 
     let (result_tx, result_rx) = oneshot::channel::<(bool, bool, bool)>();

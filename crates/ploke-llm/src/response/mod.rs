@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use crate::router_only::openrouter::providers::ProviderName;
+
 mod tool_call;
-pub use tool_call::ToolCall;
+pub use tool_call::{GoogleToolCallExtraContent, ToolCall, ToolCallExtraContent};
 
 use super::manager::Role;
 pub use tool_call::FunctionCall;
@@ -20,6 +22,8 @@ pub struct OpenAiResponse {
     #[serde(default)]
     pub object: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
@@ -36,11 +40,38 @@ pub enum ResponseFormat {
 }
 
 /// Token usage statistics
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+}
+
+impl<'de> Deserialize<'de> for TokenUsage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireTokenUsage {
+            #[serde(default)]
+            prompt_tokens: u32,
+            completion_tokens: Option<u32>,
+            #[serde(default)]
+            total_tokens: u32,
+        }
+
+        let wire = WireTokenUsage::deserialize(deserializer)?;
+        let completion_tokens = wire
+            .completion_tokens
+            .unwrap_or_else(|| wire.total_tokens.saturating_sub(wire.prompt_tokens));
+
+        Ok(Self {
+            prompt_tokens: wire.prompt_tokens,
+            completion_tokens,
+            total_tokens: wire.total_tokens,
+        })
+    }
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
@@ -119,18 +150,6 @@ pub struct ErrorResponse {
     pub(super) metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Use OpenAI-style normalized tool call shape per OpenRouter docs
-
-// TODO:ploke-llm
-// Old, I think not useful, but want to leave it until we finish up with the transition from
-// ploke-tui::llm.
-// Delete after migration complete.
-//
-// #[derive(Deserialize, Serialize, Debug, Clone)]
-// pub(crate) struct Choice {
-//     pub(super) message: ResponseMessage,
-// }
-
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ResponseMessage {
     // When tool_calls are present, role may be null/absent
@@ -147,6 +166,9 @@ pub struct ResponseMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) reasoning: Option<String>,
 }
+
+#[cfg(test)]
+mod shape_tests;
 
 #[cfg(test)]
 mod tests {
@@ -176,6 +198,7 @@ mod tests {
             created: 1234567890,
             model: "gpt-4".to_string(),
             object: "chat.completion".to_string(),
+            provider: Some(ProviderName::new("OpenAI")),
             system_fingerprint: Some("test-fingerprint".to_string()),
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
@@ -199,6 +222,10 @@ mod tests {
         assert_eq!(deserialized.created, response.created);
         assert_eq!(deserialized.model, response.model);
         assert_eq!(deserialized.object, response.object);
+        assert_eq!(
+            deserialized.provider.as_ref().map(ProviderName::as_str),
+            Some("OpenAI")
+        );
         assert_eq!(deserialized.system_fingerprint, response.system_fingerprint);
         assert_eq!(deserialized.usage.clone().unwrap().prompt_tokens, 10);
         assert_eq!(deserialized.usage.clone().unwrap().completion_tokens, 5);
@@ -218,6 +245,7 @@ mod tests {
         let response: OpenAiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.id, "minimal");
         assert!(response.choices.is_empty());
+        assert_eq!(response.provider.as_ref().map(ProviderName::as_str), None);
         assert_eq!(response.system_fingerprint, None);
         assert!(response.usage.is_none());
     }

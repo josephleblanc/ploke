@@ -585,7 +585,7 @@ mod tests {
     use cozo::{NamedRows, UuidWrapper};
     use ploke_core::CrateId;
     use ploke_error::Error;
-    use ploke_test_utils::{WS_FIXTURE_01_CANONICAL, backup_fixture_path_or_seed};
+    use ploke_test_utils::WS_FIXTURE_01_CANONICAL;
     use syn_parser::utils::LogStyle;
     use tracing::info;
 
@@ -676,7 +676,7 @@ mod tests {
 
     fn load_workspace_fixture_db() -> Result<Database, Error> {
         let db = Database::init_with_schema()?;
-        let target_file = backup_fixture_path_or_seed(&WS_FIXTURE_01_CANONICAL)?;
+        let target_file = WS_FIXTURE_01_CANONICAL.checked_path()?.into_path();
         let prior_rels = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels)
             .map_err(DbError::from)?;
@@ -1206,7 +1206,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
     fn test_load_db() -> Result<(), Error> {
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-        use ploke_test_utils::workspace_root;
+        use ploke_test_utils::FIXTURE_NODES_CANONICAL;
         use tracing::{Level, error};
 
         // init_tracing_once(HNSW_TARGET, Level::TRACE);
@@ -1241,7 +1241,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
             }
         }
 
-        let target_file = backup_fixture_path_or_seed(&ploke_test_utils::FIXTURE_NODES_CANONICAL)?;
+        let target_file = FIXTURE_NODES_CANONICAL.checked_path()?.into_path();
         let prior_rels_vec = db
             .prior_rels_for_plain_backup_import()
             .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
@@ -1289,7 +1289,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use ploke_test_utils::FIXTURE_NODES_CANONICAL;
 
         let db = Database::init_with_schema()?;
-        let target_file = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
+        let target_file = FIXTURE_NODES_CANONICAL.checked_path()?.into_path();
         let prior_rels_vec = db.prior_rels_for_plain_backup_import()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(DbError::from)

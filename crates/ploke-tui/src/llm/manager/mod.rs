@@ -4,12 +4,20 @@
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
 mod loop_error;
+mod semantics;
 mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
+#[cfg(feature = "test_harness")]
+pub use crate::llm::manager::session::{
+    RequestTapGuard, ResponseTapGuard, clear_recorded_response_tape, clear_request_tap,
+    clear_response_tap, install_recorded_response_prefix_then_live,
+    install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
+    install_request_tap, install_response_tap,
+};
 pub use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
@@ -25,16 +33,21 @@ use ploke_llm::{
     HasModels as _, Router as _,
     manager::events::{endpoint, models},
     request::ToolChoice,
-    router_only::openrouter::OpenRouter,
+    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, fs,
+    path::PathBuf,
+    sync::{Arc, OnceLock, RwLock},
+    time::Duration,
+};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 use uuid::Uuid;
 
 pub use ploke_llm::RequestMessage;
@@ -47,8 +60,8 @@ use crate::{
     chat_history::{ContextTokens, MessageKind, TokenKind},
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
-        create_file::CreateFile, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
-        request_code_context::RequestCodeContextGat,
+        create_file::CreateFile, insert_rust_item::InsertRustItem, list_dir::ListDir,
+        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
     },
     tracing_setup::TOKENS_TARGET,
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
@@ -56,6 +69,31 @@ use crate::{
 
 const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
 const TOKENS_LOG_MAX_CHARS: usize = 4_000;
+static PROTOTYPE1_TRACE_CONTEXT: OnceLock<RwLock<Option<Prototype1TraceContext>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct Prototype1TraceContext {
+    pub role: String,
+    pub runtime_phase: String,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub branch_id: String,
+    pub generation: u32,
+    pub runtime_id: Option<String>,
+}
+
+pub fn set_prototype1_trace_context(context: Prototype1TraceContext) {
+    let lock = PROTOTYPE1_TRACE_CONTEXT.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = lock.write() {
+        *guard = Some(context);
+    }
+}
+
+fn prototype1_trace_context() -> Option<Prototype1TraceContext> {
+    PROTOTYPE1_TRACE_CONTEXT
+        .get()
+        .and_then(|lock| lock.read().ok().and_then(|guard| guard.clone()))
+}
 
 /// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
 pub(super) fn tokens_logging_enabled() -> bool {
@@ -74,6 +112,27 @@ pub(super) fn truncate_for_tokens_log(input: &str) -> String {
     format!(
         "{truncated}...<truncated {} chars>",
         total - TOKENS_LOG_MAX_CHARS
+    )
+}
+
+fn prototype1_chat_request_span() -> tracing::Span {
+    let context = prototype1_trace_context();
+    let generation = context
+        .as_ref()
+        .map(|context| context.generation.to_string())
+        .unwrap_or_default();
+
+    tracing::info_span!(
+        target: "chat-loop",
+        "prototype1.chat_request",
+        prototype1 = context.is_some(),
+        role = context.as_ref().map(|context| context.role.as_str()).unwrap_or(""),
+        runtime_phase = context.as_ref().map(|context| context.runtime_phase.as_str()).unwrap_or(""),
+        campaign_id = context.as_ref().map(|context| context.campaign_id.as_str()).unwrap_or(""),
+        node_id = context.as_ref().map(|context| context.node_id.as_str()).unwrap_or(""),
+        branch_id = context.as_ref().map(|context| context.branch_id.as_str()).unwrap_or(""),
+        generation = generation.as_str(),
+        runtime_id = context.as_ref().and_then(|context| context.runtime_id.as_deref()).unwrap_or(""),
     )
 }
 
@@ -244,7 +303,10 @@ fn handle_event(
                 let req = pending_requests
                     .remove(&event_key)
                     .expect("Event key-val must exist");
-                tokio::spawn(process_llm_request(req, context, args, cancel_rx));
+                tokio::spawn(
+                    process_llm_request(req, context, args, cancel_rx)
+                        .instrument(prototype1_chat_request_span()),
+                );
             }
         }
         AppEvent::System(SystemEvent::ToolCallRequested {
@@ -507,6 +569,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let tool_defs: Vec<ToolDefinition> = vec![
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
+        InsertRustItem::tool_def(),
         CreateFile::tool_def(),
         NsPatch::tool_def(),
         NsRead::tool_def(),
@@ -520,9 +583,6 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     //    When registry is available, merge model/user defaults into LLMParameters.
     let llm_params = crate::llm::LLMParameters::default();
 
-    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
-    //      Construct a concrete request object that RequestSession will dispatch.
-
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
@@ -531,8 +591,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         (None, None)
     };
 
-    // Use the runtime-selected active model (includes optional variant)
-    let (model_id, chat_policy, llm_timeout_secs, router_fields) = {
+    let (model_id, active_router, chat_policy, llm_timeout_secs, openrouter_fields) = {
         let cfg = state.config.read().await;
         let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
         if let Some(provider) = cfg
@@ -546,20 +605,12 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         router_fields = router_fields.preferences_union(&cfg.model_registry);
         (
             cfg.active_model.clone(),
+            cfg.active_router,
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
             router_fields,
         )
     };
-
-    let req = OpenRouter::default_chat_completion()
-        .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
-        .with_model(model_id)
-        .with_messages(messages)
-        .with_param_bundle(llm_params)
-        .with_router_bundle(router_fields)
-        .with_tools(tools)
-        .with_tool_choice(tool_choice);
 
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
     // let log_fut: Option<_> = None;
@@ -573,18 +624,52 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let finish_policy = finish_policy_from_chat(&chat_policy);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
 
-    let chat_session = session::ChatSession {
-        client,
-        req,
-        parent_id,
-        assistant_message_id,
-        event_bus,
-        state_cmd_tx: cmd_tx.clone(),
-        included_message_ids,
-        chat_policy,
-        cancel_rx,
-    };
-    run_chat_session(chat_session, llm_timeout_secs).await
+    if matches!(active_router, RouterVariants::Google(_)) {
+        let req = Google::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    } else {
+        let req = OpenRouter::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_router_bundle(openrouter_fields)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    }
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {

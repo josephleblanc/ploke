@@ -20,13 +20,13 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::IndexTargetDir;
 use super::commands::{
     IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
     Validate, WorkspaceCmd, emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
 use super::events::SystemEvent;
+use super::{IndexTarget, IndexTargetDir};
 use super::{database, handlers};
 use crate::AppEvent;
 use crate::chat_history::MessageKind;
@@ -46,6 +46,8 @@ fn openrouter_embedding_config(model: &str, dims: usize) -> OpenRouterConfig {
             initial_backoff_ms: 250,
             max_backoff_ms: 10000,
             input_type: Some("code-snippet".into()),
+            provider_order: None,
+            allow_fallbacks: None,
             timeout_secs: 30,
             truncate_policy: TruncatePolicy::Truncate,
         }
@@ -193,6 +195,13 @@ pub async fn state_manager(
 
             StateCommand::Load(cmd) => {
                 handle_load_cmd(&state, &event_bus, cmd).await;
+            }
+
+            StateCommand::IndexTarget {
+                target,
+                needs_parse,
+            } => {
+                spawn_index_target(&state, &event_bus, target, needs_parse);
             }
 
             StateCommand::IndexTargetDir {
@@ -376,11 +385,11 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            StateCommand::ApproveEdits { request_id } => {
-                rag::editing::approve_edits(&state, &event_bus, request_id).await;
+            StateCommand::ApproveEdits { proposal_id } => {
+                rag::editing::approve_edits(&state, &event_bus, proposal_id).await;
             }
-            StateCommand::DenyEdits { request_id } => {
-                rag::editing::deny_edits(&state, &event_bus, request_id).await;
+            StateCommand::DenyEdits { proposal_id } => {
+                rag::editing::deny_edits(&state, &event_bus, proposal_id).await;
             }
             StateCommand::ApprovePendingEdits => {
                 rag::editing::approve_pending_edits(&state, &event_bus).await;
@@ -602,6 +611,19 @@ fn spawn_index_workspace(
     let event_bus = Arc::clone(event_bus);
     tokio::spawn(async move {
         handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse).await;
+    });
+}
+
+fn spawn_index_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: Option<IndexTarget>,
+    needs_parse: bool,
+) {
+    let state = Arc::clone(state);
+    let event_bus = Arc::clone(event_bus);
+    tokio::spawn(async move {
+        handlers::indexing::index_target(&state, &event_bus, target, needs_parse).await;
     });
 }
 

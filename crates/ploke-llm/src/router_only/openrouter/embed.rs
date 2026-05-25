@@ -1,12 +1,24 @@
 use crate::{
-    EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
-    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings},
+    EmbeddingModelName, EmbeddingResponseId, HTTP_REFERER, HTTP_TITLE, InputModality, LlmError,
+    Modality, ModelId, OutputModality,
+    embeddings::{
+        EmbClientConfig, EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings,
+        fetch_and_write_embedding_models_registry as fetch_and_write_registry_generic,
+        load_embedding_models_registry as load_registry_generic,
+        write_embedding_models_registry as write_registry_generic,
+    },
     router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{path::Path, path::PathBuf, time::Duration};
 use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLiveEmbeddingModel {
+    pub model_id: ModelId,
+    pub dims: u32,
+}
 
 impl EmbeddingModelName {
     /// OpenRouter may echo only the slug (e.g., `text-embedding-3-small`) even if the request used
@@ -49,7 +61,7 @@ pub struct OpenRouterEmbedEnv {
 }
 
 impl OpenRouterEmbedEnv {
-    pub fn from_env() -> Result<Self, std::env::VarError> {
+    pub fn from_env() -> Result<Self, LlmError> {
         let api_key = super::OpenRouter::resolve_api_key()?;
         Ok(Self {
             api_key,
@@ -68,7 +80,7 @@ impl OpenRouterEmbedEnv {
     pub fn from_overrides(
         api_key: Option<String>,
         embeddings_url: Option<String>,
-    ) -> Result<Self, std::env::VarError> {
+    ) -> Result<Self, LlmError> {
         let key = match api_key {
             Some(k) => k,
             None => super::OpenRouter::resolve_api_key()?,
@@ -85,6 +97,55 @@ impl OpenRouterEmbedEnv {
 }
 
 impl super::OpenRouter {
+    pub async fn resolve_live_text_embedding_model(
+        client: &reqwest::Client,
+        cfg: EmbClientConfig,
+        preferred_model: Option<&str>,
+        probe_input: &str,
+    ) -> color_eyre::Result<Option<ResolvedLiveEmbeddingModel>> {
+        let response = Self::fetch_embedding_models_registry(client, cfg).await?;
+
+        let mut candidates = response
+            .data
+            .into_iter()
+            .filter(|item| item.architecture.modality == Modality::TextToEmbeddings)
+            .filter(|item| {
+                item.architecture
+                    .input_modalities
+                    .contains(&InputModality::Text)
+            })
+            .filter(|item| {
+                item.architecture
+                    .output_modalities
+                    .contains(&OutputModality::Embeddings)
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort_by_key(|item| {
+            let model = item.id.to_string();
+            let is_preferred = preferred_model.is_some_and(|preferred| preferred == model);
+            (!is_preferred, model.to_ascii_lowercase())
+        });
+
+        for candidate in candidates {
+            let req = EmbeddingRequest::<Self> {
+                model: candidate.id.clone(),
+                input: crate::embeddings::EmbeddingInput::Single(probe_input.to_string()),
+                ..Default::default()
+            };
+            let dims = match <Self as HasEmbeddings>::fetch_validate_dims(client, &req).await {
+                Ok(dims) => dims as u32,
+                Err(_) => continue,
+            };
+            return Ok(Some(ResolvedLiveEmbeddingModel {
+                model_id: candidate.id,
+                dims,
+            }));
+        }
+
+        Ok(None)
+    }
+
     pub async fn fetch_embeddings_with_env(
         client: &reqwest::Client,
         req: &EmbeddingRequest<Self>,
@@ -128,8 +189,8 @@ impl super::OpenRouter {
             .bearer_auth(&env.api_key)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
-            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-            .header("X-Title", "Ploke TUI")
+            .header("HTTP-Referer", HTTP_REFERER)
+            .header("X-Title", HTTP_TITLE)
             .json(req)
             .send()
             .await
@@ -271,6 +332,78 @@ impl HasEmbeddingModels for super::OpenRouter {
     type Error = LlmError;
 
     const EMBEDDING_MODELS_URL: &str = "https://openrouter.ai/api/v1/embeddings/models";
+}
+
+impl super::OpenRouter {
+    pub async fn fetch_embedding_models_registry(
+        client: &reqwest::Client,
+        cfg: EmbClientConfig,
+    ) -> color_eyre::Result<crate::request::models::Response> {
+        <Self as HasEmbeddingModels>::fetch_embedding_models(client, cfg).await
+    }
+
+    pub async fn fetch_and_write_embedding_models_registry<P: AsRef<Path>>(
+        client: &reqwest::Client,
+        cfg: EmbClientConfig,
+        path: P,
+    ) -> color_eyre::Result<crate::request::models::Response> {
+        fetch_and_write_registry_generic::<Self, _>(client, cfg, path).await
+    }
+
+    pub fn load_embedding_models_registry<P: AsRef<Path>>(
+        path: P,
+    ) -> color_eyre::Result<crate::request::models::Response> {
+        load_registry_generic::<Self, _>(path)
+    }
+
+    pub fn write_embedding_models_registry<P: AsRef<Path>>(
+        path: P,
+        response: &crate::request::models::Response,
+    ) -> color_eyre::Result<PathBuf> {
+        write_registry_generic::<Self, _>(path, response)
+    }
+
+    pub fn suggest_embedding_model_alternatives(
+        response: &crate::request::models::Response,
+        failing_model: &ModelId,
+        limit: usize,
+    ) -> Vec<crate::request::models::ResponseItem> {
+        let base: Vec<_> = response
+            .data
+            .iter()
+            .filter(|item| item.id != *failing_model)
+            .filter(|item| item.architecture.modality == Modality::TextToEmbeddings)
+            .filter(|item| {
+                item.architecture
+                    .input_modalities
+                    .contains(&InputModality::Text)
+            })
+            .filter(|item| {
+                item.architecture
+                    .output_modalities
+                    .contains(&OutputModality::Embeddings)
+            })
+            .cloned()
+            .collect();
+
+        let min_context = response
+            .data
+            .iter()
+            .find(|item| item.id == *failing_model)
+            .and_then(|item| item.context_length);
+
+        let preferred = min_context
+            .map(|min_context| {
+                base.iter()
+                    .filter(|item| item.context_length.unwrap_or_default() >= min_context)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|items| !items.is_empty())
+            .unwrap_or_else(|| base.clone());
+
+        preferred.into_iter().take(limit).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -511,6 +644,80 @@ mod error_mapping_tests {
     }
 }
 
+#[cfg(test)]
+mod embedding_model_suggestion_tests {
+    use super::super::OpenRouter;
+    use crate::{ModelId, request::models};
+
+    fn sample_registry() -> models::Response {
+        serde_json::from_value(serde_json::json!({
+            "data": [
+                {
+                    "id": "mistralai/codestral-embed-2505",
+                    "name": "Codestral",
+                    "created": 1_i64,
+                    "description": "code embeddings",
+                    "architecture": {
+                        "modality": "text->embeddings",
+                        "input_modalities": ["text"],
+                        "output_modalities": ["embeddings"],
+                        "tokenizer": "Mistral",
+                        "instruct_type": null
+                    },
+                    "pricing": { "prompt": "0.1", "completion": "0" },
+                    "top_provider": { "context_length": 8192, "max_completion_tokens": null, "is_moderated": false }
+                },
+                {
+                    "id": "openai/text-embedding-3-small",
+                    "name": "OpenAI small",
+                    "created": 2_i64,
+                    "description": "alt",
+                    "architecture": {
+                        "modality": "text->embeddings",
+                        "input_modalities": ["text"],
+                        "output_modalities": ["embeddings"],
+                        "tokenizer": "Other",
+                        "instruct_type": null
+                    },
+                    "pricing": { "prompt": "0.1", "completion": "0" },
+                    "top_provider": { "context_length": 8192, "max_completion_tokens": null, "is_moderated": true }
+                },
+                {
+                    "id": "google/gemini-embedding-2-preview",
+                    "name": "Gemini multimodal",
+                    "created": 3_i64,
+                    "description": "multi",
+                    "architecture": {
+                        "modality": "text+image->embeddings",
+                        "input_modalities": ["text", "image"],
+                        "output_modalities": ["embeddings"],
+                        "tokenizer": "Gemini",
+                        "instruct_type": null
+                    },
+                    "pricing": { "prompt": "0.1", "completion": "0" },
+                    "top_provider": { "context_length": 8192, "max_completion_tokens": null, "is_moderated": false }
+                }
+            ]
+        }))
+        .expect("sample registry parses")
+    }
+
+    #[test]
+    fn suggest_embedding_model_alternatives_excludes_failing_and_non_text_embeddings() {
+        let registry = sample_registry();
+        let failing: ModelId = "mistralai/codestral-embed-2505"
+            .parse()
+            .expect("model id parses");
+        let suggestions = OpenRouter::suggest_embedding_model_alternatives(&registry, &failing, 5);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(
+            suggestions[0].id.to_string(),
+            "openai/text-embedding-3-small"
+        );
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenRouterEmbeddingError {
     #[error("invalid embedding request: {detail} (url={url})")]
@@ -705,6 +912,8 @@ mod tests {
         serde_json::to_value(req).expect("embedding request serializes")
     }
 
+    use crate::{HttpFailure, HttpSendFailure};
+
     /// Queries and writes the response formatted from serde's Value defaults into a file as json.
     ///
     /// Basic test that the endpoint is correct and response is well-formed json.
@@ -719,10 +928,18 @@ mod tests {
             .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|e| LlmError::Request {
-                message: e.to_string(),
-                url: Some(url.to_string()),
-                is_timeout: e.is_timeout(),
+            .map_err(|e| {
+                let phase = if e.is_timeout() {
+                    HttpSendFailure::Timeout
+                } else {
+                    HttpSendFailure::Failed
+                };
+                LlmError::Http(HttpFailure::send(
+                    Some(url.to_string()),
+                    None,
+                    e.to_string(),
+                    phase,
+                ))
             })?;
 
         let response_json = response.text().await?;

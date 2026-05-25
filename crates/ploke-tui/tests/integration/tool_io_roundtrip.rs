@@ -21,13 +21,15 @@ use uuid::Uuid;
 #[test]
 fn serde_roundtrip_request_code_context() {
     let args = RequestCodeContextArgs {
-        token_budget: Some(512),
+        token_budget_per_result: Some(512),
+        token_budget_total: Some(1536),
         search_term: "SimpleStruct".to_string(),
     };
     let args_json = serde_json::to_string(&args).expect("serialize args");
     let args_back: RequestCodeContextArgs =
         serde_json::from_str(&args_json).expect("deserialize args");
-    assert_eq!(args_back.token_budget, Some(512));
+    assert_eq!(args_back.token_budget_per_result, Some(512));
+    assert_eq!(args_back.token_budget_total, Some(1536));
     assert_eq!(args_back.search_term, "SimpleStruct");
 
     let part = ConciseContext {
@@ -45,6 +47,11 @@ fn serde_roundtrip_request_code_context() {
         ok: true,
         search_term: "foo".to_string(),
         top_k: 3,
+        note: Some("No indexed snippets matched `foo`.".to_string()),
+        next_steps: vec![
+            "Retry with an exact symbol.".to_string(),
+            "Use code_item_lookup.".to_string(),
+        ],
         context: vec![part.clone()],
         kind: ContextPartKind::Code,
     };
@@ -54,6 +61,11 @@ fn serde_roundtrip_request_code_context() {
     assert!(res_back.ok);
     assert_eq!(res_back.search_term, "foo");
     assert_eq!(res_back.top_k, 3);
+    assert_eq!(
+        res_back.note.as_deref(),
+        Some("No indexed snippets matched `foo`.")
+    );
+    assert_eq!(res_back.next_steps.len(), 2);
     assert_eq!(res_back.context, vec![part]);
     assert_eq!(res_back.kind, ContextPartKind::Code);
 
