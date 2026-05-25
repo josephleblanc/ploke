@@ -131,6 +131,26 @@ async fn create_test_tool_params(
     })
 }
 
+async fn create_ns_test_tool_params(
+    harness: &AppHarness,
+    request_id: Uuid,
+    arguments: serde_json::Value,
+) -> Result<ToolCallParams, serde_json::Error> {
+    use crate::tools::ToolName;
+    use ploke_core::ArcStr;
+    let typed_req: ApplyCodeEditRequest = serde_json::from_value(arguments)?;
+
+    Ok(ToolCallParams {
+        state: Arc::clone(&harness.state),
+        event_bus: Arc::clone(&harness.event_bus),
+        request_id,
+        parent_id: request_id,
+        name: ToolName::NsPatch,
+        typed_req,
+        call_id: ArcStr::from("test_call_id"),
+    })
+}
+
 fn test_proposal_id(request_id: Uuid) -> Uuid {
     crate::app_state::core::derive_edit_proposal_id(
         request_id,
@@ -1168,6 +1188,83 @@ async fn semantic_approval_refreshes_file_hash_before_returning() {
     assert_eq!(
         node.file_tracking_hash, actual_hash,
         "approve_edits should not return until the rescanned file hash matches the live file"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ns_patch_approval_refreshes_file_hash_before_returning() {
+    let (_fixture_guard, harness) = spawn_fixture_harness().await;
+    let request_id = Uuid::new_v4();
+    let diff = concat!(
+        "--- a/src/structs.rs\n",
+        "+++ b/src/structs.rs\n",
+        "@@ -2,6 +2,7 @@\n",
+        " \n",
+        " // Regular struct\n",
+        " pub struct SampleStruct {\n",
+        "     pub field: String,\n",
+        "+    pub refreshed_by_ns_patch: bool,\n",
+        " }\n",
+        " \n",
+    );
+
+    let edit_request = ApplyCodeEditRequest {
+        confidence: Some(0.9),
+        edits: vec![Edit::Patch {
+            file: "src/structs.rs".to_string(),
+            diff: diff.to_string(),
+            reasoning: "Refresh fixture struct through non-semantic patch".to_string(),
+        }],
+    };
+
+    let arguments = serde_json::to_value(&edit_request).expect("serialize ns patch request");
+    let params = create_ns_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid ns_patch params");
+
+    let proposal_id = apply_ns_code_edit_tool(params)
+        .await
+        .expect("stage ns_patch proposal");
+    approve_edits(&harness.state, &harness.event_bus, proposal_id).await;
+
+    let target_path = workspace_root().join(ORIGINAL_FIXTURE);
+    let mut resolved = graph_resolve_exact(
+        &harness.state.db,
+        NodeType::Struct.relation_str(),
+        &target_path,
+        &["crate".to_string(), "structs".to_string()],
+        "SampleStruct",
+    )
+    .expect("resolve ns-patched struct");
+    assert_eq!(
+        resolved.len(),
+        1,
+        "ns-patched struct should resolve uniquely"
+    );
+
+    let node = resolved.remove(0);
+    let actual_hash = generate_hash_for_file(&target_path, node.namespace)
+        .await
+        .expect("compute live file hash");
+    assert_eq!(
+        node.file_tracking_hash, actual_hash,
+        "ns_patch approval should not return until the rescanned file hash matches the live file"
+    );
+
+    let snippets = harness
+        .state
+        .io_handle
+        .get_snippets_batch(vec![node])
+        .await
+        .expect("read snippets after ns_patch approval");
+    let snippet = snippets
+        .into_iter()
+        .next()
+        .expect("one snippet result")
+        .expect("fresh reminted file hash should allow snippet read");
+    assert!(
+        snippet.contains("refreshed_by_ns_patch"),
+        "follow-up snippet read should see the ns_patch content"
     );
 }
 
