@@ -923,7 +923,7 @@ fn admit_broad_slot_for_test(
 
 // regr:timeoutapplied:22-05-26_01-27
 #[test]
-fn timed_out_headless_tui_applied_attempt_writes_submitted_result_for_admission() {
+fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
@@ -977,7 +977,7 @@ fn timed_out_headless_tui_applied_attempt_writes_submitted_result_for_admission(
     );
     let terminal = run.terminal().expect("terminal");
 
-    let executor = finish_broad_headless_tui_attempt(
+    let err = finish_broad_headless_tui_attempt(
         &GitWorktreeBackend,
         &slot,
         &repo_root,
@@ -985,25 +985,21 @@ fn timed_out_headless_tui_applied_attempt_writes_submitted_result_for_admission(
         &run,
         terminal,
     )
-    .expect("timed-out applied run should still publish submission")
-    .expect("timed-out applied run should return executor evidence");
-
-    assert_eq!(executor.run_id(), None);
-    assert_eq!(
-        executor.attempt_id(),
-        Some(proposal_id.to_string().as_str())
+    .expect_err("timed-out applied run must not publish submission");
+    let detail = err.to_string();
+    assert!(
+        detail.contains("timed out after 900 seconds"),
+        "unexpected error: {detail}"
     );
     assert!(
-        slot.published.submitted_result_path().exists(),
-        "timed-out applied run must not lose submitted result at {}",
+        detail.contains("refusing to publish submitted broad-harness result"),
+        "unexpected error: {detail}"
+    );
+    assert!(
+        !slot.published.submitted_result_path().exists(),
+        "timed-out applied run must not write submitted result at {}",
         slot.published.submitted_result_path().display()
     );
-    let submitted = fs::read(slot.published.submitted_result_path()).expect("read submission");
-    let submitted: SubmittedBroadHarnessResult =
-        serde_json::from_slice(&submitted).expect("decode submission");
-    submitted
-        .verify_request(&slot.published)
-        .expect("submission remains request-bound");
 
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(&repo_root, &slot.published)

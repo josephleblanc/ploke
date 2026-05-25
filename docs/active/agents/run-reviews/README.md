@@ -55,3 +55,27 @@ state without checking newer code, History records, and run artifacts.
   Third child-plan broad-harness attempt review for `node-b19077fc35c373b5`,
   covering the committed `ploke-transform` batching patch, timeout-after-stage
   lifecycle gap, missing post-final validation, and adjudication candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-eval.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-eval.md)
+  Eval and protocol review for the fresh direct Google baseline, covering the
+  non-empty replacement-boundary patch, protocol completion to child planning,
+  validation-audit improvements and blind spots, recoverable content/hash
+  failures, weak test evidence, final cargo-scope caveats, and protocol
+  adjudication candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-1.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-1.md)
+  First child-plan broad-harness attempt review for
+  `node-dfbca03c896b03ae`, covering the committed seven-file performance/setup
+  patch, cargo-failure feedback and retry chain, stale semantic-tool recovery,
+  weak focused-`xtask` validation, and the changed-path accounting mismatch
+  between terminal/result artifacts and the committed patch.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-2.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-2.md)
+  Second child-plan broad-harness attempt review for
+  `node-dfbca03c896b03ae`, covering the r2 `ploke-ty-mcp` startup-lock patch,
+  recoverable edit-tool failures, model-visible focused cargo validation,
+  missing request-contract validation, and the unmeasured health-check skip
+  tradeoff.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-3.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260525-035030-child-attempt-3.md)
+  Third child-plan broad-harness attempt review for
+  `node-dfbca03c896b03ae`, covering the committed r3 `ploke-db` query-ordering
+  patch, stale same-file edit recovery, model-visible cargo failure and syntax
+  repair, timeout terminal state, missing post-repair validation, and request
+  contract validation gap.

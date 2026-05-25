@@ -1614,26 +1614,17 @@ fn finish_broad_headless_tui_attempt(
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
             })
         }
-        tui_adapter::HeadlessTerminal::TimedOut { secs } => match run.applied_edit() {
-            Some(applied) => {
-                let changed_paths = candidate_paths_for_tui(
-                    backend,
-                    slot,
-                    repo_root,
-                    applied.changed_paths(),
-                    use_stash_transfer,
-                )?;
-                write_headless_tui_submission(slot, &changed_paths)?;
-                Ok(Some(transaction::Executor::new(
-                    None,
-                    Some(applied.proposal_id().to_string()),
-                    None,
-                )))
-            }
-            None => Err(PrepareError::InvalidBatchSelection {
-                detail: format!("headless ploke-tui timed out after {secs} seconds"),
-            }),
-        },
+        tui_adapter::HeadlessTerminal::TimedOut { secs } => {
+            let applied_detail = run
+                .applied_edit()
+                .map(|applied| format!(" after applying proposal {}", applied.proposal_id()))
+                .unwrap_or_default();
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui timed out after {secs} seconds{applied_detail}; refusing to publish submitted broad-harness result"
+                ),
+            })
+        }
     }
 }
 

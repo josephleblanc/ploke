@@ -2002,13 +2002,7 @@ fn build_agent_validation_audit(
     prepared: &PreparedSingleRun,
     artifact: &AgentTurnArtifact,
 ) -> AgentValidationAudit {
-    let changed_paths: Vec<String> = artifact
-        .patch_artifact
-        .expected_file_changes
-        .iter()
-        .filter(|change| change.changed)
-        .map(|change| change.path.clone())
-        .collect();
+    let changed_paths = validation_changed_paths(&prepared.repo_root, &artifact.patch_artifact);
     let patch_quality = build_patch_quality_audit(artifact, &changed_paths);
     let mut cargo_requests: HashMap<String, CargoRequestProjection> = HashMap::new();
     let mut cargo_calls = Vec::new();
@@ -2095,6 +2089,48 @@ fn build_agent_validation_audit(
         final_cargo_covers_changed_files,
         fmt_check_observed,
         warnings,
+    }
+}
+
+fn validation_changed_paths(repo_root: &Path, patch_artifact: &PatchArtifact) -> Vec<String> {
+    let mut changed_paths = Vec::new();
+    for path in patch_artifact
+        .expected_file_changes
+        .iter()
+        .filter(|change| change.changed)
+        .map(|change| change.path.as_str())
+    {
+        push_unique_changed_path(&mut changed_paths, path.to_string());
+    }
+    for proposal in patch_artifact
+        .edit_proposals
+        .iter()
+        .chain(patch_artifact.create_proposals.iter())
+        .filter(|proposal| proposal.status == "Applied")
+    {
+        for path in &proposal.files {
+            push_unique_changed_path(
+                &mut changed_paths,
+                normalize_validation_changed_path(repo_root, path),
+            );
+        }
+    }
+    changed_paths
+}
+
+fn normalize_validation_changed_path(repo_root: &Path, path: &str) -> String {
+    let path = Path::new(path);
+    if path.is_absolute()
+        && let Ok(relative) = path.strip_prefix(repo_root)
+    {
+        return relative.display().to_string();
+    }
+    path.display().to_string()
+}
+
+fn push_unique_changed_path(changed_paths: &mut Vec<String>, path: String) {
+    if !changed_paths.contains(&path) {
+        changed_paths.push(path);
     }
 }
 
@@ -6345,6 +6381,21 @@ mod tests {
         }
     }
 
+    fn validation_patch_artifact_with_applied_files(
+        changed_path: &str,
+        applied_files: Vec<String>,
+    ) -> PatchArtifact {
+        let mut artifact = validation_patch_artifact(changed_path);
+        artifact.edit_proposals = vec![ProposalSnapshotRecord {
+            request_id: "req-applied".to_string(),
+            call_id: "call-applied".to_string(),
+            status: "Applied".to_string(),
+            files: applied_files,
+            preview_mode: "codeblock".to_string(),
+        }];
+        artifact
+    }
+
     fn validation_turn_artifact(
         changed_path: &str,
         events: Vec<ObservedTurnEvent>,
@@ -6491,6 +6542,34 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("no formatting check evidence recorded"))
         );
+    }
+
+    #[test]
+    fn validation_audit_includes_applied_proposal_paths_beyond_expected_files() {
+        let repo_root = PathBuf::from("/tmp/ripgrep");
+        let prepared = validation_prepared_run(repo_root.clone());
+        let expected_changed_path = "crates/printer/src/util.rs";
+        let exported_patch_path = "crates/printer/src/standard.rs";
+        let mut artifact = validation_turn_artifact(expected_changed_path, Vec::new());
+        artifact.patch_artifact = validation_patch_artifact_with_applied_files(
+            expected_changed_path,
+            vec![
+                repo_root.join(expected_changed_path).display().to_string(),
+                repo_root.join(exported_patch_path).display().to_string(),
+            ],
+        );
+
+        let audit = build_agent_validation_audit(&prepared, &artifact);
+
+        assert_eq!(
+            audit.changed_paths,
+            vec![
+                expected_changed_path.to_string(),
+                exported_patch_path.to_string()
+            ]
+        );
+        assert_eq!(audit.patch_quality.changed_path_count, 2);
+        assert_eq!(audit.patch_quality.production_changed_path_count, 2);
     }
 
     #[test]
