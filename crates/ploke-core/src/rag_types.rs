@@ -20,6 +20,8 @@ pub struct ContextStats {
     pub parts: usize,
     pub truncated_parts: usize,
     pub dedup_removed: usize,
+    #[serde(default)]
+    pub skipped_io_errors: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

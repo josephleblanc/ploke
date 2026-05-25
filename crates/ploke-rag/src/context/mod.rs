@@ -200,6 +200,7 @@ pub async fn assemble_context(
 
     // Build preliminary parts (with placeholder file path and no ranges for now).
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
+    let mut skipped_io_errors = 0usize;
     for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
         let id = dedup_ids
             .get(i)
@@ -230,6 +231,7 @@ pub async fn assemble_context(
                         id, e
                     )));
                 } else {
+                    skipped_io_errors += 1;
                     debug!("Skipping snippet for {} due to IO error: {:?}", id, e);
                 }
             }
@@ -272,7 +274,13 @@ pub async fn assemble_context(
         }
     }
 
-    Ok(apply_token_budget(parts, budget, tokenizer, dedup_removed))
+    Ok(apply_token_budget(
+        parts,
+        budget,
+        tokenizer,
+        dedup_removed,
+        skipped_io_errors,
+    ))
 }
 
 fn apply_token_budget(
@@ -280,10 +288,12 @@ fn apply_token_budget(
     budget: &TokenBudget,
     tokenizer: &dyn TokenCounter,
     dedup_removed: usize,
+    skipped_io_errors: usize,
 ) -> AssembledContext {
     // Token budgeting (water-filling).
     let mut stats = ContextStats {
         dedup_removed,
+        skipped_io_errors,
         ..Default::default()
     };
 
@@ -377,7 +387,7 @@ mod tests {
             test_part(3, "src/c.rs", "qrstuvwx"),
         ];
 
-        let ctx = apply_token_budget(parts, &budget, &tk, 0);
+        let ctx = apply_token_budget(parts, &budget, &tk, 0, 0);
 
         assert_eq!(ctx.parts.len(), 2);
         assert_eq!(ctx.stats.parts, 2);

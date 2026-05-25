@@ -1,5 +1,5 @@
 use ploke_core::rag_types::{
-    AssembledContext, AssembledMeta, ConciseContext, RequestCodeContextResult,
+    AssembledContext, AssembledMeta, ConciseContext, ContextStats, RequestCodeContextResult,
 };
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
@@ -63,6 +63,52 @@ fn zero_result_next_steps() -> Vec<String> {
         "If you know the item name, switch to code_item_lookup for exact-definition lookup."
             .to_string(),
     ]
+}
+
+fn stale_context_next_steps() -> Vec<String> {
+    vec![
+        "Refresh or re-resolve the target before relying on this context.".to_string(),
+        "Use read_file for the suspected file if you need the current live content immediately."
+            .to_string(),
+        "Retry request_code_context after the workspace index has been refreshed.".to_string(),
+    ]
+}
+
+fn summarize_request_code_context_result(
+    result: &mut RequestCodeContextResult,
+    stats: &ContextStats,
+) -> String {
+    if result.context.is_empty() {
+        if stats.skipped_io_errors > 0 {
+            result.note = Some(format!(
+                "Context degraded: skipped {} snippets because indexed file hashes did not match the live files.",
+                stats.skipped_io_errors
+            ));
+            result.next_steps = stale_context_next_steps();
+            format!(
+                "Context degraded: 0 snippets returned, {} stale snippets skipped",
+                stats.skipped_io_errors
+            )
+        } else {
+            result.note = Some(zero_result_note(&result.search_term));
+            result.next_steps = zero_result_next_steps();
+            "No code context found (0 snippets)".to_string()
+        }
+    } else if stats.skipped_io_errors > 0 {
+        result.note = Some(format!(
+            "Context degraded: returned {} snippets but skipped {} stale snippets whose indexed file hashes did not match the live files.",
+            result.context.len(),
+            stats.skipped_io_errors
+        ));
+        result.next_steps = stale_context_next_steps();
+        format!(
+            "Context degraded: {} snippets returned, {} stale snippets skipped",
+            result.context.len(),
+            stats.skipped_io_errors
+        )
+    } else {
+        format!("Context assembled: {} snippets", result.context.len())
+    }
 }
 
 // --- GAT-based tool impl ---
@@ -211,13 +257,7 @@ impl super::Tool for RequestCodeContextGat {
         };
         tracing::debug!(?parts, ?stats);
         let mut result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
-        let summary = if result.context.is_empty() {
-            result.note = Some(zero_result_note(&result.search_term));
-            result.next_steps = zero_result_next_steps();
-            "No code context found (0 snippets)".to_string()
-        } else {
-            format!("Context assembled: {} snippets", result.context.len())
-        };
+        let summary = summarize_request_code_context_result(&mut result, &stats);
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -281,6 +321,42 @@ mod gat_tests {
         assert_eq!(params.token_budget_per_result, Some(256));
         assert!(params.token_budget_total.is_none());
         assert!(params.search_term.is_none());
+    }
+
+    #[test]
+    fn stale_snippet_skips_are_model_visible_degraded_context() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "helpers".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+        let stats = ContextStats {
+            skipped_io_errors: 1,
+            ..Default::default()
+        };
+
+        let summary = summarize_request_code_context_result(&mut result, &stats);
+
+        assert_eq!(
+            summary,
+            "Context degraded: 0 snippets returned, 1 stale snippets skipped"
+        );
+        assert!(result.ok);
+        assert!(
+            result
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("indexed file hashes did not match"))
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Refresh or re-resolve"))
+        );
     }
 
     #[test]

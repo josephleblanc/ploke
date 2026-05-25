@@ -57,6 +57,14 @@ finished applying and refreshing the index. That should be handled as proposal
 set/file-version planning, not by weakening the stale-anchor rejection added
 here.
 
+Follow-up fixed on 2026-05-25: the model-facing `request_code_context` path no
+longer silently treats stale snippet IO as clean success. Lenient RAG context
+assembly now records skipped snippet IO failures, and `request_code_context`
+turns those into an explicit degraded-context note with refresh/re-resolve
+steps. This addresses the related failure mode where a same-file edit leaves
+retrieval stale and the model sees missing context without a stale-index signal.
+It does not replace the same-file proposal planning work above.
+
 ## Affected Surface
 
 - `crates/ploke-tui/src/tools/insert_rust_item.rs`

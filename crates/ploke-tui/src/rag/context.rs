@@ -429,6 +429,7 @@ mod tests {
                 parts: 1,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 
@@ -645,6 +646,7 @@ mod tests {
                 parts: 2,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 

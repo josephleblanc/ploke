@@ -10,6 +10,25 @@ Prototype 1 loop this can look like the model simply failed to find relevant
 code, when the real problem is that the retrieval path dropped stale snippets
 without surfacing a tool-level stale-index failure.
 
+## Current Status
+
+Fixed at the model-facing retrieval boundary on 2026-05-25.
+
+`ploke-rag` context assembly still defaults to lenient per-snippet IO, but it now
+counts skipped snippet IO failures in `ContextStats::skipped_io_errors`.
+`request_code_context` uses that count to return an explicit degraded-context
+note and repair steps when stale snippets are skipped. A deliberately stale
+fixture DB hash now proves that lenient assembly does not silently look clean:
+
+```text
+cargo test -p ploke-rag lenient_context_reports_skipped_stale_snippet_io --lib
+cargo test -p ploke-tui stale_snippet_skips_are_model_visible_degraded_context --lib
+```
+
+Remaining risk: this does not by itself guarantee post-edit reindex freshness or
+solve same-file proposal composition. It makes stale snippet loss visible to the
+model/operator instead of only logged.
+
 This is a separate follow-up to the earlier `NsPatch` post-apply rescan bug:
 the non-semantic apply path now does trigger the rescan helper, but we still do
 not have an end-to-end freshness witness proving that post-edit

@@ -2,7 +2,7 @@
 mod tests {
     use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
-    use crate::{RetrievalStrategy, TokenBudget};
+    use crate::{ApproxCharTokenizer, AssemblyPolicy, RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
@@ -444,6 +444,70 @@ mod tests {
         assert!(
             ctx.parts.iter().any(|part| part.text.contains(search_term)),
             "expected sparse context to include snippet text containing {search_term:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lenient_context_reports_skipped_stale_snippet_io() -> Result<(), Error> {
+        use ploke_test_utils::fixture_dbs::FIXTURE_NODES_CANONICAL;
+
+        init_tracing_once();
+        let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?;
+        let target = db
+            .raw_query(
+                r#"
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
+
+?[id, file_mod_id] :=
+    *function{id, name: "use_all_const_static" @ 'NOW'},
+    ancestor[id, file_mod_id],
+    is_file_module[file_mod_id]
+:limit 1
+"#,
+            )
+            .map_err(Error::from)?;
+        let row = target
+            .row_refs()
+            .next()
+            .expect("fixture should contain use_all_const_static");
+        let node_id: Uuid = row.get("id").map_err(Error::from)?;
+        let file_mod_id: Uuid = row.get("file_mod_id").map_err(Error::from)?;
+        let stale_hash = Uuid::new_v4();
+        let stale_module_script = format!(
+            r#"
+?[id, at, name, path, vis_kind, vis_path, docstring, span, tracking_hash, module_kind, cfgs] :=
+    *module{{id, name, path, vis_kind, vis_path, docstring, span, tracking_hash: _old_hash, module_kind, cfgs @ 'NOW'}},
+    id = to_uuid("{file_mod_id}"),
+    at = 'ASSERT',
+    tracking_hash = to_uuid("{stale_hash}")
+:put module {{ id, at => name, path, vis_kind, vis_path, docstring, span, tracking_hash, module_kind, cfgs }}
+"#
+        );
+        db.raw_query_mut(&stale_module_script)
+            .map_err(Error::from)?;
+
+        let context = crate::context::assemble_context(
+            "use_all_const_static",
+            &[(node_id, 1.0)],
+            &TokenBudget::default(),
+            &AssemblyPolicy::default(),
+            &ApproxCharTokenizer,
+            &db,
+            &IoManagerHandle::new(),
+        )
+        .await?;
+
+        assert!(
+            context.parts.is_empty(),
+            "the stale snippet must not be returned as clean context"
+        );
+        assert_eq!(
+            context.stats.skipped_io_errors, 1,
+            "lenient context assembly must surface skipped stale snippet IO"
         );
         Ok(())
     }
