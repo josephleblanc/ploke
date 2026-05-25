@@ -492,3 +492,49 @@ Next action:
 - Continue with one bounded step from `child_plan`.
 - Preserve this run review as positive protocol evidence and keep the cargo
   validation issue as a non-blocking bug.
+
+## Note 14: Child Plan Blocked By Parent-Patcher Route Preference
+
+Time: 2026-05-25 02:27 UTC
+
+Attempted action:
+
+- Ran one bounded `prototype1-step` from `child_plan` for
+  `p1-gemini35-flash-direct-fresh-20260524-190632`.
+
+What happened:
+
+- The step published nine broad headless-TUI request slots.
+- All nine slots failed before an admissible edit.
+- The current log shows the same route-source split in a new path:
+  `headless_model_route` paired direct-Google model
+  `google/gemini-3.5-flash` with persisted OpenRouter provider preference
+  `google-ai-studio`.
+- The batch guard rejected admission with `0` children where the minimum was
+  `3`.
+- Post-failure doctor reports `phase = blocked` because published prompt files
+  reference candidate workspaces that were never materialized.
+
+Fix:
+
+- Patched the parent-patcher default model-selection path so persisted provider
+  preferences are ignored for direct-Google registry rows.
+- Explicit provider pins still validate and reject incompatible OpenRouter
+  providers for direct-Google routes.
+- Added focused regressions:
+  - `parent_patcher_selection_ignores_openrouter_preference_for_direct_google_registry_row`
+  - `headless_model_selection_explicit_direct_google_rejects_openrouter_provider_pin`
+
+Verification:
+
+- Both focused tests pass.
+- Filed
+  `docs/active/bugs/2026-05-25-parent-patcher-direct-google-provider-preference.md`.
+
+Disposition:
+
+- Treat the current campaign as stop-use for clean child-plan evidence because
+  it already contains failed published request-slot artifacts and prompt
+  preflight blockers.
+- Start the next trustworthy loop evidence from a fresh campaign after the fix
+  is committed.

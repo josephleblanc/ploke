@@ -2937,6 +2937,19 @@ fn headless_model_selection(
     Ok(prototype1_state::edit_surface::tui_adapter::ModelSelection::openrouter(model_id, provider))
 }
 
+fn headless_model_selection_from_provider_preference(
+    model_id: ModelId,
+    provider: Option<ProviderKey>,
+) -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    if registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google()) {
+        return Ok(
+            prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(model_id),
+        );
+    }
+
+    headless_model_selection(model_id, provider)
+}
+
 fn load_parent_patcher_model_selection()
 -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
     // Temporary split config: broad parent patch generation reads the
@@ -2948,7 +2961,7 @@ fn load_parent_patcher_model_selection()
         other => Err(other),
     })?;
     let provider = load_provider_for_model(&selected.model_id)?;
-    headless_model_selection(selected.model_id, provider)
+    headless_model_selection_from_provider_preference(selected.model_id, provider)
 }
 
 async fn set_persisted_provider(
@@ -14097,6 +14110,124 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("direct Google route does not accept OpenRouter provider")
+        );
+    }
+
+    #[test]
+    fn parent_patcher_selection_ignores_openrouter_preference_for_direct_google_registry_row() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("registry.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("registry json"),
+        )
+        .expect("write registry");
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "google/gemini-3.5-flash": {
+                        "slug": "google-ai-studio"
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+        let model_id: ModelId = "google/gemini-3.5-flash".parse().expect("model id");
+        save_parent_patcher_model(&model_id).expect("save parent patcher model");
+
+        let selection = load_parent_patcher_model_selection().expect("parent patcher selection");
+
+        assert!(matches!(
+            selection.router(),
+            ploke_llm::router_only::RouterVariants::Google(_)
+        ));
+        assert!(selection.provider().is_none());
+    }
+
+    #[test]
+    fn headless_model_selection_explicit_direct_google_rejects_openrouter_provider_pin() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("registry.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("registry json"),
+        )
+        .expect("write registry");
+        let model_id: ModelId = "google/gemini-3.5-flash".parse().expect("model id");
+        let provider = ProviderKey::new("google-ai-studio").expect("provider key");
+
+        let err = headless_model_selection(model_id, Some(provider))
+            .expect_err("explicit OpenRouter provider must reject direct Google");
+
+        assert!(
+            err.to_string()
+                .contains("does not accept OpenRouter provider")
         );
     }
 
