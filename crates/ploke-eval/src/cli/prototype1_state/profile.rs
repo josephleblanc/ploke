@@ -26,7 +26,7 @@ use crate::{
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
 pub(crate) const RUN_PROFILE_COMMITMENT_SCHEMA_VERSION: &str =
     "prototype1-run-profile-commitment.v1";
-pub(crate) const DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS: u64 = 10 * 60;
+pub(crate) const DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS: u64 = 20 * 60;
 
 const RUN_PROFILE_FILE: &str = "run-profile.toml";
 const RUN_PROFILE_COMMITMENT_FILE: &str = "run-profile.commitment.json";
@@ -1030,7 +1030,7 @@ mode = "omit"
 
 [execution]
 stop_after = "complete"
-observe_child_stale_after_secs = 600
+observe_child_stale_after_secs = 1200
 trace_jsonl = "auto"
 debug_tools = true
 mbe = { enabled = true, python = "python3", workers = 2 }
@@ -1077,7 +1077,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         );
         assert_eq!(
             profile.execution.observe_child_stale_after(),
-            Duration::from_secs(600)
+            Duration::from_secs(1200)
         );
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
@@ -1089,7 +1089,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         let err = parse_profile(
             Path::new("profile.toml"),
             &PROFILE.replace(
-                "observe_child_stale_after_secs = 600",
+                "observe_child_stale_after_secs = 1200",
                 "observe_child_stale_after_secs = 0",
             ),
         )
@@ -1105,7 +1105,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
     fn run_profile_execution_defaults_observe_child_stale_after() {
         let profile = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("observe_child_stale_after_secs = 600\n", ""),
+            &PROFILE.replace("observe_child_stale_after_secs = 1200\n", ""),
         )
         .expect("profile parses");
 

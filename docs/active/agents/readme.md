@@ -68,6 +68,7 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-05-11_mbe-oracle-calibration-handoff.md`](2026-05-11_mbe-oracle-calibration-handoff.md) — restart packet for MBE/oracle calibration over Prototype 1 loop outputs, including gold/empty controls and candidate patch-export questions.
 - [`2026-05-11_mbe-oracle-calibration-plan.md`](2026-05-11_mbe-oracle-calibration-plan.md) — active plan for child-owned MBE instance targets, patch projection provenance, cleanup, and oracle eligibility gating.
 - [`run-reviews/`](run-reviews/README.md) — review/report area for specific Prototype 1 runs. Treat these as run-scoped evidence, not global current implementation state.
+- [`run-review-negative-examples/`](run-review-negative-examples/README.md) — quarantined low-quality run-review outputs kept only for skill/prompt/adjudication improvement; do not cite as active run reviews.
 - [`mode-survey/`](mode-survey/README.md) — review/report area for model/mode survey notes.
 - [`death-by-slice/`](death-by-slice/README.md) — ledger for narrow implementation slices that later fail because policy, identity, authority, or state was not preserved across runtime boundaries.
 - [`collaboration-incidents/`](collaboration-incidents/README.md) — durable ledger for agent-caused trust failures, frustration triggers, boundary overreach, secret-handling failures, model-communication failures, semantic naming failures, and workflow-order failures to see whether memory and workflow changes reduce repeats.

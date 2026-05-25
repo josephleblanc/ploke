@@ -23,23 +23,66 @@ information and whether the run advanced toward a patch or oracle result.
    - run profile and campaign manifest
    - per-run submission and patch projection
    - protocol overview/artifacts
-4. Run the bundled trace audit if a run root is available:
+4. Check the runtime-playback inventory before claiming that records are
+   missing. Use the inventory to distinguish absent records from records that
+   exist but are not yet first-class playback steps.
+5. Run the bundled trace audit if a run root is available:
 
    ```bash
    python3 docs/workflow/skills/ploke-run-review/scripts/run_trace_audit.py <run-root> --markdown
    ```
 
-5. Compare three ledgers:
+6. Compare three ledgers:
    - provider-emitted tool calls from `llm-full-responses.jsonl`
    - recorded tool lifecycle from `record.json.gz` and sidecars
    - semantic usefulness of returned payloads
-6. Drill into suspicious calls before drawing conclusions.
-7. Extract positive examples and candidate LLM-adjudication signals.
-8. Classify action items as non-blockers or blockers. File or update alive bugs
+7. Drill into suspicious calls before drawing conclusions.
+8. Extract positive examples and candidate LLM-adjudication signals.
+9. Classify action items as non-blockers or blockers. File or update alive bugs
    for non-blockers while the loop continues; blockers hand off to
    `ploke-blocker-repair-loop` before the campaign advances again.
-9. Write or update the run review in `docs/active/agents/run-reviews/`.
-10. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+10. Write or update the run review in `docs/active/agents/run-reviews/`.
+11. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+
+## Record Inventory Before Missing-Record Claims
+
+Before writing that evidence is missing, check the runtime-playback inventory:
+
+- `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/README.md`
+- `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/record-surface-map.md`
+- `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/latest-run-emission-worksheet.md`
+
+Use four separate labels in the review:
+
+- `record absent`: the expected file or typed record was not written.
+- `record present, playback gap`: the file exists, but current graph/playback
+  does not expose it as an ordered typed iterator or drilldown family.
+- `record present, manual join needed`: the file exists, but the reviewer had
+  to join it by path, id, git state, or timestamp because the joined view is not
+  available yet.
+- `operator/convenience record`: the file helps discovery or reporting but is
+  not an authority source.
+
+For Prototype 1 and broad-harness reviews, explicitly check the relevant
+families before concluding:
+
+- campaign state: `campaign.json`, `closure-state.json`, `scheduler.json`,
+  `prototype1/transition-journal.jsonl`
+- node/runtime state: `nodes/<node>/node.json`, `runner-request.json`,
+  `runner-result.json`, `invocations/*.json`, channel JSONL files
+- broad-harness state: `messages/edit-harness-request/*.json`,
+  `messages/edit-harness-result/*.json`, the attempt workspace, terminal
+  record, submitted result, candidate commit, and checkout diff
+- run-root evidence: `record.json.gz`, `agent-turn-trace.json`,
+  `agent-turn-summary.json`, `llm-full-responses.jsonl`,
+  `validation-audit.json`, `multi-swe-bench-submission.jsonl`,
+  `benchmark-patch-projection.json`
+- protocol evidence: `*_tool_call_intent_segmentation_*.json`,
+  `*_tool_call_review_*.json`, and `*_tool_call_segment_review_*.json`
+
+The default conclusion should not be "no records exist" unless those checks
+prove absence. Prefer a precise claim such as "the record exists, but playback
+currently summarizes it and the review had to manually join it to the attempt."
 
 ## Execution Path First
 
@@ -60,6 +103,20 @@ In the report, name the active path compactly, for example:
 ```text
 prototype1-step -> run_planned_child -> runner.rs::run_benchmark_turn -> record.rs -> protocol
 ```
+
+For Prototype 1 child-plan broad-harness fanout, review each completed child
+attempt independently when its artifact appears. Use the specific request slot,
+workspace, branch, commit, submitted result, terminal record, and TUI trace for
+that attempt. Do not collapse attempt `r1`, `r2`, and later retries into one
+summary unless the user explicitly asks for a batch-level report. If an attempt
+shows `TOOL_EXECUTION_FAILED` but still produces an applied commit, reconstruct
+whether the failure was terminal, recoverable, or hidden by later artifact
+accounting before classifying the child.
+
+When invoked by an orchestrator, the review worker should not advance the loop
+or mutate the run. Own the evidence report for the assigned attempt, update the
+run-review index, and call out which findings should become alive bugs,
+blocker-repair work, or future adjudication signals.
 
 ## Required Distinctions
 

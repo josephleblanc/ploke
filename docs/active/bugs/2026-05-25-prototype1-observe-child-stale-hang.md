@@ -38,6 +38,10 @@ blocker.
   runtime id, missing result path, pid liveness when known, and stream freshness
   when stream paths are recorded. The doctor threshold comes from the admitted
   `run-profile.toml`.
+- Follow-up: the default observe-child stale threshold is now 1200 seconds so
+  slow but live child eval/protocol runs are less likely to be misclassified as
+  stale solely because protocol adjudication exceeded the previous 10-minute
+  default.
 
 ## Verification
 

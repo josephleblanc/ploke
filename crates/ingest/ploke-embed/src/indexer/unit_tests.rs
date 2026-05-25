@@ -41,6 +41,14 @@ use crate::{
     runtime::EmbeddingRuntime,
 };
 
+#[test]
+fn shutdown_callback_manager_ignores_dropped_receiver() {
+    let (shutdown, receiver) = crossbeam_channel::bounded(1);
+    drop(receiver);
+
+    super::shutdown_callback_manager(&shutdown);
+}
+
 /// Gate long-running tests behind per-test env flags.
 /// Set `PLOKE_EMBED_RUN_<TEST_NAME>=1` to enable a specific test.
 fn should_run(test_name: &str) -> bool {
@@ -385,7 +393,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
                                     break;
                                 } else {
                                     tracing::warn!("Sending shutdown signal to CallbackManager.");
-                                    shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                    super::shutdown_callback_manager(&shutdown);
                                     // break;
                                 }
                             },
@@ -409,7 +417,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
                     break;
                 } else {
                     tracing::warn!("Sending shutdown signal to CallbackManager.");
-                    shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                    super::shutdown_callback_manager(&shutdown);
                     // break;
                 }
                 let task_result = res.expect("Task panicked");
@@ -659,7 +667,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
                                     break;
                                 } else {
                                     tracing::warn!("Sending shutdown signal to CallbackManager.");
-                                    shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                    super::shutdown_callback_manager(&shutdown);
                                     // break;
                                 }
                             },
@@ -683,7 +691,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
                     break;
                 } else {
                     tracing::warn!("Sending shutdown signal to CallbackManager.");
-                    shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                    super::shutdown_callback_manager(&shutdown);
                     // break;
                 }
                 let task_result = res.expect("Task panicked");

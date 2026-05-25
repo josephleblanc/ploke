@@ -941,16 +941,64 @@ async fn settle_staged_batch(
     }
 
     approve_selected(runtime, turn, observer, &selected).await?;
-    let applied_outcome = wait_for_selected(runtime, turn, run, observer, &selected).await?;
+    let applied_outcome = match wait_for_selected(runtime, turn, run, observer, &selected).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            record_post_approval_indeterminate(run, turn, observer, &selected, &error.to_string());
+            return Err(error);
+        }
+    };
     outcome.applied.extend(applied_outcome.applied);
     outcome.changed_paths.extend(applied_outcome.changed_paths);
     if applied_outcome.retry.is_some() {
         outcome.retry = applied_outcome.retry;
     }
     if !outcome.applied.is_empty() {
-        wait_for_refresh(runtime, pending_events, turn, observer).await?;
+        if let Err(error) = wait_for_refresh(runtime, pending_events, turn, observer).await {
+            record_post_approval_indeterminate(run, turn, observer, &selected, &error.to_string());
+            return Err(error);
+        }
     }
     Ok(outcome)
+}
+
+fn record_post_approval_indeterminate(
+    run: &mut HeadlessRun,
+    turn: u32,
+    observer: &LiveObserver,
+    selected: &[Candidate],
+    error: &str,
+) {
+    for candidate in selected {
+        if has_recorded_apply_outcome(run, candidate.item) {
+            continue;
+        }
+        run.attempts.push(HeadlessAttempt {
+            turn,
+            proposal_id: Some(candidate.item.id()),
+            result: HeadlessAttemptResult::PostApprovalIndeterminate {
+                paths: candidate.paths.clone(),
+                error: error.to_string(),
+            },
+        });
+        observer.emit(format!(
+            "attempt {turn} proposal_post_approval_indeterminate id={} error={}",
+            candidate.item.id(),
+            truncate_chars(error, 240)
+        ));
+    }
+}
+
+fn has_recorded_apply_outcome(run: &HeadlessRun, item: StagedItem) -> bool {
+    run.attempts.iter().any(|attempt| {
+        attempt.proposal_id == Some(item.id())
+            && matches!(
+                attempt.result,
+                HeadlessAttemptResult::Applied { .. }
+                    | HeadlessAttemptResult::Rejected { .. }
+                    | HeadlessAttemptResult::PostApprovalIndeterminate { .. }
+            )
+    })
 }
 
 async fn candidate_for_item(
@@ -2248,6 +2296,7 @@ impl HeadlessAttempt {
 pub(crate) enum HeadlessAttemptResult {
     Applied { paths: Vec<PathBuf> },
     Rejected { reason: String },
+    PostApprovalIndeterminate { paths: Vec<PathBuf>, error: String },
     NoEdit { summary: String },
     ToolFailed { error: String },
 }
@@ -2488,6 +2537,7 @@ pub(crate) mod evidence {
     pub(crate) enum Result {
         Applied { paths: Vec<PathBuf> },
         Rejected { feedback: String },
+        PostApprovalIndeterminate { paths: Vec<PathBuf>, error: String },
         NoEdit { summary: String },
         ToolFailed { error: String },
     }
@@ -2731,6 +2781,12 @@ pub(crate) mod evidence {
                 HeadlessAttemptResult::Rejected { reason } => Self::Rejected {
                     feedback: reason.clone(),
                 },
+                HeadlessAttemptResult::PostApprovalIndeterminate { paths, error } => {
+                    Self::PostApprovalIndeterminate {
+                        paths: paths.clone(),
+                        error: error.clone(),
+                    }
+                }
                 HeadlessAttemptResult::NoEdit { summary } => Self::NoEdit {
                     summary: summary.clone(),
                 },
@@ -4019,6 +4075,77 @@ mod tests {
             Some(evidence::Terminal::ToolFailed { error: observed })
                 if observed == &error
                     && observed.contains("headless runtime failed after observed activity")
+        ));
+    }
+
+    #[test]
+    fn post_approval_error_records_indeterminate_for_unsettled_proposal() {
+        let proposal_id = Uuid::from_u128(41);
+        let paths = vec![PathBuf::from("crates/ploke-tree/src/tests.rs")];
+        let error = "headless ploke-tui event stream failed: scan barrier failed: channel closed";
+        let selected = vec![Candidate {
+            item: StagedItem::Edit(proposal_id),
+            proposed_at_ms: 0,
+            paths: paths.clone(),
+        }];
+        let mut run = HeadlessRun::new();
+
+        record_post_approval_indeterminate(
+            &mut run,
+            2,
+            &LiveObserver { enabled: false },
+            &selected,
+            error,
+        );
+
+        assert!(matches!(
+            run.attempts().first().map(HeadlessAttempt::result),
+            Some(HeadlessAttemptResult::PostApprovalIndeterminate {
+                paths: observed_paths,
+                error: observed_error,
+            }) if observed_paths == &paths && observed_error == error
+        ));
+        let summary = run.evidence();
+        assert!(matches!(
+            &summary.attempts[0].result,
+            evidence::Result::PostApprovalIndeterminate {
+                paths: observed_paths,
+                error: observed_error,
+            } if observed_paths == &paths && observed_error.contains("scan barrier failed")
+        ));
+        serde_json::to_string_pretty(&summary).expect("indeterminate result serializes");
+    }
+
+    #[test]
+    fn post_approval_error_keeps_existing_applied_record() {
+        let proposal_id = Uuid::from_u128(42);
+        let paths = vec![PathBuf::from("crates/ploke-tree/src/tests.rs")];
+        let selected = vec![Candidate {
+            item: StagedItem::Edit(proposal_id),
+            proposed_at_ms: 0,
+            paths: paths.clone(),
+        }];
+        let mut run = HeadlessRun::from_parts_for_test(
+            vec![HeadlessAttempt::applied_for_test(2, proposal_id, paths)],
+            None,
+        );
+
+        record_post_approval_indeterminate(
+            &mut run,
+            2,
+            &LiveObserver { enabled: false },
+            &selected,
+            "scan barrier failed: channel closed",
+        );
+
+        assert_eq!(
+            run.attempts().len(),
+            1,
+            "scan-barrier failure after observed apply should preserve the applied record"
+        );
+        assert!(matches!(
+            run.attempts()[0].result(),
+            HeadlessAttemptResult::Applied { .. }
         ));
     }
 

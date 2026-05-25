@@ -196,6 +196,13 @@ fn mock_embedding(text: &str, dimensions: usize) -> Vec<f32> {
         .collect()
 }
 
+fn shutdown_callback_manager(shutdown: &crossbeam_channel::Sender<()>) {
+    match shutdown.send(()) {
+        Ok(_) => tracing::debug!("Sending shutdown message"),
+        Err(e) => tracing::error!("Cannot send shutdown message, other side dropped: {e}"),
+    };
+}
+
 pub type IndexProgress = f64;
 // New state to track indexing
 #[derive(Debug, Clone)]
@@ -389,7 +396,7 @@ impl IndexerTask {
                                         break;
                                     } else {
                                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        shutdown_callback_manager(&shutdown);
                                         // break;
                                     }
                                 },
@@ -413,11 +420,7 @@ impl IndexerTask {
                         break;
                     } else {
                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                        // shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
-                        match shutdown.send(()) {
-                            Ok(_) => tracing::debug!("Sending shutdown message"),
-                            Err(e) => tracing::error!("Cannot send shutdown message, other side dropped"),
-                        };
+                        shutdown_callback_manager(&shutdown);
                         // break;
                     }
                     let task_result = res.expect("Task panicked");

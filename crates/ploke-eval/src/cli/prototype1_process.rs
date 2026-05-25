@@ -421,6 +421,7 @@ mod tests {
     fn child_cleanup_removes_instance_targets_without_removing_worktree() {
         let tmp = tempdir().expect("tempdir");
         let node = test_node(tmp.path());
+        let manifest_path = tmp.path().join("campaign.json");
         fs::create_dir_all(&node.workspace_root).expect("worktree");
         fs::create_dir_all(node.binary_path.parent().expect("binary parent")).expect("bin dir");
         fs::write(&node.binary_path, b"binary").expect("binary");
@@ -434,17 +435,81 @@ mod tests {
         )
         .expect("instance target");
 
-        cleanup_prototype1_child_build_products(
-            &tmp.path().join("campaign.json"),
-            "campaign",
-            &node,
-        )
-        .expect("cleanup");
+        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
+            .expect("cleanup");
 
         assert!(!node.binary_path.exists());
         assert!(!node.node_dir.join("target").exists());
         assert!(!node.node_dir.join("instance-targets").exists());
         assert!(node.workspace_root.exists());
+    }
+
+    #[test]
+    fn child_cleanup_removes_edit_harness_targets_without_removing_workspaces() {
+        let tmp = tempdir().expect("tempdir");
+        let node = test_node(tmp.path());
+        let manifest_path = tmp.path().join("campaign.json");
+        let edit_harness_root = tmp
+            .path()
+            .join("prototype1")
+            .join("workspaces")
+            .join("edit-harness");
+        let first_workspace = edit_harness_root.join("node-1");
+        let retry_workspace = edit_harness_root.join("node-1-r2");
+        fs::create_dir_all(&node.workspace_root).expect("worktree");
+        fs::create_dir_all(node.binary_path.parent().expect("binary parent")).expect("bin dir");
+        fs::write(&node.binary_path, b"binary").expect("binary");
+        fs::create_dir_all(first_workspace.join("target").join("debug")).expect("first target");
+        fs::create_dir_all(retry_workspace.join("target").join("debug")).expect("retry target");
+        fs::write(first_workspace.join("README.md"), b"first").expect("first marker");
+        fs::write(retry_workspace.join("README.md"), b"retry").expect("retry marker");
+
+        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
+            .expect("cleanup");
+
+        assert!(!first_workspace.join("target").exists());
+        assert!(!retry_workspace.join("target").exists());
+        assert_eq!(
+            fs::read(first_workspace.join("README.md")).expect("first marker"),
+            b"first"
+        );
+        assert_eq!(
+            fs::read(retry_workspace.join("README.md")).expect("retry marker"),
+            b"retry"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_cleanup_unlinks_edit_harness_target_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().expect("tempdir");
+        let node = test_node(tmp.path());
+        let manifest_path = tmp.path().join("campaign.json");
+        let workspace = tmp
+            .path()
+            .join("prototype1")
+            .join("workspaces")
+            .join("edit-harness")
+            .join("node-1");
+        let outside_target = tmp.path().join("outside-target");
+        fs::create_dir_all(&node.workspace_root).expect("worktree");
+        fs::create_dir_all(node.binary_path.parent().expect("binary parent")).expect("bin dir");
+        fs::write(&node.binary_path, b"binary").expect("binary");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::create_dir_all(&outside_target).expect("outside target");
+        fs::write(outside_target.join("artifact"), b"keep").expect("outside marker");
+        symlink(&outside_target, workspace.join("target")).expect("target symlink");
+
+        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
+            .expect("cleanup");
+
+        assert!(!workspace.join("target").exists());
+        assert_eq!(
+            fs::read(outside_target.join("artifact")).expect("outside marker"),
+            b"keep"
+        );
     }
 
     #[test]
@@ -908,12 +973,7 @@ fn child_artifact_workspace(
 }
 
 fn is_broad_harness_workspace(campaign_manifest_path: &Path, workspace_root: &Path) -> bool {
-    workspace_root.starts_with(
-        campaign_manifest_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("prototype1/workspaces/edit-harness"),
-    )
+    workspace_root.starts_with(broad_harness_workspace_root(campaign_manifest_path))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1381,7 +1441,8 @@ pub(crate) fn cleanup_prototype1_child_build_products(
         campaign_id,
         node,
         &child_instance_targets_root(&node.node_dir),
-    )
+    )?;
+    remove_broad_harness_targets(manifest_path, campaign_id, node)
 }
 
 fn remove_node_target(
@@ -1471,6 +1532,178 @@ fn remove_child_instance_targets(
             .fail("child_instance_targets_remove", &source);
             return Err(PrepareError::WriteManifest {
                 path: targets_root.to_path_buf(),
+                source,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn broad_harness_workspace_root(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1/workspaces/edit-harness")
+}
+
+fn remove_broad_harness_targets(
+    manifest_path: &Path,
+    campaign_id: &str,
+    node: &crate::intervention::Prototype1NodeRecord,
+) -> Result<(), PrepareError> {
+    let workspace_root = broad_harness_workspace_root(manifest_path);
+    match fs::read_dir(&workspace_root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(|source| PrepareError::WriteManifest {
+                    path: workspace_root.clone(),
+                    source,
+                })?;
+                let entry_path = entry.path();
+                let file_type =
+                    entry
+                        .file_type()
+                        .map_err(|source| PrepareError::WriteManifest {
+                            path: entry_path.clone(),
+                            source,
+                        })?;
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let target_dir = entry_path.join("target");
+                remove_broad_harness_target(manifest_path, campaign_id, node, &target_dir)?;
+            }
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_targets",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %workspace_root.display(),
+            ))
+            .missing();
+        }
+        Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_targets",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %workspace_root.display(),
+            ))
+            .fail("edit_harness_targets_read", &source);
+            return Err(PrepareError::WriteManifest {
+                path: workspace_root,
+                source,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn remove_broad_harness_target(
+    manifest_path: &Path,
+    campaign_id: &str,
+    node: &crate::intervention::Prototype1NodeRecord,
+    target_dir: &Path,
+) -> Result<(), PrepareError> {
+    let workspace_root = broad_harness_workspace_root(manifest_path);
+    if !target_dir.starts_with(&workspace_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "refusing to cleanup edit-harness target '{}' outside '{}'",
+                target_dir.display(),
+                workspace_root.display()
+            ),
+        });
+    }
+    let file_type = match fs::symlink_metadata(target_dir) {
+        Ok(metadata) => metadata.file_type(),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .missing();
+            return Ok(());
+        }
+        Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .fail("edit_harness_target_stat", &source);
+            return Err(PrepareError::WriteManifest {
+                path: target_dir.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if file_type.is_symlink() {
+        match fs::remove_file(target_dir) {
+            Ok(()) => observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .removed(),
+            Err(source) => {
+                observe::Step::start(observe::span!(
+                    "prototype1.cleanup.edit_harness_target",
+                    campaign_id = %campaign_id,
+                    node_id = %node.node_id,
+                    generation = node.generation,
+                    manifest_path = %manifest_path.display(),
+                    path = %target_dir.display(),
+                ))
+                .fail("edit_harness_target_symlink_remove", &source);
+                return Err(PrepareError::WriteManifest {
+                    path: target_dir.to_path_buf(),
+                    source,
+                });
+            }
+        }
+        return Ok(());
+    }
+    if !file_type.is_dir() {
+        return Ok(());
+    }
+    match fs::remove_dir_all(target_dir) {
+        Ok(()) => observe::Step::start(observe::span!(
+            "prototype1.cleanup.edit_harness_target",
+            campaign_id = %campaign_id,
+            node_id = %node.node_id,
+            generation = node.generation,
+            manifest_path = %manifest_path.display(),
+            path = %target_dir.display(),
+        ))
+        .removed(),
+        Err(source) => {
+            observe::Step::start(observe::span!(
+                "prototype1.cleanup.edit_harness_target",
+                campaign_id = %campaign_id,
+                node_id = %node.node_id,
+                generation = node.generation,
+                manifest_path = %manifest_path.display(),
+                path = %target_dir.display(),
+            ))
+            .fail("edit_harness_target_remove", &source);
+            return Err(PrepareError::WriteManifest {
+                path: target_dir.to_path_buf(),
                 source,
             });
         }

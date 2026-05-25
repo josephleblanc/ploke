@@ -312,7 +312,7 @@ printing credentials.
 ```toml
 [execution]
 stop_after = "complete"
-observe_child_stale_after_secs = 600
+observe_child_stale_after_secs = 1200
 trace_jsonl = "auto"
 debug_tools = false
 mbe = { enabled = true, python = "python3", workers = 2 }
@@ -323,7 +323,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
   spawning the child; `complete` runs evaluation, selection, and handoff.
 - `observe_child_stale_after_secs`: Maximum time the parent waits in
   `observe_child` for child result evidence before treating the child as stale
-  or hung. Defaults to `600` seconds. Must be nonzero.
+  or hung. Defaults to `1200` seconds. Must be nonzero.
 - `trace_jsonl`: Trace recording behavior. `inherit` follows the command or
   environment default; `auto` enables the standard trace artifact; `off`
   disables trace JSONL.
