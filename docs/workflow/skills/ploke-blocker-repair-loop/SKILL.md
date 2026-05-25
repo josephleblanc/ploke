@@ -1,5 +1,5 @@
 ---
-name: ploke-blocker-repair-loop
+name: blocker-repair-loop
 description: Use this skill when a Prototype 1 or ploke-eval diagnostic step, run review, replay, doctor check, or protocol run finds a blocker that should stop the loop, preserve evidence, and either become a reproducing regression before a fresh run or mark the current run abandoned when its persisted state is invalid.
 ---
 

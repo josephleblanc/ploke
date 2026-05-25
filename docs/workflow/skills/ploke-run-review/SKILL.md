@@ -1,5 +1,5 @@
 ---
-name: ploke-run-review
+name: run-review
 description: Use this skill when reviewing a `ploke-eval` or Prototype 1 run, especially when the user asks what actually happened in an eval loop, whether closure/protocol success reflects real model progress, whether tool calls were semantically useful, or when writing/updating durable run-review docs under `docs/active/agents/run-reviews`.
 ---
 

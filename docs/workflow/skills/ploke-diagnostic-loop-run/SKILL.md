@@ -1,5 +1,5 @@
 ---
-name: ploke-diagnostic-loop-run
+name: diagnostic-loop-run
 description: Use this skill when running or diagnosing a bounded Prototype 1 `ploke-eval loop` advance, especially when the user wants to take one `prototype1-step`, classify why a loop run did or did not progress, collect evidence from doctor/closure/run artifacts, decide whether a blocker is provider/env/config/model/tooling, or turn findings into a run review, bug report, doctor check, or regression test.
 ---
 

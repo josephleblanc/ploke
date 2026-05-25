@@ -1,5 +1,5 @@
 ---
-name: ploke-prototype1-run-setup
+name: prototype1-run-setup
 description: Use this skill when setting up or advancing a fresh Prototype 1 `ploke-eval loop` run in a new worktree, especially when choosing model/provider routing, admitting a run profile with `prototype1-setup`, running `prototype1-doctor`, taking a bounded `prototype1-step`, or preparing artifacts for later run review.
 ---
 
