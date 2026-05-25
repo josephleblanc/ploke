@@ -81,6 +81,10 @@ reasoning model or `gpt-5.3-codex-spark` with high reasoning when available.
 If the runtime has `gpt-5.5-mini` with high reasoning, that is also a suitable
 scout model. Reserve `gpt-5.5` with `xhigh` reasoning, or the strongest
 available reviewer, for the fan-in synthesis and any active run-review report.
+If a scout model fails to start because the runtime does not support a
+requested model or reasoning parameter, immediately retry the same scout shard
+with another small/high model or the inherited default. Do not let scout model
+selection block the loop review.
 
 Recommended scout shards:
 
