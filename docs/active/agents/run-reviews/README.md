@@ -37,3 +37,7 @@ state without checking newer code, History records, and run artifacts.
   Eval-step review for the direct Google rerun after env-cwd repair, covering
   clean route/preflight setup, non-empty patch output, target-test success,
   rustfmt failure, weak cargo-check resolution, and protocol follow-up.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-eval.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-eval.md)
+  Eval-step review for the next direct Google baseline, covering non-empty
+  patch output, missing protocol, stale content/hash tool failures, suspect
+  regression-test repair, absent fmt, and weak final validation scope.
