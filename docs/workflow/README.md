@@ -24,6 +24,7 @@ Common entry points:
 - [target-capability-registry.md](target-capability-registry.md)
 - [pipeline-registry.md](pipeline-registry.md)
 - [pipeline-registry.jsonl](pipeline-registry.jsonl)
+- [hooks/README.md](hooks/README.md)
 - [experiment-config.v0.draft.json](experiment-config.v0.draft.json)
 - [run-manifest.v0.draft.json](run-manifest.v0.draft.json)
 - [evalnomicon/README.md](evalnomicon/README.md)

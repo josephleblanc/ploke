@@ -58,6 +58,12 @@ Function records:
 
 ## Codex Hooks Note
 
-Codex lifecycle hooks can later call `cargo xtask pipeline find --path <file>`
-or inspect prompt/tool inputs and add model-visible context. Keep hooks as a
-consumer of this registry, not the registry itself.
+Codex lifecycle hooks should call:
+
+```bash
+target/debug/xtask pipeline hook-context
+```
+
+That command reads the hook event JSON on stdin and emits
+`hookSpecificOutput.additionalContext` when registered pipeline code is
+mentioned. Keep hooks as a consumer of this registry, not the registry itself.

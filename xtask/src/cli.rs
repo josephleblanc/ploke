@@ -91,6 +91,10 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Pipeline(Pipeline::HookContext(cmd)) => {
+                cmd.execute_raw(&ctx)?;
+                return Ok(());
+            }
             Commands::Pipeline(cmd) => {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?

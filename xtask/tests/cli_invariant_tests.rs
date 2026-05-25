@@ -30,6 +30,7 @@ fn cli_pipeline_help_lists_subcommands() {
     assert!(s.contains("find"), "{s}");
     assert!(s.contains("show"), "{s}");
     assert!(s.contains("check"), "{s}");
+    assert!(s.contains("hook-context"), "{s}");
 }
 
 #[test]

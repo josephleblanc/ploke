@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
@@ -26,6 +27,9 @@ pub enum Pipeline {
     Show(PipelineShow),
     /// Validate registry shape and referenced files.
     Check(PipelineCheck),
+    /// Emit Codex hook context for registered pipeline mentions.
+    #[command(name = "hook-context")]
+    HookContext(PipelineHookContext),
 }
 
 impl Pipeline {
@@ -36,6 +40,10 @@ impl Pipeline {
             Self::Find(cmd) => find(ctx, cmd),
             Self::Show(cmd) => show(ctx, cmd),
             Self::Check(cmd) => check(ctx, cmd),
+            Self::HookContext(_) => Err(XtaskError::validation(
+                "`pipeline hook-context` must be dispatched through Cli::execute_hook_context",
+            )
+            .with_recovery("Run `cargo xtask pipeline hook-context` through the xtask CLI.")),
         }
     }
 }
@@ -90,6 +98,69 @@ pub struct PipelineCheck {
     /// Return passed=false instead of exiting with a validation error.
     #[arg(long)]
     report_only: bool,
+}
+
+/// Arguments for `pipeline hook-context`.
+#[derive(Debug, Clone, Args)]
+pub struct PipelineHookContext {
+    /// Registry JSONL path. Defaults to docs/workflow/pipeline-registry.jsonl.
+    #[arg(long, default_value = DEFAULT_REGISTRY, value_name = "PATH")]
+    registry: PathBuf,
+
+    /// Maximum matched records included in hook context.
+    #[arg(long, default_value_t = 5)]
+    max_matches: usize,
+}
+
+impl PipelineHookContext {
+    /// Read a Codex hook event from stdin and emit raw Codex hook JSON.
+    pub fn execute_raw(&self, ctx: &CommandContext) -> Result<(), XtaskError> {
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input)?;
+        let Some(output) = self.output_for_event(ctx, &input)? else {
+            return Ok(());
+        };
+        println!("{}", serde_json::to_string(&output)?);
+        Ok(())
+    }
+
+    fn output_for_event(
+        &self,
+        ctx: &CommandContext,
+        input: &str,
+    ) -> Result<Option<CodexHookOutput>, XtaskError> {
+        let event = serde_json::from_str::<serde_json::Value>(input).map_err(|err| {
+            XtaskError::validation(format!("invalid Codex hook event JSON: {err}"))
+                .with_recovery("Codex should pass one hook event JSON object on stdin.")
+        })?;
+        let Some(event_name) = event
+            .get("hook_event_name")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Ok(None);
+        };
+        if !matches!(event_name, "UserPromptSubmit" | "PreToolUse") {
+            return Ok(None);
+        }
+
+        let loaded = load_registry(ctx, &self.registry)?;
+        let haystack = hook_event_text(&event);
+        if haystack.trim().is_empty() {
+            return Ok(None);
+        }
+
+        let matches = hook_matches(&loaded.entries, &haystack.to_lowercase(), self.max_matches);
+        if matches.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(CodexHookOutput {
+            hook_specific_output: CodexHookSpecificOutput {
+                hook_event_name: event_name.to_string(),
+                additional_context: render_hook_context(&matches),
+            },
+        }))
+    }
 }
 
 /// Output from pipeline registry commands.
@@ -201,6 +272,20 @@ pub struct RegistryProblem {
     pub record: Option<String>,
     /// Human-readable problem.
     pub problem: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CodexHookOutput {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: CodexHookSpecificOutput,
+}
+
+#[derive(Debug, Serialize)]
+struct CodexHookSpecificOutput {
+    #[serde(rename = "hookEventName")]
+    hook_event_name: String,
+    #[serde(rename = "additionalContext")]
+    additional_context: String,
 }
 
 fn list(ctx: &CommandContext, registry: &Path) -> Result<PipelineOutput, XtaskError> {
@@ -509,6 +594,147 @@ fn validate_source_symbol(
     }
 }
 
+#[derive(Debug)]
+struct HookMatch {
+    record: RegistryRecord,
+    pipeline: Option<RegistryRecord>,
+}
+
+fn hook_event_text(event: &serde_json::Value) -> String {
+    let prompt = event
+        .get("prompt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let tool_name = event
+        .get("tool_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let tool_input = event
+        .get("tool_input")
+        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| value.to_string()))
+        .unwrap_or_default();
+
+    [prompt, tool_name, tool_input.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .join("\n")
+}
+
+fn hook_matches(entries: &[RegistryEntry], haystack: &str, max_matches: usize) -> Vec<HookMatch> {
+    let pipelines = entries
+        .iter()
+        .filter_map(|entry| {
+            let record = &entry.record;
+            if record.kind == "pipeline" {
+                record.id.as_ref().map(|id| (id.as_str(), record))
+            } else {
+                None
+            }
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut seen = BTreeSet::new();
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let record = &entry.record;
+            if !matches!(record.kind.as_str(), "pipeline" | "function") {
+                return None;
+            }
+            let matched = [
+                record.id.as_deref(),
+                record.pipeline.as_deref(),
+                record.path.as_deref(),
+                record.symbol.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|key| haystack.contains(&key.to_lowercase()));
+            if !matched {
+                return None;
+            }
+
+            let pipeline_id = record.id.as_ref().or(record.pipeline.as_ref())?;
+            let symbol = record.symbol.as_deref().unwrap_or_default();
+            if !seen.insert((pipeline_id.clone(), symbol.to_string())) {
+                return None;
+            }
+
+            Some(HookMatch {
+                record: record.clone(),
+                pipeline: pipelines
+                    .get(pipeline_id.as_str())
+                    .map(|record| (*record).clone()),
+            })
+        })
+        .take(max_matches)
+        .collect()
+}
+
+fn render_hook_context(matches: &[HookMatch]) -> String {
+    let mut lines = vec![
+        "Pipeline registry context: this prompt or tool input mentions registered workflow pipeline code. Read the linked authority docs before changing behavior.".to_string(),
+    ];
+
+    for hook_match in matches {
+        let record = &hook_match.record;
+        let pipeline_id = record
+            .id
+            .as_deref()
+            .or(record.pipeline.as_deref())
+            .unwrap_or("unknown");
+        let subject = record
+            .symbol
+            .as_ref()
+            .map(|symbol| format!("{pipeline_id}::{symbol}"))
+            .unwrap_or_else(|| pipeline_id.to_string());
+        lines.push(format!("- {subject}"));
+        if let Some(path) = &record.path {
+            lines.push(format!("  path: {path}"));
+        }
+        if let Some(stage) = &record.stage {
+            lines.push(format!("  stage: {stage}"));
+        }
+        if let Some(role) = record.role.as_ref().or(record.summary.as_ref()) {
+            lines.push(format!("  role: {role}"));
+        }
+
+        let docs = unique_strings(
+            record.docs.iter().chain(
+                hook_match
+                    .pipeline
+                    .iter()
+                    .flat_map(|pipeline| pipeline.docs.iter()),
+            ),
+        );
+        if !docs.is_empty() {
+            lines.push(format!("  docs: {}", docs.into_iter().take(4).join(", ")));
+        }
+
+        let tests = unique_strings(
+            record.tests.iter().chain(
+                hook_match
+                    .pipeline
+                    .iter()
+                    .flat_map(|pipeline| pipeline.tests.iter()),
+            ),
+        );
+        if !tests.is_empty() {
+            lines.push(format!("  tests: {}", tests.into_iter().take(4).join(", ")));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn unique_strings<'a>(values: impl Iterator<Item = &'a String>) -> Vec<&'a str> {
+    let mut seen = BTreeSet::new();
+    values
+        .map(String::as_str)
+        .filter(|value| seen.insert(*value))
+        .collect()
+}
+
 fn resolve_path(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -623,5 +849,42 @@ mod tests {
             }
             other => panic!("expected PipelineFind, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pipeline_hook_context_emits_codex_additional_context() {
+        let ctx = CommandContext::new().expect("CommandContext");
+        let cmd = PipelineHookContext {
+            registry: PathBuf::from(DEFAULT_REGISTRY),
+            max_matches: 5,
+        };
+        let input = serde_json::json!({
+            "cwd": ctx.workspace_root().expect("root").display().to_string(),
+            "hook_event_name": "UserPromptSubmit",
+            "model": "gpt-5.5",
+            "permission_mode": "default",
+            "prompt": "I want to edit should_wait_for_settled_edit",
+            "session_id": "test-session",
+            "transcript_path": null,
+            "turn_id": "test-turn"
+        })
+        .to_string();
+
+        let output = cmd
+            .output_for_event(&ctx, &input)
+            .expect("hook context should execute")
+            .expect("registered symbol should produce context");
+        let serialized = serde_json::to_value(output).expect("serialize hook output");
+
+        assert_eq!(
+            serialized["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+        let context = serialized["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("additional context");
+        assert!(context.contains("prototype1.edit_tool_gated_refresh"));
+        assert!(context.contains("should_wait_for_settled_edit"));
+        assert!(context.contains("tui-approve-deny-pipeline.md"));
     }
 }
