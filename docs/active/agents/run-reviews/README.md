@@ -43,3 +43,8 @@ state without checking newer code, History records, and run artifacts.
   stale missing-protocol finding with full protocol artifacts, malformed
   adjudication JSON repair visibility, same-file edit failure credit, cargo
   scope visibility, and benchmark-usefulness limits.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-isolated-20260525-113746-burntsushi-ripgrep-2209-run-1779709154252-eval.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-isolated-20260525-113746-burntsushi-ripgrep-2209-run-1779709154252-eval.md)
+  Isolated baseline eval review for `BurntSushi__ripgrep-2209`, separating
+  non-empty patch export from an aborted agent turn, final red validation,
+  stale same-file context failures, protocol accounting mismatch, and unsupported
+  benchmark usefulness.

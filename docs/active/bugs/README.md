@@ -95,6 +95,8 @@ file and current code before treating a report as still open.
   Fixed in source: broad headless-TUI parent patching now ignores stale OpenRouter provider preferences for direct-Google registry rows while explicit provider pins still validate.
 - [`2026-05-25-prototype1-child-plan-publishes-unmaterialized-slots.md`](./2026-05-25-prototype1-child-plan-publishes-unmaterialized-slots.md)
   Prototype 1 child planning can publish prompt files for broad-harness slots whose candidate workspaces were never materialized, causing doctor prompt preflight to block further progress.
+- [`2026-05-25-prototype1-overlapping-protocol-step-duplicates-artifacts.md`](./2026-05-25-prototype1-overlapping-protocol-step-duplicates-artifacts.md)
+  Prototype 1 does not guard concurrent protocol advances for the same run, allowing duplicate per-call adjudication artifacts while closure still reports protocol complete.
 - [`2026-05-25-headless-tui-timeout-submission-admission.md`](./2026-05-25-headless-tui-timeout-submission-admission.md)
   Fixed in source: Prototype 1 broad headless-TUI attempts no longer publish submitted child results after a timed-out turn with failed cargo validation; the live campaign that exposed this still contains tainted r3 evidence.
 - [`2026-05-25-prototype1-observe-child-stale-hang.md`](./2026-05-25-prototype1-observe-child-stale-hang.md)
