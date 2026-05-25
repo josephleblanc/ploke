@@ -47,9 +47,9 @@ must not be cited as successful reviews.
    - run profile and campaign manifest
    - per-run submission and patch projection
    - protocol overview/artifacts
-4. Check the runtime-playback inventory before claiming that records are
-   missing. Use the inventory to distinguish absent records from records that
-   exist but are not yet first-class playback steps.
+4. Check the runtime-playback inventory and record-persistence checklist before
+   claiming that records are missing. Use them to distinguish absent records
+   from records that exist but are not yet first-class playback steps.
 5. Run the bundled trace audit if a run root is available:
 
    ```bash
@@ -76,6 +76,7 @@ Before writing that evidence is missing, check the runtime-playback inventory:
 
 - `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/README.md`
 - `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/record-surface-map.md`
+- `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/record-persistence-checklist.md`
 - `docs/workflow/evalnomicon/drafts/observability/runtime-playback/inventory/latest-run-emission-worksheet.md`
 
 Use four separate labels in the review:

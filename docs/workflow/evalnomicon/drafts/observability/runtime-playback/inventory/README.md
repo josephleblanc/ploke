@@ -12,6 +12,9 @@ egui surfaces.
   First code-backed map of current record owners, file locations, readers,
   graph coverage, History payloads, channel files, index DB snapshots,
   selection material, join keys, and duplicate record pressure.
+- [`record-persistence-checklist.md`](record-persistence-checklist.md)
+  Run-review checklist for marking expected Prototype 1 persistence surfaces as
+  present, absent, playback gaps, manual joins, or operator convenience records.
 - [`crate-boundary-inventory.md`](crate-boundary-inventory.md)
   Crate-by-crate map of writer, schema-owner, graph-loader, TUI, LLM, DB, and
   protocol responsibilities for playback evidence.
