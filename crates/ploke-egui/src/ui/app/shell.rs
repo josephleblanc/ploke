@@ -573,19 +573,38 @@ fn show_inspector_section_header(
 ) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(title).strong());
-        if let (Some(actions), Some(selection)) = (actions.as_deref_mut(), selection_ref) {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button("↗")
-                    .on_hover_text("Pop out to new pane")
-                    .clicked()
-                {
-                    actions.push(crate::ui::dashboard::tiles::TreeAction::PinSection(
-                        selection.clone(),
-                        section,
-                    ));
-                }
-            });
+        show_section_popout_button(ui, section, selection_ref, actions);
+    });
+}
+
+fn show_section_popout_button(
+    ui: &mut egui::Ui,
+    section: InspectorPanelSection,
+    selection_ref: Option<&crate::ui::view::GraphSelectionRef>,
+    actions: &mut Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
+) {
+    if actions.is_none() {
+        return;
+    }
+
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let Some(selection) = selection_ref else {
+            ui.add_enabled(false, egui::Button::new("↗"))
+                .on_hover_text("Select a graph item to pop out this section");
+            return;
+        };
+
+        if ui
+            .button("↗")
+            .on_hover_text("Pop out to new pane")
+            .clicked()
+        {
+            if let Some(actions) = actions.as_deref_mut() {
+                actions.push(crate::ui::dashboard::tiles::TreeAction::PinSection(
+                    selection.clone(),
+                    section,
+                ));
+            }
         }
     });
 }
@@ -601,35 +620,31 @@ fn show_inspector_section_collapsing<R>(
 ) {
     ui.separator();
     let _span = tracing::trace_span!("inspector_collapsing_header_layout").entered();
-    let mut pin_clicked = false;
-
-    ui.horizontal(|ui| {
-        let header = egui::RichText::new(title).heading();
-        if actions.is_some() && selection_ref.is_some() {
-            ui.label(header);
-            if ui
-                .button("↗")
-                .on_hover_text("Pop out to new pane")
-                .clicked()
-            {
-                pin_clicked = true;
-            }
-        }
-    });
-
-    let header = egui::CollapsingHeader::new("details")
-        .id_salt(title)
-        .open(open);
-    header.show(ui, |ui| add_body(ui));
-
-    if pin_clicked {
-        if let (Some(actions), Some(selection)) = (actions.as_deref_mut(), selection_ref) {
-            actions.push(crate::ui::dashboard::tiles::TreeAction::PinSection(
-                selection.clone(),
-                section,
-            ));
+    let id = ui.make_persistent_id(("inspector-section", title));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+    if let Some(open) = open {
+        if state.is_open() != open {
+            state.toggle(ui);
         }
     }
+
+    let header_response = ui.horizontal(|ui| {
+        let prev_item_spacing = ui.spacing_mut().item_spacing;
+        ui.spacing_mut().item_spacing.x = 0.0;
+        state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+        ui.spacing_mut().item_spacing = prev_item_spacing;
+
+        let title_response = ui.add(
+            egui::Label::new(egui::RichText::new(title).heading()).sense(egui::Sense::click()),
+        );
+        if title_response.clicked() {
+            state.toggle(ui);
+        }
+        show_section_popout_button(ui, section, selection_ref, actions);
+    });
+
+    state.show_body_indented(&header_response.response, ui, |ui| add_body(ui));
 }
 
 fn show_inspector_collapsing<R>(
@@ -668,7 +683,7 @@ pub(crate) fn render_right_inspector(
     }
     {
         let _span = tracing::trace_span!("inspector_scroll_area_layout").entered();
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Frame::new()
@@ -685,15 +700,15 @@ pub(crate) fn render_right_inspector(
                             kv(ui, "selection", "not_applicable");
                         }
 
-                        ui.separator();
-                        show_inspector_section_header(
+                        show_inspector_section_collapsing(
                             ui,
                             "Eval & Protocol",
                             InspectorPanelSection::EvalProtocol,
+                            open_state.open(InspectorPanelSection::EvalProtocol),
                             selection_ref,
                             &mut actions,
+                            |ui| render_eval_protocol_for_graph(ui, graph, render_cache),
                         );
-                        render_eval_protocol_for_graph(ui, graph, render_cache);
 
                         ui.separator();
                         show_inspector_section_header(
