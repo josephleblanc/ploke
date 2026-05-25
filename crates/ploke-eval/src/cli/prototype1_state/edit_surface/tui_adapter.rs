@@ -33,7 +33,7 @@ use super::{
 };
 
 #[cfg(test)]
-use super::harness_request::EvidenceRole;
+use super::harness_request::{AttachedReport, EvidenceRole};
 
 const MAX_DEBUG_RELAY_EVENTS: usize = 128;
 const MAX_DEBUG_RELAY_EVENT_CHARS: usize = 2_000;
@@ -1540,6 +1540,9 @@ fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
         if root.kind == EvidenceRootKind::SubmittedResultOutput {
             continue;
         }
+        if let Some(path) = prototype_navigation_root(root) {
+            roots.push(path);
+        }
         match &root.location {
             EvidenceRootLocation::Directory { path } => {
                 roots.push(path.clone());
@@ -1558,6 +1561,23 @@ fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
     roots.sort();
     roots.dedup();
     roots
+}
+
+fn prototype_navigation_root(root: &EvidenceRoot) -> Option<PathBuf> {
+    match (&root.kind, &root.location) {
+        (
+            EvidenceRootKind::Evaluations | EvidenceRootKind::Nodes,
+            EvidenceRootLocation::Directory { path },
+        ) => path.parent().map(Path::to_path_buf),
+        (EvidenceRootKind::HistoryBlocks, EvidenceRootLocation::Directory { path }) => {
+            path.parent().and_then(Path::parent).map(Path::to_path_buf)
+        }
+        (
+            EvidenceRootKind::ProtocolArtifacts,
+            EvidenceRootLocation::NodeScopedDirectory { nodes_root, .. },
+        ) => nodes_root.parent().map(Path::to_path_buf),
+        _ => None,
+    }
 }
 
 fn retry_feedback(feedback: &str) -> String {
@@ -3919,6 +3939,13 @@ mod tests {
     fn evidence_read_roots_include_request_evidence_but_not_result_output() {
         let roots = evidence_read_roots(&[
             EvidenceRoot {
+                kind: EvidenceRootKind::HistoryBlocks,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/prototype1/history/blocks"),
+                },
+                role: EvidenceRole::SealedHistory,
+            },
+            EvidenceRoot {
                 kind: EvidenceRootKind::Evaluations,
                 location: EvidenceRootLocation::Directory {
                     path: PathBuf::from("/tmp/prototype1/evaluations"),
@@ -3926,11 +3953,26 @@ mod tests {
                 role: EvidenceRole::EvaluationPayloads,
             },
             EvidenceRoot {
-                kind: EvidenceRootKind::Oracle,
-                location: EvidenceRootLocation::File {
-                    path: PathBuf::from("/tmp/prototype1/final_report.json"),
+                kind: EvidenceRootKind::Nodes,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/prototype1/nodes"),
+                },
+                role: EvidenceRole::RuntimeEvidence,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::ProtocolArtifacts,
+                location: EvidenceRootLocation::NodeScopedDirectory {
+                    nodes_root: PathBuf::from("/tmp/prototype1/nodes"),
+                    child_relpath: PathBuf::from("protocol-artifacts"),
                 },
                 role: EvidenceRole::GuidanceOnly,
+            },
+            EvidenceRoot {
+                kind: EvidenceRootKind::Oracle,
+                location: EvidenceRootLocation::AttachedReport {
+                    report: AttachedReport::FinalReportJson,
+                },
+                role: EvidenceRole::OracleSummary,
             },
             EvidenceRoot {
                 kind: EvidenceRootKind::SubmittedResultOutput,
@@ -3945,7 +3987,9 @@ mod tests {
             roots,
             vec![
                 PathBuf::from("/tmp/prototype1"),
-                PathBuf::from("/tmp/prototype1/evaluations")
+                PathBuf::from("/tmp/prototype1/evaluations"),
+                PathBuf::from("/tmp/prototype1/history/blocks"),
+                PathBuf::from("/tmp/prototype1/nodes"),
             ]
         );
     }

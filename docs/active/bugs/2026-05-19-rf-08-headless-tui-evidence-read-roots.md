@@ -14,6 +14,11 @@ This is not a desired denial. Agents should be able to read the campaign
 evidence that the broad-harness request advertises, while still being prevented
 from writing to protected or output-owned paths.
 
+2026-05-25 source mitigation: `tui_adapter::evidence_read_roots` now adds the
+enclosing Prototype 1 navigation root for known request evidence directories
+such as evaluations, nodes, history blocks, and node-scoped protocol artifacts.
+It still excludes submitted-result output roots.
+
 ## Affected Surface
 
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_request.rs`
