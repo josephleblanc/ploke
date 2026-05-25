@@ -33,3 +33,7 @@ state without checking newer code, History records, and run artifacts.
   Eval-step review for the fresh direct Google Gemini 3.5 Flash run, covering
   the non-empty but behaviorally incomplete patch, hidden apply failure,
   cargo-scope mismatch, empty successful reads, and adjudication candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-fresh-20260524-190632-eval.md`](2026-05-25-p1-gemini35-flash-direct-fresh-20260524-190632-eval.md)
+  Eval-step review for the direct Google rerun after env-cwd repair, covering
+  clean route/preflight setup, non-empty patch output, target-test success,
+  rustfmt failure, weak cargo-check resolution, and protocol follow-up.

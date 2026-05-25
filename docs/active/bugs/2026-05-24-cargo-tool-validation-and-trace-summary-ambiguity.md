@@ -112,6 +112,32 @@ format checks when patch hygiene matters.
 - Add an optional eval gate or report field for `cargo fmt -- --check`, or make
   the absence of a formatting check explicit in candidate summaries.
 
+## 2026-05-25 Recurrence
+
+The same validation weakness recurred in direct-Google campaign
+`p1-gemini35-flash-direct-fresh-20260524-190632`.
+
+Run root:
+
+```text
+/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-fresh-20260524-190632/BurntSushi__ripgrep-2209/runs/run-1779674853833-structured-current-policy-2897a178
+```
+
+New evidence:
+
+- The model generated a non-empty patch and `cargo test -p grep-printer`
+  passed with `95` unit tests and `2` doc tests.
+- Direct `cargo fmt -- --check` failed on an over-indented
+  `pub fn replace_all` line in `crates/printer/src/util.rs`.
+- The final `cargo check` tool call again reported success against
+  `/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/globset/Cargo.toml`,
+  unrelated to the changed `crates/printer` files.
+- `llm-full-responses.jsonl` contains a final assistant response, but
+  `agent-turn-summary.json` reports `final_assistant_message = null`.
+
+This reinforces that adjudication should treat target tests, final check scope,
+formatting checks, and summary parity as separate fields.
+
 ## Related Reports
 
 - [`2026-05-22-cargo-tool-tail-rendering-and-timeout.md`](./2026-05-22-cargo-tool-tail-rendering-and-timeout.md)
