@@ -29,6 +29,9 @@ When these drafts disagree, use this order:
 - [`evidence-and-artifacts.md`](evidence-and-artifacts.md)
   Authority and evidence surfaces, including what is History authority and what
   is only an operational projection.
+- [`phase-state-probes.md`](phase-state-probes.md)
+  How to infer finer-grained runtime state from durable files while a phase is
+  in progress.
 - [`source-map.md`](source-map.md)
   Code and existing-doc map for refreshing these drafts against current source.
 - [`review-notes.md`](review-notes.md)
@@ -47,4 +50,3 @@ Use these labels inside the draft set:
 - `operator rule`: guidance from workflow skills or operator docs.
 - `not claimed`: stronger interpretation that Prototype 1 explicitly does not
   rely on.
-

@@ -156,6 +156,9 @@ succeeds, the parent compares the treatment evidence against the parent
 baseline and writes a branch evaluation report. This comparison is the main
 bridge from child execution to selection input.
 
+For finer-grained in-flight diagnosis, including what `observe_child before`
+means, see [`phase-state-probes.md`](phase-state-probes.md).
+
 ## Select
 
 Diagnosis enters `select` when all planned children are terminal and
