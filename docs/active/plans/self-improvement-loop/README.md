@@ -54,6 +54,10 @@ artifacts before implementation claims are repeated.
   Near-term replay follow-up notes; verify against current replay modules before treating as active queue.
 - [`historical-replay-probe-workflow.md`](historical-replay-probe-workflow.md)
   Intended operator workflow and design direction for stepping historical provider output through current tools, then branching live from a breakpoint.
+- [`edit-tool-gated-refresh-subgoal.md`](edit-tool-gated-refresh-subgoal.md)
+  Active sub-goal for enforcing edit-tool gated settlement, refresh/reindex
+  barriers, and live historical replay coverage for same-file stale-anchor
+  failures.
 - [`frontend-questions.md`](frontend-questions.md)
   Questions and feature checks the frontend should answer for multi-generation self-improvement runs.
 - [`ui-data-projections-plan.md`](ui-data-projections-plan.md)
