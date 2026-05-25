@@ -48,3 +48,8 @@ state without checking newer code, History records, and run artifacts.
   non-empty patch export from an aborted agent turn, final red validation,
   stale same-file context failures, protocol accounting mismatch, and unsupported
   benchmark usefulness.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-clean-20260525-120225-burntsushi-ripgrep-2209-run-1779710592442-eval.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-clean-20260525-120225-burntsushi-ripgrep-2209-run-1779710592442-eval.md)
+  Clean baseline eval review for `BurntSushi__ripgrep-2209`, reconstructing
+  stale same-file edit recovery, validation-driven production repair, final
+  cargo coverage, summary projection gaps, weak test proof, and patch usefulness
+  against the issue/gold shape while separating later protocol artifacts.
