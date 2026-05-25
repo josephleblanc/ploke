@@ -438,3 +438,57 @@ Next action:
 - Launch live setup/doctor/step commands from `/home/brasides/code/ploke`, using
   `/home/brasides/code/ploke/target/debug/ploke-eval --repo-root <fresh-worktree>`
   where applicable so the command inherits the env-bearing source checkout.
+
+## Note 13: Fresh Direct-Google Eval And Protocol Completed
+
+Time: 2026-05-25 02:25 UTC
+
+Fresh attempt:
+
+- Campaign: `p1-gemini35-flash-direct-fresh-20260524-190632`.
+- Worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-fresh-20260524-190632`.
+- Parent node: `node-ea38dcdf301d7d63`.
+- Route: `google/gemini-3.5-flash` via `direct_google`.
+
+What happened:
+
+- Setup and doctor succeeded.
+- Live protocol preflight passed with `provider = google`,
+  `route_source = direct_google`, `reasoning = omit`, and `max_tokens = 512`.
+- Baseline eval completed from the source-checkout launch environment.
+- The eval produced a non-empty Multi-SWE-bench patch touching
+  `crates/printer/src/util.rs` and `crates/printer/src/standard.rs`.
+- Direct target verification showed `cargo test -p grep-printer` passed, while
+  `cargo fmt -- --check` failed on indentation in
+  `crates/printer/src/util.rs`.
+- Protocol initially became partial after segmentation and a direct-Google
+  timeout before call review.
+- A second bounded protocol step resumed from the partial state and completed
+  all required protocol procedures.
+
+Protocol evidence:
+
+- `protocol.status = complete`.
+- `tool_call_intent_segmentation = complete`.
+- `call_review_count = 56`.
+- `segment_review_count = 4`.
+- `missing_call_indices = []`.
+- `missing_segment_indices = []`.
+- Doctor phase advanced to `child_plan`.
+
+Interpretation:
+
+- This is the cleanest evidence so far that the route/profile/doctor/step
+  workflow can move through eval and protocol on the direct-Google lane.
+- The retry policy is useful: malformed direct-Google adjudication responses
+  with trailing sentence fragments were retried per item rather than admitted
+  as invalid protocol evidence.
+- The run is still not benchmark-clean because the patch fails formatting, and
+  eval validation remains too weak when the model does not run a format check.
+
+Next action:
+
+- Continue with one bounded step from `child_plan`.
+- Preserve this run review as positive protocol evidence and keep the cargo
+  validation issue as a non-blocking bug.

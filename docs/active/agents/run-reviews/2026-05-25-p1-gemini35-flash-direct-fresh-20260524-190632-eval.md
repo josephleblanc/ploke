@@ -2,10 +2,11 @@
 
 ## Verdict
 
-This fresh direct-Google baseline eval produced useful evidence and should
-advance to baseline protocol. The loop got past the earlier route/reasoning and
-worktree-env blockers, generated a non-empty patch, recorded all provider tool
-calls, and exported a Multi-SWE-bench submission.
+This fresh direct-Google baseline eval and protocol pass produced useful
+evidence. The loop got past the earlier route/reasoning and worktree-env
+blockers, generated a non-empty patch, recorded all provider tool calls,
+exported a Multi-SWE-bench submission, and completed all required protocol
+procedures after retrying malformed direct-Google adjudication responses.
 
 The patch is not clean enough to call a benchmark-quality success yet:
 `cargo test -p grep-printer` passes, but `cargo fmt -- --check` fails on
@@ -26,13 +27,24 @@ again resolved to an unrelated focused `globset` manifest.
 
 ## Closure State
 
-Post-step closure:
+Post-eval closure:
 
 - `eval.status = complete`
 - `eval.complete_total = 1`
-- `protocol.status = missing`
-- all three required protocol procedures are expected and missing
 - doctor phase moved to `baseline_protocol`
+
+After two bounded protocol steps:
+
+- `protocol.status = complete`
+- `tool-call-intent-segments = complete`
+- `tool-call-review = complete`
+- `tool-call-segment-review = complete`
+- protocol status reports `artifact_count = 61`
+- `call_review_count = 56`
+- `segment_review_count = 4`
+- `missing_call_indices = []`
+- `missing_segment_indices = []`
+- doctor phase moved to `child_plan`
 
 The campaign manifest records the intended model route:
 
@@ -127,6 +139,11 @@ Positive examples:
   model switched to another edit tool instead of stopping.
 - The model ran the focused target tests after editing, and the new test was
   included in the successful `running 95 tests` result.
+- Protocol did not corrupt state when direct Google returned malformed JSON
+  with a valid object followed by stray sentence fragments. The retry wrapper
+  retried individual `tool_call_review` and `tool_call_segment_review` items,
+  and the second bounded protocol step completed with all `56` calls and all
+  `4` segments reviewed.
 
 Adjudication candidates:
 
@@ -139,6 +156,9 @@ Adjudication candidates:
 - Track summary parity for final assistant messages:
   `llm-full-responses.jsonl` contains the final answer while
   `agent-turn-summary.json` reports `final_assistant_message = null`.
+- Track adjudication retry pressure separately from final protocol status:
+  this run completed, but several review calls needed retry because direct
+  Google appended non-JSON text after an otherwise complete JSON object.
 
 ## What Is Working
 
@@ -147,6 +167,9 @@ Adjudication candidates:
 - Baseline eval can now run through to a recorded, non-empty patch.
 - Provider and recorded tool-call ledgers agree on call identity.
 - The model found the relevant subsystem and produced a plausible patch.
+- Protocol segmentation, call review, and segment review can complete against
+  the recorded eval run, including retry recovery from malformed adjudication
+  JSON.
 
 ## What Is Not Working Yet
 
@@ -158,7 +181,7 @@ Adjudication candidates:
 
 ## Action Items
 
-- Advance this campaign one more bounded step to baseline protocol.
+- Continue from doctor phase `child_plan` with one bounded step.
 - Update the cargo validation bug with this second direct-Google recurrence.
-- Keep this run as positive evidence for route/env progress, but let protocol
-  adjudication decide whether the patch is semantically adequate.
+- Keep this run as positive evidence for route/env/protocol progress, but do
+  not treat it as benchmark-clean because formatting still fails.
