@@ -511,7 +511,8 @@ fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecu
     use std::collections::HashMap;
 
     let mut pending_requests: HashMap<String, ToolRequestRecord> = HashMap::new();
-    let mut tool_calls = Vec::new();
+    let mut tentative_edit_results: HashMap<String, usize> = HashMap::new();
+    let mut tool_calls: Vec<ToolExecutionRecord> = Vec::new();
 
     for event in events {
         match event {
@@ -519,21 +520,50 @@ fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecu
                 pending_requests.insert(req.call_id.clone(), req.clone());
             }
             ObservedTurnEvent::ToolCompleted(completed) => {
+                if is_pending_edit_completion(completed) {
+                    if let Some(index) = tentative_edit_results.get(&completed.call_id).copied() {
+                        tool_calls[index].result = ToolResult::Completed(completed.clone());
+                        tool_calls[index].latency_ms = completed.latency_ms;
+                    } else if let Some(request) = pending_requests.get(&completed.call_id) {
+                        tentative_edit_results.insert(completed.call_id.clone(), tool_calls.len());
+                        tool_calls.push(ToolExecutionRecord {
+                            request: request.clone(),
+                            result: ToolResult::Completed(completed.clone()),
+                            latency_ms: completed.latency_ms,
+                        });
+                    }
+                    continue;
+                }
+
                 if let Some(request) = pending_requests.remove(&completed.call_id) {
-                    tool_calls.push(ToolExecutionRecord {
-                        request,
-                        result: ToolResult::Completed(completed.clone()),
-                        latency_ms: completed.latency_ms,
-                    });
+                    if let Some(index) = tentative_edit_results.remove(&completed.call_id) {
+                        tool_calls[index].request = request;
+                        tool_calls[index].result = ToolResult::Completed(completed.clone());
+                        tool_calls[index].latency_ms =
+                            settled_latency(tool_calls[index].latency_ms, completed.latency_ms);
+                    } else {
+                        tool_calls.push(ToolExecutionRecord {
+                            request,
+                            result: ToolResult::Completed(completed.clone()),
+                            latency_ms: completed.latency_ms,
+                        });
+                    }
                 }
             }
             ObservedTurnEvent::ToolFailed(failed) => {
                 if let Some(request) = pending_requests.remove(&failed.call_id) {
-                    tool_calls.push(ToolExecutionRecord {
-                        request,
-                        result: ToolResult::Failed(failed.clone()),
-                        latency_ms: failed.latency_ms,
-                    });
+                    if let Some(index) = tentative_edit_results.remove(&failed.call_id) {
+                        tool_calls[index].request = request;
+                        tool_calls[index].result = ToolResult::Failed(failed.clone());
+                        tool_calls[index].latency_ms =
+                            settled_latency(tool_calls[index].latency_ms, failed.latency_ms);
+                    } else {
+                        tool_calls.push(ToolExecutionRecord {
+                            request,
+                            result: ToolResult::Failed(failed.clone()),
+                            latency_ms: failed.latency_ms,
+                        });
+                    }
                 }
             }
             _ => {}
@@ -541,6 +571,63 @@ fn extract_tool_calls_from_events(events: &[ObservedTurnEvent]) -> Vec<ToolExecu
     }
 
     tool_calls
+}
+
+fn settled_latency(previous: u64, settled: u64) -> u64 {
+    if settled == 0 { previous } else { settled }
+}
+
+fn is_pending_edit_completion(completed: &ToolCompletedRecord) -> bool {
+    let Some(tool) = completed_tool_name(completed) else {
+        return false;
+    };
+
+    if !is_edit_tool(tool) {
+        return false;
+    }
+
+    typed_edit_result_is_staged_pending(tool, &completed.content)
+}
+
+fn completed_tool_name(completed: &ToolCompletedRecord) -> Option<ploke_tui::tools::ToolName> {
+    completed
+        .ui_payload
+        .as_ref()
+        .map(|payload| payload.tool)
+        .or_else(|| {
+            serde_json::from_value::<ploke_tui::tools::ToolName>(serde_json::Value::String(
+                completed.tool.clone(),
+            ))
+            .ok()
+        })
+}
+
+fn is_edit_tool(tool: ploke_tui::tools::ToolName) -> bool {
+    matches!(
+        tool,
+        ploke_tui::tools::ToolName::ApplyCodeEdit
+            | ploke_tui::tools::ToolName::InsertRustItem
+            | ploke_tui::tools::ToolName::CreateFile
+            | ploke_tui::tools::ToolName::NsPatch
+    )
+}
+
+fn typed_edit_result_is_staged_pending(tool: ploke_tui::tools::ToolName, content: &str) -> bool {
+    match tool {
+        ploke_tui::tools::ToolName::ApplyCodeEdit | ploke_tui::tools::ToolName::InsertRustItem => {
+            serde_json::from_str::<ploke_tui::tools::ApplyCodeEditResult>(content)
+                .is_ok_and(|result| result.ok && result.staged > 0 && result.applied == 0)
+        }
+        ploke_tui::tools::ToolName::CreateFile => {
+            serde_json::from_str::<ploke_tui::tools::CreateFileResult>(content)
+                .is_ok_and(|result| result.ok && result.staged > 0 && result.applied == 0)
+        }
+        ploke_tui::tools::ToolName::NsPatch => {
+            serde_json::from_str::<ploke_tui::tools::ns_patch::ApplyNsPatchResult>(content)
+                .is_ok_and(|result| result.ok && result.staged > 0 && result.applied == 0)
+        }
+        _ => false,
+    }
 }
 
 fn extract_llm_response_from_events(events: &[ObservedTurnEvent]) -> Option<LlmResponseRecord> {
@@ -2485,6 +2572,145 @@ mod tests {
         assert_eq!(turn.tool_calls.len(), 1);
         assert_eq!(turn.tool_calls[0].latency_ms, 87);
         assert!(matches!(turn.tool_calls[0].result, ToolResult::Failed(_)));
+    }
+
+    fn edit_lifecycle_artifact(events: Vec<ObservedTurnEvent>) -> AgentTurnArtifact {
+        AgentTurnArtifact {
+            task_id: "test-instance-edit-lifecycle".to_string(),
+            selected_model: ModelId::from_str("anthropic/claude-sonnet-4").unwrap(),
+            issue_prompt: "Fix the bug in src/lib.rs".to_string(),
+            user_message_id: "user-edit-lifecycle".to_string(),
+            events,
+            prompt_debug: None,
+            terminal_record: None,
+            final_assistant_message: None,
+            patch_artifact: PatchArtifact {
+                edit_proposals: Vec::new(),
+                create_proposals: Vec::new(),
+                applied: false,
+                all_proposals_applied: false,
+                expected_file_changes: Vec::new(),
+                any_expected_file_changed: false,
+                all_expected_files_changed: false,
+            },
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        }
+    }
+
+    fn staged_apply_code_edit_result(file: &str) -> String {
+        serde_json::to_string(&ploke_tui::tools::ApplyCodeEditResult {
+            ok: true,
+            staged: 1,
+            applied: 0,
+            files: vec![file.to_string()],
+            preview_mode: "diff".to_string(),
+            auto_confirmed: false,
+        })
+        .expect("serialize staged edit result")
+    }
+
+    fn apply_code_edit_request(call_id: &str) -> ObservedTurnEvent {
+        ObservedTurnEvent::ToolRequested(ToolRequestRecord {
+            request_id: format!("req-{call_id}"),
+            parent_id: format!("parent-{call_id}"),
+            call_id: call_id.to_string(),
+            tool: ploke_tui::tools::ToolName::ApplyCodeEdit
+                .as_str()
+                .to_string(),
+            arguments: r#"{"edits":[]}"#.into(),
+        })
+    }
+
+    fn staged_apply_code_edit_completion(call_id: &str, latency_ms: u64) -> ObservedTurnEvent {
+        ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
+            request_id: format!("req-{call_id}"),
+            parent_id: format!("parent-{call_id}"),
+            call_id: call_id.to_string(),
+            tool: ploke_tui::tools::ToolName::ApplyCodeEdit
+                .as_str()
+                .to_string(),
+            content: staged_apply_code_edit_result("src/lib.rs"),
+            ui_payload: Some(ploke_tui::tools::ToolUiPayload::new(
+                ploke_tui::tools::ToolName::ApplyCodeEdit,
+                call_id.into(),
+                "Staged 1 edit",
+            )),
+            latency_ms,
+        })
+    }
+
+    #[test]
+    fn add_turn_from_artifact_prefers_settled_edit_failure_over_staged_completion() {
+        let mut record = create_test_record();
+        let call_id = "call-settled-completed";
+        let artifact = edit_lifecycle_artifact(vec![
+            apply_code_edit_request(call_id),
+            staged_apply_code_edit_completion(call_id, 41),
+            ObservedTurnEvent::ToolCompleted(ToolCompletedRecord {
+                request_id: format!("req-{call_id}"),
+                parent_id: format!("parent-{call_id}"),
+                call_id: call_id.to_string(),
+                tool: ploke_tui::tools::ToolName::ApplyCodeEdit.as_str().to_string(),
+                content: r#"{"applied":0,"ok":false,"results":[{"error":"Content changed for \"src/lib.rs\"","file_path":"src/lib.rs"}]}"#
+                    .to_string(),
+                ui_payload: Some(
+                    ploke_tui::tools::ToolUiPayload::new(
+                        ploke_tui::tools::ToolName::ApplyCodeEdit,
+                        call_id.into(),
+                        "Failed to apply edit",
+                    )
+                    .with_field("status", "failed")
+                    .with_field("applied", "0"),
+                ),
+                latency_ms: 0,
+            }),
+        ]);
+
+        record.add_turn_from_artifact(artifact, 1744223415900000);
+
+        let turn = record.turn_record(1).expect("Should persist turn");
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].latency_ms, 41);
+        let ToolResult::Completed(completed) = &turn.tool_calls[0].result else {
+            panic!("settled completion should replace staged completion");
+        };
+        assert!(completed.content.contains(r#""ok":false"#));
+        assert!(completed.content.contains("Content changed"));
+        assert!(!completed.content.contains(r#""staged":1"#));
+    }
+
+    #[test]
+    fn add_turn_from_artifact_prefers_tool_failed_over_staged_edit_completion() {
+        let mut record = create_test_record();
+        let call_id = "call-settled-failed";
+        let artifact = edit_lifecycle_artifact(vec![
+            apply_code_edit_request(call_id),
+            staged_apply_code_edit_completion(call_id, 37),
+            ObservedTurnEvent::ToolFailed(ToolFailedRecord {
+                request_id: format!("req-{call_id}"),
+                parent_id: format!("parent-{call_id}"),
+                call_id: call_id.to_string(),
+                tool: Some(
+                    ploke_tui::tools::ToolName::ApplyCodeEdit
+                        .as_str()
+                        .to_string(),
+                ),
+                error: "Content changed for src/lib.rs".to_string(),
+                ui_payload: None,
+                latency_ms: 0,
+            }),
+        ]);
+
+        record.add_turn_from_artifact(artifact, 1744223416000000);
+
+        let turn = record.turn_record(1).expect("Should persist turn");
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].latency_ms, 37);
+        let ToolResult::Failed(failed) = &turn.tool_calls[0].result else {
+            panic!("tool failure should replace staged completion");
+        };
+        assert_eq!(failed.error, "Content changed for src/lib.rs");
     }
 
     #[test]
