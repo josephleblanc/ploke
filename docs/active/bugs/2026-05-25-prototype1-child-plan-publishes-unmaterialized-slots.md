@@ -133,3 +133,46 @@ notes = published broad-harness prompt ... r4-r9 is not referenced by the child 
 This verifies the diagnostic path, not the cleanliness of the old campaign as
 benchmark evidence. The campaign still contains child attempts that were
 reviewed as suspicious under the previous admission behavior.
+
+## Follow-up: Pre-child-plan published slots
+
+The `p1-gemini35-flash-direct-15g2x3-20260525-035000` campaign exposed the
+same contract break through a different branch. Baseline eval and protocol were
+complete, but no child-plan file existed yet. `diagnose()` called
+`prompt_preflight(context, true)` before loading the child plan for the main
+diagnosis, and `prompt_preflight` also found no child plan. With
+`live_request_ids = None`, prompt preflight treated every published broad
+request as live.
+
+Campaign evidence, read-only:
+
+```text
+child-plan file: absent
+transition journal: parent startup/resource entries only
+published requests: node-f4cf695decef97df, r2-r9
+materialized workspaces: node-f4cf695decef97df, node-f4cf695decef97df-r2
+```
+
+Source fix: when no child plan is locked yet, published prompt files remain
+checked as prompt artifacts, but candidate workspace/protected-core references
+are live only for published requests whose candidate workspace directory already
+exists. Future published slots without materialized workspaces are recorded in
+prompt-preflight notes and do not block doctor. The existing child-plan
+request-id filtering remains unchanged for the `Some(live_request_ids)` case.
+
+Regression:
+`prompt_preflight_skips_unmaterialized_published_slots_before_child_plan`
+covers the no-child-plan state with three published requests, two materialized
+workspaces, and one future unmaterialized slot.
+
+Verification:
+
+```text
+cargo test -p ploke-eval prompt_preflight_skips_unmaterialized_published_slots_before_child_plan -- --nocapture
+cargo test -p ploke-eval prompt_preflight_skips_unused_published_slot_workspaces_after_child_plan -- --nocapture
+```
+
+Same-campaign resume should be safe after rebuilding or rerunning the fixed
+source binary: the persisted campaign evidence is still trustworthy for this
+blocker, and the fix only changes the idempotent doctor/preflight classification
+of unmaterialized future prompt slots. No run artifacts were mutated.

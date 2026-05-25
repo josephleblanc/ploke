@@ -10,6 +10,30 @@ Do not stop at closure state, token totals, or protocol aggregate counts. Recons
 the agent trace enough to say whether completed tools actually found useful
 information and whether the run advanced toward a patch or oracle result.
 
+## Quality Gate
+
+A run review is not acceptable if it is only an artifact inventory. Before
+writing or updating an active review, the draft must pass this gate:
+
+- It names the exact execution path and the evidence that proves that path.
+- It includes at least one concrete trace chain, not just counts:
+  `model/tool event -> model interpretation or next action -> resulting edit,
+  validation, timeout, or failure`.
+- It distinguishes mechanical completion from benchmark usefulness.
+- It verifies at least one suspicious or important tool result against the
+  checkout or persisted artifact instead of trusting `ok:true`, summaries, or
+  aggregate protocol labels.
+- It identifies the last point where the model had enough information to act,
+  or explicitly says the trace never reached that point.
+- It ties each action item to an observed artifact gap, tool lifecycle gap, or
+  protocol blind spot.
+
+If the evidence is not available, do not fill the gap with speculation. Mark the
+review `incomplete`, list the missing artifact joins, and do not add it to the
+active run-review index as a durable synthesis. Quarantined files under
+`docs/active/agents/run-review-negative-examples/` are examples of reports that
+must not be cited as successful reviews.
+
 ## Default Workflow
 
 1. Resolve the exact campaign, instance, run root, and `record.json.gz`.
@@ -37,12 +61,14 @@ information and whether the run advanced toward a patch or oracle result.
    - recorded tool lifecycle from `record.json.gz` and sidecars
    - semantic usefulness of returned payloads
 7. Drill into suspicious calls before drawing conclusions.
-8. Extract positive examples and candidate LLM-adjudication signals.
-9. Classify action items as non-blockers or blockers. File or update alive bugs
+8. Apply the quality gate above. If it fails, write an incomplete-review note
+   or return the missing evidence list instead of a durable active review.
+9. Extract positive examples and candidate LLM-adjudication signals.
+10. Classify action items as non-blockers or blockers. File or update alive bugs
    for non-blockers while the loop continues; blockers hand off to
    `ploke-blocker-repair-loop` before the campaign advances again.
-10. Write or update the run review in `docs/active/agents/run-reviews/`.
-11. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+11. Write or update the run review in `docs/active/agents/run-reviews/`.
+12. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
 
 ## Record Inventory Before Missing-Record Claims
 

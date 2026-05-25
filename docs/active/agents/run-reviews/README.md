@@ -33,3 +33,13 @@ state without checking newer code, History records, and run artifacts.
   Eval-step review for the fresh direct Google Gemini 3.5 Flash run, covering
   the non-empty but behaviorally incomplete patch, hidden apply failure,
   cargo-scope mismatch, empty successful reads, and adjudication candidates.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-burntsushi-ripgrep-2209-run-1779706500140-eval.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-burntsushi-ripgrep-2209-run-1779706500140-eval.md)
+  Baseline eval review for `BurntSushi__ripgrep-2209`, reconstructing useful
+  context discovery, stale same-file edit recovery, final package-intended
+  cargo check/test visibility, patch export, benchmark usefulness, and protocol
+  completion blind spots.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-burntsushi-ripgrep-2209-run-1779706500140-protocol-followup.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-035000-burntsushi-ripgrep-2209-run-1779706500140-protocol-followup.md)
+  Follow-up review after protocol completion for the same run, reconciling the
+  stale missing-protocol finding with full protocol artifacts, malformed
+  adjudication JSON repair visibility, same-file edit failure credit, cargo
+  scope visibility, and benchmark-usefulness limits.

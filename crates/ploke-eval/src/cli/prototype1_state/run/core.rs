@@ -905,20 +905,27 @@ fn extend_published_prompt_checks(
         }
     }
 
-    if live_request_ids
-        .map(|request_ids| request_ids.contains(published.request_id()))
-        .unwrap_or(true)
-    {
+    let check_workspace_refs = match live_request_ids {
+        Some(request_ids) => request_ids.contains(published.request_id()),
+        None => published.workspace_path().is_dir(),
+    };
+    if check_workspace_refs {
         checked.extend(prompt_refs_from_request(
             published.request(),
             published.workspace_path(),
             true,
             true,
         ));
-    } else {
+    } else if live_request_ids.is_some() {
         notes.push(format!(
             "published broad-harness prompt '{}' is not referenced by the child plan; candidate workspace checks skipped",
             published.prompt_path().display()
+        ));
+    } else {
+        notes.push(format!(
+            "published broad-harness prompt '{}' has no child plan and candidate workspace '{}' is not materialized; candidate workspace checks skipped",
+            published.prompt_path().display(),
+            published.workspace_path().display()
         ));
     }
 
@@ -2457,6 +2464,107 @@ mod tests {
                 .checked
                 .iter()
                 .any(|reference| reference.path.starts_with(second.workspace_path()))
+        );
+    }
+
+    #[test]
+    fn prompt_preflight_skips_unmaterialized_published_slots_before_child_plan() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let prototype = temp.path().join("campaign/prototype1");
+        fs::create_dir_all(prototype.join("nodes")).expect("create nodes");
+        fs::create_dir_all(prototype.join("evaluations")).expect("create evals");
+        fs::write(prototype.join("evaluations/branch-sample.json"), "{}\n")
+            .expect("write eval sample");
+        let request_path = prototype.join("messages/edit-harness-request/node-parent.json");
+        let prompt_path = prototype.join("messages/edit-harness-request/node-parent.md");
+        let result_path = prototype.join("messages/edit-harness-result/node-parent.json");
+        let binding = request_admission_binding_for_test();
+
+        let first = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype,
+            request_path.clone(),
+            prompt_path.clone(),
+            result_path.clone(),
+            binding.clone(),
+        );
+        write_published_prompt_for_test(&first);
+        write_protected_core(first.workspace_path());
+
+        let second = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype,
+            request_path.clone(),
+            prompt_path.clone(),
+            result_path.clone(),
+            binding.clone(),
+        );
+        write_published_prompt_for_test(&second);
+        write_protected_core(second.workspace_path());
+
+        let future = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo,
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype,
+            request_path,
+            prompt_path,
+            result_path,
+            binding,
+        );
+        write_published_prompt_for_test(&future);
+
+        let mut checked = Vec::new();
+        let mut prompt_files = Vec::new();
+        let mut problems = Vec::new();
+        let mut notes = Vec::new();
+        for published in [&first, &second, &future] {
+            extend_published_prompt_checks(
+                published,
+                None,
+                &mut checked,
+                &mut prompt_files,
+                &mut problems,
+                &mut notes,
+            )
+            .expect("extend prompt checks");
+        }
+
+        let preflight = PromptPreflight::from_parts(checked, prompt_files, problems, notes);
+
+        assert_eq!(preflight.outcome, PromptPreflightOutcome::Passed);
+        assert_eq!(preflight.prompt_files.len(), 3);
+        assert!(
+            preflight
+                .checked
+                .iter()
+                .any(|reference| reference.path.starts_with(second.workspace_path()))
+        );
+        assert!(
+            !preflight
+                .checked
+                .iter()
+                .any(|reference| reference.path.starts_with(future.workspace_path()))
+        );
+        assert!(
+            preflight.notes.iter().any(|note| {
+                note.contains("no child plan") && note.contains("node-parent-r3.md")
+            })
         );
     }
 
