@@ -27,6 +27,30 @@ Regression coverage:
 cargo test -q -p ploke-tui apply_code_edit_rejects_stale_semantic_anchor_before_staging -- --nocapture
 ```
 
+Historical replay probe:
+
+```text
+./target/debug/ploke-eval run replay turn-live \
+  --run-dir /home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-fresh-20260524-163447/BurntSushi__ripgrep-2209/runs/run-1779665713181-structured-current-policy-efa0a063 \
+  --workspace /tmp/ploke-ripgrep-replay-stale-anchor \
+  --event-index 389 \
+  --through-event \
+  --tail stop \
+  --max-attempts 1 \
+  --timeout-secs 180 \
+  --format json
+```
+
+The replay used a throwaway ripgrep worktree at the recorded base SHA. With the
+fix applied, the historical provider prefix still applied the first
+`insert_rust_item` to `crates/printer/src/util.rs`, but the follow-up
+`apply_code_edit` no longer staged a bogus pending proposal. It emitted a
+model-facing `ToolErrorWire` before staging:
+
+```text
+Cannot stage apply_code_edit for .../crates/printer/src/util.rs because the file version could not be verified: Content changed for ".../crates/printer/src/util.rs". Refresh or re-resolve the target before submitting another semantic edit.
+```
+
 Broader same-file composition remains a design risk: multiple same-file
 proposals can still be staged before an earlier auto-confirmed proposal has
 finished applying and refreshing the index. That should be handled as proposal
@@ -176,8 +200,9 @@ a missing call-site update when the intended same-file follow-up edit failed.
 
 - Keep the new stale-anchor regression as fixed-contract coverage:
   `apply_code_edit_rejects_stale_semantic_anchor_before_staging`.
-- Add replay coverage for the historical Prototype 1 run shape if the current
-  replay surfaces can reproduce it without a live provider.
+- Promote the manual historical replay probe above into automated replay
+  coverage if this bug class recurs or the replay harness gets a stable
+  artifact-comparison mode.
 - Ensure post-apply rescan visibility or proposal-set planning is a hard
   boundary for same-file canonical edits in eval/headless tool loops.
 - Carry touched-path/version state through the edit proposal lifecycle so

@@ -219,6 +219,41 @@ A later `non_semantic_patch` failure on `standard.rs` was different. It was mode
 
 The model recovered from that visible failure by rereading nearby ranges and applying a smaller cleanup patch. That later failure caused churn, but it did not prevent final patch export.
 
+### Post-Fix Historical Replay Probe
+
+After fixing semantic staging to reject unverifiable file versions before
+creating a pending proposal, I replayed the historical provider prefix through
+the same breakpoint against a throwaway ripgrep worktree at the recorded base
+SHA:
+
+```text
+./target/debug/ploke-eval run replay turn-live \
+  --run-dir /home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-fresh-20260524-163447/BurntSushi__ripgrep-2209/runs/run-1779665713181-structured-current-policy-efa0a063 \
+  --workspace /tmp/ploke-ripgrep-replay-stale-anchor \
+  --event-index 389 \
+  --through-event \
+  --tail stop \
+  --max-attempts 1 \
+  --timeout-secs 180 \
+  --format json
+```
+
+The replay installed the historical prefix through response index 45 and
+re-executed tool behavior against current code. The first same-file
+`insert_rust_item` still applied to `crates/printer/src/util.rs`. The follow-up
+`apply_code_edit` for `crate::util::Replacer::replace_all` did not stage a
+stale proposal. It emitted a model-facing tool error before staging:
+
+```text
+Cannot stage apply_code_edit for .../crates/printer/src/util.rs because the file version could not be verified: Content changed for ".../crates/printer/src/util.rs". Refresh or re-resolve the target before submitting another semantic edit.
+```
+
+That replay is not a new benchmark success: it intentionally stops at the old
+failure breakpoint and leaves only the helper insertion dirty in the throwaway
+worktree. It is useful evidence that this specific stale-anchor path now fails
+at admission instead of producing a staged-success message followed by a hidden
+apply failure.
+
 ## Empty Successful Reads
 
 The trace had 27 `empty_completed_read` calls. Several were not harmless EOF reads. Direct checkout verification shows requested ranges existed.
