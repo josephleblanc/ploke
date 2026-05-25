@@ -1,7 +1,8 @@
 # Prototype 1 Protocol Reasoning Config Blocker
 
-Status: fixed in source; original Gemini 3.5 Flash run should be rechecked with
-the live doctor preflight before advancing `baseline_protocol` again.
+Status: fixed in source and verified live for the direct-Google protocol route;
+missing protocol reasoning policy now means `auto`, and `auto` resolves to
+disabled reasoning for direct-Google protocol calls.
 Discovered: 2026-05-24
 
 ## Summary
@@ -202,6 +203,99 @@ blockers = []
 The original hard-coded `reasoning.effort = "none"` blocker is resolved in
 current source. Resume commands for this older campaign must still avoid the
 stale worktree-local binary that predates the fix.
+
+## 2026-05-25 Direct-Google Auto Default Recheck
+
+Campaign:
+
+```text
+p1-gemini35-flash-direct-fresh-20260524-193515
+```
+
+The fresh direct-Google run reached the expected post-eval boundary:
+
+```text
+eval.status = complete
+protocol.status = missing
+protocol artifacts written = 0
+doctor phase = baseline_protocol
+```
+
+The next bounded `prototype1-step` attempted baseline protocol segmentation and
+made no progress. The provider request was accepted with HTTP 200, but the
+response contained no assistant message:
+
+```text
+finish_reason = length
+prompt_tokens = 16176
+completion_tokens = 762
+reasoning_tokens = 7221
+```
+
+The request body omitted `reasoning` because the admitted profile did not
+include `[protocol.reasoning]`. A farther-progressed direct-Google run,
+`p1-google-live-multigen-2g3x3-20260523-192017`, completed protocol with
+requests that included:
+
+```json
+{"reasoning":{"effort":"none"}}
+```
+
+Interpretation:
+
+- The current campaign is not poisoned: no protocol artifact was admitted.
+- The profile surface was underspecified for direct Google; absent reasoning
+  policy should not silently mean "let the provider spend the full protocol
+  budget on hidden reasoning."
+- Explicit `mode = "omit"` still needs to remain available, but missing policy
+  should resolve through a route-aware safe default.
+
+Implemented repair:
+
+- Added `ProtocolReasoningMode::Auto` as the default profile/campaign policy.
+- `protocol_llm_config` now resolves `auto` to `disabled` for direct-Google
+  routes.
+- Explicit `mode = "omit"` is preserved for direct Google.
+
+Verification after repair:
+
+```text
+cargo test -p ploke-eval protocol_llm_config_ -- --nocapture
+cargo test -p ploke-eval run_profile_protocol -- --nocapture
+cargo test -p ploke-protocol reasoning -- --nocapture
+```
+
+All three focused test groups passed.
+
+Live doctor preflight against the same campaign also passed:
+
+```text
+protocol_preflight.outcome = passed
+model_id = google/gemini-3.5-flash
+provider = google
+route_source = direct_google
+reasoning = disabled
+max_tokens = 512
+phase = baseline_protocol
+blockers = []
+```
+
+The subsequent bounded resume step completed the required baseline protocol
+procedures on the same campaign:
+
+```text
+protocol.status = complete
+tool-call-intent-segments = complete
+tool-call-review = complete
+tool-call-segment-review = complete
+total_calls = 80
+reviewed_calls = 80
+total_segments = 11
+usable_segments = 11
+missing_call_indices = []
+missing_segment_indices = []
+doctor phase = child_plan
+```
 
 ## Related Code
 

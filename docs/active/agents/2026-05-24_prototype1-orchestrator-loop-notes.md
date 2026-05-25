@@ -538,3 +538,69 @@ Disposition:
   preflight blockers.
 - Start the next trustworthy loop evidence from a fresh campaign after the fix
   is committed.
+
+## Note 15: Direct-Google Protocol Failure Was Clean Config, Not Poisoned State
+
+Time: 2026-05-25 03:07 UTC
+
+Campaign:
+
+- `p1-gemini35-flash-direct-fresh-20260524-193515`
+
+What happened:
+
+- Baseline eval completed and produced a non-empty submission.
+- A run-review agent wrote
+  `docs/active/agents/run-reviews/2026-05-25-p1-gemini35-flash-direct-fresh-20260524-193515-eval.md`.
+- The next bounded step attempted baseline protocol segmentation and exited
+  nonzero with no protocol progress.
+- Closure still reports `protocol.status = missing`; no protocol artifact
+  directory exists for this campaign.
+
+Key comparison:
+
+- A farther-progressed direct-Google run,
+  `p1-google-live-multigen-2g3x3-20260523-192017`, completed all required
+  protocol procedures.
+- Its protocol requests included `reasoning.effort = "none"`.
+- The current failed request omitted `reasoning`; Gemini 3.5 Flash returned
+  HTTP 200 with `finish_reason = length`, no message, and
+  `reasoning_tokens = 7221`.
+
+Interpretation:
+
+- This is not an abandon condition. No invalid required protocol evidence was
+  admitted.
+- The admitted profile had no `[protocol.reasoning]`, so the controller treated
+  missing policy as omit. For direct Google, that is a poor safe default because
+  hidden reasoning can consume the visible protocol budget.
+
+Repair:
+
+- Treat missing protocol reasoning policy as `auto`.
+- Resolve `auto` to disabled reasoning for direct-Google protocol routes.
+- Preserve explicit `mode = "omit"` as an override.
+
+Verification:
+
+- `cargo test -p ploke-eval protocol_llm_config_ -- --nocapture` passed.
+- `cargo test -p ploke-eval run_profile_protocol -- --nocapture` passed.
+- `cargo test -p ploke-protocol reasoning -- --nocapture` passed.
+- `cargo build -p ploke-eval` passed.
+- Live doctor preflight passed for the same campaign with
+  `route_source = direct_google`, `reasoning = disabled`, and no blockers.
+- A bounded resume step completed baseline protocol on the same campaign:
+  80 reviewed calls, 11 usable segments, no missing call or segment indices.
+- Post-step doctor advanced to `child_plan`.
+
+Interpretation:
+
+- This was correctly handled as repair-and-resume, not abandon-and-restart.
+  The failed attempt had admitted no invalid required protocol artifact; the
+  broken contract was the default request policy for direct-Google protocol
+  calls.
+
+Next action:
+
+- Commit the controller/doc checkpoint.
+- Continue with one bounded step from `child_plan`.

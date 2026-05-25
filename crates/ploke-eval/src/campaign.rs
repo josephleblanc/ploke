@@ -86,7 +86,7 @@ pub struct ProtocolCampaignPolicy {
     pub max_concurrency: usize,
     #[serde(default = "default_protocol_max_tokens")]
     pub max_tokens: u32,
-    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_auto")]
     pub reasoning: ProtocolReasoningPolicy,
 }
 

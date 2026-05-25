@@ -74,7 +74,7 @@ file and current code before treating a report as still open.
 - [`2026-05-24-cargo-tool-validation-and-trace-summary-ambiguity.md`](./2026-05-24-cargo-tool-validation-and-trace-summary-ambiguity.md)
   Cargo output can be model-visible and repair-relevant while trace summaries hide it, and final cargo checks can resolve to weak focused manifests.
 - [`2026-05-24-prototype1-protocol-reasoning-config-blocker.md`](./2026-05-24-prototype1-protocol-reasoning-config-blocker.md)
-  Fixed in source: Prototype 1 protocol adjudication now carries admitted reasoning policy instead of unconditionally disabling reasoning; recheck the original run with the live doctor preflight.
+  Fixed and live-verified: Prototype 1 protocol adjudication carries admitted reasoning policy, and missing policy now resolves through route-aware `auto` defaults so direct-Google protocol calls disable hidden reasoning unless explicitly overridden.
 - [`2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md`](./2026-05-24-prototype1-live-preflight-reasoning-budget-false-negative.md)
   `prototype1-doctor --live-protocol-preflight` can falsely block reasoning-mandatory models because its 64-token canary budget is consumed by hidden reasoning before sentinel JSON is returned.
 - [`2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md`](./2026-05-24-prototype1-protocol-segmentation-json-trailing-characters.md)

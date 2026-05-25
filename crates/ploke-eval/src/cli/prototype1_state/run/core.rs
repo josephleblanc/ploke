@@ -2212,6 +2212,7 @@ mod tests {
     #[test]
     fn protocol_live_preflight_budget_bounds_reasoning_canary() {
         for reasoning in [
+            ploke_protocol::ProtocolReasoningPolicy::auto(),
             ploke_protocol::ProtocolReasoningPolicy::omit(),
             ploke_protocol::ProtocolReasoningPolicy::effort(ploke_llm::ReasoningEffort::Low),
         ] {

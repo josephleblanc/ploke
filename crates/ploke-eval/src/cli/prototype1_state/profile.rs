@@ -563,7 +563,7 @@ pub(crate) enum ArchiveScope {
 pub(crate) struct Protocol {
     #[serde(default = "default_protocol_max_tokens")]
     pub(crate) max_tokens: u32,
-    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_auto")]
     pub(crate) reasoning: ProtocolReasoningPolicy,
 }
 

@@ -7741,6 +7741,7 @@ pub(crate) fn protocol_llm_config(
 ) -> Result<JsonLlmConfig, PrepareError> {
     let model_id = resolve_protocol_model_id(model_id)?;
     let (route_source, provider_slug) = resolve_protocol_route(&model_id, route_source, provider)?;
+    let reasoning = effective_protocol_reasoning(route_source, reasoning);
     Ok(JsonLlmConfig {
         model_id: model_id.to_string(),
         route_source,
@@ -7750,6 +7751,17 @@ pub(crate) fn protocol_llm_config(
         max_tokens,
         reasoning,
     })
+}
+
+fn effective_protocol_reasoning(
+    route_source: ModelRouteSource,
+    reasoning: ProtocolReasoningPolicy,
+) -> ProtocolReasoningPolicy {
+    if route_source.is_direct_google() && reasoning == ProtocolReasoningPolicy::auto() {
+        ProtocolReasoningPolicy::disabled()
+    } else {
+        reasoning
+    }
 }
 
 async fn review_calls(
@@ -13982,6 +13994,7 @@ mod tests {
         assert!(cfg.route_source.is_direct_google());
         assert!(cfg.provider_slug.is_none());
         assert_eq!(cfg.provider_display(), "google");
+        assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::disabled());
     }
 
     #[test]
@@ -14092,6 +14105,24 @@ mod tests {
         assert!(cfg.route_source.is_direct_google());
         assert!(cfg.provider_slug.is_none());
         assert_eq!(cfg.provider_display(), "google");
+        assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::disabled());
+    }
+
+    #[test]
+    fn protocol_llm_config_preserves_explicit_direct_google_reasoning_omit() {
+        let cfg = protocol_llm_config(
+            Some("google/gemini-3.5-flash".to_string()),
+            Some(ModelRouteSource::DirectGoogle),
+            Some("google".to_string()),
+            120,
+            1,
+            400,
+            ProtocolReasoningPolicy::omit(),
+        )
+        .expect("protocol config");
+
+        assert!(cfg.route_source.is_direct_google());
+        assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::omit());
     }
 
     #[test]

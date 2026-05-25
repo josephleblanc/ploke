@@ -33,7 +33,7 @@ pub struct JsonLlmConfig {
     pub timeout_secs: u64,
     pub max_attempts: u32,
     pub max_tokens: u32,
-    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_omit")]
+    #[serde(default, skip_serializing_if = "ProtocolReasoningPolicy::is_auto")]
     pub reasoning: ProtocolReasoningPolicy,
 }
 
@@ -70,6 +70,13 @@ pub struct ProtocolReasoningPolicy {
 }
 
 impl ProtocolReasoningPolicy {
+    pub fn auto() -> Self {
+        Self {
+            mode: ProtocolReasoningMode::Auto,
+            effort: None,
+        }
+    }
+
     pub fn omit() -> Self {
         Self {
             mode: ProtocolReasoningMode::Omit,
@@ -91,13 +98,18 @@ impl ProtocolReasoningPolicy {
         }
     }
 
-    pub fn is_omit(&self) -> bool {
-        *self == Self::omit()
+    pub fn is_auto(&self) -> bool {
+        *self == Self::auto()
     }
 
     pub fn validate(&self) -> Result<(), String> {
         match (self.mode, self.effort) {
-            (ProtocolReasoningMode::Omit | ProtocolReasoningMode::Disabled, Some(_)) => Err(
+            (
+                ProtocolReasoningMode::Auto
+                | ProtocolReasoningMode::Omit
+                | ProtocolReasoningMode::Disabled,
+                Some(_),
+            ) => Err(
                 "protocol.reasoning.effort is only valid when protocol.reasoning.mode = \"effort\""
                     .to_string(),
             ),
@@ -115,6 +127,7 @@ impl ProtocolReasoningPolicy {
 
     pub fn as_reasoning_config(&self) -> Option<ReasoningConfig> {
         match self.mode {
+            ProtocolReasoningMode::Auto => None,
             ProtocolReasoningMode::Omit => None,
             ProtocolReasoningMode::Disabled => {
                 Some(ReasoningConfig::default().with_effort(ReasoningEffort::None))
@@ -127,6 +140,7 @@ impl ProtocolReasoningPolicy {
 
     pub fn display_label(&self) -> String {
         match self.mode {
+            ProtocolReasoningMode::Auto => "auto".to_string(),
             ProtocolReasoningMode::Omit => "omit".to_string(),
             ProtocolReasoningMode::Disabled => "disabled".to_string(),
             ProtocolReasoningMode::Effort => format!(
@@ -141,7 +155,7 @@ impl ProtocolReasoningPolicy {
 
 impl Default for ProtocolReasoningPolicy {
     fn default() -> Self {
-        Self::omit()
+        Self::auto()
     }
 }
 
@@ -149,6 +163,7 @@ impl Default for ProtocolReasoningPolicy {
 #[serde(rename_all = "kebab-case")]
 pub enum ProtocolReasoningMode {
     #[default]
+    Auto,
     Omit,
     Effort,
     Disabled,
