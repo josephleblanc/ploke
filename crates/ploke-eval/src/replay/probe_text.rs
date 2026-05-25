@@ -437,16 +437,19 @@ mod tests {
             "next_steps": [],
             "context": [
                 {
+                    "id": "00000000-0000-0000-0000-000000000001",
                     "file_path": "crates/printer/src/lib.rs",
                     "canon_path": "crate::MAX_LOOK_AHEAD",
                     "snippet": "const MAX_LOOK_AHEAD: usize = 128;"
                 },
                 {
+                    "id": "00000000-0000-0000-0000-000000000002",
                     "file_path": "crates/matcher/src/lib.rs",
                     "canon_path": "crate::replace",
                     "snippet": "fn replace<F>(haystack: &[u8], dst: &mut Vec<u8>, append: F) {}"
                 },
                 {
+                    "id": "00000000-0000-0000-0000-000000000003",
                     "file_path": "crates/regex/src/matcher.rs",
                     "canon_path": "crate::matcher::replace",
                     "snippet": "match self.matcher { Standard(ref m) => m.replace(haystack, dst, append) }"

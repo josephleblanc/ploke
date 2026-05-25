@@ -446,6 +446,7 @@ mod tests {
             text: text.to_string(),
             score: 1.0,
             modality: Modality::Sparse,
+            type_context: None,
         }
     }
 }

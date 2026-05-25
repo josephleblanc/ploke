@@ -1237,8 +1237,11 @@ mod tests {
         let checked = WS_FIXTURE_01_CANONICAL
             .checked_path()
             .expect("workspace fixture path should validate");
+        let resolved = backup_fixture_path_or_seed(&WS_FIXTURE_01_CANONICAL)
+            .expect("workspace fixture path should resolve");
 
-        assert_eq!(checked.path(), WS_FIXTURE_01_CANONICAL.path());
+        assert_eq!(checked.path(), resolved);
+        assert!(checked.path().exists());
         assert_eq!(
             checked.registered_path(),
             WS_FIXTURE_01_CANONICAL.registered_path()

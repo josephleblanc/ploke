@@ -234,3 +234,38 @@ merged advanced-branch docs/generated/archive files. Those warnings were not
 treated as an integration blocker and were not mass-cleaned in this merge,
 because doing so would add unrelated churn across the large primary-branch
 payload.
+
+## 2026-05-25 Workspace Test Follow-Up
+
+After the merge commit, `cargo test --workspace` was run as a broader
+validation pass. It initially exposed several test-only drift failures from the
+merge:
+
+- `syn_parser` typed type-use tests had an old `CrateContext` literal missing
+  the new `id` field.
+- `ploke-rag` context tests had an old `ContextPart` helper missing
+  `type_context`.
+- `ploke-tui` request-code-context matrix tests had an old `ToolCall` literal
+  missing `extra_content`.
+- `ploke-eval` replay tests had one hard-coded observe-child stale threshold
+  and one stale request-code-context JSON shape missing context item IDs.
+- `ploke-test-utils` fixture DB tests compared `checked_path()` to
+  `FixtureDb::path()` directly. That was wrong for checkout-local fixture
+  policy, because `checked_path()` validates the effective resolved path while
+  `path()` can still represent a raw shared-snapshot fallback candidate.
+
+The fixture test was updated to compare `checked_path()` against
+`backup_fixture_path_or_seed(&fixture)`, preserving the strict fixture path
+semantics documented above. No backup importer validation was relaxed.
+
+Final validation:
+
+- `cargo fmt --all`
+- `cargo test -p syn_parser --lib`
+- `cargo test -p ploke-rag --lib`
+- `cargo test -p ploke-tui --lib`
+- targeted `ploke-eval` replay tests
+- targeted `ploke-test-utils` fixture path test
+- `cargo test --workspace`
+
+The final `cargo test --workspace` run passed.

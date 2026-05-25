@@ -723,7 +723,7 @@ mod typed_tests {
     use super::*;
     use crate::discovery::{CrateContext, Dependencies, DevDependencies, Features};
     use crate::parser::nodes::{GeneratesAnyNodeId as _, ModuleNodeId};
-    use ploke_core::ItemKind;
+    use ploke_core::{CrateId, ItemKind};
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -731,6 +731,7 @@ mod typed_tests {
         let namespace = Uuid::new_v4();
         let root = PathBuf::from("/tmp/typed-type-graph-test");
         let context = CrateContext {
+            id: CrateId::from_root_path(&root),
             name: "typed_type_graph_test".into(),
             version: "0.0.0".into(),
             namespace,

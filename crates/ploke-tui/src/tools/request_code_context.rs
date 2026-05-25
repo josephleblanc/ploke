@@ -511,6 +511,7 @@ mod gat_tests {
                     })
                     .to_string(),
                 },
+                extra_content: None,
             };
 
             super::super::process_tool(tool_call, ctx).await?;
