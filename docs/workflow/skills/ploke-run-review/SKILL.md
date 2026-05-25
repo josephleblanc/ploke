@@ -13,28 +13,53 @@ information and whether the run advanced toward a patch or oracle result.
 ## Default Workflow
 
 1. Resolve the exact campaign, instance, run root, and `record.json.gz`.
-2. Read durable state first:
+2. Resolve the execution path that produced the artifact before borrowing any
+   prior RCA:
+   - exact CLI command or Prototype 1 state-machine phase
+   - code entrypoint that ran the turn
+   - event producer, event recorder, and read-side/protocol projection
+3. Read durable state first:
    - `closure status`
    - run profile and campaign manifest
    - per-run submission and patch projection
    - protocol overview/artifacts
-3. Run the bundled trace audit if a run root is available:
+4. Run the bundled trace audit if a run root is available:
 
    ```bash
    python3 docs/workflow/skills/ploke-run-review/scripts/run_trace_audit.py <run-root> --markdown
    ```
 
-4. Compare three ledgers:
+5. Compare three ledgers:
    - provider-emitted tool calls from `llm-full-responses.jsonl`
    - recorded tool lifecycle from `record.json.gz` and sidecars
    - semantic usefulness of returned payloads
-5. Drill into suspicious calls before drawing conclusions.
-6. Extract positive examples and candidate LLM-adjudication signals.
-7. Classify action items as non-blockers or blockers. File or update alive bugs
+6. Drill into suspicious calls before drawing conclusions.
+7. Extract positive examples and candidate LLM-adjudication signals.
+8. Classify action items as non-blockers or blockers. File or update alive bugs
    for non-blockers while the loop continues; blockers hand off to
    `ploke-blocker-repair-loop` before the campaign advances again.
-8. Write or update the run review in `docs/active/agents/run-reviews/`.
-9. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+9. Write or update the run review in `docs/active/agents/run-reviews/`.
+10. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
+
+## Execution Path First
+
+Before diagnosing a lifecycle or tool failure, prove which command path produced
+the artifact. Do not transfer a prior fix or RCA from `tui_adapter`, `runner.rs`,
+`record.rs`, or `session.rs` until the active path is confirmed.
+
+Common split:
+
+- `prototype1-harness attempt` / published broad headless-TUI requests use
+  `tui_adapter::run_headless_with_model`.
+- `loop prototype1-step` eval turns use the Prototype 1 state machine and
+  `runner.rs::run_benchmark_turn`; later protocol/read-side code may consume
+  the resulting `record.json.gz`.
+
+In the report, name the active path compactly, for example:
+
+```text
+prototype1-step -> run_planned_child -> runner.rs::run_benchmark_turn -> record.rs -> protocol
+```
 
 ## Required Distinctions
 
@@ -51,6 +76,30 @@ Keep these layers separate in the report:
 Do not equate `ToolCompleted`, `ok:true`, or protocol `key_progress` with real
 progress unless the returned content supports that claim.
 
+## Edit Lifecycle Reconstruction
+
+For edit tools, build a per-`call_id` timeline from raw events before trusting
+summaries:
+
+```text
+requested -> staged/pending -> applied/failed/stale/denied
+```
+
+Do not summarize an edit call from the first `ToolCallCompleted`. For staged
+proposal tools, `ToolCallCompleted` can mean only `staged > 0, applied = 0`.
+Keep these views separate:
+
+- actual edit/apply outcome in the raw event stream and proposal artifact
+- model-visible tool result or message update
+- persisted run-record projection
+- protocol/adjudication projection
+
+When a final patch is suspicious, compare `patch_artifact` proposal statuses,
+raw edit events, and the target checkout diff. If an edit applied to a file and
+a later same-file edit failed with `Content changed`, check whether the later
+edit resolved against stale file-hash or node-span metadata after the first
+apply.
+
 ## Trace Audit Checklist
 
 For each reviewed run, check:
@@ -64,6 +113,10 @@ For each reviewed run, check:
 - fuzzy or invented search terms that returned broad context
 - late useful context followed by no edit or no patch
 - edit/tool success that means staged/proposed rather than applied
+- same-call edit lifecycles where a staged `ToolCallCompleted` is superseded by
+  a later applied/failed/stale/denied event
+- same-file follow-up edits after an earlier applied edit, especially stale
+  hash failures or missing post-apply refresh boundaries
 - protocol artifacts that over-credit empty or low-information results
 - model-visible tool output that caused a useful follow-up read, edit, or validation retry
 - final validation commands that resolved to an unrelated or weak target

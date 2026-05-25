@@ -87,3 +87,5 @@ file and current code before treating a report as still open.
   Prototype 1 baseline eval can export a patch and mark closure complete even when the terminal agent turn aborted without a final assistant message.
 - [`2026-05-24-prototype1-protocol-misses-hidden-apply-failure.md`](./2026-05-24-prototype1-protocol-misses-hidden-apply-failure.md)
   Prototype 1 protocol can mark an edit segment successful from staged tool summaries while a later hidden apply failure leaves the final patch behaviorally incomplete.
+- [`2026-05-25-prototype1-same-file-semantic-edit-stale-anchor.md`](./2026-05-25-prototype1-same-file-semantic-edit-stale-anchor.md)
+  Prototype 1 eval can apply one same-file edit, then fail a follow-up canonical semantic edit because it resolved against stale file-hash anchors.
