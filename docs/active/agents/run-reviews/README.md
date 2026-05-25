@@ -71,3 +71,13 @@ state without checking newer code, History records, and run artifacts.
   protocol stages completed, classifying four repaired malformed adjudicator
   JSON outputs, preserving useful LLM-adjudication examples, and separating
   protocol completion from stale operator projections.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-node-57e8487f70ce4abc-r10-r11-broad-harness.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-node-57e8487f70ce4abc-r10-r11-broad-harness.md)
+  Broad-harness child review for `node-57e8487f70ce4abc-r10` and `r11`,
+  reconstructing prompt, tool-output visibility, edit staging/application,
+  cargo evidence, missing transition authority, and positive/negative
+  adjudication examples while keeping both attempts separate.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-node-57e8487f70ce4abc-r12-broad-harness.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824-node-57e8487f70ce4abc-r12-broad-harness.md)
+  Broad-harness child review for `node-57e8487f70ce4abc-r12`, reconstructing
+  the prompt, model-visible tool lifecycle, applied `ploke-protocol` edit,
+  focused cargo evidence, missing ploke-eval validation, transition-authority
+  gap, and adjudication examples.
