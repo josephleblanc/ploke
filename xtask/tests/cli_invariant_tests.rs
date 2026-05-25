@@ -15,6 +15,21 @@ fn cli_root_help_shows_parse_and_db() {
     let s = err.to_string();
     assert!(s.contains("parse"), "§C.3: {s}");
     assert!(s.contains("db"), "§C.3: {s}");
+    assert!(
+        s.contains("pipeline"),
+        "pipeline command should be discoverable: {s}"
+    );
+}
+
+#[test]
+fn cli_pipeline_help_lists_subcommands() {
+    let err = Cli::try_parse_from(["xtask", "pipeline", "--help"]).expect_err("DisplayHelp");
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    let s = err.to_string();
+    assert!(s.contains("list"), "{s}");
+    assert!(s.contains("find"), "{s}");
+    assert!(s.contains("show"), "{s}");
+    assert!(s.contains("check"), "{s}");
 }
 
 #[test]

@@ -36,6 +36,7 @@ pub mod db;
 pub mod orchestrate;
 pub mod parse;
 pub mod parse_debug;
+pub mod pipeline;
 
 // Re-export types from core architecture
 pub use crate::context::CommandContext;

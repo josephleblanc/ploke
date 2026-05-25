@@ -11863,6 +11863,7 @@ dependencies = [
  "chrono",
  "clap",
  "cozo",
+ "itertools 0.14.0",
  "once_cell",
  "ploke-core",
  "ploke-db",

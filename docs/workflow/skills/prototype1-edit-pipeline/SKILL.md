@@ -17,8 +17,16 @@ Read these before changing code:
 - `docs/workflow/evalnomicon/drafts/edit-surface/pipeline-function-index.md`
 - `docs/active/plans/self-improvement-loop/edit-tool-gated-refresh-subgoal.md`
 
-Then run the discovery command from `pipeline-function-index.md` and inspect
-the current source around the functions it returns.
+Then query the project-wide registry and inspect the current source around the
+functions it returns:
+
+```bash
+cargo xtask pipeline show prototype1.edit_tool_gated_refresh
+cargo xtask pipeline find --path <source-file>
+```
+
+Use `pipeline-function-index.md` for broader source discovery when the registry
+does not yet cover the relevant function.
 
 ## Invariants
 

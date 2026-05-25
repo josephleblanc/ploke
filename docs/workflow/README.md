@@ -22,6 +22,8 @@ Common entry points:
 - [phase-tracking-template.md](phase-tracking-template.md)
 - [postmortem-template.md](postmortem-template.md)
 - [target-capability-registry.md](target-capability-registry.md)
+- [pipeline-registry.md](pipeline-registry.md)
+- [pipeline-registry.jsonl](pipeline-registry.jsonl)
 - [experiment-config.v0.draft.json](experiment-config.v0.draft.json)
 - [run-manifest.v0.draft.json](run-manifest.v0.draft.json)
 - [evalnomicon/README.md](evalnomicon/README.md)

@@ -19,7 +19,7 @@
 
 use crate::commands::{
     CommandContext, OutputFormat, XtaskError, check::Check, db::Db, orchestrate::Orchestrate,
-    parse::Parse,
+    parse::Parse, pipeline::Pipeline,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -91,6 +91,10 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Pipeline(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
             Commands::HelpTopic(cmd) => {
                 cmd.print_help();
                 return Ok(());
@@ -141,6 +145,10 @@ pub enum Commands {
     #[command(subcommand)]
     Orchestrate(Orchestrate),
 
+    /// Look up source functions that belong to documented workflow pipelines
+    #[command(subcommand)]
+    Pipeline(Pipeline),
+
     /// Display detailed help for topics
     ///
     /// Shows detailed help for commands and topics beyond standard --help.
@@ -187,12 +195,14 @@ COMMANDS:
     parse         Parse source code and analyze structure
     db            Database operations and queries
     orchestrate   Coordinate sub-agent worker slots and task queues
+    pipeline      Look up documented source pipelines
     help          Display help information
 
 EXAMPLES:
     cargo xtask parse discovery ./my-crate
     cargo xtask --format json db count-nodes
     cargo xtask orchestrate status
+    cargo xtask pipeline find --path crates/ploke-tui/src/rag/tools.rs
     cargo xtask help examples
 
 For more help on a specific command:
