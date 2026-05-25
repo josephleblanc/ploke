@@ -14,6 +14,12 @@ fresh campaign exists and with `ploke-run-review` once a run root needs deeper
 trace reconstruction. If the diagnostic result is loop-blocking, switch to
 `ploke-blocker-repair-loop` before advancing the campaign again.
 
+For state-transition, History, Crown, surface-digest, or successor-handoff
+questions, first read
+`docs/workflow/skills/ploke-diagnostic-loop-run/references/prototype1-history-crown.md`.
+That reference explains why strict transition gates are part of the
+self-editing safety model rather than ordinary defensive checks.
+
 ## Boundaries
 
 - Prefer `prototype1-step` for diagnostic work. Use `prototype1-continue` only
