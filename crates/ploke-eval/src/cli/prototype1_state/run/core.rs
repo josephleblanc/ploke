@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     marker::PhantomData,
     path::{Path, PathBuf},
@@ -815,37 +816,16 @@ fn prompt_preflight(
         );
     }
 
+    let live_request_ids = live_broad_request_ids_from_child_plan(context, &mut problems)?;
     for published in load_published_broad_requests(&context.manifest_path)? {
-        prompt_files.push(published.prompt_path().to_path_buf());
-        checked.push(PromptReference::check(
-            "published prompt file",
-            published.prompt_path().to_path_buf(),
-            PromptReferenceKind::File,
-        ));
-        match fs::read_to_string(published.prompt_path()) {
-            Ok(prompt) => {
-                let rendered = published.request().render_prompt();
-                if prompt != rendered {
-                    problems.push(format!(
-                        "published prompt '{}' does not match its typed request render",
-                        published.prompt_path().display()
-                    ));
-                }
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(PrepareError::ReadManifest {
-                    path: published.prompt_path().to_path_buf(),
-                    source,
-                });
-            }
-        }
-        checked.extend(prompt_refs_from_request(
-            published.request(),
-            published.workspace_path(),
-            true,
-            true,
-        ));
+        extend_published_prompt_checks(
+            &published,
+            live_request_ids.as_ref(),
+            &mut checked,
+            &mut prompt_files,
+            &mut problems,
+            &mut notes,
+        )?;
     }
 
     Ok(PromptPreflight::from_parts(
@@ -854,6 +834,87 @@ fn prompt_preflight(
         problems,
         notes,
     ))
+}
+
+fn live_broad_request_ids_from_child_plan(
+    context: &RuntimeContext,
+    problems: &mut Vec<String>,
+) -> Result<Option<BTreeSet<String>>, PrepareError> {
+    let mut child_plan_blockers = Vec::new();
+    let Some(plan) = load_child_plan(context, &mut child_plan_blockers)? else {
+        return Ok(None);
+    };
+    problems.extend(
+        child_plan_blockers
+            .into_iter()
+            .map(|problem| format!("child-plan prompt preflight: {problem}")),
+    );
+
+    let mut request_ids = BTreeSet::new();
+    for child in plan.children() {
+        let Some(evidence) = child.harness_evidence() else {
+            problems.push(format!(
+                "broad-harness child plan node '{}' is missing request-bound harness evidence",
+                child.node_id()
+            ));
+            continue;
+        };
+        request_ids.insert(evidence.request().request_id().to_string());
+    }
+    Ok(Some(request_ids))
+}
+
+fn extend_published_prompt_checks(
+    published: &PublishedBroadHarnessRequest,
+    live_request_ids: Option<&BTreeSet<String>>,
+    checked: &mut Vec<PromptReference>,
+    prompt_files: &mut Vec<PathBuf>,
+    problems: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) -> Result<(), PrepareError> {
+    prompt_files.push(published.prompt_path().to_path_buf());
+    checked.push(PromptReference::check(
+        "published prompt file",
+        published.prompt_path().to_path_buf(),
+        PromptReferenceKind::File,
+    ));
+    match fs::read_to_string(published.prompt_path()) {
+        Ok(prompt) => {
+            let rendered = published.request().render_prompt();
+            if prompt != rendered {
+                problems.push(format!(
+                    "published prompt '{}' does not match its typed request render",
+                    published.prompt_path().display()
+                ));
+            }
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: published.prompt_path().to_path_buf(),
+                source,
+            });
+        }
+    }
+
+    if live_request_ids
+        .map(|request_ids| request_ids.contains(published.request_id()))
+        .unwrap_or(true)
+    {
+        checked.extend(prompt_refs_from_request(
+            published.request(),
+            published.workspace_path(),
+            true,
+            true,
+        ));
+    } else {
+        notes.push(format!(
+            "published broad-harness prompt '{}' is not referenced by the child plan; candidate workspace checks skipped",
+            published.prompt_path().display()
+        ));
+    }
+
+    Ok(())
 }
 
 fn prototype1_root(campaign_manifest_path: &Path) -> PathBuf {
@@ -2093,6 +2154,38 @@ mod tests {
             .expect("write backend");
     }
 
+    fn request_admission_binding_for_test()
+    -> crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding {
+        let artifact_id = crate::loop_graph::ArtifactId::new("artifact:prompt-preflight-base");
+        crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::from_admission(
+            &crate::cli::prototype1_state::backend::EditSurfaceAdmission::new(
+                crate::loop_graph::Coordinate {
+                    runtime_id: RuntimeId::new(),
+                    target: crate::loop_graph::OperationTarget::Artifact {
+                        artifact_id,
+                    },
+                },
+                crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId::new(
+                    "workspace except ploke-eval",
+                ),
+            ),
+        )
+        .expect("construct request admission binding")
+    }
+
+    fn write_published_prompt_for_test(published: &PublishedBroadHarnessRequest) {
+        if let Some(parent) = published.request_path().parent() {
+            fs::create_dir_all(parent).expect("create request dir");
+        }
+        fs::write(
+            published.request_path(),
+            serde_json::to_string_pretty(published).expect("serialize published request"),
+        )
+        .expect("write request json");
+        fs::write(published.prompt_path(), published.request().render_prompt())
+            .expect("write prompt");
+    }
+
     #[test]
     fn prompt_preflight_accepts_existing_prompt_references() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -2158,6 +2251,85 @@ mod tests {
         assert!(preflight.checked.iter().any(|reference| {
             !reference.present && reference.path.ends_with("prototype1/nodes")
         }));
+    }
+
+    #[test]
+    fn prompt_preflight_skips_unused_published_slot_workspaces_after_child_plan() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let prototype = temp.path().join("campaign/prototype1");
+        fs::create_dir_all(prototype.join("nodes")).expect("create nodes");
+        fs::create_dir_all(prototype.join("evaluations")).expect("create evals");
+        fs::write(prototype.join("evaluations/branch-sample.json"), "{}\n")
+            .expect("write eval sample");
+        let request_path = prototype.join("messages/edit-harness-request/node-parent.json");
+        let prompt_path = prototype.join("messages/edit-harness-request/node-parent.md");
+        let result_path = prototype.join("messages/edit-harness-result/node-parent.json");
+        let binding = request_admission_binding_for_test();
+
+        let first = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype,
+            request_path.clone(),
+            prompt_path.clone(),
+            result_path.clone(),
+            binding.clone(),
+        );
+        write_published_prompt_for_test(&first);
+        write_protected_core(first.workspace_path());
+
+        let second = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-parent".to_string(),
+            repo,
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype,
+            request_path,
+            prompt_path,
+            result_path,
+            binding,
+        );
+        write_published_prompt_for_test(&second);
+
+        let mut live_request_ids = BTreeSet::new();
+        live_request_ids.insert(first.request_id().to_string());
+        let mut checked = Vec::new();
+        let mut prompt_files = Vec::new();
+        let mut problems = Vec::new();
+        let mut notes = Vec::new();
+        for published in [&first, &second] {
+            extend_published_prompt_checks(
+                published,
+                Some(&live_request_ids),
+                &mut checked,
+                &mut prompt_files,
+                &mut problems,
+                &mut notes,
+            )
+            .expect("extend prompt checks");
+        }
+
+        let preflight = PromptPreflight::from_parts(checked, prompt_files, problems, notes);
+
+        assert_eq!(preflight.outcome, PromptPreflightOutcome::Passed);
+        assert_eq!(preflight.prompt_files.len(), 2);
+        assert!(preflight.notes.iter().any(|note| {
+            note.contains("not referenced by the child plan") && note.contains("node-parent-r2.md")
+        }));
+        assert!(
+            !preflight
+                .checked
+                .iter()
+                .any(|reference| reference.path.starts_with(second.workspace_path()))
+        );
     }
 
     #[test]

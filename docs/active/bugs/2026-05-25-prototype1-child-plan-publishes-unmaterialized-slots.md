@@ -1,7 +1,8 @@
 # Prototype 1 Child Plan Publishes Unmaterialized Slots
 
-Status: open
+Status: source fixed
 Discovered: 2026-05-25
+Fixed: 2026-05-25
 
 ## Summary
 
@@ -99,8 +100,22 @@ operator setup.
 
 ## Disposition
 
-Blocker. Stop advancing this campaign for clean loop evidence. Add a
-step-level or prompt-preflight regression that reproduces the exact condition:
-published child prompt files without matching materialized candidate
-workspaces must either be impossible or classified as canceled/skipped rather
-than blocking future doctor checks.
+Blocker. Stop advancing this campaign for clean loop evidence; the existing
+campaign artifacts were not patched or reinterpreted.
+
+Source fix: `prototype1-doctor` prompt preflight now derives live broad-harness
+prompt obligations from request IDs carried in the child plan's request-bound
+harness evidence. Published prompt files that are not referenced by the child
+plan remain checked as prompt artifacts, but their candidate workspace paths are
+classified as unused slots and do not block doctor.
+
+Regression: `prompt_preflight_skips_unused_published_slot_workspaces_after_child_plan`
+covers a published `r2` prompt without a materialized workspace after the child
+plan live set contains only the first request.
+
+Verification:
+
+```text
+cargo test -p ploke-eval prompt_preflight_skips_unused_published_slot_workspaces_after_child_plan
+cargo test -p ploke-eval prompt_preflight
+```
