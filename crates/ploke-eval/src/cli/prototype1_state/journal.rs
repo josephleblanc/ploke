@@ -1659,18 +1659,17 @@ mod tests {
             .expect("replay observe child");
 
         assert_eq!(replay.len(), 1);
-        assert!(matches!(
-            &replay[0],
+        let expected_stale_after_ms = DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS * 1_000;
+        match &replay[0] {
             CompletionReplay {
-                outcome: CompletionOutcome::Pending {
-                    disposition: PendingCompletion::StaleOrHung {
-                        stale_after_ms: 600_000,
-                        ..
+                outcome:
+                    CompletionOutcome::Pending {
+                        disposition: PendingCompletion::StaleOrHung { stale_after_ms, .. },
                     },
-                },
                 ..
-            }
-        ));
+            } => assert_eq!(*stale_after_ms, expected_stale_after_ms),
+            other => panic!("expected stale pending completion, got {other:?}"),
+        }
     }
 
     #[test]

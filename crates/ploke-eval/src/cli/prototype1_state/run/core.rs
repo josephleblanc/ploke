@@ -25,6 +25,7 @@ use crate::{
         load_node_record, load_runner_request, load_runner_result,
     },
     projection::OperatorProjectionRead,
+    run_registry::{RunExecutionStatus, list_registrations_for_instance},
     spec::PrepareError,
 };
 
@@ -1066,6 +1067,63 @@ fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut 
     }
 }
 
+fn extend_baseline_eval_registration_blockers(
+    closure: &crate::closure::ClosureState,
+    blockers: &mut Vec<String>,
+) -> Result<(), PrepareError> {
+    for row in &closure.instances {
+        let registrations =
+            list_registrations_for_instance(&closure.config.instances_root, &row.instance_id)?;
+
+        if let Some(registration) = registrations.iter().find(|registration| {
+            matches!(
+                registration.lifecycle.execution_status,
+                RunExecutionStatus::Registered | RunExecutionStatus::Running
+            )
+        }) {
+            let record_state = if registration.artifacts.record_path.exists() {
+                "record exists"
+            } else {
+                "record missing"
+            };
+            let turn_summary_state = registration
+                .artifacts
+                .turn_summary
+                .as_ref()
+                .map(|path| {
+                    if path.exists() {
+                        "turn summary exists"
+                    } else {
+                        "turn summary missing"
+                    }
+                })
+                .unwrap_or("turn summary unregistered");
+            blockers.push(format!(
+                "baseline eval has nonterminal registered attempt '{}' for instance '{}' \
+                 with execution_status={:?}, updated_at={}, {}, {}; refusing to start \
+                 another baseline eval until this attempt is classified or abandoned",
+                registration.run_id,
+                row.instance_id,
+                registration.lifecycle.execution_status,
+                registration.lifecycle.updated_at,
+                record_state,
+                turn_summary_state
+            ));
+            continue;
+        }
+
+        if row.eval_status == ClosureClass::Partial {
+            blockers.push(format!(
+                "baseline eval for instance '{}' is partial in closure state; refusing to \
+                 rerun over partial evidence without explicit classification",
+                row.instance_id
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 impl PromptPreflight {
     fn skipped(note: impl Into<String>) -> Self {
         Self {
@@ -1134,9 +1192,10 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
                 if closure.eval.status != ClosureClass::Complete {
                     let prompt_preflight = prompt_preflight(context, false)?;
                     extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
+                    extend_baseline_eval_registration_blockers(&closure, &mut blockers)?;
                     return Ok(Diagnosis {
                         context: context.clone(),
-                        phase: DiagnosedPhase::BaselineEval,
+                        phase: phase_or_blocked(DiagnosedPhase::BaselineEval, &blockers),
                         current_child: None,
                         blockers,
                         notes,
@@ -1150,7 +1209,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
                     extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
                     return Ok(Diagnosis {
                         context: context.clone(),
-                        phase: DiagnosedPhase::BaselineProtocol,
+                        phase: phase_or_blocked(DiagnosedPhase::BaselineProtocol, &blockers),
                         current_child: None,
                         blockers,
                         notes,
@@ -1165,7 +1224,7 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
                 extend_prompt_preflight_blockers(&prompt_preflight, &mut blockers);
                 return Ok(Diagnosis {
                     context: context.clone(),
-                    phase: DiagnosedPhase::BaselineEval,
+                    phase: phase_or_blocked(DiagnosedPhase::BaselineEval, &blockers),
                     current_child: None,
                     blockers,
                     notes,
@@ -1277,6 +1336,14 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
         child_plan,
         child_snapshots,
     })
+}
+
+fn phase_or_blocked(phase: DiagnosedPhase, blockers: &[String]) -> DiagnosedPhase {
+    if blockers.is_empty() {
+        phase
+    } else {
+        DiagnosedPhase::Blocked
+    }
 }
 
 fn terminal_phase_from_marker(marker: SuccessorMarkerState) -> DiagnosedPhase {
@@ -2734,6 +2801,42 @@ mod tests {
     }
 
     #[test]
+    fn nonterminal_baseline_eval_registration_adds_doctor_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path();
+        let instances_root = eval_home.join("instances/prototype1/campaign");
+        let instance_id = "BurntSushi__ripgrep-2209";
+        let registration =
+            write_running_registration_for_test(eval_home, &instances_root, instance_id);
+        let closure = closure_state_for_test(instances_root, instance_id, ClosureClass::Missing);
+        let mut blockers = Vec::new();
+
+        extend_baseline_eval_registration_blockers(&closure, &mut blockers)
+            .expect("extend blockers");
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains(&registration.run_id));
+        assert!(blockers[0].contains("nonterminal registered attempt"));
+        assert!(blockers[0].contains("record missing"));
+        assert!(blockers[0].contains("turn summary missing"));
+    }
+
+    #[test]
+    fn partial_baseline_eval_closure_adds_doctor_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let instances_root = temp.path().join("instances/prototype1/campaign");
+        let instance_id = "BurntSushi__ripgrep-2209";
+        let closure = closure_state_for_test(instances_root, instance_id, ClosureClass::Partial);
+        let mut blockers = Vec::new();
+
+        extend_baseline_eval_registration_blockers(&closure, &mut blockers)
+            .expect("extend blockers");
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("partial in closure state"));
+    }
+
+    #[test]
     fn stale_observe_before_adds_doctor_blocker() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime_id = RuntimeId::new();
@@ -2787,6 +2890,135 @@ mod tests {
         assert!(blockers[0].contains("node 'node-dead-child' is running"));
         assert!(blockers[0].contains("child pid 4294967295 is not visible"));
         assert!(blockers[0].contains("results/"));
+    }
+
+    fn write_running_registration_for_test(
+        eval_home: &Path,
+        instances_root: &Path,
+        instance_id: &str,
+    ) -> crate::inner::registry::RunRegistration {
+        use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
+        use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus, RunRegistration};
+        use crate::spec::EvalBudget;
+
+        let run_id = "run-running-baseline";
+        let runs_dir = instances_root.join(instance_id).join("runs");
+        let registries_dir = instances_root
+            .parent()
+            .expect("instances root parent")
+            .join("registries");
+        let intent = RunIntent {
+            task_id: instance_id.to_string(),
+            repo_root: eval_home.join("repos/BurntSushi/ripgrep"),
+            storage_roots: RunStorageRoots::new(registries_dir, runs_dir),
+            base_sha: Some("base".to_string()),
+            budget: EvalBudget {
+                max_turns: 40,
+                max_tool_calls: 200,
+                wall_clock_secs: 1800,
+            },
+            model_id: Some("google/gemini-3.5-flash".to_string()),
+            provider_slug: Some("google".to_string()),
+            campaign_id: Some("campaign".to_string()),
+            batch_id: Some("batch".to_string()),
+            run_arm_id: "structured-current-policy".to_string(),
+            run_role: RegisteredRunRole::Treatment,
+        };
+        let mut registration =
+            RunRegistration::register_with_run_id(intent, run_id).expect("registration");
+        registration.artifacts.turn_summary =
+            Some(registration.run_root().join("agent-turn-summary.json"));
+        fs::create_dir_all(registration.run_root()).expect("create run root");
+        fs::write(registration.artifacts.indexing_status.clone(), "{}")
+            .expect("write indexing status");
+        registration.mark_execution_started(Some("run setup started".to_string()));
+        registration.update_phase(
+            RunLifecyclePhase::Patching,
+            RunPhaseStatus::InProgress,
+            Some("agent inquiry running".to_string()),
+        );
+        registration.persist().expect("persist registration");
+        registration
+    }
+
+    fn closure_state_for_test(
+        instances_root: PathBuf,
+        instance_id: &str,
+        eval_status: ClosureClass,
+    ) -> crate::closure::ClosureState {
+        use crate::closure::{
+            ClosureArtifactRefs, ClosureConfig, ClosureInstanceRow, EvalClosureSummary,
+            ProtocolClosureSummary, RegistryClosureSummary, RegistryInstanceStatus,
+        };
+        use crate::target_registry::{BenchmarkFamily, RegistryDatasetSource};
+
+        crate::closure::ClosureState {
+            schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
+            campaign_id: "campaign".to_string(),
+            updated_at: "2026-05-25T00:00:00Z".to_string(),
+            config: ClosureConfig {
+                benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+                model_id: Some("google/gemini-3.5-flash".to_string()),
+                provider_slug: Some("google".to_string()),
+                route_source: None,
+                registry_path: None,
+                dataset_sources: vec![RegistryDatasetSource {
+                    key: None,
+                    path: PathBuf::from("slice.jsonl"),
+                    label: "slice".to_string(),
+                    url: None,
+                }],
+                required_procedures: Vec::new(),
+                instances_root,
+                batches_root: PathBuf::from("batches"),
+                framework: Default::default(),
+            },
+            registry: RegistryClosureSummary {
+                expected_total: 1,
+                mapped_total: 1,
+                missing_total: 0,
+                ambiguous_total: 0,
+                status: ClosureClass::Complete,
+            },
+            eval: EvalClosureSummary {
+                expected_total: 1,
+                complete_total: usize::from(eval_status == ClosureClass::Complete),
+                failed_total: usize::from(eval_status == ClosureClass::Failed),
+                missing_total: usize::from(eval_status == ClosureClass::Missing),
+                partial_total: usize::from(eval_status == ClosureClass::Partial),
+                in_progress_total: 0,
+                status: eval_status,
+                last_transition_at: None,
+            },
+            protocol: ProtocolClosureSummary {
+                expected_total: 0,
+                full_total: 0,
+                partial_total: 0,
+                failed_total: 0,
+                missing_total: 0,
+                incompatible_total: 0,
+                ineligible_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Missing,
+                required_procedures: Vec::new(),
+                status_by_procedure: Default::default(),
+                last_transition_at: None,
+            },
+            instances: vec![ClosureInstanceRow {
+                instance_id: instance_id.to_string(),
+                dataset_label: "slice".to_string(),
+                repo_family: "BurntSushi__ripgrep".to_string(),
+                registry_status: RegistryInstanceStatus::Mapped,
+                eval_status,
+                protocol_status: ClosureClass::Ineligible,
+                eval_failure: None,
+                protocol_failure: None,
+                artifacts: ClosureArtifactRefs::default(),
+                protocol_procedures: Default::default(),
+                protocol_counts: None,
+                last_event_at: None,
+            }],
+        }
     }
 
     fn observe_before_entry(

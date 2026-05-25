@@ -107,6 +107,45 @@ Recommended scout shards:
   closure state, protocol artifacts, evaluation artifacts, MBE/oracle evidence,
   selection History payloads, metric/formula records, and projection failures.
 
+Record-surface checklist for scout assignment:
+
+- Authority and ordering spine:
+  sealed History blocks, transition journal, parent identity, run profile and
+  commitment, scheduler projection.
+- Parent planning and child admission:
+  branch registry, child plan messages, node records, runner request, invocation
+  records, runtime result records, successor readiness/completion records, and
+  parent/child channel JSONL files.
+- Broad harness and edit attempts:
+  published edit request, submitted edit result, headless TUI trace, candidate
+  workspace git state, proposal lifecycle, surface/policy receipt, and
+  model-visible validation command output.
+- Eval run root and model exchange:
+  run registration, `record.json.gz`, `agent-turn-trace.json`,
+  `agent-turn-summary.json`, `llm-full-responses.jsonl`, validation audit,
+  benchmark patch projection, Multi-SWE-bench submission, batch/instance
+  manifests, prompt messages, complete router request evidence, raw provider
+  response, and model/provider provenance.
+- Index and database witnesses:
+  indexing status, parse failure artifact, indexing checkpoint DB, indexing
+  failure DB, snapshot status, final snapshot DB, Cozo time-travel markers, and
+  redirected TUI proposal store only when the run records that path or ids.
+- Protocol and adjudication:
+  protocol artifact root, tool-call intent segmentation, tool-call review,
+  tool-call segment review, and procedure provenance.
+- Evaluation, selection, and successor evidence:
+  evaluation artifacts, compared run evidence, oracle/MBE evidence, sealed
+  selection decision payload, candidate payloads, metric set/formula,
+  projection failures, successor-ready records, and successor-completion
+  records.
+
+Do not treat this as a mandatory-everywhere checklist. Each scout should mark
+items with the labels from `record-persistence-checklist.md`: `present`,
+`record absent`, `record present, playback gap`, `record present, manual join
+needed`, `operator/convenience record`, or `not applicable`. A missing record is
+only a red flag when the current phase, profile, or state transition expected it
+to exist.
+
 Each scout should return only:
 
 - the exact root, node, runtime id, branch id, run id, or attempt it checked;
