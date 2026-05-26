@@ -219,12 +219,60 @@ impl Transition for LockChildPlan {
     type To = Parent<Planned>;
 }
 
+impl observe::ObservedTransition for LockChildPlan {
+    const ROLE: observe::Role = observe::Role::Parent;
+    const PIPELINE: observe::Pipeline = observe::Pipeline::ChildPlanAuthority;
+    const STAGE: observe::Stage = observe::Stage::MessageLock;
+    const AUTHORITY: observe::Authority = observe::Authority::ParentBroadcastChannel;
+    const LABEL: &'static str = "Parent<Ready>->Parent<Planned>";
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UnlockChildPlan;
 
 impl Transition for UnlockChildPlan {
     type From = Parent<Planned>;
     type To = Parent<Selectable>;
+}
+
+impl observe::ObservedTransition for UnlockChildPlan {
+    const ROLE: observe::Role = observe::Role::Parent;
+    const PIPELINE: observe::Pipeline = observe::Pipeline::ChildPlanAuthority;
+    const STAGE: observe::Stage = observe::Stage::MessageReceive;
+    const AUTHORITY: observe::Authority = observe::Authority::ParentBroadcastChannel;
+    const LABEL: &'static str = "ChildPlan->Parent<Selectable>";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AwaitHarnessPlan;
+
+impl Transition for AwaitHarnessPlan {
+    type From = Parent<Ready>;
+    type To = Parent<AwaitingHarnessPlan>;
+}
+
+impl observe::ObservedTransition for AwaitHarnessPlan {
+    const ROLE: observe::Role = observe::Role::Parent;
+    const PIPELINE: observe::Pipeline = observe::Pipeline::ChildPlanAuthority;
+    const STAGE: observe::Stage = observe::Stage::RequestPublication;
+    const AUTHORITY: observe::Authority = observe::Authority::ParentBroadcastChannel;
+    const LABEL: &'static str = "Parent<Ready>->Parent<AwaitingHarnessPlan>";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AcceptHarnessPlan;
+
+impl Transition for AcceptHarnessPlan {
+    type From = Parent<AwaitingHarnessPlan>;
+    type To = Parent<Ready>;
+}
+
+impl observe::ObservedTransition for AcceptHarnessPlan {
+    const ROLE: observe::Role = observe::Role::Parent;
+    const PIPELINE: observe::Pipeline = observe::Pipeline::ChildPlanAuthority;
+    const STAGE: observe::Stage = observe::Stage::TypestateTransition;
+    const AUTHORITY: observe::Authority = observe::Authority::ParentBroadcastChannel;
+    const LABEL: &'static str = "Parent<AwaitingHarnessPlan>->Parent<Ready>";
 }
 
 impl File for ChildPlanFile {
@@ -943,56 +991,13 @@ impl Parent<Ready> {
         &self.identity
     }
 
-    #[instrument(
-        target = "ploke_exec",
-        level = "info",
-        skip(self),
-        fields(
-            role = "parent",
-            authority = "parent_broadcast_channel",
-            transition = "Parent<Ready>->Parent<Planned>",
-            runtime_id = %self.runtime_id,
-            campaign_id = %self.identity.campaign_id(),
-            parent_id = %self.identity.parent_id(),
-            node_id = %self.identity.node_id(),
-            generation = self.identity.generation(),
-            branch_id = %self.identity.branch_id(),
-        )
-    )]
     pub(crate) fn planned_from_locked_child_plan(self) -> Parent<Planned> {
-        info!(
-            target: "ploke_exec",
-            role = "parent",
-            authority = "parent_broadcast_channel",
-            transition = "Parent<Ready>->Parent<Planned>",
-            runtime_id = %self.runtime_id,
-            campaign_id = %self.identity.campaign_id(),
-            parent_id = %self.identity.parent_id(),
-            node_id = %self.identity.node_id(),
-            generation = self.identity.generation(),
-            branch_id = %self.identity.branch_id(),
-            "locked parent child-plan broadcast"
-        );
-        self.cast()
+        let identity = self.identity.clone();
+        observe::transition::<LockChildPlan>(&identity)
+            .stage(observe::Stage::RetryReplay)
+            .commit(|| self.cast())
     }
 
-    #[instrument(
-        target = "ploke_exec",
-        level = "info",
-        skip(self, harness_request),
-        fields(
-            role = "parent",
-            authority = "parent_broadcast_channel",
-            transition = "Parent<Ready>->Parent<AwaitingHarnessPlan>",
-            runtime_id = %self.runtime_id,
-            campaign_id = %self.identity.campaign_id(),
-            parent_id = %self.identity.parent_id(),
-            node_id = %self.identity.node_id(),
-            generation = self.identity.generation(),
-            branch_id = %self.identity.branch_id(),
-            request_id = %harness_request.request_id(),
-        )
-    )]
     pub(crate) fn awaiting_harness_plan_for_request(
         self,
         harness_request: harness_request::request::Reference<
@@ -1000,22 +1005,9 @@ impl Parent<Ready> {
             harness_request::request::Published,
         >,
     ) -> Parent<AwaitingHarnessPlan> {
-        info!(
-            target: "ploke_exec",
-            role = "parent",
-            authority = "parent_broadcast_channel",
-            transition = "Parent<Ready>->Parent<AwaitingHarnessPlan>",
-            runtime_id = %self.runtime_id,
-            campaign_id = %self.identity.campaign_id(),
-            parent_id = %self.identity.parent_id(),
-            node_id = %self.identity.node_id(),
-            generation = self.identity.generation(),
-            branch_id = %self.identity.branch_id(),
-            request_id = %harness_request.request_id(),
-            request_hash = %harness_request.request_hash(),
-            "published broad harness request and is awaiting a request-bound child-plan response"
-        );
-        self.into_state(AwaitingHarnessPlan { harness_request })
+        let identity = self.identity.clone();
+        observe::transition::<AwaitHarnessPlan>(&identity)
+            .commit(|| self.into_state(AwaitingHarnessPlan { harness_request }))
     }
 }
 
@@ -1040,22 +1032,8 @@ impl Parent<AwaitingHarnessPlan> {
     }
 
     pub(crate) fn accept_harness_plan(self) -> Parent<Ready> {
-        info!(
-            target: "ploke_exec",
-            role = "parent",
-            authority = "parent_broadcast_channel",
-            transition = "Parent<AwaitingHarnessPlan>->Parent<Ready>",
-            runtime_id = %self.runtime_id,
-            campaign_id = %self.identity.campaign_id(),
-            parent_id = %self.identity.parent_id(),
-            node_id = %self.identity.node_id(),
-            generation = self.identity.generation(),
-            branch_id = %self.identity.branch_id(),
-            request_id = %self.state.harness_request.request_id(),
-            request_hash = %self.state.harness_request.request_hash(),
-            "accepted request-bound harness response and resumed child-plan locking"
-        );
-        self.into_state(Ready)
+        let identity = self.identity.clone();
+        observe::transition::<AcceptHarnessPlan>(&identity).commit(|| self.into_state(Ready))
     }
 }
 
@@ -1403,24 +1381,19 @@ mod tests {
     #[test]
     fn parent_planning_transition_emits_authority_trace() {
         let parent = parent("parent-a", 0);
-        let runtime_id = *parent.runtime_id();
-
         let (_planned, trace) = collect_traces(|| parent.planned_from_locked_child_plan());
 
         assert!(trace_contains(
             &trace,
             &[
+                "event=typestate_transition",
                 "transition=Parent<Ready>->Parent<Planned>",
                 "authority=parent_broadcast_channel",
+                "pipeline=prototype1.child_plan_authority",
+                "phase=retry_replay",
                 "role=parent",
+                "outcome=committed",
                 "node_id=parent-a",
-                &format!("runtime_id={runtime_id}"),
-            ],
-        ));
-        assert!(trace_contains(
-            &trace,
-            &[
-                "locked parent child-plan broadcast",
                 "campaign_id=campaign",
                 "branch_id=branch-parent-a",
             ],

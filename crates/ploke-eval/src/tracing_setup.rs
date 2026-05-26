@@ -103,7 +103,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let console_layer = tracing_fmt::layer()
         .event_format(CompactConsoleFormat)
         .with_ansi(true)
-        .with_writer(std::io::stderr);
+        .with_writer(std::io::stdout);
     let console_filter = if cfg!(feature = "demo") {
         filter::Targets::new().with_default(filter::LevelFilter::OFF)
     } else if debug_tools {
@@ -279,6 +279,16 @@ fn format_prototype1_console_event(
         if let Some(path) = fields.get(key) {
             write!(writer, " {}={}", short_path_key(key), compact_path(path))?;
         }
+    }
+    if let Some(kind) = fields.get("record_kind") {
+        if let Some(access) = fields.get("record_access") {
+            write!(writer, " {access}:{kind}")?;
+        } else {
+            write!(writer, " record={kind}")?;
+        }
+    }
+    if let Some(path) = fields.get("record_path") {
+        write!(writer, " path={}", compact_path(path))?;
     }
     if let Some(duration) = fields.get("duration_ms") {
         write!(writer, " {duration}ms")?;

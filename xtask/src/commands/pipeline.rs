@@ -62,7 +62,7 @@ pub struct PipelineList {
 /// Arguments for `pipeline find`.
 #[derive(Debug, Clone, Args)]
 pub struct PipelineFind {
-    /// Optional free-text query matched against pipeline, stage, path, symbol, role, docs, and tests.
+    /// Optional free-text query matched against pipeline, stage, path, symbol, role, docs, supporting docs, and tests.
     #[arg(value_name = "QUERY")]
     query: Option<String>,
 
@@ -267,6 +267,8 @@ pub struct PipelineSummary {
     pub functions: usize,
     /// Docs linked from the pipeline metadata.
     pub docs: Vec<String>,
+    /// Progressive-disclosure docs linked from the pipeline metadata.
+    pub supporting_docs: Vec<String>,
 }
 
 /// One parsed JSONL registry record.
@@ -304,6 +306,9 @@ pub struct RegistryRecord {
     /// Authority docs for this record.
     #[serde(default)]
     pub docs: Vec<String>,
+    /// Supporting docs for deeper discovery after authority docs.
+    #[serde(default)]
+    pub supporting_docs: Vec<String>,
     /// Focused tests related to this record.
     #[serde(default)]
     pub tests: Vec<String>,
@@ -373,6 +378,7 @@ fn list(ctx: &CommandContext, registry: &Path) -> Result<PipelineOutput, XtaskEr
                 owner_area: entry.record.owner_area.clone(),
                 summary: entry.record.summary.clone(),
                 docs: entry.record.docs.clone(),
+                supporting_docs: entry.record.supporting_docs.clone(),
             }
         })
         .collect::<Vec<_>>();
@@ -552,6 +558,13 @@ fn validate_registry(entries: &[RegistryEntry], root: &Path) -> Vec<RegistryProb
                     problems.push(problem(entry, Some(id), "duplicate pipeline id"));
                 }
                 validate_paths(&mut problems, entry, root, &record.docs, "doc");
+                validate_paths(
+                    &mut problems,
+                    entry,
+                    root,
+                    &record.supporting_docs,
+                    "supporting doc",
+                );
                 validate_paths(&mut problems, entry, root, &record.bugs, "bug");
             }
             "function" => {
@@ -561,6 +574,13 @@ fn validate_registry(entries: &[RegistryEntry], root: &Path) -> Vec<RegistryProb
                 let symbol = required(&mut problems, entry, record.symbol.as_deref(), "symbol");
                 required(&mut problems, entry, record.role.as_deref(), "role");
                 validate_paths(&mut problems, entry, root, &record.docs, "doc");
+                validate_paths(
+                    &mut problems,
+                    entry,
+                    root,
+                    &record.supporting_docs,
+                    "supporting doc",
+                );
                 validate_paths(&mut problems, entry, root, &record.bugs, "bug");
                 if let (Some(path), Some(symbol)) = (path, symbol) {
                     validate_source_symbol(&mut problems, entry, root, path, symbol);
@@ -739,7 +759,7 @@ fn hook_row_key(entry: &RegistryEntry) -> String {
 
 fn render_hook_context(matches: &[HookMatch]) -> String {
     let mut lines = vec![
-        "Pipeline registry context: this prompt or tool input mentions registered workflow pipeline code. Read the linked authority docs before changing behavior.".to_string(),
+        "Pipeline registry context: this prompt or tool input mentions registered workflow pipeline code. Read the linked docs before changing behavior; use supporting_docs for progressive follow-up when the primary docs are insufficient.".to_string(),
     ];
 
     for hook_match in matches {
@@ -775,6 +795,21 @@ fn render_hook_context(matches: &[HookMatch]) -> String {
         );
         if !docs.is_empty() {
             lines.push(format!("  docs: {}", docs.into_iter().take(4).join(", ")));
+        }
+
+        let supporting_docs = unique_strings(
+            record.supporting_docs.iter().chain(
+                hook_match
+                    .pipeline
+                    .iter()
+                    .flat_map(|pipeline| pipeline.supporting_docs.iter()),
+            ),
+        );
+        if !supporting_docs.is_empty() {
+            lines.push(format!(
+                "  supporting_docs: {}",
+                supporting_docs.into_iter().take(4).join(", ")
+            ));
         }
 
         let tests = unique_strings(
@@ -901,6 +936,7 @@ impl RegistryRecord {
         .chain(
             self.docs
                 .iter()
+                .chain(self.supporting_docs.iter())
                 .chain(self.tests.iter())
                 .chain(self.bugs.iter())
                 .map(String::as_str),
@@ -1011,6 +1047,47 @@ mod tests {
         assert!(
             suppressed.is_none(),
             "same registry row should be suppressed within cooldown"
+        );
+    }
+
+    #[test]
+    fn pipeline_hook_context_emits_supporting_docs_separately() {
+        let ctx = CommandContext::new().expect("CommandContext");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cmd = PipelineHookContext {
+            registry: PathBuf::from(DEFAULT_REGISTRY),
+            state_path: temp.path().join("pipeline-hook-state.json"),
+            cooldown_secs: DEFAULT_HOOK_COOLDOWN_SECS,
+            max_matches: 5,
+        };
+        let input = serde_json::json!({
+            "cwd": ctx.workspace_root().expect("root").display().to_string(),
+            "hook_event_name": "UserPromptSubmit",
+            "model": "gpt-5.5",
+            "permission_mode": "default",
+            "prompt": "I want to edit receive_existing_child_plan",
+            "session_id": "test-session",
+            "transcript_path": null,
+            "turn_id": "test-turn"
+        })
+        .to_string();
+
+        let output = cmd
+            .output_for_event(&ctx, &input)
+            .expect("hook context should execute")
+            .expect("registered symbol should produce context");
+        let serialized = serde_json::to_value(output).expect("serialize hook output");
+        let context = serialized["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("additional context");
+
+        assert!(context.contains("prototype1.child_plan_authority"));
+        assert!(context.contains(
+            "docs: crates/ploke-eval/docs/prototype1-child-plan-authority/zero-admission-flow.md"
+        ));
+        assert!(context.contains("supporting_docs:"));
+        assert!(
+            context.contains("docs/workflow/evalnomicon/drafts/runtime/parent-child-channel.md")
         );
     }
 }

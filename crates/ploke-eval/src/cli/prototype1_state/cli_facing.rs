@@ -95,7 +95,8 @@ use crate::{
             observe,
             parent::{
                 AwaitingHarnessPlan, Check, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles,
-                Genesis, Parent, Planned, Predecessor, Ready, Selectable, Startup, Unchecked,
+                Genesis, LockChildPlan, Parent, Planned, Predecessor, Ready, Selectable, Startup,
+                Unchecked, UnlockChildPlan,
             },
             profile, selection as state_selection,
             successor::Record as SuccessorRecord,
@@ -760,6 +761,7 @@ pub(crate) struct PlannedChildOutcome {
 const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
 const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
 const BROAD_TUI_STASH_TRANSFER_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_STASH_TRANSFER";
+const BROAD_TUI_PRODUCER: &str = "prototype1:broad-headless-tui-adapter-v1";
 
 struct DeterministicTuiToolsCandidates {
     checked: Vec<CheckedSurfaceEdit>,
@@ -1251,11 +1253,16 @@ async fn run_legacy_parent_target_selection(
         report.staged_children.clone(),
     );
     let at = files.message_at();
+    let observed_at = at.clone();
     let open = Open::<ChildPlan>::from_sender(parent, files);
-    let (planned, locked) = open
-        .lock(at, |at, body| {
-            validate_child_plan(&parent_identity, &report, body)?;
-            write_child_plan_file(at.path(), body)
+    let (planned, locked) = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::MessageLock)
+        .writes(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| {
+            open.lock(at, |at, body| {
+                validate_child_plan(&parent_identity, &report, body)?;
+                write_child_plan_file(at.path(), body)
+            })
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -1484,7 +1491,8 @@ async fn run_broad_headless_tui_attempt_with_options(
     let repo_root = slot.published.request().workspace.source_repository_path();
     backend
         .prepare_broad_harness_workspace(repo_root, &slot.published)
-        .map_err(|source| PrepareError::InvalidBatchSelection {
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "broad_headless_tui_workspace",
             detail: format!("failed to prepare broad headless-tui workspace: {source}"),
         })?;
 
@@ -1993,7 +2001,7 @@ fn broad_harness_child_from_admitted(
                 admitted.request_id()
             ))),
             branch_label: format!("broad harness edit {}", admitted.request_id()),
-            synthesized_spec_id: "prototype1:broad-headless-tui-adapter-v1".to_string(),
+            synthesized_spec_id: BROAD_TUI_PRODUCER.to_string(),
             proposed_content,
             proposed_content_hash,
             generation_target: Some(crate::loop_graph::OperationTarget::Artifact {
@@ -2030,6 +2038,11 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
     admitted: Vec<AdmittedBroadHarnessResult>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     if admitted.len() < batch.child_budget.min as usize {
+        let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
+        let rejected_attempts = rejected_attempts(&batch, &admitted);
+        let ready_parent = batch.parent.accept_harness_plan();
+        persist_rejected_plan(manifest_path, ready_parent, rejected_attempts)?;
+        write_node_projection(&failed_parent)?;
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "broad harness admitted {} child transaction(s), fewer than required minimum {}",
@@ -2057,11 +2070,16 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
         .collect::<Result<Vec<_>, PrepareError>>()?;
     let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, children);
     let at = files.message_at();
+    let observed_at = at.clone();
     let ready_parent = batch.parent.accept_harness_plan();
     let open = Open::<ChildPlan>::from_sender(ready_parent, files);
-    let (planned, locked) = open
-        .lock(at, |at, body| {
-            validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+    let (planned, locked) = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::BatchAdmission)
+        .writes(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| {
+            open.lock(at, |at, body| {
+                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+            })
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -2075,6 +2093,138 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
         planned,
         locked,
     )
+}
+
+fn persist_rejected_plan(
+    manifest_path: &Path,
+    parent: Parent<Ready>,
+    rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+) -> Result<(), PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let files = ChildPlanFiles::for_parent(manifest_path, &parent_identity, Vec::new())
+        .with_rejected_surface_attempts(rejected_surface_attempts);
+    let at = files.message_at();
+    let observed_at = at.clone();
+    let open = Open::<ChildPlan>::from_sender(parent, files);
+    let _ = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::FailedBatchPersistence)
+        .writes(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| {
+            open.lock(at, |at, body| {
+                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+            })
+        })
+        .map_err(|err| {
+            let (_parent, source) = err.into_parts();
+            source
+        })?;
+    Ok(())
+}
+
+fn rejected_attempts(
+    batch: &HarnessRequestBatch,
+    admitted: &[AdmittedBroadHarnessResult],
+) -> Vec<surface_attempt::Evidence> {
+    batch
+        .slots
+        .iter()
+        .filter(|slot| {
+            let request_id = slot.published.request_id();
+            !admitted
+                .iter()
+                .any(|admitted| admitted.request_id() == request_id)
+        })
+        .map(|slot| {
+            surface_attempt::Evidence::rejected(
+                BROAD_TUI_PRODUCER,
+                slot.published.request_id().to_string(),
+                slot.published.request_hash().to_string(),
+                serde_name(&slot.published.request().edit_policy),
+                PathBuf::from("."),
+                slot_rejection(slot),
+            )
+        })
+        .collect()
+}
+
+fn slot_rejection(slot: &HarnessRequestSlot) -> String {
+    let diagnostics_path =
+        broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
+    let text = match fs::read_to_string(&diagnostics_path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return format!(
+                "broad headless-tui slot '{}' produced no submitted result or diagnostics at '{}'",
+                slot.published.request_id(),
+                diagnostics_path.display()
+            );
+        }
+        Err(source) => {
+            return format!(
+                "broad headless-tui slot '{}' diagnostics could not be read at '{}': {source}",
+                slot.published.request_id(),
+                diagnostics_path.display()
+            );
+        }
+    };
+    let summary = match serde_json::from_str::<tui_adapter::evidence::Summary>(&text) {
+        Ok(summary) => summary,
+        Err(source) => {
+            return format!(
+                "broad headless-tui slot '{}' diagnostics could not be decoded at '{}': {source}",
+                slot.published.request_id(),
+                diagnostics_path.display()
+            );
+        }
+    };
+    let terminal = summary
+        .terminal
+        .as_ref()
+        .map(terminal_reason)
+        .unwrap_or_else(|| {
+            format!(
+                "ended without terminal outcome after {} recorded attempt(s)",
+                summary.attempts.len()
+            )
+        });
+    format!(
+        "broad headless-tui slot '{}' {terminal}; diagnostics='{}'",
+        slot.published.request_id(),
+        diagnostics_path.display()
+    )
+}
+
+fn terminal_reason(terminal: &tui_adapter::evidence::Terminal) -> String {
+    match terminal {
+        tui_adapter::evidence::Terminal::Applied { changed_paths, .. } => {
+            format!(
+                "reported applied terminal for {} path(s) but was not admitted",
+                changed_paths.len()
+            )
+        }
+        tui_adapter::evidence::Terminal::Exhausted {
+            attempts,
+            last_feedback,
+        } => {
+            format!("exhausted {attempts} attempt(s) without an admissible edit: {last_feedback}")
+        }
+        tui_adapter::evidence::Terminal::CompletedWithoutEdit { outcome, summary } => {
+            format!("completed without edit: outcome={outcome}; {summary}")
+        }
+        tui_adapter::evidence::Terminal::ToolFailed { error } => {
+            format!("tool failed: {error}")
+        }
+        tui_adapter::evidence::Terminal::NoEdit => "produced no edit".to_string(),
+        tui_adapter::evidence::Terminal::ContextUnavailable { reason } => {
+            format!("prompt context unavailable: {reason}")
+        }
+        tui_adapter::evidence::Terminal::ProviderUnavailable { reason } => {
+            format!("provider unavailable: {reason}")
+        }
+        tui_adapter::evidence::Terminal::TimedOut { secs } => {
+            format!("timed out after {secs} seconds")
+        }
+    }
 }
 
 fn publish_broad_harness_child_plan_from_admitted(
@@ -2382,9 +2532,10 @@ fn validate_and_write_broad_harness_child_plan(
             ),
         });
     }
-    if body.children().is_empty() {
+    if body.children().is_empty() && body.rejected_surface_attempts().is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
-            detail: "broad harness child plan must contain admitted children".to_string(),
+            detail: "broad harness child plan cannot be empty without rejected attempt evidence"
+                .to_string(),
         });
     }
     for child in body.children() {
@@ -2395,7 +2546,7 @@ fn validate_and_write_broad_harness_child_plan(
 
 fn validate_requested_broad_harness_child(child: &ChildFiles) -> Result<(), PrepareError> {
     let node = child.node_record();
-    if child.resolved().branch.synthesized_spec_id != "prototype1:broad-headless-tui-adapter-v1" {
+    if child.resolved().branch.synthesized_spec_id != BROAD_TUI_PRODUCER {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "broad harness child '{}' was not produced by the headless TUI adapter",
@@ -3022,10 +3173,15 @@ fn receive_existing_child_plan(
         manifest_path.to_path_buf(),
         parent_identity.node_id().to_string(),
     ));
-    let locked = Locked::<ChildPlan>::from_box(at, read_child_plan_message).map_err(|err| {
-        let (_at, source) = err.into_parts();
-        source
-    })?;
+    let observed_at = at.clone();
+    let locked = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::RetryReplay)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| Locked::<ChildPlan>::from_box(at, read_child_plan_message))
+        .map_err(|err| {
+            let (_at, source) = err.into_parts();
+            source
+        })?;
     let planned = parent.planned_from_locked_child_plan();
     receive_child_plan(
         campaign_id,
@@ -3054,12 +3210,17 @@ fn receive_child_plan(
             ),
         });
     }
-    let (parent, plan) = locked.unlock(planned).map_err(|err| {
-        let (_failed, source) = err.into_parts();
-        PrepareError::InvalidBatchSelection {
-            detail: source.to_string(),
-        }
-    })?;
+    let observed_at = locked.at().clone();
+    let (parent, plan) = observe::transition::<UnlockChildPlan>(parent_identity)
+        .stage(observe::Stage::MessageReceive)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| locked.unlock(planned))
+        .map_err(|err| {
+            let (_failed, source) = err.into_parts();
+            PrepareError::InvalidBatchSelection {
+                detail: source.to_string(),
+            }
+        })?;
     let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
     Ok(ChildPlanReceipt {
         parent,
@@ -7361,7 +7522,10 @@ async fn resolve_child_plan(
                             Ok(value) => {
                                 executor = value;
                             }
-                            Err(source @ PrepareError::ProviderUnavailable { .. }) => {
+                            Err(
+                                source @ (PrepareError::ProviderUnavailable { .. }
+                                | PrepareError::DatabaseSetup { .. }),
+                            ) => {
                                 return Err(source);
                             }
                             Err(source) => {

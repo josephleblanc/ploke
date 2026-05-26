@@ -454,6 +454,10 @@ pub(crate) struct Locked<M: Message> {
 }
 
 impl<M: Message> Locked<M> {
+    pub(crate) fn at(&self) -> &At<M::Box> {
+        &self.at
+    }
+
     pub(crate) fn from_box<E, F>(at: At<M::Box>, read: F) -> Result<Self, UnlockReadError<M, E>>
     where
         F: FnOnce(&At<M::Box>) -> Result<M::Body, E>,

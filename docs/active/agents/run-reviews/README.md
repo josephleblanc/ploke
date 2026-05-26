@@ -81,3 +81,8 @@ state without checking newer code, History records, and run artifacts.
   the prompt, model-visible tool lifecycle, applied `ploke-protocol` edit,
   focused cargo evidence, missing ploke-eval validation, transition-authority
   gap, and adjudication examples.
+- [`2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-140904-baseline-eval-protocol-run-1779743381178.md`](2026-05-25-p1-gemini35-flash-direct-15g2x3-20260525-140904-baseline-eval-protocol-run-1779743381178.md)
+  Combined baseline eval and protocol review for `BurntSushi__ripgrep-2209`,
+  covering non-empty patch/submission output, model-visible cargo results,
+  final cargo-scope mismatch, completed protocol artifacts, repaired malformed
+  adjudicator JSON, and child-plan record gaps.

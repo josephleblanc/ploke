@@ -119,6 +119,17 @@ fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
     (result, lines.snapshot())
 }
 
+async fn collect_traces_async<T>(f: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
+    let lines = TraceLines::default();
+    let subscriber = Registry::default().with(TraceLayer {
+        lines: lines.clone(),
+    });
+    let guard = tracing::subscriber::set_default(subscriber);
+    let result = f.await;
+    drop(guard);
+    (result, lines.snapshot())
+}
+
 fn trace_contains(lines: &[String], needles: &[&str]) -> bool {
     lines
         .iter()
@@ -856,6 +867,18 @@ fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready
     checked.ready(startup).expect("ready parent")
 }
 
+fn count_broad_requests(manifest_path: &Path) -> usize {
+    let request_dir = prototype1_campaign_root(manifest_path).join("messages/edit-harness-request");
+    match fs::read_dir(request_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .count(),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(source) => panic!("read request dir: {source}"),
+    }
+}
+
 fn test_broad_request_admission_binding() -> RequestAdmissionBinding {
     RequestAdmissionBinding::from_admission(&EditSurfaceAdmission::new(
         Coordinate {
@@ -979,6 +1002,208 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
     };
     assert_eq!(phase, "broad_headless_tui_attempt");
     assert!(detail.contains(&reason), "unexpected detail: {detail}");
+}
+
+#[tokio::test]
+async fn broad_tui_prep_failure_is_setup_blocker() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "workspace prep fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget { min: 1, max: 1 },
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    fs::create_dir_all(slot.published.workspace_path()).expect("create unmanaged workspace path");
+    let options = BroadTuiAttemptOptions {
+        model: None,
+        max_attempts: Some(1),
+        timeout_secs: Some(60),
+    };
+
+    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
+        .await
+        .expect_err("workspace preparation failures must stop child planning");
+
+    let PrepareError::DatabaseSetup { phase, detail } = err else {
+        panic!("expected setup blocker, got {err:?}");
+    };
+    assert_eq!(phase, "broad_headless_tui_workspace");
+    assert!(
+        detail.contains("failed to prepare broad headless-tui workspace"),
+        "unexpected detail: {detail}"
+    );
+    assert!(
+        detail.contains("not managed by git worktree metadata"),
+        "unexpected detail: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn zero_admission_batch_is_persisted() {
+    let historical_request: PublishedBroadHarnessRequest = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.request.json"
+    ));
+    let historical_summary: tui_adapter::evidence::Summary = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.headless-tui.json"
+    ));
+    assert_eq!(
+        historical_request.request_id(),
+        "broad-harness-request:node-18f71c7f3b1718b8"
+    );
+    assert!(matches!(
+        historical_summary.terminal,
+        Some(tui_adapter::evidence::Terminal::TimedOut { secs: 240 })
+    ));
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "zero admission fixture");
+    // Parent<Ready> is the last parent-only state before child-plan authority is
+    // resolved. No child runtime channel or ChildFiles exist yet.
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget: Prototype1ChildBudget = Prototype1ChildBudget { min: 2, max: 3 };
+
+    // Publishing the broad-harness request consumes Parent<Ready> and returns a
+    // batch carrying Parent<AwaitingHarnessPlan>; from here the controller must
+    // either lock a ChildPlan message or fail without pretending the phase is
+    // still fresh.
+    let batch: HarnessRequestBatch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    let first_diagnostics =
+        broad_headless_tui_diagnostics_path(batch.slots[0].published.submitted_result_path());
+    write_json_file_pretty(&first_diagnostics, &historical_summary)
+        .expect("write historical diagnostic into temp slot");
+    let request_count_before = count_broad_requests(&manifest_path);
+
+    // Zero admitted children is an error, but it still represents an attempted
+    // child-plan phase. The below-min branch must accept the harness-plan state
+    // back to Parent<Ready>, lock a rejected-attempt-only ChildPlan, and then
+    // return InvalidBatchSelection.
+    let (result, failed_batch_trace) = collect_traces(|| {
+        publish_broad_harness_child_plan_from_admitted_batch(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            batch,
+            Vec::new(),
+        )
+    });
+    dump_trace_if_requested(&failed_batch_trace);
+    let err = match result {
+        Ok(_) => panic!("zero admitted broad harness batch must not seal children"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("broad harness admitted 0 child transaction(s)"),
+        "{err}"
+    );
+    assert!(trace_contains(
+        &failed_batch_trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<AwaitingHarnessPlan>->Parent<Ready>",
+            "phase=typestate_transition",
+            "outcome=committed",
+        ],
+    ));
+    assert!(trace_contains(
+        &failed_batch_trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=failed_batch_persistence",
+            "record_access=write",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+
+    // Retry starts again from Parent<Ready>. A persisted ChildPlanFile should
+    // move through Locked<ChildPlan> -> Parent<Planned> -> Parent<Selectable>
+    // through the same profile-dispatched child-plan resolver used by
+    // advance_child_plan, instead of minting fresh request slots.
+    let resumed_parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let run_profile = toml::from_str::<profile::Prototype1RunProfile>(
+        r#"
+schema_version = "prototype1-run-profile.v1"
+name = "zero-admission-replay"
+"#,
+    )
+    .expect("profile parses");
+    run_profile.validate().expect("profile validates");
+    let (planned_result, replay_trace) = collect_traces_async(resolve_profile_child_plan(
+        "campaign",
+        &manifest_path,
+        &repo_root,
+        resumed_parent,
+        &run_profile,
+        budget,
+    ))
+    .await;
+    dump_trace_if_requested(&replay_trace);
+    let planned: PlannedChildren = planned_result
+        .expect("failed broad harness batch should be recoverable as rejected evidence");
+    assert!(trace_contains(
+        &replay_trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+    assert!(trace_contains(
+        &replay_trace,
+        &[
+            "event=typestate_transition",
+            "transition=ChildPlan->Parent<Selectable>",
+            "phase=message_receive",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+
+    assert!(planned.children.is_empty());
+    assert!(
+        !planned.rejected_surface_attempts.is_empty(),
+        "failed broad harness batch must persist rejected attempt evidence"
+    );
+    assert_eq!(
+        count_broad_requests(&manifest_path),
+        request_count_before,
+        "replaying child_plan must reuse the persisted failed batch instead of minting fresh request slots"
+    );
+    assert!(
+        planned.rejected_surface_attempts.iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("timed out after 240 seconds")
+            )
+        }),
+        "historical timeout should be visible in parent-readable rejected attempt evidence: {:?}",
+        planned.rejected_surface_attempts
+    );
 }
 
 // regr:timeoutapplied:22-05-26_01-27
@@ -1971,14 +2196,49 @@ fn broad_harness_batch_admits_three_transactions_into_three_children() {
         })
         .collect::<Vec<_>>();
 
-    let receipt = publish_broad_harness_child_plan_from_admitted_batch(
-        "campaign",
-        &manifest_path,
-        &repo_root,
-        batch,
-        admitted,
-    )
-    .expect("three admitted broad transactions should seal one three-child plan");
+    let (receipt, trace) = collect_traces(|| {
+        publish_broad_harness_child_plan_from_admitted_batch(
+            "campaign",
+            &manifest_path,
+            &repo_root,
+            batch,
+            admitted,
+        )
+    });
+    dump_trace_if_requested(&trace);
+    let receipt =
+        receipt.expect("three admitted broad transactions should seal one three-child plan");
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<AwaitingHarnessPlan>->Parent<Ready>",
+            "phase=typestate_transition",
+            "outcome=committed",
+        ],
+    ));
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=batch_admission",
+            "record_access=write",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=ChildPlan->Parent<Selectable>",
+            "phase=message_receive",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
 
     let children = receipt.plan.body().children();
     assert_eq!(children.len(), 3);
@@ -2212,6 +2472,124 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             .any(|payload| payload.has_parent_readable_surface_attempt()),
         "rejected-only projection should produce parent-readable attempt evidence"
     );
+}
+
+#[test]
+fn child_plan_replay_rejects_wrong_parent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let rejected = surface_attempt::Evidence::rejected(
+        TUI_EDIT_SURFACE_PRODUCER_ID,
+        "proposal-rejected",
+        "run-rejected",
+        "workspace_except_ploke_eval",
+        PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+        "backend rejected deterministic proposal",
+    );
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new())
+        .with_rejected_surface_attempts(vec![rejected]);
+    let at = files.message_at();
+    let mut json = serde_json::to_value(&files).expect("child plan serializes");
+    json.as_object_mut()
+        .expect("child plan json object")
+        .insert("parent_node_id".to_string(), "node-other".into());
+    fs::create_dir_all(at.path().parent().expect("child plan parent"))
+        .expect("create child plan dir");
+    write_json_file_pretty(at.path(), &json).expect("write mismatched child plan");
+
+    let (result, trace) = collect_traces(|| {
+        receive_existing_child_plan("campaign", &manifest_path, &repo_root, parent)
+    });
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("wrong-parent child plan must not be accepted"),
+        Err(err) => err,
+    };
+    let PrepareError::InvalidBatchSelection { detail } = err else {
+        panic!("unexpected error variant");
+    };
+    assert!(
+        detail.contains("child plan is addressed to parent node 'node-other'"),
+        "unexpected detail: {detail}"
+    );
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=ChildPlan->Parent<Selectable>",
+            "phase=message_receive",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=failed",
+        ],
+    ));
+}
+
+#[test]
+fn child_plan_replay_rejects_malformed_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.clone(),
+        parent_identity.node_id().to_string(),
+    ));
+    fs::create_dir_all(at.path().parent().expect("child plan parent"))
+        .expect("create child plan dir");
+    fs::write(at.path(), b"{ not valid child plan json").expect("write malformed child plan");
+
+    let (result, trace) = collect_traces(|| {
+        receive_existing_child_plan("campaign", &manifest_path, &repo_root, parent)
+    });
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("malformed child plan must not be accepted"),
+        Err(err) => err,
+    };
+    let PrepareError::InvalidBatchSelection { detail } = err else {
+        panic!("unexpected error variant");
+    };
+    assert!(
+        detail.contains("could not decode child plan message"),
+        "unexpected detail: {detail}"
+    );
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=failed",
+        ],
+    ));
+    assert!(!trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=ChildPlan->Parent<Selectable>",
+            "phase=message_receive",
+        ],
+    ));
 }
 
 fn test_edit_surface_admission(

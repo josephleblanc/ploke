@@ -1,0 +1,181 @@
+{
+  "schema": "v1",
+  "request_id": "broad-harness-request:node-18f71c7f3b1718b8",
+  "request_hash": "fa983904f4b19ce94d7b8e40a0d42d6f2478bc179514d57ac3ef053c5342cc86",
+  "request_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/messages/edit-harness-request/node-18f71c7f3b1718b8.json",
+  "prompt_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/messages/edit-harness-request/node-18f71c7f3b1718b8.md",
+  "submitted_result_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/messages/edit-harness-result/node-18f71c7f3b1718b8.json",
+  "admission_binding": {
+    "coordinate": {
+      "runtime_id": "9c7ff85c-4c7a-49b4-ae53-f87f91a5a379",
+      "target": {
+        "kind": "artifact",
+        "artifact_id": "artifact:git-commit:8b8923d2fb9042b0dc76559ad19750d480730cee"
+      }
+    },
+    "target_artifact_id": "artifact:git-commit:8b8923d2fb9042b0dc76559ad19750d480730cee",
+    "policy_id": "workspace except ploke-eval"
+  },
+  "request": {
+    "schema": "v1",
+    "parent_node_id": "node-18f71c7f3b1718b8",
+    "workspace": {
+      "source_repository_path": ".",
+      "candidate_workspace_path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/workspaces/edit-harness/node-18f71c7f3b1718b8"
+    },
+    "edit_policy": "workspace_except_ploke_eval",
+    "child_budget": {
+      "min_children": 1,
+      "max_children": 1
+    },
+    "protected_core": {
+      "anchor": {
+        "kind": "authority_constant",
+        "code_path": "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+        "symbol": "eval_core_surface_root"
+      },
+      "policy": "workspace_except_ploke_eval_authority_set",
+      "consequence": "reject_before_admission_or_invalid_descendant"
+    },
+    "evaluation": {
+      "scope": "prototype1_descendant_performance",
+      "selection": "history_backed_successor_selection",
+      "guidance": "protocol_diagnostics_are_context"
+    },
+    "contract": {
+      "digest": {
+        "paths": [
+          {
+            "label": "latest evaluation reports",
+            "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/evaluations",
+            "role": "latest_evaluations"
+          },
+          {
+            "label": "node protocol artifacts",
+            "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/nodes",
+            "role": "protocol_artifacts"
+          },
+          {
+            "label": "sealed history blocks",
+            "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/history/blocks",
+            "role": "history_blocks"
+          }
+        ],
+        "facts": [
+          {
+            "label": "edit submission",
+            "value": "Use the available edit tools to stage the candidate change; do not create separate result or bookkeeping files.",
+            "source": null
+          },
+          {
+            "label": "oracle reports",
+            "value": "Use final_report.json when present and cite the source path.",
+            "source": null
+          }
+        ]
+      },
+      "validation": {
+        "commands": [
+          {
+            "label": "compile ploke-eval",
+            "program": "cargo",
+            "args": [
+              "check",
+              "-p",
+              "ploke-eval"
+            ],
+            "workdir": "candidate_workspace",
+            "success": "command exits successfully"
+          },
+          {
+            "label": "edit surface tests",
+            "program": "cargo",
+            "args": [
+              "test",
+              "-p",
+              "ploke-eval",
+              "edit_surface"
+            ],
+            "workdir": "candidate_workspace",
+            "success": "edit_surface tests pass"
+          }
+        ]
+      },
+      "attempt": {
+        "max_attempts": 4,
+        "timeout": {
+          "turn_seconds": 900,
+          "tool_seconds": 180
+        },
+        "retry": {
+          "on_rejected_surface": true,
+          "on_no_edit": true,
+          "on_tool_failure": true
+        }
+      }
+    },
+    "evidence_roots": [
+      {
+        "kind": "submitted_result_output",
+        "location": {
+          "kind": "file",
+          "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/messages/edit-harness-result/node-18f71c7f3b1718b8.json"
+        },
+        "role": "output_box"
+      },
+      {
+        "kind": "history_blocks",
+        "location": {
+          "kind": "directory",
+          "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/history/blocks"
+        },
+        "role": "sealed_history"
+      },
+      {
+        "kind": "nodes",
+        "location": {
+          "kind": "directory",
+          "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/nodes"
+        },
+        "role": "runtime_evidence"
+      },
+      {
+        "kind": "protocol_artifacts",
+        "location": {
+          "kind": "node_scoped_directory",
+          "nodes_root": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-140904/prototype1/nodes",
+          "child_relpath": "protocol-artifacts"
+        },
+        "role": "guidance_only"
+      },
+      {
+        "kind": "oracle",
+        "location": {
+          "kind": "attached_report",
+          "report": "final_report_json"
+        },
+        "role": "oracle_summary"
+      }
+    ],
+    "return_evidence": {
+      "authority_boundary": {
+        "admission": "not_claimed",
+        "grant": "not_claimed",
+        "child_plan": "not_claimed"
+      },
+      "fields": [
+        "change_summary",
+        "guiding_evidence",
+        "improvement_rationale",
+        "suggested_checks"
+      ]
+    },
+    "instructions": [
+      "inspect_repository_and_evidence",
+      "treat_protocol_diagnostics_as_guidance",
+      "edit_broad_surface_outside_protected_core",
+      "choose_likely_descendant_improvement",
+      "stage_candidate_change"
+    ]
+  }
+}

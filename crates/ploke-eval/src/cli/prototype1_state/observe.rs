@@ -6,10 +6,17 @@
 use std::fmt;
 use std::future::Future;
 use std::io;
+use std::marker::PhantomData;
 use std::process::Output;
 use std::time::{Duration, Instant};
 
 use tracing::{Instrument, Level, Span, event};
+
+use super::{
+    identity::ParentIdentity,
+    inner::{At, Transition},
+    parent::ChildPlanFile,
+};
 
 pub(crate) const TARGET: &str = ploke_core::EXECUTION_DEBUG_TARGET;
 
@@ -23,6 +30,375 @@ macro_rules! span {
 }
 
 pub(crate) use span;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Role {
+    Parent,
+}
+
+impl Role {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Parent => "parent",
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pipeline {
+    ChildPlanAuthority,
+}
+
+impl Pipeline {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ChildPlanAuthority => "prototype1.child_plan_authority",
+        }
+    }
+}
+
+impl fmt::Display for Pipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage {
+    TypestateTransition,
+    RequestPublication,
+    BatchAdmission,
+    FailedBatchPersistence,
+    RetryReplay,
+    MessageLock,
+    MessageReceive,
+}
+
+impl Stage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TypestateTransition => "typestate_transition",
+            Self::RequestPublication => "request_publication",
+            Self::BatchAdmission => "batch_admission",
+            Self::FailedBatchPersistence => "failed_batch_persistence",
+            Self::RetryReplay => "retry_replay",
+            Self::MessageLock => "message_lock",
+            Self::MessageReceive => "message_receive",
+        }
+    }
+}
+
+impl fmt::Display for Stage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Authority {
+    ParentBroadcastChannel,
+}
+
+impl Authority {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ParentBroadcastChannel => "parent_broadcast_channel",
+        }
+    }
+}
+
+impl fmt::Display for Authority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordKind {
+    ChildPlanFile,
+}
+
+impl RecordKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ChildPlanFile => "child_plan_file",
+        }
+    }
+}
+
+impl fmt::Display for RecordKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordAccess {
+    Read,
+    Write,
+}
+
+impl RecordAccess {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+}
+
+impl fmt::Display for RecordAccess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RecordRef<'a> {
+    ChildPlanFile(&'a At<ChildPlanFile>),
+}
+
+impl RecordRef<'_> {
+    fn kind(&self) -> RecordKind {
+        match self {
+            Self::ChildPlanFile(_) => RecordKind::ChildPlanFile,
+        }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Self::ChildPlanFile(at) => at.path(),
+        }
+    }
+}
+
+pub(crate) trait ObservedTransition: Transition {
+    const ROLE: Role;
+    const PIPELINE: Pipeline;
+    const STAGE: Stage;
+    const AUTHORITY: Authority;
+    const LABEL: &'static str;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RecordSlot<'a> {
+    access: RecordAccess,
+    record: RecordRef<'a>,
+}
+
+const MAX_TRANSITION_RECORDS: usize = 6;
+
+#[derive(Debug, Clone, Copy)]
+struct RecordSlots<'a> {
+    records: [Option<RecordSlot<'a>>; MAX_TRANSITION_RECORDS],
+    len: usize,
+}
+
+impl<'a> RecordSlots<'a> {
+    fn empty() -> Self {
+        Self {
+            records: [None; MAX_TRANSITION_RECORDS],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, access: RecordAccess, record: RecordRef<'a>) {
+        if self.len < MAX_TRANSITION_RECORDS {
+            self.records[self.len] = Some(RecordSlot { access, record });
+            self.len += 1;
+        } else {
+            debug_assert!(
+                false,
+                "prototype1 typestate transition recorded too many persistence refs"
+            );
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn iter(&self) -> impl Iterator<Item = RecordSlot<'a>> + '_ {
+        self.records[..self.len].iter().filter_map(|record| *record)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TransitionBuilder<'a, T: ObservedTransition> {
+    parent: &'a ParentIdentity,
+    stage: Stage,
+    records: RecordSlots<'a>,
+    _transition: PhantomData<T>,
+}
+
+pub(crate) fn transition<'a, T: ObservedTransition>(
+    parent: &'a ParentIdentity,
+) -> TransitionBuilder<'a, T> {
+    TransitionBuilder {
+        parent,
+        stage: T::STAGE,
+        records: RecordSlots::empty(),
+        _transition: PhantomData,
+    }
+}
+
+impl<'a, T: ObservedTransition> TransitionBuilder<'a, T> {
+    pub(crate) fn stage(mut self, stage: Stage) -> Self {
+        self.stage = stage;
+        self
+    }
+
+    pub(crate) fn reads(mut self, record: RecordRef<'a>) -> Self {
+        self.records.push(RecordAccess::Read, record);
+        self
+    }
+
+    pub(crate) fn writes(mut self, record: RecordRef<'a>) -> Self {
+        self.records.push(RecordAccess::Write, record);
+        self
+    }
+
+    pub(crate) fn commit<R>(self, run: impl FnOnce() -> R) -> R {
+        let started = Instant::now();
+        let value = run();
+        self.emit("committed", started.elapsed(), None);
+        value
+    }
+
+    pub(crate) fn try_commit<R, E>(self, run: impl FnOnce() -> Result<R, E>) -> Result<R, E>
+    where
+        E: fmt::Display,
+    {
+        let started = Instant::now();
+        let result = run();
+        match &result {
+            Ok(_) => self.emit("committed", started.elapsed(), None),
+            Err(error) => self.emit("failed", started.elapsed(), Some(error)),
+        }
+        result
+    }
+
+    fn emit(&self, outcome: &'static str, duration: Duration, error: Option<&dyn fmt::Display>) {
+        if self.records.is_empty() {
+            self.emit_one(outcome, duration, error, None, 0);
+        } else {
+            for (index, record) in self.records.iter().enumerate() {
+                self.emit_one(outcome, duration, error, Some(record), index);
+            }
+        }
+    }
+
+    fn emit_one(
+        &self,
+        outcome: &'static str,
+        duration: Duration,
+        error: Option<&dyn fmt::Display>,
+        record: Option<RecordSlot<'_>>,
+        record_index: usize,
+    ) {
+        let duration_ms = duration_ms(duration);
+        let record_count = self.records.len();
+        let parent = self.parent;
+        match (record, error) {
+            (Some(record), Some(error)) => event!(
+                target: TARGET,
+                Level::WARN,
+                event = "typestate_transition",
+                role = %T::ROLE,
+                pipeline = %T::PIPELINE,
+                phase = %self.stage,
+                authority = %T::AUTHORITY,
+                transition = T::LABEL,
+                outcome,
+                duration_ms,
+                campaign_id = %parent.campaign_id(),
+                parent_id = %parent.parent_id(),
+                node_id = %parent.node_id(),
+                generation = parent.generation(),
+                branch_id = %parent.branch_id(),
+                record_access = %record.access,
+                record_kind = %record.record.kind(),
+                record_path = %record.record.path().display(),
+                record_index,
+                record_count,
+                error = %error,
+                "prototype1 typestate transition failed"
+            ),
+            (Some(record), None) => event!(
+                target: TARGET,
+                Level::INFO,
+                event = "typestate_transition",
+                role = %T::ROLE,
+                pipeline = %T::PIPELINE,
+                phase = %self.stage,
+                authority = %T::AUTHORITY,
+                transition = T::LABEL,
+                outcome,
+                duration_ms,
+                campaign_id = %parent.campaign_id(),
+                parent_id = %parent.parent_id(),
+                node_id = %parent.node_id(),
+                generation = parent.generation(),
+                branch_id = %parent.branch_id(),
+                record_access = %record.access,
+                record_kind = %record.record.kind(),
+                record_path = %record.record.path().display(),
+                record_index,
+                record_count,
+                "prototype1 typestate transition committed"
+            ),
+            (None, Some(error)) => event!(
+                target: TARGET,
+                Level::WARN,
+                event = "typestate_transition",
+                role = %T::ROLE,
+                pipeline = %T::PIPELINE,
+                phase = %self.stage,
+                authority = %T::AUTHORITY,
+                transition = T::LABEL,
+                outcome,
+                duration_ms,
+                campaign_id = %parent.campaign_id(),
+                parent_id = %parent.parent_id(),
+                node_id = %parent.node_id(),
+                generation = parent.generation(),
+                branch_id = %parent.branch_id(),
+                record_count,
+                error = %error,
+                "prototype1 typestate transition failed"
+            ),
+            (None, None) => event!(
+                target: TARGET,
+                Level::INFO,
+                event = "typestate_transition",
+                role = %T::ROLE,
+                pipeline = %T::PIPELINE,
+                phase = %self.stage,
+                authority = %T::AUTHORITY,
+                transition = T::LABEL,
+                outcome,
+                duration_ms,
+                campaign_id = %parent.campaign_id(),
+                parent_id = %parent.parent_id(),
+                node_id = %parent.node_id(),
+                generation = parent.generation(),
+                branch_id = %parent.branch_id(),
+                record_count,
+                "prototype1 typestate transition committed"
+            ),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Step {
