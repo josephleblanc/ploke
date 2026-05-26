@@ -1,0 +1,124 @@
+{
+  "schema_version": "closure-state.v1",
+  "campaign_id": "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414",
+  "updated_at": "2026-05-25T12:16:36.798159435+00:00",
+  "config": {
+    "benchmark_family": "multi_swe_bench_rust",
+    "model_id": "google/gemini-3.5-flash",
+    "route_source": "direct_google",
+    "registry_path": "/home/brasides/.ploke-eval/registries/multi-swe-bench-rust.json",
+    "dataset_sources": [
+      {
+        "path": "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-20260525-035000/slice.jsonl",
+        "label": "slice"
+      }
+    ],
+    "required_procedures": [
+      "tool-call-intent-segments",
+      "tool-call-review",
+      "tool-call-segment-review"
+    ],
+    "instances_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances",
+    "batches_root": "/home/brasides/.ploke-eval/batches/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/batches"
+  },
+  "registry": {
+    "expected_total": 1,
+    "mapped_total": 1,
+    "missing_total": 0,
+    "ambiguous_total": 0,
+    "status": "complete"
+  },
+  "eval": {
+    "expected_total": 1,
+    "complete_total": 1,
+    "failed_total": 0,
+    "missing_total": 0,
+    "partial_total": 0,
+    "in_progress_total": 0,
+    "status": "complete",
+    "last_transition_at": "2026-05-25T12:16:26.136+00:00"
+  },
+  "protocol": {
+    "expected_total": 1,
+    "full_total": 0,
+    "partial_total": 1,
+    "failed_total": 0,
+    "missing_total": 0,
+    "incompatible_total": 0,
+    "ineligible_total": 0,
+    "in_progress_total": 0,
+    "status": "partial",
+    "required_procedures": [
+      "tool-call-intent-segments",
+      "tool-call-review",
+      "tool-call-segment-review"
+    ],
+    "status_by_procedure": {
+      "tool-call-intent-segments": {
+        "expected_total": 1,
+        "complete_total": 1,
+        "failed_total": 0,
+        "missing_total": 0,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      },
+      "tool-call-review": {
+        "expected_total": 1,
+        "complete_total": 0,
+        "failed_total": 0,
+        "missing_total": 1,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      },
+      "tool-call-segment-review": {
+        "expected_total": 1,
+        "complete_total": 0,
+        "failed_total": 0,
+        "missing_total": 1,
+        "incompatible_total": 0,
+        "partial_total": 0,
+        "ineligible_total": 0
+      }
+    },
+    "last_transition_at": "2026-05-25T12:16:26.136+00:00"
+  },
+  "instances": [
+    {
+      "instance_id": "BurntSushi__ripgrep-2209",
+      "dataset_label": "slice",
+      "repo_family": "BurntSushi__ripgrep",
+      "registry_status": "mapped",
+      "eval_status": "complete",
+      "protocol_status": "partial",
+      "artifacts": {
+        "registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1779711015972-structured-current-policy-2f4c7f3b.json",
+        "run_manifest": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/run.json",
+        "run_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b",
+        "record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/record.json.gz",
+        "execution_log": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/execution-log.json",
+        "indexing_status": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/indexing-status.json",
+        "parse_failure": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/parse-failure.json",
+        "snapshot_status": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/snapshot-status.json",
+        "msb_submission": "/home/brasides/.ploke-eval/instances/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/multi-swe-bench-submission.jsonl",
+        "protocol_artifacts_dir": "/home/brasides/.ploke-eval/protocol/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b",
+        "protocol_anchor": "/home/brasides/.ploke-eval/protocol/prototype1/p1-gemini35-flash-direct-15g2x3-20260525-035000/treatments/branch-c56614c6e6a63aa9/instances/BurntSushi__ripgrep-2209/runs/run-1779711015972-structured-current-policy-2f4c7f3b/1779711386136_tool_call_intent_segmentation_BurntSushi__ripgrep-2209.json"
+      },
+      "protocol_procedures": {
+        "tool-call-intent-segments": "complete",
+        "tool-call-review": "missing",
+        "tool-call-segment-review": "missing"
+      },
+      "protocol_counts": {
+        "total_calls": 57,
+        "reviewed_calls": 0,
+        "total_segments": 4,
+        "usable_segments": 0,
+        "mismatched_segments": 0,
+        "missing_segments": 4
+      },
+      "last_event_at": "2026-05-25T12:16:26.136+00:00"
+    }
+  ]
+}

@@ -1527,6 +1527,8 @@ fn broad_batch_publication_allocates_request_slots() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -1581,6 +1583,8 @@ fn broad_batch_default_cap_respects_small_max() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "6".into())]);
     write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -1600,6 +1604,8 @@ fn broad_batch_uses_explicit_parallel_targets() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -2234,6 +2240,8 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     let allowed = write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -2454,6 +2462,7 @@ async fn child_fanout_is_parallel() {
             probe_dir.clone().into_os_string(),
         ),
         ("PLOKE_EVAL_CHILD_FANOUT_PROBE_WAIT_FOR", "2".into()),
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into()),
     ]);
 
     let allowed = write_broad_surface_targets(&repo_root);
@@ -3932,6 +3941,74 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     assert_eq!(
         Some(treatment_record.operational_metrics()),
         terminal.2.instances[0].metrics
+    );
+    let mut treatment_closure: crate::closure::ClosureState = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-node-150-handoff/treatment_closure_state.json"
+    ));
+    let treatment_row = treatment_closure
+        .instances
+        .iter_mut()
+        .find(|row| row.instance_id == terminal.2.instances[0].instance_id)
+        .expect("matching treatment closure row");
+    treatment_row.artifacts.record_path = Some(treatment_record_path.clone());
+    let treatment_campaign = Prototype1LoopCampaign {
+        campaign_id: treatment_closure.campaign_id.clone(),
+        manifest_path: terminal.2.treatment_campaign_manifest.clone(),
+        closure_state_path: terminal.2.treatment_closure_state_path.clone(),
+        slice_dataset_path: treatment_closure
+            .config
+            .dataset_sources
+            .first()
+            .expect("treatment closure dataset source")
+            .path
+            .clone(),
+        resolved: ResolvedCampaignConfig {
+            campaign_id: treatment_closure.campaign_id.clone(),
+            benchmark_family: treatment_closure.config.benchmark_family,
+            dataset_sources: treatment_closure.config.dataset_sources.clone(),
+            model_id: treatment_closure
+                .config
+                .model_id
+                .clone()
+                .expect("treatment closure model id"),
+            provider_slug: treatment_closure.config.provider_slug.clone(),
+            route_source: treatment_closure
+                .config
+                .route_source
+                .expect("treatment closure route source"),
+            required_procedures: treatment_closure.config.required_procedures.clone(),
+            instances_root: treatment_closure.config.instances_root.clone(),
+            batches_root: treatment_closure.config.batches_root.clone(),
+            eval: terminal.2.eval_policy.clone(),
+            // The treatment evidence builder reads eval/run records here; protocol
+            // policy is not part of this reconstruction contract.
+            protocol: ProtocolCampaignPolicy::default(),
+            framework: treatment_closure.config.framework.clone(),
+        },
+    };
+    let rebuilt_treatment = build_prototype1_treatment_evidence(
+        parent_identity.campaign_id(),
+        &node.branch_id,
+        &treatment_campaign,
+        &treatment_closure,
+    )
+    .expect("rebuild treatment evidence from historical closure state");
+    assert_eq!(
+        rebuilt_treatment.treatment_campaign_id,
+        terminal.2.treatment_campaign_id
+    );
+    assert_eq!(rebuilt_treatment.branch_id, terminal.2.branch_id);
+    assert_eq!(
+        rebuilt_treatment.instances.len(),
+        terminal.2.instances.len()
+    );
+    assert_eq!(
+        rebuilt_treatment.instances[0].metrics,
+        terminal.2.instances[0].metrics
+    );
+    assert_eq!(
+        rebuilt_treatment.instances[0].status,
+        terminal.2.instances[0].status
     );
 
     let baseline_record_path = tmp.path().join("baseline-record.json.gz");

@@ -1209,3 +1209,66 @@ Current boundary:
 - The remaining child self-eval gap is the successful treatment path that
   carries treatment evidence through the terminal channel and into parent
   comparison.
+
+## Entry 26: Historical Treatment Evidence Rebuild
+
+Observe:
+
+- The node-150 historical channel fixture already proves that parent observation
+  can receive terminal treatment evidence from the authoritative child channel.
+- That did not prove the child-side evidence builder can reconstruct treatment
+  evidence from a treatment `closure-state.json` plus the run `record.json.gz`.
+- The full crate gate initially failed in an unrelated broad-batch test because
+  a test-only global slot-limit env var could be observed by another test.
+
+Orient:
+
+- The next useful proof rung is not a synthetic treatment object. It is a real
+  historical treatment closure state wired to the existing compressed record
+  fixture.
+- The env-var failure is a test isolation problem around
+  `PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT`, not a failure in the new fixture.
+
+Decide:
+
+- Copy the real node-150 treatment closure-state fixture into
+  `crates/ploke-eval/src/tests/fixtures/prototype1-node-150-handoff/`.
+- Extend the existing historical node-150 handoff test so it calls
+  `build_prototype1_treatment_evidence` and compares the rebuilt treatment with
+  the terminal channel treatment payload.
+- Pin slot-count-sensitive tests under the existing env guard so the
+  concurrency probe cannot leak its temporary slot cap into unrelated tests.
+
+Act:
+
+- Added `treatment_closure_state.json` from the historical treatment campaign.
+- Extended
+  `historical_node_150_channel_treatment_reaches_current_generation_handoff`
+  to:
+  - load the real `ClosureState`;
+  - redirect its record path to the hermetic copied `treatment-record.json.gz`;
+  - build a `Prototype1LoopCampaign`;
+  - call `build_prototype1_treatment_evidence`;
+  - assert campaign id, branch id, instance count, metrics, and status match the
+    terminal channel treatment evidence.
+- Hardened broad harness slot-count tests against concurrent test-only env
+  overrides.
+- `cargo fmt --all` passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval historical_node_150_channel_treatment_reaches_current_generation_handoff -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval broad_harness_batch_admits_three_transactions_into_three_children -- --nocapture`
+  passed after the env-race hardening.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval` passed:
+  - 764 lib tests passed, 21 ignored;
+  - 13 tests passed in the next group;
+  - 6 tests passed in the next group;
+  - 12 doctests ignored.
+
+Current boundary:
+
+- The proof ladder now covers historical successful treatment evidence rebuild
+  from persisted child-side closure state and record data.
+- The remaining gap is still a live successful
+  `execute_prototype1_runner_invocation` run all the way through treatment eval,
+  treatment protocol, patch projection validation, and terminal treatment
+  channel result.
