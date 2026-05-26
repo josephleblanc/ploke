@@ -1017,3 +1017,74 @@ Current boundary:
 - Do not start a long live loop until the patch-generation slot can reliably
   produce either an admissible child or a clearly classified, actionable
   rejection on a focused live step.
+
+## Entry 23: Live Google Child-Plan Admission And Parallel Slots
+
+Observe:
+
+- The first stronger one-slot live test used a seeded canary fixture and direct
+  Google through the real `prototype1-step` path.
+- The model found the failing `src/lib.rs` function, staged a semantic edit,
+  the headless adapter approved and applied it, and the model ran both
+  `cargo test` and `cargo check` successfully.
+- Initial admission failures were not provider failures:
+  - the fixture `Cargo.lock` was non-canonical, so Cargo rewrote it and broad
+    policy correctly rejected the protected filename;
+  - after fixing that, the fixture was missing tool-description artifact
+    files required by artifact-surface measurement.
+
+Orient:
+
+- `Cargo.lock` is intentionally outside
+  `WorkspaceExceptPlokeEval`; rewriting it is not an admissible descendant
+  patch.
+- The missing artifact-surface files exposed a real ordering bug: broad
+  admission could commit the candidate and only then fail while building the
+  admitted transaction.
+- The immediate proof target is parent patch generation, not long-loop
+  execution.
+
+Decide:
+
+- Canonicalize the test fixture lockfile instead of weakening broad policy.
+- Add the tool-description files the broad artifact surface expects.
+- Add a local backend regression that proves artifact-surface input failures do
+  not commit the candidate.
+- Re-run the focused live one-slot and two-slot proofs.
+
+Act:
+
+- Added `broad_harness_admission_preflights_surface_before_commit`.
+  - It removes tool-description artifacts from the source fixture.
+  - It submits an otherwise valid README change.
+  - It asserts the backend returns `MissingSurfaceFile`, the candidate `HEAD`
+    is unchanged, and the original dirty README remains available for review.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval broad_harness_admission_preflights_surface_before_commit -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval --features live_api_tests live_google_step_child_plan --no-run`
+  passed.
+- `RUSTFLAGS=-Awarnings PLOKE_RUN_LIVE_TESTS=1 cargo test -q -p ploke-eval --features live_api_tests live_google_step_child_plan -- --ignored --nocapture`
+  passed in about 50 seconds.
+  - One live Gemini slot applied the canary fix.
+  - `cargo test` and `cargo check` both resolved to the candidate manifest and
+    succeeded.
+  - The child-plan advanced to `materialize` with one planned child.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval broad_slots_run_in_parallel -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_fanout_is_parallel -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings PLOKE_RUN_LIVE_TESTS=1 cargo test -q -p ploke-eval --features live_api_tests live_google_parallel_slots -- --ignored --nocapture`
+  passed in about 48 seconds.
+  - Both live slots started together and built prompts at about 53-54 ms.
+  - Both slots applied the canary fix in separate edit-harness workspaces.
+  - Both slots ran successful `cargo test` against their candidate manifests.
+  - Both slots were committed and the resulting step advanced to
+    `materialize` with `patch_generation_parallel_cap: 2`.
+
+Current boundary:
+
+- The parent patch-generation slot unit can run in parallel under the configured
+  cap and still serialize admission into durable child-plan authority.
+- The next proof rung should exercise materialize/build for the admitted
+  children, including cleanup of build products and preservation of the
+  promoted child binary.
