@@ -72,6 +72,7 @@ pub(crate) fn expandable_id(ui: &mut egui::Ui, id_source: impl Hash, full: &str)
     let Some(short) = ShortId::new(full) else {
         return ui.monospace(full);
     };
+    let value = CopyableId::new(full);
 
     let id = ui.make_persistent_id(("ploke-egui.short-id", id_source));
     let mut expanded = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
@@ -90,14 +91,235 @@ pub(crate) fn expandable_id(ui: &mut egui::Ui, id_source: impl Hash, full: &str)
         ui.data_mut(|data| data.insert_temp(id, expanded));
     }
 
+    attach_copy_context_menu(&response, &value);
+    copy_button(ui, &value);
+
+    response
+}
+
+pub(crate) trait CopyableExpandable {
+    fn full_text(&self) -> &str;
+    fn copy_menu_label(&self) -> &'static str;
+    fn copy_button_hover(&self) -> &'static str;
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyableId<'a> {
+    full: &'a str,
+}
+
+impl<'a> CopyableId<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+}
+
+impl CopyableExpandable for CopyableId<'_> {
+    fn full_text(&self) -> &str {
+        self.full
+    }
+
+    fn copy_menu_label(&self) -> &'static str {
+        "Copy full id"
+    }
+
+    fn copy_button_hover(&self) -> &'static str {
+        "Copy full id"
+    }
+
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str {
+        match (expanded, expandable) {
+            (true, true) => "Click to collapse. Right click to copy the full id.",
+            (false, true) => "Click to expand. Right click to copy the full id.",
+            (_, false) => "Right click to copy the full id.",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyablePath<'a> {
+    full: &'a str,
+}
+
+impl<'a> CopyablePath<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+
+    pub(crate) fn tail(self) -> &'a str {
+        path_tail(self.full)
+    }
+
+    pub(crate) fn is_expandable(self) -> bool {
+        self.tail() != self.full
+    }
+}
+
+impl CopyableExpandable for CopyablePath<'_> {
+    fn full_text(&self) -> &str {
+        self.full
+    }
+
+    fn copy_menu_label(&self) -> &'static str {
+        "Copy full path"
+    }
+
+    fn copy_button_hover(&self) -> &'static str {
+        "Copy full path"
+    }
+
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str {
+        match (expanded, expandable) {
+            (true, true) => "Click to collapse. Right click to copy the full path.",
+            (false, true) => "Click to expand. Right click to copy the full path.",
+            (_, false) => "Right click to copy the full path.",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyableArtifactFile<'a> {
+    full: &'a str,
+}
+
+impl<'a> CopyableArtifactFile<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+
+    pub(crate) fn display_tail(self) -> &'a str {
+        artifact_file_tail(self.full)
+    }
+
+    pub(crate) fn is_expandable(self) -> bool {
+        self.display_tail() != self.full
+    }
+}
+
+impl CopyableExpandable for CopyableArtifactFile<'_> {
+    fn full_text(&self) -> &str {
+        self.full
+    }
+
+    fn copy_menu_label(&self) -> &'static str {
+        "Copy artifact path"
+    }
+
+    fn copy_button_hover(&self) -> &'static str {
+        "Copy artifact path"
+    }
+
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str {
+        match (expanded, expandable) {
+            (true, true) => "Click to collapse. Right click to copy the artifact path.",
+            (false, true) => "Click to expand. Right click to copy the artifact path.",
+            (_, false) => "Right click to copy the artifact path.",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyableRunName<'a> {
+    full: &'a str,
+}
+
+impl<'a> CopyableRunName<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+}
+
+impl CopyableExpandable for CopyableRunName<'_> {
+    fn full_text(&self) -> &str {
+        self.full
+    }
+
+    fn copy_menu_label(&self) -> &'static str {
+        "Copy run name"
+    }
+
+    fn copy_button_hover(&self) -> &'static str {
+        "Copy run name"
+    }
+
+    fn hover_text(&self, _expanded: bool, _expandable: bool) -> &'static str {
+        "Right click to copy the run name."
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyableText<'a> {
+    full: &'a str,
+}
+
+impl<'a> CopyableText<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+}
+
+impl CopyableExpandable for CopyableText<'_> {
+    fn full_text(&self) -> &str {
+        self.full
+    }
+
+    fn copy_menu_label(&self) -> &'static str {
+        "Copy text"
+    }
+
+    fn copy_button_hover(&self) -> &'static str {
+        "Copy text"
+    }
+
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str {
+        match (expanded, expandable) {
+            (true, true) => "Click to collapse. Right click to copy the full text.",
+            (false, true) => "Click to expand. Right click to copy the full text.",
+            (_, false) => "Right click to copy the full text.",
+        }
+    }
+}
+
+pub(crate) fn attach_copy_context_menu(response: &egui::Response, value: &impl CopyableExpandable) {
     response.context_menu(|ui| {
-        if ui.button("Copy full id").clicked() {
-            ui.ctx().copy_text(full.to_owned());
+        if ui.button(value.copy_menu_label()).clicked() {
+            ui.ctx().copy_text(value.full_text().to_owned());
             ui.close();
         }
     });
+}
 
+pub(crate) fn copy_button(ui: &mut egui::Ui, value: &impl CopyableExpandable) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    let response = response.on_hover_text(value.copy_button_hover());
+    if ui.is_rect_visible(rect) {
+        paint_copy_icon_button(ui, rect, &response);
+    }
+    if response.clicked() {
+        ui.ctx().copy_text(value.full_text().to_owned());
+    }
+    attach_copy_context_menu(&response, value);
     response
+}
+
+fn paint_copy_icon_button(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
+    let visuals = ui.style().interact(response);
+    ui.painter().rect_filled(rect, 2.0, visuals.weak_bg_fill);
+
+    let icon_rect = rect.shrink(4.0);
+    let offset = egui::vec2(3.0, -3.0);
+    let back = icon_rect.translate(offset);
+    let front = icon_rect.translate(-offset);
+    paint_rect_outline(ui.painter(), back, visuals.fg_stroke);
+    paint_rect_outline(ui.painter(), front, visuals.fg_stroke);
+}
+
+fn paint_rect_outline(painter: &egui::Painter, rect: egui::Rect, stroke: egui::Stroke) {
+    painter.line_segment([rect.left_top(), rect.right_top()], stroke);
+    painter.line_segment([rect.right_top(), rect.right_bottom()], stroke);
+    painter.line_segment([rect.right_bottom(), rect.left_bottom()], stroke);
+    painter.line_segment([rect.left_bottom(), rect.left_top()], stroke);
 }
 
 pub(crate) trait InteractiveId {
@@ -187,6 +409,25 @@ fn short_prefix(value: &str, max_chars: usize) -> &str {
         .unwrap_or(value)
 }
 
+fn path_tail(value: &str) -> &str {
+    let trimmed = value.trim_end_matches(|ch| ch == '/' || ch == '\\');
+    if trimmed.is_empty() {
+        return value;
+    }
+
+    trimmed
+        .rfind(|ch| ch == '/' || ch == '\\')
+        .map(|index| &trimmed[index + 1..])
+        .unwrap_or(trimmed)
+}
+
+fn artifact_file_tail(value: &str) -> &str {
+    let tail = path_tail(value);
+    tail.rsplit_once("__")
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(tail)
+}
+
 fn compact_label(full: &str) -> (&str, bool) {
     let suffix = full
         .rsplit_once(':')
@@ -211,7 +452,7 @@ fn compact_label(full: &str) -> (&str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShortId, compact_label, id_prefix};
+    use super::{CopyableArtifactFile, CopyablePath, ShortId, compact_label, id_prefix};
 
     fn short(value: &str) -> Option<String> {
         ShortId::new(value).map(|id| id.to_string())
@@ -237,6 +478,42 @@ mod tests {
     fn leaves_paths_and_short_values_alone() {
         assert_eq!(short("crates/ploke-tui/src/tools/cargo.rs"), None);
         assert_eq!(short("not_available"), None);
+    }
+
+    #[test]
+    fn copyable_path_defaults_to_tail_component() {
+        let path = CopyablePath::new(
+            "/home/brasides/.ploke-eval/instances/prototype1/campaign/runs/run-1/record.json.gz",
+        );
+
+        assert_eq!(path.tail(), "record.json.gz");
+        assert!(path.is_expandable());
+    }
+
+    #[test]
+    fn copyable_path_keeps_single_component_unexpanded() {
+        let path = CopyablePath::new("record.json.gz");
+
+        assert_eq!(path.tail(), "record.json.gz");
+        assert!(!path.is_expandable());
+    }
+
+    #[test]
+    fn copyable_path_ignores_trailing_separators_for_tail() {
+        let path = CopyablePath::new("/tmp/worktree/");
+
+        assert_eq!(path.tail(), "worktree");
+        assert!(path.is_expandable());
+    }
+
+    #[test]
+    fn copyable_artifact_file_uses_subject_suffix_tail() {
+        let artifact = CopyableArtifactFile::new(
+            "/tmp/run/1779713106220_tool_call_review_BurntSushi__ripgrep-2209.json",
+        );
+
+        assert_eq!(artifact.display_tail(), "ripgrep-2209.json");
+        assert!(artifact.is_expandable());
     }
 
     #[test]

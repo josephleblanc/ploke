@@ -1,5 +1,8 @@
 # ploke-egui Plans
 
+- [`eval-protocol-analyst-surface/`](eval-protocol-analyst-surface/)
+  Backlog and design direction for turning Eval & Protocol into an
+  analyst-oriented run investigation surface.
 - [`parent-create/`](parent-create/)
   Plan and orchestration contract for exposing parent patch-generation attempts
   in the graph inspector and timeline without moving semantic authority into

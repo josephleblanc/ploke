@@ -1,3 +1,4 @@
+use ploke_protocol::OverallVerdict;
 use ploke_records::evaluation::PatchProjectionCheckState;
 use ploke_records::protocol::ArtifactBody;
 use ploke_records::run_record::SubmissionArtifactState;
@@ -180,6 +181,64 @@ impl<'g> EvalProtocolDashboard<'g> {
     pub(crate) fn protocol_review_stats(&self) -> ProtocolReviewStats {
         self.evidence.protocol_review_stats()
     }
+
+    pub(crate) fn visual_summary(&self) -> EvalProtocolVisualSummary {
+        let mut summary = EvalProtocolVisualSummary::default();
+
+        if let Some(run_records) = self.run_records_summary() {
+            summary.run_records = run_records.parsed_count;
+            summary.turns = run_records.total_turn_count;
+            summary.tool_calls = run_records.total_tool_call_count;
+            summary.failed_tool_calls = run_records.failed_tool_call_count;
+        }
+
+        if let Some(closure) = self.closure() {
+            for instance in &closure.state.instances {
+                let Some(counts) = instance.protocol_counts.as_ref() else {
+                    continue;
+                };
+                summary.total_calls += counts.total_calls;
+                summary.reviewed_calls += counts.reviewed_calls;
+                summary.total_segments += counts.total_segments;
+                summary.usable_segments += counts.usable_segments;
+                summary.mismatched_segments += counts.mismatched_segments;
+                summary.missing_segments += counts.missing_segments;
+            }
+        }
+
+        if summary.total_calls == 0 {
+            summary.total_calls = summary.tool_calls;
+        }
+        if summary.reviewed_calls == 0 {
+            summary.reviewed_calls = self.protocol_artifacts_review_count().unwrap_or(0);
+        }
+        if summary.usable_segments == 0 {
+            summary.usable_segments = self.protocol_artifacts_segment_review_count().unwrap_or(0);
+        }
+
+        summary.patch = self.eval_patch_counts();
+
+        if let Some(protocol_artifacts) = self.protocol_artifacts() {
+            for artifact in protocol_artifacts.index.values() {
+                match &artifact.body {
+                    ArtifactBody::ToolCallReview(payload) => {
+                        summary.call_review_outcomes.observe(payload.output.overall);
+                    }
+                    ArtifactBody::ToolCallSegmentReview(payload) => {
+                        summary
+                            .segment_review_outcomes
+                            .observe(payload.output.overall);
+                    }
+                    ArtifactBody::ToolCallIntentSegmentation(_)
+                    | ArtifactBody::InterventionIssueDetection(_)
+                    | ArtifactBody::InterventionSynthesis(_)
+                    | ArtifactBody::InterventionApply(_) => {}
+                }
+            }
+        }
+
+        summary
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -224,6 +283,85 @@ pub(crate) struct ProtocolAggregateCounts {
     pub intervention_synthesis_count: usize,
     pub intervention_candidate_count: usize,
     pub intervention_apply_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EvalProtocolVisualSummary {
+    pub run_records: usize,
+    pub turns: usize,
+    pub tool_calls: usize,
+    pub failed_tool_calls: usize,
+    pub total_calls: usize,
+    pub reviewed_calls: usize,
+    pub total_segments: usize,
+    pub usable_segments: usize,
+    pub mismatched_segments: usize,
+    pub missing_segments: usize,
+    pub patch: EvalPatchCounts,
+    pub call_review_outcomes: ProtocolOutcomeCounts,
+    pub segment_review_outcomes: ProtocolOutcomeCounts,
+}
+
+impl EvalProtocolVisualSummary {
+    pub(crate) fn missing_call_reviews(self) -> usize {
+        self.total_calls.saturating_sub(self.reviewed_calls)
+    }
+
+    pub(crate) fn has_any_visual_data(self) -> bool {
+        self.run_records > 0
+            || self.turns > 0
+            || self.tool_calls > 0
+            || self.total_calls > 0
+            || self.total_segments > 0
+            || self.patch.edit_proposal_count > 0
+            || self.patch.create_proposal_count > 0
+            || self.patch.expected_file_change_count > 0
+            || self.call_review_outcomes.total() > 0
+            || self.segment_review_outcomes.total() > 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ProtocolOutcomeCounts {
+    pub focused_progress: usize,
+    pub useful_exploration: usize,
+    pub recoverable_detour: usize,
+    pub redundant_thrash: usize,
+    pub mixed: usize,
+    pub unclear: usize,
+}
+
+impl ProtocolOutcomeCounts {
+    fn observe(&mut self, verdict: OverallVerdict) {
+        match verdict {
+            OverallVerdict::FocusedProgress => self.focused_progress += 1,
+            OverallVerdict::UsefulExploration => self.useful_exploration += 1,
+            OverallVerdict::RecoverableDetour => self.recoverable_detour += 1,
+            OverallVerdict::RedundantThrash => self.redundant_thrash += 1,
+            OverallVerdict::Mixed => self.mixed += 1,
+            OverallVerdict::Unclear => self.unclear += 1,
+        }
+    }
+
+    pub(crate) fn total(self) -> usize {
+        self.focused_progress
+            + self.useful_exploration
+            + self.recoverable_detour
+            + self.redundant_thrash
+            + self.mixed
+            + self.unclear
+    }
+
+    pub(crate) fn combined(self, other: Self) -> Self {
+        Self {
+            focused_progress: self.focused_progress + other.focused_progress,
+            useful_exploration: self.useful_exploration + other.useful_exploration,
+            recoverable_detour: self.recoverable_detour + other.recoverable_detour,
+            redundant_thrash: self.redundant_thrash + other.redundant_thrash,
+            mixed: self.mixed + other.mixed,
+            unclear: self.unclear + other.unclear,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,6 +512,16 @@ mod tests {
         );
         assert_eq!(dashboard.protocol_artifacts_review_count(), Some(6));
         assert_eq!(dashboard.protocol_artifacts_segment_review_count(), Some(5));
+
+        let visual = dashboard.visual_summary();
+        assert_eq!(visual.run_records, 4);
+        assert_eq!(visual.turns, 12);
+        assert_eq!(visual.tool_calls, 34);
+        assert_eq!(visual.failed_tool_calls, 5);
+        assert_eq!(visual.total_calls, 34);
+        assert_eq!(visual.reviewed_calls, 6);
+        assert_eq!(visual.usable_segments, 5);
+        assert!(visual.has_any_visual_data());
     }
 
     #[test]

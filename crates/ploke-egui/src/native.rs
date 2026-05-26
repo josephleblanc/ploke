@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 #[cfg(all(feature = "dev", feature = "native-benchmark"))]
+use crate::allocation::scope;
+#[cfg(all(feature = "dev", feature = "native-benchmark"))]
 use crate::benchmark::{
     BenchmarkConfig, BenchmarkController, BenchmarkSuite, StartupProfile,
     load_graph_with_startup_profile, span_from_start, with_benchmark_tracing_subscriber,
@@ -148,7 +150,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .with_mode(run.mode)
             .with_benchmark(BenchmarkController::new(config, startup)?);
         with_benchmark_tracing_subscriber(|| {
-            let _span = tracing::trace_span!("eframe_run_native").entered();
+            let _span = tracing::trace_span!(scope::EFRAME_RUN_NATIVE).entered();
             eframe::run_native(
                 "ploke-egui",
                 options,

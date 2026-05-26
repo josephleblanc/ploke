@@ -1,6 +1,7 @@
 //! eframe application shell for the operator graph UI.
 
 pub(crate) mod layout;
+pub(crate) mod section;
 pub(crate) mod shell;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -17,6 +18,7 @@ use ploke_tree::Graph;
 #[cfg(not(target_arch = "wasm32"))]
 use ploke_tree::GraphSnapshot;
 
+use crate::allocation::scope;
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "dev",
@@ -53,7 +55,6 @@ use crate::import::graph_from_snapshot_bytes;
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
-use crate::ui::charts;
 use crate::ui::diff::PatchDiffCache;
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -118,6 +119,7 @@ pub struct OperatorApp {
     ))]
     benchmark_graph_catalog_visible: bool,
     graph_catalog: GraphCatalog,
+    benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode,
 }
 
 impl OperatorApp {
@@ -176,6 +178,7 @@ impl OperatorApp {
             ))]
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
+            benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
         }
     }
 
@@ -230,6 +233,7 @@ impl OperatorApp {
             ))]
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
+            benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
         }
     }
 
@@ -412,8 +416,7 @@ impl eframe::App for OperatorApp {
         ))]
         let top_strip_start = Instant::now();
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _span = tracing::trace_span!("egui_panel_top_strip_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_PANEL_TOP_STRIP_LAYOUT).entered();
             egui::Panel::top("top_strip")
                 .default_size(layout::TOP_STRIP_HEIGHT)
                 .show_inside(ui, |ui| {
@@ -440,8 +443,7 @@ impl eframe::App for OperatorApp {
         ))]
         let run_navigation_start = Instant::now();
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _span = tracing::trace_span!("egui_panel_run_navigation_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_PANEL_RUN_NAVIGATION_LAYOUT).entered();
             egui::Panel::left("run_navigation")
                 .default_size(layout::LEFT_SIDEBAR_WIDTH)
                 .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
@@ -464,8 +466,7 @@ impl eframe::App for OperatorApp {
         ))]
         let timeline_start = Instant::now();
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _span = tracing::trace_span!("egui_panel_timeline_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_PANEL_TIMELINE_LAYOUT).entered();
             egui::Panel::bottom("timeline")
                 .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
                 .show_inside(ui, |ui| {
@@ -492,8 +493,7 @@ impl eframe::App for OperatorApp {
         ))]
         let central_start = Instant::now();
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _span = tracing::trace_span!("egui_panel_central_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_PANEL_CENTRAL_LAYOUT).entered();
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.central");
 
@@ -518,6 +518,12 @@ impl eframe::App for OperatorApp {
                         feature = "native-benchmark"
                     ))]
                     benchmark_inspector_exclusive: self.benchmark_inspector_exclusive,
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    benchmark_eval_protocol_render_mode: self.benchmark_eval_protocol_render_mode,
                 };
 
                 self.dashboard_tree.ui(&mut behavior, ui);
@@ -581,7 +587,7 @@ impl eframe::App for OperatorApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _span = tracing::trace_span!("emit_diagnostics").entered();
+            let _span = tracing::trace_span!(scope::EMIT_DIAGNOSTICS).entered();
             self.emit_diagnostics(ui.ctx());
         }
         #[cfg(all(
@@ -591,8 +597,7 @@ impl eframe::App for OperatorApp {
         ))]
         let capture_start = Instant::now();
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _span = tracing::trace_span!("benchmark_finish_frame").entered();
+            let _span = tracing::trace_span!(scope::BENCHMARK_FINISH_FRAME).entered();
             profiling::finish_frame!();
         }
         #[cfg(not(all(
@@ -603,7 +608,7 @@ impl eframe::App for OperatorApp {
         profiling::finish_frame!();
         #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
         {
-            let _span = tracing::trace_span!("puffin_capture").entered();
+            let _span = tracing::trace_span!(scope::PUFFIN_CAPTURE).entered();
             self.emit_puffin_capture(ui.ctx());
         }
         #[cfg(all(
@@ -929,7 +934,7 @@ mod tests {
 ))]
 impl OperatorApp {
     fn benchmark_begin_frame(&mut self) {
-        let _span = tracing::trace_span!("benchmark_frame_begin").entered();
+        let _span = tracing::trace_span!(scope::BENCHMARK_FRAME_BEGIN).entered();
         let action = self
             .benchmark
             .as_mut()
@@ -949,11 +954,11 @@ impl OperatorApp {
     }
 
     fn benchmark_end_frame(&mut self, ctx: &egui::Context) {
-        let _span = tracing::trace_span!("benchmark_frame_end").entered();
+        let _span = tracing::trace_span!(scope::BENCHMARK_FRAME_END).entered();
         let Some(benchmark) = &mut self.benchmark else {
             return;
         };
-        let _end_frame_span = tracing::trace_span!("benchmark_end_frame").entered();
+        let _end_frame_span = tracing::trace_span!(scope::BENCHMARK_END_FRAME).entered();
         match benchmark.end_frame() {
             Ok(Some(result)) => {
                 print_benchmark_result(&result);
@@ -970,12 +975,23 @@ impl OperatorApp {
     }
 
     fn apply_benchmark_action(&mut self, action: BenchmarkAction) -> BenchmarkActionReport {
-        let _span = tracing::trace_span!("benchmark_apply_action").entered();
+        let _span = tracing::trace_span!(scope::BENCHMARK_APPLY_ACTION).entered();
         let mut report = BenchmarkActionReport::for_action(action);
         self.benchmark_inspector_section = None;
         self.benchmark_inspector_exclusive = false;
+        self.benchmark_eval_protocol_render_mode = shell::EvalProtocolRenderMode::Full;
         match action {
             BenchmarkAction::None => {}
+            BenchmarkAction::FocusEvalProtocolCallReviewScan => {
+                self.dashboard_tree = crate::ui::dashboard::tiles::create_tree_with_primary_pane(
+                    crate::ui::dashboard::tiles::Pane::EvalProtocol,
+                );
+                self.benchmark_eval_protocol_render_mode =
+                    shell::EvalProtocolRenderMode::CallReviewScanOnly;
+                report
+                    .notes
+                    .push("eval_protocol_surface=call_review_scan_only".to_owned());
+            }
             BenchmarkAction::SetMode(mode) => {
                 self.view.set_mode(mode);
                 report.notes.push(format!("mode={}", mode.as_str()));

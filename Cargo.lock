@@ -6827,6 +6827,8 @@ dependencies = [
  "itoa",
  "js-sys",
  "petgraph 0.8.3",
+ "ploke-egui-macros",
+ "ploke-protocol",
  "ploke-records",
  "ploke-tree",
  "profiling",
@@ -6841,6 +6843,15 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "ploke-egui-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

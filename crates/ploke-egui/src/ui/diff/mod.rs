@@ -7,6 +7,7 @@ use egui::text::{LayoutJob, TextFormat};
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 use similar::TextDiff;
 
+use crate::allocation::scope;
 use crate::ui::inspector::PatchInspection;
 
 #[derive(Debug, Default)]
@@ -45,12 +46,13 @@ impl PatchDiffCache {
             .iter()
             .find(|entry| entry.key.matches(input, dark_mode))
         {
-            let _span = tracing::trace_span!("inspector_patch_debug_diff_cache_hit").entered();
+            let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_CACHE_HIT).entered();
             return entry.galley.clone();
         }
 
         let diff = {
-            let _span = tracing::trace_span!("inspector_patch_debug_diff_build_text").entered();
+            let _span =
+                tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_BUILD_TEXT).entered();
             unified_rust_diff(
                 input.target_relpath,
                 input.source_content,
@@ -58,15 +60,15 @@ impl PatchDiffCache {
             )
         };
         let job = {
-            let _span = tracing::trace_span!("inspector_patch_debug_diff_highlight").entered();
+            let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_HIGHLIGHT).entered();
             highlighted_diff_job(ui, diff.as_str(), f32::INFINITY)
         };
         let galley = {
-            let _span = tracing::trace_span!("inspector_patch_debug_diff_layout").entered();
+            let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_LAYOUT).entered();
             ui.fonts_mut(|fonts| fonts.layout_job(job))
         };
         {
-            let _span = tracing::trace_span!("inspector_patch_debug_diff_store").entered();
+            let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_STORE).entered();
             self.entries.push(PatchDiffEntry {
                 key: PatchDiffKey::from_input(input, dark_mode),
                 galley: galley.clone(),

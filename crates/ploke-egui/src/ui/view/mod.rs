@@ -16,6 +16,8 @@ use eframe::egui::Vec2;
 use ploke_tree::Graph as DomainGraph;
 use serde::{Deserialize, Serialize};
 
+use crate::allocation::scope;
+
 pub use style::{
     CurveStyle, EdgeLabelStyle, EdgeStyle, LabelStyle, LayoutStyle, StatusColors, ViewStyle,
 };
@@ -165,7 +167,7 @@ impl GraphView {
 
         self.sync_projection(graph);
         if std::mem::take(&mut self.layout_state_pending) {
-            let _span = tracing::trace_span!("central_graph_layout_state_restore").entered();
+            let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_LAYOUT_STATE_RESTORE).entered();
             egui_graphs::set_layout_state(
                 ui,
                 self.cache.layout_state(self.view_style),
@@ -175,12 +177,12 @@ impl GraphView {
 
         let fit_now = std::mem::take(&mut self.fit_next_frame);
         {
-            let _span = tracing::trace_span!("central_graph_navigation_prepare").entered();
+            let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_NAVIGATION_PREPARE).entered();
             self.navigation = navigation(self.view_style.layout.fit_padding, fit_now);
         }
 
         let mut widget = {
-            let _span = tracing::trace_span!("central_graph_widget_build").entered();
+            let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_WIDGET_BUILD).entered();
             egui_graphs::GraphView::<_, _, _, _, _, _, layout::State, layout::Lineage>::new(
                 self.cache.graph_mut(),
             )
@@ -192,12 +194,12 @@ impl GraphView {
 
         label::reset_edge_label_diagnostics(ui.ctx());
         let response = {
-            let _span = tracing::trace_span!("central_graph_widget_add").entered();
+            let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_WIDGET_ADD).entered();
             ui.add(&mut widget)
         };
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
         {
-            let _span = tracing::trace_span!("central_graph_diagnostics_update").entered();
+            let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_DIAGNOSTICS_UPDATE).entered();
             self.diagnostics =
                 self.cache
                     .diagnostics(response.rect.size(), self.view_style, edge_labels);

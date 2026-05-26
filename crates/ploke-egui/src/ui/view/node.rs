@@ -1,6 +1,8 @@
 use eframe::egui::{Color32, Pos2, Shape, Vec2};
 use petgraph::{EdgeType, stable_graph::IndexType};
 
+use crate::allocation::scope;
+
 use super::effects::{self, NodeVisualEffect};
 use super::projection::GraphNode;
 
@@ -34,7 +36,7 @@ where
     }
 
     fn shapes(&mut self, ctx: &egui_graphs::DrawContext) -> Vec<Shape> {
-        let _span = tracing::trace_span!("egui_graphs_node_shape_layout").entered();
+        let _span = tracing::trace_span!(scope::EGUI_GRAPHS_NODE_SHAPE_LAYOUT).entered();
         if self.visible {
             let effect = self.effect.with_interaction(
                 self.inner.selected,
@@ -64,7 +66,7 @@ where
     }
 
     fn update(&mut self, state: &egui_graphs::NodeProps<GraphNode>) {
-        let _span = tracing::trace_span!("egui_graphs_node_update").entered();
+        let _span = tracing::trace_span!(scope::EGUI_GRAPHS_NODE_UPDATE).entered();
         self.visible = state.payload.visible();
         self.effect = state.payload.effect();
         <egui_graphs::DefaultNodeShape as egui_graphs::DisplayNode<GraphNode, E, Ty, Ix>>::update(

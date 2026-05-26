@@ -1,10 +1,7 @@
 use eframe::egui;
-use ploke_tree::Graph;
 
 mod bar;
 
-pub(crate) fn render_dashboard_content(ui: &mut egui::Ui, graph: &Graph) {
-    let data = [("first", 5.2), ("second", 2.2)];
-    let title: &str = "example";
-    bar::horizontal_bar_chart(ui, title, &data)
+pub(crate) fn horizontal_bar_chart(ui: &mut egui::Ui, title: &str, data: &[(&str, f32)]) {
+    bar::horizontal_bar_chart(ui, title, data);
 }

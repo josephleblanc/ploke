@@ -39,6 +39,8 @@ regressions, and residual risk.
   Graph snapshot UI benchmark note.
 - [`20260521-selected-graph-item-print-benchmark-note.md`](20260521-selected-graph-item-print-benchmark-note.md)
   Selected graph item JSON print benchmark note.
+- [`20260525-eval-protocol-row-hover-samply-note.md`](20260525-eval-protocol-row-hover-samply-note.md)
+  Eval & Protocol row-hover CPU sampling note and allocation follow-up.
 
 Large Puffin captures stay local under
 `crates/ploke-egui/data/profiling/puffin/benchmarks/` and are referenced from

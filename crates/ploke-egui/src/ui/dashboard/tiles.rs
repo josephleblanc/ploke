@@ -75,6 +75,34 @@ pub(crate) struct TreeBehavior<'a> {
         feature = "native-benchmark"
     ))]
     pub(crate) benchmark_inspector_exclusive: bool,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode,
+}
+
+impl TreeBehavior<'_> {
+    fn eval_protocol_render_mode(&self) -> shell::EvalProtocolRenderMode {
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        {
+            self.benchmark_eval_protocol_render_mode
+        }
+
+        #[cfg(not(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        )))]
+        {
+            shell::EvalProtocolRenderMode::Full
+        }
+    }
 }
 
 impl<'a> Behavior<Pane> for TreeBehavior<'a> {
@@ -86,24 +114,26 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 self.view.show(ui, self.graph);
             }
             Pane::EvalProtocol => {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin {
-                                left: 8,
-                                right: 0,
-                                top: 0,
-                                bottom: 0,
-                            })
-                            .show(ui, |ui| {
-                                shell::render_eval_protocol_for_graph(
-                                    ui,
-                                    self.graph,
-                                    self.inspector_render_cache,
-                                );
-                            });
-                    });
+                let viewport_height = ui.available_height();
+                let scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+                scroll_area.show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 8,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        })
+                        .show(ui, |ui| {
+                            shell::render_eval_protocol_pane(
+                                ui,
+                                self.graph,
+                                self.inspector_render_cache,
+                                self.eval_protocol_render_mode(),
+                            );
+                            shell::add_inspector_scroll_end_padding(ui, viewport_height);
+                        });
+                });
             }
             Pane::Inspector => {
                 ui.horizontal(|ui| {
@@ -208,6 +238,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     self.inspector_cache
                         .sections(self.graph, self.graph_revision, Some(reference));
 
+                let viewport_height = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -385,6 +416,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                                 } else {
                                     ui.label("No data available.");
                                 }
+                                shell::add_inspector_scroll_end_padding(ui, viewport_height);
                             });
                     });
             }
@@ -492,7 +524,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
 }
 
 pub fn create_default_tree() -> egui_tiles::Tree<Pane> {
-    create_default_tree_with_primary(Pane::Graph)
+    create_tree_with_primary_pane(Pane::Graph)
 }
 
 pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
@@ -501,14 +533,14 @@ pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
     } else {
         Pane::Graph
     };
-    create_default_tree_with_primary(primary)
+    create_tree_with_primary_pane(primary)
 }
 
 pub fn prefers_eval_protocol_pane(graph: &Graph) -> bool {
     graph.history.blocks.is_empty() && graph.eval_protocol_evidence().is_available()
 }
 
-fn create_default_tree_with_primary(primary: Pane) -> egui_tiles::Tree<Pane> {
+pub(crate) fn create_tree_with_primary_pane(primary: Pane) -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
     let graph_pane = tiles.insert_pane(primary);

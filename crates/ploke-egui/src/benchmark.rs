@@ -51,10 +51,17 @@ pub const BENCHMARK_GRAPH_SNAPSHOT_FIXTURE: &str =
     "benchmark-fixtures/standard-prototype1-graph-snapshot.json";
 
 const FOCUSED_CALLSITE_SCOPES: &[&str] = &[
-    "eframe_run_native",
-    "selection_inspector",
-    "central_graph_widget_add",
-    "inspector_run_record_tool_step",
+    allocation::scope::EFRAME_RUN_NATIVE,
+    allocation::scope::SELECTION_INSPECTOR,
+    allocation::scope::EVAL_PROTOCOL_VISUAL_SUMMARY,
+    allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_SCAN,
+    allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_SPOTLIGHT,
+    allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_ROW,
+    allocation::scope::INSPECTOR_AGENT_TRACE_LLM_TRACE,
+    allocation::scope::INSPECTOR_PATCH_GENERATION_RECORD,
+    allocation::scope::INSPECTOR_RUN_RECORD_TOOL_STEPS,
+    allocation::scope::CENTRAL_GRAPH_WIDGET_ADD,
+    allocation::scope::INSPECTOR_RUN_RECORD_TOOL_STEP,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +91,7 @@ impl BenchmarkSuite {
 pub enum BenchmarkScenario {
     StartupFrames300,
     WarmIdle300,
+    EvalProtocolCallReviewScan300,
     SelectArtifactInspector300,
     InspectorRunRecordsExpanded300,
     InspectorGraphEdgesExpanded300,
@@ -115,6 +123,7 @@ impl BenchmarkScenario {
         match value {
             "startup_frames_300" => Ok(Self::StartupFrames300),
             "warm_idle_300" => Ok(Self::WarmIdle300),
+            "eval_protocol_call_review_scan_300" => Ok(Self::EvalProtocolCallReviewScan300),
             "select_artifact_inspector_300" => Ok(Self::SelectArtifactInspector300),
             "inspector_run_records_expanded_300" => Ok(Self::InspectorRunRecordsExpanded300),
             "inspector_graph_edges_expanded_300" => Ok(Self::InspectorGraphEdgesExpanded300),
@@ -168,6 +177,7 @@ impl BenchmarkScenario {
         match self {
             Self::StartupFrames300 => "startup_frames_300".to_owned(),
             Self::WarmIdle300 => "warm_idle_300".to_owned(),
+            Self::EvalProtocolCallReviewScan300 => "eval_protocol_call_review_scan_300".to_owned(),
             Self::SelectArtifactInspector300 => "select_artifact_inspector_300".to_owned(),
             Self::InspectorRunRecordsExpanded300 => "inspector_run_records_expanded_300".to_owned(),
             Self::InspectorGraphEdgesExpanded300 => "inspector_graph_edges_expanded_300".to_owned(),
@@ -219,6 +229,7 @@ impl BenchmarkScenario {
     pub fn action(self) -> BenchmarkAction {
         match self {
             Self::StartupFrames300 | Self::WarmIdle300 => BenchmarkAction::None,
+            Self::EvalProtocolCallReviewScan300 => BenchmarkAction::FocusEvalProtocolCallReviewScan,
             Self::SelectArtifactInspector300 => BenchmarkAction::SelectArtifact {
                 inspector_section: None,
                 reset_patch_cache: false,
@@ -365,6 +376,7 @@ pub enum BenchmarkAction {
         target: BenchmarkSelectionTarget,
         phase: InspectorSectionPhase,
     },
+    FocusEvalProtocolCallReviewScan,
     SetMode(GraphViewMode),
     ToggleHideUnconsideredChildren,
     ReplaceGraphFromSnapshotFixture,
@@ -393,6 +405,7 @@ impl BenchmarkAction {
             } => section.action_label(),
             Self::InspectorSequence { .. } => "inspector_sections_sequence",
             Self::InspectorSectionPhase { .. } => "inspector_section_phase_sequence",
+            Self::FocusEvalProtocolCallReviewScan => "focus_eval_protocol_call_review_scan",
             Self::SetMode(GraphViewMode::Lineage) => "set_mode_lineage",
             Self::SetMode(GraphViewMode::ArtifactTree) => "set_mode_artifact_tree",
             Self::SetMode(GraphViewMode::ArtifactAndLineage) => "set_mode_artifact_and_lineage",
@@ -1065,6 +1078,9 @@ fn action_notes(action: BenchmarkAction) -> Vec<String> {
             format!("phase_sequence_phase={}", phase.as_str()),
             format!("phase_sequence_frames={INSPECTOR_SECTION_PHASE_FRAMES}"),
         ],
+        BenchmarkAction::FocusEvalProtocolCallReviewScan => {
+            vec!["eval_protocol_focus=call_review_scan".to_owned()]
+        }
         _ => Vec::new(),
     }
 }

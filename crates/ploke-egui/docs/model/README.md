@@ -28,6 +28,9 @@ operator drilldown questions without becoming a second graph model.
 - [protocol-and-evaluation-data-locations.md](protocol-and-evaluation-data-locations.md)
   maps Prototype 1 evaluation artifacts, protocol evidence records, and
   `record.json.gz` paths to the current `ploke_tree::Graph` import boundary.
+- [analyst-representation.md](analyst-representation.md) describes how run,
+  protocol, tool-call, and patch facts should be shaped into analyst-facing
+  summaries before the operator drills into raw evidence.
 - [animation-hooks.md](animation-hooks.md) records how `DisplayNode`,
   `DisplayEdge`, and custom layout implementations can support transitions
   without making display state semantic authority.

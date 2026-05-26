@@ -6,8 +6,10 @@ rust-version.workspace = true
 description = "egui run playback browser for Ploke"
 
 [dependencies]
+ploke-protocol = { workspace = true }
 ploke-records = { workspace = true }
 ploke-tree = { workspace = true }
+ploke-egui-macros = { workspace = true }
 eframe = { version = "0.34", features = ["persistence"] }
 egui = "0.34"
 egui_extras = { version = "0.34", features = ["syntect"] }

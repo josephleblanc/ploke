@@ -59,6 +59,7 @@ members = [
     "tests/fixture_crates/fixture_impls",
     "crates/ploke-llm",
     "proc_macros/ploke-db-derive",
+    "proc_macros/ploke-egui-macros",
     # Add more modules as needed
 ]
 # The TUI is the release-facing default member; `ploke-eval` and
@@ -91,6 +92,7 @@ ploke-tui = { path = "crates/ploke-tui" }
 ploke-rag = { path = "crates/ploke-rag" }
 ploke-io = { path = "crates/ploke-io" }
 ploke-ty-mcp = { path = "crates/ploke-ty-mcp" }
+ploke-egui-macros = { path = "proc_macros/ploke-egui-macros" }
 # Parsing and code generation
 syn = { version = "2.0.100", features = ["full", "visit"] }
 quote = "1"

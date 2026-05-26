@@ -6,3 +6,5 @@
   Implementation plans for bounded UI feature areas.
 - [`profiling/`](profiling/)
   Profiling setup, rolling performance log format, and performance impact notes.
+- [`style/`](style/)
+  Inspector UX discipline for evidence-first, typed, low-churn operator UI work.

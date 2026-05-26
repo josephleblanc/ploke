@@ -7,6 +7,8 @@ use eframe::egui::{
 };
 use petgraph::{EdgeType, stable_graph::IndexType};
 
+use crate::allocation::scope;
+
 use super::effects::{self, EdgeVisualEffect};
 use super::geometry::{
     cubic_point, curve_points, distance_to_curve, endpoint_direction, self_loop_points,
@@ -80,7 +82,7 @@ impl GraphEdgeShape {
     }
 
     fn label_galley(&mut self, ctx: &egui_graphs::DrawContext, color: Color32) -> Arc<Galley> {
-        let _span = tracing::trace_span!("egui_graphs_edge_label_layout").entered();
+        let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_LABEL_LAYOUT).entered();
         let key = EdgeLabelGalleyKey {
             font_size: self.style.label.font_size,
             color,
@@ -118,12 +120,12 @@ impl GraphEdgeShape {
         D: egui_graphs::DisplayNode<N, GraphEdgePayload, Ty, Ix>,
     {
         if start.location() == end.location() {
-            let _span = tracing::trace_span!("egui_graphs_edge_curve_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_CURVE_LAYOUT).entered();
             return self_loop_points(start.location(), node_radius(start), self.style.curve);
         }
 
         {
-            let _span = tracing::trace_span!("egui_graphs_edge_curve_layout").entered();
+            let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_CURVE_LAYOUT).entered();
             let (start_point, end_point) = attachment_points(start, end, self.style.curve);
             self.curve(start_point, end_point)
         }
@@ -155,7 +157,7 @@ where
         end: &egui_graphs::Node<N, GraphEdgePayload, Ty, Ix, D>,
         ctx: &egui_graphs::DrawContext,
     ) -> Vec<Shape> {
-        let _span = tracing::trace_span!("egui_graphs_edge_shape_layout").entered();
+        let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_SHAPE_LAYOUT).entered();
         if !self.visible {
             return Vec::new();
         }
@@ -228,7 +230,7 @@ where
     }
 
     fn update(&mut self, state: &egui_graphs::EdgeProps<GraphEdgePayload>) {
-        let _span = tracing::trace_span!("egui_graphs_edge_update").entered();
+        let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_UPDATE).entered();
         if self.label.as_ref() != state.payload.label.as_ref() {
             self.label = state.payload.label.clone();
             self.curve.set(None);
