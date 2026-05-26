@@ -1,17 +1,14 @@
+use crate::allocation::scope;
 use crate::ui::id_display::{self, TraceId};
 use crate::ui::inspector::{
-    ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, RoleBadgeSet,
+    ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, RoleBadgeSet, SourceRef,
     find_run_forest_node, phase_label, result_class_label, run_forest_node_identity,
 };
 use eframe::egui;
 use ploke_tree::Graph;
 
 use super::fields::*;
-use super::{
-    InspectorRenderCache, artifact_evidence_count, artifact_label, artifact_source_count,
-    first_artifact_source, primary_artifact_id, primary_artifact_ref, render_source_refs,
-    render_unavailable,
-};
+use super::{InspectorRenderCache, render_unavailable};
 
 /// archaeology:runtime-role
 /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
@@ -277,6 +274,117 @@ fn opening_authority_label(authority: &ploke_tree::graph::OpeningAuthorityNode) 
         ploke_tree::graph::OpeningAuthorityNode::Genesis { .. } => "genesis",
         ploke_tree::graph::OpeningAuthorityNode::Predecessor { .. } => "predecessor",
     }
+}
+
+fn render_source_refs<'a>(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    source_refs: impl IntoIterator<Item = SourceRef<'a>>,
+) {
+    let _span = tracing::trace_span!(scope::INSPECTOR_SOURCE_REFS_ITER).entered();
+    let mut total = 0;
+    for source_ref in source_refs {
+        if total < 8 {
+            render_source_ref(ui, render_cache, &source_ref);
+        }
+        total += 1;
+    }
+    if total == 0 {
+        kv(ui, "record refs", "none");
+        return;
+    }
+    if total > 8 {
+        cached_kv_usize(ui, render_cache, "more", total - 8);
+    }
+}
+
+fn render_source_ref(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    source_ref: &SourceRef<'_>,
+) {
+    let _span = tracing::trace_span!(scope::INSPECTOR_SOURCE_REFS_ROW).entered();
+    match source_ref {
+        SourceRef::Evidence {
+            kind,
+            authority,
+            recorded_at,
+        } => {
+            ui.horizontal(|ui| {
+                cached_monospace_label(ui, render_cache, kind);
+                cached_monospace_label(ui, render_cache, authority);
+                if let Some(recorded_at) = recorded_at {
+                    cached_expandable_id(
+                        ui,
+                        render_cache,
+                        ("source-ref", kind, authority, recorded_at),
+                        recorded_at,
+                    );
+                }
+            });
+        }
+        SourceRef::Diagnostic { severity, code } => {
+            ui.horizontal(|ui| {
+                cached_monospace_label(ui, render_cache, "diagnostic");
+                cached_monospace_label(ui, render_cache, severity);
+                cached_expandable_id(ui, render_cache, ("source-ref", severity, code), code);
+            });
+        }
+        SourceRef::ArtifactHistoryRef { artifact } => {
+            ui.horizontal(|ui| {
+                cached_monospace_label(ui, render_cache, "artifact_history_ref");
+                cached_expandable_id(ui, render_cache, ("source-ref", artifact), artifact);
+            });
+        }
+        SourceRef::ArtifactId { artifact } => {
+            ui.horizontal(|ui| {
+                cached_monospace_label(ui, render_cache, "artifact_id");
+                cached_expandable_id(ui, render_cache, ("source-ref", artifact), artifact);
+            });
+        }
+    }
+}
+
+fn first_artifact_source<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_tree::graph::ArtifactNode> {
+    sources.iter().find_map(|source| source.resolve(graph))
+}
+
+fn primary_artifact_id<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_records::ids::ArtifactId> {
+    first_artifact_source(graph, sources).and_then(|source| source.artifact_ids().first())
+}
+
+fn primary_artifact_ref<'g>(
+    graph: &'g Graph,
+    sources: &[ArtifactSourceSlot],
+) -> Option<&'g ploke_records::history::ArtifactRefRecord> {
+    first_artifact_source(graph, sources).and_then(|source| source.artifact_refs().first())
+}
+
+fn artifact_label<'g>(graph: &'g Graph, sources: &[ArtifactSourceSlot]) -> &'g str {
+    first_artifact_source(graph, sources)
+        .map(crate::ui::inspector::artifact_node_label_for_render)
+        .unwrap_or("missing_artifact_identity")
+}
+
+fn artifact_source_count(graph: &Graph, sources: &[ArtifactSourceSlot]) -> usize {
+    sources
+        .iter()
+        .filter(|source| source.resolve(graph).is_some())
+        .count()
+}
+
+fn artifact_evidence_count(graph: &Graph, sources: &[ArtifactSourceSlot]) -> usize {
+    sources
+        .iter()
+        .filter_map(|source| source.resolve(graph))
+        .map(|source| source.evidence.len())
+        .sum()
 }
 
 #[cfg_attr(
