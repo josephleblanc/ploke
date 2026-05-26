@@ -1088,3 +1088,65 @@ Current boundary:
 - The next proof rung should exercise materialize/build for the admitted
   children, including cleanup of build products and preservation of the
   promoted child binary.
+
+## Entry 24: C1-C5 Local Proof Ladder And Handoff Gate
+
+Observe:
+
+- After the live parallel-slot proof passed, the next question was whether the
+  downstream parent mechanics were already covered strongly enough to justify a
+  bounded fresh run.
+
+Orient:
+
+- The live child-plan proof uses a tiny canary crate, so it proves live
+  parent patch generation and admission, but not a real child `ploke-eval`
+  binary running treatment evaluation.
+- The existing C1-C5 tests use the real parent typestate path and fake the
+  child binary/cargo where appropriate. That is enough for parent mechanics,
+  but not enough to prove real treatment self-evaluation.
+
+Decide:
+
+- Run the existing parent-path tests in order:
+  - materialize/build cleanup;
+  - spawn ready and failed-result channel handling;
+  - observation rules that forbid projection-only success;
+  - current-generation selection trace;
+  - successor handoff hydration/rejection tests;
+  - the full `ploke-eval` crate gate.
+
+Act:
+
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_build_promotes_binary_and_cleans_scratch -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_spawn_observes_ready -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_spawn_observes_failed_result -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval observe_child -- --nocapture`
+  passed: 9 tests.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval parent_and_child_have_opposite_directions_from_existing_role_states -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval file_transport_reads_only_new_complete_records -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval current_generation_selector_trace_follows_child_channel_evidence_path -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_cleanup -- --nocapture`
+  passed: 3 tests.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval handoff -- --nocapture`
+  passed: 6 tests.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval` passed:
+  - 763 lib tests passed, 21 ignored;
+  - 13 tests passed in the next group;
+  - 6 tests passed in the next group;
+  - 12 doctests ignored.
+
+Current boundary:
+
+- Parent patch generation, child-plan admission, C1-C5 parent mechanics,
+  projection-vs-channel observation rules, selection trace, handoff hydration,
+  cleanup, and the `ploke-eval` crate gate are green.
+- The remaining proof gap before trusting a long run is the real child
+  self-evaluation step: built child binary -> treatment campaign -> eval closure
+  -> protocol closure -> terminal channel result with treatment evidence.
