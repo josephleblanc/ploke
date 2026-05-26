@@ -1,4 +1,4 @@
-use super::*;
+use super::{cache::ParentCreateRowsKey, *};
 
 #[test]
 fn parent_create_render_rows_reuse_allocated_text_for_stable_key() {
