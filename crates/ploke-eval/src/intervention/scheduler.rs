@@ -157,11 +157,36 @@ fn default_explore_from_rejected() -> bool {
 pub struct Prototype1ChildBudget {
     pub min: u32,
     pub max: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_targets: Option<u32>,
 }
 
 impl Default for Prototype1ChildBudget {
     fn default() -> Self {
-        Self { min: 2, max: 6 }
+        Self {
+            min: 2,
+            max: 6,
+            parallel_targets: None,
+        }
+    }
+}
+
+impl Prototype1ChildBudget {
+    pub fn new(min: u32, max: u32) -> Self {
+        Self {
+            min,
+            max,
+            parallel_targets: None,
+        }
+    }
+
+    pub fn with_parallel_targets(mut self, parallel_targets: u32) -> Self {
+        self.parallel_targets = Some(parallel_targets);
+        self
+    }
+
+    pub fn parallel_targets(self) -> u32 {
+        self.parallel_targets.unwrap_or(3).min(self.max).max(1)
     }
 }
 
@@ -1641,7 +1666,7 @@ mod tests {
 
     #[test]
     fn child_schedule_mode_controls_fanout_width() {
-        let budget = Prototype1ChildBudget { min: 2, max: 6 };
+        let budget = Prototype1ChildBudget::new(2, 6);
         assert_eq!(
             Prototype1ChildScheduleMode::FullBatch.fanout_width(budget, 6),
             6

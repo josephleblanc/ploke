@@ -9,6 +9,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    fs,
     marker::PhantomData,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -1618,6 +1619,8 @@ fn retry_feedback(feedback: &str) -> String {
 #[derive(Debug, Clone, Copy)]
 struct LiveObserver {
     enabled: bool,
+    resources: bool,
+    started: Instant,
 }
 
 impl LiveObserver {
@@ -1630,14 +1633,110 @@ impl LiveObserver {
                     !matches!(value.as_str(), "" | "0" | "false" | "off" | "no")
                 })
                 .unwrap_or(false),
+            resources: std::env::var_os("PLOKE_EVAL_HEADLESS_TUI_LIVE_RESOURCES")
+                .and_then(|value| value.into_string().ok())
+                .map(|value| {
+                    let value = value.trim().to_ascii_lowercase();
+                    !matches!(value.as_str(), "" | "0" | "false" | "off" | "no")
+                })
+                .unwrap_or(false),
+            started: Instant::now(),
+        }
+    }
+
+    #[cfg(test)]
+    fn disabled() -> Self {
+        Self {
+            enabled: false,
+            resources: false,
+            started: Instant::now(),
         }
     }
 
     fn emit(&self, message: impl AsRef<str>) {
         if self.enabled {
-            eprintln!("[headless-tui] {}", message.as_ref());
+            if self.resources {
+                eprintln!(
+                    "[headless-tui elapsed_ms={} rss_kb={}] {}",
+                    self.started.elapsed().as_millis(),
+                    current_rss_kb()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    message.as_ref()
+                );
+            } else {
+                eprintln!(
+                    "[headless-tui elapsed_ms={}] {}",
+                    self.started.elapsed().as_millis(),
+                    message.as_ref()
+                );
+            }
         }
     }
+
+    fn emit_workspace_size(&self, label: &str, workspace_path: &Path) {
+        if self.enabled && self.resources {
+            let workspace = dir_size_limited(workspace_path, 50_000);
+            let target = dir_size_limited(&workspace_path.join("target"), 50_000);
+            eprintln!(
+                "[headless-tui elapsed_ms={} rss_kb={} {label} workspace_bytes={} workspace_entries={} workspace_truncated={} target_bytes={} target_entries={} target_truncated={}]",
+                self.started.elapsed().as_millis(),
+                current_rss_kb()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                workspace.bytes,
+                workspace.entries,
+                workspace.truncated,
+                target.bytes,
+                target.entries,
+                target.truncated,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DirSize {
+    bytes: u64,
+    entries: usize,
+    truncated: bool,
+}
+
+fn current_rss_kb() -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let rest = line.strip_prefix("VmRSS:")?;
+        rest.split_whitespace().next()?.parse::<u64>().ok()
+    })
+}
+
+fn dir_size_limited(path: &Path, max_entries: usize) -> DirSize {
+    let mut size = DirSize::default();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        if size.entries >= max_entries {
+            size.truncated = true;
+            break;
+        }
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        size.entries += 1;
+        if metadata.is_file() {
+            size.bytes = size.bytes.saturating_add(metadata.len());
+            continue;
+        }
+        if !metadata.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            stack.push(entry.path());
+        }
+    }
+    size
 }
 
 async fn submit_prompt(app: &ploke_tui::app::App, content: String) -> Result<Uuid, Error> {
@@ -3880,7 +3979,7 @@ mod tests {
                 &mut runtime,
                 &mut pending_events,
                 1,
-                &LiveObserver { enabled: false },
+                &LiveObserver::disabled(),
             ),
         )
         .await
@@ -4245,7 +4344,7 @@ Suggested action: Verify API credentials and retry."#;
         record_post_approval_indeterminate(
             &mut run,
             2,
-            &LiveObserver { enabled: false },
+            &LiveObserver::disabled(),
             &selected,
             error,
         );
@@ -4285,7 +4384,7 @@ Suggested action: Verify API credentials and retry."#;
         record_post_approval_indeterminate(
             &mut run,
             2,
-            &LiveObserver { enabled: false },
+            &LiveObserver::disabled(),
             &selected,
             "scan barrier failed: channel closed",
         );
@@ -4855,7 +4954,7 @@ Suggested action: Verify API credentials and retry."#;
             BroadEditPolicy::WorkspaceExceptPlokeEval,
             1,
             &mut run,
-            &LiveObserver { enabled: false },
+            &LiveObserver::disabled(),
         )
         .await
         .expect("same-file recorded replay should finish");
@@ -4993,7 +5092,7 @@ Suggested action: Verify API credentials and retry."#;
             BroadEditPolicy::WorkspaceExceptPlokeEval,
             1,
             &mut run,
-            &LiveObserver { enabled: false },
+            &LiveObserver::disabled(),
         )
         .await
         .expect("gated recorded replay should finish");

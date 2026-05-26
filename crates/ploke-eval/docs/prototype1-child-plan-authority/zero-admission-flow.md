@@ -281,13 +281,53 @@ The returned `HarnessRequestBatch` carries:
 ```text
 Parent<AwaitingHarnessPlan>
 slots: Vec<HarnessRequestSlot>
-child_budget: Prototype1ChildBudget { min: 2, max: 3 }
+child_budget: Prototype1ChildBudget::new(2, 3)
 ```
 
 The loop then attempts slots until it reaches `max` admitted children or runs
 out of slots. A slot failure, timeout, malformed result, or admission rejection
 is not itself the controller bug. Those are valid reasons for a slot to produce
 no child transaction.
+
+The parent patch-generation unit is the request slot, not the final child
+runtime. Each slot owns a provisional edit-harness checkout under:
+
+```text
+prototype1/workspaces/edit-harness/<request-id>
+```
+
+`prepare_broad_harness_workspace` creates or resets that checkout from the
+active parent `HEAD`, then the parent runtime asks the headless TUI/model loop
+to edit that candidate checkout. Admission serially validates the completed
+slot, commits the changed files in the candidate checkout, and turns the
+admitted transaction into `ChildPlan` material.
+
+Only after admission does the controller have a runnable child candidate. In
+the broad-harness path, `MaterializeBranch::transition_with_harness` validates
+the admitted candidate workspace and records that workspace as the child
+artifact root. It does not ask the model to patch `nodes/<node>/worktree`
+after the child already exists.
+
+The parent patch-generation loop may run multiple slot attempts concurrently,
+bounded by `[search.children].parallel_targets`. If omitted, that cap defaults
+to `min(3, search.children.max)`. Admission remains parent-serialized and still
+writes exactly one `ChildPlan` message. This keeps parallel model/edit work
+from becoming parallel child-plan authority.
+
+Temporary build products are not durable evidence:
+
+- edit-harness `target/` directories can be removed after each slot attempt
+  has produced diagnostics or a submitted result;
+- `nodes/<node>/target/` can be removed after the parent promotes the built
+  child `ploke-eval` binary into `nodes/<node>/bin/`;
+- `nodes/<node>/instance-targets/` exists for child self-evaluation and can be
+  removed after child evaluation artifacts and terminal channel evidence have
+  been recorded.
+
+The durable surfaces are the submitted/admitted request evidence, the committed
+candidate artifact, the promoted child binary until spawn no longer needs it,
+the per-runtime channel result, and the run/protocol artifacts used for later
+review.
 
 The controller bug starts when all attempted slots admit fewer than
 `child_budget.min`.
@@ -378,10 +418,22 @@ they must not substitute for the authority-bearing message transition.
   - `resolve_profile_child_plan`
   - `resolve_child_plan`
   - `publish_broad_harness_child_plan_request`
+  - `admit_broad_harness_batch`
   - `publish_broad_harness_child_plan_from_admitted_batch`
   - `persist_rejected_plan`
   - `receive_existing_child_plan`
   - `receive_child_plan`
+- `crates/ploke-eval/src/cli/prototype1_state/backend.rs`
+  - `prepare_broad_harness_workspace`
+  - `admit_submitted_broad_harness_result`
+- `crates/ploke-eval/src/cli/prototype1_state/c1.rs`
+  - `MaterializeBranch::transition_with_harness`
+- `crates/ploke-eval/src/cli/prototype1_state/c2.rs`
+  - `BuildChild`
+- `crates/ploke-eval/src/cli/prototype1_process.rs`
+  - `run_prototype1_resolved_branch_treatment`
+  - `prepare_child_instance_target_cache`
+  - `cleanup_prototype1_child_build_products`
 - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
   - `ChildPlan`
   - `ChildPlanFiles`

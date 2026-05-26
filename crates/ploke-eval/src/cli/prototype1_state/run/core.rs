@@ -75,7 +75,9 @@ pub(crate) struct EffectiveRunControl {
     pub(crate) path: PathBuf,
     pub(crate) mode: profile::RunMode,
     pub(crate) parallel_cap: u32,
+    pub(crate) patch_generation_parallel_cap: u32,
     pub(crate) defaulted_from_profile: bool,
+    pub(crate) patch_generation_defaulted_from_profile: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -317,6 +319,18 @@ fn render_status(
                 }
             );
             println!(
+                "patch_generation_parallel_cap: {}{}",
+                status.effective_control.patch_generation_parallel_cap,
+                if status
+                    .effective_control
+                    .patch_generation_defaulted_from_profile
+                {
+                    " (derived)"
+                } else {
+                    ""
+                }
+            );
+            println!(
                 "prompt_preflight: {} (checked={} prompt_files={})",
                 prompt_preflight_label(status.prompt_preflight.outcome),
                 status.prompt_preflight.checked.len(),
@@ -441,11 +455,19 @@ fn load_effective_control(
             ),
         });
     }
+    let patch_generation_parallel_cap = admitted.profile.patch_generation_parallel_cap();
     Ok(EffectiveRunControl {
         path,
         mode: admitted.profile.control.mode,
         parallel_cap,
+        patch_generation_parallel_cap,
         defaulted_from_profile: admitted.profile.control.parallel_cap.is_none(),
+        patch_generation_defaulted_from_profile: admitted
+            .profile
+            .search
+            .children
+            .parallel_targets
+            .is_none(),
     })
 }
 
@@ -506,6 +528,15 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
     if diagnosis.context.effective_control.defaulted_from_profile {
         notes.push(
             "profile [control].parallel_cap missing; using derived cap from [search]".to_string(),
+        );
+    }
+    if diagnosis
+        .context
+        .effective_control
+        .patch_generation_defaulted_from_profile
+    {
+        notes.push(
+            "profile [search.children].parallel_targets missing; using min(3, max)".to_string(),
         );
     }
     ActiveParentStatus {
@@ -2385,7 +2416,7 @@ mod tests {
             search: Search {
                 max_generations: 4,
                 max_total_nodes: 32,
-                children: crate::intervention::Prototype1ChildBudget { min, max },
+                children: crate::intervention::Prototype1ChildBudget::new(min, max),
                 schedule,
                 stop_on_first_keep: false,
                 require_keep_for_continuation: false,
@@ -2435,14 +2466,23 @@ mod tests {
     }
 
     fn env_guard(values: &[(&'static str, PathBuf)]) -> EnvGuard {
+        env_guard_os(
+            values
+                .iter()
+                .map(|(key, value)| (*key, value.clone().into_os_string()))
+                .collect(),
+        )
+    }
+
+    fn env_guard_os(values: Vec<(&'static str, OsString)>) -> EnvGuard {
         let lock = crate::test_support::env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = values
             .iter()
-            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .map(|(key, _)| (*key, std::env::var_os(*key)))
             .collect::<Vec<_>>();
-        for (key, value) in values {
+        for (key, value) in &values {
             unsafe {
                 std::env::set_var(key, value);
             }
@@ -2461,6 +2501,10 @@ mod tests {
 
     impl ChildPlanWorld {
         fn mint_at_child_plan_phase(eval_home: &Path) -> Self {
+            Self::mint_at_child_plan_phase_with_budget(eval_home, 2, 3)
+        }
+
+        fn mint_at_child_plan_phase_with_budget(eval_home: &Path, min: u32, max: u32) -> Self {
             let campaign_id = "campaign";
             let instance_id = "BurntSushi__ripgrep-2209";
             let campaign_dir = eval_home.join("campaigns").join(campaign_id);
@@ -2485,7 +2529,7 @@ mod tests {
             manifest.batches_root = Some(eval_home.join("batches"));
             let manifest_path = save_campaign_manifest(&manifest).expect("save manifest");
 
-            let run_profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 3);
+            let run_profile = profile(Prototype1ChildScheduleMode::FullBatch, min, max);
             run_profile.validate().expect("profile validates");
             let operator = profile::OperatorRunProfile {
                 source_path: eval_home.join("profiles/test-profile.toml"),
@@ -2529,10 +2573,255 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_env_or_skip(test_name: &str) -> bool {
+        use ploke_llm::router_only::google::Google;
+
+        crate::test_support::install_default_google_route_env();
+        let route_config_available = Google::route_config_available().is_ok();
+        let auth_config_available = Google::auth_config_available().is_ok();
+        if route_config_available && auth_config_available {
+            return true;
+        }
+
+        let missing = match (route_config_available, auth_config_available) {
+            (false, false) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC auth",
+            (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
+            (true, false) => "Google ADC auth",
+            (true, true) => unreachable!("handled above"),
+        };
+        let message = format!(
+            "skipping {test_name}: direct Google route is configured for this live test, \
+             but missing {missing}; prototype1-step did not exercise the live Gemini path"
+        );
+        if strict_live_tests_requested() {
+            panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
+        }
+        eprintln!("{message}");
+        false
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn strict_live_tests_requested() -> bool {
+        std::env::var("PLOKE_RUN_LIVE_TESTS")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_model_id() -> ploke_llm::ModelId {
+        let raw = std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID")
+            .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+            .unwrap_or_else(|_| "google/gemini-3.5-flash".to_string());
+        let model = if raw.contains('/') {
+            raw
+        } else {
+            format!("google/{raw}")
+        };
+        model.parse().expect("live Google model id")
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn write_direct_google_model_config(eval_home: &Path, model_id: &ploke_llm::ModelId) {
+        let models_dir = eval_home.join("models");
+        fs::create_dir_all(&models_dir).expect("create temp model config dir");
+        let model = model_id.to_string();
+        let name = model
+            .rsplit('/')
+            .next()
+            .unwrap_or(model.as_str())
+            .to_string();
+        fs::write(
+            models_dir.join("registry.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data": [{
+                    "id": model,
+                    "name": name,
+                    "created": 0,
+                    "description": "Direct Google live prototype1-step test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": model,
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("serialize direct Google registry"),
+        )
+        .expect("write direct Google registry");
+        crate::model_registry::save_parent_patcher_model(model_id)
+            .expect("save direct Google parent patcher model");
+    }
+
+    fn write_parent_workspace_fixture(repo_root: &Path) {
+        fs::write(
+            repo_root.join("Cargo.toml"),
+            r#"[package]
+name = "prototype1-live-step"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#,
+        )
+        .expect("write live step Cargo.toml");
+        let src = repo_root.join("src/lib.rs");
+        fs::create_dir_all(src.parent().expect("src parent")).expect("create src dir");
+        fs::write(
+            src,
+            r#"pub fn prototype1_live_step_canary(input: &str) -> bool {
+    input.trim().is_empty()
+}
+"#,
+        )
+        .expect("write live step canary");
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn headless_summaries(
+        manifest_path: &Path,
+    ) -> Vec<crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Summary> {
+        let result_dir = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("prototype1/messages/edit-harness-result");
+        let Ok(entries) = fs::read_dir(result_dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".headless-tui.json"))
+            })
+            .map(|path| {
+                let bytes = fs::read(&path).unwrap_or_else(|err| {
+                    panic!("read headless-TUI diagnostics '{}': {err}", path.display())
+                });
+                serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                    panic!(
+                        "decode headless-TUI diagnostics '{}': {err}",
+                        path.display()
+                    )
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn print_live_step_timing(
+        phase: &str,
+        started: std::time::Instant,
+        previous: &mut std::time::Instant,
+    ) {
+        let now = std::time::Instant::now();
+        eprintln!(
+            "[prototype1-step-live] phase={phase} delta_ms={} total_ms={}",
+            now.duration_since(*previous).as_millis(),
+            now.duration_since(started).as_millis()
+        );
+        *previous = now;
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn print_headless_profile(
+        summaries: &[crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Summary],
+    ) {
+        use crate::cli::prototype1_state::edit_surface::tui_adapter::evidence;
+
+        for (index, summary) in summaries.iter().enumerate() {
+            eprintln!(
+                "[prototype1-step-live] diagnostics[{index}] terminal={:?} attempts={} events={} validations={} prompts={}",
+                summary.terminal,
+                summary.attempts.len(),
+                summary.events.len(),
+                summary.validations.len(),
+                summary.prompt_diagnostics.len()
+            );
+            for event in &summary.events {
+                match event {
+                    evidence::Event::ToolRequest { call_id, tool, .. } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] tool_request call_id={call_id} tool={tool}"
+                        );
+                    }
+                    evidence::Event::ToolCompleted { call_id, content } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] tool_completed call_id={call_id} content_chars={}",
+                            content.chars
+                        );
+                    }
+                    evidence::Event::ToolFailed { call_id, error } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] tool_failed call_id={call_id} error_chars={}",
+                            error.chars
+                        );
+                    }
+                    evidence::Event::Turn {
+                        outcome,
+                        attempts,
+                        summary,
+                        ..
+                    } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] turn outcome={outcome} attempts={attempts} summary_chars={}",
+                            summary.chars
+                        );
+                    }
+                    evidence::Event::Proposal {
+                        id,
+                        edit_count,
+                        paths,
+                    } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] proposal id={id} edits={edit_count} paths={}",
+                            paths.len()
+                        );
+                    }
+                    evidence::Event::AssistantMessage {
+                        id,
+                        status,
+                        content,
+                    } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] assistant id={id} status={status} chars={}",
+                            content.chars
+                        );
+                    }
+                    evidence::Event::Outcome { outcome } => {
+                        eprintln!(
+                            "[prototype1-step-live] diagnostics[{index}] outcome={outcome:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn init_repo_with_parent_identity(repo_root: &Path, campaign_id: &str, instance_id: &str) {
         fs::create_dir_all(repo_root).expect("create repo root");
         run_git(repo_root, &["init"]);
         write_protected_core(repo_root);
+        write_parent_workspace_fixture(repo_root);
         fs::write(repo_root.join("README.md"), "prototype1 fixture\n").expect("write readme");
         run_git(repo_root, &["add", "--all"]);
         commit(repo_root, "base");
@@ -2681,6 +2970,104 @@ mod tests {
             "retry must not mint fresh broad-harness slots after the rejected child plan is durable"
         );
         assert_eq!(count_broad_requests(&world.manifest_path), after_requests);
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires Google ADC and makes a live Gemini call through prototype1-step"]
+    async fn live_google_step_child_plan() {
+        const TEST_NAME: &str = "live_google_step_child_plan";
+
+        let started = std::time::Instant::now();
+        let mut previous = started;
+        if !live_google_env_or_skip(TEST_NAME) {
+            return;
+        }
+        print_live_step_timing("google_auth_checked", started, &mut previous);
+        assert!(
+            std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_none(),
+            "{TEST_NAME} must not run with the broad TUI fixture hook enabled"
+        );
+
+        let _llm_guard = crate::test_support::llm_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = env_guard_os(vec![
+            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+            ("PLOKE_EVAL_HEADLESS_TUI_LIVE", OsString::from("1")),
+            ("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS", OsString::from("1")),
+            ("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS", OsString::from("60")),
+        ]);
+        let model_id = live_google_model_id();
+        write_direct_google_model_config(&eval_home, &model_id);
+        print_live_step_timing("model_config_written", started, &mut previous);
+        let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
+        print_live_step_timing("world_minted", started, &mut previous);
+        let before_requests = count_broad_requests(&world.manifest_path);
+        let diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
+            .expect("diagnose pre-child-plan world");
+        assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
+        print_live_step_timing("diagnosed_child_plan", started, &mut previous);
+
+        let step_result = step(Prototype1ControlCommand {
+            repo_root: Some(world.repo_root.clone()),
+            format: InspectOutputFormat::Json,
+        })
+        .await;
+        print_live_step_timing("step_returned", started, &mut previous);
+
+        let summaries = headless_summaries(&world.manifest_path);
+        print_headless_profile(&summaries);
+        print_live_step_timing("diagnostics_loaded", started, &mut previous);
+        assert!(
+            !summaries.is_empty(),
+            "prototype1-step should write live headless-TUI diagnostics; step_result={step_result:?}"
+        );
+        assert!(
+            summaries.iter().any(|summary| {
+                summary.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event::Turn { .. }
+                    )
+                })
+            }),
+            "live Gemini route should produce at least one recorded TUI turn"
+        );
+
+        let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
+        let bytes = fs::read(&plan_path).unwrap_or_else(|err| {
+            panic!(
+                "prototype1-step should persist child-plan authority after live Gemini attempt: {err}; step_result={step_result:?}"
+            )
+        });
+        let plan: ChildPlanFiles =
+            serde_json::from_slice(&bytes).expect("persisted child plan decodes");
+        assert_eq!(plan.parent_node_id(), world.parent_identity.node_id());
+        assert_eq!(
+            plan.child_generation(),
+            world.parent_identity.generation() + 1
+        );
+        assert!(
+            plan.children().len() <= 1,
+            "1x1 live step should admit at most one child"
+        );
+        assert!(
+            !plan.children().is_empty() || !plan.rejected_surface_attempts().is_empty(),
+            "live step must persist either an admitted child or rejected attempt evidence"
+        );
+        let after_requests = count_broad_requests(&world.manifest_path);
+        assert!(
+            after_requests > before_requests,
+            "prototype1-step should publish broad request slots before live patch generation"
+        );
+        if let Err(err) = step_result {
+            assert!(
+                err.to_string()
+                    .contains("broad harness admitted 0 child transaction(s)"),
+                "unexpected live prototype1-step error: {err}"
+            );
+        }
     }
 
     fn write_protected_core(repo: &Path) {
@@ -2991,6 +3378,7 @@ mod tests {
         assert!(effective.defaulted_from_profile);
         assert_eq!(effective.mode, RunMode::Continuous);
         assert_eq!(effective.parallel_cap, 6);
+        assert_eq!(effective.patch_generation_parallel_cap, 3);
     }
 
     #[test]
@@ -3007,6 +3395,7 @@ mod tests {
         assert!(!effective.defaulted_from_profile);
         assert_eq!(effective.mode, RunMode::Step);
         assert_eq!(effective.parallel_cap, 1);
+        assert_eq!(effective.patch_generation_parallel_cap, 3);
     }
 
     #[test]
@@ -3016,6 +3405,52 @@ mod tests {
 
         let err = profile.validate().expect_err("widening rejected");
         assert!(err.to_string().contains("widens admitted fanout"));
+    }
+
+    #[test]
+    fn profile_child_budget_accepts_separate_patch_generation_cap() {
+        let mut profile = profile(Prototype1ChildScheduleMode::AdaptiveBatch, 2, 6);
+        profile.search.children = profile.search.children.with_parallel_targets(4);
+        let admitted = admitted(profile);
+
+        let effective = load_effective_control(&admitted).expect("load patch cap");
+
+        assert_eq!(effective.parallel_cap, 2);
+        assert_eq!(effective.patch_generation_parallel_cap, 4);
+    }
+
+    #[test]
+    fn profile_child_budget_caps_default_patch_generation_at_child_max() {
+        let profile = profile(Prototype1ChildScheduleMode::FullBatch, 1, 2);
+        let admitted = admitted(profile);
+
+        let effective = load_effective_control(&admitted).expect("load patch cap");
+
+        assert_eq!(effective.patch_generation_parallel_cap, 2);
+    }
+
+    #[test]
+    fn profile_child_budget_rejects_patch_generation_cap_above_child_max() {
+        let mut profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+        profile.search.children = profile.search.children.with_parallel_targets(7);
+
+        let err = profile.validate().expect_err("patch cap widening rejected");
+        assert!(
+            err.to_string()
+                .contains("parallel_targets 7 must be nonzero and no greater than max 6")
+        );
+    }
+
+    #[test]
+    fn profile_child_budget_rejects_zero_patch_generation_cap() {
+        let mut profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 6);
+        profile.search.children = profile.search.children.with_parallel_targets(0);
+
+        let err = profile.validate().expect_err("zero patch cap rejected");
+        assert!(
+            err.to_string()
+                .contains("parallel_targets 0 must be nonzero and no greater than max 6")
+        );
     }
 
     #[test]

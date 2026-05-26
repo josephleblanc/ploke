@@ -626,6 +626,7 @@ struct HarnessRequestReceipt {
         crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
+#[derive(Clone)]
 struct HarnessRequestSlot {
     request_path: PathBuf,
     published:
@@ -636,6 +637,7 @@ struct HarnessRequestBatch {
     parent: Parent<AwaitingHarnessPlan>,
     slots: Vec<HarnessRequestSlot>,
     child_budget: Prototype1ChildBudget,
+    patch_generation_parallel_cap: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -1280,7 +1282,7 @@ fn publish_broad_harness_child_plan_request(
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
     write_node_projection(&running_parent)?;
     let admission_binding = broad_harness_request_admission_binding(&parent, repo_root)?;
-    let slot_budget = Prototype1ChildBudget { min: 1, max: 1 };
+    let slot_budget = Prototype1ChildBudget::new(1, 1);
     let slot_count = (child_budget.max as usize)
         .checked_mul(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD)
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
@@ -1289,6 +1291,10 @@ fn publish_broad_harness_child_plan_request(
                 child_budget.max
             ),
         })?;
+    #[cfg(test)]
+    let slot_count = broad_headless_tui_env_usize("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT")?
+        .map(|limit| slot_count.min(limit))
+        .unwrap_or(slot_count);
     let mut slots = Vec::with_capacity(slot_count);
     for _ in 0..slot_count {
         let publication = publish_broad_edit_harness_request(
@@ -1321,6 +1327,7 @@ fn publish_broad_harness_child_plan_request(
         parent: awaiting_parent,
         slots,
         child_budget,
+        patch_generation_parallel_cap: child_budget.parallel_targets(),
     })
 }
 
@@ -1455,13 +1462,75 @@ async fn run_broad_headless_tui_attempt(
         return run_broad_headless_tui_attempt_with_options(slot, &options).await;
     }
 
-    let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(None, None)?;
+    #[cfg(test)]
+    let max_attempts = broad_headless_tui_env_u32("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS")?;
+    #[cfg(not(test))]
+    let max_attempts = None;
+    #[cfg(test)]
+    let timeout_secs = broad_headless_tui_env_u64("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS")?;
+    #[cfg(not(test))]
+    let timeout_secs = None;
+    let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
     run_broad_headless_tui_attempt_with_options(slot, &options).await
 }
 
 #[cfg(test)]
 fn broad_headless_tui_fixture_enabled() -> bool {
     std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_some()
+}
+
+#[cfg(test)]
+fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| PrepareError::InvalidBatchSelection {
+            detail: format!("{name} is not valid UTF-8"),
+        })?;
+    value
+        .parse::<u32>()
+        .map(Some)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("invalid {name} value '{value}': {source}"),
+        })
+}
+
+#[cfg(test)]
+fn broad_headless_tui_env_u64(name: &str) -> Result<Option<u64>, PrepareError> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| PrepareError::InvalidBatchSelection {
+            detail: format!("{name} is not valid UTF-8"),
+        })?;
+    value
+        .parse::<u64>()
+        .map(Some)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("invalid {name} value '{value}': {source}"),
+        })
+}
+
+#[cfg(test)]
+fn broad_headless_tui_env_usize(name: &str) -> Result<Option<usize>, PrepareError> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| PrepareError::InvalidBatchSelection {
+            detail: format!("{name} is not valid UTF-8"),
+        })?;
+    value
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("invalid {name} value '{value}': {source}"),
+        })
 }
 
 fn effective_broad_tui_max_attempts(
@@ -2294,7 +2363,8 @@ fn publish_broad_harness_child_plan_from_admitted(
                 request_path: receipt.request_path,
                 published: receipt.published,
             }],
-            child_budget: Prototype1ChildBudget { min: 1, max: 1 },
+            child_budget: Prototype1ChildBudget::new(1, 1),
+            patch_generation_parallel_cap: 1,
         },
         vec![admitted],
     )
@@ -3495,10 +3565,10 @@ fn child_budget_from_command(
             ),
         });
     }
-    Ok(Prototype1ChildBudget {
-        min: command.min_children,
-        max: command.max_children,
-    })
+    Ok(Prototype1ChildBudget::new(
+        command.min_children,
+        command.max_children,
+    ))
 }
 
 fn child_schedule_mode_from_command(
@@ -7625,44 +7695,80 @@ async fn admit_broad_harness_batch(
     env: ChildPlanEnv<'_>,
     batch: HarnessRequestBatch,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    let mut admitted = Vec::with_capacity(batch.slots.len());
-    for slot in &batch.slots {
-        if admitted.len() >= batch.child_budget.max as usize {
+    let max_children = batch.child_budget.max as usize;
+    let cap = (batch.patch_generation_parallel_cap as usize).max(1);
+    let mut pending = batch.slots.iter().cloned().enumerate();
+    let mut running = tokio::task::JoinSet::new();
+    let mut admitted = Vec::with_capacity(max_children);
+
+    loop {
+        while admitted.len() + running.len() < max_children && running.len() < cap {
+            let Some((slot_index, slot)) = pending.next() else {
+                break;
+            };
+            running.spawn(run_broad_slot_for_admission(slot_index, slot));
+        }
+
+        if running.is_empty() {
             break;
         }
-        let mut executor = None;
-        if !slot.published.submitted_result_path().exists() {
-            match run_broad_headless_tui_attempt(slot).await {
-                Ok(value) => {
-                    executor = value;
-                }
-                Err(
-                    source @ (PrepareError::ProviderUnavailable { .. }
-                    | PrepareError::DatabaseSetup { .. }),
-                ) => {
-                    return Err(source);
-                }
-                Err(source) => {
-                    warn_broad_slot_error(
-                        &batch,
-                        slot,
-                        admitted.len(),
-                        &source,
-                        "broad headless-tui slot attempt did not produce an admissible edit; trying next fresh slot",
-                    );
-                    continue;
-                }
+
+        let outcome = match running.join_next().await {
+            Some(Ok(outcome)) => outcome,
+            Some(Err(source)) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!("broad headless-tui slot task failed to join: {source}"),
+                });
             }
+            None => break,
+        };
+
+        if admitted.len() >= max_children {
+            warn!(
+                target: EXECUTION_DEBUG_TARGET,
+                request_id = %outcome.slot.published.request_id(),
+                request_hash = %outcome.slot.published.request_hash(),
+                admitted = admitted.len(),
+                configured_max = batch.child_budget.max,
+                "broad headless-tui slot finished after child max was already admitted; ignoring result"
+            );
+            continue;
         }
-        match try_admit_request_result(env.repo_root, &batch.parent, slot, executor.as_ref()) {
-            Ok(Some(transaction)) => admitted.push(transaction),
-            Ok(None) => {
-                warn_broad_slot_missing_result(&batch, slot, admitted.len());
+
+        let executor = match outcome.result {
+            Ok(executor) => executor,
+            Err(
+                source @ (PrepareError::ProviderUnavailable { .. }
+                | PrepareError::DatabaseSetup { .. }),
+            ) => {
+                return Err(source);
             }
             Err(source) => {
                 warn_broad_slot_error(
                     &batch,
-                    slot,
+                    &outcome.slot,
+                    admitted.len(),
+                    &source,
+                    "broad headless-tui slot attempt did not produce an admissible edit; trying next fresh slot",
+                );
+                continue;
+            }
+        };
+
+        match try_admit_request_result(
+            env.repo_root,
+            &batch.parent,
+            &outcome.slot,
+            executor.as_ref(),
+        ) {
+            Ok(Some(transaction)) => admitted.push((outcome.slot_index, transaction)),
+            Ok(None) => {
+                warn_broad_slot_missing_result(&batch, &outcome.slot, admitted.len());
+            }
+            Err(source) => {
+                warn_broad_slot_error(
+                    &batch,
+                    &outcome.slot,
                     admitted.len(),
                     &source,
                     "broad headless-tui slot result failed admission; trying next fresh slot",
@@ -7670,7 +7776,76 @@ async fn admit_broad_harness_batch(
             }
         }
     }
+    admitted.sort_by_key(|(slot_index, _)| *slot_index);
+    let admitted = admitted
+        .into_iter()
+        .map(|(_, transaction)| transaction)
+        .collect::<Vec<_>>();
+    drop(pending);
     publish_broad_harness_child_plan_from_admitted_batch(env, batch, admitted)
+}
+
+struct BroadSlotAttempt {
+    slot_index: usize,
+    slot: HarnessRequestSlot,
+    result: Result<Option<transaction::Executor>, PrepareError>,
+}
+
+async fn run_broad_slot_for_admission(
+    slot_index: usize,
+    slot: HarnessRequestSlot,
+) -> BroadSlotAttempt {
+    let result = if slot.published.submitted_result_path().exists() {
+        Ok(None)
+    } else {
+        run_broad_headless_tui_attempt(&slot).await
+    };
+    cleanup_broad_slot_target(&slot);
+    BroadSlotAttempt {
+        slot_index,
+        slot,
+        result,
+    }
+}
+
+fn cleanup_broad_slot_target(slot: &HarnessRequestSlot) {
+    let target_dir = slot.published.workspace_path().join("target");
+    if let Err(source) = remove_broad_slot_target(&target_dir, slot.published.workspace_path()) {
+        warn!(
+            target: EXECUTION_DEBUG_TARGET,
+            request_id = %slot.published.request_id(),
+            request_hash = %slot.published.request_hash(),
+            workspace = %slot.published.workspace_path().display(),
+            target_dir = %target_dir.display(),
+            error = %source,
+            "failed to cleanup broad headless-tui slot target dir"
+        );
+    }
+}
+
+fn remove_broad_slot_target(target_dir: &Path, workspace: &Path) -> io::Result<()> {
+    if !target_dir.starts_with(workspace) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to remove target dir '{}' outside workspace '{}'",
+                target_dir.display(),
+                workspace.display()
+            ),
+        ));
+    }
+    let file_type = match fs::symlink_metadata(target_dir) {
+        Ok(metadata) => metadata.file_type(),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(source),
+    };
+    if file_type.is_symlink() || file_type.is_file() {
+        fs::remove_file(target_dir)
+    } else if file_type.is_dir() {
+        fs::remove_dir_all(target_dir)
+    } else {
+        Ok(())
+    }
 }
 
 fn warn_broad_slot_error(
@@ -8467,10 +8642,12 @@ fn reserve_complete_child_budget(
             ),
         });
     }
-    Ok(Prototype1ChildBudget {
-        min: policy.child_budget.min,
-        max: policy.child_budget.max.min(remaining_node_slots),
-    })
+    let mut child_budget = Prototype1ChildBudget::new(
+        policy.child_budget.min,
+        policy.child_budget.max.min(remaining_node_slots),
+    );
+    child_budget.parallel_targets = policy.child_budget.parallel_targets;
+    Ok(child_budget)
 }
 
 pub(crate) fn reserve_profile_child_budget(
@@ -9671,7 +9848,7 @@ impl Prototype1StateCommand {
             }
             reserve_complete_child_budget(policy, current_node_count)?
         } else {
-            Prototype1ChildBudget { min: 1, max: 1 }
+            Prototype1ChildBudget::new(1, 1)
         };
         let planned_children = resolve_child_plan(
             &campaign_id,
@@ -9696,13 +9873,13 @@ impl Prototype1StateCommand {
             } else {
                 // Non-Complete modes intentionally run one child as a debug/inspection slice.
                 (
-                    Prototype1ChildBudget { min: 1, max: 1 },
+                    Prototype1ChildBudget::new(1, 1),
                     Prototype1ChildScheduleMode::AdaptiveBatch,
                 )
             };
         if run_shape.stop_after != Prototype1StateStopAfter::Complete && self.node_id.is_some() {
             // Non-Complete + explicit node id is a single-node debug path.
-            child_budget = Prototype1ChildBudget { min: 1, max: 1 };
+            child_budget = Prototype1ChildBudget::new(1, 1);
             child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
         }
         if self.node_id.is_none() {

@@ -181,21 +181,21 @@ fn candidate_generation_config_dispatches_broad_harness_surface_by_default() {
 fn complete_child_budget_reserves_remaining_node_slots() {
     let policy = Prototype1SearchPolicy {
         max_total_nodes: 20,
-        child_budget: Prototype1ChildBudget { min: 2, max: 6 },
+        child_budget: Prototype1ChildBudget::new(2, 6),
         ..Prototype1SearchPolicy::default()
     };
 
     let reserved =
         reserve_complete_child_budget(&policy, 17).expect("remaining slots should reserve");
 
-    assert_eq!(reserved, Prototype1ChildBudget { min: 2, max: 3 });
+    assert_eq!(reserved, Prototype1ChildBudget::new(2, 3));
 }
 
 #[test]
 fn complete_child_budget_rejects_below_min_remaining_slots() {
     let policy = Prototype1SearchPolicy {
         max_total_nodes: 20,
-        child_budget: Prototype1ChildBudget { min: 4, max: 4 },
+        child_budget: Prototype1ChildBudget::new(4, 4),
         ..Prototype1SearchPolicy::default()
     };
 
@@ -213,7 +213,7 @@ fn complete_child_budget_rejects_below_min_remaining_slots() {
 fn complete_child_budget_rejects_reached_total_node_limit() {
     let policy = Prototype1SearchPolicy {
         max_total_nodes: 20,
-        child_budget: Prototype1ChildBudget { min: 2, max: 6 },
+        child_budget: Prototype1ChildBudget::new(2, 6),
         ..Prototype1SearchPolicy::default()
     };
 
@@ -956,6 +956,33 @@ fn admit_broad_slot_for_test(
         .expect("admit broad harness slot")
 }
 
+fn submit_broad_slot_for_test(
+    repo_root: &Path,
+    slot: &HarnessRequestSlot,
+    changed_paths: &[PathBuf],
+    label: &str,
+) {
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(repo_root, &slot.published)
+        .expect("prepare broad harness workspace");
+    for relpath in changed_paths {
+        write_surface_target(
+            slot.published.workspace_path(),
+            relpath,
+            &format!("candidate edit {label} for {}\n", relpath.display()),
+        );
+    }
+    let changed_paths = changed_paths
+        .iter()
+        .map(|relpath| slot.published.workspace_path().join(relpath))
+        .collect::<Vec<_>>();
+    let target_dir = slot.published.workspace_path().join("target");
+    fs::create_dir_all(&target_dir).expect("create broad slot target dir");
+    fs::write(target_dir.join("canary"), "scratch build output\n")
+        .expect("write broad slot target canary");
+    write_headless_tui_submission(slot, &changed_paths).expect("write broad harness submission");
+}
+
 #[test]
 fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -970,7 +997,7 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published broad harness request");
@@ -1018,7 +1045,7 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published broad harness request");
@@ -1076,7 +1103,7 @@ async fn zero_admission_batch_is_persisted() {
     // Parent<Ready> is the last parent-only state before child-plan authority is
     // resolved. No child runtime channel or ChildFiles exist yet.
     let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget: Prototype1ChildBudget = Prototype1ChildBudget { min: 2, max: 3 };
+    let budget: Prototype1ChildBudget = Prototype1ChildBudget::new(2, 3);
 
     // Publishing the broad-harness request consumes Parent<Ready> and returns a
     // batch carrying Parent<AwaitingHarnessPlan>; from here the controller must
@@ -1230,7 +1257,7 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published broad harness request");
@@ -1344,7 +1371,7 @@ fn deterministic_tui_surface_producer_labels_scaffold_noop_candidates() {
     let generated = produce_deterministic_tui_tools_candidates(
         tmp.path(),
         &parent,
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
     )
     .expect("checked deterministic scaffold candidate");
     let candidate = generated.checked.first().expect("checked candidate");
@@ -1389,7 +1416,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget = Prototype1ChildBudget { min: 1, max: 1 };
+    let budget = Prototype1ChildBudget::new(1, 1);
 
     let receipt = publish_deterministic_tui_tools_child_plan(
         ChildPlanEnv {
@@ -1431,7 +1458,7 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
     write_broad_surface_targets(&repo_root);
     let parent_identity = test_parent_identity();
     let admission_binding = test_broad_request_admission_binding();
-    let budget = Prototype1ChildBudget { min: 2, max: 3 };
+    let budget = Prototype1ChildBudget::new(2, 3);
 
     let first = publish_broad_edit_harness_request(
         &manifest_path,
@@ -1496,20 +1523,21 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
 }
 
 #[test]
-fn broad_workspace_edit_surface_live_publication_allocates_budget_slots_from_active_head() {
+fn broad_batch_publication_allocates_request_slots() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget = Prototype1ChildBudget { min: 2, max: 3 };
+    let budget = Prototype1ChildBudget::new(2, 3);
 
     let batch =
         publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
             .expect("broad harness should allocate request slots from active artifact head");
 
     assert_eq!(batch.child_budget, budget);
+    assert_eq!(batch.patch_generation_parallel_cap, 3);
     assert_eq!(batch.slots.len(), 9);
     assert_eq!(
         batch.parent.harness_request().request_id(),
@@ -1546,6 +1574,44 @@ fn broad_workspace_edit_surface_live_publication_allocates_budget_slots_from_act
         assert!(slot.published.prompt_path().exists());
         assert!(!slot.published.submitted_result_path().exists());
     }
+}
+
+#[test]
+fn broad_batch_default_cap_respects_small_max() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(1, 2);
+
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("broad harness should allocate request slots");
+
+    assert_eq!(batch.child_budget, budget);
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+    assert_eq!(batch.slots.len(), 6);
+}
+
+#[test]
+fn broad_batch_uses_explicit_parallel_targets() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(2, 3).with_parallel_targets(2);
+
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("broad harness should allocate request slots");
+
+    assert_eq!(batch.child_budget, budget);
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+    assert_eq!(batch.slots.len(), 9);
 }
 
 #[test]
@@ -1698,7 +1764,7 @@ path = "src/lib.rs"
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published broad harness request");
@@ -1917,7 +1983,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget = Prototype1ChildBudget { min: 1, max: 1 };
+    let budget = Prototype1ChildBudget::new(1, 1);
     let receipt = publish_deterministic_tui_tools_child_plan(
         ChildPlanEnv {
             campaign_id: "campaign",
@@ -1983,7 +2049,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
         &manifest_path,
         &repo_root,
         parent.identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published request");
@@ -2087,7 +2153,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
         &manifest_path,
         &repo_root,
         &parent_identity,
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         admission_binding.clone(),
     )
     .expect("publish broad request");
@@ -2163,60 +2229,43 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
     assert_eq!(c2.node().workspace_root, workspace.candidate_root);
 }
 
-#[test]
-fn broad_harness_batch_admits_three_transactions_into_three_children() {
+#[tokio::test]
+async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
     let allowed = write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let parent_identity = parent.identity().clone();
-    let admission_binding = test_broad_request_admission_binding();
-    let budget = Prototype1ChildBudget { min: 3, max: 3 };
-    let mut slots = Vec::new();
-    for _ in 0..(budget.max as usize * BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD) {
-        let publication = publish_broad_edit_harness_request(
-            &manifest_path,
-            &repo_root,
-            &parent_identity,
-            Prototype1ChildBudget { min: 1, max: 1 },
-            admission_binding.clone(),
-        )
-        .expect("publish broad slot");
-        slots.push(HarnessRequestSlot {
-            request_path: publication.request_path,
-            published: publication.published,
-        });
-    }
-    let awaiting_parent = parent.awaiting_harness_plan_for_request((&slots[0].published).into());
-    let batch = HarnessRequestBatch {
-        parent: awaiting_parent,
-        slots,
-        child_budget: budget,
-    };
-    let replacement_indexes = [0_usize, 3, 8];
-    let admitted = replacement_indexes
+    let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+
+    let submitted_indexes = [0_usize, 1, 2];
+    let target_dirs = submitted_indexes
         .iter()
         .enumerate()
         .map(|(index, slot_index)| {
             let slot = &batch.slots[*slot_index];
-            let changed_paths = vec![allowed[index].clone(), allowed[index + 1].clone()];
-            admit_broad_slot_for_test(&repo_root, slot, &changed_paths, &format!("slot-{index}"))
+            let changed_paths = vec![allowed[index].clone()];
+            submit_broad_slot_for_test(&repo_root, slot, &changed_paths, &format!("slot-{index}"));
+            slot.published.workspace_path().join("target")
         })
         .collect::<Vec<_>>();
+    let untouched_target = batch.slots[3].published.workspace_path().join("target");
+    fs::create_dir_all(&untouched_target).expect("create untouched target dir");
 
-    let (receipt, trace) = collect_traces(|| {
-        publish_broad_harness_child_plan_from_admitted_batch(
-            ChildPlanEnv {
-                campaign_id: "campaign",
-                manifest_path: &manifest_path,
-                repo_root: &repo_root,
-            },
-            batch,
-            admitted,
-        )
-    });
+    let (receipt, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    ))
+    .await;
     dump_trace_if_requested(&trace);
     let receipt =
         receipt.expect("three admitted broad transactions should seal one three-child plan");
@@ -2254,6 +2303,17 @@ fn broad_harness_batch_admits_three_transactions_into_three_children() {
 
     let children = receipt.plan.body().children();
     assert_eq!(children.len(), 3);
+    for target_dir in target_dirs {
+        assert!(
+            !target_dir.exists(),
+            "submitted slot target dir should be cleaned: {}",
+            target_dir.display()
+        );
+    }
+    assert!(
+        untouched_target.exists(),
+        "slot beyond max admission should not be spawned or cleaned"
+    );
     let request_ids = children
         .iter()
         .map(|child| {
@@ -2294,14 +2354,14 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let admission_binding = test_broad_request_admission_binding();
-    let budget = Prototype1ChildBudget { min: 3, max: 3 };
+    let budget = Prototype1ChildBudget::new(3, 3);
     let mut slots = Vec::new();
     for _ in 0..budget.max {
         let publication = publish_broad_edit_harness_request(
             &manifest_path,
             &repo_root,
             &parent_identity,
-            Prototype1ChildBudget { min: 1, max: 1 },
+            Prototype1ChildBudget::new(1, 1),
             admission_binding.clone(),
         )
         .expect("publish broad slot");
@@ -2324,6 +2384,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
         parent: awaiting_parent,
         slots,
         child_budget: budget,
+        patch_generation_parallel_cap: 2,
     };
 
     let result = publish_broad_harness_child_plan_from_admitted_batch(
@@ -2361,7 +2422,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         &manifest_path,
         &repo_root,
         parent.identity(),
-        Prototype1ChildBudget { min: 1, max: 1 },
+        Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
     )
     .expect("published request");

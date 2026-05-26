@@ -88,6 +88,10 @@ impl Prototype1RunProfile {
         self.search.default_parallel_cap()
     }
 
+    pub(crate) fn patch_generation_parallel_cap(&self) -> u32 {
+        self.search.children.parallel_targets()
+    }
+
     pub(crate) fn search_policy(&self) -> Prototype1SearchPolicy {
         Prototype1SearchPolicy {
             max_generations: self.search.max_generations,
@@ -296,6 +300,14 @@ impl Search {
                 "profile search.children.min {} cannot exceed max {}",
                 self.children.min, self.children.max
             )));
+        }
+        if let Some(parallel_targets) = self.children.parallel_targets {
+            if parallel_targets == 0 || parallel_targets > self.children.max {
+                return Err(profile_error(format!(
+                    "profile search.children.parallel_targets {} must be nonzero and no greater than max {}",
+                    parallel_targets, self.children.max
+                )));
+            }
         }
         Ok(())
     }
@@ -745,15 +757,14 @@ pub(crate) struct Control {
 
 impl Control {
     fn validate(self, search: &Search) -> Result<(), PrepareError> {
-        let Some(parallel_cap) = self.parallel_cap else {
-            return Ok(());
-        };
-        let derived_parallel_cap = search.default_parallel_cap();
-        if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
-            return Err(profile_error(format!(
-                "profile control.parallel_cap {} widens admitted fanout {}",
-                parallel_cap, derived_parallel_cap
-            )));
+        if let Some(parallel_cap) = self.parallel_cap {
+            let derived_parallel_cap = search.default_parallel_cap();
+            if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
+                return Err(profile_error(format!(
+                    "profile control.parallel_cap {} widens admitted fanout {}",
+                    parallel_cap, derived_parallel_cap
+                )));
+            }
         }
         Ok(())
     }
@@ -1083,7 +1094,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
         assert_eq!(profile.model.provider.as_deref(), Some("google"));
         assert_eq!(
             profile.search_policy().child_budget,
-            Prototype1ChildBudget { min: 6, max: 6 }
+            Prototype1ChildBudget::new(6, 6)
         );
         assert_eq!(
             profile.execution.state_stop_after(),

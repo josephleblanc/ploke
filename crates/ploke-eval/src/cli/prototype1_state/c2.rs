@@ -19,11 +19,11 @@
 //! - a promoted child binary now exists, but is not running yet
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Output};
 
 use thiserror::Error;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
@@ -69,6 +69,27 @@ fn failure(output: &Output) -> FailureInfo {
         exit_code: output.status.code(),
         stdout_excerpt: excerpt(&output.stdout),
         stderr_excerpt: excerpt(&output.stderr),
+    }
+}
+
+fn cleanup_scratch_dir(path: &Path) {
+    match fs::remove_dir_all(path) {
+        Ok(()) => {
+            debug!(
+                target: ploke_core::EXECUTION_DEBUG_TARGET,
+                scratch_dir = %path.display(),
+                "removed child build scratch target dir"
+            );
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            warn!(
+                target: ploke_core::EXECUTION_DEBUG_TARGET,
+                scratch_dir = %path.display(),
+                error = %source,
+                "failed to remove child build scratch target dir"
+            );
+        }
     }
 }
 
@@ -476,6 +497,7 @@ impl Intervention<C2, C3> for BuildChild {
                 source,
             })
         })?;
+        cleanup_scratch_dir(&scratch_dir);
         let node = project_node_status(&from.node, Prototype1NodeStatus::BinaryBuilt);
         write_node_projection(&node).map_err(|source| {
             CommitError::Transition(BuildChildError::UpdateNodeStatus {

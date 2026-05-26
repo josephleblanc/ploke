@@ -65,6 +65,27 @@ Legacy `prototype1/run-control.toml` files are ignored by the current control
 path. Move any still-needed `parallel_cap` into `[control]` in
 `prototype1/run-profile.toml`.
 
+## Parent Patch Generation
+
+`[search.children]` owns both the child admission budget and the parent-side
+broad-harness patch-generation concurrency used to try to fill that budget.
+
+```toml
+[search.children]
+min = 2
+max = 3
+parallel_targets = 3
+```
+
+- `parallel_targets`: Optional cap on concurrent parent-side broad-harness
+  patch-generation slots. If omitted, it defaults to `min(3, max)`. This
+  controls provisional edit-harness workspaces and model patch attempts, not
+  child self-evaluation.
+
+Parent patch generation may attempt more total slots than `max` over time, but
+it must not run more slot attempts concurrently than the maximum number of
+child candidates that can be admitted.
+
 ## Profile Conflicts
 
 The profile rejects internally conflicting settings:
@@ -79,6 +100,8 @@ The profile rejects internally conflicting settings:
   `google-ai-studio` are valid only with `model.route_source = "openrouter"`.
 - `search.children.min` and `search.children.max` must be nonzero, and `min`
   must not exceed `max`.
+- `search.children.parallel_targets`, when present, must be nonzero and no
+  greater than `search.children.max`.
 - `generation.source = "legacy"` currently requires exactly one target
   instance.
 - `execution.mbe.enabled = true` requires at least one configured target
@@ -164,7 +187,7 @@ is supplied, setup uses the resolved eval tuple for protocol as well.
 [search]
 max_generations = 2
 max_total_nodes = 13
-children = { min = 1, max = 3 }
+children = { min = 1, max = 3, parallel_targets = 3 }
 schedule = "full-batch"
 stop_on_first_keep = false
 require_keep_for_continuation = false
@@ -175,6 +198,8 @@ explore_from_rejected = true
 - `max_total_nodes`: Maximum total Prototype 1 nodes admitted for the campaign.
 - `children.min`: Minimum children to reserve for a complete generation.
 - `children.max`: Maximum children to reserve for a complete generation.
+- `children.parallel_targets`: Optional parent-side patch-generation
+  concurrency cap. If omitted, it defaults to `min(3, children.max)`.
 - `schedule`: Child execution schedule. `full-batch` plans/runs the reserved
   cohort together; `adaptive-batch` can run narrower batches.
 - `stop_on_first_keep`: Stop the generation as soon as a kept child exists.
