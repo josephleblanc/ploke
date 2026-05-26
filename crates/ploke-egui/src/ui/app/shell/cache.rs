@@ -34,7 +34,7 @@ pub(crate) struct InspectorRenderCache {
 }
 
 impl InspectorRenderCache {
-    pub(crate) fn parent_create_rows(&mut self, key: ParentCreateRowsKey) -> ParentCreateRows {
+    pub(super) fn parent_create_rows(&mut self, key: ParentCreateRowsKey) -> ParentCreateRows {
         if !self.parent_create_rows.contains_key(&key) {
             self.parent_create_rows
                 .insert(key, ParentCreateRows::from_key(key));
@@ -46,7 +46,7 @@ impl InspectorRenderCache {
             .expect("parent-create row cache populated")
     }
 
-    pub(crate) fn call_review_scan_order(
+    pub(super) fn call_review_scan_order(
         &mut self,
         protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
         filter: CallReviewFilter,
@@ -62,11 +62,11 @@ impl InspectorRenderCache {
     }
 
     #[cfg(test)]
-    pub(crate) fn parent_create_row_rebuilds(&self) -> usize {
+    pub(super) fn parent_create_row_rebuilds(&self) -> usize {
         self.parent_create_row_rebuilds
     }
 
-    pub(crate) fn text_galley(
+    pub(super) fn text_galley(
         &mut self,
         ui: &egui::Ui,
         text: &str,
@@ -94,7 +94,7 @@ impl InspectorRenderCache {
         galley
     }
 
-    pub(crate) fn wrapped_monospace_galley(
+    pub(super) fn wrapped_monospace_galley(
         &mut self,
         ui: &egui::Ui,
         text: &str,
@@ -122,7 +122,7 @@ impl InspectorRenderCache {
         galley
     }
 
-    pub(crate) fn run_record_text_galley(
+    pub(super) fn run_record_text_galley(
         &mut self,
         ui: &egui::Ui,
         text: &str,
@@ -169,7 +169,7 @@ impl InspectorRenderCache {
         galley
     }
 
-    pub(crate) fn id_galley(
+    pub(super) fn id_galley(
         &mut self,
         ui: &egui::Ui,
         full: &str,
@@ -202,7 +202,7 @@ impl InspectorRenderCache {
         galley
     }
 
-    pub(crate) fn run_record_id_galley(
+    pub(super) fn run_record_id_galley(
         &mut self,
         ui: &egui::Ui,
         full: &str,
@@ -251,7 +251,7 @@ impl InspectorRenderCache {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn tool_arguments(
+    pub(super) fn tool_arguments(
         &mut self,
         call_id: &str,
         tool: &str,
@@ -277,7 +277,7 @@ impl InspectorRenderCache {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn tool_result(
+    pub(super) fn tool_result(
         &mut self,
         call_id: &str,
         tool: &str,
@@ -303,7 +303,7 @@ impl InspectorRenderCache {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn text_size_summary(&mut self, text: &str) -> Arc<str> {
+    pub(super) fn text_size_summary(&mut self, text: &str) -> Arc<str> {
         let key = TextSizeSummaryKey::from(text);
         if let Some(index) = self
             .text_size_summaries
@@ -322,12 +322,12 @@ impl InspectorRenderCache {
     }
 
     #[cfg(test)]
-    pub(crate) fn text_galley_rebuilds(&self) -> usize {
+    pub(super) fn text_galley_rebuilds(&self) -> usize {
         self.text_galley_rebuilds
     }
 
     #[cfg(test)]
-    pub(crate) fn id_galley_rebuilds(&self) -> usize {
+    pub(super) fn id_galley_rebuilds(&self) -> usize {
         self.id_galley_rebuilds
     }
 }
@@ -436,26 +436,26 @@ fn layout_owned_cached_text(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ParentCreateRowsKey {
-    pub(crate) surface_touches: Option<usize>,
-    pub(crate) check_status: Option<&'static str>,
-    pub(crate) apply_status: Option<&'static str>,
-    pub(crate) tool_requested: usize,
-    pub(crate) tool_completed: usize,
-    pub(crate) tool_failed: usize,
-    pub(crate) edit_proposals: usize,
-    pub(crate) create_proposals: usize,
-    pub(crate) expected_file_changes: usize,
-    pub(crate) candidate_evaluations: usize,
+pub(super) struct ParentCreateRowsKey {
+    pub(super) surface_touches: Option<usize>,
+    pub(super) check_status: Option<&'static str>,
+    pub(super) apply_status: Option<&'static str>,
+    pub(super) tool_requested: usize,
+    pub(super) tool_completed: usize,
+    pub(super) tool_failed: usize,
+    pub(super) edit_proposals: usize,
+    pub(super) create_proposals: usize,
+    pub(super) expected_file_changes: usize,
+    pub(super) candidate_evaluations: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ParentCreateRows {
-    pub(crate) surface_touches: Option<Arc<str>>,
-    pub(crate) check_apply: Option<Arc<str>>,
-    pub(crate) tools: Arc<str>,
-    pub(crate) llm_proposal: Arc<str>,
-    pub(crate) child_eval: Arc<str>,
+pub(super) struct ParentCreateRows {
+    pub(super) surface_touches: Option<Arc<str>>,
+    pub(super) check_apply: Option<Arc<str>>,
+    pub(super) tools: Arc<str>,
+    pub(super) llm_proposal: Arc<str>,
+    pub(super) child_eval: Arc<str>,
 }
 
 impl ParentCreateRows {

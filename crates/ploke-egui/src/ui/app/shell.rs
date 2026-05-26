@@ -38,7 +38,8 @@ use std::sync::Arc;
 
 mod cache;
 mod inspector;
-pub(crate) use cache::{InspectorRenderCache, ParentCreateRowsKey};
+pub(crate) use cache::InspectorRenderCache;
+use cache::ParentCreateRowsKey;
 pub(crate) use inspector::{EvalProtocolRenderMode, InspectorOpenState, InspectorPanelSection};
 #[cfg(test)]
 mod render_cache_tests;
@@ -1430,7 +1431,7 @@ fn render_selected_eval_protocol_call_review(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CallReviewFilter {
+enum CallReviewFilter {
     All,
     FailedScope,
     Mixed,
@@ -1501,7 +1502,7 @@ impl CallReviewFilter {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CallReviewSort {
+struct CallReviewSort {
     column: CallReviewSortColumn,
     direction: SortDirection,
 }
