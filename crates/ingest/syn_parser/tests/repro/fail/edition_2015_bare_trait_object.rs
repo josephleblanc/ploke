@@ -15,8 +15,6 @@
 
 use std::fs;
 
-use syn_parser::GraphAccess;
-use syn_parser::error::SynParserError;
 use syn_parser::try_run_phases_and_resolve;
 use tempfile::tempdir;
 

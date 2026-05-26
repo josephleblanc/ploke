@@ -98,6 +98,9 @@ The profile rejects internally conflicting settings:
 - `model.route_source = "direct-google"` only accepts `model.provider =
   "google"` or no provider. OpenRouter provider pins such as
   `google-ai-studio` are valid only with `model.route_source = "openrouter"`.
+  Warning: this is a profile-level sentinel, not a campaign provider pin. After
+  setup, direct Google campaigns serialize `provider_slug` as absent/null and
+  preserve the route with `route_source = "direct_google"`.
 - `search.children.min` and `search.children.max` must be nonzero, and `min`
   must not exceed `max`.
 - `search.children.parallel_targets`, when present, must be nonzero and no
@@ -174,6 +177,15 @@ provider = "google"
   `provider = "google"` is accepted as the direct Google sentinel and resolves
   to no OpenRouter provider pin in the campaign manifest. For
   `route_source = "openrouter"`, this is an OpenRouter provider pin.
+
+Warning: the direct Google serialization rule is intentionally asymmetric in
+the current implementation. The admitted profile may say
+`provider = "google"`, but `campaign.json` should then say
+`"provider_slug": null` or omit the field. The campaign's route authority is
+`"route_source": "direct_google"`. Do not "repair" a direct Google campaign by
+adding `"provider_slug": "google"`; that value is only accepted as a setup-time
+sentinel and is normalized away before campaign admission. OpenRouter provider
+slugs belong only with `route_source = "openrouter"`.
 
 CLI flags keep normal precedence over this section. `--model-id`,
 `--route-source`, and `--provider` override the eval defaults; the

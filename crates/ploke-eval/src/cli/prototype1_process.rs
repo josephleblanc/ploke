@@ -1483,6 +1483,7 @@ fn child_artifact_workspace(
         Err(err @ BackendError::WorkspacePathMismatch { .. })
             if is_broad_harness_workspace(campaign_manifest_path, &node.workspace_root) =>
         {
+            eprintln!("{err:#?}");
             backend.workspace_for_artifact_root(&node.workspace_root)
         }
         Err(err) => Err(err),
@@ -2900,15 +2901,6 @@ fn block_store_prepare_error(
 ) -> PrepareError {
     PrepareError::DatabaseSetup {
         phase: "prototype1_history_store",
-        detail: error.to_string(),
-    }
-}
-
-fn backend_prepare_error(
-    error: crate::cli::prototype1_state::backend::BackendError,
-) -> PrepareError {
-    PrepareError::DatabaseSetup {
-        phase: "prototype1_history_tree_key",
         detail: error.to_string(),
     }
 }

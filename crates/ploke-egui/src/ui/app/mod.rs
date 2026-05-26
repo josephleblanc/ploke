@@ -37,7 +37,6 @@ use crate::import::graph_from_run_root;
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
-use crate::ui::charts;
 use crate::ui::diff::PatchDiffCache;
 #[cfg(all(
     not(target_arch = "wasm32"),

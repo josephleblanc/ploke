@@ -20,9 +20,7 @@ pub(crate) mod surface;
 pub(crate) mod tui;
 pub(crate) mod tui_adapter;
 
-pub(crate) use diagnosis::{Diagnosis, classify};
 pub(crate) use harness::ArtifactDelta;
-pub(crate) use route::semantic_resolution;
 
 #[cfg(test)]
 mod tests;

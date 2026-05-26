@@ -20,9 +20,9 @@ use crate::{
     },
     closure::load_closure_state,
     intervention::{
-        CompleteBaseline, Intervention, Prototype1ChildScheduleMode, Prototype1NodeRecord,
-        Prototype1NodeStatus, Prototype1RunnerRequest, Prototype1RunnerResult, RecordStore,
-        load_node_record, load_runner_request, load_runner_result,
+        CompleteBaseline, Intervention, Prototype1NodeRecord, Prototype1NodeStatus,
+        Prototype1RunnerRequest, RecordStore, load_node_record, load_runner_request,
+        load_runner_result,
     },
     projection::OperatorProjectionRead,
     run_registry::{RunExecutionStatus, list_registrations_for_instance},
@@ -66,7 +66,7 @@ use crate::cli::prototype1_state::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
     },
-    profile::{self, AdmittedRunProfile, Prototype1RunProfile, RunProfileCommitment},
+    profile::{self, AdmittedRunProfile, RunProfileCommitment},
     successor,
 };
 
@@ -2402,6 +2402,7 @@ mod tests {
         Control, Execution, Generation, ModelDefaults, Protocol, Prototype1RunProfile, RunMode,
         Search, Selection, Storage, Target,
     };
+    use crate::intervention::Prototype1ChildScheduleMode;
     use crate::target_registry::RegistryDatasetSource;
     use ploke_core::tool_types::ToolName;
     use ploke_llm::request::models::ModelRouteSource;

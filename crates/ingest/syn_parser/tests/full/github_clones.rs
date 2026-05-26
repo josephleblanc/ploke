@@ -4,10 +4,7 @@
 /// Rust code to surface parse failures, merge conflicts, or module-tree
 /// construction bugs that smaller fixtures do not expose.
 use ploke_common::fixture_github_clones_dir;
-use syn_parser::{
-    ManifestKind, ParseWorkspaceConfig, error::SynParserError, parser::graph::ParsedCodeGraph,
-    try_parse_manifest, try_run_phases_and_merge,
-};
+use syn_parser::{parser::graph::ParsedCodeGraph, try_run_phases_and_merge};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::common::{WorkspaceParsePair, parse_workspace_both};

@@ -27,6 +27,25 @@ For live parent execution, use the `ploke-eval` binary built inside the active
 parent checkout. Do not run a binary from one checkout against another
 checkout's `--repo-root`.
 
+## Direct Google Manifest Warning
+
+Current setup uses an asymmetric route/provider encoding for direct Google.
+The run profile may contain:
+
+```toml
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+```
+
+That `provider = "google"` value is a setup-time sentinel only. A correctly
+admitted direct Google campaign manifest should serialize the route as
+`"route_source": "direct_google"` and should omit `provider_slug` or serialize
+it as null. Do not add `"provider_slug": "google"` to `campaign.json` to make
+the fields look symmetric; OpenRouter provider slugs belong only to
+`route_source = "openrouter"` campaigns.
+
 ## Command Surfaces
 
 The main operator commands are in `src/cli.rs` and dispatch into

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use ploke_core::{WriteSnippetData, tool_types::ToolName};
+use ploke_core::tool_types::ToolName;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -283,76 +283,6 @@ impl EditSurfaceAdmission {
     }
 }
 
-/// Convert resolved TUI byte-span writes into the backend proposal carrier.
-///
-/// `WriteSnippetData::expected_file_hash` is TUI tracking evidence, not the
-/// authority-side expected base hash. This projection reads the target file
-/// from the parent checkout and fills `ProposedTouch::expected_file_hash` with
-/// the backend-owned content hash that `validate_edit_surface_candidate`
-/// expects.
-pub(crate) fn proposal_from_resolved_writes(
-    repo_root: &Path,
-    surface: Prototype1EditSurface,
-    proposal_id: impl Into<String>,
-    run_id: impl Into<String>,
-    writes: &[WriteSnippetData],
-) -> Result<EditProposal, BackendError> {
-    let mut touches = Vec::with_capacity(writes.len());
-    let mut source_content = None;
-    for write in writes {
-        let relpath = write_relpath(repo_root, &write.file_path)?;
-        validate_normal_repo_relpath(&relpath)?;
-        let absolute_target = repo_root.join(&relpath);
-        let content =
-            fs::read_to_string(&absolute_target).map_err(|source| BackendError::ReadTarget {
-                path: absolute_target,
-                source,
-            })?;
-        source_content.get_or_insert_with(|| content.clone());
-        touches.push(ProposedTouch {
-            target: write.name.clone(),
-            relpath,
-            start: write.start_byte,
-            end: write.end_byte,
-            expected_file_hash: content_hash(&content),
-            replacement: write.replacement.clone(),
-        });
-    }
-    let source_content = source_content.unwrap_or_default();
-    let target_relpath = touches
-        .first()
-        .map(|touch| touch.relpath.clone())
-        .ok_or(BackendError::EmptyEditTouches { surface })?;
-    let generator_surface = GitWorktreeBackend.generator_surface_for_proposed_touches(
-        &target_relpath,
-        &source_content,
-        &touches,
-    )?;
-
-    Ok(EditProposal {
-        surface,
-        proposal_id: proposal_id.into(),
-        run_id: run_id.into(),
-        proposal_producer: request_policy::ProposalProducer::NonRouter,
-        generator_surface,
-        touches,
-        reported_after_file_hash: None,
-    })
-}
-
-fn write_relpath(repo_root: &Path, file_path: &Path) -> Result<PathBuf, BackendError> {
-    if file_path.is_absolute() {
-        file_path
-            .strip_prefix(repo_root)
-            .map(Path::to_path_buf)
-            .map_err(|_| BackendError::InvalidEditSurfacePath {
-                path: file_path.to_path_buf(),
-            })
-    } else {
-        Ok(file_path.to_path_buf())
-    }
-}
-
 /// Checked single-file edit that has passed the authority-side surface gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckedSurfaceEdit {
@@ -379,18 +309,16 @@ impl CheckedSurfaceEdit {
         &self.proposal_id
     }
 
-    pub(crate) fn run_id(&self) -> &str {
-        &self.run_id
-    }
-
     pub(crate) fn target_relpath(&self) -> &Path {
         &self.checked_surface.transition.target_relpath
     }
 
+    #[cfg(test)]
     pub(crate) fn coordinate(&self) -> Coordinate {
         self.checked_surface.grant.coordinate().operation()
     }
 
+    #[cfg(test)]
     pub(crate) fn policy(&self) -> &surface::SurfacePolicyId {
         &self.policy
     }
@@ -423,6 +351,7 @@ impl CheckedSurfaceEdit {
         &self.checked_surface.transition.after.artifact_id
     }
 
+    #[cfg(test)]
     pub(crate) fn delta(&self) -> &edit_surface::ArtifactDelta {
         &self.delta
     }
@@ -483,6 +412,7 @@ impl transaction::Transaction<transaction::state::Admitted> {
         self.admission().binding().coordinate()
     }
 
+    #[cfg(test)]
     pub(crate) fn policy(&self) -> &edit_surface::harness_request::RequestAdmissionPolicyId {
         self.admission().binding().policy_id()
     }
@@ -491,6 +421,7 @@ impl transaction::Transaction<transaction::state::Admitted> {
         self.workspace().candidate_root()
     }
 
+    #[cfg(test)]
     pub(crate) fn submitted_result_path(&self) -> &Path {
         self.submission().result_path()
     }
@@ -507,6 +438,7 @@ impl transaction::Transaction<transaction::state::Admitted> {
         self.artifact().derived_artifact_id()
     }
 
+    #[cfg(test)]
     pub(crate) fn artifact_surface(&self) -> &ArtifactSurface {
         self.artifact().surface()
     }
@@ -536,6 +468,7 @@ impl TuiAttemptDiff {
         &self.candidate_root
     }
 
+    #[cfg(test)]
     pub(crate) fn surface(&self) -> Prototype1EditSurface {
         self.surface
     }
@@ -551,13 +484,6 @@ impl TuiAttemptDiff {
     fn into_changed_paths(self) -> Vec<PathBuf> {
         self.changed_paths
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RetryDisposition {
-    RetryPrompt,
-    RefreshWorkspace,
-    Abort,
 }
 
 /// Retry-friendly boundary rejection for a returned TUI attempt.
@@ -593,18 +519,6 @@ pub(crate) enum AttemptRejection {
 }
 
 impl AttemptRejection {
-    pub(crate) fn disposition(&self) -> RetryDisposition {
-        match self {
-            Self::NoChange { .. } | Self::OutOfPolicy { .. } | Self::UnexpectedDirty { .. } => {
-                RetryDisposition::RetryPrompt
-            }
-            Self::StaleBase { .. } => RetryDisposition::RefreshWorkspace,
-            Self::SourceDirty { .. }
-            | Self::WorkspaceNotIsolated { .. }
-            | Self::InvalidPath { .. } => RetryDisposition::Abort,
-        }
-    }
-
     fn into_backend_error(self) -> BackendError {
         match self {
             Self::SourceDirty { path, dirty_paths } => {
@@ -3056,7 +2970,6 @@ fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::edit_surface::graph::View as _;
     use super::edit_surface::harness_request::{
         EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget, PublishedBroadHarnessRequest,
         RequestAdmissionBinding, SubmissionAuthorityBoundary,
@@ -3066,17 +2979,16 @@ mod tests {
         SubmittedCheckRecommendation, SubmittedEvidenceCitation, SubmittedFileChange,
         SubmittedHarnessReturnEvidence, SubmittedImprovementRationale,
     };
-    use super::edit_surface::{graph, request_policy, surface, tui};
+    use super::edit_surface::{request_policy, surface, tui};
     use super::{
-        AdmittedBroadHarnessResult, AttemptRejection, BackendError, EditSurfaceAdmission,
-        GitWorktreeBackend, RetryDisposition, TuiAttemptOutcome, WorkspaceBackend, WorktreeEntry,
+        AdmittedBroadHarnessResult, BackendError, EditSurfaceAdmission, GitWorktreeBackend,
+        TuiAttemptOutcome, WorkspaceBackend, WorktreeEntry,
         describe_submitted_broad_harness_result_error, parse_dirty_paths, parse_worktree_list,
     };
     use crate::cli::prototype1_state::identity::{
         PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
         parent_identity_commit_message, parent_identity_relpath, write_parent_identity,
     };
-    use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
@@ -3362,19 +3274,6 @@ mod tests {
         }
     }
 
-    fn write_data_for(_repo_root: &std::path::Path, relpath: &std::path::Path) -> WriteSnippetData {
-        WriteSnippetData {
-            id: Uuid::new_v4(),
-            name: "code_edit".to_string(),
-            file_path: relpath.to_path_buf(),
-            expected_file_hash: TrackingHash(Uuid::new_v4()),
-            start_byte: 4,
-            end_byte: 7,
-            replacement: "new".to_string(),
-            namespace: PROJECT_NAMESPACE_UUID,
-        }
-    }
-
     fn identity(generation: u32, parent_id: &str, artifact_branch: &str) -> ParentIdentity {
         ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
@@ -3495,148 +3394,6 @@ R  old.rs -> new.rs
                 panic!("checked edit should keep checked grant coordinate")
             }
         }
-    }
-
-    #[test]
-    fn edit_surface_resolved_write_conversion_lowers_to_surface_touch_and_grant_check() {
-        let tmp = init_git_repo();
-        let source = "let old = 1;\n";
-        let relpath = write_tui_target(tmp.path(), source);
-        let write = write_data_for(tmp.path(), &relpath);
-        let tracking_hash = write.expected_file_hash.0.to_string();
-
-        let tracking_only = super::EditProposal {
-            surface: crate::cli::Prototype1EditSurface::PlokeTuiTools,
-            proposal_id: "proposal-tracking".to_string(),
-            run_id: "run-1".to_string(),
-            proposal_producer: request_policy::ProposalProducer::NonRouter,
-            generator_surface: GitWorktreeBackend
-                .generator_surface_for_proposed_touches(
-                    &relpath,
-                    source,
-                    &[super::ProposedTouch {
-                        target: write.name.clone(),
-                        relpath: relpath.clone(),
-                        start: write.start_byte,
-                        end: write.end_byte,
-                        expected_file_hash: tracking_hash.clone(),
-                        replacement: write.replacement.clone(),
-                    }],
-                )
-                .expect("generator surface"),
-            reported_after_file_hash: None,
-            touches: vec![super::ProposedTouch {
-                target: write.name.clone(),
-                relpath: relpath.clone(),
-                start: write.start_byte,
-                end: write.end_byte,
-                expected_file_hash: tracking_hash.clone(),
-                replacement: write.replacement.clone(),
-            }],
-        };
-
-        let err = GitWorktreeBackend
-            .validate_edit_surface_candidate(
-                tmp.path(),
-                admission_for(crate::loop_graph::ArtifactId::new("artifact:tracking-only")),
-                tracking_only,
-            )
-            .expect_err("TUI TrackingHash is not the backend content hash");
-        assert!(matches!(err, BackendError::StaleEditBaseHash { .. }));
-
-        let converted = super::proposal_from_resolved_writes(
-            tmp.path(),
-            crate::cli::Prototype1EditSurface::PlokeTuiTools,
-            "proposal-content",
-            "run-1",
-            &[write.clone()],
-        )
-        .expect("convert resolved writes");
-
-        assert_eq!(
-            converted.touches[0].expected_file_hash,
-            super::content_hash(source)
-        );
-        assert_ne!(converted.touches[0].expected_file_hash, tracking_hash);
-
-        let checked = GitWorktreeBackend
-            .validate_edit_surface_candidate(
-                tmp.path(),
-                admission_for(crate::loop_graph::ArtifactId::new(
-                    "artifact:resolved-write",
-                )),
-                converted.clone(),
-            )
-            .expect("converted proposal validates");
-        assert_eq!(checked.target_relpath(), relpath.as_path());
-        assert_eq!(checked.source_content_hash(), super::content_hash(source));
-        assert_eq!(checked.proposed_content(), "let new = 1;\n");
-
-        let tracking_hash = surface::Hash::new(tracking_hash);
-        let tracking_ref = surface::Ref::new(
-            super::text_file_artifact_id(&relpath, source),
-            tracking_hash.clone(),
-        );
-        let tracking_artifact = surface::Artifact::new(
-            tracking_ref.clone(),
-            [(relpath.clone(), tracking_hash.clone())],
-        );
-        let graph_target = graph::Target::new(relpath.clone(), write.name.clone());
-        let graph = graph::Mock::new(
-            vec![graph::Node::new(
-                graph_target.clone(),
-                relpath.clone(),
-                write.start_byte,
-                write.end_byte,
-            )],
-            [],
-        );
-        let graph_projection = graph.project(&tracking_artifact).expect("project artifact");
-        let graph_bounds = graph
-            .bounds(
-                &graph_projection,
-                &[graph::Rule::Include(graph_target.clone())],
-            )
-            .expect("derive bounds");
-        let tui_bounds =
-            tui::generator_bounds(&graph_projection, graph_bounds.clone()).expect("adapter bounds");
-        let material = tui::MaterialSpan::from_write(graph_target, &write);
-        let touch = tui_bounds
-            .touch(
-                &tracking_artifact,
-                material,
-                converted.touches[0].replacement.clone(),
-            )
-            .expect("write lowers to touch");
-        let grant = surface::Grant::for_coordinate(
-            crate::loop_graph::Coordinate {
-                runtime_id: crate::loop_graph::RuntimeId(Uuid::nil()),
-                target: crate::loop_graph::OperationTarget::Artifact {
-                    artifact_id: tracking_ref.id().clone(),
-                },
-            },
-            surface::SurfacePolicyId::new("policy:test-boundary"),
-            tracking_ref.clone(),
-            graph_bounds,
-            surface::Area::new([touch.span().clone()]),
-        )
-        .expect("grant");
-        let after_ref = surface::Ref::new(
-            super::text_file_artifact_id(&relpath, "let new = 1;\n"),
-            surface::Hash::new(super::content_hash("let new = 1;\n")),
-        );
-        let check = grant
-            .check(surface::Draft {
-                proposal: &converted.proposal_id,
-                base: tracking_artifact.reference(),
-                after: &after_ref,
-                touches: &[touch],
-            })
-            .expect("checked touch");
-        let (base, after, touches) = check.into_parts();
-        assert_eq!(base, tracking_ref);
-        assert_eq!(after, after_ref);
-        assert_eq!(touches.len(), 1);
     }
 
     #[test]
@@ -4155,116 +3912,6 @@ R  old.rs -> new.rs
         assert_eq!(diff.source_root(), fixture.source_root.as_path());
         assert_eq!(diff.candidate_root(), published.workspace_path());
         assert_eq!(diff.changed_paths(), &[changed]);
-    }
-
-    #[test]
-    fn tui_attempt_diff_rejects_noop_candidate() {
-        let fixture = BroadHarnessFixture::new();
-        let published = fixture.published_request();
-        fixture.clone_candidate_workspace(&published);
-
-        let outcome = GitWorktreeBackend
-            .validate_tui_attempt(fixture.source_root.as_path(), &published)
-            .expect("validate noop attempt");
-
-        assert!(matches!(
-            &outcome,
-            TuiAttemptOutcome::Rejected(AttemptRejection::NoChange { path })
-                if path == published.workspace_path()
-        ));
-        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
-            panic!("noop candidate should reject");
-        };
-        assert_eq!(rejection.disposition(), RetryDisposition::RetryPrompt);
-    }
-
-    #[test]
-    fn tui_attempt_diff_rejects_dirty_source_repo() {
-        let fixture = BroadHarnessFixture::new();
-        let published = fixture.published_request();
-        fixture.clone_candidate_workspace(&published);
-        fs::write(fixture.source_root.join("README.md"), "dirty source\n")
-            .expect("dirty source repo");
-
-        let outcome = GitWorktreeBackend
-            .validate_tui_attempt(fixture.source_root.as_path(), &published)
-            .expect("validate dirty-source attempt");
-
-        assert!(matches!(
-            &outcome,
-            TuiAttemptOutcome::Rejected(AttemptRejection::SourceDirty { path, dirty_paths })
-                if path == &fixture.source_root && dirty_paths == &vec![PathBuf::from("README.md")]
-        ));
-        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
-            panic!("dirty source should reject");
-        };
-        assert_eq!(rejection.disposition(), RetryDisposition::Abort);
-    }
-
-    #[test]
-    fn tui_attempt_diff_rejects_protected_candidate_path() {
-        let fixture = BroadHarnessFixture::new();
-        let published = fixture.published_request();
-        fixture.clone_candidate_workspace(&published);
-
-        let changed = PathBuf::from("crates/ploke-eval/src/lib.rs");
-        fs::write(
-            published.workspace_path().join(&changed),
-            "pub fn protected() { panic!(\"mutated\") }\n",
-        )
-        .expect("write protected-core mutation");
-
-        let outcome = GitWorktreeBackend
-            .validate_tui_attempt(fixture.source_root.as_path(), &published)
-            .expect("validate protected attempt");
-
-        assert!(matches!(
-            &outcome,
-            TuiAttemptOutcome::Rejected(AttemptRejection::OutOfPolicy {
-                surface: crate::cli::Prototype1EditSurface::WorkspaceExceptPlokeEval,
-                path
-            }) if path == &changed
-        ));
-        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
-            panic!("protected candidate should reject");
-        };
-        assert_eq!(rejection.disposition(), RetryDisposition::RetryPrompt);
-    }
-
-    #[test]
-    fn tui_attempt_diff_rejects_stale_base() {
-        let fixture = BroadHarnessFixture::new();
-        let published = fixture.published_request();
-        fixture.clone_candidate_workspace(&published);
-
-        fs::write(fixture.source_root.join("README.md"), "source advanced\n")
-            .expect("advance source repo");
-        run_git_test(fixture.source_root.as_path(), &["add", "README.md"]);
-        run_git_test(
-            fixture.source_root.as_path(),
-            &["commit", "--no-gpg-sign", "-m", "advance source"],
-        );
-
-        let changed = PathBuf::from("src/feature.rs");
-        fs::write(
-            published.workspace_path().join(&changed),
-            "pub fn feature() { println!(\"candidate\") }\n",
-        )
-        .expect("write candidate change");
-
-        let outcome = GitWorktreeBackend
-            .validate_tui_attempt(fixture.source_root.as_path(), &published)
-            .expect("validate stale-base attempt");
-
-        assert!(matches!(
-            &outcome,
-            TuiAttemptOutcome::Rejected(AttemptRejection::StaleBase { path, .. })
-                if path == published.workspace_path()
-        ));
-        let TuiAttemptOutcome::Rejected(rejection) = outcome else {
-            panic!("stale base should reject");
-        };
-        assert_eq!(rejection.disposition(), RetryDisposition::RefreshWorkspace);
     }
 
     #[test]

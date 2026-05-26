@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 use tokio::time::{Duration, Instant, sleep, timeout};
 use uuid::Uuid;
 
+use crate::cli::prototype1_state::edit_surface::route::semantic_resolution;
 use crate::cli::prototype1_state::history::EvidenceRef;
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
@@ -515,7 +516,7 @@ fn replay_shaped_rejected_surface_attempt_admits_semantic_edit_surface_request()
         ),
         crate::cli::prototype1_state::history::EvidenceRef::new("history:context:graph-bounds"),
     ];
-    let (objective, request) = super::semantic_resolution(
+    let (objective, request) = semantic_resolution(
         &diagnosis,
         artifact.reference().clone(),
         bounds,
