@@ -288,6 +288,33 @@ mod tests {
         }
     }
 
+    fn resolved_branch_for(node: &Prototype1NodeRecord) -> ResolvedTreatmentBranch {
+        ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath: node.target_relpath.clone(),
+            source_content: "pub fn before() {}\n".to_string(),
+            source_content_hash: "source-hash".to_string(),
+            selected_branch_id: Some(node.branch_id.clone()),
+            branch: crate::intervention::TreatmentBranchNode {
+                branch_id: node.branch_id.clone(),
+                candidate_id: node.candidate_id.clone(),
+                patch_id: None,
+                branch_label: "candidate branch".to_string(),
+                synthesized_spec_id: "spec-1".to_string(),
+                proposed_content: "pub fn after() {}\n".to_string(),
+                proposed_content_hash: "proposed-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: crate::intervention::TreatmentBranchStatus::Synthesized,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+            },
+        }
+    }
+
     fn treatment_with_instances(instance_ids: &[&str]) -> Prototype1TreatmentEvidence {
         Prototype1TreatmentEvidence {
             baseline_campaign_id: "baseline".to_string(),
@@ -398,6 +425,121 @@ mod tests {
         assert!(treatment.instances[0].oracle_evaluation.is_some());
         assert!(treatment.instances[1].oracle_evaluation.is_some());
         assert!(treatment.instances[2].oracle_evaluation.is_none());
+    }
+
+    #[tokio::test]
+    async fn child_runner_failure_records_terminal_channel() {
+        let tmp = tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let campaign_id = "child-runner-failure";
+        let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+        let prototype1_root = campaign_dir.join("prototype1");
+        let manifest_path = campaign_dir.join("campaign.json");
+        fs::create_dir_all(&prototype1_root).expect("prototype1 root");
+
+        let node = test_node(&prototype1_root);
+        let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
+        let resolved = resolved_branch_for(&node);
+        let runtime_id = RuntimeId::new();
+        let journal_path = prototype1_root.join("transition-journal.jsonl");
+        let channel_root =
+            crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
+        let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
+            campaign_id.to_string(),
+            node.clone(),
+            request,
+            resolved,
+            runtime_id,
+            journal_path.clone(),
+            channel_root,
+        )
+        .expect("valid child invocation bootstrap");
+        let invocation_path =
+            crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
+        crate::cli::prototype1_state::invocation::write_child_invocation(
+            &invocation_path,
+            &invocation,
+        )
+        .expect("write child invocation");
+
+        // The workspace target file is intentionally absent. That forces the
+        // real child runner through `run_prototype1_resolved_branch_treatment`
+        // and into an early materialization failure without faking runner
+        // success or treatment evidence.
+        let result = execute_prototype1_runner_invocation(&invocation_path)
+            .await
+            .expect("runner converts treatment failure into terminal result");
+
+        assert_eq!(result.status, Prototype1NodeStatus::Failed);
+        assert_eq!(
+            result.disposition,
+            Prototype1RunnerDisposition::TreatmentFailed
+        );
+
+        let attempt_result_path =
+            crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);
+        let projection = crate::projection::OperatorProjectionRead::projection_module();
+        let attempt_result =
+            crate::intervention::load_runner_result_at(&attempt_result_path, projection.clone())
+                .expect("attempt-scoped result");
+        let latest_result = crate::intervention::load_runner_result_at(
+            &node.runner_result_path,
+            projection.clone(),
+        )
+        .expect("latest node result");
+        let projected_node =
+            crate::intervention::load_node_record(&manifest_path, &node.node_id, projection)
+                .expect("projected failed node");
+
+        assert_eq!(attempt_result, result);
+        assert_eq!(latest_result, result);
+        assert_eq!(projected_node.status, Prototype1NodeStatus::Failed);
+
+        let journal = fs::read_to_string(&journal_path).expect("transition journal");
+        assert!(journal.contains(r#""state":"ready""#), "{journal}");
+        assert!(journal.contains(r#""state":"evaluating""#), "{journal}");
+        assert!(
+            journal.contains(r#""state":{"result_written""#)
+                || journal.contains(r#""result_written""#),
+            "{journal}"
+        );
+
+        let endpoints = invocation
+            .channel_endpoints()
+            .expect("child invocation carries channel endpoints");
+        let (_, raw_messages) = crate::cli::prototype1_state::channel::Transport::read_since(
+            &FileTransport,
+            &endpoints.child_to_parent(),
+            Cursor::start(),
+        )
+        .expect("read child-to-parent channel");
+        let messages = raw_messages
+            .iter()
+            .map(|bytes| {
+                serde_json::from_slice::<crate::cli::prototype1_state::channel::Envelope<ToParent>>(
+                    bytes,
+                )
+                .expect("typed child-to-parent envelope")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(messages.len(), 3);
+        assert!(matches!(messages[0].body(), ToParent::Ready));
+        assert!(matches!(messages[1].body(), ToParent::Evaluating));
+        match messages[2].body() {
+            ToParent::Result {
+                runner_result,
+                treatment,
+            } => {
+                assert_eq!(runner_result, &result);
+                assert!(treatment.is_none());
+            }
+            other => panic!("expected terminal channel result, got {other:?}"),
+        }
     }
 
     #[test]

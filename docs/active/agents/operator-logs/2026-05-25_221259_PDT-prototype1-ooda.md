@@ -1150,3 +1150,62 @@ Current boundary:
 - The remaining proof gap before trusting a long run is the real child
   self-evaluation step: built child binary -> treatment campaign -> eval closure
   -> protocol closure -> terminal channel result with treatment evidence.
+
+## Entry 25: Child Runner Terminal Failure Evidence
+
+Observe:
+
+- The proof ladder still needed coverage for the real child runner function,
+  not just parent-side spawn/observe mechanics.
+- The child runner path is responsible for `Child<Starting> -> Child<Ready> ->
+  Child<Evaluating> -> Child<ResultWritten>` journal projections, attempt and
+  latest runner-result files, node status projection, and the terminal
+  child-to-parent channel `Result`.
+
+Orient:
+
+- A local test should not fake treatment success. That would only prove the
+  wrapper shape.
+- The narrowest useful case is an early materialization failure inside
+  `run_prototype1_resolved_branch_treatment`: it forces the real runner through
+  the child execution path and proves failure evidence remains terminal and
+  observable.
+- This does not prove successful child self-eval with treatment evidence. It
+  proves the child runner does not disappear silently on early treatment
+  failure.
+
+Decide:
+
+- Add a focused test using existing production carriers:
+  `ChildInvocation`, `Prototype1NodeRecord`, `Prototype1RunnerRequest`, and
+  `ResolvedTreatmentBranch`.
+- Force failure by leaving the target workspace file absent.
+- Assert the durable surfaces that parent-side diagnostics depend on:
+  attempt result, latest node result, node status, transition journal states,
+  and typed child-to-parent channel messages.
+
+Act:
+
+- Added `child_runner_failure_records_terminal_channel`.
+  - It writes an executable `ChildInvocation` bootstrap.
+  - It calls `execute_prototype1_runner_invocation` directly.
+  - It asserts `TreatmentFailed` / `Failed`.
+  - It loads both `nodes/<node>/results/<runtime>.json` and
+    `nodes/<node>/runner-result.json`.
+  - It asserts the node projection is `Failed`.
+  - It parses the child-to-parent channel envelopes and checks:
+    `Ready`, `Evaluating`, then terminal `Result { treatment: None }`.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_runner_failure_records_terminal_channel -- --nocapture`
+  passed.
+- `RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval` passed:
+  - 764 lib tests passed, 21 ignored;
+  - 13 tests passed in the next group;
+  - 6 tests passed in the next group;
+  - 12 doctests ignored.
+
+Current boundary:
+
+- The proof ladder now covers real child-runner terminal failure persistence.
+- The remaining child self-eval gap is the successful treatment path that
+  carries treatment evidence through the terminal channel and into parent
+  comparison.
