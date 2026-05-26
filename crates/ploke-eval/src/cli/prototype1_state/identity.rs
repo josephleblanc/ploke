@@ -1,8 +1,15 @@
 //! Artifact-carried parent identity for Prototype 1.
 //!
-//! This file is committed into every parent-capable Artifact at a stable path.
-//! A Runtime hydrated from that checkout reads this record to learn which
-//! Parent it is, instead of treating command-line arguments as identity.
+//! The record is stored at `.ploke/prototype1/parent_identity.json` inside a
+//! parent-capable checkout. Control commands read it to map the checkout to a
+//! campaign, node, generation, branch, and predecessor chain before loading the
+//! campaign manifest or admitted run profile.
+//!
+//! This record identifies the parent coordinate for the checkout. It is not a
+//! process id, scheduler snapshot, run root, or standalone proof of authority;
+//! startup and handoff still validate the checkout against campaign and History
+//! state. Child worktrees do not carry parent control state and are rejected by
+//! parent-control commands.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,7 +24,12 @@ pub(crate) use ploke_records::identity::{
     PARENT_IDENTITY_RELPATH, PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord,
 };
 
-/// Parent identity committed into a parent Artifact checkout.
+/// Checkout-local identity for the active Prototype 1 parent coordinate.
+///
+/// The wrapped record names the campaign, parent/node id, generation,
+/// branch/artifact coordinate, optional benchmark instance, and predecessor
+/// links. The file is committed into the Artifact so a hydrated Runtime can
+/// recover its parent coordinate from the checkout itself.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub(crate) struct ParentIdentity(ParentIdentityRecord);
@@ -72,7 +84,9 @@ impl ParentIdentity {
         Self(record)
     }
 
-    /// Construct the first parent identity from explicit bootstrap facts.
+    /// Construct the generation-0 parent identity from setup facts.
+    ///
+    /// Root parents have no predecessor parent or parent node.
     pub(crate) fn root_bootstrap(
         campaign_id: impl Into<String>,
         node_id: impl Into<String>,
@@ -96,7 +110,10 @@ impl ParentIdentity {
         })
     }
 
-    /// Construct identity from the scheduler node mirror.
+    /// Construct a parent identity for a selected node.
+    ///
+    /// The node supplies the parent coordinate; the previous parent supplies
+    /// predecessor linkage for startup and History validation.
     pub(crate) fn from_node(
         campaign_id: impl Into<String>,
         node: &Prototype1NodeRecord,
@@ -118,7 +135,10 @@ impl ParentIdentity {
         })
     }
 
-    /// Validate this identity against the active campaign/node expectation.
+    /// Validate command-supplied expectations against the checkout identity.
+    ///
+    /// This checks schema, campaign, and optional node id only. Authority still
+    /// depends on later checkout/startup/History validation.
     pub(crate) fn validate_for_command(
         &self,
         campaign_id: &str,

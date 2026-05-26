@@ -270,16 +270,32 @@ pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), Prep
     }
 }
 
+/// Advance the active Prototype 1 parent checkout by one diagnosed phase.
+///
+/// `prototype1-step` is intentionally diagnosis-driven: it does not accept a
+/// phase argument from the operator. Instead it reconstructs the active parent
+/// context from the checkout, diagnoses the next admissible phase, advances
+/// that phase at most once, and then diagnoses again so the rendered status is
+/// the post-step state.
 pub(crate) async fn step(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
+    // Resolve from the active parent checkout every time. This keeps the step
+    // command tied to the artifact-carried parent identity and admitted run
+    // profile, not to caller-supplied scheduler coordinates.
     let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
     if diagnosis.phase == DiagnosedPhase::Blocked {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!("prototype1-step refused: {}", diagnosis.blockers.join("; ")),
         });
     }
+    // A completed parent is already terminal, so step only renders its current
+    // state. Every other phase advances through the same dispatcher, but with
+    // ExecuteMode::Step so child execution phases run at most one child.
     if diagnosis.phase != DiagnosedPhase::Complete {
         advance(diagnosis, ExecuteMode::Step).await?;
     }
+    // Re-diagnose after the mutation. The status printed by prototype1-step is
+    // therefore the state the operator should act on next, not the stale
+    // pre-advance diagnosis.
     let status = diagnose_command(&command)?;
     render_status(command.format, &status)
 }
@@ -390,7 +406,17 @@ fn render_status(
     Ok(())
 }
 
+/// Build the runtime context used by doctor, prompt, step, and continue.
+///
+/// The input is an optional parent checkout path. The function loads the
+/// parent identity, campaign config, admitted run profile, and effective
+/// control limits needed by later phase diagnosis and advance. Passing a path
+/// targets a parent checkout from another cwd; it does not make an arbitrary
+/// source workspace valid.
 fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareError> {
+    // Use the explicit repo root when present; otherwise use the current
+    // directory. The resolved path must be an active parent checkout, not just
+    // a workspace with candidate source changes.
     let repo_root = repo_root
         .map(Path::to_path_buf)
         .unwrap_or(
@@ -399,6 +425,8 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
                 source,
             })?,
         );
+    // Parent identity links the checkout to its campaign and lineage. Child
+    // worktrees are rejected because they do not carry parent control state.
     let Some(parent_identity) = load_parent_identity_optional(&repo_root)? else {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -408,8 +436,12 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
         });
     };
     let campaign_id = parent_identity.campaign_id().to_string();
+    // Resolve the campaign from the parent identity; step and continue do not
+    // accept an independent run root.
     let manifest_path = campaign_manifest_path(&campaign_id)?;
     let resolved_campaign = resolve_campaign_config(&campaign_id, &Default::default())?;
+    // The admitted profile supplies search bounds, control caps, generation
+    // source, protocol policy, and successor-selection policy.
     let admitted_profile =
         profile::load_admitted_run_profile(&manifest_path)?.ok_or_else(|| {
             PrepareError::InvalidBatchSelection {
@@ -423,6 +455,8 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
                 ),
             }
         })?;
+    // Effective control turns optional control settings into concrete limits
+    // and rejects fanout wider than the admitted profile allows.
     let effective_control = load_effective_control(&admitted_profile)?;
     Ok(RuntimeContext {
         repo_root,

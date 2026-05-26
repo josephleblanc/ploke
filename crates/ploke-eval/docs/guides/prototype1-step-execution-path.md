@@ -80,6 +80,35 @@ Its control shape is:
 That last re-diagnosis matters. The command reports the state after the phase
 advance, not the state that was originally diagnosed.
 
+Current source shape:
+
+```rust
+let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
+```
+
+This line does two separate things:
+
+- `resolve_context` turns an optional checkout path into the runtime facts that
+  all later phases need.
+- `diagnose` reads those facts plus persisted artifacts and chooses the next
+  admissible phase.
+
+If the diagnosis is blocked, `step` returns a `PrepareError` with the collected
+blockers. It does not call `advance`.
+
+If the diagnosis is complete, `step` also does not call `advance`; it only
+prints the current terminal status.
+
+All other phases go through:
+
+```rust
+advance(diagnosis, ExecuteMode::Step).await?;
+```
+
+`ExecuteMode::Step` is the local one-phase contract. It matters later for child
+execution phases because it caps child-phase fanout to one matching child even
+when the admitted profile allows more concurrency.
+
 ## Runtime Context Resolution
 
 `step` begins by calling:
@@ -104,6 +133,88 @@ If the active checkout has no parent identity, the command fails early. The
 error text is explicit that child worktree cwd diagnosis is not supported in v1.
 This is important for self-edit loop operation: `prototype1-step` is a parent
 checkout controller, not a generic campaign artifact scanner.
+
+The current function proceeds in this order:
+
+1. Resolve `repo_root`.
+   If `--repo-root` is present, it is used directly. Otherwise the process
+   current directory is used. This is only a path default; it is not authority.
+2. Load `parent_identity` from the checkout.
+   This is the bridge from filesystem checkout to Prototype 1 lineage. Without
+   it, the command refuses to continue.
+    - setup normally creates it from the registered root node; the explicit init path creates it directly from bootstrap facts.
+3. Copy `campaign_id` from `parent_identity`.
+   The active artifact names its campaign; the caller does not pass a separate
+   campaign id to `prototype1-step`.
+4. Resolve `manifest_path` from `campaign_id`.
+   This locates the campaign root under the normal ploke-eval campaign layout.
+5. Load `resolved_campaign`.
+   This is the existing campaign configuration used by eval/protocol closure
+   work.
+6. Load the admitted run profile from the campaign.
+   Missing `prototype1/run-profile.toml` is a hard error because the step
+   controller should run within the setup-admitted search/control bounds.
+7. Derive `effective_control`.
+   This folds optional control knobs into concrete values and rejects control
+   settings that would widen admitted fanout.
+
+The result is a `RuntimeContext`, not a mutable scheduler view. That distinction
+is deliberate: later phase diagnosis may read projections for status, but the
+active parent identity and admitted profile come from the parent checkout and
+campaign setup artifacts.
+
+### Clarification: How is Parent Identity first created?
+
+The normal first creation path is `loop prototype1-setup`.
+
+In [prepare_prototype1_parent_setup](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:203), setup does this:
+
+1. Prepares/loads the campaign and admits the run profile.
+2. Chooses the primary instance.
+3. Builds the gen0 parent artifact branch name:
+   `prototype1-parent-<campaign>-gen0`.
+4. Calls `register_root_parent_node(...)` to create the generation-0 parent node.
+5. Checks out a fresh parent branch.
+6. Creates the identity with:
+
+```rust
+ParentIdentity::from_node(campaign_id, &node, None, Some(artifact_branch))
+```
+
+7. Writes it to `.ploke/prototype1/parent_identity.json`.
+8. Commits that file into the active checkout.
+9. Validates the checkout against the identity.
+
+There is also a manual bootstrap path: `loop prototype1-state --init-parent-identity`. That goes through [initialize_prototype1_parent_identity](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6182), requires `--identity-branch` and `--identity-instance`, checks the deterministic gen0 node id, then calls:
+
+```rust
+ParentIdentity::root_bootstrap(...)
+```
+
+So: setup normally creates it from the registered root node; the explicit init path creates it directly from bootstrap facts. `resolve_context` only reads it later.
+
+### Concrete Example of a Branch Name: `prototype1-parent-<campaign>-gen0`
+
+```text
+prototype1-parent-p1-gemini35-flash-direct-15g2x3-20260525-035000-gen0
+```
+
+It appears in this actual parent identity file:
+
+[.ploke/prototype1/parent_identity.json](</home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-15g2x3-20260525-035000/.ploke/prototype1/parent_identity.json:1>)
+
+Relevant fields from that file:
+
+```json
+{
+  "campaign_id": "p1-gemini35-flash-direct-15g2x3-20260525-035000",
+  "generation": 0,
+  "branch_id": "prototype1-parent-p1-gemini35-flash-direct-15g2x3-20260525-035000-gen0",
+  "artifact_branch": "prototype1-parent-p1-gemini35-flash-direct-15g2x3-20260525-035000-gen0"
+}
+```
+
+This is the worktree-local file that parent-control commands would read for that checkout.
 
 ## First Diagnostic Boundary
 

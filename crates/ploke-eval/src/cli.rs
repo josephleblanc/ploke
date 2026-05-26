@@ -663,7 +663,10 @@ pub struct Prototype1StateCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(about = "Diagnose or control the active Prototype 1 parent checkout")]
 pub struct Prototype1ControlCommand {
-    /// Parent checkout root. Defaults to the current directory.
+    /// Active parent checkout root. Defaults to the current directory.
+    ///
+    /// Use this to diagnose or control a parent checkout from another cwd. The
+    /// path must contain `.ploke/prototype1/parent_identity.json`.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
@@ -685,7 +688,10 @@ pub struct Prototype1DoctorCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(about = "Print the broad-harness prompt for the active Prototype 1 parent checkout")]
 pub struct Prototype1PromptCommand {
-    /// Parent checkout root. Defaults to the current directory.
+    /// Active parent checkout root. Defaults to the current directory.
+    ///
+    /// Use this to print the prompt for a parent checkout from another cwd. The
+    /// path must contain `.ploke/prototype1/parent_identity.json`.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 }
