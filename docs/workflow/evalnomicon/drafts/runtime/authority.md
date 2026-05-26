@@ -78,6 +78,11 @@ held along its admitted path, not by a runtime-global role label. For example,
 evaluation progress, persist a `Child<ResultWritten>` projection, and send the
 terminal child-channel `Result` that the parent observes.
 
+`Child<ResultWritten>` is not treatment-output authority. Successful child
+output is authority-bearing only when the terminal per-runtime channel `Result`
+carries both the runner result and the treatment evidence assembled from complete
+treatment records.
+
 ### Disjoint Mutable Surfaces
 
 For any two distinct child runtimes `C_i` and `C_j` in the same parent wave:

@@ -57,7 +57,7 @@ Key files inside `prototype1/`:
 | `evaluations/<branch-id>.json` | Treatment-vs-baseline branch evaluation report. |
 | `nodes/<node-id>/node.json` | Scheduler-owned node record. |
 | `nodes/<node-id>/runner-request.json` | Runner request projection for a node. |
-| `nodes/<node-id>/runner-result.json` | Parent-consumed runner outcome. |
+| `nodes/<node-id>/runner-result.json` | Latest node-level runner-result projection; not full treatment evidence. |
 | `nodes/<node-id>/invocations/<runtime-id>.json` | Child or successor bootstrap contract. |
 | `nodes/<node-id>/channels/<runtime-id>/*.jsonl` | Parent-child or successor transport messages. |
 | `nodes/<node-id>/streams/<runtime-id>/*.log` | Detached runtime stdout/stderr streams. |
@@ -89,7 +89,7 @@ Run artifacts usually live under:
 | Materialize | node status, worktree, transition journal | treating a temp worktree as successor home |
 | Build | child binary path, node status, build result | treating failed cargo output as absent evidence |
 | Spawn | invocation, channel, runtime id, streams | treating process spawn as child acknowledgement |
-| Observe | runner result, treatment evidence, branch evaluation | treating a non-empty patch as clean success despite aborted turn |
+| Observe | terminal channel result, treatment evidence, branch evaluation | treating a non-empty patch as clean success despite aborted turn |
 | Select | selection decision and seal material | treating child self-report as promotion |
 | Handoff | active checkout update, sealed History block, successor ready record | treating successor invocation as authority without sealed-head validation |
 | Blocked | doctor blockers, transition journal, failing artifact | continuing and producing more ambiguous evidence |
@@ -152,4 +152,3 @@ Use narrow blocker labels. The next action depends on the class.
   model-visible.
 - `repo_state`: wrong branch, dirty worktree, stale checkout, missing path, or
   path-sensitive fixture issue.
-

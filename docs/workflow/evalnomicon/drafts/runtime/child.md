@@ -190,9 +190,10 @@ send ToParent::Ready
 record Child<Evaluating>
 send ToParent::Evaluating
 run treatment branch evaluation
+require complete treatment metrics for success
 write runner result
 record Child<ResultWritten>
-send terminal ToParent::Result { runner_result, treatment }
+send terminal ToParent::Result { runner_result, treatment? }
 exit
 ```
 
@@ -205,12 +206,15 @@ Relevant files:
 - `crates/ploke-eval/src/cli/prototype1_process.rs`
   - `record_prototype1_child_ready`
   - `execute_prototype1_runner_invocation`
-  - `run_prototype1_branch_evaluation`
+  - `run_prototype1_resolved_branch_treatment`
+  - `require_complete_treatment`
   - runner-result constructors
 
 The child runner currently records one runner result for the attempt. Successful
 branch evaluation becomes `Prototype1RunnerDisposition::Succeeded`. Evaluation
 failure becomes a non-success runner disposition such as `TreatmentFailed`.
+Treatment evidence is emitted only in the terminal channel result; the attempt
+result file and `Child<ResultWritten>` record are reconstruction surfaces.
 
 Provider and agent timeouts are not handled by the parent scheduler directly.
 They occur inside the child runner's evaluation work and surface back only if

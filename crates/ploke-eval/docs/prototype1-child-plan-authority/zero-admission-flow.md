@@ -411,6 +411,49 @@ This zero-admission bug happened before `ChildFiles` existed. Therefore:
 Runtime projections remain useful for later reconstruction and run review, but
 they must not substitute for the authority-bearing message transition.
 
+## Child Treatment Evidence Boundary
+
+This zero-admission bug is parent-side and happens before any child runtime
+exists. For later child-runtime diagnosis, keep a separate boundary in mind:
+treatment evidence leaves the child only in the terminal per-runtime channel
+message.
+
+The child execution path is:
+
+```text
+run treatment eval closure
+-> run treatment protocol closure
+-> load treatment closure state
+-> build treatment evidence from complete run records
+-> require complete treatment metrics
+-> validate patch projection
+-> optionally attach MBE oracle evidence
+-> write attempt runner result projections
+-> send ToParent::Result { runner_result, treatment? }
+```
+
+`Prototype1TreatmentEvidence` is assembled in memory from treatment
+`closure-state.json` and each complete run's `record.json.gz`. It becomes
+parent-visible evidence only when carried by `ToParent::Result.treatment`.
+`nodes/<node-id>/results/<runtime-id>.json`, `runner-result.json`, and
+`Child<ResultWritten>` are reconstruction/projection surfaces; they do not carry
+the full treatment payload the parent needs for comparison.
+
+If treatment evidence is incomplete, the child must not emit a success-shaped
+terminal result. The current gate requires every treatment instance to have
+metrics derived from a complete run record. When that gate fails, the terminal
+channel result carries a failed `runner_result` and no `treatment` payload.
+
+One live canary failure exposed a test setup issue at this boundary. The eval
+closure did write a run record, but closure-state reconstruction marked the
+instance `missing` because the live test used a non-canonical eval-home spelling
+containing `crates/ploke-eval/../../target/...`, while the run registration held
+the canonical `/home/brasides/code/ploke/target/...` spelling. Registration
+lookup compares `storage_roots.runs_dir` by path identity, so live test roots
+need to be canonicalized before campaign paths are written. Do not paper over
+that with runner-result or scheduler projection reads; the fix belongs in test
+setup or path normalization before registration/evidence lookup.
+
 ## Source Map
 
 - `crates/ploke-eval/src/cli/prototype1_state/run/core.rs`
@@ -436,8 +479,16 @@ they must not substitute for the authority-bearing message transition.
   - `BuildChild`
 - `crates/ploke-eval/src/cli/prototype1_process.rs`
   - `run_prototype1_resolved_branch_treatment`
+  - `require_complete_treatment`
   - `prepare_child_instance_target_cache`
   - `cleanup_prototype1_child_build_products`
+- `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `ToParent::Result`
+  - `Channel::send_terminal_result`
+- `crates/ploke-eval/src/closure.rs`
+  - `build_instance_row`
+- `crates/ploke-eval/src/run_registry.rs`
+  - `list_registrations_for_instance`
 - `crates/ploke-eval/src/cli/prototype1_state/parent.rs`
   - `ChildPlan`
   - `ChildPlanFiles`

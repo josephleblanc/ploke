@@ -1272,3 +1272,158 @@ Current boundary:
   `execute_prototype1_runner_invocation` run all the way through treatment eval,
   treatment protocol, patch projection validation, and terminal treatment
   channel result.
+
+## Entry 27: Live Child Runner Success Proof
+
+Observe:
+
+- The previous child-runner proof only covered terminal failure.
+- The historical node-150 proof covered reconstruction of successful treatment
+  evidence, but did not prove a fresh child runtime could produce it now.
+- The missing rung was a real live `execute_prototype1_runner_invocation` call
+  that returns success and sends terminal channel treatment evidence.
+
+Orient:
+
+- The faithful surface is the child runner itself, not a full long loop.
+- The test must use the real `ChildInvocation`, local Multi-SWE-Bench-style
+  dataset/repo preparation, live direct Google model routing, eval closure,
+  protocol closure, treatment evidence builder, patch projection gate, and
+  child-to-parent channel.
+- The terminal `ToParent::Result` remains the lifecycle authority. Result files
+  and node projections are supporting reconstruction evidence.
+
+Decide:
+
+- Add `live_google_child_runner_success` behind `live_api_tests` and `#[ignore]`.
+- Use shared live Google helper plumbing instead of duplicating model registry
+  and auth checks in each test module.
+- Keep the live temp root configurable and home-backed by default so focused
+  live proofs do not consume the small root partition through `/tmp`.
+- Add `crates/ploke-eval/docs/prototype1-proof-ladder.md` so the proof state is
+  discoverable outside this chat and terminal history.
+
+Act:
+
+- Added shared live helpers in `crate::test_support`:
+  - `live_google_env_or_skip`;
+  - `live_google_model_id`;
+  - `write_direct_google_model_config`;
+  - `live_tempdir`.
+- Updated existing live Prototype 1 step tests to reuse those helpers.
+- Added `live_google_child_runner_success`.
+  - It creates a local source repo for `ploke-live/child-target`.
+  - It writes a one-instance dataset whose failing test requires changing
+    `answer()` from `"wrong"` to `"fixed"`.
+  - It writes a direct-Google campaign manifest.
+  - It bootstraps and executes a real `ChildInvocation`.
+  - It asserts runner success, treatment campaign creation, one complete
+    treatment instance, channel `Ready`, `Evaluating`, terminal `Result`, and
+    `treatment: Some(...)`.
+  - It asserts treatment evidence points at an existing `record.json.gz`,
+    metrics report a non-empty valid patch, and the child target checkout
+    contains `"fixed"`.
+- Live command passed:
+
+```bash
+RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval --features live_api_tests live_google_child_runner_success -- --ignored --nocapture
+```
+
+Observed timing:
+
+```text
+[prototype1-child-live] phase=google_auth_checked delta_ms=232 total_ms=232
+[prototype1-child-live] phase=model_config_written delta_ms=0 total_ms=232
+[prototype1-child-live] phase=campaign_written delta_ms=6 total_ms=239
+[prototype1-child-live] phase=invocation_written delta_ms=0 total_ms=239
+loop.prototype1_branch.evaluate.branch-live-child.start
+loop.prototype1_branch.evaluate.branch-live-child.end +111.355s
+[prototype1-child-live] phase=runner_returned delta_ms=111355 total_ms=111595
+[prototype1-child-live] phase=assertions_complete delta_ms=0 total_ms=111595
+test result: ok. 1 passed; finished in 111.60s
+```
+
+Current boundary:
+
+- At this point in the investigation, the live test appeared to cover fresh
+  live successful child self-evaluation through terminal channel treatment
+  evidence.
+- Entry 28 revises this after the stricter completeness gate showed that the
+  apparent success was too weak: the child produced a patch, but treatment
+  closure still classified the instance as missing.
+
+## Entry 28: Live Child Success Gate Exposed Closure Registration Gap
+
+Observe:
+
+- The initial `live_google_child_runner_success` pass was too weak. It trusted
+  the returned runner result before requiring treatment closure to classify the
+  treatment instance as complete.
+- After tightening the production completeness gate, the same live test failed
+  with `TreatmentFailed` because treatment evidence had no complete metrics:
+  `status=missing`.
+- The failure preserved artifacts under:
+
+```text
+target/tmp/live-api-tests/prototype1-child-runner-success-EEaL2s/eval-home
+```
+
+Orient:
+
+- The model/tool execution itself appears to have worked:
+  - `agent-turn-summary.json` reports terminal outcome `completed`;
+  - `patch_artifact.applied=true`;
+  - `all_proposals_applied=true`;
+  - the submitted patch and checkout diff change `"wrong"` to `"fixed"`.
+- The treatment closure state reports:
+  - `expected_total=1`;
+  - `complete_total=0`;
+  - `missing_total=1`.
+- The run registration exists, is completed, and points at the actual
+  `record.json.gz`.
+- Closure fails before classification because
+  `list_registrations_for_instance` rejects the registration on lexical
+  `PathBuf` inequality:
+  - closure expected:
+    `/home/brasides/code/ploke/crates/ploke-eval/../../target/tmp/live-api-tests/.../runs`;
+  - registration stored:
+    `/home/brasides/code/ploke/target/tmp/live-api-tests/.../runs`.
+- These paths name the same directory after normalization, but the code uses
+  direct `PathBuf` equality.
+- After rejecting the registration, closure falls back to the instance root and
+  checks for `<instance_root>/record.json.gz`, so it never sees the real
+  `<instance_root>/runs/<run-id>/record.json.gz`.
+- This is a path-authority bug, not an agent patch failure.
+
+Decide:
+
+- Keep the stricter production gate. A child runner must not report successful
+  treatment evidence unless closure recompute can classify the run as complete.
+- Downgrade the proof-ladder live child self-eval rung from proven to blocked.
+- File a separate bug report for the registration/closure mismatch instead of
+  mixing it with the earlier node-150 observe-child sidecar race.
+
+Act:
+
+- Added `require_complete_treatment` after
+  `build_prototype1_treatment_evidence`.
+- Added focused local guard:
+
+```bash
+RUSTFLAGS=-Awarnings cargo test -q -p ploke-eval child_success_requires_complete_treatment_metrics -- --nocapture
+```
+
+- Updated `crates/ploke-eval/docs/prototype1-proof-ladder.md` to record the
+  stricter live-test result and preserved evidence root.
+- Added bug report:
+  `docs/active/bugs/2026-05-26-prototype1-treatment-closure-misses-live-child-run.md`.
+- Updated the bug report with the traced root cause after reading
+  `run_registry.rs`, `closure.rs`, `runner.rs`, and the preserved failed
+  registration/closure artifacts.
+
+Current boundary:
+
+- The live child self-eval proof is not complete.
+- The next repair target is registration selection in
+  `run_registry.rs::list_registrations_for_instance`: it must not reject
+  equivalent roots solely because one side contains `..` components.

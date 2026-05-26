@@ -315,6 +315,155 @@ mod tests {
         }
     }
 
+    fn live_node(root: &Path) -> Prototype1NodeRecord {
+        let mut node = test_node(root);
+        node.node_id = "node-live-child".to_string();
+        node.instance_id = "ploke-live__child-target-1".to_string();
+        node.branch_id = "branch-live-child".to_string();
+        node.candidate_id = "candidate-live-child".to_string();
+        node.target_relpath =
+            PathBuf::from(ploke_tui::tools::ToolName::NsPatch.description_artifact_relpath());
+        node.node_dir = root.join("nodes").join(&node.node_id);
+        node.workspace_root = node.node_dir.join("worktree");
+        node.binary_path = node.node_dir.join("bin").join("ploke-eval");
+        node.runner_request_path = node.node_dir.join("runner-request.json");
+        node.runner_result_path = node.node_dir.join("runner-result.json");
+        node
+    }
+
+    fn live_branch_for(
+        node: &Prototype1NodeRecord,
+        source: &str,
+        proposed: &str,
+    ) -> ResolvedTreatmentBranch {
+        let mut resolved = resolved_branch_for(node);
+        resolved.target_relpath = node.target_relpath.clone();
+        resolved.source_content = source.to_string();
+        resolved.branch.proposed_content = proposed.to_string();
+        resolved
+    }
+
+    fn write_text(path: &Path, text: &str) {
+        fs::create_dir_all(path.parent().expect("path parent")).expect("create parent dir");
+        fs::write(path, text).expect("write file");
+    }
+
+    fn git_output(repo_root: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .output()
+            .expect("git command");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("git stdout is utf8")
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn write_live_repo(eval_home: &Path) -> String {
+        let repo_root = eval_home.join("repos/ploke-live/child-target");
+        fs::create_dir_all(&repo_root).expect("create live source repo");
+        run_git_test(&repo_root, &["init"]);
+        write_text(
+            &repo_root.join("Cargo.toml"),
+            r#"[package]
+name = "child-target"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#,
+        );
+        write_text(
+            &repo_root.join("src/lib.rs"),
+            r#"pub fn answer() -> &'static str {
+    "wrong"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn answer_returns_fixed() {
+        assert_eq!(answer(), "fixed");
+    }
+}
+"#,
+        );
+        run_git_test(&repo_root, &["add", "--all"]);
+        run_git_test(
+            &repo_root,
+            &[
+                "-c",
+                "user.email=prototype1-test@example.invalid",
+                "-c",
+                "user.name=Prototype1 Test",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "base",
+            ],
+        );
+        git_output(&repo_root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn write_live_dataset(eval_home: &Path, base_sha: &str) -> PathBuf {
+        let dataset = eval_home.join("datasets/live-child-runner.jsonl");
+        let body = "The repository has one source file to fix: `src/lib.rs`. \
+The failing test is `answer_returns_fixed`. The function `answer()` currently returns the \
+string literal `wrong`; replace that literal with `fixed`. Do not change `Cargo.toml`. \
+After editing, use the cargo tool to run `cargo test`, then finish with the patch output.";
+        let row = serde_json::json!({
+            "instance_id": "ploke-live__child-target-1",
+            "org": "ploke-live",
+            "repo": "child-target",
+            "number": 1,
+            "title": "Fix the answer canary",
+            "body": body,
+            "base": { "sha": base_sha },
+            "fix_patch": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn answer() -> &'static str {\n-    \"wrong\"\n+    \"fixed\"\n }\n"
+        });
+        write_text(&dataset, &format!("{row}\n"));
+        dataset
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn write_live_campaign(eval_home: &Path, campaign_id: &str, dataset: PathBuf, model: &str) {
+        let mut manifest = crate::CampaignManifest::new(campaign_id.to_string());
+        manifest.dataset_sources = vec![crate::target_registry::RegistryDatasetSource {
+            key: None,
+            path: dataset,
+            label: "live-child-runner".to_string(),
+            url: None,
+        }];
+        manifest.model_id = Some(model.to_string());
+        manifest.route_source = Some(ploke_llm::request::models::ModelRouteSource::DirectGoogle);
+        manifest.instances_root = Some(eval_home.join("instances").join(campaign_id));
+        manifest.batches_root = Some(eval_home.join("batches").join(campaign_id));
+        manifest.eval.limit = Some(1);
+        manifest.eval.batch_prefix = Some("live-child-runner".to_string());
+        manifest.eval.budget = crate::spec::EvalBudget {
+            max_turns: 8,
+            max_tool_calls: 24,
+            wall_clock_secs: 900,
+        };
+        manifest.protocol.limit_runs = Some(1);
+        manifest.protocol.max_concurrency = 1;
+        manifest.protocol.tool_review_parallelism = 2;
+        manifest.protocol.max_tokens = 3200;
+        crate::save_campaign_manifest(&manifest).expect("save live baseline campaign");
+    }
+
     fn treatment_with_instances(instance_ids: &[&str]) -> Prototype1TreatmentEvidence {
         Prototype1TreatmentEvidence {
             baseline_campaign_id: "baseline".to_string(),
@@ -338,6 +487,25 @@ mod tests {
                     }
                 })
                 .collect(),
+        }
+    }
+
+    fn complete_metrics() -> crate::OperationalRunMetrics {
+        crate::OperationalRunMetrics {
+            tool_calls_total: 1,
+            tool_calls_failed: 0,
+            patch_attempted: true,
+            patch_apply_state: crate::PatchApplyState::Applied,
+            submission_artifact_state: SubmissionArtifactState::Nonempty,
+            patch_projection_check_state: PatchProjectionCheckState::Passed,
+            partial_patch_failures: 0,
+            same_file_patch_retry_count: 0,
+            same_file_patch_max_streak: 0,
+            aborted: false,
+            aborted_repair_loop: false,
+            nonempty_valid_patch: true,
+            convergence: true,
+            oracle_eligible: true,
         }
     }
 
@@ -425,6 +593,23 @@ mod tests {
         assert!(treatment.instances[0].oracle_evaluation.is_some());
         assert!(treatment.instances[1].oracle_evaluation.is_some());
         assert!(treatment.instances[2].oracle_evaluation.is_none());
+    }
+
+    #[test]
+    fn child_success_requires_complete_treatment_metrics() {
+        let incomplete = treatment_with_instances(&["case-1"]);
+        let error =
+            require_complete_treatment(&incomplete).expect_err("missing metrics are not success");
+        assert!(
+            error
+                .to_string()
+                .contains("did not produce complete run metrics"),
+            "{error}"
+        );
+
+        let mut complete = treatment_with_instances(&["case-1"]);
+        complete.instances[0].metrics = Some(complete_metrics());
+        require_complete_treatment(&complete).expect("complete metrics are success evidence");
     }
 
     #[tokio::test]
@@ -540,6 +725,181 @@ mod tests {
             }
             other => panic!("expected terminal channel result, got {other:?}"),
         }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires Google ADC and runs a live child self-evaluation plus protocol closure"]
+    async fn live_google_child_runner_success() {
+        const TEST_NAME: &str = "live_google_child_runner_success";
+
+        let started = std::time::Instant::now();
+        let mut previous = started;
+        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
+            return;
+        }
+        print_live_child_timing("google_auth_checked", started, &mut previous);
+
+        let _llm_guard = crate::test_support::llm_lock().lock().await;
+        let tmp = crate::test_support::live_tempdir("prototype1-child-runner-success-");
+        let eval_home = tmp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let model_id = crate::test_support::live_google_model_id();
+        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
+        print_live_child_timing("model_config_written", started, &mut previous);
+
+        let campaign_id = "live-child-runner-success";
+        let base_sha = write_live_repo(&eval_home);
+        let dataset = write_live_dataset(&eval_home, &base_sha);
+        write_live_campaign(&eval_home, campaign_id, dataset, &model_id.to_string());
+        print_live_child_timing("campaign_written", started, &mut previous);
+
+        let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+        let prototype1_root = campaign_dir.join("prototype1");
+        fs::create_dir_all(&prototype1_root).expect("prototype1 root");
+        let manifest_path = campaign_dir.join("campaign.json");
+        let mut node = live_node(&prototype1_root);
+        let source = "baseline ns_patch tool description\n";
+        let proposed = "candidate ns_patch tool description\n";
+        let target_path = node.workspace_root.join(&node.target_relpath);
+        write_text(&target_path, source);
+        crate::intervention::write_node_projection(&node).expect("write node projection");
+
+        let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
+        let resolved = live_branch_for(&node, source, proposed);
+        let runtime_id = RuntimeId::new();
+        let journal_path = prototype1_root.join("transition-journal.jsonl");
+        let channel_root =
+            crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
+        let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
+            campaign_id.to_string(),
+            node.clone(),
+            request,
+            resolved,
+            runtime_id,
+            journal_path.clone(),
+            channel_root,
+        )
+        .expect("valid child invocation bootstrap");
+        let invocation_path =
+            crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
+        crate::cli::prototype1_state::invocation::write_child_invocation(
+            &invocation_path,
+            &invocation,
+        )
+        .expect("write child invocation");
+        print_live_child_timing("invocation_written", started, &mut previous);
+
+        let result = execute_prototype1_runner_invocation(&invocation_path)
+            .await
+            .expect("live child runner invocation completes");
+        print_live_child_timing("runner_returned", started, &mut previous);
+
+        if result.status != Prototype1NodeStatus::Succeeded
+            || result.disposition != Prototype1RunnerDisposition::Succeeded
+        {
+            eprintln!(
+                "[prototype1-child-live] preserving failed live tempdir={}",
+                tmp.path().display()
+            );
+            let detail = format!("{result:#?}");
+            std::mem::forget(tmp);
+            panic!("live child runner did not succeed:\n{detail}");
+        }
+        let treatment_campaign_id = result
+            .treatment_campaign_id
+            .as_ref()
+            .expect("success result names treatment campaign");
+        let treatment_state =
+            crate::load_closure_state(treatment_campaign_id).expect("load treatment closure state");
+        assert_eq!(treatment_state.instances.len(), 1);
+        assert_eq!(treatment_state.eval.complete_total, 1);
+
+        let endpoints = invocation
+            .channel_endpoints()
+            .expect("child invocation carries channel endpoints");
+        let (_, raw_messages) = crate::cli::prototype1_state::channel::Transport::read_since(
+            &FileTransport,
+            &endpoints.child_to_parent(),
+            Cursor::start(),
+        )
+        .expect("read child-to-parent channel");
+        let messages = raw_messages
+            .iter()
+            .map(|bytes| {
+                serde_json::from_slice::<crate::cli::prototype1_state::channel::Envelope<ToParent>>(
+                    bytes,
+                )
+                .expect("typed child-to-parent envelope")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(messages.len(), 3);
+        assert!(matches!(messages[0].body(), ToParent::Ready));
+        assert!(matches!(messages[1].body(), ToParent::Evaluating));
+        match messages[2].body() {
+            ToParent::Result {
+                runner_result,
+                treatment,
+            } => {
+                assert_eq!(runner_result, &result);
+                let treatment = treatment
+                    .as_ref()
+                    .expect("successful child result carries treatment evidence");
+                assert_eq!(treatment.treatment_campaign_id, *treatment_campaign_id);
+                assert_eq!(treatment.instances.len(), 1);
+                assert_eq!(
+                    treatment.instances[0].instance_id,
+                    "ploke-live__child-target-1"
+                );
+                assert!(
+                    treatment.instances[0]
+                        .record_path
+                        .as_ref()
+                        .is_some_and(|p| p.exists()),
+                    "terminal treatment evidence should point at the run record"
+                );
+                assert!(
+                    treatment.instances[0]
+                        .metrics
+                        .as_ref()
+                        .is_some_and(|m| m.nonempty_valid_patch),
+                    "live child should produce non-empty valid patch metrics"
+                );
+            }
+            other => panic!("expected terminal channel result, got {other:?}"),
+        }
+
+        let target_repo = node
+            .node_dir
+            .join("instance-targets")
+            .join(treatment_campaign_id)
+            .join("ploke-live/child-target");
+        let final_lib = fs::read_to_string(target_repo.join("src/lib.rs"))
+            .expect("read child eval target after runner");
+        assert!(
+            final_lib.contains("\"fixed\""),
+            "live child target should contain the intended fix:\n{final_lib}"
+        );
+        print_live_child_timing("assertions_complete", started, &mut previous);
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn print_live_child_timing(
+        phase: &str,
+        started: std::time::Instant,
+        previous: &mut std::time::Instant,
+    ) {
+        let now = std::time::Instant::now();
+        eprintln!(
+            "[prototype1-child-live] phase={phase} delta_ms={} total_ms={}",
+            now.duration_since(*previous).as_millis(),
+            now.duration_since(started).as_millis()
+        );
+        *previous = now;
     }
 
     #[test]
@@ -2710,6 +3070,9 @@ pub(super) async fn execute_prototype1_runner_invocation(
     )
     .await;
 
+    // Treatment evidence leaves the child only through the terminal channel
+    // result. Attempt result files and Child<ResultWritten> are reconstruction
+    // projections, so failures carry no treatment payload.
     let (result, treatment) = match outcome {
         Ok(evidence) => (
             build_succeeded_runner_result(invocation.campaign_id(), &node, &evidence),
@@ -2896,6 +3259,12 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
             treatment_campaign_id = %treatment_campaign.campaign_id,
         )?;
         step!(
+            "prototype1.child.evaluate.complete_treatment_gate",
+            "CompleteTreatmentGate",
+            || require_complete_treatment(&treatment),
+            treatment_campaign_id = %treatment_campaign.campaign_id,
+        )?;
+        step!(
             "prototype1.child.evaluate.patch_projection_gate",
             "PatchProjectionGate",
             || validate_treatment_patch_projection(node, &treatment),
@@ -2927,4 +3296,31 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
             Err(error)
         }
     }
+}
+
+fn require_complete_treatment(treatment: &Prototype1TreatmentEvidence) -> Result<(), PrepareError> {
+    if treatment.instances.is_empty() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "treatment '{}' produced no instance evidence",
+                treatment.treatment_campaign_id
+            ),
+        });
+    }
+
+    // Missing metrics means the closure state could not resolve a complete
+    // treatment run record. Do not emit a success-shaped channel result without
+    // the treatment evidence the parent needs for comparison.
+    for instance in &treatment.instances {
+        if instance.metrics.is_none() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "treatment '{}' instance '{}' did not produce complete run metrics (status={})",
+                    treatment.treatment_campaign_id, instance.instance_id, instance.status
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }

@@ -23,7 +23,7 @@ it reaches `complete`, `blocked`, or its guard limit.
 | Materialize child Artifact | implemented | `materialize` | `run_planned_child(..., stop_after = Materialize)` | child node worktree, node projection, runner request, transition journal |
 | Build child Runtime | implemented | `build` | `BuildChild` over `C2 -> C3` | child binary path, node status, build journal entries |
 | Spawn child Runtime | implemented | `spawn` | `SpawnChild` over `C3 -> C4` | invocation JSON, channel files, streams, runtime id, node status |
-| Observe child result | implemented | `observe` | `ObserveChild` over `C4 -> C5` | runner result, treatment evidence, branch evaluation report |
+| Observe child result | implemented | `observe` | `ObserveChild` over `C4 -> C5` | terminal channel result, treatment evidence, branch evaluation report |
 | Select successor | implemented | `select` | `select_successor_for_profile` | successor selection journal record and selection seal material |
 | Handoff successor | partially implemented | `handoff` | `spawn_and_handoff_prototype1_successor` | active checkout update, sealed History block, successor invocation, ready/completion records |
 | Terminal | implemented | `complete` | no-op | read-only status |
@@ -151,10 +151,11 @@ Diagnosis enters `observe` when a child node is `Running`. The transition uses
 C5 = parent has observed one terminal child state
 ```
 
-The parent reads the runner result and treatment evidence. When the child
-succeeds, the parent compares the treatment evidence against the parent
-baseline and writes a branch evaluation report. This comparison is the main
-bridge from child execution to selection input.
+The parent reads the terminal channel result, which embeds the runner result and
+must carry treatment evidence for successful children. When the child succeeds,
+the parent compares the treatment evidence against the parent baseline and
+writes a branch evaluation report. This comparison is the main bridge from child
+execution to selection input.
 
 For finer-grained in-flight diagnosis, including what `observe_child before`
 means, see [`phase-state-probes.md`](phase-state-probes.md).

@@ -307,6 +307,14 @@ journal entries are reconstruction surfaces. New execution handoff should use
 the direct `Result` payload so successful children cannot be observed without
 treatment evidence.
 
+In the current child runner, treatment evidence is assembled after treatment
+eval/protocol closure from `closure-state.json` plus complete run records. The
+complete-treatment gate runs before a success result is built. If any treatment
+instance lacks metrics, the child writes a failed runner result and sends a
+terminal `ToParent::Result` without a `treatment` payload. A result file or
+`Child<ResultWritten>` projection is therefore never enough to prove successful
+treatment output.
+
 During `run evaluation`, the child may call subsystems that emit their own
 structured external observations. For example, the LLM chat-step path records
 `ProviderAttempt` telemetry through tracing when HTTP attempts complete. These

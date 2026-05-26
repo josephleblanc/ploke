@@ -132,10 +132,11 @@ The child-side sequence is:
 6. run treatment protocol closure;
 7. load treatment closure state;
 8. build treatment evidence;
-9. validate patch projection;
-10. optionally attach MBE oracle evidence;
-11. build and write the runner result;
-12. send terminal `result` on the channel.
+9. require complete treatment metrics;
+10. validate patch projection;
+11. optionally attach MBE oracle evidence;
+12. build and write the runner result;
+13. send terminal `result` on the channel.
 
 To refine the state, look for a treatment campaign whose id starts with:
 
@@ -437,6 +438,13 @@ The assembled evidence becomes durable only when it is carried by the terminal
 child channel `result`. The runner result file alone does not contain the full
 treatment evidence payload.
 
+The child requires complete metrics before it can build a success-shaped result.
+If closure-state reconstruction marks an instance `missing`, the child sends a
+failed runner result with no treatment payload. When a run record exists but the
+closure row is still `missing`, check the run registration path first: a
+non-canonical eval root can make registration lookup miss a completed run
+because storage roots are compared by path identity.
+
 ### Validate Patch Projection
 
 Patch projection validation is a gate, not a new success artifact. It reads:
@@ -468,6 +476,7 @@ stderr, not through a separate validation-success file.
 | treatment campaign exists, eval incomplete | child is running treatment eval closure |
 | treatment campaign eval complete, protocol incomplete | child is running treatment protocol closure |
 | eval run root has partial artifacts, no `record.json.gz` | child is inside eval setup/indexing/agent turn/packaging or eval failed before durable completion |
+| `record.json.gz` exists, closure row still `missing` | check run registration path identity and canonicalization before treating the eval as absent |
 | protocol artifacts exist, closure protocol still missing | protocol artifacts may lead the closure projection; inspect artifact dir and projection freshness |
 | treatment campaign closure complete, no result file | child is building/validating treatment evidence or attaching oracle evidence |
 | failed attempt result exists, channel has no `result` | child wrote a failure projection, but parent lifecycle observation still waits for channel `result` |

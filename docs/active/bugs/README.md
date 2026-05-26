@@ -109,3 +109,5 @@ file and current code before treating a report as still open.
   Prototype 1 broad headless-TUI child planning retried direct-Google HTTP 401 provider failures as ordinary no-edit/slot failures instead of stopping as an environment blocker.
 - [`2026-05-25-prototype1-baseline-eval-nonterminal-registration.md`](./2026-05-25-prototype1-baseline-eval-nonterminal-registration.md)
   Fixed in source: doctor now blocks generation 0 baseline eval when the run registry already contains a nonterminal registered attempt or closure state records partial eval evidence.
+- [`2026-05-26-prototype1-treatment-closure-misses-live-child-run.md`](./2026-05-26-prototype1-treatment-closure-misses-live-child-run.md)
+  Focused live child runner can produce a valid patch and artifacts while treatment closure rejects the completed run registration due to lexical path mismatch.

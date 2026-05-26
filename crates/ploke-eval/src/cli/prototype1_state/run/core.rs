@@ -2535,104 +2535,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "live_api_tests")]
-    async fn live_google_env_or_skip(test_name: &str) -> bool {
-        use ploke_llm::Router;
-        use ploke_llm::router_only::google::Google;
-
-        crate::test_support::install_default_google_route_env();
-        let route_config_available = Google::route_config_available().is_ok();
-        let auth_config_available =
-            Google::auth_config_available().is_ok() && Google::resolve_bearer_token().await.is_ok();
-        if route_config_available && auth_config_available {
-            return true;
-        }
-
-        let missing = match (route_config_available, auth_config_available) {
-            (false, false) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config and Google ADC auth",
-            (false, true) => "GOOGLE_PROJECT_ID/GOOGLE_REGION route config",
-            (true, false) => "Google ADC auth",
-            (true, true) => unreachable!("handled above"),
-        };
-        let message = format!(
-            "skipping {test_name}: direct Google route is configured for this live test, \
-             but missing {missing}; prototype1-step did not exercise the live Gemini path"
-        );
-        if strict_live_tests_requested() {
-            panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
-        }
-        eprintln!("{message}");
-        false
-    }
-
-    #[cfg(feature = "live_api_tests")]
-    fn strict_live_tests_requested() -> bool {
-        std::env::var("PLOKE_RUN_LIVE_TESTS")
-            .ok()
-            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
-    }
-
-    #[cfg(feature = "live_api_tests")]
-    fn live_google_model_id() -> ploke_llm::ModelId {
-        let raw = std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID")
-            .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
-            .unwrap_or_else(|_| "google/gemini-3.5-flash".to_string());
-        let model = if raw.contains('/') {
-            raw
-        } else {
-            format!("google/{raw}")
-        };
-        model.parse().expect("live Google model id")
-    }
-
-    #[cfg(feature = "live_api_tests")]
-    fn write_direct_google_model_config(eval_home: &Path, model_id: &ploke_llm::ModelId) {
-        let models_dir = eval_home.join("models");
-        fs::create_dir_all(&models_dir).expect("create temp model config dir");
-        let model = model_id.to_string();
-        let name = model
-            .rsplit('/')
-            .next()
-            .unwrap_or(model.as_str())
-            .to_string();
-        fs::write(
-            models_dir.join("registry.json"),
-            serde_json::to_string_pretty(&serde_json::json!({
-                "data": [{
-                    "id": model,
-                    "name": name,
-                    "created": 0,
-                    "description": "Direct Google live prototype1-step test row",
-                    "architecture": {
-                        "input_modalities": ["text"],
-                        "modality": "text->text",
-                        "output_modalities": ["text"],
-                        "tokenizer": "Gemini"
-                    },
-                    "top_provider": {
-                        "is_moderated": false,
-                        "context_length": null,
-                        "max_completion_tokens": null
-                    },
-                    "pricing": {
-                        "prompt": 0.0,
-                        "completion": 0.0
-                    },
-                    "canonical_slug": model,
-                    "context_length": 1048576,
-                    "hugging_face_id": null,
-                    "per_request_limits": null,
-                    "supported_parameters": ["tools"],
-                    "route_source": "direct_google"
-                }]
-            }))
-            .expect("serialize direct Google registry"),
-        )
-        .expect("write direct Google registry");
-        crate::model_registry::save_parent_patcher_model(model_id)
-            .expect("save direct Google parent patcher model");
-    }
-
     fn write_parent_workspace_fixture(repo_root: &Path) {
         fs::write(
             repo_root.join("Cargo.toml"),
@@ -3024,7 +2926,7 @@ Suggested validation after editing: run `cargo test`.
 
         let started = std::time::Instant::now();
         let mut previous = started;
-        if !live_google_env_or_skip(TEST_NAME).await {
+        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
             return;
         }
         print_live_step_timing("google_auth_checked", started, &mut previous);
@@ -3034,7 +2936,7 @@ Suggested validation after editing: run `cargo test`.
         );
 
         let _llm_guard = crate::test_support::llm_lock().lock().await;
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = crate::test_support::live_tempdir("prototype1-step-");
         let eval_home = temp.path().join("eval-home");
         let _env = crate::test_support::env_guard_os(vec![
             ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
@@ -3047,8 +2949,8 @@ Suggested validation after editing: run `cargo test`.
             ("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS", OsString::from("60")),
             ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", OsString::from("1")),
         ]);
-        let model_id = live_google_model_id();
-        write_direct_google_model_config(&eval_home, &model_id);
+        let model_id = crate::test_support::live_google_model_id();
+        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
         print_live_step_timing("model_config_written", started, &mut previous);
         let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
         write_live_step_evidence(&world.manifest_path);
@@ -3151,7 +3053,7 @@ Suggested validation after editing: run `cargo test`.
 
         let started = std::time::Instant::now();
         let mut previous = started;
-        if !live_google_env_or_skip(TEST_NAME).await {
+        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
             return;
         }
         print_live_step_timing("google_auth_checked", started, &mut previous);
@@ -3161,7 +3063,7 @@ Suggested validation after editing: run `cargo test`.
         );
 
         let _llm_guard = crate::test_support::llm_lock().lock().await;
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = crate::test_support::live_tempdir("prototype1-parallel-slots-");
         let eval_home = temp.path().join("eval-home");
         let probe_dir = temp.path().join("slot-probe");
         let _env = crate::test_support::env_guard_os(vec![
@@ -3183,8 +3085,8 @@ Suggested validation after editing: run `cargo test`.
                 OsString::from("2"),
             ),
         ]);
-        let model_id = live_google_model_id();
-        write_direct_google_model_config(&eval_home, &model_id);
+        let model_id = crate::test_support::live_google_model_id();
+        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
         print_live_step_timing("model_config_written", started, &mut previous);
         let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 2);
         write_live_step_evidence(&world.manifest_path);
