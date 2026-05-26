@@ -730,161 +730,176 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
     #[cfg(feature = "live_api_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "requires Google ADC and runs a live child self-evaluation plus protocol closure"]
+    /// WARNING: intentionally quarantined. The last live run exposed a path
+    /// identity bug in this test setup: closure reconstruction can miss a
+    /// completed treatment run when eval roots and run registrations use
+    /// different canonical spellings. Keep this loud until the test is rebuilt.
     async fn live_google_child_runner_success() {
-        const TEST_NAME: &str = "live_google_child_runner_success";
-
-        let started = std::time::Instant::now();
-        let mut previous = started;
-        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
-            return;
-        }
-        print_live_child_timing("google_auth_checked", started, &mut previous);
-
-        let _llm_guard = crate::test_support::llm_lock().lock().await;
-        let tmp = crate::test_support::live_tempdir("prototype1-child-runner-success-");
-        let eval_home = tmp.path().join("eval-home");
-        let _env = crate::test_support::env_guard_os(vec![(
-            "PLOKE_EVAL_HOME",
-            eval_home.clone().into_os_string(),
-        )]);
-        let model_id = crate::test_support::live_google_model_id();
-        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
-        print_live_child_timing("model_config_written", started, &mut previous);
-
-        let campaign_id = "live-child-runner-success";
-        let base_sha = write_live_repo(&eval_home);
-        let dataset = write_live_dataset(&eval_home, &base_sha);
-        write_live_campaign(&eval_home, campaign_id, dataset, &model_id.to_string());
-        print_live_child_timing("campaign_written", started, &mut previous);
-
-        let campaign_dir = eval_home.join("campaigns").join(campaign_id);
-        let prototype1_root = campaign_dir.join("prototype1");
-        fs::create_dir_all(&prototype1_root).expect("prototype1 root");
-        let manifest_path = campaign_dir.join("campaign.json");
-        let mut node = live_node(&prototype1_root);
-        let source = "baseline ns_patch tool description\n";
-        let proposed = "candidate ns_patch tool description\n";
-        let target_path = node.workspace_root.join(&node.target_relpath);
-        write_text(&target_path, source);
-        crate::intervention::write_node_projection(&node).expect("write node projection");
-
-        let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
-        let resolved = live_branch_for(&node, source, proposed);
-        let runtime_id = RuntimeId::new();
-        let journal_path = prototype1_root.join("transition-journal.jsonl");
-        let channel_root =
-            crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
-        let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
-            campaign_id.to_string(),
-            node.clone(),
-            request,
-            resolved,
-            runtime_id,
-            journal_path.clone(),
-            channel_root,
-        )
-        .expect("valid child invocation bootstrap");
-        let invocation_path =
-            crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
-        crate::cli::prototype1_state::invocation::write_child_invocation(
-            &invocation_path,
-            &invocation,
-        )
-        .expect("write child invocation");
-        print_live_child_timing("invocation_written", started, &mut previous);
-
-        let result = execute_prototype1_runner_invocation(&invocation_path)
-            .await
-            .expect("live child runner invocation completes");
-        print_live_child_timing("runner_returned", started, &mut previous);
-
-        if result.status != Prototype1NodeStatus::Succeeded
-            || result.disposition != Prototype1RunnerDisposition::Succeeded
-        {
-            eprintln!(
-                "[prototype1-child-live] preserving failed live tempdir={}",
-                tmp.path().display()
-            );
-            let detail = format!("{result:#?}");
-            std::mem::forget(tmp);
-            panic!("live child runner did not succeed:\n{detail}");
-        }
-        let treatment_campaign_id = result
-            .treatment_campaign_id
-            .as_ref()
-            .expect("success result names treatment campaign");
-        let treatment_state =
-            crate::load_closure_state(treatment_campaign_id).expect("load treatment closure state");
-        assert_eq!(treatment_state.instances.len(), 1);
-        assert_eq!(treatment_state.eval.complete_total, 1);
-
-        let endpoints = invocation
-            .channel_endpoints()
-            .expect("child invocation carries channel endpoints");
-        let (_, raw_messages) = crate::cli::prototype1_state::channel::Transport::read_since(
-            &FileTransport,
-            &endpoints.child_to_parent(),
-            Cursor::start(),
-        )
-        .expect("read child-to-parent channel");
-        let messages = raw_messages
-            .iter()
-            .map(|bytes| {
-                serde_json::from_slice::<crate::cli::prototype1_state::channel::Envelope<ToParent>>(
-                    bytes,
-                )
-                .expect("typed child-to-parent envelope")
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(messages.len(), 3);
-        assert!(matches!(messages[0].body(), ToParent::Ready));
-        assert!(matches!(messages[1].body(), ToParent::Evaluating));
-        match messages[2].body() {
-            ToParent::Result {
-                runner_result,
-                treatment,
-            } => {
-                assert_eq!(runner_result, &result);
-                let treatment = treatment
-                    .as_ref()
-                    .expect("successful child result carries treatment evidence");
-                assert_eq!(treatment.treatment_campaign_id, *treatment_campaign_id);
-                assert_eq!(treatment.instances.len(), 1);
-                assert_eq!(
-                    treatment.instances[0].instance_id,
-                    "ploke-live__child-target-1"
-                );
-                assert!(
-                    treatment.instances[0]
-                        .record_path
-                        .as_ref()
-                        .is_some_and(|p| p.exists()),
-                    "terminal treatment evidence should point at the run record"
-                );
-                assert!(
-                    treatment.instances[0]
-                        .metrics
-                        .as_ref()
-                        .is_some_and(|m| m.nonempty_valid_patch),
-                    "live child should produce non-empty valid patch metrics"
-                );
-            }
-            other => panic!("expected terminal channel result, got {other:?}"),
-        }
-
-        let target_repo = node
-            .node_dir
-            .join("instance-targets")
-            .join(treatment_campaign_id)
-            .join("ploke-live/child-target");
-        let final_lib = fs::read_to_string(target_repo.join("src/lib.rs"))
-            .expect("read child eval target after runner");
-        assert!(
-            final_lib.contains("\"fixed\""),
-            "live child target should contain the intended fix:\n{final_lib}"
+        panic!(
+            "live_google_child_runner_success is intentionally quarantined: \
+             its setup previously made a completed treatment run appear missing \
+             through eval-root/run-registration path identity drift"
         );
-        print_live_child_timing("assertions_complete", started, &mut previous);
+        #[allow(unreachable_code)]
+        {
+            const TEST_NAME: &str = "live_google_child_runner_success";
+
+            let started = std::time::Instant::now();
+            let mut previous = started;
+            if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
+                return;
+            }
+            print_live_child_timing("google_auth_checked", started, &mut previous);
+
+            let _llm_guard = crate::test_support::llm_lock().lock().await;
+            let tmp = crate::test_support::live_tempdir("prototype1-child-runner-success-");
+            let eval_home = tmp.path().join("eval-home");
+            let _env = crate::test_support::env_guard_os(vec![(
+                "PLOKE_EVAL_HOME",
+                eval_home.clone().into_os_string(),
+            )]);
+            let model_id = crate::test_support::live_google_model_id();
+            crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
+            print_live_child_timing("model_config_written", started, &mut previous);
+
+            let campaign_id = "live-child-runner-success";
+            let base_sha = write_live_repo(&eval_home);
+            let dataset = write_live_dataset(&eval_home, &base_sha);
+            write_live_campaign(&eval_home, campaign_id, dataset, &model_id.to_string());
+            print_live_child_timing("campaign_written", started, &mut previous);
+
+            let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+            let prototype1_root = campaign_dir.join("prototype1");
+            fs::create_dir_all(&prototype1_root).expect("prototype1 root");
+            let manifest_path = campaign_dir.join("campaign.json");
+            let mut node = live_node(&prototype1_root);
+            let source = "baseline ns_patch tool description\n";
+            let proposed = "candidate ns_patch tool description\n";
+            let target_path = node.workspace_root.join(&node.target_relpath);
+            write_text(&target_path, source);
+            crate::intervention::write_node_projection(&node).expect("write node projection");
+
+            let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
+            let resolved = live_branch_for(&node, source, proposed);
+            let runtime_id = RuntimeId::new();
+            let journal_path = prototype1_root.join("transition-journal.jsonl");
+            let channel_root =
+                crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
+            let invocation =
+                crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
+                    campaign_id.to_string(),
+                    node.clone(),
+                    request,
+                    resolved,
+                    runtime_id,
+                    journal_path.clone(),
+                    channel_root,
+                )
+                .expect("valid child invocation bootstrap");
+            let invocation_path = crate::cli::prototype1_state::invocation::invocation_path(
+                &node.node_dir,
+                runtime_id,
+            );
+            crate::cli::prototype1_state::invocation::write_child_invocation(
+                &invocation_path,
+                &invocation,
+            )
+            .expect("write child invocation");
+            print_live_child_timing("invocation_written", started, &mut previous);
+
+            let result = execute_prototype1_runner_invocation(&invocation_path)
+                .await
+                .expect("live child runner invocation completes");
+            print_live_child_timing("runner_returned", started, &mut previous);
+
+            if result.status != Prototype1NodeStatus::Succeeded
+                || result.disposition != Prototype1RunnerDisposition::Succeeded
+            {
+                eprintln!(
+                    "[prototype1-child-live] preserving failed live tempdir={}",
+                    tmp.path().display()
+                );
+                let detail = format!("{result:#?}");
+                std::mem::forget(tmp);
+                panic!("live child runner did not succeed:\n{detail}");
+            }
+            let treatment_campaign_id = result
+                .treatment_campaign_id
+                .as_ref()
+                .expect("success result names treatment campaign");
+            let treatment_state = crate::load_closure_state(treatment_campaign_id)
+                .expect("load treatment closure state");
+            assert_eq!(treatment_state.instances.len(), 1);
+            assert_eq!(treatment_state.eval.complete_total, 1);
+
+            let endpoints = invocation
+                .channel_endpoints()
+                .expect("child invocation carries channel endpoints");
+            let (_, raw_messages) = crate::cli::prototype1_state::channel::Transport::read_since(
+                &FileTransport,
+                &endpoints.child_to_parent(),
+                Cursor::start(),
+            )
+            .expect("read child-to-parent channel");
+            let messages = raw_messages
+                .iter()
+                .map(|bytes| {
+                    serde_json::from_slice::<
+                        crate::cli::prototype1_state::channel::Envelope<ToParent>,
+                    >(bytes)
+                    .expect("typed child-to-parent envelope")
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(messages.len(), 3);
+            assert!(matches!(messages[0].body(), ToParent::Ready));
+            assert!(matches!(messages[1].body(), ToParent::Evaluating));
+            match messages[2].body() {
+                ToParent::Result {
+                    runner_result,
+                    treatment,
+                } => {
+                    assert_eq!(runner_result, &result);
+                    let treatment = treatment
+                        .as_ref()
+                        .expect("successful child result carries treatment evidence");
+                    assert_eq!(treatment.treatment_campaign_id, *treatment_campaign_id);
+                    assert_eq!(treatment.instances.len(), 1);
+                    assert_eq!(
+                        treatment.instances[0].instance_id,
+                        "ploke-live__child-target-1"
+                    );
+                    assert!(
+                        treatment.instances[0]
+                            .record_path
+                            .as_ref()
+                            .is_some_and(|p| p.exists()),
+                        "terminal treatment evidence should point at the run record"
+                    );
+                    assert!(
+                        treatment.instances[0]
+                            .metrics
+                            .as_ref()
+                            .is_some_and(|m| m.nonempty_valid_patch),
+                        "live child should produce non-empty valid patch metrics"
+                    );
+                }
+                other => panic!("expected terminal channel result, got {other:?}"),
+            }
+
+            let target_repo = node
+                .node_dir
+                .join("instance-targets")
+                .join(treatment_campaign_id)
+                .join("ploke-live/child-target");
+            let final_lib = fs::read_to_string(target_repo.join("src/lib.rs"))
+                .expect("read child eval target after runner");
+            assert!(
+                final_lib.contains("\"fixed\""),
+                "live child target should contain the intended fix:\n{final_lib}"
+            );
+            print_live_child_timing("assertions_complete", started, &mut previous);
+        }
     }
 
     #[cfg(feature = "live_api_tests")]
