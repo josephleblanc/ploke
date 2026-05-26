@@ -7,10 +7,9 @@ use super::call_review::{
 };
 use super::eval_protocol;
 use super::fields::*;
-use super::{
-    InspectorRenderCache, render_decoded_tool_arguments, render_decoded_tool_result,
-    show_inspector_collapsing,
-};
+use super::{InspectorRenderCache, show_inspector_collapsing};
+#[cfg(not(target_arch = "wasm32"))]
+use super::{render_decoded_tool_arguments, render_decoded_tool_result};
 
 fn render_protocol_artifact_coordinate(
     ui: &mut egui::Ui,
