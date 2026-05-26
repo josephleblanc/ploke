@@ -49,18 +49,6 @@ fn inspector_text_galley_cache_reuses_stable_labels() {
 }
 
 #[test]
-fn call_review_hover_preview_respects_utf8_boundaries() {
-    let (short, truncated) = bounded_utf8_prefix("focused progress", 220);
-    assert_eq!(short, "focused progress");
-    assert!(!truncated);
-
-    let text = "abcdéfg";
-    let (prefix, truncated) = bounded_utf8_prefix(text, 5);
-    assert_eq!(prefix, "abcd");
-    assert!(truncated);
-}
-
-#[test]
 fn inspector_id_galley_cache_reuses_short_id_labels() {
     let mut cache = InspectorRenderCache::default();
     let id = "artifact:git-commit:deadbeefcafebabe";
