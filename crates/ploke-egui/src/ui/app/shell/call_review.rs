@@ -17,7 +17,7 @@ use super::{
 const CALL_REVIEW_SCAN_HOVER_PREVIEW_BYTES: usize = 220;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CallReviewFilter {
+pub(super) enum CallReviewFilter {
     All,
     FailedScope,
     Mixed,
@@ -88,7 +88,7 @@ impl CallReviewFilter {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CallReviewSort {
+pub(super) struct CallReviewSort {
     column: CallReviewSortColumn,
     direction: SortDirection,
 }
@@ -157,13 +157,13 @@ struct CallReviewScanCounts {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct CallReviewScanOrderCache {
-    pub(crate) key: Option<CallReviewScanOrderKey>,
-    pub(crate) rows: Arc<[String]>,
+pub(super) struct CallReviewScanOrderCache {
+    pub(super) key: Option<CallReviewScanOrderKey>,
+    pub(super) rows: Arc<[String]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CallReviewScanOrderKey {
+pub(super) struct CallReviewScanOrderKey {
     filter: CallReviewFilter,
     sort: CallReviewSort,
     artifact_count: usize,
@@ -171,7 +171,7 @@ pub(crate) struct CallReviewScanOrderKey {
 }
 
 impl CallReviewScanOrderKey {
-    pub(crate) fn new(
+    pub(super) fn new(
         protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
         filter: CallReviewFilter,
         sort: CallReviewSort,
@@ -384,7 +384,7 @@ fn call_review_scan_counts(
     counts
 }
 
-pub(crate) fn build_call_review_scan_order(
+pub(super) fn build_call_review_scan_order(
     protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
     filter: CallReviewFilter,
     sort: CallReviewSort,

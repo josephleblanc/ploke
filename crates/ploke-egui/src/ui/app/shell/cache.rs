@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{PersistedToolCallArguments, PersistedToolResultContent};
 
-use super::{
+use super::call_review::{
     CallReviewFilter, CallReviewScanOrderCache, CallReviewScanOrderKey, CallReviewSort,
     build_call_review_scan_order,
 };

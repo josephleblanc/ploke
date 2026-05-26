@@ -42,10 +42,6 @@ use self::call_review::{
 use self::fields::*;
 pub(crate) use cache::InspectorRenderCache;
 use cache::ParentCreateRowsKey;
-pub(crate) use call_review::{
-    CallReviewFilter, CallReviewScanOrderCache, CallReviewScanOrderKey, CallReviewSort,
-    build_call_review_scan_order,
-};
 pub(crate) use chrome::{
     add_inspector_scroll_end_padding, render_bottom_timeline, render_top_strip,
 };
