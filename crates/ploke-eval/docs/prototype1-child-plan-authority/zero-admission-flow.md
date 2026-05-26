@@ -391,6 +391,24 @@ they must not substitute for the authority-bearing message transition.
 
 ## Regression Coverage
 
+`step_persists_zero_admission_plan` covers the direct control path:
+
+```text
+prototype1-step
+-> diagnose child_plan
+-> advance_child_plan
+-> publish broad-harness slots
+-> replay historical timed-out headless-TUI diagnostics through a test-only TUI fixture hook
+-> expect below-minimum error
+-> assert ChildPlanFile exists with zero children and rejected_surface_attempts
+-> diagnose again and assert the phase is not child_plan
+```
+
+The test-scoped minter writes the same production records the controller reads:
+`campaign.json`, admitted `run-profile.toml` plus commitment,
+`closure-state.json`, and `.ploke/prototype1/parent_identity.json` committed on
+the active parent branch. It does not prewrite the `ChildPlanFile`.
+
 `broad_harness_batch_admits_three_transactions_into_three_children` covers the
 positive batch-admission path:
 
@@ -428,4 +446,5 @@ ordinary inadmissible edit.
 
 These tests do not prove a full live successor handoff. They prove the
 authority gap that prevented the run from reaching child materialization is now
-closed for the historical failure shape.
+closed for the historical failure shape, including the `prototype1-step`
+controller path up to durable child-plan authority.

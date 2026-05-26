@@ -1097,9 +1097,11 @@ async fn zero_admission_batch_is_persisted() {
     // return InvalidBatchSelection.
     let (result, failed_batch_trace) = collect_traces(|| {
         publish_broad_harness_child_plan_from_admitted_batch(
-            "campaign",
-            &manifest_path,
-            &repo_root,
+            ChildPlanEnv {
+                campaign_id: "campaign",
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+            },
             batch,
             Vec::new(),
         )
@@ -1390,9 +1392,11 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let budget = Prototype1ChildBudget { min: 1, max: 1 };
 
     let receipt = publish_deterministic_tui_tools_child_plan(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         parent,
         budget,
     )
@@ -1915,9 +1919,11 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget { min: 1, max: 1 };
     let receipt = publish_deterministic_tui_tools_child_plan(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         parent,
         budget,
     )
@@ -2013,9 +2019,11 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
     let admitted_derived = admitted.derived_artifact_id().clone();
 
     let child_plan = publish_broad_harness_child_plan_from_admitted(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         receipt,
         admitted,
     )
@@ -2114,9 +2122,11 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
         .expect("admit broad harness result");
 
     let child_plan = publish_broad_harness_child_plan_from_admitted(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         receipt,
         admitted,
     )
@@ -2198,9 +2208,11 @@ fn broad_harness_batch_admits_three_transactions_into_three_children() {
 
     let (receipt, trace) = collect_traces(|| {
         publish_broad_harness_child_plan_from_admitted_batch(
-            "campaign",
-            &manifest_path,
-            &repo_root,
+            ChildPlanEnv {
+                campaign_id: "campaign",
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+            },
             batch,
             admitted,
         )
@@ -2315,9 +2327,11 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
     };
 
     let result = publish_broad_harness_child_plan_from_admitted_batch(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         batch,
         admitted,
     );
@@ -2381,9 +2395,11 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         )
         .expect("admit broad harness result");
     let child_plan = publish_broad_harness_child_plan_from_admitted(
-        "campaign",
-        &manifest_path,
-        &repo_root,
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
         receipt,
         admitted,
     )
@@ -2430,9 +2446,15 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
         .expect("persist rejected attempt child plan");
 
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let receipt =
-        receive_existing_child_plan("campaign", &manifest_path, &repo_root, resumed_parent)
-            .expect("receive existing child plan");
+    let receipt = receive_existing_child_plan(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        resumed_parent,
+    )
+    .expect("receive existing child plan");
 
     assert!(
         receipt.plan.body().children().is_empty(),
@@ -2502,7 +2524,14 @@ fn child_plan_replay_rejects_wrong_parent() {
     write_json_file_pretty(at.path(), &json).expect("write mismatched child plan");
 
     let (result, trace) = collect_traces(|| {
-        receive_existing_child_plan("campaign", &manifest_path, &repo_root, parent)
+        receive_existing_child_plan(
+            ChildPlanEnv {
+                campaign_id: "campaign",
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+            },
+            parent,
+        )
     });
     dump_trace_if_requested(&trace);
     let err = match result {
@@ -2557,7 +2586,14 @@ fn child_plan_replay_rejects_malformed_file() {
     fs::write(at.path(), b"{ not valid child plan json").expect("write malformed child plan");
 
     let (result, trace) = collect_traces(|| {
-        receive_existing_child_plan("campaign", &manifest_path, &repo_root, parent)
+        receive_existing_child_plan(
+            ChildPlanEnv {
+                campaign_id: "campaign",
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+            },
+            parent,
+        )
     });
     dump_trace_if_requested(&trace);
     let err = match result {

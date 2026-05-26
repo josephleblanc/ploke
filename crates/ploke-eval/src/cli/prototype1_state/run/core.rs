@@ -2361,10 +2361,18 @@ fn persisted_node_count(campaign_manifest_path: &Path) -> Result<u32, PrepareErr
 mod tests {
     use super::*;
 
+    use std::{ffi::OsString, process::Command, sync::MutexGuard};
+
+    use crate::campaign::{CampaignManifest, campaign_closure_state_path, save_campaign_manifest};
+    use crate::cli::prototype1_state::identity::{
+        parent_identity_commit_message, write_parent_identity,
+    };
     use crate::cli::prototype1_state::profile::{
         Control, Execution, Generation, ModelDefaults, Protocol, Prototype1RunProfile, RunMode,
         Search, Selection, Storage, Target,
     };
+    use crate::target_registry::RegistryDatasetSource;
+    use ploke_llm::request::models::ModelRouteSource;
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
         Prototype1RunProfile {
@@ -2404,6 +2412,275 @@ mod tests {
             },
             profile,
         }
+    }
+
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                match value {
+                    Some(value) => unsafe {
+                        std::env::set_var(key, value);
+                    },
+                    None => unsafe {
+                        std::env::remove_var(key);
+                    },
+                }
+            }
+        }
+    }
+
+    fn env_guard(values: &[(&'static str, PathBuf)]) -> EnvGuard {
+        let lock = crate::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = values
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for (key, value) in values {
+            unsafe {
+                std::env::set_var(key, value);
+            }
+        }
+        EnvGuard {
+            _lock: lock,
+            previous,
+        }
+    }
+
+    struct ChildPlanWorld {
+        repo_root: PathBuf,
+        manifest_path: PathBuf,
+        parent_identity: ParentIdentity,
+    }
+
+    impl ChildPlanWorld {
+        fn mint_at_child_plan_phase(eval_home: &Path) -> Self {
+            let campaign_id = "campaign";
+            let instance_id = "BurntSushi__ripgrep-2209";
+            let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+            let repo_root = eval_home.join("worktrees").join("prototype1-parent");
+            fs::create_dir_all(&campaign_dir).expect("create campaign dir");
+            fs::create_dir_all(eval_home.join("instances/prototype1/campaign"))
+                .expect("create instances root");
+            fs::create_dir_all(eval_home.join("batches")).expect("create batches root");
+            fs::write(campaign_dir.join("slice.jsonl"), "{}\n").expect("write slice");
+
+            let mut manifest = CampaignManifest::new(campaign_id.to_string());
+            manifest.dataset_sources = vec![RegistryDatasetSource {
+                key: None,
+                path: campaign_dir.join("slice.jsonl"),
+                label: "slice".to_string(),
+                url: None,
+            }];
+            manifest.model_id = Some("google/gemini-3.5-flash".to_string());
+            manifest.provider_slug = None;
+            manifest.route_source = Some(ModelRouteSource::DirectGoogle);
+            manifest.instances_root = Some(eval_home.join("instances/prototype1/campaign"));
+            manifest.batches_root = Some(eval_home.join("batches"));
+            let manifest_path = save_campaign_manifest(&manifest).expect("save manifest");
+
+            let run_profile = profile(Prototype1ChildScheduleMode::FullBatch, 2, 3);
+            run_profile.validate().expect("profile validates");
+            let operator = profile::OperatorRunProfile {
+                source_path: eval_home.join("profiles/test-profile.toml"),
+                profile: run_profile,
+            };
+            profile::admit_run_profile(&manifest_path, &operator).expect("admit profile");
+
+            let mut closure = closure_state_for_test(
+                eval_home.join("instances/prototype1/campaign"),
+                instance_id,
+                ClosureClass::Complete,
+            );
+            closure.protocol.status = ClosureClass::Complete;
+            let closure_path =
+                campaign_closure_state_path(campaign_id).expect("closure state path");
+            fs::write(
+                &closure_path,
+                serde_json::to_vec_pretty(&closure).expect("serialize closure"),
+            )
+            .expect("write closure");
+
+            init_repo_with_parent_identity(&repo_root, campaign_id, instance_id);
+            let parent_identity = load_parent_identity_optional(&repo_root)
+                .expect("load identity")
+                .unwrap();
+            fs::create_dir_all(campaign_dir.join("prototype1/evaluations"))
+                .expect("create evaluations dir");
+            fs::create_dir_all(campaign_dir.join("prototype1/nodes")).expect("create nodes dir");
+            assert!(manifest_path.exists());
+            assert!(closure_path.exists());
+            assert!(repo_root.join(parent_identity_relpath()).exists());
+            assert!(
+                !child_plan_path(&manifest_path, parent_identity.node_id()).exists(),
+                "child-plan authority must not be pre-minted"
+            );
+            Self {
+                repo_root,
+                manifest_path,
+                parent_identity,
+            }
+        }
+    }
+
+    fn init_repo_with_parent_identity(repo_root: &Path, campaign_id: &str, instance_id: &str) {
+        fs::create_dir_all(repo_root).expect("create repo root");
+        run_git(repo_root, &["init"]);
+        write_protected_core(repo_root);
+        fs::write(repo_root.join("README.md"), "prototype1 fixture\n").expect("write readme");
+        run_git(repo_root, &["add", "--all"]);
+        commit(repo_root, "base");
+
+        let branch = format!("prototype1-parent-{campaign_id}-gen0");
+        run_git(repo_root, &["switch", "-c", &branch]);
+        let identity = ParentIdentity::root_bootstrap(
+            campaign_id.to_string(),
+            "node-control".to_string(),
+            instance_id.to_string(),
+            branch.clone(),
+            Some(branch),
+        );
+        write_parent_identity(repo_root, &identity).expect("write parent identity");
+        run_git(
+            repo_root,
+            &["add", ".ploke/prototype1/parent_identity.json"],
+        );
+        commit(repo_root, &parent_identity_commit_message(&identity));
+    }
+
+    fn run_git(repo_root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn commit(repo_root: &Path, message: &str) {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args([
+                "-c",
+                "user.email=prototype1-test@example.invalid",
+                "-c",
+                "user.name=Prototype1 Test",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                message,
+            ])
+            .output()
+            .expect("git commit");
+        assert!(
+            output.status.success(),
+            "git commit failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn child_plan_path(manifest_path: &Path, parent_node_id: &str) -> PathBuf {
+        At::<ChildPlanFile>::resolve((manifest_path.to_path_buf(), parent_node_id.to_string()))
+            .path()
+            .to_path_buf()
+    }
+
+    fn count_broad_requests(manifest_path: &Path) -> usize {
+        let request_dir = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("prototype1/messages/edit-harness-request");
+        match fs::read_dir(request_dir) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry.path().extension().and_then(|ext| ext.to_str()) == Some("json")
+                })
+                .count(),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(source) => panic!("read broad request dir: {source}"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn step_persists_zero_admission_plan() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let summary_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "src/tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.headless-tui.json",
+        );
+        let _env = env_guard(&[
+            ("PLOKE_EVAL_HOME", eval_home.clone()),
+            ("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE", summary_fixture),
+        ]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let before_requests = count_broad_requests(&world.manifest_path);
+        let diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
+            .expect("diagnose pre-child-plan world");
+        assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
+
+        let err = step(Prototype1ControlCommand {
+            repo_root: Some(world.repo_root.clone()),
+            format: InspectOutputFormat::Json,
+        })
+        .await
+        .expect_err("zero-admission child planning still returns the below-minimum error");
+
+        assert!(
+            err.to_string()
+                .contains("broad harness admitted 0 child transaction(s)"),
+            "{err}"
+        );
+        let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
+        let bytes = fs::read(&plan_path).expect("child plan was persisted by prototype1-step");
+        let plan: ChildPlanFiles =
+            serde_json::from_slice(&bytes).expect("persisted child plan decodes");
+        assert!(plan.children().is_empty());
+        assert_eq!(plan.parent_node_id(), world.parent_identity.node_id());
+        assert_eq!(
+            plan.child_generation(),
+            world.parent_identity.generation() + 1
+        );
+        assert_eq!(
+            plan.rejected_surface_attempts().len(),
+            9,
+            "2g3 profile should spend three fresh slots per max child"
+        );
+        assert!(
+            plan.rejected_surface_attempts().iter().any(|attempt| {
+                matches!(
+                    &attempt.outcome,
+                    surface_attempt::Outcome::Rejected { reason }
+                        if reason.contains("timed out after 240 seconds")
+                )
+            }),
+            "{:?}",
+            plan.rejected_surface_attempts()
+        );
+
+        let after_requests = count_broad_requests(&world.manifest_path);
+        assert_eq!(after_requests, before_requests + 9);
+        let retry_diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
+            .expect("diagnose after persisted child plan");
+        assert_ne!(
+            retry_diagnosis.phase,
+            DiagnosedPhase::ChildPlan,
+            "retry must not mint fresh broad-harness slots after the rejected child plan is durable"
+        );
+        assert_eq!(count_broad_requests(&world.manifest_path), after_requests);
     }
 
     fn write_protected_core(repo: &Path) {
