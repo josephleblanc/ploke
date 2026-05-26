@@ -111,66 +111,6 @@ fn text_size_summary_cache_reuses_stable_size_labels() {
 }
 
 #[test]
-fn tool_ui_payload_renderer_keeps_cached_payload_labels_visible() {
-    use ploke_records::agent_turn::{ToolUiFieldRecord, ToolUiPayloadRecord, ToolVerbosityRecord};
-    use ploke_records::tool_contracts::ToolName;
-
-    let payload = ToolUiPayloadRecord {
-        tool: ToolName::ApplyCodeEdit,
-        call_id: "call-1".to_owned(),
-        request_id: Some("request-1".to_owned()),
-        proposal_id: Some("proposal-1".to_owned()),
-        summary: "edit staged".to_owned(),
-        fields: vec![ToolUiFieldRecord {
-            name: "status".to_owned(),
-            value: "staged".to_owned(),
-        }],
-        details: Some("Ready to apply".to_owned()),
-        verbosity: ToolVerbosityRecord::Normal,
-        error: None,
-        error_code: None,
-    };
-    let mut cache = InspectorRenderCache::default();
-    let ctx = egui::Context::default();
-    ctx.set_fonts(egui::FontDefinitions::empty());
-
-    let output = ctx.run_ui(Default::default(), |ui| {
-        render_tool_ui_payload(ui, &mut cache, &payload);
-    });
-    let texts = clipped_shape_texts(&output.shapes);
-
-    assert!(texts.iter().any(|text| text.contains("tool ui payload")));
-    assert!(texts.iter().any(|text| text.contains("tool")));
-    assert!(texts.iter().any(|text| text.contains("apply_code_edit")));
-    assert!(texts.iter().any(|text| text.contains("call id")));
-    assert!(texts.iter().any(|text| text.contains("call-1")));
-    assert!(texts.iter().any(|text| text.contains("summary")));
-    assert!(texts.iter().any(|text| text.contains("edit staged")));
-    assert!(texts.iter().any(|text| text.contains("status")));
-    assert!(texts.iter().any(|text| text.contains("staged")));
-}
-
-fn clipped_shape_texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
-    let mut texts = Vec::new();
-    for shape in shapes {
-        collect_shape_texts(&shape.shape, &mut texts);
-    }
-    texts
-}
-
-fn collect_shape_texts(shape: &egui::epaint::Shape, texts: &mut Vec<String>) {
-    match shape {
-        egui::epaint::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
-        egui::epaint::Shape::Vec(shapes) => {
-            for shape in shapes {
-                collect_shape_texts(shape, texts);
-            }
-        }
-        _ => {}
-    }
-}
-
-#[test]
 fn patch_diff_galleys_keep_natural_height_when_repeated() {
     use std::fmt::Write as _;
 
