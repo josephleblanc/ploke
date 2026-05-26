@@ -33,11 +33,7 @@ pub(crate) struct InspectorOpenState {
 }
 
 impl InspectorOpenState {
-    #[cfg(all(
-        not(target_arch = "wasm32"),
-        feature = "dev",
-        feature = "native-benchmark"
-    ))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
     pub(crate) fn benchmark(
         section: Option<crate::benchmark::BenchmarkInspectorSection>,
         exclusive: bool,
@@ -97,11 +93,7 @@ impl InspectorPanelSection {
             Self::LineageAuthority => "Lineage Authority",
         }
     }
-    #[cfg(all(
-        not(target_arch = "wasm32"),
-        feature = "dev",
-        feature = "native-benchmark"
-    ))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
     fn from_benchmark(section: crate::benchmark::BenchmarkInspectorSection) -> Self {
         match section {
             crate::benchmark::BenchmarkInspectorSection::LlmCalls => Self::LlmCalls,
