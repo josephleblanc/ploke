@@ -5,6 +5,9 @@ use crate::ui::inspector::InspectorSections;
 use eframe::egui;
 use ploke_tree::Graph;
 
+use super::eval_protocol::{
+    render_selected_eval_protocol_call_review, selected_eval_protocol_call_review_key,
+};
 use super::fields::{cached_kv_artifact_file, cached_kv_id, kv};
 use super::{
     InspectorRenderCache, add_inspector_scroll_end_padding, render_artifact_edges_for_inspector,
@@ -13,8 +16,7 @@ use super::{
     render_lineage_authority_for_inspector, render_parent_create_for_inspector,
     render_patches_for_inspector, render_roles_and_metrics, render_run_level_llm_trace_for_graph,
     render_run_level_patch_generation_for_graph, render_run_records_for_inspector,
-    render_selected_eval_protocol_call_review, render_source_refs_for_inspector,
-    selected_eval_protocol_call_review_key,
+    render_source_refs_for_inspector,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

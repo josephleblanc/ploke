@@ -7,12 +7,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::fields::*;
-use super::{
-    InspectorRenderCache, render_call_review_reasoning_spotlight,
-    selected_eval_protocol_call_review_key, set_selected_eval_protocol_call_review,
-    show_inspector_collapsing,
+use super::eval_protocol::{
+    render_call_review_reasoning_spotlight, selected_eval_protocol_call_review_key,
+    set_selected_eval_protocol_call_review,
 };
+use super::fields::*;
+use super::{InspectorRenderCache, show_inspector_collapsing};
 
 const CALL_REVIEW_SCAN_HOVER_PREVIEW_BYTES: usize = 220;
 
