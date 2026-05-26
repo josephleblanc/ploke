@@ -1,0 +1,62 @@
+%%{init: {"theme": "base", "flowchart": {"htmlLabels": false, "curve": "basis", "nodeSpacing": 45, "rankSpacing": 70}, "themeVariables": {"background": "#ffffff", "textColor": "#1e1e1e", "lineColor": "#495057", "fontFamily": "Inter, Arial, sans-serif"}}}%%
+%% Prototype 1 diagrams regenerated as small multiples.
+%% Full per-step accounting lives in prototype1-record-inventory.md.
+%% Authority cue: ChildPlan admits ChildFiles before runtime;
+%% the per-runtime Channel drives C3-C5 child lifecycle state;
+%% files, journals, registries, and playback summaries are reconstruction surfaces.
+flowchart LR
+    classDef child fill:#b2f2bb,stroke:#1e1e1e,stroke-width:2px
+    classDef runtime fill:#c3fae8,stroke:#087f5b,stroke-width:2px
+    classDef authority fill:#ffc9c9,stroke:#1e1e1e,stroke-width:2px
+    classDef records fill:#fff3bf,stroke:#1e1e1e,stroke-width:1px,stroke-dasharray: 4 4
+    classDef gap fill:#ffc9c9,stroke:#1e1e1e,stroke-width:1px,stroke-dasharray: 4 4
+
+    subgraph Attempt["one planned child attempt"]
+        direction LR
+        A["ChildFiles"]:::child --> B["C1<br/>parent over parent Artifact"]:::child
+        B --> C["C2<br/>materialized child Artifact"]:::child
+        C --> D["C3<br/>built child binary"]:::child
+        D --> E["C4<br/>spawned + ready"]:::child
+        E --> F["leaf runtime run<br/>treatment eval + protocol"]:::runtime
+        F --> G["C5<br/>terminal channel Result observed"]:::authority
+        G --> H["parent compare<br/>baseline + treatment evidence"]:::child
+        H --> I["child outcome"]:::child
+    end
+
+    subgraph AttemptRecords["attempt-local records"]
+        direction TB
+        R1["node bundle<br/>nodes/<node>/node.json<br/>runner-request.json<br/>runner-result.json"]:::records
+        R2["worktree + build<br/>nodes/<node>/worktree/<br/>target/<br/>bin/"]:::records
+        R3["invocation + streams<br/>invocations/<runtime>.json<br/>streams/<runtime>/*.log"]:::records
+        R4["lifecycle channel<br/>channels/<runtime>/parent-to-child.jsonl<br/>channels/<runtime>/child-to-parent.jsonl<br/>Ready / Evaluating / Result with treatment"]:::authority
+        R5["attempt projections<br/>results/<runtime>.json<br/>runner-result.json<br/>transition-journal entries"]:::records
+    end
+
+    subgraph RunRoot["leaf run-root emissions"]
+        direction TB
+        L1["run lifecycle<br/>execution-log.json<br/>repo-state.json<br/>record.json.gz<br/>run.json<br/>registries/runs/<run-id>.json"]:::records
+        L2["agent turn + model exchange<br/>agent-turn-trace.json<br/>agent-turn-summary.json<br/>llm-full-responses.jsonl<br/>future: provider-request witness"]:::gap
+        L3["index / DB witnesses<br/>indexing-status.json<br/>parse-failure.json<br/>snapshot-status.json<br/>indexing-checkpoint.db<br/>indexing-failure.db<br/>final-snapshot.db"]:::gap
+        L4["child protocol + benchmark inputs<br/>protocol-artifacts/*.json<br/>tool-call review artifacts<br/>multi-swe-bench-submission.jsonl<br/>benchmark-patch-projection.json"]:::gap
+    end
+
+    subgraph ParentComparison["parent comparison records"]
+        direction TB
+        P1["branch evaluation<br/>evaluations/<branch>.json<br/>branches.json summary"]:::records
+    end
+
+    C -. writes .-> R1
+    C -. creates .-> R2
+    D -. writes .-> R2
+    E -. writes .-> R3
+    E -. exchanges .-> R4
+    F -. emits .-> L1
+    F -. emits .-> L2
+    F -. emits .-> L3
+    F -. emits .-> L4
+    F -. writes projections .-> R5
+    F -. sends terminal result .-> R4
+    G -. reads .-> R4
+    G -. writes observation .-> R5
+    H -. reads .-> L4
+    H -. writes .-> P1
