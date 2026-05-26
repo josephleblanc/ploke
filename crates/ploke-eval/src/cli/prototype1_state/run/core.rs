@@ -2921,126 +2921,139 @@ Suggested validation after editing: run `cargo test`.
     #[cfg(feature = "live_api_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "requires Google ADC and makes a live Gemini call through prototype1-step"]
+    /// WARNING: intentionally quarantined. This live canary is model-behavior
+    /// and setup sensitive: it has failed from path canonicalization drift,
+    /// protected-path detours, cargo workspace metadata noise, and broad-harness
+    /// timeout/admission behavior. Do not treat it as a child-plan correctness
+    /// oracle until the fixture and acceptance contract are rebuilt.
     async fn live_google_step_child_plan() {
-        const TEST_NAME: &str = "live_google_step_child_plan";
+        panic!(
+            "live_google_step_child_plan is intentionally quarantined: \
+             the current fixture is model-behavior/setup sensitive and has \
+             produced misleading broad-harness admission failures"
+        );
+        #[allow(unreachable_code)]
+        {
+            const TEST_NAME: &str = "live_google_step_child_plan";
 
-        let started = std::time::Instant::now();
-        let mut previous = started;
-        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
-            return;
-        }
-        print_live_step_timing("google_auth_checked", started, &mut previous);
-        assert!(
-            std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_none(),
-            "{TEST_NAME} must not run with the broad TUI fixture hook enabled"
-        );
-
-        let _llm_guard = crate::test_support::llm_lock().lock().await;
-        let temp = crate::test_support::live_tempdir("prototype1-step-");
-        let eval_home = temp.path().join("eval-home");
-        let _env = crate::test_support::env_guard_os(vec![
-            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
-            ("PLOKE_EVAL_HEADLESS_TUI_LIVE", OsString::from("1")),
-            (
-                "PLOKE_EVAL_HEADLESS_TUI_LIVE_RESOURCES",
-                OsString::from("1"),
-            ),
-            ("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS", OsString::from("1")),
-            ("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS", OsString::from("60")),
-            ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", OsString::from("1")),
-        ]);
-        let model_id = crate::test_support::live_google_model_id();
-        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
-        print_live_step_timing("model_config_written", started, &mut previous);
-        let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
-        write_live_step_evidence(&world.manifest_path);
-        print_live_step_timing("world_minted", started, &mut previous);
-        let before_requests = count_broad_requests(&world.manifest_path);
-        let diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
-            .expect("diagnose pre-child-plan world");
-        assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
-        print_live_step_timing("diagnosed_child_plan", started, &mut previous);
-
-        let step_result = step(Prototype1ControlCommand {
-            repo_root: Some(world.repo_root.clone()),
-            format: InspectOutputFormat::Json,
-        })
-        .await;
-        print_live_step_timing("step_returned", started, &mut previous);
-
-        let summaries = headless_summaries(&world.manifest_path);
-        print_headless_profile(&summaries);
-        print_live_step_timing("diagnostics_loaded", started, &mut previous);
-        if !summaries.is_empty() {
-            let published = first_live_published_request(&world.manifest_path);
-            let admission_probe =
-                GitWorktreeBackend.validate_tui_attempt(&world.repo_root, &published);
-            eprintln!("[prototype1-step-live] post_step_admission_probe={admission_probe:#?}");
-        }
-        assert!(
-            !summaries.is_empty(),
-            "prototype1-step should write live headless-TUI diagnostics; step_result={step_result:?}"
-        );
-        assert!(
-            summaries.iter().any(|summary| {
-                summary.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolRequest { .. }
-                    )
-                })
-            }),
-            "live Gemini route should produce at least one model-driven tool request"
-        );
-
-        let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
-        let bytes = fs::read(&plan_path).unwrap_or_else(|err| {
-            panic!(
-                "prototype1-step should persist child-plan authority after live Gemini attempt: {err}; step_result={step_result:?}"
-            )
-        });
-        let plan: ChildPlanFiles =
-            serde_json::from_slice(&bytes).expect("persisted child plan decodes");
-        assert_eq!(plan.parent_node_id(), world.parent_identity.node_id());
-        assert_eq!(
-            plan.child_generation(),
-            world.parent_identity.generation() + 1
-        );
-        assert!(
-            plan.children().len() <= 1,
-            "1x1 live step should admit at most one child"
-        );
-        let after_requests = count_broad_requests(&world.manifest_path);
-        assert_eq!(
-            after_requests,
-            before_requests + 1,
-            "test-scoped slot limit should publish exactly one broad request"
-        );
-        let admitted_children = plan.children().len();
-        let rejected_attempts = plan.rejected_surface_attempts().len();
-        assert_eq!(
-            admitted_children + rejected_attempts,
-            1,
-            "one published request slot should become exactly one admitted child or rejected attempt"
-        );
-        match step_result {
-            Ok(()) => {
-                assert_eq!(
-                    admitted_children, 1,
-                    "seeded live prototype1-step should admit the only published slot"
-                );
-                assert_eq!(
-                    rejected_attempts, 0,
-                    "seeded live prototype1-step should not also reject the only slot"
-                );
+            let started = std::time::Instant::now();
+            let mut previous = started;
+            if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
+                return;
             }
-            Err(err) => {
+            print_live_step_timing("google_auth_checked", started, &mut previous);
+            assert!(
+                std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_none(),
+                "{TEST_NAME} must not run with the broad TUI fixture hook enabled"
+            );
+
+            let _llm_guard = crate::test_support::llm_lock().lock().await;
+            let temp = crate::test_support::live_tempdir("prototype1-step-");
+            let eval_home = temp.path().join("eval-home");
+            let _env = crate::test_support::env_guard_os(vec![
+                ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+                ("PLOKE_EVAL_HEADLESS_TUI_LIVE", OsString::from("1")),
+                (
+                    "PLOKE_EVAL_HEADLESS_TUI_LIVE_RESOURCES",
+                    OsString::from("1"),
+                ),
+                ("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS", OsString::from("1")),
+                ("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS", OsString::from("60")),
+                ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", OsString::from("1")),
+            ]);
+            let model_id = crate::test_support::live_google_model_id();
+            crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
+            print_live_step_timing("model_config_written", started, &mut previous);
+            let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
+            write_live_step_evidence(&world.manifest_path);
+            print_live_step_timing("world_minted", started, &mut previous);
+            let before_requests = count_broad_requests(&world.manifest_path);
+            let diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
+                .expect("diagnose pre-child-plan world");
+            assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
+            print_live_step_timing("diagnosed_child_plan", started, &mut previous);
+
+            let step_result = step(Prototype1ControlCommand {
+                repo_root: Some(world.repo_root.clone()),
+                format: InspectOutputFormat::Json,
+            })
+            .await;
+            print_live_step_timing("step_returned", started, &mut previous);
+
+            let summaries = headless_summaries(&world.manifest_path);
+            print_headless_profile(&summaries);
+            print_live_step_timing("diagnostics_loaded", started, &mut previous);
+            if !summaries.is_empty() {
+                let published = first_live_published_request(&world.manifest_path);
+                let admission_probe =
+                    GitWorktreeBackend.validate_tui_attempt(&world.repo_root, &published);
+                eprintln!("[prototype1-step-live] post_step_admission_probe={admission_probe:#?}");
+            }
+            assert!(
+                !summaries.is_empty(),
+                "prototype1-step should write live headless-TUI diagnostics; step_result={step_result:?}"
+            );
+            assert!(
+                summaries.iter().any(|summary| {
+                    summary.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolRequest { .. }
+                        )
+                    })
+                }),
+                "live Gemini route should produce at least one model-driven tool request"
+            );
+
+            let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
+            let bytes = fs::read(&plan_path).unwrap_or_else(|err| {
                 panic!(
-                    "seeded live prototype1-step should admit one child, got error {err}; \
-                     admitted_children={admitted_children} rejected_attempts={rejected_attempts}; \
-                     rejected={:#?}",
-                    plan.rejected_surface_attempts()
-                );
+                    "prototype1-step should persist child-plan authority after live Gemini attempt: {err}; step_result={step_result:?}"
+                )
+            });
+            let plan: ChildPlanFiles =
+                serde_json::from_slice(&bytes).expect("persisted child plan decodes");
+            assert_eq!(plan.parent_node_id(), world.parent_identity.node_id());
+            assert_eq!(
+                plan.child_generation(),
+                world.parent_identity.generation() + 1
+            );
+            assert!(
+                plan.children().len() <= 1,
+                "1x1 live step should admit at most one child"
+            );
+            let after_requests = count_broad_requests(&world.manifest_path);
+            assert_eq!(
+                after_requests,
+                before_requests + 1,
+                "test-scoped slot limit should publish exactly one broad request"
+            );
+            let admitted_children = plan.children().len();
+            let rejected_attempts = plan.rejected_surface_attempts().len();
+            assert_eq!(
+                admitted_children + rejected_attempts,
+                1,
+                "one published request slot should become exactly one admitted child or rejected attempt"
+            );
+            match step_result {
+                Ok(()) => {
+                    assert_eq!(
+                        admitted_children, 1,
+                        "seeded live prototype1-step should admit the only published slot"
+                    );
+                    assert_eq!(
+                        rejected_attempts, 0,
+                        "seeded live prototype1-step should not also reject the only slot"
+                    );
+                }
+                Err(err) => {
+                    panic!(
+                        "seeded live prototype1-step should admit one child, got error {err}; \
+                         admitted_children={admitted_children} rejected_attempts={rejected_attempts}; \
+                         rejected={:#?}",
+                        plan.rejected_surface_attempts()
+                    );
+                }
             }
         }
     }
