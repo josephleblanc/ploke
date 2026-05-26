@@ -2344,6 +2344,586 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn broad_slots_run_in_parallel() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let probe_dir = tmp.path().join("slot-probe");
+    let summary_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "src/tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.headless-tui.json",
+    );
+    let _env = crate::test_support::env_guard_os(vec![
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            summary_fixture.into_os_string(),
+        ),
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "2".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_DIR",
+            probe_dir.clone().into_os_string(),
+        ),
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_WAIT_FOR", "2".into()),
+    ]);
+
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget: Prototype1ChildBudget = Prototype1ChildBudget::new(2, 2).with_parallel_targets(2);
+    let batch: HarnessRequestBatch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+    assert_eq!(
+        batch.slots.len(),
+        2,
+        "test-scoped slot limit keeps this fanout proof focused"
+    );
+    assert_eq!(count_broad_requests(&manifest_path), 2);
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("fixture-backed parallel slots should not admit children"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("broad harness admitted 0 child transaction(s)"),
+        "{err}"
+    );
+
+    for slot_index in [0, 1] {
+        assert!(
+            probe_dir.join(format!("start-{slot_index}")).exists(),
+            "slot {slot_index} should have reached the test barrier"
+        );
+        assert!(
+            probe_dir.join(format!("release-{slot_index}")).exists(),
+            "slot {slot_index} should have observed the other active slot before finishing"
+        );
+    }
+    assert!(
+        !probe_dir.join("start-2").exists(),
+        "the two-child cap should not start a third concurrent slot"
+    );
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=failed_batch_persistence",
+            "record_access=write",
+            "record_kind=child_plan_file",
+            "outcome=committed",
+        ],
+    ));
+
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.clone(),
+        parent_identity.node_id().to_string(),
+    ));
+    let bytes = fs::read(at.path()).expect("child plan file should persist rejected attempts");
+    let plan: ChildPlanFiles = serde_json::from_slice(&bytes).expect("child plan decodes");
+    assert!(plan.children().is_empty());
+    assert_eq!(
+        plan.rejected_surface_attempts().len(),
+        2,
+        "both concurrently-started slots should be visible as rejected parent-readable evidence"
+    );
+}
+
+#[tokio::test]
+async fn child_fanout_is_parallel() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let probe_dir = tmp.path().join("child-probe");
+    let _env = crate::test_support::env_guard_os(vec![
+        (
+            "PLOKE_EVAL_CHILD_FANOUT_PROBE_DIR",
+            probe_dir.clone().into_os_string(),
+        ),
+        ("PLOKE_EVAL_CHILD_FANOUT_PROBE_WAIT_FOR", "2".into()),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+
+    for (index, slot) in batch.slots.iter().take(3).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+    }
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    )
+    .await
+    .expect("three admitted children");
+    let children = receipt.plan.body().children().to_vec();
+    assert_eq!(children.len(), 3);
+
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+    let outcomes = run_child_fanout(
+        "campaign",
+        &manifest_path,
+        &repo_root,
+        &prototype1_transition_journal_path(&manifest_path),
+        &parent_identity,
+        &baseline,
+        Prototype1StateStopAfter::Materialize,
+        Duration::from_secs(30),
+        Prototype1ChildScheduleMode::FullBatch,
+        budget,
+        0,
+        children,
+    )
+    .await
+    .expect("materialize first child fanout batch");
+
+    assert_eq!(
+        outcomes.len(),
+        2,
+        "materialize step should run one parallel batch capped by parallel_targets"
+    );
+    for plan_index in [0, 1] {
+        assert!(
+            probe_dir.join(format!("start-{plan_index}")).exists(),
+            "child {plan_index} should reach the fanout barrier"
+        );
+        assert!(
+            probe_dir.join(format!("release-{plan_index}")).exists(),
+            "child {plan_index} should see the other concurrent child before materializing"
+        );
+    }
+    assert!(
+        !probe_dir.join("start-2").exists(),
+        "materialize step should not start the third child in the first capped batch"
+    );
+    for outcome in &outcomes {
+        assert_eq!(outcome.outcome, "materialized");
+        assert_eq!(outcome.node_status, Prototype1NodeStatus::WorkspaceStaged);
+        assert!(
+            outcome.workspace_root.exists(),
+            "materialized child workspace should exist"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn install_fake_cargo(fake_bin: &Path, child_script: &str) -> std::ffi::OsString {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::create_dir_all(fake_bin).expect("fake bin dir");
+    let fake_cargo = fake_bin.join("cargo");
+    fs::write(
+        &fake_cargo,
+        format!(
+            r#"#!/bin/sh
+set -eu
+if [ "${{1:-}}" = "build" ]; then
+  mkdir -p "$CARGO_TARGET_DIR/debug"
+  child="$CARGO_TARGET_DIR/debug/ploke-eval"
+  cat > "$child" <<'PLOKE_FAKE_CHILD'
+{child_script}
+PLOKE_FAKE_CHILD
+  chmod +x "$child"
+fi
+exit 0
+"#
+        ),
+    )
+    .expect("write fake cargo");
+    let mut permissions = fs::metadata(&fake_cargo)
+        .expect("fake cargo metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_cargo, permissions).expect("chmod fake cargo");
+
+    let old_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut path = fake_bin.as_os_str().to_os_string();
+    path.push(":");
+    path.push(old_path);
+    path
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn child_build_promotes_binary_and_cleans_scratch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let outcome = run_planned_child(
+        "campaign".to_string(),
+        manifest_path.clone(),
+        repo_root.clone(),
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect("build child with fake cargo");
+
+    assert_eq!(outcome.outcome, "built");
+    assert_eq!(outcome.node_status, Prototype1NodeStatus::BinaryBuilt);
+    assert!(outcome.binary_path.exists(), "promoted child binary exists");
+    assert!(
+        !node.node_dir.join("target").exists(),
+        "temporary child build target should be removed after a successful build"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn child_spawn_observes_ready() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(
+        &fake_bin,
+        r#"#!/bin/sh
+set -eu
+invocation=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--invocation" ]; then
+    shift
+    invocation="${1:-}"
+    break
+  fi
+  shift
+done
+if [ -z "$invocation" ]; then
+  echo "missing invocation" >&2
+  exit 2
+fi
+invocations_dir=$(dirname "$invocation")
+node_dir=$(dirname "$invocations_dir")
+runtime_id="${PLOKE_PROTOTYPE1_RUNTIME_ID:?missing runtime id}"
+channel_dir="$node_dir/channels/$runtime_id"
+mkdir -p "$channel_dir"
+cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
+{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}","node_id":"${PLOKE_PROTOTYPE1_NODE_ID:?missing node}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000001","recorded_at":0,"body_hash":"40ec7f71ea684c8b976e79e8e425f87779e6de57f4821dcfc8066dbcad2defe0","body":"ready"}
+JSON
+sleep 1
+exit 0
+"#,
+    );
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let outcome = run_planned_child(
+        "campaign".to_string(),
+        manifest_path.clone(),
+        repo_root.clone(),
+        journal_path.clone(),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Spawn,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect("spawn child and observe ready channel message");
+
+    assert_eq!(outcome.outcome, "spawned");
+    assert_eq!(outcome.node_status, Prototype1NodeStatus::Running);
+    let runtime = outcome
+        .child_runtime
+        .as_deref()
+        .expect("spawned child runtime id");
+    let channel_path = node
+        .node_dir
+        .join("channels")
+        .join(runtime)
+        .join("child-to-parent.jsonl");
+    let channel = fs::read_to_string(&channel_path).expect("child ready channel record");
+    assert!(channel.contains(r#""body":"ready""#));
+
+    let entries = PrototypeJournal::new(journal_path)
+        .load_entries()
+        .expect("load transition journal");
+    assert!(entries.iter().any(|entry| {
+        matches!(
+            entry,
+            JournalEntry::SpawnChild(spawn)
+                if spawn.refs.node_id == node.node_id
+                    && spawn.phase == crate::cli::prototype1_state::journal::SpawnPhase::Observed
+                    && matches!(
+                        spawn.result,
+                        Some(crate::cli::prototype1_state::journal::SpawnObservation::Acknowledged)
+                    )
+        )
+    }));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn child_spawn_observes_failed_result() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch =
+        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
+            .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let runner_result = crate::intervention::Prototype1RunnerResult {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: "campaign".to_string(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        branch_id: node.branch_id.clone(),
+        status: Prototype1NodeStatus::Failed,
+        disposition: crate::intervention::Prototype1RunnerDisposition::TreatmentFailed,
+        treatment_campaign_id: None,
+        evaluation_artifact_path: None,
+        detail: Some("fake spawned child terminal failure".to_string()),
+        exit_code: Some(1),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-05-25T00:00:00Z".to_string(),
+    };
+    let terminal = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: runner_result.clone(),
+        treatment: None,
+    };
+    let channel_body = |message: &crate::cli::prototype1_state::channel::ToParent| {
+        use sha2::{Digest, Sha256};
+
+        let bytes = serde_json::to_vec(message).expect("serialize channel body");
+        (
+            String::from_utf8(bytes.clone()).expect("channel body utf8"),
+            format!("{:x}", Sha256::digest(&bytes)),
+        )
+    };
+    let (ready_body, ready_hash) =
+        channel_body(&crate::cli::prototype1_state::channel::ToParent::Ready);
+    let (evaluating_body, evaluating_hash) =
+        channel_body(&crate::cli::prototype1_state::channel::ToParent::Evaluating);
+    let (terminal_body, terminal_hash) = channel_body(&terminal);
+    let result_json = serde_json::to_string(&runner_result).expect("serialize runner result");
+    let path = install_fake_cargo(
+        &fake_bin,
+        &format!(
+            r#"#!/bin/sh
+set -eu
+invocation=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--invocation" ]; then
+    shift
+    invocation="${{1:-}}"
+    break
+  fi
+  shift
+done
+if [ -z "$invocation" ]; then
+  echo "missing invocation" >&2
+  exit 2
+fi
+invocations_dir=$(dirname "$invocation")
+node_dir=$(dirname "$invocations_dir")
+runtime_id="${{PLOKE_PROTOTYPE1_RUNTIME_ID:?missing runtime id}}"
+channel_dir="$node_dir/channels/$runtime_id"
+mkdir -p "$channel_dir" "$node_dir/results"
+cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
+{{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${{PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}}","node_id":"${{PLOKE_PROTOTYPE1_NODE_ID:?missing node}}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000001","recorded_at":0,"body_hash":"{ready_hash}","body":{ready_body}}}
+JSON
+cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
+{{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${{PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}}","node_id":"${{PLOKE_PROTOTYPE1_NODE_ID:?missing node}}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000002","recorded_at":0,"body_hash":"{evaluating_hash}","body":{evaluating_body}}}
+JSON
+cat > "$node_dir/results/$runtime_id.json" <<'RESULT'
+{result_json}
+RESULT
+cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
+{{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${{PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}}","node_id":"${{PLOKE_PROTOTYPE1_NODE_ID:?missing node}}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000003","recorded_at":0,"body_hash":"{terminal_hash}","body":{terminal_body}}}
+JSON
+exit 0
+"#
+        ),
+    );
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let outcome = run_planned_child(
+        "campaign".to_string(),
+        manifest_path.clone(),
+        repo_root.clone(),
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Complete,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect("observe spawned child terminal result");
+
+    assert_eq!(outcome.outcome, "completed:Reject");
+    assert_eq!(outcome.node_status, Prototype1NodeStatus::Failed);
+    assert!(outcome.child_runtime.is_some());
+    assert!(outcome.evaluation_report.is_none());
+}
+
 #[test]
 fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
     let tmp = tempfile::tempdir().expect("tempdir");

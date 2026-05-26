@@ -7798,6 +7798,14 @@ async fn run_broad_slot_for_admission(
     let result = if slot.published.submitted_result_path().exists() {
         Ok(None)
     } else {
+        #[cfg(test)]
+        if let Err(source) = wait_for_broad_slot_probe(slot_index).await {
+            return BroadSlotAttempt {
+                slot_index,
+                slot,
+                result: Err(source),
+            };
+        }
         run_broad_headless_tui_attempt(&slot).await
     };
     cleanup_broad_slot_target(&slot);
@@ -7806,6 +7814,127 @@ async fn run_broad_slot_for_admission(
         slot,
         result,
     }
+}
+
+#[cfg(test)]
+async fn wait_for_broad_slot_probe(slot_index: usize) -> Result<(), PrepareError> {
+    let Some(probe_dir) = std::env::var_os("PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_DIR") else {
+        return Ok(());
+    };
+    let wait_for = broad_headless_tui_env_usize("PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_WAIT_FOR")?
+        .unwrap_or(1)
+        .max(1);
+    let probe_dir = PathBuf::from(probe_dir);
+    fs::create_dir_all(&probe_dir).map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not create broad slot probe dir '{}': {source}",
+            probe_dir.display()
+        ),
+    })?;
+    let start_path = probe_dir.join(format!("start-{slot_index}"));
+    fs::write(&start_path, b"started\n").map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not write broad slot probe start marker '{}': {source}",
+            start_path.display()
+        ),
+    })?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let started = count_broad_slot_probe_starts(&probe_dir)?;
+        if started >= wait_for {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "timed out waiting for {wait_for} concurrent broad slot probe starts; observed {started}"
+                ),
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let release_path = probe_dir.join(format!("release-{slot_index}"));
+    fs::write(&release_path, b"released\n").map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not write broad slot probe release marker '{}': {source}",
+            release_path.display()
+        ),
+    })
+}
+
+#[cfg(test)]
+fn count_broad_slot_probe_starts(probe_dir: &Path) -> Result<usize, PrepareError> {
+    count_test_probe_starts(probe_dir, "broad slot")
+}
+
+#[cfg(test)]
+fn wait_for_child_fanout_probe(plan_index: usize) -> Result<(), PrepareError> {
+    let Some(probe_dir) = std::env::var_os("PLOKE_EVAL_CHILD_FANOUT_PROBE_DIR") else {
+        return Ok(());
+    };
+    let wait_for = broad_headless_tui_env_usize("PLOKE_EVAL_CHILD_FANOUT_PROBE_WAIT_FOR")?
+        .unwrap_or(1)
+        .max(1);
+    let probe_dir = PathBuf::from(probe_dir);
+    fs::create_dir_all(&probe_dir).map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not create child fanout probe dir '{}': {source}",
+            probe_dir.display()
+        ),
+    })?;
+    let start_path = probe_dir.join(format!("start-{plan_index}"));
+    fs::write(&start_path, b"started\n").map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not write child fanout probe start marker '{}': {source}",
+            start_path.display()
+        ),
+    })?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let started = count_test_probe_starts(&probe_dir, "child fanout")?;
+        if started >= wait_for {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "timed out waiting for {wait_for} concurrent child fanout probe starts; observed {started}"
+                ),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let release_path = probe_dir.join(format!("release-{plan_index}"));
+    fs::write(&release_path, b"released\n").map_err(|source| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "could not write child fanout probe release marker '{}': {source}",
+            release_path.display()
+        ),
+    })
+}
+
+#[cfg(test)]
+fn count_test_probe_starts(probe_dir: &Path, label: &str) -> Result<usize, PrepareError> {
+    let entries =
+        fs::read_dir(probe_dir).map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "could not read {label} probe dir '{}': {source}",
+                probe_dir.display()
+            ),
+        })?;
+    Ok(entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("start-"))
+        })
+        .count())
 }
 
 fn cleanup_broad_slot_target(slot: &HarnessRequestSlot) {
@@ -7996,6 +8125,8 @@ pub(crate) fn run_planned_child(
         plan_index = plan_index,
     );
     let _child_path_entered = child_path_span.enter();
+    #[cfg(test)]
+    wait_for_child_fanout_probe(plan_index)?;
     info!(
         target: EXECUTION_DEBUG_TARGET,
         role = "parent",

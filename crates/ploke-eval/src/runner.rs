@@ -5771,12 +5771,32 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
-    async fn live_google_route() -> LlmRoute {
+    async fn live_google_route() -> Option<LlmRoute> {
+        use ploke_llm::Router;
+        use ploke_llm::router_only::google::Google;
+
         crate::test_support::install_default_google_route_env();
+        if let Err(error) = Google::route_config_available() {
+            eprintln!("skipping live Google route test: route config unavailable: {error}");
+            return None;
+        }
+        if let Err(error) = Google::auth_config_available() {
+            eprintln!("skipping live Google route test: ADC config unavailable: {error}");
+            return None;
+        }
+        if let Err(error) = Google::resolve_bearer_token().await {
+            eprintln!("skipping live Google route test: ADC token unavailable: {error}");
+            return None;
+        }
+
         let model_id = live_google_model_id();
-        let registry = crate::model_registry::fetch_google_model_registry()
-            .await
-            .expect("Google model registry catalog");
+        let registry = match crate::model_registry::fetch_google_model_registry().await {
+            Ok(registry) => registry,
+            Err(error) => {
+                eprintln!("skipping live Google route test: catalog unavailable: {error}");
+                return None;
+            }
+        };
         let selected_model = registry
             .data
             .into_iter()
@@ -5804,7 +5824,7 @@ mod tests {
         assert!(route.provider_key().is_none());
         assert_eq!(route.selected_provider_slug(), "google");
         assert!(selected_endpoint_provenance(&route).is_none());
-        route
+        Some(route)
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -5817,7 +5837,9 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     #[ignore = "live Google API test for ploke-eval route resolution and direct content response"]
     async fn live_google_resolved_route_returns_content_success_or_quota() {
-        let route = live_google_route().await;
+        let Some(route) = live_google_route().await else {
+            return;
+        };
         let request = ploke_llm::router_only::google::Google::default_chat_completion()
             .with_model(route.model().clone())
             .with_message(RequestMessage::new_user(
@@ -5855,7 +5877,9 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     #[ignore = "live Google API test for ploke-eval route resolution and forced tool-call response"]
     async fn live_google_resolved_route_forces_list_dir_tool_call_success_or_quota() {
-        let route = live_google_route().await;
+        let Some(route) = live_google_route().await else {
+            return;
+        };
         let request = ploke_llm::router_only::google::Google::default_chat_completion()
             .with_model(route.model().clone())
             .with_message(RequestMessage::new_user(

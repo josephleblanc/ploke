@@ -1171,6 +1171,9 @@ impl BroadHarnessRequest {
             self.workspace.display_candidate_workspace(),
             self.evaluation.scope.benchmark_name()
         ));
+        prompt.push_str(
+            "Treat the candidate checkout as the write target and command root. Resolve ordinary file paths there; read only the explicitly listed evidence paths outside it. When running cargo, prefer root-level `cargo check` or `cargo test` unless you have confirmed a package name in the candidate checkout.\n",
+        );
         if let Some(evaluations) = self.evidence_root(EvidenceRootKind::Evaluations) {
             prompt.push_str(&format!(
                 "Past benchmark results live under `{}`.\n",
@@ -1503,6 +1506,10 @@ mod tests {
                 .display()
         );
         assert!(prompt.contains(&opening));
+        assert!(
+            prompt.contains("Treat the candidate checkout as the write target and command root")
+        );
+        assert!(prompt.contains("root-level `cargo check` or `cargo test`"));
         assert!(prompt.contains("Past benchmark results live under"));
         assert!(prompt.contains("/evaluations`"));
         assert!(prompt.contains("If prior attempt or conversation history is useful"));

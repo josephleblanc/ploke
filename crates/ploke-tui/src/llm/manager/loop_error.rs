@@ -206,7 +206,7 @@ impl ChatSessionReport {
     }
 
     pub fn summary(&self) -> String {
-        match &self.outcome {
+        let mut summary = match &self.outcome {
             SessionOutcome::Completed => "Request summary: [success]".to_string(),
             SessionOutcome::Aborted { error_id } => {
                 format!("Request summary: [aborted] error_id={error_id}")
@@ -214,8 +214,34 @@ impl ChatSessionReport {
             SessionOutcome::Exhausted { error_id } => {
                 format!("Request summary: [exhausted] error_id={error_id}")
             }
+        };
+        if let Some(error) = self.last_error() {
+            summary.push_str(" code=");
+            summary.push_str(error.code.as_ref());
+            summary.push_str(" kind=");
+            summary.push_str(kind_str(&error.kind));
+            summary.push_str(" error_summary=");
+            summary.push_str(&summary_fragment(&error.summary));
+            if let Some(diagnostics) = &error.diagnostics {
+                summary.push_str(" diagnostic=");
+                summary.push_str(&summary_fragment(&diagnostics.diagnostic));
+            }
         }
+        summary
     }
+}
+
+fn summary_fragment(value: &str) -> String {
+    const MAX_SUMMARY_CHARS: usize = 512;
+    let mut output = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= MAX_SUMMARY_CHARS {
+            output.push_str("...");
+            return output;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 #[derive(Clone, Debug)]
@@ -1057,6 +1083,33 @@ mod tests {
             }
         ));
         assert_eq!(loop_error.context.provider.as_deref(), Some("Io Net"));
+    }
+
+    #[test]
+    fn chat_session_summary_preserves_last_error_detail() {
+        let err = LlmError::Http(ploke_llm::HttpFailure::send(
+            None,
+            None,
+            "failed to resolve bearer token: ADC token unavailable".to_string(),
+            HttpSendFailure::Failed,
+        ));
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+        let error_id = loop_error.error_id;
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.record_error(loop_error);
+        report.outcome = SessionOutcome::Aborted { error_id };
+
+        let summary = report.summary();
+
+        assert!(summary.contains("[aborted]"));
+        assert!(summary.contains("code=HTTP_SEND_FAILED"));
+        assert!(summary.contains("kind=transport"));
+        assert!(summary.contains("failed to resolve bearer token"));
     }
 
     #[test]

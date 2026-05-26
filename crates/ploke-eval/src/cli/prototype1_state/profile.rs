@@ -313,11 +313,8 @@ impl Search {
     }
 
     fn default_parallel_cap(&self) -> u32 {
-        match self.schedule {
-            Prototype1ChildScheduleMode::FullBatch => self.children.max,
-            Prototype1ChildScheduleMode::AdaptiveBatch => self.children.min,
-        }
-        .max(1)
+        self.schedule
+            .fanout_width(self.children, self.children.max as usize) as u32
     }
 }
 

@@ -139,6 +139,7 @@ pub(crate) async fn run_headless_with_model(
         budget.timeout_secs(),
         extra_read_roots.len()
     ));
+    observer.emit_workspace_size("workspace_start", workspace_path);
 
     let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
         loop {
@@ -242,6 +243,7 @@ pub(crate) async fn run_headless_with_model(
         },
     };
     observer.emit(format!("done {}", terminal.live_summary()));
+    observer.emit_workspace_size("workspace_done", workspace_path);
     run.terminal = Some(terminal);
     Ok(run)
 }
@@ -697,6 +699,9 @@ async fn run_attempt(
                 ));
                 if provider_failure.is_none() {
                     provider_failure = provider_failure_from_chat(runtime).await;
+                }
+                if provider_failure.is_none() {
+                    provider_failure = provider_unavailable_reason(&summary);
                 }
                 if let Some(reason) = provider_failure.take() {
                     return Ok(AttemptEnd::Terminal(
@@ -1498,6 +1503,13 @@ fn provider_unavailable_reason(content: &str) -> Option<String> {
     {
         return Some(content.to_string());
     }
+    if normalized.contains("failed to resolve bearer token")
+        || normalized.contains("application default credentials")
+        || normalized.contains("reauthentication failed")
+        || normalized.contains("auth tokens")
+    {
+        return Some(content.to_string());
+    }
     None
 }
 
@@ -1656,14 +1668,18 @@ impl LiveObserver {
     fn emit(&self, message: impl AsRef<str>) {
         if self.enabled {
             if self.resources {
-                eprintln!(
-                    "[headless-tui elapsed_ms={} rss_kb={}] {}",
-                    self.started.elapsed().as_millis(),
-                    current_rss_kb()
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    message.as_ref()
-                );
+                match current_rss_kb() {
+                    Some(rss_kb) => eprintln!(
+                        "[headless-tui elapsed_ms={} rss_kb={rss_kb}] {}",
+                        self.started.elapsed().as_millis(),
+                        message.as_ref()
+                    ),
+                    None => eprintln!(
+                        "[headless-tui elapsed_ms={} rss_kb=unknown] {}",
+                        self.started.elapsed().as_millis(),
+                        message.as_ref()
+                    ),
+                }
             } else {
                 eprintln!(
                     "[headless-tui elapsed_ms={}] {}",
@@ -1678,19 +1694,28 @@ impl LiveObserver {
         if self.enabled && self.resources {
             let workspace = dir_size_limited(workspace_path, 50_000);
             let target = dir_size_limited(&workspace_path.join("target"), 50_000);
-            eprintln!(
-                "[headless-tui elapsed_ms={} rss_kb={} {label} workspace_bytes={} workspace_entries={} workspace_truncated={} target_bytes={} target_entries={} target_truncated={}]",
-                self.started.elapsed().as_millis(),
-                current_rss_kb()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                workspace.bytes,
-                workspace.entries,
-                workspace.truncated,
-                target.bytes,
-                target.entries,
-                target.truncated,
-            );
+            match current_rss_kb() {
+                Some(rss_kb) => eprintln!(
+                    "[headless-tui elapsed_ms={} rss_kb={rss_kb} {label} workspace_bytes={} workspace_entries={} workspace_truncated={} target_bytes={} target_entries={} target_truncated={}]",
+                    self.started.elapsed().as_millis(),
+                    workspace.bytes,
+                    workspace.entries,
+                    workspace.truncated,
+                    target.bytes,
+                    target.entries,
+                    target.truncated,
+                ),
+                None => eprintln!(
+                    "[headless-tui elapsed_ms={} rss_kb=unknown {label} workspace_bytes={} workspace_entries={} workspace_truncated={} target_bytes={} target_entries={} target_truncated={}]",
+                    self.started.elapsed().as_millis(),
+                    workspace.bytes,
+                    workspace.entries,
+                    workspace.truncated,
+                    target.bytes,
+                    target.entries,
+                    target.truncated,
+                ),
+            }
         }
     }
 }
@@ -4161,6 +4186,19 @@ Suggested action: Verify API credentials and retry."#;
 
         assert!(reason.contains("status 401"));
         assert!(reason.contains("ACCESS_TOKEN_TYPE_UNSUPPORTED"));
+    }
+
+    #[test]
+    fn aborted_summary_google_adc_failure_is_provider_unavailable() {
+        let reason = provider_unavailable_reason(
+            "Request summary: [aborted] error_id=abc code=HTTP_SEND_FAILED kind=transport \
+             error_summary=HTTP error while sending request: failed to resolve bearer token: \
+             Var error: failed to resolve Google application default credentials",
+        )
+        .expect("ADC bearer-token failures should stop the headless attempt");
+
+        assert!(reason.contains("failed to resolve bearer token"));
+        assert!(reason.contains("application default credentials"));
     }
 
     #[test]

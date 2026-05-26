@@ -1569,6 +1569,9 @@ impl GitWorktreeBackend {
 
         let base_artifact_id = admission.base_artifact_id()?.clone();
         let request_id = published.request_id().to_string();
+        let changes = transaction::ChangeSet::new(changed_paths.clone())
+            .map_err(transaction_error_to_backend_error)?;
+        self.check_artifact_surface_inputs(&candidate_root)?;
         let persisted_head = self.persist_files(
             &candidate_root,
             &changed_paths,
@@ -1576,9 +1579,6 @@ impl GitWorktreeBackend {
         )?;
         let derived_artifact_id = artifact_id_from_git_commit(&persisted_head);
         let artifact_surface = self.artifact_surface(&candidate_root)?;
-
-        let changes = transaction::ChangeSet::new(changed_paths)
-            .map_err(transaction_error_to_backend_error)?;
 
         Ok(transaction::Transaction::admit(
             published.reference(),
@@ -2490,6 +2490,20 @@ impl WorkspaceBackend for GitWorktreeBackend {
 }
 
 impl GitWorktreeBackend {
+    fn check_artifact_surface_inputs(&self, root: &Path) -> Result<(), BackendError> {
+        let immutable_paths = tracked_paths(root, "crates/ploke-eval")?;
+        if immutable_paths.is_empty() {
+            return Err(BackendError::EmptySurfacePathspec {
+                root: root.to_path_buf(),
+                pathspec: "crates/ploke-eval".to_string(),
+            });
+        }
+        surface_hash(root, &immutable_paths)?;
+        surface_hash(root, &mutated_surface_paths(root)?)?;
+        surface_hash(root, &[])?;
+        Ok(())
+    }
+
     pub(crate) fn artifact_surface(&self, root: &Path) -> Result<ArtifactSurface, BackendError> {
         let tree_key = self
             .clean_tree_key(root)?
@@ -4526,6 +4540,61 @@ R  old.rs -> new.rs
                 if detail.contains("request_hash mismatch")
                     && detail.contains("tampered-request-hash")
         ));
+    }
+
+    #[test]
+    fn broad_harness_admission_preflights_surface_before_commit() {
+        let fixture = BroadHarnessFixture::new();
+        for relpath in super::tool_description_paths() {
+            fs::remove_file(fixture.source_root.join(&relpath))
+                .unwrap_or_else(|err| panic!("remove tool description '{relpath:?}': {err}"));
+        }
+        run_git_test(fixture.source_root.as_path(), &["add", "-u"]);
+        run_git_test(
+            fixture.source_root.as_path(),
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "remove tool description artifacts",
+            ],
+        );
+
+        let published = fixture.published_request();
+        fixture.clone_candidate_workspace(&published);
+        let base_head = GitWorktreeBackend
+            .head_commit(published.workspace_path())
+            .expect("candidate base head");
+
+        let changed = PathBuf::from("README.md");
+        fs::write(
+            published.workspace_path().join(&changed),
+            "improved broad harness\n",
+        )
+        .expect("write candidate change");
+        let submitted = submitted_broad_harness_result(&published, std::slice::from_ref(&changed));
+
+        let err = GitWorktreeBackend
+            .admit_submitted_broad_harness_result(
+                fixture.source_root.as_path(),
+                admission_for(crate::loop_graph::ArtifactId::new("artifact:broad-base")),
+                &published,
+                &submitted,
+            )
+            .expect_err("missing artifact-surface inputs must reject before commit");
+
+        assert!(matches!(err, BackendError::MissingSurfaceFile { .. }));
+        assert_eq!(
+            GitWorktreeBackend
+                .head_commit(published.workspace_path())
+                .expect("candidate head after rejected admission"),
+            base_head,
+            "admission must not commit before all artifact-surface inputs are known good"
+        );
+        assert_eq!(
+            super::dirty_paths(published.workspace_path()).expect("candidate dirty paths"),
+            vec![changed]
+        );
     }
 
     #[test]

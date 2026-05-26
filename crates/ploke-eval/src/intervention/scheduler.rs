@@ -208,9 +208,16 @@ impl Prototype1ChildScheduleMode {
     ) -> usize {
         let planned = planned_children.max(1);
         match self {
-            Self::FullBatch => planned,
-            Self::AdaptiveBatch => usize::min(child_budget.min as usize, planned).max(1),
+            Self::FullBatch => usize::min(child_budget.parallel_targets() as usize, planned),
+            Self::AdaptiveBatch => usize::min(
+                usize::min(
+                    child_budget.min as usize,
+                    child_budget.parallel_targets() as usize,
+                ),
+                planned,
+            ),
         }
+        .max(1)
     }
 }
 
@@ -1669,7 +1676,7 @@ mod tests {
         let budget = Prototype1ChildBudget::new(2, 6);
         assert_eq!(
             Prototype1ChildScheduleMode::FullBatch.fanout_width(budget, 6),
-            6
+            3
         );
         assert_eq!(
             Prototype1ChildScheduleMode::AdaptiveBatch.fanout_width(budget, 6),
@@ -1678,6 +1685,11 @@ mod tests {
         assert_eq!(
             Prototype1ChildScheduleMode::FullBatch.fanout_width(budget, 0),
             1
+        );
+        let narrow = Prototype1ChildBudget::new(1, 2);
+        assert_eq!(
+            Prototype1ChildScheduleMode::FullBatch.fanout_width(narrow, 6),
+            2
         );
     }
 

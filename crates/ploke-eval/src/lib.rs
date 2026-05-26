@@ -42,7 +42,49 @@ pub const DEFAULT_GOOGLE_REGION: &str = "global";
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::sync::{Mutex, OnceLock};
+    use std::{
+        ffi::OsString,
+        sync::{Mutex, MutexGuard, OnceLock},
+    };
+
+    pub(crate) struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                match value {
+                    Some(value) => unsafe {
+                        std::env::set_var(key, value);
+                    },
+                    None => unsafe {
+                        std::env::remove_var(key);
+                    },
+                }
+            }
+        }
+    }
+
+    pub(crate) fn env_guard_os(values: Vec<(&'static str, OsString)>) -> EnvGuard {
+        let lock = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = values
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(*key)))
+            .collect::<Vec<_>>();
+        for (key, value) in &values {
+            unsafe {
+                std::env::set_var(key, value);
+            }
+        }
+        EnvGuard {
+            _lock: lock,
+            previous,
+        }
+    }
 
     pub(crate) fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

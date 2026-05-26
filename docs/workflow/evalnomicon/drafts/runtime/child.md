@@ -160,12 +160,15 @@ loop prototype1-runner --invocation <path> --execute
 
 and redirects child stdout/stderr to the node runtime stream files.
 
-The parent then waits for the child to record readiness in the transition
-journal.
+The parent then waits for the child to send `ToParent::Ready` through the
+per-runtime child-to-parent channel. The transition journal still receives
+spawn `Starting`, `Spawned`, and `Observed` entries, but those entries are
+projection/audit records for this handshake; they are not the readiness
+authority.
 
 Current pre-ready behavior:
 
-- parent polls the transition journal for `Child<Ready>`
+- parent polls the per-runtime child channel for `ToParent::Ready`
 - parent also polls child process status with `try_wait`
 - child exit before ready rejects the spawn and marks the node failed
 - ready timeout rejects the spawn and marks the node failed
@@ -183,7 +186,9 @@ Inside the spawned child process, the runner:
 
 ```text
 record Child<Ready>
+send ToParent::Ready
 record Child<Evaluating>
+send ToParent::Evaluating
 run treatment branch evaluation
 write runner result
 record Child<ResultWritten>

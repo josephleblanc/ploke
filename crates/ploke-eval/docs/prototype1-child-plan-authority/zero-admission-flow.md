@@ -329,6 +329,10 @@ candidate artifact, the promoted child binary until spawn no longer needs it,
 the per-runtime channel result, and the run/protocol artifacts used for later
 review.
 
+The same `parallel_targets` cap also bounds parent-side child execution fanout:
+`full-batch` still means "eventually run the full admitted batch", but it must
+do so in capped chunks rather than starting every child runtime at once.
+
 The controller bug starts when all attempted slots admit fewer than
 `child_budget.min`.
 
