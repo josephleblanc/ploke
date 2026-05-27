@@ -11,6 +11,8 @@ pub struct ContextPart {
     pub text: String,
     pub score: f32,
     pub modality: Modality,
+    #[serde(default)]
+    pub type_context: Option<TypeContextInfo>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,6 +78,44 @@ impl From<Modality> for &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum TypeContextKind {
+    SameResolvedType,
+    UsesTypeNested,
+    TypeDefinitionImpact,
+    ImplOfTrait,
+    ImplSelfType,
+    AliasExpansion,
+    TraitBound,
+    IteratorSurface,
+    ConstGenericAlias,
+}
+
+impl TypeContextKind {
+    pub fn to_static_str(self) -> &'static str {
+        use TypeContextKind::*;
+        match self {
+            SameResolvedType => "SameResolvedType",
+            UsesTypeNested => "UsesTypeNested",
+            TypeDefinitionImpact => "TypeDefinitionImpact",
+            ImplOfTrait => "ImplOfTrait",
+            ImplSelfType => "ImplSelfType",
+            AliasExpansion => "AliasExpansion",
+            TraitBound => "TraitBound",
+            IteratorSurface => "IteratorSurface",
+            ConstGenericAlias => "ConstGenericAlias",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct TypeContextInfo {
+    pub seed_id: Uuid,
+    pub relation: TypeContextKind,
+    pub distance: u32,
+}
+
 impl Modality {
     pub fn to_static_str(self) -> &'static str {
         self.into()
@@ -129,9 +169,11 @@ impl RequestCodeContextResult {
 impl From<ContextPart> for ConciseContext {
     fn from(value: ContextPart) -> Self {
         Self {
+            id: value.id,
             file_path: value.file_path.clone(),
             canon_path: value.canon_path.clone(),
             snippet: value.text,
+            type_context: value.type_context,
         }
     }
 }
@@ -170,9 +212,12 @@ impl CanonPath {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ConciseContext {
+    pub id: Uuid,
     pub file_path: NodeFilepath,
     pub canon_path: CanonPath,
     pub snippet: String,
+    #[serde(default)]
+    pub type_context: Option<TypeContextInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

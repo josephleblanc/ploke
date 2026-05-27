@@ -17,7 +17,7 @@ use ploke_core::{
     EmbeddingData,
     rag_types::{
         AssembledContext, CanonPath, ContextPart, ContextPartKind, ContextStats, Modality,
-        NodeFilepath,
+        NodeFilepath, TypeContextInfo,
     },
 };
 use ploke_db::{Database, NodeType, get_by_id::NodePaths};
@@ -167,6 +167,29 @@ pub async fn assemble_context(
     db: &Database,
     io: &IoManagerHandle,
 ) -> Result<AssembledContext, RagError> {
+    assemble_context_with_type_context(
+        query,
+        hits,
+        budget,
+        policy,
+        tokenizer,
+        db,
+        io,
+        &HashMap::new(),
+    )
+    .await
+}
+
+pub async fn assemble_context_with_type_context(
+    query: &str,
+    hits: &[(Uuid, f32)],
+    budget: &TokenBudget,
+    policy: &AssemblyPolicy,
+    tokenizer: &dyn TokenCounter,
+    db: &Database,
+    io: &IoManagerHandle,
+    type_context: &HashMap<Uuid, TypeContextInfo>,
+) -> Result<AssembledContext, RagError> {
     // Build score map and preserve incoming order.
     let mut score_map: HashMap<Uuid, f32> = HashMap::with_capacity(hits.len());
     let ordered_ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
@@ -186,6 +209,7 @@ pub async fn assemble_context(
         .map_err(|e| RagError::Embed(e.to_string()))?;
     let (nodes, node_paths): (Vec<EmbeddingData>, Vec<NodePaths>) =
         context_nodes.into_iter().unzip();
+    let node_ids: Vec<Uuid> = nodes.iter().map(|node| node.id).collect();
 
     let file_paths = nodes
         .iter()
@@ -202,7 +226,7 @@ pub async fn assemble_context(
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
     let mut skipped_io_errors = 0usize;
     for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
-        let id = dedup_ids
+        let id = node_ids
             .get(i)
             .copied()
             .ok_or_else(|| RagError::Search(format!("mismatched batch index {}", i)))?;
@@ -221,6 +245,7 @@ pub async fn assemble_context(
                     text,
                     score: *score_map.get(&id).unwrap_or(&0.0),
                     modality: Modality::HybridFused,
+                    type_context: type_context.get(&id).copied(),
                 };
                 prelim_parts.push(part);
             }
@@ -421,6 +446,7 @@ mod tests {
             text: text.to_string(),
             score: 1.0,
             modality: Modality::Sparse,
+            type_context: None,
         }
     }
 }

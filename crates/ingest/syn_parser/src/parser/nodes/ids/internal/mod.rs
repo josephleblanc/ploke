@@ -2,14 +2,210 @@
 
 //! Private implementation module for strictly encapsulated typed node identifiers.
 //!
-//! Defines the ID newtype structs with private fields, implements necessary traits
-//! internally, provides restricted constructors, and defines helper types like
-//! `AnyNodeId`. Access to the base `NodeId` is confined to this module.
+//! This module defines the primitive vertex sets used by the code graph. A raw
+//! `NodeId` names an element in the node-id universe, but code outside this
+//! layer should work with refined typed IDs or finite unions of those typed IDs.
+//! Access to the base `NodeId` is confined to this module so callers cannot
+//! silently construct graph facts with endpoints whose admissibility has not
+//! been proven.
+//!
+//! The design rule is set-theoretic:
+//!
+//! ```text
+//! V_node = the universe of node vertices
+//!
+//! FunctionNodeId ⊆ V_node
+//! StructNodeId   ⊆ V_node
+//! ModuleNodeId   ⊆ V_node
+//!
+//! PrimaryNodeId =
+//!     FunctionNodeId
+//!   ∪ StructNodeId
+//!   ∪ EnumNodeId
+//!   ∪ ...
+//! ```
+//!
+//! Specific ID newtypes such as `FunctionNodeId` and `StructNodeId` prove
+//! membership in one concrete subset of `V_node`. Category enums such as
+//! `PrimaryNodeId`, `SecondaryNodeId`, `AssociatedItemNodeId`, and `AnyNodeId`
+//! name finite unions of those subsets. They are endpoint sets, not loose
+//! classifiers.
+//!
+//! The major node-id endpoint sets encoded here are:
+//!
+//! ```text
+//! PrimaryNodeId =
+//!     FunctionNodeId
+//!   ∪ StructNodeId
+//!   ∪ EnumNodeId
+//!   ∪ UnionNodeId
+//!   ∪ TypeAliasNodeId
+//!   ∪ TraitNodeId
+//!   ∪ ImplNodeId
+//!   ∪ ConstNodeId
+//!   ∪ StaticNodeId
+//!   ∪ MacroNodeId
+//!   ∪ ImportNodeId
+//!   ∪ ModuleNodeId
+//!   ∪ UnresolvedNodeId
+//!
+//! SecondaryNodeId =
+//!     VariantNodeId
+//!   ∪ FieldNodeId
+//!   ∪ GenericParamNodeId
+//!
+//! AssociatedItemNodeId =
+//!     MethodNodeId
+//!   ∪ TypeAliasNodeId
+//!   ∪ ConstNodeId
+//!
+//! GenericParamOwnerId =
+//!     FunctionNodeId
+//!   ∪ StructNodeId
+//!   ∪ EnumNodeId
+//!   ∪ UnionNodeId
+//!   ∪ TraitNodeId
+//!   ∪ ImplNodeId
+//!   ∪ MethodNodeId
+//!   ∪ TypeAliasNodeId
+//!
+//! TypeUseOwnerId =
+//!     FunctionNodeId
+//!   ∪ MethodNodeId
+//!   ∪ FieldNodeId
+//!   ∪ TypeAliasNodeId
+//!   ∪ TraitNodeId
+//!   ∪ ImplNodeId
+//!   ∪ ConstNodeId
+//!   ∪ StaticNodeId
+//!   ∪ GenericParamNodeId
+//!
+//! SelfScopeOwnerId =
+//!     StructNodeId
+//!   ∪ EnumNodeId
+//!   ∪ UnionNodeId
+//!   ∪ TraitNodeId
+//!   ∪ ImplNodeId
+//!
+//! AssociatedItemOwnerId = TraitNodeId ∪ ImplNodeId
+//! ```
+//!
+//! Generic parameters have an additional refinement layer. A
+//! `GenericParamNodeId` proves only that a generic parameter exists; the
+//! refined wrappers prove which Rust generic-parameter kind it has:
+//!
+//! ```text
+//! TypeGenericParamNodeId     ⊆ GenericParamNodeId
+//! LifetimeGenericParamNodeId ⊆ GenericParamNodeId
+//! ConstGenericParamNodeId    ⊆ GenericParamNodeId
+//!
+//! AnyGenericParamId =
+//!     TypeGenericParamNodeId
+//!   ∪ LifetimeGenericParamNodeId
+//!   ∪ ConstGenericParamNodeId
+//! ```
+//!
+//! These three refined generic-parameter subsets are intended to be pairwise
+//! disjoint because a parsed generic parameter has exactly one
+//! `GenericParamKind`:
+//!
+//! ```text
+//! TypeGenericParamNodeId     ∩ LifetimeGenericParamNodeId = ∅
+//! TypeGenericParamNodeId     ∩ ConstGenericParamNodeId    = ∅
+//! LifetimeGenericParamNodeId ∩ ConstGenericParamNodeId    = ∅
+//! ```
+//!
+//! Other category intersections are intentional and meaningful. Category enums
+//! are finite unions, not a global partition:
+//!
+//! ```text
+//! PrimaryNodeId ∩ AssociatedItemNodeId = TypeAliasNodeId ∪ ConstNodeId
+//! AssociatedItemOwnerId ⊆ PrimaryNodeId
+//! SelfScopeOwnerId      ⊆ PrimaryNodeId
+//! ```
+//!
+//! Subset arrows are encoded as Rust conversion arrows when the value already
+//! carries the membership proof. Widening along an inclusion is total and maps
+//! to `From`:
+//!
+//! ```text
+//! A ⊆ B
+//! A → B
+//! impl From<A> for B
+//! ```
+//!
+//! Reverse movement across a subset boundary is partial. It maps to `TryFrom`
+//! only when the source value carries enough evidence to prove the narrower
+//! membership:
+//!
+//! ```text
+//! B ⇀ A
+//! impl TryFrom<B> for A
+//! ```
+//!
+//! When the proof lives in another payload table, the reverse arrow is not a
+//! plain conversion from the ID alone. For example, `GenericParamNodeId` does
+//! not prove whether the parameter is type, lifetime, or const; the refinement
+//! needs the `GenericParamKind` payload:
+//!
+//! ```text
+//! (GenericParamNodeId × GenericParamKind)
+//!     → Result<TypeGenericParamNodeId, GenericParamIdRefinementError>
+//! ```
+//!
+//! In code, that is represented by `TypeGenericParamNodeId::try_refine(id,
+//! &node.kind)`, not by an unchecked narrowing conversion from
+//! `GenericParamNodeId`.
+//!
+//! A relation variant then denotes an admissible subset of a Cartesian product:
+//!
+//! ```text
+//! Contains      ⊆ ModuleNodeId            × PrimaryNodeId
+//! StructField   ⊆ StructNodeId            × FieldNodeId
+//! UnionField    ⊆ UnionNodeId             × FieldNodeId
+//! DeclaresParam ⊆ GenericParamOwnerId     × AnyGenericParamId
+//! TypeBound     ⊆ TypeGenericParamNodeId  × TraitTypeSourceId
+//! TypeDefault   ⊆ TypeGenericParamNodeId  × OrdinaryTypeUseId
+//! ConstParamType ⊆ ConstGenericParamNodeId × OrdinaryTypeUseId
+//! ```
+//!
+//! In Rust, the endpoint fields encode that product directly:
+//!
+//! ```ignore
+//! Contains {
+//!     source: ModuleNodeId,
+//!     target: PrimaryNodeId,
+//! }
+//! ```
+//!
+//! A graph fact may be constructed only when its endpoints inhabit the sets
+//! required by the relation variant. If a raw ID cannot be refined into the
+//! required typed ID or category enum, that failure belongs at the construction
+//! boundary as an error, unresolved state, or diagnostic. It should not be
+//! smuggled into the inner graph as a broad ID plus a later runtime check.
+//!
+//! The same pattern applies outside the node universe. For example, refined
+//! structural type IDs such as `NamedTypeId` prove membership in subsets of the
+//! type-id universe, and type-resolution endpoint families should be modeled as
+//! finite unions in the same style:
+//!
+//! ```text
+//! OrdinaryTypeRelation ⊆ OrdinaryTypeSourceId × OrdinaryTypeTargetId
+//! TraitTypeRelation    ⊆ TraitTypeSourceId    × TraitTypeTargetId
+//! ```
+//!
+//! This is the foundation for correct-by-construction graph primitives:
+//! typed IDs define valid vertices, category enums define admissible endpoint
+//! sets, and relation variants define valid edges between those sets.
+
+mod type_families;
+mod type_ids;
 
 use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
+use crate::parser::types::{GenericParamKind, GenericParamNode};
 use crate::utils::{LogStyle, LogStyleDebug};
 use cozo::{DataValue, UuidWrapper};
 use log::debug;
@@ -19,6 +215,19 @@ use uuid::Uuid;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
+
+pub use type_families::{
+    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+    TraitTypeSourceId, TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromOrdinaryTypeUseError,
+    TryFromTraitTypeSourceError, TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+};
+pub(in crate::parser) use type_ids::StructuralTypeId;
+pub use type_ids::{
+    ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, TraitBoundTypeId,
+    TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+};
 
 // NOTE: WIP, turn this into macro for, e.g. FunctionNodeId, StructNodeId, etc
 // pub trait HasAnyNodeId {
@@ -811,6 +1020,91 @@ impl Default for TryFromAssociatedItemError {
     }
 }
 
+/// Error type for failed `GenericParamOwnerId` conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromGenericParamOwnerError;
+
+impl std::fmt::Display for TryFromGenericParamOwnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GenericParamOwnerId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromGenericParamOwnerError {}
+
+impl Default for TryFromGenericParamOwnerError {
+    fn default() -> Self {
+        TryFromGenericParamOwnerError
+    }
+}
+
+/// Error type for failed `TypeUseOwnerId` conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromTypeUseOwnerError;
+
+impl std::fmt::Display for TryFromTypeUseOwnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TypeUseOwnerId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromTypeUseOwnerError {}
+
+impl Default for TryFromTypeUseOwnerError {
+    fn default() -> Self {
+        TryFromTypeUseOwnerError
+    }
+}
+
+/// Error type for failed `SelfScopeOwnerId` conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromSelfScopeOwnerError;
+
+impl std::fmt::Display for TryFromSelfScopeOwnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SelfScopeOwnerId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromSelfScopeOwnerError {}
+
+impl Default for TryFromSelfScopeOwnerError {
+    fn default() -> Self {
+        TryFromSelfScopeOwnerError
+    }
+}
+
+/// Error type for failed `AssociatedItemOwnerId` conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromAssociatedItemOwnerError;
+
+impl std::fmt::Display for TryFromAssociatedItemOwnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AssociatedItemOwnerId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromAssociatedItemOwnerError {}
+
+impl Default for TryFromAssociatedItemOwnerError {
+    fn default() -> Self {
+        TryFromAssociatedItemOwnerError
+    }
+}
+
+/// Error type for failed `AnyGenericParamId` conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromAnyGenericParamError;
+
+impl std::fmt::Display for TryFromAnyGenericParamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AnyGenericParamId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromAnyGenericParamError {}
+
+impl Default for TryFromAnyGenericParamError {
+    fn default() -> Self {
+        TryFromAnyGenericParamError
+    }
+}
+
 pub trait PrimaryNodeMarker {}
 
 impl PrimaryNodeMarker for FunctionNode {}
@@ -949,6 +1243,66 @@ define_category_enum!(
         (Method, MethodNodeId, ItemKind::Method),
         (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias), // Associated types use TypeAliasNodeId
         (Const, ConstNodeId, ItemKind::Const),             // Associated consts use ConstNodeId
+    ]
+);
+
+define_category_enum!(
+    #[doc = "Represents the ID of any node type that may declare generic parameters."]
+    GenericParamOwnerId,
+    TryFromGenericParamOwnerError,
+    ItemKind,
+    [
+        (Function, FunctionNodeId, ItemKind::Function),
+        (Struct, StructNodeId, ItemKind::Struct),
+        (Enum, EnumNodeId, ItemKind::Enum),
+        (Union, UnionNodeId, ItemKind::Union),
+        (Trait, TraitNodeId, ItemKind::Trait),
+        (Impl, ImplNodeId, ItemKind::Impl),
+        (Method, MethodNodeId, ItemKind::Method),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias),
+    ]
+);
+
+define_category_enum!(
+    #[doc = "Represents node IDs whose payload may contain direct structural `TypeId` use-sites."]
+    TypeUseOwnerId,
+    TryFromTypeUseOwnerError,
+    ItemKind,
+    [
+        (Function, FunctionNodeId, ItemKind::Function),
+        (Method, MethodNodeId, ItemKind::Method),
+        (Field, FieldNodeId, ItemKind::Field),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias),
+        (Trait, TraitNodeId, ItemKind::Trait),
+        (Impl, ImplNodeId, ItemKind::Impl),
+        (Const, ConstNodeId, ItemKind::Const),
+        (Static, StaticNodeId, ItemKind::Static),
+        (GenericParam, GenericParamNodeId, ItemKind::GenericParam),
+    ]
+);
+
+define_category_enum!(
+    #[doc = "Represents node IDs that introduce a Rust `Self` type scope."]
+    SelfScopeOwnerId,
+    TryFromSelfScopeOwnerError,
+    ItemKind,
+    [
+        (Struct, StructNodeId, ItemKind::Struct),
+        (Enum, EnumNodeId, ItemKind::Enum),
+        (Union, UnionNodeId, ItemKind::Union),
+        (Trait, TraitNodeId, ItemKind::Trait),
+        (Impl, ImplNodeId, ItemKind::Impl),
+    ]
+);
+
+define_category_enum!(
+    #[doc = "Represents node IDs that may contain associated items."]
+    AssociatedItemOwnerId,
+    TryFromAssociatedItemOwnerError,
+    ItemKind,
+    [
+        (Trait, TraitNodeId, ItemKind::Trait),
+        (Impl, ImplNodeId, ItemKind::Impl),
     ]
 );
 
@@ -1190,6 +1544,296 @@ impl std::fmt::Display for AnyNodeIdConversionError {
     }
 }
 impl Error for AnyNodeIdConversionError {}
+
+fn generic_param_kind_name(kind: &GenericParamKind) -> &'static str {
+    match kind {
+        GenericParamKind::Type { .. } => "Type",
+        GenericParamKind::Lifetime { .. } => "Lifetime",
+        GenericParamKind::Const { .. } => "Const",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "cannot refine GenericParamNodeId {generic_param_id} into {expected}; actual GenericParamKind is {found}"
+)]
+pub struct GenericParamIdRefinementError {
+    expected: &'static str,
+    found: &'static str,
+    generic_param_id: GenericParamNodeId,
+}
+
+impl GenericParamIdRefinementError {
+    fn new(
+        expected: &'static str,
+        found: &'static str,
+        generic_param_id: GenericParamNodeId,
+    ) -> Self {
+        Self {
+            expected,
+            found,
+            generic_param_id,
+        }
+    }
+}
+
+macro_rules! define_generic_param_id {
+    ($Name:ident, $Variant:ident { .. }) => {
+        #[doc = concat!("Refined `GenericParamNodeId` for `GenericParamKind::", stringify!($Variant), "`.")]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord,
+        )]
+        pub struct $Name(GenericParamNodeId);
+
+        impl $Name {
+            #[inline]
+            pub fn matches(kind: &GenericParamKind) -> bool {
+                matches!(kind, GenericParamKind::$Variant { .. })
+            }
+
+            #[inline]
+            pub fn try_refine(
+                id: GenericParamNodeId,
+                kind: &GenericParamKind,
+            ) -> Result<Self, GenericParamIdRefinementError> {
+                if Self::matches(kind) {
+                    Ok(Self(id))
+                } else {
+                    Err(GenericParamIdRefinementError::new(
+                        stringify!($Name),
+                        generic_param_kind_name(kind),
+                        id,
+                    ))
+                }
+            }
+
+            #[inline]
+            pub fn base_id(self) -> ploke_core::NodeId {
+                self.0.base_id()
+            }
+
+            #[inline]
+            pub fn generic_param_id(self) -> GenericParamNodeId {
+                self.0
+            }
+        }
+
+        impl AnyTypedId for $Name {}
+        impl TypedId for $Name {}
+
+        impl From<$Name> for GenericParamNodeId {
+            #[inline]
+            fn from(id: $Name) -> Self {
+                id.0
+            }
+        }
+
+        impl From<$Name> for AnyNodeId {
+            #[inline]
+            fn from(id: $Name) -> Self {
+                id.0.into()
+            }
+        }
+
+        impl TryFrom<&GenericParamNode> for $Name {
+            type Error = GenericParamIdRefinementError;
+
+            #[inline]
+            fn try_from(node: &GenericParamNode) -> Result<Self, Self::Error> {
+                Self::try_refine(node.id, &node.kind)
+            }
+        }
+
+        impl std::fmt::Display for $Name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}({})", stringify!($Name), self.0)
+            }
+        }
+    };
+}
+
+define_generic_param_id!(TypeGenericParamNodeId, Type { .. });
+define_generic_param_id!(LifetimeGenericParamNodeId, Lifetime { .. });
+define_generic_param_id!(ConstGenericParamNodeId, Const { .. });
+
+macro_rules! define_generic_param_family {
+    (
+        $(#[$outer:meta])*
+        $Family:ident,
+        $Error:ty,
+        [
+            ($FirstVariant:ident, $FirstIdType:ty),
+            $(($Variant:ident, $IdType:ty)),+ $(,)?
+        ]
+    ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $Family {
+            $FirstVariant($FirstIdType),
+            $(
+                $Variant($IdType),
+            )+
+        }
+
+        impl $Family {
+            #[inline]
+            pub fn generic_param_id(self) -> GenericParamNodeId {
+                match self {
+                    Self::$FirstVariant(id) => id.into(),
+                    $(
+                        Self::$Variant(id) => id.into(),
+                    )+
+                }
+            }
+
+            #[inline]
+            pub fn base_id(self) -> ploke_core::NodeId {
+                self.generic_param_id().base_id()
+            }
+
+            #[inline]
+            pub fn kind_name(&self) -> &'static str {
+                match self {
+                    Self::$FirstVariant(_) => stringify!($FirstIdType),
+                    $(
+                        Self::$Variant(_) => stringify!($IdType),
+                    )+
+                }
+            }
+        }
+
+        impl AnyTypedId for $Family {}
+        impl CategoricalTypedId for $Family {}
+
+        impl From<$Family> for GenericParamNodeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                id.generic_param_id()
+            }
+        }
+
+        impl From<$Family> for AnyNodeId {
+            #[inline]
+            fn from(id: $Family) -> Self {
+                id.generic_param_id().into()
+            }
+        }
+
+        impl From<$FirstIdType> for $Family {
+            #[inline]
+            fn from(id: $FirstIdType) -> Self {
+                Self::$FirstVariant(id)
+            }
+        }
+
+        impl TryFrom<$Family> for $FirstIdType {
+            type Error = $Error;
+
+            #[inline]
+            fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                match value {
+                    $Family::$FirstVariant(id) => Ok(id),
+                    _ => Err(<$Error>::default()),
+                }
+            }
+        }
+
+        $(
+            impl From<$IdType> for $Family {
+                #[inline]
+                fn from(id: $IdType) -> Self {
+                    Self::$Variant(id)
+                }
+            }
+
+            impl TryFrom<$Family> for $IdType {
+                type Error = $Error;
+
+                #[inline]
+                fn try_from(value: $Family) -> Result<Self, Self::Error> {
+                    match value {
+                        $Family::$Variant(id) => Ok(id),
+                        _ => Err(<$Error>::default()),
+                    }
+                }
+            }
+        )+
+
+        impl std::fmt::Display for $Family {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match *self {
+                    Self::$FirstVariant(id) => write!(f, "{}({})", stringify!($FirstVariant), id),
+                    $(
+                        Self::$Variant(id) => write!(f, "{}({})", stringify!($Variant), id),
+                    )+
+                }
+            }
+        }
+    };
+}
+
+define_generic_param_family!(
+    /// Represents any refined generic parameter ID.
+    ///
+    /// Set-theoretically:
+    ///
+    /// ```text
+    /// AnyGenericParamId =
+    ///     TypeGenericParamNodeId
+    ///   ∪ LifetimeGenericParamNodeId
+    ///   ∪ ConstGenericParamNodeId
+    /// ```
+    AnyGenericParamId,
+    TryFromAnyGenericParamError,
+    [
+        (Type, TypeGenericParamNodeId),
+        (Lifetime, LifetimeGenericParamNodeId),
+        (Const, ConstGenericParamNodeId),
+    ]
+);
+
+#[cfg(test)]
+mod generic_param_id_tests {
+    use super::*;
+
+    fn synthetic_generic_param_id() -> GenericParamNodeId {
+        GenericParamNodeId::create(NodeId::Synthetic(Uuid::new_v4()))
+    }
+
+    #[test]
+    fn any_generic_param_round_trips_refined_generic_ids() {
+        let type_param = TypeGenericParamNodeId::try_refine(
+            synthetic_generic_param_id(),
+            &GenericParamKind::Type {
+                name: "T".into(),
+                bounds: Vec::new(),
+                default: None,
+            },
+        )
+        .expect("type generic should refine");
+        let lifetime_param = LifetimeGenericParamNodeId::try_refine(
+            synthetic_generic_param_id(),
+            &GenericParamKind::Lifetime {
+                name: "a".into(),
+                bounds: Vec::new(),
+            },
+        )
+        .expect("lifetime generic should refine");
+
+        let type_any = AnyGenericParamId::from(type_param);
+        let lifetime_any = AnyGenericParamId::from(lifetime_param);
+
+        assert_eq!(
+            TypeGenericParamNodeId::try_from(type_any).expect("type param"),
+            type_param
+        );
+        assert_eq!(
+            LifetimeGenericParamNodeId::try_from(lifetime_any).expect("lifetime param"),
+            lifetime_param
+        );
+        assert!(LifetimeGenericParamNodeId::try_from(type_any).is_err());
+    }
+}
 
 // --- TryFrom<AnyNodeId> Implementations for Specific IDs ---
 

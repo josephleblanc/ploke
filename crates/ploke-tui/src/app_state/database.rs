@@ -2071,11 +2071,13 @@ mod tests {
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
     use ploke_db::multi_embedding::debug::DebugAll;
     use ploke_embed::indexer::EmbeddingProcessor;
+    use ploke_test_utils::PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV;
     use ploke_transform::schema::crate_node::CrateContextSchema;
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
     use crate::test_support::config_home_lock;
+    use crate::user_config::PLOKE_WORKSPACE_REGISTRY_PATH_ENV;
 
     #[test]
     fn loaded_crate_index_target_preserves_workspace_root_for_member() {
@@ -2101,20 +2103,25 @@ mod tests {
     struct WorkspaceRegistryPathGuard {
         old_xdg: Option<String>,
         old_registry_path: Option<String>,
+        old_snapshot_fixture_dir: Option<String>,
     }
 
     impl WorkspaceRegistryPathGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-            let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+            let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+            let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
             let registry_path = path.join("ploke").join("workspaces.toml");
+            let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
             unsafe {
                 std::env::remove_var("XDG_CONFIG_HOME");
-                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", registry_path);
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, registry_path);
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             }
             Self {
                 old_xdg,
                 old_registry_path,
+                old_snapshot_fixture_dir,
             }
         }
     }
@@ -2123,6 +2130,15 @@ mod tests {
         fn drop(&mut self) {
             restore_workspace_registry_path(self.old_registry_path.take());
             restore_xdg_config_home(self.old_xdg.take());
+            if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+                unsafe {
+                    std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+                }
+            }
         }
     }
 
@@ -2172,11 +2188,11 @@ mod tests {
     fn restore_workspace_registry_path(old_path: Option<String>) {
         if let Some(old) = old_path {
             unsafe {
-                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old);
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old);
             }
         } else {
             unsafe {
-                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
             }
         }
     }

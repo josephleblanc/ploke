@@ -52,20 +52,14 @@ Use:
 cargo xtask recreate-backup-db --fixture <id>
 ```
 
-The command has three output modes:
-
-- automated registered-path fixtures: writes a new dated backup under
-  `tests/backup_dbs/`
 - automated checkout-local fixtures: writes a root-scoped backup under
   `tests/backup_dbs/local/`
+- automated shared-snapshot fixtures: writes a new dated backup under the
+  shared DB snapshot fixture directory
+- automated legacy registered-path fixtures: writes a new dated backup under
+  `tests/backup_dbs/`
 - manual: prints exact fixture-specific steps when the fixture is not
   hermetically reproducible yet
-
-Registered-path outputs use dated names like:
-
-```text
-tests/backup_dbs/<stem>_2026-03-20.sqlite
-```
 
 Checkout-local outputs use names like:
 
@@ -73,15 +67,68 @@ Checkout-local outputs use names like:
 tests/backup_dbs/local/<stem>__root-<workspace-root-hash>.sqlite
 ```
 
-These files are local to the checkout/worktree because the DB rows may contain
-absolute crate or workspace roots. Registry loads prefer the checkout-local
-file when it exists, otherwise they fall back to the committed registered path
-and `verify-backup-dbs` reports root-mismatch failures with a regeneration
-hint. Path-only consumers such as `setup-rag-fixtures` use
+Checkout-local files are local to the checkout/worktree because the DB rows may
+contain absolute crate or workspace roots. Registry loads prefer the
+checkout-local file when it exists, otherwise they fall back to the committed
+registered path and `verify-backup-dbs` reports root-mismatch failures with a
+regeneration hint. Path-only consumers such as `setup-rag-fixtures` use
 `FixtureDb::checked_path()` so that the fallback path is still imported and
 validated before it is copied elsewhere.
 
-After generating a new registered-path dated backup, update:
+If `XDG_CONFIG_HOME` is unset, the shared directory is
+`~/.config/ploke/db_snapshot_fixtures`. Set `PLOKE_DB_SNAPSHOT_FIXTURE_DIR` to
+override the path for tests or unusual local setups.
+
+Shared-snapshot outputs use dated names like:
+
+```text
+$XDG_CONFIG_HOME/ploke/db_snapshot_fixtures/<stem>_2026-05-17.sqlite
+```
+
+Use shared snapshots for source-pinned corpus fixtures and other fixtures whose
+contract is not tied to the current checkout root. Do not use shared snapshots
+for checkout-local fixtures whose DB rows encode absolute paths from the
+current worktree.
+
+To ensure current active and typed graph fixtures are available without
+sharing checkout-local DB rows:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+```
+
+This command runs active fixture validation in the normal profile and then
+invokes a typed-only xtask pass for typed graph fixtures. Checkout-local
+fixtures are created or repaired under `tests/backup_dbs/local/`; only
+shared-snapshot fixtures are staged into the shared DB snapshot directory.
+
+To regenerate every automated registered fixture in its scope-specific output
+location:
+
+```bash
+cargo xtask fixtures regenerate --all
+```
+
+Use `--active` or `--typed` instead of `--all` to regenerate only that subset.
+The command skips manual legacy/orphaned snapshots. Active checkout-local
+fixtures are written under `tests/backup_dbs/local/`; shared typed corpus
+fixtures are written under the shared DB snapshot directory. `--all` runs
+active fixtures in the normal profile and then invokes a typed-only xtask pass
+for the typed graph fixtures.
+
+GitHub corpus fixtures prepare their source checkouts through the shared
+fixture cache before generating the DB. Set `PLOKE_FIXTURE_HOME` to override
+the source cache location; otherwise xtask stores corpus mirrors and checkouts
+under `<db_snapshot_fixtures>/_source_cache`.
+
+To prepare registered typed corpus sources without generating new backup DBs:
+
+```bash
+cargo xtask fixtures ensure --typed
+```
+
+After generating a new registered-path or shared-snapshot dated backup that
+should become the registered fixture, update:
 
 - [crates/test-utils/src/fixture_dbs.rs](../../crates/test-utils/src/fixture_dbs.rs)
 - [docs/testing/BACKUP_DB_FIXTURES.md](../testing/BACKUP_DB_FIXTURES.md)
@@ -89,6 +136,11 @@ After generating a new registered-path dated backup, update:
 For checkout-local outputs, do not update the committed registry path just to
 make the current worktree pass. The root-scoped local filename is the active
 path for that checkout.
+
+For shared-snapshot outputs, update the registry and docs when the new dated
+backup should become the registered fixture. Copy the reviewed snapshot into
+`tests/backup_dbs/` only when you want to commit it as a seed artifact for
+other machines or CI.
 
 ## Repair a stale legacy backup in place
 

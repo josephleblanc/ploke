@@ -1,6 +1,20 @@
+//! TUI tool-carrier coverage boundary:
+//!
+//! - Covered: serde roundtrips for `request_code_context` arguments/results
+//!   and the optional `type_context` carrier on context parts.
+//! - Covered elsewhere: the direct `request_code_context` production tool path
+//!   is exercised in `tools::request_code_context::gat_tests` against the shared
+//!   corpus-backed `TypeShapeCase` matrix. That test observes
+//!   `ToolCallCompleted` and asserts structured `ConciseContext.type_context`.
+//! - Not covered here: live model/tool selection. Ignored live tests should use
+//!   the same matrix prompts and assert tool payloads, not final model wording.
+//! - Recursive/nested type behavior is matrix-bounded by the deepest real corpus
+//!   examples selected for DB and RAG coverage.
+
 use ploke_core::rag_types::{
     ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
-    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult,
+    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult, TypeContextInfo,
+    TypeContextKind,
 };
 use uuid::Uuid;
 
@@ -19,9 +33,15 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(args_back.search_term, "SimpleStruct");
 
     let part = ConciseContext {
+        id: Uuid::from_u128(2),
         file_path: NodeFilepath("id://dummy".to_string()),
         canon_path: CanonPath("some::module::dummy".to_string()),
         snippet: "fn foo() {}".to_string(),
+        type_context: Some(TypeContextInfo {
+            seed_id: Uuid::from_u128(1),
+            relation: TypeContextKind::TypeDefinitionImpact,
+            distance: 1,
+        }),
     };
     let result = RequestCodeContextResult {
         ok: true,
@@ -48,6 +68,17 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(res_back.next_steps.len(), 2);
     assert_eq!(res_back.context, vec![part]);
     assert_eq!(res_back.kind, ContextPartKind::Code);
+
+    let missing_id_json = r#"{
+        "file_path": "id://dummy",
+        "canon_path": "some::module::dummy",
+        "snippet": "fn foo() {}",
+        "type_context": null
+    }"#;
+    assert!(
+        serde_json::from_str::<ConciseContext>(missing_id_json).is_err(),
+        "ConciseContext.id is a required tool payload identity"
+    );
 }
 
 #[test]

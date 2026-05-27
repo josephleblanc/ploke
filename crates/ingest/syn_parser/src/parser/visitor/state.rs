@@ -6,7 +6,10 @@ use crate::parser::nodes::{
     AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId, SecondaryNodeId,
 }; // Import AnyNodeIdConversionError, GenericParamNodeId
 use crate::parser::nodes::{AssociatedItemNodeId, PrimaryNodeId};
-use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use crate::parser::type_slots::TraitTypeUseId;
+use crate::parser::types::{
+    GenericParamKind, GenericParamNode, TypeWherePredicate, VisibilityKind,
+};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
 use log::error;
 use ploke_core::ItemKind;
@@ -14,14 +17,9 @@ use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use super::calculate_cfg_hash_bytes;
-use super::type_processing::get_or_create_type;
+use super::type_processing::{get_or_create_trait_bound_type, get_or_create_type};
 
-use {
-    crate::parser::nodes::ParamData,
-    ploke_core::{TrackingHash, TypeId},
-    std::path::PathBuf,
-    uuid::Uuid,
-};
+use {crate::parser::nodes::ParamData, ploke_core::TrackingHash, std::path::PathBuf, uuid::Uuid};
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -202,7 +200,7 @@ impl VisitorState {
                     default,
                     ..
                 }) => {
-                    let bounds: Vec<TypeId> = bounds
+                    let bounds: Vec<TraitTypeUseId> = bounds
                         .iter()
                         .filter_map(|bound| self.process_type_bound(bound))
                         .collect();
@@ -313,19 +311,46 @@ impl VisitorState {
         params
     }
 
+    pub(crate) fn process_where_predicates(
+        &mut self,
+        generics: &Generics,
+    ) -> Vec<TypeWherePredicate> {
+        let Some(where_clause) = &generics.where_clause else {
+            return Vec::new();
+        };
+
+        where_clause
+            .predicates
+            .iter()
+            .filter_map(|predicate| match predicate {
+                syn::WherePredicate::Type(predicate) => {
+                    let bounds: Vec<TraitTypeUseId> = predicate
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| self.process_type_bound(bound))
+                        .collect();
+                    if bounds.is_empty() {
+                        return None;
+                    }
+                    Some(TypeWherePredicate {
+                        subject: get_or_create_type(self, &predicate.bounded_ty),
+                        bounds,
+                    })
+                }
+                // Lifetime predicates do not currently participate in typed
+                // type graph traversal.
+                syn::WherePredicate::Lifetime(_) => None,
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Process type bounds for generics
     // Only handles trait bounds for now
-    fn process_type_bound(&mut self, bound: &syn::TypeParamBound) -> Option<TypeId> {
+    fn process_type_bound(&mut self, bound: &syn::TypeParamBound) -> Option<TraitTypeUseId> {
         match bound {
             syn::TypeParamBound::Trait(trait_bound) => {
-                let type_id = get_or_create_type(
-                    self,
-                    &syn::Type::Path(syn::TypePath {
-                        qself: None,
-                        path: trait_bound.path.clone(),
-                    }),
-                );
-                Some(type_id)
+                Some(get_or_create_trait_bound_type(self, trait_bound))
             }
             // TODO: How should lifetime bounds be represented in the type graph?
             // For now, create a placeholder type ID. Revisit during Phase 3 resolution.

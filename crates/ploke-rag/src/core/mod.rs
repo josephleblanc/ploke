@@ -14,6 +14,8 @@ use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
+#[cfg(feature = "typed_type_graph")]
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -68,6 +70,31 @@ pub struct RagConfig {
     pub assembly_policy: AssemblyPolicy,
     pub token_counter: Arc<dyn TokenCounter>,
     pub reranker: Option<Arc<dyn Reranker>>,
+    pub type_context: TypeContextConfig,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeContextConfig {
+    pub enabled: bool,
+    pub max_seed_hits: usize,
+    pub max_expanded_hits: usize,
+    pub score_factor: f32,
+    pub options: TypeContextOptions,
+}
+
+impl Default for TypeContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(feature = "typed_type_graph"),
+            max_seed_hits: 12,
+            max_expanded_hits: 48,
+            score_factor: 0.6,
+            options: TypeContextOptions {
+                max_distance: 4,
+                ..TypeContextOptions::default()
+            },
+        }
+    }
 }
 
 impl Default for RagConfig {
@@ -83,6 +110,7 @@ impl Default for RagConfig {
             assembly_policy: AssemblyPolicy::default(),
             token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
+            type_context: TypeContextConfig::default(),
         }
     }
 }
@@ -113,6 +141,21 @@ impl Reranker for NoopReranker {
         candidates: Vec<(Uuid, String)>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<(Uuid, f32)>, RagError>> + Send + 'a>> {
         Box::pin(async move { Ok(candidates.into_iter().map(|(id, _)| (id, 1.0)).collect()) })
+    }
+}
+
+#[cfg(feature = "typed_type_graph")]
+fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
+    match relation {
+        TypeContextRelation::SameResolvedType => TypeContextKind::SameResolvedType,
+        TypeContextRelation::UsesTypeNested => TypeContextKind::UsesTypeNested,
+        TypeContextRelation::TypeDefinitionImpact => TypeContextKind::TypeDefinitionImpact,
+        TypeContextRelation::ImplOfTrait => TypeContextKind::ImplOfTrait,
+        TypeContextRelation::ImplSelfType => TypeContextKind::ImplSelfType,
+        TypeContextRelation::AliasExpansion => TypeContextKind::AliasExpansion,
+        TypeContextRelation::TraitBound => TypeContextKind::TraitBound,
+        TypeContextRelation::IteratorSurface => TypeContextKind::IteratorSurface,
+        TypeContextRelation::ConstGenericAlias => TypeContextKind::ConstGenericAlias,
     }
 }
 
@@ -564,6 +607,121 @@ impl RagService {
         Ok(all_results)
     }
 
+    #[cfg(feature = "typed_type_graph")]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
+        let cfg = self.cfg.type_context;
+        if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_expanded_hits == 0 || hits.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut scores: HashMap<Uuid, f32> = HashMap::with_capacity(
+            hits.len()
+                + cfg
+                    .max_seed_hits
+                    .saturating_mul(cfg.max_expanded_hits.min(8)),
+        );
+        for &(id, score) in hits {
+            scores.entry(id).or_insert(score);
+        }
+
+        let mut expanded_scores: HashMap<Uuid, f32> = HashMap::new();
+        let mut expanded_context: HashMap<Uuid, TypeContextInfo> = HashMap::new();
+        let mut owner_terminal_targets: HashSet<Uuid> = HashSet::new();
+        for &(seed_id, seed_score) in hits.iter().take(cfg.max_seed_hits) {
+            owner_terminal_targets.extend(
+                self.db
+                    .type_targets_reachable_from_owner(seed_id)?
+                    .into_iter()
+                    .map(|target| target.target_id),
+            );
+            for seed in [
+                TypeContextSeed::Owner(seed_id),
+                TypeContextSeed::Target(seed_id),
+            ] {
+                for candidate in self.db.expand_type_context(seed, cfg.options)? {
+                    if candidate.node_id == seed_id || scores.contains_key(&candidate.node_id) {
+                        continue;
+                    }
+
+                    let distance = candidate.distance.max(1) as f32;
+                    let derived_score = seed_score * cfg.score_factor / distance;
+                    expanded_scores
+                        .entry(candidate.node_id)
+                        .and_modify(|score| *score = score.max(derived_score))
+                        .or_insert(derived_score);
+                    expanded_context
+                        .entry(candidate.node_id)
+                        .and_modify(|existing| {
+                            if candidate.distance < existing.distance {
+                                *existing = TypeContextInfo {
+                                    seed_id,
+                                    relation: type_context_kind(candidate.relation),
+                                    distance: candidate.distance,
+                                };
+                            }
+                        })
+                        .or_insert(TypeContextInfo {
+                            seed_id,
+                            relation: type_context_kind(candidate.relation),
+                            distance: candidate.distance,
+                        });
+                }
+            }
+        }
+
+        if expanded_scores.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut expanded: Vec<(Uuid, f32)> = expanded_scores.into_iter().collect();
+        expanded.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            match owner_terminal_targets
+                .contains(right_id)
+                .cmp(&owner_terminal_targets.contains(left_id))
+            {
+                std::cmp::Ordering::Equal => match right_score
+                    .partial_cmp(left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
+                    std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                    other => other,
+                },
+                other => other,
+            }
+        });
+        expanded.truncate(cfg.max_expanded_hits);
+
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let materialized_ids = self
+            .db
+            .get_nodes_ordered(expanded_ids)
+            .map_err(|e| RagError::Embed(e.to_string()))?
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<HashSet<_>>();
+
+        let mut merged = Vec::with_capacity(hits.len() + materialized_ids.len());
+        merged.extend_from_slice(hits);
+        merged.extend(
+            expanded
+                .into_iter()
+                .filter(|(id, _)| materialized_ids.contains(id)),
+        );
+        expanded_context.retain(|id, _| materialized_ids.contains(id));
+        Ok((merged, expanded_context))
+    }
+
+    #[cfg(not(feature = "typed_type_graph"))]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
+        Ok((hits.to_vec(), HashMap::new()))
+    }
+
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
     /// Uses configured defaults (policy, tokenizer, strict bm25) unless overridden by the strategy.
     #[instrument(skip(self, query, budget, strategy), fields(query_len = %query.len(), top_k = top_k))]
@@ -608,6 +766,8 @@ impl RagService {
                 }
             }
         };
+
+        let (hits, type_context) = self.expand_hits_with_type_context(&hits)?;
 
         // Optional reranker: requires IoManager to fetch texts
         let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
@@ -656,7 +816,7 @@ impl RagService {
             .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
             .clone();
 
-        assemble_context(
+        assemble_context_with_type_context(
             query,
             &final_hits,
             budget,
@@ -664,6 +824,7 @@ impl RagService {
             &*self.cfg.token_counter,
             &self.db,
             &io,
+            &type_context,
         )
         .await
     }

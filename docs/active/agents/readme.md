@@ -73,6 +73,7 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`mode-survey/`](mode-survey/README.md) — review/report area for model/mode survey notes.
 - [`death-by-slice/`](death-by-slice/README.md) — ledger for narrow implementation slices that later fail because policy, identity, authority, or state was not preserved across runtime boundaries.
 - [`collaboration-incidents/`](collaboration-incidents/README.md) — durable ledger for agent-caused trust failures, frustration triggers, boundary overreach, secret-handling failures, model-communication failures, semantic naming failures, and workflow-order failures to see whether memory and workflow changes reduce repeats.
+- [`merges/`](merges/README.md) — active merge journals and restart notes for branch integrations.
 - [`open-questions.md`](open-questions.md) — agent-to-agent questions (not direct user prompts).
 - [`notable-inconsistencies.md`](notable-inconsistencies.md) — durable inconsistencies worth tracking.
 

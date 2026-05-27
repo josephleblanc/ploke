@@ -258,6 +258,7 @@ for a more fuzzy search."#
                 )));
             }
         };
+        let resolved_item_id = resolved_item[0].id;
         let tool_results = ctx
             .state
             .io_handle
@@ -280,12 +281,14 @@ for a more fuzzy search."#
             )))
         })?;
         let concise_context = ConciseContext {
+            id: resolved_item_id,
             file_path: NodeFilepath::new(rel_path.display().to_string()),
             canon_path: CanonPath::new(lookup_support::item_canon_path(
                 params.module_path.as_ref(),
                 params.item_name.as_ref(),
             )),
             snippet,
+            type_context: None,
         };
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());

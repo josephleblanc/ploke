@@ -25,7 +25,7 @@ use ploke_llm::router_only::openrouter::{
 };
 use ploke_llm::{ModelId, ProviderSlug};
 
-const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+const BYTES_PER_TOKEN_ESTIMATE: usize = 2;
 
 #[derive(Debug, Clone)]
 struct RetryConfig {
@@ -581,8 +581,8 @@ impl OpenRouterBackend {
     fn max_snippet_chars(&self) -> Option<usize> {
         let model_id = self.model.to_string();
         if let Some(tokens) = openrouter_embedding_context_length(&model_id) {
-            // Conservative heuristic: use a tighter chars/token estimate than the
-            // OpenRouter context length to reduce oversized snippet payloads.
+            // Conservative heuristic: keep char count well below the provider's
+            // token limit so code-heavy snippets do not cross OpenRouter's cap.
             return Some((tokens as usize).saturating_mul(BYTES_PER_TOKEN_ESTIMATE));
         }
         let max_chars = self.dimensions.saturating_mul(24);

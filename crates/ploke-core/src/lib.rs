@@ -399,6 +399,40 @@ mod ids {
             Self::Synthetic(type_uuid)
         }
 
+        /// Generates a canonical `Resolved` `TypeId` for a semantically resolved item-backed type.
+        ///
+        /// This is the type-side counterpart to path-based node resolution: once a named type has
+        /// been justified against a canonical defining item path, this constructor turns that
+        /// stable target identity into a `TypeId::Resolved`.
+        pub fn generate_resolved(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            logical_type_path: &[String],
+            cfgs: &[String],
+        ) -> Result<Self, IdConversionError> {
+            let canonical_file_path = file_path.canonicalize().map_err(|e| {
+                IdConversionError::IoError(file_path.display().to_string(), e.to_string())
+            })?;
+            let fp_bytes: &[u8] = canonical_file_path.as_os_str().as_encoded_bytes();
+
+            let resolved_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::TYPE_CANON_FILE::")
+                .chain(fp_bytes)
+                .chain(b"::TYPE_CANON_PATH::")
+                .chain(logical_type_path.join("::").as_bytes())
+                .chain(b"::TYPE_CFG::")
+                .chain(cfgs.join("::").as_bytes())
+                .copied()
+                .collect();
+
+            Ok(Self::Resolved(uuid::Uuid::new_v5(
+                &PROJECT_NAMESPACE_UUID,
+                &resolved_data,
+            )))
+        }
+
         // Removed generate_contextual_synthetic function.
         // Contextual disambiguation for Self/Generics is deferred to Step 3.
 
@@ -931,6 +965,11 @@ pub enum TypeKind {
         // Trait bounds are in related_types
     },
     //ANCHOR_END: ImplTrait
+    TraitBound {
+        path: Vec<String>,
+        is_fully_qualified: bool,
+        // Generic/associated/parenthesized arguments are in related_types
+    },
     Paren {
         // Inner type is in related_types[0]
     },

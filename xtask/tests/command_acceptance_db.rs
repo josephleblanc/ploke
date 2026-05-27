@@ -4,7 +4,7 @@
 //! `hnsw-build` / `hnsw-rebuild` / `bm25-rebuild` are implemented; replace those with
 //! behavior-gated tests when commands are real.
 
-use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 
 use xtask::commands::db::{DbOutput, EmbeddingStatus, ListRelations};
 use xtask::context::CommandContext;
@@ -15,11 +15,9 @@ fn isolated_fixture_copy(
 ) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().expect("TempDir");
     let dst = dir.path().join("fixture.sqlite");
-    let fixture_path = fixture
-        .checked_path()
-        .expect("fixture path should validate")
-        .into_path();
-    std::fs::copy(fixture_path, &dst).expect("copy fixture db");
+    let db = fresh_backup_fixture_db(fixture).expect("load fixture db");
+    db.write_backup_to_path(&dst)
+        .expect("write current-schema fixture db");
     (dir, dst)
 }
 

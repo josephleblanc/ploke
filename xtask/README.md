@@ -44,10 +44,45 @@ The original multi-command `xtask` expansion spec is currently **paused** after 
     - imports the backup using the registry-configured import mode
     - enforces embedding/index expectations via the shared fixture helper
     - saves a temporary roundtrip backup and re-imports it
+- `cargo xtask fixtures ensure --snapshots`
+  - Ensures current active and typed graph snapshots exist in the shared runtime
+    snapshot directory.
+  - Runs active fixture validation in the normal profile, then invokes a
+    typed-only xtask pass for typed graph fixtures.
+  - Stages committed seed backups from `tests/backup_dbs/` when a shared
+    snapshot is missing.
+  - Uses `$XDG_CONFIG_HOME/ploke/db_snapshot_fixtures`, or
+    `~/.config/ploke/db_snapshot_fixtures` when `XDG_CONFIG_HOME` is unset.
+  - `PLOKE_DB_SNAPSHOT_FIXTURE_DIR` can override this path for tests and
+    unusual local setups.
+  - Refuses to overwrite an existing shared snapshot if its content differs
+    from the committed seed.
+  - Validates staged snapshots strictly; stale schema fixtures fail and must be
+    regenerated or explicitly migrated.
+- `cargo xtask fixtures ensure --typed`
+  - Prepares shared source checkouts for registered typed GitHub corpus
+    fixtures and stages typed graph seed snapshots.
+  - Uses `PLOKE_FIXTURE_HOME` for source checkouts when set, otherwise stores
+    sources under `<db_snapshot_fixtures>/_source_cache`.
+  - Stores bare mirrors separately from immutable per-revision checkouts and
+    uses per-fixture lock files so concurrent agents do not mutate the same
+    source checkout.
+  - Does not loosen backup DB validation; if a registered backup DB is missing,
+    it prints the exact `recreate-backup-db` command to run.
+- `cargo xtask fixtures regenerate --all`
+  - Regenerates every automated active and typed graph fixture directly into
+    the shared DB snapshot fixture directory using the currently registered
+    filename.
+  - Skips manual legacy/orphaned snapshots.
+  - Runs active fixtures in the normal profile, then invokes a typed-only xtask
+    pass for typed graph fixtures.
+  - Also supports `--active` and `--typed` to regenerate those subsets.
 - `cargo xtask recreate-backup-db --fixture <id>`
   - Recreates a registered backup fixture when that fixture has an automated
     regeneration path.
-  - Writes a dated backup filename under `tests/backup_dbs/`.
+  - Writes a dated backup filename under the shared runtime snapshot directory.
+  - GitHub corpus fixtures use the same shared source cache as
+    `fixtures ensure --typed`.
   - If a fixture is not hermetically automatable yet, prints exact
     fixture-specific manual recreation steps instead of failing silently.
 - `cargo xtask repair-backup-db-schema --fixture <id>`

@@ -3,18 +3,23 @@ use cozo::ScriptMutability;
 use ploke_db::Database;
 use ploke_embed::{
     cancel_token::CancellationToken,
+    config::OpenRouterConfig,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexerTask},
     local::{DevicePreference, EmbeddingConfig, LocalEmbedder},
+    providers::openrouter::OpenRouterBackend,
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
-use ploke_test_utils::fixture_dbs::{active_backup_db_fixtures, all_backup_db_fixtures};
+use ploke_test_utils::fixture_dbs::{
+    active_backup_db_fixtures, all_backup_db_fixtures, import_backup_with_embeddings_for_fixture,
+    plain_backup_import_relations,
+};
 use ploke_test_utils::{
     CheckedFixturePath, FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy,
-    FixtureDb, FixtureImportMode, FixtureManualRecreation, FixturePathScope, backup_db_fixture,
-    load_backup_fixture_db, setup_db_full_crate, setup_db_full_multi_embedding,
-    setup_db_full_workspace_fixture, setup_db_full_workspace_member_fixture,
-    validate_backup_fixture_contract,
+    FixtureDb, FixtureImportMode, FixtureManualRecreation, FixturePathScope, FixtureStatus,
+    backup_db_fixture, backup_db_snapshot_fixture_dir, load_backup_fixture_db, setup_db_full_crate,
+    setup_db_full_multi_embedding, setup_db_full_workspace_fixture,
+    setup_db_full_workspace_member_fixture, validate_backup_fixture_contract,
 };
 use ploke_transform::schema::crate_node::WorkspaceMetadataSchema;
 use reqwest::blocking::Client;
@@ -23,12 +28,13 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env,
-    fs::{self, File},
-    io::Read,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, ExitCode},
     sync::Arc,
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 use tempfile::tempdir;
 use tokio::{
@@ -104,6 +110,9 @@ const GITHUB_FIXTURE_AXUM_REQUIRED_PATHS: &[&str] = &[
     GITHUB_FIXTURE_AXUM_LIB,
 ];
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
+const PLOKE_FIXTURE_HOME_ENV: &str = "PLOKE_FIXTURE_HOME";
+const GITHUB_CORPUS_LOCK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const GITHUB_CORPUS_LOCK_POLL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy)]
 struct GitHubFixture {
@@ -185,6 +194,7 @@ fn dispatch() -> Result<(), DispatchError> {
     match args[1].as_str() {
         "setup-fixtures" => setup_fixtures().map_err(DispatchError::Xtask),
         "verify-fixtures" => verify_fixtures().map_err(DispatchError::Xtask),
+        "fixtures" => fixtures_command(tail).map_err(DispatchError::Xtask),
         "verify-backup-dbs" => verify_backup_dbs(tail).map_err(DispatchError::Xtask),
         "recreate-backup-db" => recreate_backup_db(tail).map_err(DispatchError::Xtask),
         "repair-backup-db-schema" => repair_backup_db_schema(tail).map_err(DispatchError::Xtask),
@@ -222,7 +232,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  setup-fixtures          Prepare all ignored/generated fixtures for this checkout\n  verify-fixtures         Ensure required local test assets are staged\n  verify-backup-dbs      Validate registered backup DB fixtures used by tests\n  recreate-backup-db     Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures   Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog     Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest          Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help     Show detailed help for profile-ingest command"
+         Commands:\n  setup-fixtures          Prepare all ignored/generated fixtures for this checkout\n  verify-fixtures         Ensure required local test assets are staged\n  fixtures ensure --snapshots Ensure DB fixture snapshots without sharing checkout-local DBs\n  fixtures ensure --typed Prepare shared typed corpus fixture sources and snapshots\n  verify-backup-dbs      Validate registered backup DB fixtures used by tests\n  recreate-backup-db     Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures   Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog     Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest          Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help     Show detailed help for profile-ingest command"
     );
 }
 
@@ -277,7 +287,7 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
         id: "fixture_db_backup",
         target: FixtureTarget::BackupFixture(&FIXTURE_NODES_LOCAL_EMBEDDINGS),
         description: "Required CozoDB backup used by AppHarness/apply_code_edit tests.",
-        remediation: "Run `cargo xtask recreate-backup-db --fixture fixture_nodes_local_embeddings` and then `cargo xtask setup-rag-fixtures`.",
+        remediation: "Run `cargo xtask fixtures ensure --snapshots` and then `cargo xtask setup-rag-fixtures`.",
         integrity: None,
     },
     FixtureCheck {
@@ -552,6 +562,40 @@ fn setup_backup_db_fixtures() -> Result<(), XtaskError> {
     println!("Preparing active backup DB fixtures:");
 
     for fixture in active_backup_db_fixtures() {
+        let required_local_output = match fixture.path_scope {
+            FixturePathScope::CheckoutLocal => Some(
+                fixture
+                    .checkout_local_path()
+                    .expect("checkout-local fixtures should resolve a scoped output path"),
+            ),
+            FixturePathScope::SharedSnapshot | FixturePathScope::LegacyAbsolute => None,
+        };
+        if let Some(output_path) = required_local_output.as_ref()
+            && !output_path.exists()
+        {
+            recreate_active_backup_fixture(fixture, output_path).map_err(|recreate| {
+                XtaskError::new(format!(
+                    "Failed to create checkout-local fixture {} at {}: {recreate}",
+                    fixture.id,
+                    output_path.display()
+                ))
+            })?;
+            let summary = verify_registered_backup_fixture(fixture).map_err(|err| {
+                XtaskError::new(format!(
+                    "Recreated checkout-local fixture {} failed strict validation from {}: {err}",
+                    fixture.id,
+                    output_path.display()
+                ))
+            })?;
+            println!(
+                "  recreated {:<29} {} | relations={}",
+                fixture.id,
+                display_relative(summary.path.path(), &root),
+                summary.relation_count
+            );
+            continue;
+        }
+
         match verify_registered_backup_fixture(fixture) {
             Ok(summary) => {
                 let path_note =
@@ -564,21 +608,13 @@ fn setup_backup_db_fixtures() -> Result<(), XtaskError> {
                 );
             }
             Err(err) => {
-                let FixtureCreationStrategy::Automated(strategy) = fixture.creation else {
-                    return Err(XtaskError::new(format!(
-                        "{} cannot be recreated automatically: {err}",
-                        fixture.id
-                    )));
-                };
                 let output_path = recreation_output_path(fixture, &root);
-                recreate_automated_fixture(fixture, strategy, &output_path).map_err(
-                    |recreate| {
-                        XtaskError::new(format!(
-                            "Failed to recreate {} after validation error ({err}): {recreate}",
-                            fixture.id
-                        ))
-                    },
-                )?;
+                recreate_active_backup_fixture(fixture, &output_path).map_err(|recreate| {
+                    XtaskError::new(format!(
+                        "Failed to recreate {} after validation error ({err}): {recreate}",
+                        fixture.id
+                    ))
+                })?;
                 println!(
                     "  recreated {:<29} {}",
                     fixture.id,
@@ -589,6 +625,16 @@ fn setup_backup_db_fixtures() -> Result<(), XtaskError> {
     }
 
     Ok(())
+}
+
+fn recreate_active_backup_fixture(
+    fixture: &'static FixtureDb,
+    output_path: &Path,
+) -> Result<(), String> {
+    let FixtureCreationStrategy::Automated(strategy) = fixture.creation else {
+        return Err(format!("{} cannot be recreated automatically", fixture.id));
+    };
+    recreate_automated_fixture(fixture, strategy, output_path)
 }
 
 fn missing_any_rel_path(root: &Path, rel_paths: &[&str]) -> bool {
@@ -791,6 +837,453 @@ fn verify_backup_dbs(args: Vec<String>) -> Result<(), XtaskError> {
     }
 }
 
+fn fixtures_command(args: Vec<String>) -> Result<(), XtaskError> {
+    match args.as_slice() {
+        [command, flag] if command == "ensure" && flag == "--snapshots" => {
+            ensure_all_snapshot_fixture_profiles()
+        }
+        [command, flag] if command == "ensure" && flag == "--typed" => {
+            if !cfg!(feature = "typed_type_graph") {
+                return Err(XtaskError::new(
+                    "Typed type graph fixture validation requires xtask's `typed_type_graph` feature. Run `cargo run -p xtask --features typed_type_graph -- fixtures ensure --typed`.",
+                ));
+            }
+            ensure_typed_fixture_sources()?;
+            ensure_snapshot_fixtures(SnapshotFixtureSelection::TypedTypeGraph)
+        }
+        [command, flag] if command == "regenerate" && flag == "--all" => {
+            regenerate_all_snapshot_fixture_profiles()
+        }
+        [command, flag] if command == "regenerate" && flag == "--active" => {
+            regenerate_snapshot_fixtures(SnapshotFixtureSelection::Active)
+        }
+        [command, flag] if command == "regenerate" && flag == "--typed" => {
+            regenerate_snapshot_fixtures(SnapshotFixtureSelection::TypedTypeGraph)
+        }
+        _ => Err(XtaskError::new(
+            "Usage: cargo xtask fixtures ensure --snapshots | --typed\n       cargo xtask fixtures regenerate --all | --active | --typed".to_string(),
+        )),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SnapshotFixtureSelection {
+    Active,
+    TypedTypeGraph,
+}
+
+fn snapshot_fixture_matches_selection(
+    fixture: &'static FixtureDb,
+    selection: SnapshotFixtureSelection,
+) -> bool {
+    match selection {
+        SnapshotFixtureSelection::Active => fixture.status == FixtureStatus::Active,
+        SnapshotFixtureSelection::TypedTypeGraph => fixture.status == FixtureStatus::TypedTypeGraph,
+    }
+}
+
+fn regenerate_all_snapshot_fixture_profiles() -> Result<(), XtaskError> {
+    if cfg!(feature = "typed_type_graph") {
+        return Err(XtaskError::new(
+            "`fixtures regenerate --all` must be run without `typed_type_graph`; it regenerates active fixtures in the normal profile, then invokes the typed-only pass itself.",
+        ));
+    }
+
+    regenerate_snapshot_fixtures(SnapshotFixtureSelection::Active)?;
+    run_typed_fixture_regeneration_pass()?;
+    Ok(())
+}
+
+fn ensure_all_snapshot_fixture_profiles() -> Result<(), XtaskError> {
+    if cfg!(feature = "typed_type_graph") {
+        return Err(XtaskError::new(
+            "`fixtures ensure --snapshots` must be run without `typed_type_graph`; it validates active fixtures in the normal profile, then invokes the typed-only pass itself.",
+        ));
+    }
+
+    ensure_snapshot_fixtures(SnapshotFixtureSelection::Active)?;
+    run_typed_fixture_ensure_pass()?;
+    Ok(())
+}
+
+fn run_typed_fixture_regeneration_pass() -> Result<(), XtaskError> {
+    println!("Regenerating typed graph fixtures with xtask's typed_type_graph feature");
+    let status = ProcessCommand::new("cargo")
+        .current_dir(workspace_root())
+        .args([
+            "run",
+            "-p",
+            "xtask",
+            "--features",
+            "typed_type_graph",
+            "--",
+            "fixtures",
+            "regenerate",
+            "--typed",
+        ])
+        .status()
+        .map_err(|err| XtaskError::new(format!("spawn typed fixture regeneration pass: {err}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(XtaskError::new(format!(
+            "typed fixture regeneration pass exited with status {status}"
+        )))
+    }
+}
+
+fn run_typed_fixture_ensure_pass() -> Result<(), XtaskError> {
+    println!("Ensuring typed graph fixtures with xtask's typed_type_graph feature");
+    let status = ProcessCommand::new("cargo")
+        .current_dir(workspace_root())
+        .args([
+            "run",
+            "-p",
+            "xtask",
+            "--features",
+            "typed_type_graph",
+            "--",
+            "fixtures",
+            "ensure",
+            "--typed",
+        ])
+        .status()
+        .map_err(|err| XtaskError::new(format!("spawn typed fixture ensure pass: {err}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(XtaskError::new(format!(
+            "typed fixture ensure pass exited with status {status}"
+        )))
+    }
+}
+
+fn regenerate_snapshot_fixtures(selection: SnapshotFixtureSelection) -> Result<(), XtaskError> {
+    let fixtures = all_backup_db_fixtures()
+        .iter()
+        .copied()
+        .filter(|fixture| snapshot_fixture_matches_selection(fixture, selection))
+        .filter_map(|fixture| match fixture.creation {
+            FixtureCreationStrategy::Automated(strategy) => Some((fixture, strategy)),
+            FixtureCreationStrategy::Manual(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    if fixtures.is_empty() {
+        println!("No automated fixtures matched the requested regeneration selection.");
+        return Ok(());
+    }
+
+    let typed_selected = fixtures
+        .iter()
+        .any(|(fixture, _)| fixture.status == FixtureStatus::TypedTypeGraph);
+    if typed_selected && !cfg!(feature = "typed_type_graph") {
+        return Err(XtaskError::new(
+            "Typed type graph fixture regeneration requires xtask's `typed_type_graph` feature. Run `cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed`.",
+        ));
+    }
+
+    let shared_count = fixtures
+        .iter()
+        .filter(|(fixture, _)| fixture.path_scope == FixturePathScope::SharedSnapshot)
+        .count();
+    if shared_count > 0 {
+        let snapshot_dir = backup_db_snapshot_fixture_dir();
+        fs::create_dir_all(&snapshot_dir).map_err(|err| {
+            XtaskError::new(format!(
+                "Unable to create shared DB snapshot fixture dir {}: {err}",
+                snapshot_dir.display()
+            ))
+        })?;
+        println!(
+            "Regenerating shared DB snapshot fixtures under {}",
+            snapshot_dir.display()
+        );
+    }
+
+    let root = workspace_root();
+    let mut regenerated = Vec::new();
+    for (fixture, strategy) in fixtures {
+        let output_path = bulk_fixture_output_path(fixture, &root);
+        recreate_automated_fixture(fixture, strategy, &output_path)
+            .map_err(|err| XtaskError::new(format!("Failed to recreate {}: {err}", fixture.id)))?;
+        let summary = verify_registered_backup_fixture(fixture).map_err(|err| {
+            XtaskError::new(format!(
+                "Regenerated fixture {} failed strict validation from {}: {err}",
+                fixture.id,
+                output_path.display()
+            ))
+        })?;
+        regenerated.push((fixture, output_path, summary));
+    }
+
+    for (fixture, path, summary) in regenerated {
+        println!(
+            "✔ {:<32} {} | scope={} | relations={} | roundtrip={}",
+            fixture.id,
+            display_relative(&path, &root),
+            fixture_scope_label(fixture.path_scope),
+            summary.relation_count,
+            if summary.roundtrip_ok { "ok" } else { "failed" }
+        );
+    }
+
+    Ok(())
+}
+
+fn ensure_snapshot_fixtures(selection: SnapshotFixtureSelection) -> Result<(), XtaskError> {
+    let fixtures = all_backup_db_fixtures()
+        .iter()
+        .copied()
+        .filter(|fixture| snapshot_fixture_matches_selection(fixture, selection))
+        .collect::<Vec<_>>();
+
+    if fixtures
+        .iter()
+        .any(|fixture| fixture.path_scope == FixturePathScope::SharedSnapshot)
+    {
+        let snapshot_dir = backup_db_snapshot_fixture_dir();
+        fs::create_dir_all(&snapshot_dir).map_err(|err| {
+            XtaskError::new(format!(
+                "Unable to create shared DB snapshot fixture dir {}: {err}",
+                snapshot_dir.display()
+            ))
+        })?;
+
+        println!(
+            "Ensuring shared DB snapshot fixtures under {}",
+            snapshot_dir.display()
+        );
+    } else {
+        println!("Ensuring checkout-local DB fixtures without staging shared snapshots");
+    }
+
+    let root = workspace_root();
+    let mut missing_seeds = Vec::new();
+    let mut staged = Vec::new();
+    for fixture in fixtures {
+        if fixture.path_scope == FixturePathScope::CheckoutLocal {
+            let output_path = fixture
+                .checkout_local_path()
+                .expect("checkout-local fixtures should resolve a scoped output path");
+            if !output_path.exists() {
+                recreate_active_backup_fixture(fixture, &output_path).map_err(|err| {
+                    XtaskError::new(format!(
+                        "Failed to create checkout-local fixture {} at {}: {err}",
+                        fixture.id,
+                        output_path.display()
+                    ))
+                })?;
+            }
+            let summary = match verify_registered_backup_fixture(fixture) {
+                Ok(summary) => summary,
+                Err(err) => {
+                    recreate_active_backup_fixture(fixture, &output_path).map_err(|recreate| {
+                        XtaskError::new(format!(
+                            "Failed to recreate checkout-local fixture {} after validation error ({err}): {recreate}",
+                            fixture.id
+                        ))
+                    })?;
+                    verify_registered_backup_fixture(fixture).map_err(|verify| {
+                        XtaskError::new(format!(
+                            "Checkout-local fixture {} failed strict validation from {}: {verify}\n  {}",
+                            fixture.id,
+                            output_path.display(),
+                            recreation_hint(fixture)
+                        ))
+                    })?
+                }
+            };
+            staged.push((fixture, summary.path.path().to_path_buf(), summary));
+            continue;
+        }
+
+        let seed_path = fixture.repo_path();
+        let snapshot_path = bulk_fixture_output_path(fixture, &root);
+        if snapshot_path.exists() {
+            let summary = verify_registered_backup_fixture(fixture).map_err(|err| {
+                XtaskError::new(format!(
+                    "Shared snapshot fixture {} failed strict validation from {}: {err}\n  {}",
+                    fixture.id,
+                    snapshot_path.display(),
+                    recreation_hint(fixture)
+                ))
+            })?;
+            if seed_path.exists() {
+                let seed_hash = compute_file_hash(&seed_path).map_err(XtaskError::new)?;
+                let snapshot_hash = compute_file_hash(&snapshot_path).map_err(XtaskError::new)?;
+                if seed_hash != snapshot_hash {
+                    println!(
+                        "WARN {:<29} shared snapshot differs from committed seed {}; update the seed if this regenerated snapshot should be shared",
+                        fixture.id,
+                        display_relative(&seed_path, &root)
+                    );
+                }
+            }
+            staged.push((fixture, snapshot_path, summary));
+            continue;
+        }
+
+        if !seed_path.exists() {
+            missing_seeds.push((fixture, seed_path));
+            continue;
+        }
+
+        stage_snapshot_fixture_file(fixture, &seed_path, &snapshot_path)?;
+        let summary = match verify_registered_backup_fixture(fixture) {
+            Ok(summary) => summary,
+            Err(err) => {
+                let _ = fs::remove_file(&snapshot_path);
+                return Err(XtaskError::new(format!(
+                    "Staged fixture {} failed strict validation from {}: {err}\n  {}",
+                    fixture.id,
+                    snapshot_path.display(),
+                    recreation_hint(fixture)
+                )));
+            }
+        };
+        staged.push((fixture, snapshot_path, summary));
+    }
+
+    for (fixture, path, summary) in staged {
+        println!(
+            "✔ {:<32} {} | scope={} | relations={} | roundtrip={}",
+            fixture.id,
+            display_relative(&path, &root),
+            fixture_scope_label(fixture.path_scope),
+            summary.relation_count,
+            if summary.roundtrip_ok { "ok" } else { "failed" }
+        );
+    }
+
+    if missing_seeds.is_empty() {
+        Ok(())
+    } else {
+        let mut message = String::from("Committed seed backup fixtures are missing:\n");
+        for (fixture, seed_path) in missing_seeds {
+            message.push_str(&format!(
+                "- {} seed missing at {}\n  {}\n",
+                fixture.id,
+                display_relative(&seed_path, &root),
+                recreation_hint(fixture)
+            ));
+        }
+        Err(XtaskError::new(message.trim_end().to_string()))
+    }
+}
+
+fn stage_snapshot_fixture_file(
+    fixture: &'static FixtureDb,
+    seed_path: &Path,
+    snapshot_path: &Path,
+) -> Result<(), XtaskError> {
+    if fixture.path_scope == FixturePathScope::CheckoutLocal {
+        return Err(XtaskError::new(format!(
+            "{} is checkout-local; refusing to stage it into the shared snapshot directory",
+            fixture.id
+        )));
+    }
+
+    if let Some(parent) = snapshot_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            XtaskError::new(format!(
+                "Unable to create snapshot fixture directory {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    fs::copy(seed_path, snapshot_path).map_err(|err| {
+        XtaskError::new(format!(
+            "Copy fixture {} from {} to {}: {err}",
+            fixture.id,
+            seed_path.display(),
+            snapshot_path.display()
+        ))
+    })?;
+    Ok(())
+}
+
+fn ensure_typed_fixture_sources() -> Result<(), XtaskError> {
+    let typed_corpus_fixtures = all_backup_db_fixtures()
+        .iter()
+        .copied()
+        .filter(|fixture| fixture.status == FixtureStatus::TypedTypeGraph)
+        .filter_map(|fixture| match fixture.creation {
+            FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+                ..
+            })
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargets {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            )
+            | FixtureCreationStrategy::Automated(
+                FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+                    normalized_repo,
+                    checkout_slug,
+                    clone_url,
+                    rev,
+                    ..
+                },
+            ) => Some((fixture, normalized_repo, checkout_slug, clone_url, rev)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if typed_corpus_fixtures.is_empty() {
+        println!("No typed GitHub corpus fixtures are registered.");
+        return Ok(());
+    }
+
+    println!(
+        "Ensuring typed corpus fixture sources under {}",
+        fixture_cache_home().map_err(XtaskError::new)?.display()
+    );
+
+    let root = workspace_root();
+    for (fixture, normalized_repo, checkout_slug, clone_url, rev) in typed_corpus_fixtures {
+        let checkout = match ensure_github_corpus_fixture_checkout(
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+        ) {
+            Ok(checkout) => checkout,
+            Err(err) => {
+                return Err(XtaskError::new(format!(
+                    "Failed to prepare source checkout for {}: {err}",
+                    fixture.id
+                )));
+            }
+        };
+        println!(
+            "✔ {:<32} source={}",
+            fixture.id,
+            display_relative(&checkout, &root)
+        );
+    }
+
+    Ok(())
+}
+
 fn recreate_backup_db(args: Vec<String>) -> Result<(), XtaskError> {
     let fixture_id = parse_required_fixture_arg(&args, "recreate-backup-db")?;
     let fixture = resolve_fixture(&fixture_id)?;
@@ -815,6 +1308,14 @@ fn recreate_backup_db(args: Vec<String>) -> Result<(), XtaskError> {
                     println!(
                         "This checkout-local fixture is now the effective path for \
                         registry loads in this workspace."
+                    );
+                }
+                FixturePathScope::SharedSnapshot => {
+                    println!(
+                        "Next: update {fixture_db_path} and {fixture_db_doc_path} \
+                        if you intend tests to use this new dated shared snapshot. Copy the \
+                        reviewed snapshot into tests/backup_dbs/ only when you want to commit it \
+                        as a seed artifact."
                     );
                 }
                 FixturePathScope::LegacyAbsolute => {
@@ -872,9 +1373,8 @@ fn verify_registered_backup_fixture(
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded
-                .prior_rels_for_plain_backup_import()
-                .map_err(|err| err.to_string())?;
+            let relations =
+                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(&backup_path, &relations)
                 .map_err(|err| format!("roundtrip import: {err}"))?;
@@ -883,8 +1383,7 @@ fn verify_registered_backup_fixture(
                 .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            reloaded
-                .import_backup_with_embeddings(&backup_path)
+            import_backup_with_embeddings_for_fixture(fixture, &reloaded, &backup_path)
                 .map_err(|err| format!("roundtrip import with embeddings: {err}"))?;
         }
     }
@@ -927,6 +1426,90 @@ fn recreate_automated_fixture(
                 .map_err(|err| format!("build workspace crate fixture database: {err}"))?;
             Arc::new(Database::new(cozo_db))
         }
+        FixtureAutomation::GithubCorpusCrate {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            let cozo_db = setup_db_full_parse_target(&checkout_path).map_err(|err| {
+                format!(
+                    "build corpus fixture database from {}: {err}",
+                    display_relative(&checkout_path, &workspace_root())
+                )
+            })?;
+            Arc::new(Database::new(cozo_db))
+        }
+        FixtureAutomation::GithubCorpusCrateOpenRouterEmbeddings {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            recreate_openrouter_embedding_corpus_db(fixture, &checkout_path)?
+        }
+        FixtureAutomation::GithubCorpusWorkspaceTargets {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            target_relative_paths,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            let cozo_db =
+                setup_db_full_parse_workspace_targets(&checkout_path, target_relative_paths)
+                    .map_err(|err| {
+                        format!(
+                            "build corpus workspace fixture database from {}: {err}",
+                            display_relative(&checkout_path, &workspace_root())
+                        )
+                    })?;
+            Arc::new(Database::new(cozo_db))
+        }
+        FixtureAutomation::GithubCorpusWorkspaceTargetsOpenRouterEmbeddings {
+            normalized_repo,
+            checkout_slug,
+            clone_url,
+            rev,
+            target_relative_paths,
+            ..
+        } => {
+            let checkout_path = ensure_github_corpus_fixture_checkout(
+                normalized_repo,
+                checkout_slug,
+                clone_url,
+                rev,
+            )
+            .map_err(|err| format!("prepare corpus checkout: {err}"))?;
+            recreate_openrouter_embedding_corpus_workspace_db(
+                fixture,
+                &checkout_path,
+                target_relative_paths,
+            )?
+        }
         FixtureAutomation::FixtureWorkspaceMember {
             fixture_name,
             member_crate,
@@ -950,13 +1533,355 @@ fn recreate_automated_fixture(
     Ok(())
 }
 
+fn setup_db_full_parse_target(target: &Path) -> Result<cozo::Db<cozo::MemStorage>, String> {
+    let db = cozo::Db::new(cozo::MemStorage::default())
+        .map_err(|err| format!("create in-memory cozo db: {err}"))?;
+    db.initialize()
+        .map_err(|err| format!("initialize in-memory cozo db: {err}"))?;
+    ploke_transform::schema::create_schema_all(&db)
+        .map_err(|err| format!("create transform schema: {err}"))?;
+
+    let mut output = syn_parser::try_run_phases_and_merge(target)
+        .map_err(|err| format!("parse and merge target {}: {err}", target.display()))?;
+    let mut merged = output
+        .extract_merged_graph()
+        .ok_or_else(|| "parser output missing merged graph".to_string())?;
+    let tree = match output.extract_module_tree() {
+        Some(tree) => tree,
+        None => merged
+            .build_tree_and_prune()
+            .map_err(|err| format!("build module tree: {err}"))?,
+    };
+
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)
+        .map_err(|err| format!("transform parsed graph: {err}"))?;
+    Ok(db)
+}
+
+fn setup_db_full_parse_workspace_targets(
+    workspace_path: &Path,
+    target_relative_paths: &[&str],
+) -> Result<cozo::Db<cozo::MemStorage>, String> {
+    let db = cozo::Db::new(cozo::MemStorage::default())
+        .map_err(|err| format!("create in-memory cozo db: {err}"))?;
+    db.initialize()
+        .map_err(|err| format!("initialize in-memory cozo db: {err}"))?;
+    ploke_transform::schema::create_schema_all(&db)
+        .map_err(|err| format!("create transform schema: {err}"))?;
+
+    let selected = target_relative_paths
+        .iter()
+        .map(|relative| workspace_path.join(relative))
+        .collect::<Vec<_>>();
+    let selected_refs = selected.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    let parsed_workspace = syn_parser::parse_workspace(workspace_path, Some(&selected_refs))
+        .map_err(|err| {
+            format!(
+                "parse workspace {} with targets {:?}: {err}",
+                workspace_path.display(),
+                target_relative_paths
+            )
+        })?;
+
+    ploke_transform::transform::transform_parsed_workspace(&db, parsed_workspace)
+        .map_err(|err| format!("transform parsed workspace: {err}"))?;
+    Ok(db)
+}
+
+fn ensure_github_corpus_fixture_checkout(
+    normalized_repo: &str,
+    checkout_slug: &str,
+    clone_url: &str,
+    rev: &str,
+) -> Result<PathBuf, String> {
+    let cache = GithubCorpusFixtureCache::new()?;
+    let lock = acquire_fixture_cache_lock(&cache.lock_path(checkout_slug, rev))?;
+
+    let mirror_path = cache.mirror_path(checkout_slug);
+    ensure_github_corpus_mirror(normalized_repo, clone_url, rev, &mirror_path)?;
+
+    let checkout_path = cache.checkout_path(checkout_slug, rev);
+    ensure_github_corpus_revision_checkout(
+        normalized_repo,
+        checkout_slug,
+        rev,
+        &mirror_path,
+        &checkout_path,
+    )?;
+
+    drop(lock);
+
+    let actual = git_stdout(Some(&checkout_path), &["rev-parse", "HEAD"])
+        .map_err(|err| format!("read checked-out commit for {normalized_repo}: {err}"))?;
+    if actual.trim() != rev {
+        return Err(format!(
+            "checkout {} resolved to {}, expected {}",
+            checkout_path.display(),
+            actual.trim(),
+            rev
+        ));
+    }
+
+    Ok(checkout_path)
+}
+
+struct GithubCorpusFixtureCache {
+    root: PathBuf,
+}
+
+impl GithubCorpusFixtureCache {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            root: fixture_cache_home()?,
+        })
+    }
+
+    fn mirror_path(&self, checkout_slug: &str) -> PathBuf {
+        self.root
+            .join("corpus")
+            .join("mirrors")
+            .join(format!("{checkout_slug}.git"))
+    }
+
+    fn checkout_path(&self, checkout_slug: &str, rev: &str) -> PathBuf {
+        self.root
+            .join("corpus")
+            .join("checkouts")
+            .join(checkout_slug)
+            .join(rev)
+    }
+
+    fn lock_path(&self, checkout_slug: &str, rev: &str) -> PathBuf {
+        self.root
+            .join("locks")
+            .join(format!("github-corpus-{checkout_slug}-{rev}.lock"))
+    }
+}
+
+struct FixtureCacheLock {
+    path: PathBuf,
+}
+
+impl Drop for FixtureCacheLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_fixture_cache_lock(lock_path: &Path) -> Result<FixtureCacheLock, String> {
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create fixture lock directory {}: {err}", parent.display()))?;
+    }
+
+    let start = Instant::now();
+    loop {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path)
+        {
+            Ok(mut file) => {
+                writeln!(
+                    file,
+                    "pid={}\ncreated_at={}",
+                    std::process::id(),
+                    Utc::now().to_rfc3339()
+                )
+                .map_err(|err| format!("write fixture lock {}: {err}", lock_path.display()))?;
+                return Ok(FixtureCacheLock {
+                    path: lock_path.to_path_buf(),
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if start.elapsed() >= GITHUB_CORPUS_LOCK_TIMEOUT {
+                    return Err(format!(
+                        "Timed out waiting for fixture cache lock {}. Another process may be preparing the same corpus fixture. If no such process is running, remove the stale lock and retry.",
+                        lock_path.display()
+                    ));
+                }
+                thread::sleep(GITHUB_CORPUS_LOCK_POLL);
+            }
+            Err(err) => {
+                return Err(format!(
+                    "create fixture cache lock {}: {err}",
+                    lock_path.display()
+                ));
+            }
+        }
+    }
+}
+
+fn ensure_github_corpus_mirror(
+    normalized_repo: &str,
+    clone_url: &str,
+    rev: &str,
+    mirror_path: &Path,
+) -> Result<(), String> {
+    if mirror_path.exists() && !mirror_path.join("HEAD").is_file() {
+        return Err(format!(
+            "corpus mirror path {} exists but does not look like a bare git repository",
+            mirror_path.display()
+        ));
+    }
+
+    if !mirror_path.exists() {
+        let mirror_parent = mirror_path.parent().ok_or_else(|| {
+            format!(
+                "corpus mirror path {} has no parent directory",
+                mirror_path.display()
+            )
+        })?;
+        fs::create_dir_all(mirror_parent).map_err(|err| {
+            format!(
+                "create corpus mirror directory {}: {err}",
+                mirror_parent.display()
+            )
+        })?;
+        let mirror_arg = path_to_str(mirror_path)?;
+        run_git(None, &["clone", "--mirror", clone_url, mirror_arg])
+            .map_err(|err| format!("clone mirror for {normalized_repo}: {err}"))?;
+    }
+
+    if !git_has_commit(mirror_path, rev) {
+        run_git(Some(mirror_path), &["fetch", "origin", rev])
+            .map_err(|err| format!("fetch {normalized_repo}@{rev} into mirror: {err}"))?;
+    }
+
+    if !git_has_commit(mirror_path, rev) {
+        return Err(format!(
+            "corpus mirror {} does not contain expected revision {} after fetch",
+            mirror_path.display(),
+            rev
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_github_corpus_revision_checkout(
+    normalized_repo: &str,
+    checkout_slug: &str,
+    rev: &str,
+    mirror_path: &Path,
+    checkout_path: &Path,
+) -> Result<(), String> {
+    if checkout_path.exists() {
+        if !checkout_path.join(".git").exists() {
+            return Err(format!(
+                "revision checkout path {} exists but is not a git checkout",
+                checkout_path.display()
+            ));
+        }
+        let actual = git_stdout(Some(checkout_path), &["rev-parse", "HEAD"]).map_err(|err| {
+            format!("read existing checkout revision for {normalized_repo}: {err}")
+        })?;
+        if actual.trim() != rev {
+            return Err(format!(
+                "revision checkout {} is for {}, expected {}. Because revision checkout paths are immutable cache entries, remove this corrupt checkout and retry.",
+                checkout_path.display(),
+                actual.trim(),
+                rev
+            ));
+        }
+        return Ok(());
+    }
+
+    let checkout_parent = checkout_path.parent().ok_or_else(|| {
+        format!(
+            "corpus checkout path {} has no parent directory",
+            checkout_path.display()
+        )
+    })?;
+    fs::create_dir_all(checkout_parent).map_err(|err| {
+        format!(
+            "create corpus checkout directory {}: {err}",
+            checkout_parent.display()
+        )
+    })?;
+
+    let mirror_arg = path_to_str(mirror_path)?;
+    let checkout_arg = path_to_str(checkout_path)?;
+    run_git(
+        None,
+        &[
+            "clone",
+            "--shared",
+            "--no-checkout",
+            mirror_arg,
+            checkout_arg,
+        ],
+    )
+    .map_err(|err| format!("clone cached checkout for {checkout_slug}: {err}"))?;
+    run_git(Some(checkout_path), &["checkout", "--detach", rev])
+        .map_err(|err| format!("checkout {normalized_repo}@{rev}: {err}"))?;
+
+    Ok(())
+}
+
+fn fixture_cache_home() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os(PLOKE_FIXTURE_HOME_ENV) {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(backup_db_snapshot_fixture_dir().join("_source_cache"))
+}
+
+fn path_to_str(path: &Path) -> Result<&str, String> {
+    path.to_str()
+        .ok_or_else(|| format!("non-utf8 path {}", path.display()))
+}
+
+fn git_has_commit(repo: &Path, rev: &str) -> bool {
+    let commitish = format!("{rev}^{{commit}}");
+    git_output(Some(repo), &["cat-file", "-e", &commitish])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_git(cwd: Option<&Path>, args: &[&str]) -> Result<(), String> {
+    let output = git_output(cwd, args)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(stderr_or_status(&output))
+    }
+}
+
+fn git_stdout(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let output = git_output(cwd, args)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(stderr_or_status(&output))
+    }
+}
+
+fn git_output(cwd: Option<&Path>, args: &[&str]) -> Result<std::process::Output, String> {
+    let mut command = ProcessCommand::new("git");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
+        .args(args)
+        .output()
+        .map_err(|err| format!("spawn git {}: {err}", args.join(" ")))
+}
+
+fn stderr_or_status(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("process exited with status {}", output.status)
+    } else {
+        stderr
+    }
+}
+
 fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Result<(), String> {
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations = reloaded
-                .prior_rels_for_plain_backup_import()
-                .map_err(|err| err.to_string())?;
+            let relations =
+                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(output_path, &relations)
                 .map_err(|err| format!("validate generated backup import: {err}"))?;
@@ -965,11 +1890,9 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
                 .map_err(|err| err.to_string())?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            reloaded
-                .import_backup_with_embeddings(output_path)
-                .map_err(|err| {
-                    format!("validate generated backup import with embeddings: {err}")
-                })?;
+            import_backup_with_embeddings_for_fixture(fixture, &reloaded, output_path).map_err(
+                |err| format!("validate generated backup import with embeddings: {err}"),
+            )?;
         }
     }
     validate_backup_fixture_contract(fixture, &reloaded)
@@ -981,6 +1904,80 @@ fn recreate_local_embedding_fixture_db(
     fixture: &'static FixtureDb,
     fixture_name: &'static str,
 ) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_multi_embedding(fixture_name)
+        .map_err(|err| format!("build source fixture database: {err}"))?;
+    let local_embedder = LocalEmbedder::new(EmbeddingConfig {
+        device_preference: DevicePreference::ForceCpu,
+        ..EmbeddingConfig::default()
+    })
+    .map_err(|err| format!("initialize local embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::Local(local_embedder));
+    recreate_embedding_db_with_processor(fixture, fixture_name, cozo_db, processor, "local")
+}
+
+fn recreate_openrouter_embedding_corpus_db(
+    fixture: &'static FixtureDb,
+    checkout_path: &Path,
+) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_parse_target(checkout_path).map_err(|err| {
+        format!(
+            "build corpus fixture database from {}: {err}",
+            display_relative(checkout_path, &workspace_root())
+        )
+    })?;
+    let expected_set = fixture
+        .expected_embedding_set()
+        .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
+    let or_cfg = OpenRouterConfig {
+        model: expected_set.model.to_string(),
+        dimensions: Some(expected_set.dims() as usize),
+        request_dimensions: None,
+        snippet_batch_size: 16,
+        input_type: Some("code-snippet".into()),
+        ..Default::default()
+    };
+    let backend = OpenRouterBackend::new(&or_cfg)
+        .map_err(|err| format!("initialize OpenRouter embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend));
+    recreate_embedding_db_with_processor(fixture, fixture.id, cozo_db, processor, "OpenRouter")
+}
+
+fn recreate_openrouter_embedding_corpus_workspace_db(
+    fixture: &'static FixtureDb,
+    checkout_path: &Path,
+    target_relative_paths: &[&str],
+) -> Result<Arc<Database>, String> {
+    let cozo_db = setup_db_full_parse_workspace_targets(checkout_path, target_relative_paths)
+        .map_err(|err| {
+            format!(
+                "build corpus workspace fixture database from {}: {err}",
+                display_relative(checkout_path, &workspace_root())
+            )
+        })?;
+    let expected_set = fixture
+        .expected_embedding_set()
+        .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
+    let or_cfg = OpenRouterConfig {
+        model: expected_set.model.to_string(),
+        dimensions: Some(expected_set.dims() as usize),
+        request_dimensions: None,
+        snippet_batch_size: 16,
+        input_type: Some("code-snippet".into()),
+        ..Default::default()
+    };
+    let backend = OpenRouterBackend::new(&or_cfg)
+        .map_err(|err| format!("initialize OpenRouter embedder: {err}"))?;
+    let processor = EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend));
+    recreate_embedding_db_with_processor(fixture, fixture.id, cozo_db, processor, "OpenRouter")
+}
+
+fn recreate_embedding_db_with_processor(
+    fixture: &'static FixtureDb,
+    active_set_owner: &str,
+    cozo_db: cozo::Db<cozo::MemStorage>,
+    processor: EmbeddingProcessor,
+    backend_label: &str,
+) -> Result<Arc<Database>, String> {
     let expected_set = fixture
         .expected_embedding_set()
         .ok_or_else(|| format!("fixture {} is missing embedding metadata", fixture.id))?;
@@ -988,22 +1985,14 @@ fn recreate_local_embedding_fixture_db(
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|err| format!("build tokio runtime for local fixture recreation: {err}"))?;
+        .map_err(|err| format!("build tokio runtime for embedding fixture recreation: {err}"))?;
 
     runtime.block_on(async move {
-        let cozo_db = setup_db_full_multi_embedding(fixture_name)
-            .map_err(|err| format!("build source fixture database: {err}"))?;
         let db = Arc::new(Database::new(cozo_db));
 
         db.set_active_set(expected_set)
             .map_err(|err| format!("set active embedding set: {err}"))?;
 
-        let local_embedder = LocalEmbedder::new(EmbeddingConfig {
-            device_preference: DevicePreference::ForceCpu,
-            ..EmbeddingConfig::default()
-        })
-        .map_err(|err| format!("initialize local embedder: {err}"))?;
-        let processor = EmbeddingProcessor::new(EmbeddingSource::Local(local_embedder));
         let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
             processor,
@@ -1022,21 +2011,21 @@ fn recreate_local_embedding_fixture_db(
         indexer
             .run(Arc::new(progress_tx), control_rx)
             .await
-            .map_err(|err| format!("run local embedding indexer: {err}"))?;
+            .map_err(|err| format!("run {backend_label} embedding indexer: {err}"))?;
 
         let remaining_unembedded = db
             .count_unembedded_nonfiles()
             .map_err(|err| format!("count remaining unembedded nodes: {err}"))?;
         if remaining_unembedded != 0 {
             return Err(format!(
-                "local embedding recreation left {remaining_unembedded} unembedded nodes"
+                "{backend_label} embedding recreation left {remaining_unembedded} unembedded nodes"
             ));
         }
 
         let active_set = db
             .with_active_set(|set| set.clone())
             .map_err(|err| format!("read active embedding set after indexing: {err}"))?;
-        db.put_active_embedding_set_meta(fixture_name, &active_set)
+        db.put_active_embedding_set_meta(active_set_owner, &active_set)
             .map_err(|err| format!("persist active embedding set metadata: {err}"))?;
 
         Ok(db)
@@ -1062,10 +2051,12 @@ fn print_manual_recreation_help(
 }
 
 fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<PathBuf, String> {
-    if fixture.path_scope == FixturePathScope::CheckoutLocal {
+    if fixture.path_scope != FixturePathScope::LegacyAbsolute {
         return Err(format!(
-            "{} is checkout-local; recreate it with `cargo xtask recreate-backup-db --fixture {}` instead of repairing the registered fallback in place",
-            fixture.id, fixture.id
+            "{} is {}; recreate it with `cargo xtask recreate-backup-db --fixture {}` instead of repairing the registered fallback in place",
+            fixture.id,
+            fixture_scope_label(fixture.path_scope),
+            fixture.id
         ));
     }
 
@@ -1163,9 +2154,22 @@ fn recreation_output_path(fixture: &'static FixtureDb, root: &Path) -> PathBuf {
         FixturePathScope::CheckoutLocal => fixture
             .checkout_local_path()
             .expect("checkout-local fixtures should resolve a scoped output path"),
+        FixturePathScope::SharedSnapshot => {
+            backup_db_snapshot_fixture_dir().join(dated_output_filename(fixture))
+        }
         FixturePathScope::LegacyAbsolute => root
             .join("tests/backup_dbs")
             .join(dated_output_filename(fixture)),
+    }
+}
+
+fn bulk_fixture_output_path(fixture: &'static FixtureDb, root: &Path) -> PathBuf {
+    match fixture.path_scope {
+        FixturePathScope::CheckoutLocal => fixture
+            .checkout_local_path()
+            .expect("checkout-local fixtures should resolve a scoped output path"),
+        FixturePathScope::SharedSnapshot => fixture.shared_snapshot_path(),
+        FixturePathScope::LegacyAbsolute => root.join(fixture.rel_path),
     }
 }
 
@@ -1180,6 +2184,7 @@ fn dated_output_filename(fixture: &'static FixtureDb) -> String {
 fn fixture_scope_label(scope: FixturePathScope) -> &'static str {
     match scope {
         FixturePathScope::CheckoutLocal => "checkout-local",
+        FixturePathScope::SharedSnapshot => "shared-snapshot",
         FixturePathScope::LegacyAbsolute => "legacy-absolute",
     }
 }

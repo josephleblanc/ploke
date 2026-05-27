@@ -12,8 +12,8 @@ use super::attribute_processing_syn1::{
     extract_attributes, extract_cfg_strings, extract_docstring,
 };
 use super::state::VisitorState;
-use super::type_processing_syn1::get_or_create_type;
-use crate::parser::nodes::{FunctionNodeId, GenerateTypeId as _, GeneratesAnyNodeId};
+use super::type_processing_syn1::{get_or_create_trait_bound_type, get_or_create_type};
+use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId};
 // NodeId wrapper types for individual node types
 use crate::parser::nodes::{
     EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, MethodNodeId, ModuleNodeId, StaticNodeId,
@@ -72,19 +72,26 @@ fn convert_visibility_syn1(vis: &syn1::Visibility) -> VisibilityKind {
     }
 }
 
+fn trait_bound_from_path_syn1(path: syn1::Path) -> syn1::TraitBound {
+    syn1::TraitBound {
+        paren_token: None,
+        modifier: syn1::TraitBoundModifier::None,
+        lifetimes: None,
+        path,
+    }
+}
+
 use crate::parser::relations::*;
+use crate::parser::type_slots::TraitTypeUseId;
 use crate::parser::types::{GenericParamNode, *};
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 
 use crate::error::CodeVisitorError; // Import the new error type
 use crate::utils::LogStyleDebug;
 use crate::utils::logging::LogErrorConversion as _;
-use itertools::Itertools;
-use ploke_core::{TypeId, TypeKind};
-
 use colored::*;
+use itertools::Itertools;
 use quote::ToTokens;
-use syn1::TypePath;
 use syn1::spanned::Spanned;
 use syn1::{
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
@@ -132,62 +139,23 @@ impl<'a> CodeVisitor<'a> {
                 })
             }
             FnArg::Receiver(receiver) => {
-                // Syn1 Receiver doesn't have a pre-computed `ty` field like syn2.
-                // We need to construct the type based on `reference` and `mutability`.
-
-                // First, create/get the base `Self` type
-                let self_type_kind = TypeKind::Named {
-                    path: vec!["Self".to_string()],
-                    is_fully_qualified: false,
-                };
-                let self_type_id = self.state.generate_type_id(&self_type_kind, &[]);
-
-                // Ensure the Self type is in the type graph
-                if !self
-                    .state
-                    .code_graph
-                    .type_graph
-                    .iter()
-                    .any(|tn| tn.id == self_type_id)
-                {
-                    let self_type_node = crate::parser::types::TypeNode {
-                        id: self_type_id,
-                        kind: self_type_kind,
-                        related_types: vec![],
+                let type_source = if let Some((_and_token, lifetime)) = &receiver.reference {
+                    let lifetime = lifetime
+                        .as_ref()
+                        .map(|lt| format!("{} ", lt.to_token_stream()))
+                        .unwrap_or_default();
+                    let mutability = if receiver.mutability.is_some() {
+                        "mut "
+                    } else {
+                        ""
                     };
-                    self.state.code_graph.type_graph.push(self_type_node);
-                }
-
-                // Determine the final type_id based on whether it's a reference
-                let type_id = if receiver.reference.is_some() {
-                    // It's `&self` or `&mut self` - create a Reference type
-                    let ref_type_kind = TypeKind::Reference {
-                        lifetime: None, // Syn1 Receiver doesn't expose lifetime directly
-                        is_mutable: receiver.mutability.is_some(),
-                    };
-                    let ref_type_id = self.state.generate_type_id(&ref_type_kind, &[self_type_id]);
-
-                    // Ensure the Reference type is in the type graph
-                    if !self
-                        .state
-                        .code_graph
-                        .type_graph
-                        .iter()
-                        .any(|tn| tn.id == ref_type_id)
-                    {
-                        let ref_type_node = crate::parser::types::TypeNode {
-                            id: ref_type_id,
-                            kind: ref_type_kind,
-                            related_types: vec![self_type_id],
-                        };
-                        self.state.code_graph.type_graph.push(ref_type_node);
-                    }
-
-                    ref_type_id
+                    format!("&{lifetime}{mutability}Self")
                 } else {
-                    // It's just `self` or `mut self` - use Self type directly
-                    self_type_id
+                    "Self".to_string()
                 };
+                let self_type = syn1::parse_str::<syn1::Type>(&type_source)
+                    .expect("constructed syn1 receiver type should parse");
+                let type_id = get_or_create_type(self.state, &self_type);
 
                 Some(crate::parser::nodes::ParamData {
                     name: Some("self".to_string()),
@@ -202,6 +170,43 @@ impl<'a> CodeVisitor<'a> {
     fn process_generics_syn1(&mut self, _generics: &syn1::Generics) -> Vec<GenericParamNode> {
         // TODO: Implement proper syn1 version
         Vec::new()
+    }
+
+    fn process_where_predicates_syn1(
+        &mut self,
+        generics: &syn1::Generics,
+    ) -> Vec<TypeWherePredicate> {
+        let Some(where_clause) = &generics.where_clause else {
+            return Vec::new();
+        };
+
+        where_clause
+            .predicates
+            .iter()
+            .filter_map(|predicate| match predicate {
+                syn1::WherePredicate::Type(predicate) => {
+                    let bounds: Vec<TraitTypeUseId> = predicate
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| match bound {
+                            syn1::TypeParamBound::Trait(trait_bound) => {
+                                Some(get_or_create_trait_bound_type(self.state, trait_bound))
+                            }
+                            syn1::TypeParamBound::Lifetime(_) => None,
+                        })
+                        .collect();
+                    if bounds.is_empty() {
+                        return None;
+                    }
+                    Some(TypeWherePredicate {
+                        subject: get_or_create_type(self.state, &predicate.bounded_ty),
+                        bounds,
+                    })
+                }
+                syn1::WherePredicate::Lifetime(_) => None,
+                syn1::WherePredicate::Eq(_) => None,
+            })
+            .collect()
     }
 
     // Helper method to extract path segments from a use tree
@@ -827,6 +832,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Process generic parameters
             let generic_params = self.process_generics_syn1(&func.sig.generics);
+            let where_predicates = self.process_where_predicates_syn1(&func.sig.generics);
 
             // Pop the function's ID from the scope stack AFTER processing types/generics
             // Use helper function for logging
@@ -848,6 +854,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 parameters,
                 return_type,
                 generic_params,
+                where_predicates,
                 attributes,
                 docstring,
                 body,
@@ -961,6 +968,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters (still within struct's scope)
         let generic_params = self.process_generics_syn1(&item_struct.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_struct.generics);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
@@ -975,6 +983,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_struct.vis),
             fields,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1109,6 +1118,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters (still within struct's scope)
         let generic_params = self.process_generics_syn1(&item_struct.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_struct.generics);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
@@ -1123,6 +1133,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_struct.vis),
             fields,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1211,6 +1222,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.process_generics_syn1(&item_type.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_type.generics);
 
         // Pop the type alias's ID from the scope stack AFTER processing type/generics
         // Use helper function for logging
@@ -1228,6 +1240,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_type.vis),
             type_id,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1350,6 +1363,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.process_generics_syn1(&item_union.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_union.generics);
 
         // Pop the union's ID from the scope stack AFTER processing fields/generics
         // Note: This pop happens *before* visiting children, which might be incorrect
@@ -1369,6 +1383,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_union.vis),
             fields, // Pass the collected FieldNode Vec
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1615,6 +1630,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.process_generics_syn1(&item_enum.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_enum.generics);
 
         // Pop the enum's ID from the scope stack AFTER processing its generics
         // Note: This pop happens *before* visiting children, which might be incorrect
@@ -1633,6 +1649,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_enum.vis),
             variants,
             generic_params,
+            where_predicates,
             attributes,
             docstring,
             tracking_hash: Some(
@@ -1728,13 +1745,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process trait type if it's a trait impl
         let trait_type_id = item_impl.trait_.as_ref().map(|(_, path, _)| {
-            let ty = Type::Path(TypePath {
-                qself: None,
-                path: path.clone(),
-            });
-
-            // Return TraitId
-            get_or_create_type(self.state, &ty)
+            let trait_bound = trait_bound_from_path_syn1(path.clone());
+            get_or_create_trait_bound_type(self.state, &trait_bound)
         });
 
         // Process methods
@@ -1813,6 +1825,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Process generic parameters for methods
                 let generic_params = self.process_generics_syn1(&method.sig.generics);
+                let where_predicates = self.process_where_predicates_syn1(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
@@ -1835,6 +1848,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters,
                     return_type,
                     generic_params,
+                    where_predicates,
                     attributes,
                     docstring,
                     body,
@@ -1859,6 +1873,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters for impl block
         let generic_params = self.process_generics_syn1(&item_impl.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_impl.generics);
 
         // Create info struct and then the node
         let impl_node = ImplNode {
@@ -1868,6 +1883,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             trait_type: trait_type_id,
             methods, // Pass the collected MethodNode Vec
             generic_params,
+            where_predicates,
             cfgs: item_cfgs,
         };
         let typed_impl_id = impl_node.impl_id();
@@ -2020,6 +2036,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Process generic parameters for methods
                 let generic_params = self.process_generics_syn1(&method.sig.generics);
+                let where_predicates = self.process_where_predicates_syn1(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
@@ -2045,6 +2062,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters,
                     return_type,
                     generic_params,
+                    where_predicates,
                     attributes,
                     docstring,
                     body,
@@ -2070,22 +2088,50 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process generic parameters
         let generic_params = self.process_generics_syn1(&item_trait.generics);
+        let where_predicates = self.process_where_predicates_syn1(&item_trait.generics);
+
+        let mut next_associated_type_index = 0;
+        let associated_type_bounds: Vec<AssociatedTypeBound> = item_trait
+            .items
+            .iter()
+            .filter_map(|item| {
+                let syn1::TraitItem::Type(assoc_type) = item else {
+                    return None;
+                };
+                let associated_type_index = next_associated_type_index;
+                next_associated_type_index += 1;
+                Some(
+                    assoc_type
+                        .bounds
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(bound_index, bound)| match bound {
+                            syn1::TypeParamBound::Trait(trait_bound) => Some(AssociatedTypeBound {
+                                associated_type_index,
+                                associated_type_name: assoc_type.ident.to_string(),
+                                bound_index,
+                                bound_type_id: get_or_create_trait_bound_type(
+                                    self.state,
+                                    trait_bound,
+                                ),
+                            }),
+                            syn1::TypeParamBound::Lifetime(_) => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect();
 
         // Process super traits
-        let super_traits: Vec<TypeId> = item_trait
+        let super_traits: Vec<TraitTypeUseId> = item_trait
             .supertraits
             .iter()
             .filter_map(|bound| {
                 // Use filter_map to handle non-trait bounds if necessary
                 match bound {
                     syn1::TypeParamBound::Trait(trait_bound) => {
-                        // Construct a Type::Path from the TraitBound's path
-                        // This correctly represents the supertrait type itself.
-                        let ty = syn1::Type::Path(syn1::TypePath {
-                            qself: None, // Supertraits typically don't have qself
-                            path: trait_bound.path.clone(),
-                        });
-                        Some(get_or_create_type(self.state, &ty))
+                        Some(get_or_create_trait_bound_type(self.state, trait_bound))
                     }
                     syn1::TypeParamBound::Lifetime(_) => {
                         // We don't store lifetime bounds as supertrait TypeIds currently
@@ -2112,7 +2158,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: convert_visibility_syn1(&item_trait.vis),
             methods, // Use collected methods
             generic_params,
+            where_predicates,
             super_traits: super_traits.clone(),
+            associated_type_bounds,
             attributes,
             docstring,
             tracking_hash: Some(

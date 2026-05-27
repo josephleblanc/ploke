@@ -52,3 +52,4 @@ ploke-common = { path = "../common" }
 [features]
 default = []
 type_bearing_ids = []
+typed_type_graph = ["syn_parser/typed_type_graph", "ploke-transform/typed_type_graph"]

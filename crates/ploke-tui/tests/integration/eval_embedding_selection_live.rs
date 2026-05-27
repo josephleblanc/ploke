@@ -24,12 +24,14 @@ use ploke_llm::OpenRouter;
 use ploke_llm::embeddings::EmbClientConfig;
 use ploke_llm::router_only::openrouter::embed::ResolvedLiveEmbeddingModel;
 use ploke_rag::TokenBudget;
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, workspace_root};
+use ploke_tui::AppEvent;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app_state::handlers::indexing::index_workspace;
 use ploke_tui::app_state::{
     AppState, ChatState, ConfigState, IndexTargetDir, RuntimeConfig, SystemState,
 };
+use ploke_tui::user_config::PLOKE_WORKSPACE_REGISTRY_PATH_ENV;
 use ratatui::{Terminal, backend::TestBackend};
 use tempfile::TempDir;
 use tokio::sync::mpsc::UnboundedSender;
@@ -45,19 +47,24 @@ const OPENROUTER_SEARCH_PROBE: &str = "test for dims";
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
     old_registry_path: Option<String>,
+    old_snapshot_fixture_dir: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+        let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+        let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+        let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
         unsafe {
+            std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             std::env::set_var("XDG_CONFIG_HOME", path);
-            std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+            std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
         }
         Self {
             old_xdg,
             old_registry_path,
+            old_snapshot_fixture_dir,
         }
     }
 }
@@ -66,11 +73,11 @@ impl Drop for XdgConfigHomeGuard {
     fn drop(&mut self) {
         if let Some(old_registry_path) = self.old_registry_path.take() {
             unsafe {
-                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_registry_path);
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old_registry_path);
             }
         } else {
             unsafe {
-                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
             }
         }
         if let Some(old_xdg) = self.old_xdg.take() {
@@ -82,13 +89,23 @@ impl Drop for XdgConfigHomeGuard {
                 std::env::remove_var("XDG_CONFIG_HOME");
             }
         }
+        if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+            unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+            }
+        }
     }
 }
 
 struct ConfigSandbox {
-    _lock: tokio::sync::MutexGuard<'static, ()>,
-    _tmp_dir: TempDir,
+    // Fields drop in declaration order; restore env before releasing the lock.
     _xdg_guard: XdgConfigHomeGuard,
+    _tmp_dir: TempDir,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn setup_config_sandbox() -> ConfigSandbox {
@@ -96,9 +113,9 @@ async fn setup_config_sandbox() -> ConfigSandbox {
     let tmp_dir = tempfile::tempdir().expect("temp xdg config dir");
     let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
     ConfigSandbox {
-        _lock: lock,
-        _tmp_dir: tmp_dir,
         _xdg_guard: xdg_guard,
+        _tmp_dir: tmp_dir,
+        _lock: lock,
     }
 }
 

@@ -87,7 +87,7 @@ async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &A
                 edits_ns: vec![],
                 files: vec![file_path],
                 preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
-                    text: String::new(),
+                    text: "patch notes.txt".to_string(),
                 },
                 status: EditProposalStatus::Pending,
                 is_semantic: true,

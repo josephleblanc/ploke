@@ -15,6 +15,7 @@ mod result;
 pub(crate) mod utils;
 
 pub mod tool_query;
+pub mod type_graph;
 
 pub mod multi_embedding;
 
@@ -45,3 +46,8 @@ pub use query::{
 pub use result::typed_rows;
 
 pub use result::{CodeSnippet, QueryResult, ResultFormatter};
+pub use type_graph::{
+    TypeContainmentEdge, TypeContainmentKind, TypeContextCandidate, TypeContextOptions,
+    TypeContextRelation, TypeContextSeed, TypeRelationKind, TypeTargetPath, TypeUseCoordinate,
+    TypeUseRole, TypeUseRoot,
+};

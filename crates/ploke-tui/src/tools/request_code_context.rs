@@ -289,6 +289,18 @@ impl super::Tool for RequestCodeContextGat {
 }
 #[cfg(test)]
 mod gat_tests {
+    //! TUI tool coverage boundary for typed type context:
+    //!
+    //! - Quarantined: strict direct `request_code_context` matrix payload
+    //!   assertions. Production retrieval can return a matrix terminal as an
+    //!   ordinary search hit before type-context expansion reaches it, so these
+    //!   rows must not drive BM25 ranking or `top_k` changes.
+    //! - Ignored/live: `LiveIgnored` rows exercise the production model/tool
+    //!   path and assert `ToolCallRequested`, `ToolCallCompleted`, and payload
+    //!   type context. They do not trust final model wording as proof.
+    //! - Not covered here: exact DB coordinates, parser source coordinates, or
+    //!   unbounded recursive type grammar. Those stay in parser/DB matrix tests.
+
     use super::*;
 
     #[test]
@@ -407,5 +419,713 @@ mod gat_tests {
         });
         assert_eq!(expected, v);
         Ok(())
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[tokio::test]
+    #[ignore = "quarantined: do not force BM25/top_k behavior to satisfy matrix payload assertions"]
+    async fn request_code_context_tool_emits_matrix_type_context() -> color_eyre::Result<()> {
+        use crate::app::commands::harness::TestRuntime;
+        use crate::app_state::events::SystemEvent;
+        use crate::user_config::RetrievalStrategyUser;
+        use crate::{AppEvent, EventBus, EventBusCaps, EventPriority};
+        use ploke_core::ArcStr;
+        use ploke_core::rag_types::RequestCodeContextResult;
+        use ploke_core::tool_types::FunctionMarker;
+        use ploke_db::bm25_index::bm25_service::Bm25Status;
+        use ploke_embed::indexer::EmbeddingProcessor;
+        use ploke_llm::response::{FunctionCall, ToolCall};
+        use tokio::time::{Duration, sleep, timeout};
+        use uuid::Uuid;
+
+        let cases = ploke_test_utils::positive_type_shape_cases()
+            .iter()
+            .filter(|case| covers(case, ploke_test_utils::ShapePipelineCoverage::TuiTool))
+            .collect::<Vec<_>>();
+        assert!(
+            !cases.is_empty(),
+            "shared type-shape matrix should include direct TUI tool rows"
+        );
+
+        for case in cases {
+            let db = std::sync::Arc::new(ploke_test_utils::fresh_backup_fixture_db(
+                case.fixture.searchable_fixture(),
+            )?);
+            let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
+            rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
+                .await;
+            let state = rt.state_arc();
+            {
+                let mut cfg = state.config.write().await;
+                // Keep production `rag.top_k`; sparse avoids the mock dense embedder.
+                cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+                cfg.token_limit = 4096;
+            }
+            let rag = state
+                .rag
+                .as_ref()
+                .expect("test runtime should provide RagService")
+                .clone();
+            rag.bm25_rebuild().await?;
+            let mut ready_docs = None;
+            for _ in 0..50 {
+                match rag.bm25_status().await? {
+                    Bm25Status::Ready { docs } if docs > 0 => {
+                        ready_docs = Some(docs);
+                        break;
+                    }
+                    Bm25Status::Error(err) => panic!("BM25 rebuild failed: {err}"),
+                    _ => sleep(Duration::from_millis(50)).await,
+                }
+            }
+            assert!(
+                ready_docs.is_some(),
+                "BM25 index did not become ready before request_code_context for {}",
+                case.name
+            );
+
+            let owner_id = resolve_matrix_owner(&state.db, case.owner)?;
+            let expected_seed_ids =
+                resolve_matrix_expected_type_context_seed_ids(&state.db, case, owner_id)?;
+            let expected_target_id = resolve_matrix_target(&state.db, case.terminal)?;
+            let event_bus = std::sync::Arc::new(EventBus::new(EventBusCaps::default()));
+            let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+            let request_id = Uuid::new_v4();
+            let parent_id = Uuid::new_v4();
+            let call_id = ArcStr::from("matrix_request_code_context");
+            let ctx = super::super::Ctx {
+                state,
+                event_bus: std::sync::Arc::clone(&event_bus),
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+            };
+            let tool_call = ToolCall {
+                call_id: call_id.clone(),
+                call_type: FunctionMarker,
+                function: FunctionCall {
+                    name: ToolName::RequestCodeContext,
+                    arguments: serde_json::json!({
+                        "search_term": case.search_term,
+                        "token_budget": 4096
+                    })
+                    .to_string(),
+                },
+                extra_content: None,
+            };
+
+            super::super::process_tool(tool_call, ctx).await?;
+
+            let completed = timeout(Duration::from_secs(5), async {
+                loop {
+                    match event_rx.recv().await {
+                        Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id: event_request_id,
+                            call_id: event_call_id,
+                            content,
+                            ..
+                        })) if event_request_id == request_id && event_call_id == call_id => {
+                            break content;
+                        }
+                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                            request_id: event_request_id,
+                            call_id: event_call_id,
+                            error,
+                            ..
+                        })) if event_request_id == request_id && event_call_id == call_id => {
+                            panic!("request_code_context failed for {}: {error}", case.name);
+                        }
+                        Ok(_) => {}
+                        Err(err) => panic!(
+                            "event channel closed before ToolCallCompleted for {}: {err}",
+                            case.name
+                        ),
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!("timed out waiting for ToolCallCompleted for {}", case.name)
+            });
+
+            let result: RequestCodeContextResult = serde_json::from_str(&completed)?;
+            assert_matrix_payload_has_type_context(
+                case,
+                expected_target_id,
+                &expected_seed_ids,
+                &result,
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "live OpenRouter model/tool matrix test; requires OPENROUTER_API_KEY"]
+    async fn live_request_code_context_matrix_uses_production_tool_payload()
+    -> color_eyre::Result<()> {
+        use crate::app::commands::harness::TestRuntime;
+        use crate::app_state::events::SystemEvent;
+        use crate::app_state::handlers::chat::add_msg_immediate;
+        use crate::chat_history::MessageKind;
+        use crate::llm::manager::events::{ContextPlan, ContextPlanMessage};
+        use crate::llm::manager::{ChatEvt, LlmEvent, RequestMessage};
+        use crate::user_config::RetrievalStrategyUser;
+        use crate::{AppEvent, EventPriority};
+        use ploke_core::rag_types::RequestCodeContextResult;
+        use ploke_core::tool_types::ToolName;
+        use ploke_embed::indexer::EmbeddingProcessor;
+        use tokio::time::{Duration, timeout};
+        use uuid::Uuid;
+
+        if crate::test_harness::openrouter_env().is_none() {
+            eprintln!(
+                "skipping live_request_code_context_matrix_uses_production_tool_payload: OPENROUTER_API_KEY not set"
+            );
+            return Ok(());
+        }
+
+        let cases = ploke_test_utils::positive_type_shape_cases()
+            .iter()
+            .filter(|case| covers(case, ploke_test_utils::ShapePipelineCoverage::LiveIgnored))
+            .collect::<Vec<_>>();
+        assert!(
+            !cases.is_empty(),
+            "shared type-shape matrix should include ignored live rows"
+        );
+
+        for case in cases {
+            let db = std::sync::Arc::new(ploke_test_utils::fresh_backup_fixture_db(
+                case.fixture.searchable_fixture(),
+            )?);
+            let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock())
+                .spawn_state_manager()
+                .spawn_llm_manager();
+            rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
+                .await;
+            let state = rt.state_arc();
+            let event_bus = rt.event_bus_arc();
+            {
+                let mut cfg = state.config.write().await;
+                // Keep production `rag.top_k`; sparse avoids the mock dense embedder.
+                cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+                cfg.token_limit = 4096;
+                cfg.llm_timeout_secs = 90;
+            }
+            let rag = state
+                .rag
+                .as_ref()
+                .expect("test runtime should provide RagService")
+                .clone();
+            rag.bm25_rebuild().await?;
+
+            let owner_id = resolve_matrix_owner(&state.db, case.owner)?;
+            let expected_seed_ids =
+                resolve_matrix_expected_type_context_seed_ids(&state.db, case, owner_id)?;
+            let expected_target_id = resolve_matrix_target(&state.db, case.terminal)?;
+
+            let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+            let user_msg_id = Uuid::new_v4();
+            let request_msg_id = Uuid::new_v4();
+            let prompt = format!(
+                "Call request_code_context with search_term {:?} and token_budget 4096. Do not answer from memory.",
+                case.search_term
+            );
+            add_msg_immediate(
+                &state,
+                &event_bus,
+                user_msg_id,
+                prompt.clone(),
+                MessageKind::User,
+            )
+            .await;
+            event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(
+                ChatEvt::PromptConstructed {
+                    parent_id: user_msg_id,
+                    formatted_prompt: vec![RequestMessage::new_user(prompt)],
+                    context_plan: ContextPlan {
+                        plan_id: Uuid::new_v4(),
+                        parent_id: user_msg_id,
+                        estimated_total_tokens: 64,
+                        included_messages: vec![ContextPlanMessage {
+                            message_id: Some(user_msg_id),
+                            kind: MessageKind::User,
+                            estimated_tokens: 64,
+                        }],
+                        excluded_messages: Vec::new(),
+                        included_rag_parts: Vec::new(),
+                        rag_stats: None,
+                    },
+                },
+            )));
+            event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
+                parent_id: user_msg_id,
+                request_msg_id,
+            })));
+
+            let mut requested_tool_ids = None;
+            let mut completed_payload = None;
+            let mut saw_finished = false;
+            timeout(Duration::from_secs(120), async {
+                while !(requested_tool_ids.is_some() && completed_payload.is_some() && saw_finished)
+                {
+                    match event_rx.recv().await {
+                        Ok(AppEvent::System(SystemEvent::ToolCallRequested {
+                            request_id,
+                            tool_call,
+                            ..
+                        })) if tool_call.function.name == ToolName::RequestCodeContext => {
+                            if requested_tool_ids.is_none() {
+                                requested_tool_ids = Some((request_id, tool_call.call_id.clone()));
+                            }
+                        }
+                        Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            call_id,
+                            content,
+                            ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, expected_call_id)| {
+                                request_id == *expected_request_id
+                                    && call_id.as_ref() == expected_call_id.as_ref()
+                            },
+                        ) =>
+                        {
+                            if serde_json::from_str::<RequestCodeContextResult>(&content).is_ok() {
+                                completed_payload = Some(content);
+                            }
+                        }
+                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                            request_id,
+                            call_id,
+                            error,
+                            ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, expected_call_id)| {
+                                request_id == *expected_request_id
+                                    && call_id.as_ref() == expected_call_id.as_ref()
+                            },
+                        ) =>
+                        {
+                            panic!(
+                                "request_code_context failed in live matrix test for {}: {error}",
+                                case.name
+                            );
+                        }
+                        Ok(AppEvent::System(SystemEvent::ChatTurnFinished {
+                            request_id, ..
+                        })) if requested_tool_ids.as_ref().is_some_and(
+                            |(expected_request_id, _)| request_id == *expected_request_id,
+                        ) =>
+                        {
+                            saw_finished = true;
+                        }
+                        Ok(_) => {}
+                        Err(err) => panic!(
+                            "event channel closed before live matrix completion for {}: {err}",
+                            case.name
+                        ),
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out waiting for live request_code_context events for {}",
+                    case.name
+                )
+            });
+
+            let result: RequestCodeContextResult =
+                serde_json::from_str(&completed_payload.expect("tool payload"))?;
+            assert_matrix_payload_has_type_context(
+                case,
+                expected_target_id,
+                &expected_seed_ids,
+                &result,
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn assert_matrix_payload_has_type_context(
+        case: &ploke_test_utils::TypeShapeCase,
+        expected_target_id: uuid::Uuid,
+        expected_seed_ids: &[uuid::Uuid],
+        result: &ploke_core::rag_types::RequestCodeContextResult,
+    ) {
+        let expected_relation = type_context_kind(case.type_context_relation);
+        assert!(
+            result.ok,
+            "{} returned error payload: {result:#?}",
+            case.name
+        );
+        assert!(
+            result.context.iter().any(|context| {
+                context.id == expected_target_id
+                    && context.type_context.is_some_and(|info| {
+                        info.relation == expected_relation
+                            && expected_seed_ids.contains(&info.seed_id)
+                            && info.distance == case.depth
+                    })
+            }),
+            "{} should expose traversal-derived type_context for target {expected_target_id} with distance {} in request_code_context payload; result: {result:#?}",
+            case.name,
+            case.depth
+        );
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn covers(
+        case: &ploke_test_utils::TypeShapeCase,
+        coverage: ploke_test_utils::ShapePipelineCoverage,
+    ) -> bool {
+        case.coverage.iter().any(|candidate| *candidate == coverage)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn resolve_matrix_target(
+        db: &ploke_db::Database,
+        selector: ploke_test_utils::TargetSelector,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        match selector {
+            ploke_test_utils::TargetSelector::StructByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *struct {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::StructInModule { module_path, name } => {
+                one_uuid(db, &struct_in_module_query(module_path, name))
+            }
+            ploke_test_utils::TargetSelector::EnumByName { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *enum {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::TraitInModule { module_path, name } => {
+                one_uuid(db, &trait_in_module_query(module_path, name))
+            }
+            ploke_test_utils::TargetSelector::TraitInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &trait_in_file_query(name), file_suffix)
+            }
+            ploke_test_utils::TargetSelector::TypeAlias { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *type_alias {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            ploke_test_utils::TargetSelector::Union { name } => one_uuid(
+                db,
+                &format!(r#"?[id] := *union {{ id, name: "{name}" @ 'NOW' }}"#),
+            ),
+            other => Err(color_eyre::eyre::eyre!(
+                "TUI matrix resolver does not materialize target selector {other:?}"
+            )),
+        }
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn type_context_kind(
+        relation: ploke_db::TypeContextRelation,
+    ) -> ploke_core::rag_types::TypeContextKind {
+        match relation {
+            ploke_db::TypeContextRelation::SameResolvedType => {
+                ploke_core::rag_types::TypeContextKind::SameResolvedType
+            }
+            ploke_db::TypeContextRelation::UsesTypeNested => {
+                ploke_core::rag_types::TypeContextKind::UsesTypeNested
+            }
+            ploke_db::TypeContextRelation::TypeDefinitionImpact => {
+                ploke_core::rag_types::TypeContextKind::TypeDefinitionImpact
+            }
+            ploke_db::TypeContextRelation::ImplOfTrait => {
+                ploke_core::rag_types::TypeContextKind::ImplOfTrait
+            }
+            ploke_db::TypeContextRelation::ImplSelfType => {
+                ploke_core::rag_types::TypeContextKind::ImplSelfType
+            }
+            ploke_db::TypeContextRelation::AliasExpansion => {
+                ploke_core::rag_types::TypeContextKind::AliasExpansion
+            }
+            ploke_db::TypeContextRelation::TraitBound => {
+                ploke_core::rag_types::TypeContextKind::TraitBound
+            }
+            ploke_db::TypeContextRelation::IteratorSurface => {
+                ploke_core::rag_types::TypeContextKind::IteratorSurface
+            }
+            ploke_db::TypeContextRelation::ConstGenericAlias => {
+                ploke_core::rag_types::TypeContextKind::ConstGenericAlias
+            }
+        }
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn resolve_matrix_expected_type_context_seed_ids(
+        db: &ploke_db::Database,
+        case: &ploke_test_utils::TypeShapeCase,
+        owner_id: uuid::Uuid,
+    ) -> color_eyre::Result<Vec<uuid::Uuid>> {
+        let mut seeds = vec![owner_id];
+        match case.owner {
+            ploke_test_utils::OwnerSelector::FieldByStructInModule {
+                module_path,
+                struct_name,
+                ..
+            } => {
+                seeds.push(one_uuid(
+                    db,
+                    &struct_in_module_query(module_path, struct_name),
+                )?);
+            }
+            ploke_test_utils::OwnerSelector::FieldByStructInFile {
+                file_suffix,
+                struct_name,
+                ..
+            } => {
+                seeds.push(one_uuid_by_file_suffix(
+                    db,
+                    &struct_in_file_query(struct_name),
+                    file_suffix,
+                )?);
+            }
+            _ => {}
+        }
+        seeds.sort();
+        seeds.dedup();
+        Ok(seeds)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn resolve_matrix_owner(
+        db: &ploke_db::Database,
+        selector: ploke_test_utils::OwnerSelector,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        match selector {
+            ploke_test_utils::OwnerSelector::FunctionInModule { module_path, name } => {
+                one_uuid(db, &function_in_module_query(module_path, name))
+            }
+            ploke_test_utils::OwnerSelector::FunctionInFile { file_suffix, name } => {
+                one_uuid_by_file_suffix(db, &function_in_file_query(name), file_suffix)
+            }
+            ploke_test_utils::OwnerSelector::MethodByImplSelf { self_type, method } => {
+                one_uuid(db, &method_by_impl_self_query(self_type, method))
+            }
+            ploke_test_utils::OwnerSelector::MethodByImplTraitAndSelf {
+                trait_name,
+                self_type,
+                method,
+            } => one_uuid(
+                db,
+                &method_by_impl_trait_self_query(trait_name, self_type, method),
+            ),
+            ploke_test_utils::OwnerSelector::FieldByStructInModule {
+                module_path,
+                struct_name,
+                field_index,
+            } => {
+                let struct_id = one_uuid(db, &struct_in_module_query(module_path, struct_name))?;
+                one_uuid(
+                    db,
+                    &format!(
+                        r#"?[id] :=
+                            *field {{
+                                id,
+                                owner_id: to_uuid("{struct_id}"),
+                                index: {field_index} @ 'NOW'
+                            }}"#
+                    ),
+                )
+            }
+            ploke_test_utils::OwnerSelector::FieldByStructInFile {
+                file_suffix,
+                struct_name,
+                field_index,
+            } => {
+                let struct_id =
+                    one_uuid_by_file_suffix(db, &struct_in_file_query(struct_name), file_suffix)?;
+                one_uuid(
+                    db,
+                    &format!(
+                        r#"?[id] :=
+                            *field {{
+                                id,
+                                owner_id: to_uuid("{struct_id}"),
+                                index: {field_index} @ 'NOW'
+                            }}"#
+                    ),
+                )
+            }
+            other => Err(color_eyre::eyre::eyre!(
+                "TUI matrix resolver does not materialize owner selector {other:?}"
+            )),
+        }
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn one_uuid(db: &ploke_db::Database, script: &str) -> color_eyre::Result<uuid::Uuid> {
+        let rows = db.raw_query(script)?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected exactly one UUID for query:\n{script}\nrows: {:#?}",
+            rows.rows
+        );
+        Ok(ploke_db::to_uuid(&rows.rows[0][0])?)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn one_uuid_by_file_suffix(
+        db: &ploke_db::Database,
+        script: &str,
+        file_suffix: &str,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        let rows = db.raw_query(script)?;
+        let matching = rows
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let file_path = match &row[1] {
+                    cozo::DataValue::Str(path) => path.as_str(),
+                    _ => return None,
+                };
+                file_path.ends_with(file_suffix).then(|| row[0].clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "expected exactly one row in file suffix {file_suffix}; rows: {:#?}",
+            rows.rows
+        );
+        Ok(ploke_db::to_uuid(&matching[0])?)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn module_path(items: &[&str]) -> String {
+        format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|item| format!("\"{item}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn function_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *function {{ id, name: "{name}", module_id @ 'NOW' }},
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn function_in_file_query(name: &str) -> String {
+        item_in_file_query("function", name)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn struct_in_file_query(name: &str) -> String {
+        item_in_file_query("struct", name)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn item_in_file_query(relation: &str, name: &str) -> String {
+        format!(
+            r#"?[id, file_path] :=
+                *{relation} {{ id, name: "{name}" @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *file_mod {{ owner_id: module_id, file_path @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn struct_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *struct {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn trait_in_file_query(name: &str) -> String {
+        item_in_file_query("trait", name)
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
+        let module_path = module_path(module_path_items);
+        format!(
+            r#"?[id] :=
+                *module {{ id: module_id, path: {module_path} @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: module_id,
+                    target_id: id,
+                    relation_kind: "Contains" @ 'NOW'
+                }},
+                *trait {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    fn method_by_impl_trait_self_query(trait_name: &str, self_type: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type}" @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: trait_type_id,
+                    role: "ImplTrait" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: trait_type_id,
+                    target_id: trait_target_id,
+                    relation_kind: "Trait" @ 'NOW'
+                }},
+                *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }}"#
+        )
     }
 }

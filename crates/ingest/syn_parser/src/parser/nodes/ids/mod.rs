@@ -14,10 +14,23 @@ use super::*;
 // and the TypedNodeIdGet trait from `internal` here later.
 
 // --- type-bearing ids ---
+pub(in crate::parser) use internal::StructuralTypeId;
 pub use internal::{
-    ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
-    ImportNodeId, MacroNodeId, MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId,
-    StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, UnresolvedNodeId,
+    AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+    TraitTypeSourceId, TraitTypeTargetId, TryFromAnyTypeError, TryFromOrdinaryTypeDefError,
+    TryFromOrdinaryTypeSourceError, TryFromOrdinaryTypeTargetError, TryFromOrdinaryTypeUseError,
+    TryFromTraitTypeSourceError, TryFromTraitTypeTargetError, TryFromTypeSourceError, TypeSourceId,
+};
+pub use internal::{
+    ArrayTypeId, FunctionTypeId, ImplTraitTypeId, InferredTypeId, MacroTypeId, NamedTypeId,
+    NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, TraitBoundTypeId,
+    TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
+};
+pub use internal::{
+    ConstGenericParamNodeId, ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId,
+    GenericParamNodeId, ImplNodeId, ImportNodeId, LifetimeGenericParamNodeId, MacroNodeId,
+    MethodNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId, StaticNodeId, StructNodeId,
+    TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId, UnresolvedNodeId,
     VariantNodeId,
 };
 // --- traits ---
@@ -36,12 +49,17 @@ pub use internal::{ToCozoUuid, ToUuidString};
 // pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
 // Re-export category enums
-pub use internal::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+pub use internal::{
+    AnyGenericParamId, AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, GenericParamOwnerId,
+    PrimaryNodeId, SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
+};
 // --- macro rules ---
 // --- error types ---
 pub use internal::{
-    AnyNodeIdConversionError, TryFromAssociatedItemError, TryFromPrimaryError,
-    TryFromSecondaryError,
+    AnyNodeIdConversionError, GenericParamIdRefinementError, TryFromAnyGenericParamError,
+    TryFromAssociatedItemError, TryFromAssociatedItemOwnerError, TryFromGenericParamOwnerError,
+    TryFromPrimaryError, TryFromSecondaryError, TryFromSelfScopeOwnerError,
+    TryFromTypeUseOwnerError,
 };
 
 // --- semi-private ---

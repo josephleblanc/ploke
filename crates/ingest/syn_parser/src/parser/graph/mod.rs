@@ -20,6 +20,8 @@ use crate::parser::diagnostics::{
 };
 use crate::parser::nodes::*;
 use crate::utils::{LogStyle, LogStyleDebug};
+#[cfg(feature = "typed_type_graph")]
+use ploke_core::IdTrait;
 use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
 use serde_json::json;
@@ -561,10 +563,24 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     }
 
     fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
+        #[cfg(feature = "typed_type_graph")]
+        {
+            return self
+                .type_graph()
+                .iter()
+                .find(|t| t.id().uuid() == type_id.uuid());
+        }
+        #[cfg(not(feature = "typed_type_graph"))]
         self.type_graph().iter().find(|t| t.id == type_id)
     }
 
     fn get_type_kind(&self, type_id: TypeId) -> Option<&TypeKind> {
+        #[cfg(feature = "typed_type_graph")]
+        {
+            let _ = type_id;
+            return None;
+        }
+        #[cfg(not(feature = "typed_type_graph"))]
         self.resolve_type(type_id).map(|t| &t.kind)
     }
 

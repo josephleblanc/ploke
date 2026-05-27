@@ -32,6 +32,8 @@ pub fn openrouter_url() -> reqwest::Url {
     OPENROUTER_URL.clone()
 }
 
+pub const PLOKE_WORKSPACE_REGISTRY_PATH_ENV: &str = "PLOKE_WORKSPACE_REGISTRY_PATH";
+
 #[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
     NeoVim,
@@ -482,7 +484,7 @@ impl WorkspaceRegistry {
 
     pub fn default_registry_path() -> std::path::PathBuf {
         if let Some(path) =
-            std::env::var_os("PLOKE_WORKSPACE_REGISTRY_PATH").filter(|path| !path.is_empty())
+            std::env::var_os(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).filter(|path| !path.is_empty())
         {
             return std::path::PathBuf::from(path);
         }

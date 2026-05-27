@@ -13,7 +13,9 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::fixture_dbs::WS_FIXTURE_01_CANONICAL;
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{
+    PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, fresh_backup_fixture_db, workspace_root,
+};
 use ploke_tui as tui;
 use ploke_tui::app_state::IndexTargetDir;
 use tokio::sync::{Mutex, RwLock};
@@ -25,7 +27,9 @@ use tui::app_state::{
 };
 use tui::chat_history::ChatHistory;
 use tui::event_bus::{EventBus, EventBusCaps};
-use tui::user_config::{WorkspaceRegistry, WorkspaceRegistryEntry};
+use tui::user_config::{
+    PLOKE_WORKSPACE_REGISTRY_PATH_ENV, WorkspaceRegistry, WorkspaceRegistryEntry,
+};
 
 fn fixture_lock() -> &'static StdMutex<()> {
     static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
@@ -34,19 +38,24 @@ fn fixture_lock() -> &'static StdMutex<()> {
 
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
+    old_snapshot_fixture_dir: Option<String>,
     old_registry_path: Option<String>,
 }
 
 impl XdgConfigHomeGuard {
     fn set_to(path: &Path) -> Self {
         let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_registry_path = std::env::var("PLOKE_WORKSPACE_REGISTRY_PATH").ok();
+        let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+        let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+        let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
         unsafe {
+            std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             std::env::set_var("XDG_CONFIG_HOME", path);
-            std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+            std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
         }
         Self {
             old_xdg,
+            old_snapshot_fixture_dir,
             old_registry_path,
         }
     }
@@ -56,11 +65,11 @@ impl Drop for XdgConfigHomeGuard {
     fn drop(&mut self) {
         if let Some(old_registry_path) = self.old_registry_path.take() {
             unsafe {
-                std::env::set_var("PLOKE_WORKSPACE_REGISTRY_PATH", old_registry_path);
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old_registry_path);
             }
         } else {
             unsafe {
-                std::env::remove_var("PLOKE_WORKSPACE_REGISTRY_PATH");
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
             }
         }
         if let Some(old_xdg) = self.old_xdg.take() {
@@ -70,6 +79,15 @@ impl Drop for XdgConfigHomeGuard {
         } else {
             unsafe {
                 std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+            unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
             }
         }
     }
@@ -120,6 +138,19 @@ fn write_workspace_registry_entry(
     registry
         .save_to_path(&WorkspaceRegistry::default_registry_path())
         .expect("save workspace registry");
+}
+
+fn write_current_schema_workspace_snapshot(snapshot_file: &Path) {
+    if let Some(parent) = snapshot_file.parent() {
+        std::fs::create_dir_all(parent).expect("create snapshot dir");
+    }
+    if snapshot_file.exists() {
+        std::fs::remove_file(snapshot_file).expect("remove stale workspace snapshot");
+    }
+    let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)
+        .expect("load canonical workspace fixture");
+    db.write_backup_to_path(snapshot_file)
+        .expect("write current-schema workspace snapshot");
 }
 
 fn function_node_id(db: &Database, function_name: &str) -> uuid::Uuid {
@@ -314,17 +345,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
     let registry_snapshot = xdg_dir
         .path()
         .join("ploke/data/ws_fixture_01_source.sqlite");
-    std::fs::create_dir_all(
-        registry_snapshot
-            .parent()
-            .expect("workspace snapshot parent should exist"),
-    )
-    .expect("create snapshot dir");
-    let fixture_path = WS_FIXTURE_01_CANONICAL
-        .checked_path()
-        .expect("canonical workspace snapshot should validate")
-        .into_path();
-    std::fs::copy(&fixture_path, &registry_snapshot).expect("copy canonical workspace snapshot");
+    write_current_schema_workspace_snapshot(&registry_snapshot);
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,
@@ -376,7 +397,7 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
         .await
         .expect("workspace remove should succeed");
 
-    std::fs::copy(&fixture_path, &registry_snapshot).expect("restore canonical workspace snapshot");
+    write_current_schema_workspace_snapshot(&registry_snapshot);
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,
@@ -556,17 +577,7 @@ async fn workspace_load_crates_conflict_preserves_runtime_state() {
     let registry_snapshot = xdg_dir
         .path()
         .join("ploke/data/ws_fixture_01_source.sqlite");
-    std::fs::create_dir_all(
-        registry_snapshot
-            .parent()
-            .expect("workspace snapshot parent should exist"),
-    )
-    .expect("create snapshot dir");
-    let fixture_path = WS_FIXTURE_01_CANONICAL
-        .checked_path()
-        .expect("canonical workspace snapshot should validate")
-        .into_path();
-    std::fs::copy(&fixture_path, &registry_snapshot).expect("copy canonical workspace snapshot");
+    write_current_schema_workspace_snapshot(&registry_snapshot);
     write_workspace_registry_entry(
         &registry_snapshot,
         &workspace_root,

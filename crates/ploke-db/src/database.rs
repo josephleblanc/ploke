@@ -45,6 +45,30 @@ lazy_static! {
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 pub const ACTIVE_EMBEDDING_SET_REL: &str = "active_embedding_set";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeRelationImportMode {
+    CurrentSchema,
+    PlainFixture,
+}
+
+fn is_typed_type_graph_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "type_relation"
+            | "type_use"
+            | "type_contains"
+            | "type_use_param_slot"
+            | "type_use_field_slot"
+            | "type_use_trait_super_slot"
+            | "type_use_generic_bound_slot"
+            | "type_use_generic_param_bound_slot"
+            | "type_use_where_subject_slot"
+            | "type_use_where_bound_slot"
+            | "type_use_where_generic_param_bound_slot"
+            | "type_use_associated_type_bound_slot"
+    )
+}
+
 fn snippet_context_nodes(
     query_result: QueryResult,
 ) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
@@ -1385,6 +1409,8 @@ target[id] := input[id_str], id = to_uuid(id_str)
     }
 
     pub fn new_with_active_set(db: Db<MemStorage>, active_set: Arc<RwLock<EmbeddingSet>>) -> Self {
+        crate::type_graph::fixed_rules::register_ploke_fixed_rules(&db)
+            .expect("register ploke fixed rules");
         Self {
             db,
             active_embedding_set: active_set,
@@ -1419,15 +1445,50 @@ target[id] := input[id_str], id = to_uuid(id_str)
         Ok(())
     }
 
-    /// Relation names for [`cozo::Db::import_from_backup`] when the `.sqlite` snapshot may omit
-    /// `compilation_unit*` tables (older fixtures). Call [`Self::ensure_compilation_unit_relations`]
-    /// after import.
-    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+    /// Current-schema relation names for [`cozo::Db::import_from_backup`] when the `.sqlite`
+    /// snapshot may omit `compilation_unit*` tables. Call
+    /// [`Self::ensure_compilation_unit_relations`] after import.
+    pub fn prior_rels_for_current_schema_backup_import(&self) -> Result<Vec<String>, PlokeError> {
         Ok(self
             .relations_vec()?
             .into_iter()
             .filter(|r| !r.starts_with("compilation_unit"))
             .collect())
+    }
+
+    /// Relation names for active plain fixtures that are shared between the legacy and typed
+    /// type-resolution build profiles.
+    ///
+    /// In the normal profile this includes `resolved_type_use`. In the `typed_type_graph`
+    /// profile, active non-typed fixtures intentionally do not claim typed type graph coverage, so
+    /// typed type graph relations remain empty after import. Typed graph corpus fixtures must use
+    /// [`Self::prior_rels_for_typed_type_graph_backup_import`] instead.
+    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        #[cfg(not(feature = "typed_type_graph"))]
+        {
+            self.prior_rels_for_current_schema_backup_import()
+        }
+
+        #[cfg(feature = "typed_type_graph")]
+        {
+            let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+            relations.retain(|r| !is_typed_type_graph_relation(r));
+            Ok(relations)
+        }
+    }
+
+    /// Relation names for source-pinned typed type graph backup fixtures.
+    pub fn prior_rels_for_typed_type_graph_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        #[cfg(feature = "typed_type_graph")]
+        {
+            self.prior_rels_for_current_schema_backup_import()
+        }
+        #[cfg(not(feature = "typed_type_graph"))]
+        {
+            Err(PlokeError::from(DbError::Cozo(
+                "typed type graph backup import requires the typed_type_graph feature".to_string(),
+            )))
+        }
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
@@ -2174,6 +2235,26 @@ target[id] := input[id_str], id = to_uuid(id_str)
     /// Import a backup in two passes so embedding-set metadata is read first, allowing per-set
     /// vector relations to be created before vector rows are imported.
     pub fn import_backup_with_embeddings(&self, backup: &Path) -> Result<(), DbError> {
+        self.import_backup_with_embeddings_inner(backup, TypeRelationImportMode::CurrentSchema)
+    }
+
+    /// Import an embedding backup for an active non-typed fixture.
+    ///
+    /// This uses the same profile-neutral graph relation selection as
+    /// [`Self::prior_rels_for_plain_backup_import`]. Typed type graph corpus backups must use
+    /// [`Self::import_backup_with_embeddings`] so their typed graph relations are imported.
+    pub fn import_plain_fixture_backup_with_embeddings(
+        &self,
+        backup: &Path,
+    ) -> Result<(), DbError> {
+        self.import_backup_with_embeddings_inner(backup, TypeRelationImportMode::PlainFixture)
+    }
+
+    fn import_backup_with_embeddings_inner(
+        &self,
+        backup: &Path,
+        type_relation_import: TypeRelationImportMode,
+    ) -> Result<(), DbError> {
         // Ensure base relations exist in the fresh DB.
         self.ensure_embedding_set_relation()
             .map_err(|e| DbError::Cozo(e.to_string()))?;
@@ -2226,9 +2307,14 @@ target[id] := input[id_str], id = to_uuid(id_str)
             }
         }
 
-        let mut relations: Vec<String> = self
-            .relations_vec()
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let mut relations: Vec<String> = match type_relation_import {
+            TypeRelationImportMode::CurrentSchema => self
+                .prior_rels_for_current_schema_backup_import()
+                .map_err(|e| DbError::Cozo(e.to_string()))?,
+            TypeRelationImportMode::PlainFixture => self
+                .prior_rels_for_plain_backup_import()
+                .map_err(|e| DbError::Cozo(e.to_string()))?,
+        };
         relations.retain(|r| r != ACTIVE_EMBEDDING_SET_REL);
         for set in &sets {
             relations.push(set.rel_name().as_ref().to_string());
@@ -2237,10 +2323,6 @@ target[id] := input[id_str], id = to_uuid(id_str)
         // Deduplicate to avoid duplicate import entries.
         let mut uniq = HashSet::new();
         relations.retain(|r| uniq.insert(r.clone()));
-
-        // Snapshots may omit compilation-unit relations; importing them by name fails on legacy
-        // backups. Recreate after import via `ensure_compilation_unit_relations`.
-        relations.retain(|r| !r.starts_with("compilation_unit"));
 
         self.db
             .import_from_backup(backup, &relations)
@@ -3497,12 +3579,22 @@ mod tests {
         let fixture_path = fixture.checked_path()?.into_path();
         match fixture.import_mode {
             ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
-                let prior_rels = db.prior_rels_for_plain_backup_import()?;
+                let prior_rels = match fixture.status {
+                    ploke_test_utils::fixture_dbs::FixtureStatus::TypedTypeGraph => {
+                        db.prior_rels_for_typed_type_graph_backup_import()?
+                    }
+                    _ => db.prior_rels_for_plain_backup_import()?,
+                };
                 db.import_from_backup(&fixture_path, &prior_rels)
                     .map_err(DbError::from)?;
             }
             ploke_test_utils::fixture_dbs::FixtureImportMode::BackupWithEmbeddings => {
-                db.import_backup_with_embeddings(&fixture_path)?;
+                match fixture.status {
+                    ploke_test_utils::fixture_dbs::FixtureStatus::TypedTypeGraph => {
+                        db.import_backup_with_embeddings(&fixture_path)?
+                    }
+                    _ => db.import_plain_fixture_backup_with_embeddings(&fixture_path)?,
+                }
             }
         }
         db.ensure_compilation_unit_relations()?;

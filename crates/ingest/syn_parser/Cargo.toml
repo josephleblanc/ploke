@@ -69,6 +69,14 @@ anyhow = "1.0"
 name = "parse_pipeline"
 harness = false
 
+[[bench]]
+name = "type_resolution"
+harness = false
+
+[[bench]]
+name = "type_resolution_corpus"
+harness = false
+
 # Feature flags
 [features]
 default = [
@@ -85,6 +93,7 @@ verbose_debug = []
 temp_target = []
 not_wip_marker = []
 type_bearing_ids = []
+typed_type_graph = []
 ghost_data_graphs = []
 validate = []
 public_path = []

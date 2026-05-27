@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 
 use tokio::sync::Mutex as TokioMutex;
 
+/// Shared lock for integration tests that mutate process-global config and registry env.
 pub(crate) fn workspace_registry_env_lock() -> &'static TokioMutex<()> {
     static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| TokioMutex::new(()))

@@ -262,7 +262,7 @@ fn semantic_node_type_schema_property() -> serde_json::Value {
         "type": "string",
         "enum": values,
         "description": format!(
-            "Semantic node type accepted by apply_code_edit. Must be one of: {}",
+            "Semantic node type accepted by apply_code_edit. Methods are valid direct targets. Must be one of: {}",
             values.join(", ")
         ),
     })

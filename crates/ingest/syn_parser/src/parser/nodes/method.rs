@@ -2,9 +2,10 @@
 // Proc-macro `ExpectedData` expands `use` items at module scope; keep this file separate from
 // `function.rs` (which also derives `ExpectedData`) to avoid duplicate imports.
 
-use crate::parser::types::GenericParamNode;
+use crate::parser::type_slots::OrdinaryTypeUseId;
+use crate::parser::types::{GenericParamNode, TypeWherePredicate};
 use derive_test_helpers::ExpectedData;
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -17,8 +18,10 @@ pub struct MethodNode {
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParamData>,
-    pub return_type: Option<TypeId>,
+    pub return_type: Option<OrdinaryTypeUseId>,
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub body: Option<String>,

@@ -39,6 +39,10 @@ use ploke_tui::app_state::core::{
 };
 use tokio::sync::RwLock;
 
+fn stable_preview_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("/workspace/Cargo.toml")
+}
+
 fn buffer_to_lines(term: &Terminal<TestBackend>) -> Vec<String> {
     let buffer = term.backend().buffer();
     let mut out = Vec::new();
@@ -164,7 +168,7 @@ async fn make_state_with_ids(
                     proposed_at_ms: ts,
                     edits: vec![],
                     edits_ns: vec![],
-                    files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
+                    files: vec![stable_preview_path()],
                     preview,
                     status: EditProposalStatus::Pending,
                     is_semantic: true,
@@ -309,7 +313,7 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
             id,
             DiffPreview::CodeBlocks {
                 per_file: vec![ploke_tui::app_state::core::BeforeAfter {
-                    file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
+                    file_path: stable_preview_path(),
                     before: "fn a() {}\nfn b() {}".into(),
                     after: "fn a() {}\nfn c() {}".into(),
                 }],
@@ -349,7 +353,7 @@ fn approvals_overlay_renders_codeblocks_preview_expanded_includes_unchanged_line
             id,
             DiffPreview::CodeBlocks {
                 per_file: vec![ploke_tui::app_state::core::BeforeAfter {
-                    file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
+                    file_path: stable_preview_path(),
                     before: "fn a() {}\nfn b() {}".into(),
                     after: "fn a() {}\nfn c() {}".into(),
                 }],

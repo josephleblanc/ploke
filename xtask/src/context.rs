@@ -176,7 +176,7 @@ impl DatabasePool {
 
     fn load_plain_backup(path: &Path) -> Result<Arc<Database>, XtaskError> {
         let db = Database::init_with_schema()?;
-        let prior = db.prior_rels_for_plain_backup_import()?;
+        let prior = db.prior_rels_for_current_schema_backup_import()?;
         db.import_from_backup(path, &prior)
             .map_err(|e| XtaskError::Database(e.to_string()))?;
         db.ensure_compilation_unit_relations()
@@ -236,7 +236,7 @@ impl DatabasePool {
                         e
                     ))
                     .with_recovery(
-                        "Ensure the backup file exists (copy a registered fixture from tests/backup_dbs/ if needed). Use an absolute path or a path relative to the current working directory.",
+                        "Ensure the backup file exists. For registered test fixtures, run `cargo xtask fixtures ensure --snapshots` to stage committed seeds into the shared snapshot directory.",
                     )
                 })?;
 

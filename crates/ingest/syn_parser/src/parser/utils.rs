@@ -1,9 +1,9 @@
 use quote::ToTokens;
 use syn::{
-    ConstParam, Field, ImplItemFn, ItemConst, ItemEnum, ItemExternCrate, ItemFn, ItemImpl,
-    ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUnion, ItemUse, Lifetime,
-    LifetimeParam, TraitItemFn, TypeParam, UseGlob, UseName, UseRename, UseTree, Variant,
-    spanned::Spanned,
+    ConstParam, Field, ImplItemConst, ImplItemFn, ImplItemType, ItemConst, ItemEnum,
+    ItemExternCrate, ItemFn, ItemImpl, ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait,
+    ItemType, ItemUnion, ItemUse, Lifetime, LifetimeParam, TraitItemConst, TraitItemFn,
+    TraitItemType, TypeParam, UseGlob, UseName, UseRename, UseTree, Variant, spanned::Spanned,
 };
 
 // ============================================================================
@@ -438,8 +438,12 @@ impl ExtractSpan for ItemFn {}
 impl ExtractSpan for ItemEnum {}
 impl ExtractSpan for ItemImpl {}
 impl ExtractSpan for ImplItemFn {}
+impl ExtractSpan for ImplItemConst {}
+impl ExtractSpan for ImplItemType {}
 impl ExtractSpan for ItemTrait {}
 impl ExtractSpan for TraitItemFn {}
+impl ExtractSpan for TraitItemConst {}
+impl ExtractSpan for TraitItemType {}
 impl ExtractSpan for ItemType {}
 impl ExtractSpan for ItemUnion {}
 impl ExtractSpan for ItemUse {}
