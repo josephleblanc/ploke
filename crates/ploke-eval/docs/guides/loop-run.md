@@ -10,7 +10,7 @@ git worktree add -b \
 
 First build ploke-eval in the new directory.
 
-cd ~/.ploke-eval/worktrees/p1-gemini35-flash-direct-15g2x3-par2-20260526-01
+cd ~/.ploke-eval/worktrees/p1-gemini35-flash-direct-15g2x3-par2-20260526-02
 cargo build -p ploke-eval
 
 Use the profile from the last run. This can be found with:
@@ -26,6 +26,6 @@ That profile can be edited or changed as necessary, but serves as a good baselin
 
 Run the setup for the loop:
 ./target/debug/ploke-eval loop prototype1-setup \
-    --campaign p1-gemini35-flash-direct-15g2x3-par2-20260526-01 \
-    --profile  \
-    --format j
+    --campaign p1-gemini35-flash-direct-15g2x3-par2-20260526-02 \
+    --profile ~/.ploke-eval/profiles/prototype1/p1-gemini35-flash-direct-15g2x3-par2-20260526-02.toml \
+    --format json
