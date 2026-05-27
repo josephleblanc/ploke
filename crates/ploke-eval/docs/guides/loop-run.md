@@ -2,8 +2,8 @@
 
 ## New worktree
 git worktree add -b \
-  seed-p1-gemini35-flash-direct-15g2x3-par2-20260526-164443 \
-  ~/.ploke-eval/worktrees/p1-gemini35-flash-direct-15g2x3-par2-20260526-164443 \
+  p1-gemini35-flash-direct-15g2x3-par2-20260526-01 \
+  ~/.ploke-eval/worktrees/p1-gemini35-flash-direct-15g2x3-par2-20260526-01 \
   HEAD
 
 ## Setup the run-profile.json
