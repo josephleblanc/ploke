@@ -1171,9 +1171,11 @@ impl BroadHarnessRequest {
             self.workspace.display_candidate_workspace(),
             self.evaluation.scope.benchmark_name()
         ));
-        prompt.push_str(
-            "Treat the candidate checkout as the write target and command root. Resolve ordinary file paths there; read only the explicitly listed evidence paths outside it. When running cargo, prefer root-level `cargo check` or `cargo test` unless you have confirmed a package name in the candidate checkout.\n",
-        );
+        // prompt.push_str(
+        //     "Treat the candidate checkout as the write target and command root. Resolve ordinary file paths there; read only the explicitly listed evidence paths outside it. When running cargo, prefer root-level `cargo check` or `cargo test` unless you have confirmed a package name in the candidate checkout.\n",
+        // );
+
+        prompt.push_str("All files in this directory may be read.");
         if let Some(evaluations) = self.evidence_root(EvidenceRootKind::Evaluations) {
             prompt.push_str(&format!(
                 "Past benchmark results live under `{}`.\n",
@@ -1193,7 +1195,7 @@ impl BroadHarnessRequest {
             ));
         }
         prompt.push_str(
-            "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. Stage the change in the candidate checkout outside the protected core. Protocol diagnoses are guidance, not hard edit targets.\n",
+            "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. The provided evaluations are guidance, not hard edit targets.\n",
         );
         prompt
     }
@@ -1520,10 +1522,6 @@ mod tests {
         assert!(prompt.contains(
             "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`."
         ));
-        assert!(
-            prompt
-                .contains("Stage the change in the candidate checkout outside the protected core")
-        );
         assert!(!prompt.contains("Modify any part of the codebase"));
         assert!(prompt.contains("Protocol diagnoses are guidance, not hard edit targets"));
         assert!(!prompt.contains("## Latest Evidence Digest"));

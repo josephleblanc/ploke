@@ -10,6 +10,35 @@ It intentionally starts at the CLI command boundary and follows the live code
 one step at a time. Keep this document narrow: it should describe the current
 execution path, not the whole Prototype 1 architecture.
 
+## Prerequisites
+
+`prototype1-step` does not bootstrap a Prototype 1 run. It controls an already
+prepared parent checkout. In the normal path, that means `loop prototype1-setup`
+has already completed successfully from the worktree that will become the
+parent checkout.
+
+At minimum, the active checkout and campaign must already have:
+
+- a committed parent identity at `.ploke/prototype1/parent_identity.json`;
+- a campaign manifest at the campaign path named by that parent identity;
+- a campaign config that resolves its dataset sources, model route, instance
+  root, batch root, required procedures, and eval/protocol policies;
+- an admitted Prototype 1 run profile at `prototype1/run-profile.toml` beside
+  the campaign manifest;
+- a matching `prototype1/run-profile.commitment.json` digest for that admitted
+  profile;
+- a generation-0 parent node registered for the campaign and active checkout.
+
+The command must be run with `--repo-root` pointing at that active parent
+checkout, or from that checkout as the current directory. A child worktree is
+not enough, because child worktrees do not carry parent control state.
+
+The baseline eval, baseline protocol, child planning, child execution,
+selection, and handoff phases do not all need to be complete before
+`prototype1-step` runs. Those are the phases `prototype1-step` diagnoses and
+advances. Provider credentials, prompt files, or protocol readiness may still
+block a later phase, but they are not substitutes for parent checkout setup.
+
 ## Scope
 
 `prototype1-step` is the bounded controller path for an active Prototype 1
@@ -129,6 +158,20 @@ diagnose(&resolve_context(command.repo_root.as_deref())?)
   campaign manifest.
 - `effective_control`: derived execution control from the admitted profile.
 
+`campaign_id` is identity and location. It binds the active parent checkout to
+one durable campaign tree and is used to find the campaign manifest and related
+campaign artifacts.
+
+`resolved_campaign` is the campaign manifest config after defaults and normal
+resolution. It describes the eval campaign substrate: benchmark family, dataset
+sources, model route, required procedures, instance and batch roots, eval
+policy, protocol policy, and framework config.
+
+`admitted_profile` is Prototype 1 loop policy for that campaign. It is the
+setup-admitted run profile, checked by digest commitment, that controls search
+limits, child fanout, generation source, protocol settings, model defaults, and
+successor selection.
+
 If the active checkout has no parent identity, the command fails early. The
 error text is explicit that child worktree cwd diagnosis is not supported in v1.
 This is important for self-edit loop operation: `prototype1-step` is a parent
@@ -149,8 +192,7 @@ The current function proceeds in this order:
 4. Resolve `manifest_path` from `campaign_id`.
    This locates the campaign root under the normal ploke-eval campaign layout.
 5. Load `resolved_campaign`.
-   This is the existing campaign configuration used by eval/protocol closure
-   work.
+   This is the campaign manifest config used by eval/protocol closure work.
 6. Load the admitted run profile from the campaign.
    Missing `prototype1/run-profile.toml` is a hard error because the step
    controller should run within the setup-admitted search/control bounds.
