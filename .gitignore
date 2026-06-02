@@ -25,6 +25,7 @@ tests/data/code_graph.ron
 
 # Data input/output
 crates/ploke-tui/data/
+crates/ploke-egui/data/
 
 # Ignore temp file for random stuff
 temp.md
@@ -93,16 +94,34 @@ logs/
 docs/dependency_details/cozo/notes/vectors.md
 .env
 /local-target
+.orchestrator/
+.orchestrator-archive/
 .serena/
 .scratch*
 crates/ploke-tui/local-target/
 crates/ingest/ploke-transform/test-logs/
 
 # archived docs no longer useful
-docs/archive
+docs/archive/*
+!docs/archive/agents/
+!docs/archive/agents/**
 
 # cursor settings
 .cursor/
 
 # Local upstream symlink
 /rust-analyzer-upstream
+github-project
+research-papers
+crates/ploke-tree-egui/dist/index.html
+crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b.js
+crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b_bg.wasm
+crates/ploke-egui/dist/
+crates/ploke-egui/docs/profiling/benchmarks/*/report.json
+research-symlink
+.tmp/*
+.tmp/prototype1-loop.excalidraw
+.tmp/prototype1-flow.svg
+.tmp/prototype1-flow.mermaid
+docs/agents/active/prototype1-state-execution-path.excalidraw
+.tmp/prototype1-loop-records.excalidraw
