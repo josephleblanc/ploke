@@ -250,6 +250,96 @@ Open question:
 
 - Should branch evaluation reports explicitly label whether baseline evidence came from generation-0 closure or selected-child promotion?
 
+## Resolution recommendations from Evalnomicon drafts
+
+This pass reads the conflict list against the current Evalnomicon draft packets,
+especially:
+
+- `docs/workflow/evalnomicon/drafts/start-here/stage-overview.md`
+- `docs/workflow/evalnomicon/drafts/start-here/evidence-and-artifacts.md`
+- `docs/workflow/evalnomicon/drafts/runtime/authority.md`
+- `docs/workflow/evalnomicon/drafts/runtime/child.md`
+- `docs/workflow/evalnomicon/drafts/runtime/parent-child-channel.md`
+- `docs/workflow/evalnomicon/drafts/runtime/artifact-runtime-lineage.md`
+- `docs/workflow/evalnomicon/drafts/runtime/loop.md`
+- `docs/workflow/evalnomicon/drafts/history/crown-authority-background.md`
+- `docs/workflow/evalnomicon/drafts/edit-surface/model.md`
+- `docs/workflow/evalnomicon/drafts/persistence/map-2026-05-03/synthesis.md`
+- `docs/workflow/evalnomicon/drafts/selection/README.md`
+- book-level summaries in `docs/workflow/evalnomicon/src/prototype1/`
+
+### Source precedence
+
+When terms conflict, prefer this order:
+
+1. Current code and current book-level Evalnomicon pages.
+2. `drafts/start-here/` operator-facing pages, because they are the most concise
+   current public vocabulary.
+3. Current dated draft packets in `runtime/`, `edit-surface/`, `selection/`,
+   `persistence/`, and `observability` when they describe the same current
+   implementation boundary.
+4. Older chat-history/framework notes only as conceptual background.
+
+This precedence matters because some older notes say `baseline -> patch ->
+rerun`; the current runtime-loop docs explicitly replace that with runtime
+succession: parent runtime, descendant artifact, child runtime, selected
+successor, successor admission.
+
+### Global naming rule
+
+Use role/state/authority names for control-flow claims and use projection names
+for files/views. A file path does not confer authority by itself. The draft
+runtime authority model says a runtime gains a role only through an admitted
+execution path and role-shaped surface (`runtime/authority.md:25-50`,
+`runtime/authority.md:200-224`). The channel plan is stricter: lifecycle state
+must be driven by per-runtime channel evidence, not scheduler/journal/latest
+result projections (`runtime/parent-child-channel.md:9-15`,
+`runtime/parent-child-channel.md:202-231`). The evidence page gives the same
+order: sealed History first, then parent/profile admission evidence, transition
+journal, typed boxes/invocations, benchmark/protocol artifacts, and finally
+scheduler/branch/node/monitor/dashboard projections (`start-here/evidence-and-artifacts.md:6-25`).
+
+### Recommended resolutions by conflict
+
+| Conflict | Recommended resolution |
+| --- | --- |
+| Node | In Prototype 1 docs, use `search node` or `Prototype 1 search node` for `Prototype1NodeRecord`/scheduler-owned node records. Use `code graph node` or `syntax node` for parsed/indexed code facts. Use `candidate artifact` or `descendant artifact` for the material code state. Rationale: persistence docs classify `nodes/<node-id>/node.json` as a scheduler-owned node record/projection (`persistence/map-2026-05-03/synthesis.md:40-42`), while the edit-surface model says code graph nodes are a derived view over an Artifact (`edit-surface/model.md:190-210`). |
+| Parent id / parent node id / node id | Keep `node_id` as the active search-node id in code discussions. In prose, write `active parent search node id` for the parent node that owns child-plan publication, and `predecessor search node id` or `search-tree parent node id` for the edge to the prior node. Reserve `parent_id` for the active parent identity coordinate until the code is renamed. Prefer a future code/doc alias `active_parent_id` if this becomes a passive record field. Rationale: the start-here docs use `parent node id` for child-plan ownership (`stage-overview.md:91-103`) and the operator map separates active parent checkout, campaign root, and child worktree (`prototype1-loop-operator.md:12-28`). |
+| Child vs successor | Adopt the lifecycle ladder from the runtime-loop draft: `proposed child`, `realized child artifact`, `built child`, `acknowledged child runtime`, `evaluated child`, `selected successor`, `successor runtime` (`runtime/loop.md:184-210`). Do not say a child process becomes the successor. Say an evaluated child/candidate artifact is selected, then a fresh successor runtime is launched/admitted. Persisted reports should separate `selected_child_node_id` or selected candidate membership from `successor_runtime_id`. Rationale: the child role is leaf evaluation only (`runtime/child.md:20-49`), while successor validation precedes entry into parent authority (`runtime/authority.md:191-199`). |
+| Runtime vs run vs turn | Use `runtime` for an OS process hydrated from an Artifact and occupying exactly one `Role<State>` (`edit-surface/model.md:303-340`). Use `runtime attempt` where a `RuntimeId` is present. Use `benchmark run` or `eval run` for `RunRecord` / run manifests. Use `parent turn` or `parent control turn` for one controller pass through the active parent. Use `agent turn` for LLM/tool turns inside run records. Avoid unqualified `run` in new docs unless the command name itself uses it. |
+| Branch / treatment branch / artifact branch / git branch | Keep `treatment branch id` for branch-registry/candidate identity. Use `git ref` or `checkout branch` for VCS names. Prefer `selected Artifact` over `selected branch` when discussing handoff, because handoff installs the selected Artifact into the active checkout before launching the successor (`stage-overview.md:175-188`, `prototype1-loop-operator.md:92-112`). Consider deprecating `artifact_branch` in prose in favor of `artifact checkout ref` or `active checkout git ref`; if code changes later, `GitRef`/`CheckoutRef` would be clearer than another `branch` field. |
+| Artifact vs worktree vs source state | Use `Artifact` for source/tree material that can hydrate a Runtime (`edit-surface/model.md:119-139`). Use `derived Artifact` for a checked/applied candidate transition (`edit-surface/model.md:497-568`). Use `worktree` for a mutable local filesystem handle; it is not durable identity. Use `source state` for candidate-generation input content/state, not for the whole checkout unless a specific record says that. Rationale: the lineage draft warns that an uncommitted worktree can be lost and therefore is a poor graph identity (`runtime/artifact-runtime-lineage.md:68-91`), while operator docs warn child worktrees are temporary surfaces, not successor homes (`stage-overview.md:51-60`). |
+| Authority vs projection | Replace loose `authority` with one of: `authority substrate`, `authority-bearing admission input`, `transition evidence`, `runtime channel evidence`, or `projection`. Sealed History is the intended authority substrate; parent identity/profile commitments and invocations are admission inputs; transition journal entries are transition evidence; node/scheduler/branch/latest-result/dashboard files are projections unless explicitly converted/admitted. Rationale: History/Crown docs say scheduler snapshots, branch registries, CLI reports, and dashboards are projections, not History authority (`history-crown.md:5-18`), and the channel plan says attempt results/projections should not drive live lifecycle advancement (`runtime/parent-child-channel.md:202-231`). |
+| History / lineage / Crown / scheduler tree | Use `History lineage` for admitted lineage facts and Crown handoff claims; use `search tree` or `scheduler frontier` for candidate planning/status. Do not call scheduler state “History” unless the record has been sealed/admitted or explicitly imported by policy. Rationale: book-level `History` is an authenticated store over sealed lineage-local blocks and `Crown` is one-at-a-time lineage mutation authority, not a process id, git branch, path, or global singleton (`history-crown.md:5-30`). The persistence map classifies scheduler/node/branch surfaces as mutable projections and sealed block streams as local History authority (`persistence/map-2026-05-03/synthesis.md:40-60`). |
+| Closure | Keep the code term `ClosureState`, but introduce it in docs as `campaign completeness / closure state`. Use `eval closure section` and `protocol closure section` when referring to subparts. Explicitly say generation-0 baseline closure is not the same thing as later parent baselines. Rationale: stage docs say generation 0 enters baseline eval/protocol via closure, but later candidate planning waits for both (`stage-overview.md:62-84`); runtime-loop docs say generation > 0 parent baselines are promoted from selected-child treatment reports, not the original generation-0 closure (`runtime/loop.md:231-252`). |
+| Protocol procedure names | Use `procedure id` for canonical docs/config ids and keep them kebab-case: `tool-call-intent-segments`, `tool-call-review`, `tool-call-segment-review`. Treat snake_case artifact kind strings and filename stems as storage/schema compatibility names, not public procedure names. Add an alias table near config docs if users still encounter `tool_call_intent_segmentation` or similar legacy names. Rationale: protocol artifacts are persisted under procedure-specific filenames/envelopes and are inspected as stored evidence (`persistence/map-2026-05-03/synthesis.md:72-78`); docs should not make filename/kind compatibility drive public vocabulary. |
+| MBE / MSB / Multi-SWE-Bench | Public docs should spell out `Multi-SWE-Bench` on first use. Use `MSB` only for benchmark/submission concepts. Use `Multi-SWE-Bench evaluator` or ``mbe` module` for the local module path instead of implying `MBE` is the canonical user-facing acronym. If future code cleanup is allowed, consider renaming module-facing docs toward `multi_swe_bench` rather than inventing an additional acronym. Rationale: the persistence map names the submission artifact as `multi-swe-bench-submission.jsonl` (`persistence/map-2026-05-03/synthesis.md:71`) while older conceptual notes use `MBE` loosely for external oracle/evaluator background. |
+| Baseline vs parent | Use three explicit terms: `generation-0 campaign baseline`, `active parent baseline evidence`, and `candidate/treatment evidence`. Answer the open question as yes: branch evaluation reports and selection displays should label baseline provenance, at least as `baseline_source = generation0_closure | selected_child_promotion`, plus the baseline campaign/branch/run-record paths. Rationale: the current runtime-loop draft says later parents compare against selected-child treatment evidence promoted into the next parent baseline (`runtime/loop.md:231-252`), while stage docs say generation-0 baseline closure is the startup gate (`stage-overview.md:62-84`). |
+
+### Suggested implementation/doc follow-ups
+
+1. Add a short “Terminology precedence” note to the walkthrough glossary:
+   role/state/authority terms win for control-flow claims; file names are named
+   as projections unless the doc identifies an admission transition.
+2. In future passive record docs, prefer these field aliases even if current code
+   fields remain unchanged:
+   - `search_node_id` for scheduler/Prototype 1 node identity;
+   - `active_parent_search_node_id` for the parent node that owns a child plan;
+   - `predecessor_search_node_id` for tree ancestry;
+   - `runtime_attempt_id` where `RuntimeId` is an attempt identity;
+   - `checkout_git_ref` or `artifact_checkout_ref` for VCS branch names;
+   - `selected_candidate_membership_id` / `selected_child_node_id` distinct from
+     `successor_runtime_id`.
+3. In operator docs, prefer the stage vocabulary from `drafts/start-here/`:
+   setup/admission, baseline eval, baseline protocol, child planning,
+   materialize, build, spawn, observe, select, handoff, complete/blocked.
+4. In architecture docs, prefer the runtime succession wording from the current
+   book pages: active parent runtime -> descendant candidate/artifact -> child
+   runtime -> selected successor artifact -> successor runtime -> next parent.
+5. Do not erase the open questions above yet. Treat these recommendations as the
+   proposed answer set; close each question only after either code renames or
+   durable glossary updates make the convention hard to miss.
+
 ## Follow-up process
 
 When updating the walkthrough glossary:
