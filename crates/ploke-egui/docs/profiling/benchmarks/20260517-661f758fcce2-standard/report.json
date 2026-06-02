@@ -1,0 +1,3871 @@
+{
+  "schema_version": "ploke-egui.native-benchmark-report.v2",
+  "suite": "standard",
+  "created_at_unix_ms": 1778994259368,
+  "commit": {
+    "short_sha": "661f758fcce2",
+    "full_sha": "661f758fcce2e8505ad0b4dfea17b9ad554fcda2"
+  },
+  "dirty_state": {
+    "dirty": true,
+    "classification": "dirty_unrelated",
+    "relevant_dirty": false,
+    "paths": [
+      "ocs/workflow/evalnomicon/drafts/eval/hyperagents-gap-review-2026-05-17.md",
+      "docs/workflow/evalnomicon/drafts/eval/ha-review-plan.md"
+    ],
+    "relevant_paths": [],
+    "unrelated_paths": [
+      "ocs/workflow/evalnomicon/drafts/eval/hyperagents-gap-review-2026-05-17.md",
+      "docs/workflow/evalnomicon/drafts/eval/ha-review-plan.md"
+    ],
+    "scope": "git status --short at benchmark start; benchmark-relevant prefixes are Cargo manifests, ploke-egui, ploke-tree, and ploke-records"
+  },
+  "command": "target/debug/ploke-egui --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 --benchmark-suite standard",
+  "run_root": "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1",
+  "feature_set": [
+    "dev",
+    "native-benchmark",
+    "profile-with-puffin"
+  ],
+  "scenarios_requested": [
+    "startup_frames_300",
+    "warm_idle_300",
+    "select_artifact_inspector_300",
+    "patch_debug_cold_300",
+    "patch_debug_warm_300",
+    "mode_lineage_300",
+    "mode_artifact_tree_300",
+    "toggle_hide_unconsidered_children_300"
+  ],
+  "startup": {
+    "spans": [
+      {
+        "name": "run_picker_discovery",
+        "duration_ns": 26709189374
+      },
+      {
+        "name": "FsRunStore::load",
+        "duration_ns": 909242051
+      },
+      {
+        "name": "FsRunStore::load_history_blocks",
+        "duration_ns": 21897831
+      },
+      {
+        "name": "FsRunStore::load_transition_journal",
+        "duration_ns": 4175418
+      },
+      {
+        "name": "FsRunStore::load_record_set",
+        "duration_ns": 935319329
+      },
+      {
+        "name": "compressed_run_record_profile_probe",
+        "duration_ns": 112770703
+      },
+      {
+        "name": "Graph::from_records",
+        "duration_ns": 4098494
+      },
+      {
+        "name": "graph_load_total",
+        "duration_ns": 1052190407
+      }
+    ],
+    "compressed_run_records": [
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/BurntSushi__ripgrep-2209/runs/run-1778950623675-structured-current-policy-da5906b1/record.json.gz",
+        "compressed_bytes": 78413,
+        "decompressed_bytes": 692537,
+        "turn_count": 1,
+        "tool_call_count": 18,
+        "failed_tool_call_count": 2,
+        "open_read_ns": 8756,
+        "gzip_decompress_ns": 2428941,
+        "typed_json_deserialize_ns": 3970833
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-001b9e9fc72533ca/instances/BurntSushi__ripgrep-2209/runs/run-1778965589964-structured-current-policy-5dd3b64c/record.json.gz",
+        "compressed_bytes": 148354,
+        "decompressed_bytes": 1040789,
+        "turn_count": 1,
+        "tool_call_count": 57,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 13275,
+        "gzip_decompress_ns": 4169206,
+        "typed_json_deserialize_ns": 6864239
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-191617d9aacf4dda/instances/BurntSushi__ripgrep-2209/runs/run-1778968862624-structured-current-policy-c97a8076/record.json.gz",
+        "compressed_bytes": 66867,
+        "decompressed_bytes": 456406,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 1,
+        "open_read_ns": 11001,
+        "gzip_decompress_ns": 1889385,
+        "typed_json_deserialize_ns": 2872485
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-38a8fc72b0b8bf03/instances/BurntSushi__ripgrep-2209/runs/run-1778963824453-structured-current-policy-61a90854/record.json.gz",
+        "compressed_bytes": 47520,
+        "decompressed_bytes": 316722,
+        "turn_count": 1,
+        "tool_call_count": 20,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 7905,
+        "gzip_decompress_ns": 1331616,
+        "typed_json_deserialize_ns": 2194781
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-53d3c597b864fcf9/instances/BurntSushi__ripgrep-2209/runs/run-1778962530279-structured-current-policy-c6d6a72d/record.json.gz",
+        "compressed_bytes": 61586,
+        "decompressed_bytes": 503774,
+        "turn_count": 1,
+        "tool_call_count": 36,
+        "failed_tool_call_count": 6,
+        "open_read_ns": 7975,
+        "gzip_decompress_ns": 1838500,
+        "typed_json_deserialize_ns": 3406391
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-67233258b489ccf1/instances/BurntSushi__ripgrep-2209/runs/run-1778953273239-structured-current-policy-277d8be9/record.json.gz",
+        "compressed_bytes": 90600,
+        "decompressed_bytes": 630218,
+        "turn_count": 1,
+        "tool_call_count": 34,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 9928,
+        "gzip_decompress_ns": 2562644,
+        "typed_json_deserialize_ns": 3889590
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-7ee6db64779c8019/instances/BurntSushi__ripgrep-2209/runs/run-1778957355110-structured-current-policy-b0e1d500/record.json.gz",
+        "compressed_bytes": 65528,
+        "decompressed_bytes": 430878,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9328,
+        "gzip_decompress_ns": 1830946,
+        "typed_json_deserialize_ns": 2735268
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-8895520341e426aa/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-b4563a68/record.json.gz",
+        "compressed_bytes": 80492,
+        "decompressed_bytes": 485725,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9498,
+        "gzip_decompress_ns": 2185953,
+        "typed_json_deserialize_ns": 2929393
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-9456db3662f9d15a/instances/BurntSushi__ripgrep-2209/runs/run-1778953272443-structured-current-policy-f1847fad/record.json.gz",
+        "compressed_bytes": 125451,
+        "decompressed_bytes": 1127416,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 10420,
+        "gzip_decompress_ns": 3868240,
+        "typed_json_deserialize_ns": 6703386
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b2b9bfa6ac855313/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-8957da87/record.json.gz",
+        "compressed_bytes": 72745,
+        "decompressed_bytes": 531868,
+        "turn_count": 1,
+        "tool_call_count": 37,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 10500,
+        "gzip_decompress_ns": 2092508,
+        "typed_json_deserialize_ns": 3622527
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b360573242cfdaf4/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-ba315811/record.json.gz",
+        "compressed_bytes": 94759,
+        "decompressed_bytes": 751078,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 10580,
+        "gzip_decompress_ns": 2771396,
+        "typed_json_deserialize_ns": 5106441
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b53a075a894cedf9/instances/BurntSushi__ripgrep-2209/runs/run-1778953269791-structured-current-policy-6d0dc6f7/record.json.gz",
+        "compressed_bytes": 63371,
+        "decompressed_bytes": 510476,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 10089,
+        "gzip_decompress_ns": 1878385,
+        "typed_json_deserialize_ns": 3608541
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b8ec5f10e815fd12/instances/BurntSushi__ripgrep-2209/runs/run-1778957354452-structured-current-policy-9ec5c365/record.json.gz",
+        "compressed_bytes": 44147,
+        "decompressed_bytes": 332582,
+        "turn_count": 1,
+        "tool_call_count": 26,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 8967,
+        "gzip_decompress_ns": 1275561,
+        "typed_json_deserialize_ns": 2560699
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-babdce8b381580ef/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-5e788851/record.json.gz",
+        "compressed_bytes": 62602,
+        "decompressed_bytes": 500893,
+        "turn_count": 1,
+        "tool_call_count": 32,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 9207,
+        "gzip_decompress_ns": 1850413,
+        "typed_json_deserialize_ns": 3296313
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-bd77551f3715f119/instances/BurntSushi__ripgrep-2209/runs/run-1778957354823-structured-current-policy-fadea182/record.json.gz",
+        "compressed_bytes": 50992,
+        "decompressed_bytes": 367261,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 8667,
+        "gzip_decompress_ns": 1466369,
+        "typed_json_deserialize_ns": 2566100
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c1a38306ed49dc1c/instances/BurntSushi__ripgrep-2209/runs/run-1778962529969-structured-current-policy-3204ca08/record.json.gz",
+        "compressed_bytes": 118577,
+        "decompressed_bytes": 884086,
+        "turn_count": 1,
+        "tool_call_count": 53,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 9488,
+        "gzip_decompress_ns": 3401702,
+        "typed_json_deserialize_ns": 5497356
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c30d784dd5ffb231/instances/BurntSushi__ripgrep-2209/runs/run-1778968862801-structured-current-policy-91092892/record.json.gz",
+        "compressed_bytes": 49619,
+        "decompressed_bytes": 364079,
+        "turn_count": 1,
+        "tool_call_count": 28,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9398,
+        "gzip_decompress_ns": 1417768,
+        "typed_json_deserialize_ns": 2702937
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c9841bdf11e59aee/instances/BurntSushi__ripgrep-2209/runs/run-1778962529953-structured-current-policy-9448cde8/record.json.gz",
+        "compressed_bytes": 52601,
+        "decompressed_bytes": 460616,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 5,
+        "open_read_ns": 7615,
+        "gzip_decompress_ns": 1592457,
+        "typed_json_deserialize_ns": 3290482
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-ccfbb42e20f22f5b/instances/BurntSushi__ripgrep-2209/runs/run-1778968862654-structured-current-policy-477c4423/record.json.gz",
+        "compressed_bytes": 46743,
+        "decompressed_bytes": 336339,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 8846,
+        "gzip_decompress_ns": 1334973,
+        "typed_json_deserialize_ns": 2412139
+      }
+    ],
+    "notes": []
+  },
+  "scenarios": [
+    {
+      "name": "startup_frames_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1508088,
+        "median_ns": 1530640,
+        "p95_ns": 1690852,
+        "p99_ns": 2061460,
+        "max_ns": 59796286
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 59796286,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 10326174
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 13102158
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 12206522
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 2223825
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 21080483
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5009
+            }
+          ]
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 17318534,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 72797
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 7977955
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 8683252
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 220885
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 62377
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8208227
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 4829
+            }
+          ]
+        },
+        {
+          "frame_index": 3,
+          "duration_ns": 2190713,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66706
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 656505
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 869726
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 211568
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 42931
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 938586
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3457
+            }
+          ]
+        },
+        {
+          "frame_index": 6,
+          "duration_ns": 2061460,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 130917
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 86102
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 406144
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 415683
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 69692
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 927185
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3246
+            }
+          ]
+        },
+        {
+          "frame_index": 265,
+          "duration_ns": 2049858,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 128141
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107302
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 610889
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 229732
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40065
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 927425
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3326
+            }
+          ]
+        },
+        {
+          "frame_index": 235,
+          "duration_ns": 1916617,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 132600
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107893
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 468922
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 226596
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39955
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 930361
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3186
+            }
+          ]
+        },
+        {
+          "frame_index": 232,
+          "duration_ns": 1825165,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129704
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107773
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 468051
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 192252
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39765
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 924390
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3066
+            }
+          ]
+        },
+        {
+          "frame_index": 169,
+          "duration_ns": 1743060,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 127861
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 58911
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 402607
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 191450
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39896
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 925512
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2896
+            }
+          ]
+        },
+        {
+          "frame_index": 103,
+          "duration_ns": 1727571,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 130015
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 58611
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 380146
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 190108
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39815
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 929930
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2856
+            }
+          ]
+        },
+        {
+          "frame_index": 296,
+          "duration_ns": 1726219,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 127560
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54573
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 380206
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 191430
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40085
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 927496
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2915
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2715,
+            "median_ns": 2895,
+            "p95_ns": 3246,
+            "p99_ns": 4829,
+            "max_ns": 7113
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 919941,
+            "median_ns": 926654,
+            "p95_ns": 942293,
+            "p99_ns": 1030840,
+            "max_ns": 21080483
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 299,
+            "min_ns": 53120,
+            "median_ns": 54001,
+            "p95_ns": 59823,
+            "p99_ns": 107893,
+            "max_ns": 7977955
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 232077,
+            "median_ns": 238428,
+            "p95_ns": 337675,
+            "p99_ns": 610889,
+            "max_ns": 13102158
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 188455,
+            "median_ns": 191200,
+            "p95_ns": 199024,
+            "p99_ns": 265249,
+            "max_ns": 12206522
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 39294,
+            "median_ns": 40046,
+            "p95_ns": 44954,
+            "p99_ns": 62377,
+            "max_ns": 2223825
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 61636,
+            "median_ns": 67437,
+            "p95_ns": 129514,
+            "p99_ns": 133501,
+            "max_ns": 10326174
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 353370,
+        "deallocation_count_delta": 348872,
+        "allocated_bytes_delta": 264220441,
+        "deallocated_bytes_delta": 262496353,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "none"
+      }
+    },
+    {
+      "name": "warm_idle_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1508288,
+        "median_ns": 1541962,
+        "p95_ns": 1943488,
+        "p99_ns": 2243923,
+        "max_ns": 2583221
+      },
+      "top_frames": [
+        {
+          "frame_index": 278,
+          "duration_ns": 2583221,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 127219
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106891
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 469644
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 527523
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 82927
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1261033
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3767
+            }
+          ]
+        },
+        {
+          "frame_index": 65,
+          "duration_ns": 2282025,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67708
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 108664
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 517594
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 397248
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 87685
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1098648
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 252,
+          "duration_ns": 2247881,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 191410
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107232
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 470425
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 383773
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 79249
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1011734
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2955
+            }
+          ]
+        },
+        {
+          "frame_index": 153,
+          "duration_ns": 2243923,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 138140
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53491
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 313069
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 190820
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40095
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1499162
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3226
+            }
+          ]
+        },
+        {
+          "frame_index": 158,
+          "duration_ns": 2226119,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 100269
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53400
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236145
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 190248
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39785
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1598569
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 97,
+          "duration_ns": 2219497,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66626
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54313
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236585
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 189838
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39755
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1625920
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3286
+            }
+          ]
+        },
+        {
+          "frame_index": 216,
+          "duration_ns": 2116533,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67156
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53640
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 237978
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 190719
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40275
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1519640
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ]
+        },
+        {
+          "frame_index": 172,
+          "duration_ns": 2089092,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 130355
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53782
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 297800
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 484071
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 83767
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 990674
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 96,
+          "duration_ns": 2073672,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66706
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106771
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 419940
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 390755
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 80401
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1006364
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3166
+            }
+          ]
+        },
+        {
+          "frame_index": 210,
+          "duration_ns": 2063934,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66125
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53941
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 235644
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 189817
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39765
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1474145
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2696,
+            "median_ns": 2896,
+            "p95_ns": 3276,
+            "p99_ns": 5991,
+            "max_ns": 6792
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 918308,
+            "median_ns": 926974,
+            "p95_ns": 1090011,
+            "p99_ns": 1499162,
+            "max_ns": 1625920
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 53140,
+            "median_ns": 54021,
+            "p95_ns": 83718,
+            "p99_ns": 109356,
+            "max_ns": 115497
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 233319,
+            "median_ns": 240563,
+            "p95_ns": 394723,
+            "p99_ns": 476827,
+            "max_ns": 517594
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 188254,
+            "median_ns": 191340,
+            "p95_ns": 244060,
+            "p99_ns": 390755,
+            "max_ns": 527523
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 39083,
+            "median_ns": 40026,
+            "p95_ns": 45045,
+            "p99_ns": 82927,
+            "max_ns": 119395
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 65223,
+            "median_ns": 68309,
+            "p95_ns": 130997,
+            "p99_ns": 138030,
+            "max_ns": 191410
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 342709,
+        "deallocation_count_delta": 339700,
+        "allocated_bytes_delta": 256947926,
+        "deallocated_bytes_delta": 255890541,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "none"
+      }
+    },
+    {
+      "name": "select_artifact_inspector_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1656106,
+        "median_ns": 1684740,
+        "p95_ns": 1990245,
+        "p99_ns": 2492601,
+        "max_ns": 32307502
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 32307502,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 72617
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54573
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 237127
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 30226015
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 63910
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 940460
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3206
+            }
+          ]
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 9226384,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 64511
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 85752
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 398851
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 445138
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41859
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8203849
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3176
+            }
+          ]
+        },
+        {
+          "frame_index": 228,
+          "duration_ns": 2640760,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 114205
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107071
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 467670
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 462861
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40646
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1429600
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5951
+            }
+          ]
+        },
+        {
+          "frame_index": 32,
+          "duration_ns": 2492601,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 133741
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107793
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 467369
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 775610
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 86573
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 943947
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ]
+        },
+        {
+          "frame_index": 5,
+          "duration_ns": 2336697,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 104506
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53541
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 302138
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 334810
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40526
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1493331
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3186
+            }
+          ]
+        },
+        {
+          "frame_index": 149,
+          "duration_ns": 2270593,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 130165
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 55575
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 395665
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 631358
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 89117
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 962822
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 193,
+          "duration_ns": 2226891,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 117180
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107232
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 450808
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 556618
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41097
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 931884
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3316
+            }
+          ]
+        },
+        {
+          "frame_index": 94,
+          "duration_ns": 2216271,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 126017
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54182
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 354527
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 336463
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40416
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1289186
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5590
+            }
+          ]
+        },
+        {
+          "frame_index": 125,
+          "duration_ns": 2209068,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 198714
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 108253
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 491655
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 439067
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41619
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 928658
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3176
+            }
+          ]
+        },
+        {
+          "frame_index": 34,
+          "duration_ns": 2199950,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66425
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54102
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 240212
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 335151
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 163918
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1333419
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3196
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2765,
+            "median_ns": 2945,
+            "p95_ns": 3256,
+            "p99_ns": 6512,
+            "max_ns": 7875
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 919510,
+            "median_ns": 930551,
+            "p95_ns": 955257,
+            "p99_ns": 1333419,
+            "max_ns": 8203849
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 53310,
+            "median_ns": 54152,
+            "p95_ns": 74349,
+            "p99_ns": 108264,
+            "max_ns": 128993
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 233579,
+            "median_ns": 239681,
+            "p95_ns": 394082,
+            "p99_ns": 481296,
+            "max_ns": 554524
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 332686,
+            "median_ns": 337495,
+            "p95_ns": 345971,
+            "p99_ns": 562539,
+            "max_ns": 30226015
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 40045,
+            "median_ns": 41067,
+            "p95_ns": 45636,
+            "p99_ns": 86573,
+            "max_ns": 163918
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 64511,
+            "median_ns": 68760,
+            "p95_ns": 131186,
+            "p99_ns": 140885,
+            "max_ns": 198714
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 391555,
+        "deallocation_count_delta": 388314,
+        "allocated_bytes_delta": 285228343,
+        "deallocated_bytes_delta": 284057257,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "select_artifact_inspector",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124"
+      }
+    },
+    {
+      "name": "patch_debug_cold_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1654785,
+        "median_ns": 1680723,
+        "p95_ns": 1956632,
+        "p99_ns": 2168380,
+        "max_ns": 2542515
+      },
+      "top_frames": [
+        {
+          "frame_index": 191,
+          "duration_ns": 2542515,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 96752
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54031
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 275899
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 640466
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 42330
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1367433
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2545
+            }
+          ]
+        },
+        {
+          "frame_index": 13,
+          "duration_ns": 2241198,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66265
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54071
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 238148
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 752546
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 88607
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1038023
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3206
+            }
+          ]
+        },
+        {
+          "frame_index": 164,
+          "duration_ns": 2194881,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 97624
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 108915
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 469744
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 540778
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 44594
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 930441
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 1,
+          "duration_ns": 2168380,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 73318
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54382
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236445
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 337285
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40687
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 926844
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3196
+            }
+          ]
+        },
+        {
+          "frame_index": 271,
+          "duration_ns": 2153672,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 68820
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 108214
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 367451
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 604317
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41218
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 960368
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3306
+            }
+          ]
+        },
+        {
+          "frame_index": 224,
+          "duration_ns": 2150517,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 99898
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53881
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 304894
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 335852
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41208
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1297031
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5941
+            }
+          ]
+        },
+        {
+          "frame_index": 76,
+          "duration_ns": 2149165,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 133632
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107813
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 469854
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 445969
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40376
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 944998
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 6813
+            }
+          ]
+        },
+        {
+          "frame_index": 194,
+          "duration_ns": 2109300,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66936
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 58781
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 242596
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 336062
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40546
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1361963
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3296
+            }
+          ]
+        },
+        {
+          "frame_index": 166,
+          "duration_ns": 2106976,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67157
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54002
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 235193
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 335000
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41167
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1367564
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ]
+        },
+        {
+          "frame_index": 225,
+          "duration_ns": 2102938,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66906
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54032
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 235574
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 334049
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40796
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1365360
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 1613,
+            "median_ns": 2945,
+            "p95_ns": 3296,
+            "p99_ns": 5941,
+            "max_ns": 6813
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 921935,
+            "median_ns": 929930,
+            "p95_ns": 967571,
+            "p99_ns": 1361963,
+            "max_ns": 1367564
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 53190,
+            "median_ns": 54202,
+            "p95_ns": 59953,
+            "p99_ns": 107813,
+            "max_ns": 108915
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 233790,
+            "median_ns": 238900,
+            "p95_ns": 357894,
+            "p99_ns": 444837,
+            "max_ns": 469864
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 331293,
+            "median_ns": 337135,
+            "p95_ns": 347354,
+            "p99_ns": 540778,
+            "max_ns": 752546
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 40125,
+            "median_ns": 40997,
+            "p95_ns": 43902,
+            "p99_ns": 46537,
+            "max_ns": 88607
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 63880,
+            "median_ns": 67316,
+            "p95_ns": 130315,
+            "p99_ns": 132078,
+            "max_ns": 140053
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 387800,
+        "deallocation_count_delta": 384782,
+        "allocated_bytes_delta": 283250664,
+        "deallocated_bytes_delta": 282161015,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "patch_debug_cold",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124",
+        "notes": [
+          "patch_diff_cache_reset=true"
+        ]
+      }
+    },
+    {
+      "name": "patch_debug_warm_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1656968,
+        "median_ns": 1694770,
+        "p95_ns": 1948367,
+        "p99_ns": 2349481,
+        "max_ns": 2521235
+      },
+      "top_frames": [
+        {
+          "frame_index": 296,
+          "duration_ns": 2521235,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 151956
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107453
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 465767
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 531781
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 106621
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1173028
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 26,
+          "duration_ns": 2367967,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129634
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 111811
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 549404
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 608986
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41378
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 925171
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ]
+        },
+        {
+          "frame_index": 25,
+          "duration_ns": 2361674,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129604
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54353
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 338868
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 335371
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41078
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1454627
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3267
+            }
+          ]
+        },
+        {
+          "frame_index": 65,
+          "duration_ns": 2349481,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66856
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54252
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 238318
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 630016
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 90481
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1263448
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 84,
+          "duration_ns": 2191394,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 106430
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107642
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 528795
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 469013
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41939
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 934078
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3336
+            }
+          ]
+        },
+        {
+          "frame_index": 30,
+          "duration_ns": 2180354,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67958
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53912
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 237687
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 335171
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 71474
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1408320
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ]
+        },
+        {
+          "frame_index": 240,
+          "duration_ns": 2170144,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 151986
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106831
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 535137
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 403489
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40577
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 928427
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ]
+        },
+        {
+          "frame_index": 1,
+          "duration_ns": 2163602,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 74740
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54212
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236516
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 333788
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40807
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 926363
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3186
+            }
+          ]
+        },
+        {
+          "frame_index": 161,
+          "duration_ns": 2108969,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 131457
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 118162
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 480494
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 369456
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40687
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 975716
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3156
+            }
+          ]
+        },
+        {
+          "frame_index": 276,
+          "duration_ns": 2062862,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 128492
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107402
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 468361
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 385585
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41358
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 928417
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3166
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2715,
+            "median_ns": 2956,
+            "p95_ns": 3267,
+            "p99_ns": 4388,
+            "max_ns": 7664
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 920472,
+            "median_ns": 930682,
+            "p95_ns": 953083,
+            "p99_ns": 1263448,
+            "max_ns": 1454627
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 53350,
+            "median_ns": 54202,
+            "p95_ns": 65032,
+            "p99_ns": 111811,
+            "max_ns": 118162
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 233971,
+            "median_ns": 242727,
+            "p95_ns": 359467,
+            "p99_ns": 519357,
+            "max_ns": 549404
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 331554,
+            "median_ns": 337305,
+            "p95_ns": 348616,
+            "p99_ns": 469013,
+            "max_ns": 630016
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 40146,
+            "median_ns": 40977,
+            "p95_ns": 43262,
+            "p99_ns": 47329,
+            "max_ns": 106621
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 65423,
+            "median_ns": 75853,
+            "p95_ns": 131227,
+            "p99_ns": 139472,
+            "max_ns": 151986
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 387790,
+        "deallocation_count_delta": 384774,
+        "allocated_bytes_delta": 283236272,
+        "deallocated_bytes_delta": 282154767,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "patch_debug_warm",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124"
+      }
+    },
+    {
+      "name": "mode_lineage_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 844038,
+        "median_ns": 867202,
+        "p95_ns": 1179310,
+        "p99_ns": 1333690,
+        "max_ns": 2735447
+      },
+      "top_frames": [
+        {
+          "frame_index": 2,
+          "duration_ns": 2735447,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 127840
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 1626370
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 1845954
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 358916
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 212339
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 130466
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3116
+            }
+          ]
+        },
+        {
+          "frame_index": 297,
+          "duration_ns": 1580694,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66826
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 181562
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 436170
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 689187
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 81914
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 194226
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ]
+        },
+        {
+          "frame_index": 76,
+          "duration_ns": 1394164,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 96361
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105840
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 394472
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 630857
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40826
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 122270
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ]
+        },
+        {
+          "frame_index": 134,
+          "duration_ns": 1333690,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 95790
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105859
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 457421
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 508687
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40727
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 122230
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3156
+            }
+          ]
+        },
+        {
+          "frame_index": 166,
+          "duration_ns": 1329132,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 130545
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105899
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 461498
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 440209
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 45346
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 140614
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3226
+            }
+          ]
+        },
+        {
+          "frame_index": 129,
+          "duration_ns": 1320866,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 89859
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 86002
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 363925
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 517594
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 64251
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 194236
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3156
+            }
+          ]
+        },
+        {
+          "frame_index": 169,
+          "duration_ns": 1311207,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66165
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53651
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236655
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 595030
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 88626
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 260480
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5800
+            }
+          ]
+        },
+        {
+          "frame_index": 8,
+          "duration_ns": 1296971,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 175500
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 60744
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 408740
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 413678
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 42310
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 165771
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ]
+        },
+        {
+          "frame_index": 10,
+          "duration_ns": 1232690,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129113
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106200
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 462009
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 355369
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39545
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 127380
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3076
+            }
+          ]
+        },
+        {
+          "frame_index": 180,
+          "duration_ns": 1231157,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 65924
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105979
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 534957
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 341613
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41227
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 142959
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2675
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2675,
+            "median_ns": 2895,
+            "p95_ns": 3226,
+            "p99_ns": 4288,
+            "max_ns": 8386
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 117992,
+            "median_ns": 121819,
+            "p95_ns": 130466,
+            "p99_ns": 165771,
+            "max_ns": 260480
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 52108,
+            "median_ns": 53220,
+            "p95_ns": 85851,
+            "p99_ns": 108163,
+            "max_ns": 1626370
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 231966,
+            "median_ns": 237607,
+            "p95_ns": 399292,
+            "p99_ns": 500302,
+            "max_ns": 1845954
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 327927,
+            "median_ns": 335211,
+            "p95_ns": 376649,
+            "p99_ns": 517594,
+            "max_ns": 689187
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 39545,
+            "median_ns": 40557,
+            "p95_ns": 45396,
+            "p99_ns": 64251,
+            "max_ns": 212339
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 62929,
+            "median_ns": 67838,
+            "p95_ns": 130335,
+            "p99_ns": 139122,
+            "max_ns": 175500
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 338084,
+        "deallocation_count_delta": 335185,
+        "allocated_bytes_delta": 172321671,
+        "deallocated_bytes_delta": 171281235,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "set_mode_lineage",
+        "notes": [
+          "mode=lineage"
+        ]
+      }
+    },
+    {
+      "name": "mode_artifact_tree_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1651859,
+        "median_ns": 1690412,
+        "p95_ns": 2057682,
+        "p99_ns": 2411678,
+        "max_ns": 5118733
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 5118733,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129634
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 52568
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 236896
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 342935
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40256
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 4288421
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3247
+            }
+          ]
+        },
+        {
+          "frame_index": 142,
+          "duration_ns": 2551302,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 131166
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106280
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 460757
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 761904
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 81543
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 963423
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 78,
+          "duration_ns": 2440533,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 82756
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 78969
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 327185
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 633402
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 106020
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1211681
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ]
+        },
+        {
+          "frame_index": 51,
+          "duration_ns": 2411678,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 121318
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106450
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 467139
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 404411
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40917
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1261394
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5711
+            }
+          ]
+        },
+        {
+          "frame_index": 55,
+          "duration_ns": 2324725,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 66245
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53320
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 235192
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 731467
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 88987
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1144033
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 299,
+          "duration_ns": 2252569,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 100870
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 52970
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 233860
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 336022
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40176
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1481018
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3186
+            }
+          ]
+        },
+        {
+          "frame_index": 228,
+          "duration_ns": 2224516,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 127470
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53070
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 352934
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 332005
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40666
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1295207
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5751
+            }
+          ]
+        },
+        {
+          "frame_index": 238,
+          "duration_ns": 2215018,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 110568
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105659
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 428096
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 569662
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40005
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 960578
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3276
+            }
+          ]
+        },
+        {
+          "frame_index": 43,
+          "duration_ns": 2214117,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75522
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 107162
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 512534
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 533294
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41588
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 944798
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3657
+            }
+          ]
+        },
+        {
+          "frame_index": 176,
+          "duration_ns": 2193127,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67417
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53411
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 233489
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 330983
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40536
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1459557
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3296
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2525,
+            "median_ns": 2985,
+            "p95_ns": 3396,
+            "p99_ns": 6091,
+            "max_ns": 8486
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 922236,
+            "median_ns": 931513,
+            "p95_ns": 982108,
+            "p99_ns": 1367062,
+            "max_ns": 4288421
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 52228,
+            "median_ns": 53281,
+            "p95_ns": 104476,
+            "p99_ns": 107162,
+            "max_ns": 237647
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 231034,
+            "median_ns": 239210,
+            "p95_ns": 428096,
+            "p99_ns": 477519,
+            "max_ns": 612552
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 327657,
+            "median_ns": 335952,
+            "p95_ns": 404411,
+            "p99_ns": 569662,
+            "max_ns": 761904
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 39684,
+            "median_ns": 40676,
+            "p95_ns": 46497,
+            "p99_ns": 77115,
+            "max_ns": 106020
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 64852,
+            "median_ns": 68308,
+            "p95_ns": 130987,
+            "p99_ns": 140174,
+            "max_ns": 171923
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 387624,
+        "deallocation_count_delta": 384489,
+        "allocated_bytes_delta": 283344090,
+        "deallocated_bytes_delta": 282210047,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "set_mode_artifact_tree",
+        "notes": [
+          "mode=artifact-tree"
+        ]
+      }
+    },
+    {
+      "name": "toggle_hide_unconsidered_children_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1504200,
+        "median_ns": 1553503,
+        "p95_ns": 1841605,
+        "p99_ns": 2099952,
+        "max_ns": 5553972
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 5553972,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 95399
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53080
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 256102
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 286209
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 58410
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 4060662
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 85,
+          "duration_ns": 2266094,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 114786
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106170
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 466208
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 394783
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 106250
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1113616
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3306
+            }
+          ]
+        },
+        {
+          "frame_index": 242,
+          "duration_ns": 2175675,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 97474
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 85561
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 372300
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 287401
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 64862
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1262967
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3517
+            }
+          ]
+        },
+        {
+          "frame_index": 84,
+          "duration_ns": 2099952,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 87624
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 52990
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 255491
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 433926
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 106741
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1152609
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3196
+            }
+          ]
+        },
+        {
+          "frame_index": 38,
+          "duration_ns": 2081948,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67467
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53310
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 238028
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 269027
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 45926
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1387822
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 173,
+          "duration_ns": 2018499,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67146
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106861
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 522082
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 259769
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40075
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1014830
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3346
+            }
+          ]
+        },
+        {
+          "frame_index": 52,
+          "duration_ns": 1953596,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 129654
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 54161
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 297951
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 201790
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 41589
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1211590
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5861
+            }
+          ]
+        },
+        {
+          "frame_index": 256,
+          "duration_ns": 1929030,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 112511
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 106099
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 465696
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 262875
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 40005
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 926964
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ]
+        },
+        {
+          "frame_index": 83,
+          "duration_ns": 1918570,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 82165
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 53241
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 241214
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 194626
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39625
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1300257
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3226
+            }
+          ]
+        },
+        {
+          "frame_index": 171,
+          "duration_ns": 1902831,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 67276
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105178
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 535477
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 217630
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 39775
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 930621
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ]
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2685,
+            "median_ns": 2945,
+            "p95_ns": 3517,
+            "p99_ns": 5601,
+            "max_ns": 6362
+          }
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 919260,
+            "median_ns": 930561,
+            "p95_ns": 1018186,
+            "p99_ns": 1290920,
+            "max_ns": 4060662
+          }
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 52198,
+            "median_ns": 53291,
+            "p95_ns": 77646,
+            "p99_ns": 106170,
+            "max_ns": 106861
+          }
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 232126,
+            "median_ns": 239270,
+            "p95_ns": 356821,
+            "p99_ns": 471687,
+            "max_ns": 535477
+          }
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 186561,
+            "median_ns": 191049,
+            "p95_ns": 232578,
+            "p99_ns": 286209,
+            "max_ns": 433926
+          }
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 38854,
+            "median_ns": 39975,
+            "p95_ns": 47149,
+            "p99_ns": 84399,
+            "max_ns": 106741
+          }
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 65213,
+            "median_ns": 68399,
+            "p95_ns": 129775,
+            "p99_ns": 137339,
+            "max_ns": 170681
+          }
+        }
+      ],
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 343476,
+        "deallocation_count_delta": 340681,
+        "allocated_bytes_delta": 254327203,
+        "deallocated_bytes_delta": 253324948,
+        "scope": "process-wide; excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "toggle_hide_unconsidered_children",
+        "notes": [
+          "hide_unconsidered_children=true"
+        ]
+      }
+    }
+  ],
+  "puffin_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/puffin/benchmarks/20260517-661f758fcce2-standard/standard.puffin",
+      "bytes": 7404868,
+      "sha256": "76d7ca335ccf54043dd94e2d5700c4179c7216e0366c4a9f93d28929d37c0f4f",
+      "tracked": false
+    }
+  ],
+  "notes": [
+    "reporting-only benchmark; no pass/fail thresholds applied",
+    "allocation deltas are process-wide and exclude GPU/driver memory",
+    "puffin captures are local ignored artifacts under crates/ploke-egui/data/",
+    "git worktree was dirty only outside benchmark-relevant paths at benchmark start"
+  ]
+}

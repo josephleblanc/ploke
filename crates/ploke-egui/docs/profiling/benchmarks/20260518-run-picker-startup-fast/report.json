@@ -1,0 +1,1434 @@
+{
+  "schema_version": "ploke-egui.native-benchmark-report.v3",
+  "suite": "standard",
+  "created_at_unix_ms": 1779087561386,
+  "commit": {
+    "short_sha": "c4a6acb3ab66",
+    "full_sha": "c4a6acb3ab66ad7d44ff842f1d9eece6f3537468"
+  },
+  "dirty_state": {
+    "dirty": true,
+    "classification": "dirty_relevant",
+    "relevant_dirty": true,
+    "paths": [
+      "crates/ploke-egui/src/native.rs",
+      "crates/ploke-egui/src/run_picker/mod.rs",
+      "crates/ploke-tree/src/store/fs.rs",
+      "crates/ploke-tree/src/store/record_set.rs",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/README.md",
+      "docs/active/agents/collaboration-incidents/model-communication-failures/README.md",
+      "docs/active/agents/collaboration-incidents/verification-surface-drift/README.md",
+      "docs/active/archaeology/INDEX.md",
+      "docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-c4a6acb3ab66-standard/",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-selection-metric-witness-benchmark-note.md",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/2026-05-17-headless-harness-probe-used-primary-gitdir.md",
+      "docs/active/agents/collaboration-incidents/model-communication-failures/2026-05-18-filepath-heavy-triage-summary.md",
+      "docs/active/agents/collaboration-incidents/verification-surface-drift/2026-05-18-selection-inspector-allocation-regression.md"
+    ],
+    "relevant_paths": [
+      "crates/ploke-egui/src/native.rs",
+      "crates/ploke-egui/src/run_picker/mod.rs",
+      "crates/ploke-tree/src/store/fs.rs",
+      "crates/ploke-tree/src/store/record_set.rs"
+    ],
+    "unrelated_paths": [
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/README.md",
+      "docs/active/agents/collaboration-incidents/model-communication-failures/README.md",
+      "docs/active/agents/collaboration-incidents/verification-surface-drift/README.md",
+      "docs/active/archaeology/INDEX.md",
+      "docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-c4a6acb3ab66-standard/",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-selection-metric-witness-benchmark-note.md",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/2026-05-17-headless-harness-probe-used-primary-gitdir.md",
+      "docs/active/agents/collaboration-incidents/model-communication-failures/2026-05-18-filepath-heavy-triage-summary.md",
+      "docs/active/agents/collaboration-incidents/verification-surface-drift/2026-05-18-selection-inspector-allocation-regression.md"
+    ],
+    "scope": "git status --short at benchmark start; benchmark-relevant paths are Cargo manifests, ploke-egui inputs except generated benchmark reports, ploke-tree, and ploke-records"
+  },
+  "command": "target/debug/ploke-egui --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 --benchmark-suite standard --benchmark-scenario startup_frames_300 --benchmark-output crates/ploke-egui/docs/profiling/benchmarks/20260518-run-picker-startup-fast",
+  "run_root": "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1",
+  "feature_set": [
+    "dev",
+    "native-benchmark",
+    "profile-with-puffin"
+  ],
+  "scenarios_requested": [
+    "startup_frames_300"
+  ],
+  "run_readiness": {
+    "policy_max_generations": 5,
+    "policy_child_budget_min": 1,
+    "expected_min_history_blocks": 6,
+    "sealed_history_blocks": 6,
+    "max_sealed_block_height": 5,
+    "expected_min_spawned_children": 5,
+    "spawned_child_nodes": 18,
+    "scheduler_node_count": 1,
+    "node_record_count": 19,
+    "ready": true,
+    "reason": "sealed_history_reached_policy_generation"
+  },
+  "startup": {
+    "spans": [
+      {
+        "name": "run_picker_discovery",
+        "duration_ns": 7684
+      },
+      {
+        "name": "FsRunStore::load",
+        "duration_ns": 915938395
+      },
+      {
+        "name": "FsRunStore::load_history_blocks",
+        "duration_ns": 23017070
+      },
+      {
+        "name": "FsRunStore::load_transition_journal",
+        "duration_ns": 4418779
+      },
+      {
+        "name": "FsRunStore::load_record_set",
+        "duration_ns": 943378222
+      },
+      {
+        "name": "compressed_run_record_profile_probe",
+        "duration_ns": 115000431
+      },
+      {
+        "name": "Graph::from_records",
+        "duration_ns": 6568787
+      },
+      {
+        "name": "graph_load_total",
+        "duration_ns": 1064950637
+      }
+    ],
+    "compressed_run_records": [
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/BurntSushi__ripgrep-2209/runs/run-1778950623675-structured-current-policy-da5906b1/record.json.gz",
+        "compressed_bytes": 78413,
+        "decompressed_bytes": 692537,
+        "turn_count": 1,
+        "tool_call_count": 18,
+        "failed_tool_call_count": 2,
+        "open_read_ns": 11692,
+        "gzip_decompress_ns": 2487212,
+        "typed_json_deserialize_ns": 4036020
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-001b9e9fc72533ca/instances/BurntSushi__ripgrep-2209/runs/run-1778965589964-structured-current-policy-5dd3b64c/record.json.gz",
+        "compressed_bytes": 148354,
+        "decompressed_bytes": 1040789,
+        "turn_count": 1,
+        "tool_call_count": 57,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 14978,
+        "gzip_decompress_ns": 4295488,
+        "typed_json_deserialize_ns": 6477816
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-191617d9aacf4dda/instances/BurntSushi__ripgrep-2209/runs/run-1778968862624-structured-current-policy-c97a8076/record.json.gz",
+        "compressed_bytes": 66867,
+        "decompressed_bytes": 456406,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 1,
+        "open_read_ns": 11932,
+        "gzip_decompress_ns": 1899017,
+        "typed_json_deserialize_ns": 2941304
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-38a8fc72b0b8bf03/instances/BurntSushi__ripgrep-2209/runs/run-1778963824453-structured-current-policy-61a90854/record.json.gz",
+        "compressed_bytes": 47520,
+        "decompressed_bytes": 316722,
+        "turn_count": 1,
+        "tool_call_count": 20,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9538,
+        "gzip_decompress_ns": 1340307,
+        "typed_json_deserialize_ns": 2261568
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-53d3c597b864fcf9/instances/BurntSushi__ripgrep-2209/runs/run-1778962530279-structured-current-policy-c6d6a72d/record.json.gz",
+        "compressed_bytes": 61586,
+        "decompressed_bytes": 503774,
+        "turn_count": 1,
+        "tool_call_count": 36,
+        "failed_tool_call_count": 6,
+        "open_read_ns": 10510,
+        "gzip_decompress_ns": 1843032,
+        "typed_json_deserialize_ns": 3477892
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-67233258b489ccf1/instances/BurntSushi__ripgrep-2209/runs/run-1778953273239-structured-current-policy-277d8be9/record.json.gz",
+        "compressed_bytes": 90600,
+        "decompressed_bytes": 630218,
+        "turn_count": 1,
+        "tool_call_count": 34,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 12383,
+        "gzip_decompress_ns": 2615102,
+        "typed_json_deserialize_ns": 3977741
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-7ee6db64779c8019/instances/BurntSushi__ripgrep-2209/runs/run-1778957355110-structured-current-policy-b0e1d500/record.json.gz",
+        "compressed_bytes": 65528,
+        "decompressed_bytes": 430878,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10440,
+        "gzip_decompress_ns": 1842350,
+        "typed_json_deserialize_ns": 2780262
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-8895520341e426aa/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-b4563a68/record.json.gz",
+        "compressed_bytes": 80492,
+        "decompressed_bytes": 485725,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10200,
+        "gzip_decompress_ns": 2205482,
+        "typed_json_deserialize_ns": 2971802
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-9456db3662f9d15a/instances/BurntSushi__ripgrep-2209/runs/run-1778953272443-structured-current-policy-f1847fad/record.json.gz",
+        "compressed_bytes": 125451,
+        "decompressed_bytes": 1127416,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 11712,
+        "gzip_decompress_ns": 3990245,
+        "typed_json_deserialize_ns": 6842621
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b2b9bfa6ac855313/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-8957da87/record.json.gz",
+        "compressed_bytes": 72745,
+        "decompressed_bytes": 531868,
+        "turn_count": 1,
+        "tool_call_count": 37,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 11382,
+        "gzip_decompress_ns": 2105705,
+        "typed_json_deserialize_ns": 3729895
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b360573242cfdaf4/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-ba315811/record.json.gz",
+        "compressed_bytes": 94759,
+        "decompressed_bytes": 751078,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 12934,
+        "gzip_decompress_ns": 2798837,
+        "typed_json_deserialize_ns": 5245171
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b53a075a894cedf9/instances/BurntSushi__ripgrep-2209/runs/run-1778953269791-structured-current-policy-6d0dc6f7/record.json.gz",
+        "compressed_bytes": 63371,
+        "decompressed_bytes": 510476,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 10179,
+        "gzip_decompress_ns": 1888838,
+        "typed_json_deserialize_ns": 3689930
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b8ec5f10e815fd12/instances/BurntSushi__ripgrep-2209/runs/run-1778957354452-structured-current-policy-9ec5c365/record.json.gz",
+        "compressed_bytes": 44147,
+        "decompressed_bytes": 332582,
+        "turn_count": 1,
+        "tool_call_count": 26,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9548,
+        "gzip_decompress_ns": 1292317,
+        "typed_json_deserialize_ns": 2595806
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-babdce8b381580ef/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-5e788851/record.json.gz",
+        "compressed_bytes": 62602,
+        "decompressed_bytes": 500893,
+        "turn_count": 1,
+        "tool_call_count": 32,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 9178,
+        "gzip_decompress_ns": 1863239,
+        "typed_json_deserialize_ns": 3372224
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-bd77551f3715f119/instances/BurntSushi__ripgrep-2209/runs/run-1778957354823-structured-current-policy-fadea182/record.json.gz",
+        "compressed_bytes": 50992,
+        "decompressed_bytes": 367261,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10199,
+        "gzip_decompress_ns": 1482465,
+        "typed_json_deserialize_ns": 2618828
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c1a38306ed49dc1c/instances/BurntSushi__ripgrep-2209/runs/run-1778962529969-structured-current-policy-3204ca08/record.json.gz",
+        "compressed_bytes": 118577,
+        "decompressed_bytes": 884086,
+        "turn_count": 1,
+        "tool_call_count": 53,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 11412,
+        "gzip_decompress_ns": 3433979,
+        "typed_json_deserialize_ns": 5614966
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c30d784dd5ffb231/instances/BurntSushi__ripgrep-2209/runs/run-1778968862801-structured-current-policy-91092892/record.json.gz",
+        "compressed_bytes": 49619,
+        "decompressed_bytes": 364079,
+        "turn_count": 1,
+        "tool_call_count": 28,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9598,
+        "gzip_decompress_ns": 1439173,
+        "typed_json_deserialize_ns": 2766656
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c9841bdf11e59aee/instances/BurntSushi__ripgrep-2209/runs/run-1778962529953-structured-current-policy-9448cde8/record.json.gz",
+        "compressed_bytes": 52601,
+        "decompressed_bytes": 460616,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 5,
+        "open_read_ns": 6852,
+        "gzip_decompress_ns": 1606958,
+        "typed_json_deserialize_ns": 3569163
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-ccfbb42e20f22f5b/instances/BurntSushi__ripgrep-2209/runs/run-1778968862654-structured-current-policy-477c4423/record.json.gz",
+        "compressed_bytes": 46743,
+        "decompressed_bytes": 336339,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 13245,
+        "gzip_decompress_ns": 1347431,
+        "typed_json_deserialize_ns": 2460171
+      }
+    ],
+    "notes": [
+      "run_picker_discovery=7684 ns (kept in startup spans)",
+      "standard_run_readiness_heuristic: sealed_history_reached_policy_generation; history_blocks=6/6 max_history_height=Some(5) spawned_children=18/5 node_records=19"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "startup_frames_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1688281,
+        "median_ns": 1711204,
+        "p95_ns": 1925276,
+        "p99_ns": 2617596,
+        "max_ns": 60910351
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 60910351,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 10714484
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 13485589
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 12480821
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 2368459
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 20808673
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 6732
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 8097,
+            "deallocation_count_delta": 7195,
+            "allocated_object_bytes_delta": 3762772,
+            "deallocated_object_bytes_delta": 3496713,
+            "allocated_wrapped_bytes_delta": 3840856,
+            "deallocated_wrapped_bytes_delta": 3566792,
+            "live_object_bytes": 266059,
+            "live_wrapped_bytes": 274064
+          }
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 17543110,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 86522
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 7787366
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 8568644
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 256241
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 75442
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8463857
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3927
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 3985,
+            "deallocation_count_delta": 3097,
+            "allocated_object_bytes_delta": 3089769,
+            "deallocated_object_bytes_delta": 2742038,
+            "allocated_wrapped_bytes_delta": 3127568,
+            "deallocated_wrapped_bytes_delta": 2771280,
+            "live_object_bytes": 613790,
+            "live_wrapped_bytes": 630352
+          }
+        },
+        {
+          "frame_index": 228,
+          "duration_ns": 2784009,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 149842
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 118983
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 474381
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 388530
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 83627
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1544381
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3576
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1143,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 824958,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 836000,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 2418753,
+            "live_wrapped_bytes": 2458120
+          }
+        },
+        {
+          "frame_index": 273,
+          "duration_ns": 2617596,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 104577
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 112521
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 441268
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 378762
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 84428
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1497682
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3596
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1143,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 824966,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 836008,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 2605805,
+            "live_wrapped_bytes": 2649888
+          }
+        },
+        {
+          "frame_index": 3,
+          "duration_ns": 2348852,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 74319
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 652746
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 882167
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 240221
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 58129
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1018933
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3527
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1419,
+            "deallocation_count_delta": 1523,
+            "allocated_object_bytes_delta": 2031653,
+            "deallocated_object_bytes_delta": 1041465,
+            "allocated_wrapped_bytes_delta": 2045216,
+            "deallocated_wrapped_bytes_delta": 1055848,
+            "live_object_bytes": 1603978,
+            "live_wrapped_bytes": 1619720
+          }
+        },
+        {
+          "frame_index": 211,
+          "duration_ns": 2196315,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 73117
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 152006
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 617139
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 313369
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 55554
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1005729
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 2975
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1143,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 824942,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 835984,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 2358123,
+            "live_wrapped_bytes": 2395704
+          }
+        },
+        {
+          "frame_index": 93,
+          "duration_ns": 2171519,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 107352
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 115847
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 454063
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 368983
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 83386
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1049060
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1144,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 827695,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 838744,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 1924949,
+            "live_wrapped_bytes": 1950016
+          }
+        },
+        {
+          "frame_index": 187,
+          "duration_ns": 2073384,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 119595
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 75462
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 320301
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 250661
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52428
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1227396
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3416
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1144,
+            "deallocation_count_delta": 1134,
+            "allocated_object_bytes_delta": 825067,
+            "deallocated_object_bytes_delta": 824122,
+            "allocated_wrapped_bytes_delta": 836112,
+            "deallocated_wrapped_bytes_delta": 835064,
+            "live_object_bytes": 2272564,
+            "live_wrapped_bytes": 2307632
+          }
+        },
+        {
+          "frame_index": 204,
+          "duration_ns": 2055511,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 74660
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 126207
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 613302
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 233488
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 49934
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1006791
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3096
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1143,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 824936,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 835976,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 2333043,
+            "live_wrapped_bytes": 2369872
+          }
+        },
+        {
+          "frame_index": 198,
+          "duration_ns": 1979968,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 120847
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 75482
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 323147
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 252314
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52839
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1126526
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3406
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1144,
+            "deallocation_count_delta": 1133,
+            "allocated_object_bytes_delta": 825058,
+            "deallocated_object_bytes_delta": 821386,
+            "allocated_wrapped_bytes_delta": 836104,
+            "deallocated_wrapped_bytes_delta": 832320,
+            "live_object_bytes": 2311825,
+            "live_wrapped_bytes": 2348040
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2845,
+            "median_ns": 3066,
+            "p95_ns": 3326,
+            "p99_ns": 6161,
+            "max_ns": 6732
+          },
+          "median_percent_of_frame_x100": 17
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 999818,
+            "median_ns": 1007883,
+            "p95_ns": 1069719,
+            "p99_ns": 1497682,
+            "max_ns": 20808673
+          },
+          "median_percent_of_frame_x100": 5889
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 299,
+            "min_ns": 67827,
+            "median_ns": 69260,
+            "p95_ns": 76584,
+            "p99_ns": 152006,
+            "max_ns": 7787366
+          },
+          "median_percent_of_frame_x100": 404,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 273493,
+            "median_ns": 278142,
+            "p95_ns": 329509,
+            "p99_ns": 617139,
+            "max_ns": 13485589
+          },
+          "median_percent_of_frame_x100": 1625
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 224171,
+            "median_ns": 227647,
+            "p95_ns": 250811,
+            "p99_ns": 368983,
+            "max_ns": 12480821
+          },
+          "median_percent_of_frame_x100": 1330
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 48492,
+            "median_ns": 49623,
+            "p95_ns": 56115,
+            "p99_ns": 83627,
+            "max_ns": 2368459
+          },
+          "median_percent_of_frame_x100": 289
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 72375,
+            "median_ns": 75101,
+            "p95_ns": 120106,
+            "p99_ns": 144511,
+            "max_ns": 10714484
+          },
+          "median_percent_of_frame_x100": 438
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 300,
+            "min": 1141,
+            "median": 1143,
+            "p95": 1145,
+            "p99": 1161,
+            "max": 8097
+          },
+          "allocated_object_bytes": {
+            "count": 300,
+            "min": 824785,
+            "median": 824963,
+            "p95": 827695,
+            "p99": 878217,
+            "max": 3762772
+          },
+          "allocated_wrapped_bytes": {
+            "count": 300,
+            "min": 835824,
+            "median": 836000,
+            "p95": 838744,
+            "p99": 889264,
+            "max": 3840856
+          },
+          "live_object_bytes": {
+            "count": 300,
+            "min": 266059,
+            "median": 2140174,
+            "p95": 2648592,
+            "p99": 2691356,
+            "max": 2702126
+          },
+          "live_wrapped_bytes": {
+            "count": 300,
+            "min": 274064,
+            "median": 2171344,
+            "p95": 2693960,
+            "p99": 2738000,
+            "max": 2749096
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1141,
+              "median": 1143,
+              "p95": 1419,
+              "p99": 8097,
+              "max": 8097
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 824833,
+              "median": 824969,
+              "p95": 2031653,
+              "p99": 3762772,
+              "max": 3762772
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 835856,
+              "median": 836008,
+              "p95": 2045216,
+              "p99": 3840856,
+              "max": 3840856
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 266059,
+              "median": 1664508,
+              "p95": 1753326,
+              "p99": 1760422,
+              "max": 1760422
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 274064,
+              "median": 1682240,
+              "p95": 1773528,
+              "p99": 1780840,
+              "max": 1780840
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 251,
+          "frame_end": 300,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1142,
+              "median": 1143,
+              "p95": 1144,
+              "p99": 1144,
+              "max": 1144
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 824895,
+              "median": 824960,
+              "p95": 825060,
+              "p99": 878217,
+              "max": 878217
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 835936,
+              "median": 836000,
+              "p95": 836104,
+              "p99": 889264,
+              "max": 889264
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 2500672,
+              "median": 2612948,
+              "p95": 2694951,
+              "p99": 2702126,
+              "max": 2702126
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 2542432,
+              "median": 2657248,
+              "p95": 2741704,
+              "p99": 2749096,
+              "max": 2749096
+            }
+          }
+        },
+        "slope": "plateau"
+      },
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 353072,
+          "deallocation_count": 348425,
+          "allocated_object_bytes": 254042130,
+          "deallocated_object_bytes": 251340004,
+          "allocated_wrapped_bytes": 257451136,
+          "deallocated_wrapped_bytes": 254702040,
+          "live_object_bytes": 2702126,
+          "live_wrapped_bytes": 2749096
+        },
+        "unmatched_deallocations": 0,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 160943,
+              "deallocation_count": 159717,
+              "allocated_object_bytes": 237116872,
+              "deallocated_object_bytes": 235002188,
+              "allocated_wrapped_bytes": 238521848,
+              "deallocated_wrapped_bytes": 236394976,
+              "live_object_bytes": 2114684,
+              "live_wrapped_bytes": 2126872
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95576,
+              "deallocation_count": 95202,
+              "allocated_object_bytes": 6007839,
+              "deallocated_object_bytes": 5873163,
+              "allocated_wrapped_bytes": 7105560,
+              "deallocated_wrapped_bytes": 6967600,
+              "live_object_bytes": 134676,
+              "live_wrapped_bytes": 137960
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 36526,
+              "deallocation_count": 36362,
+              "allocated_object_bytes": 3532848,
+              "deallocated_object_bytes": 3455615,
+              "allocated_wrapped_bytes": 3892440,
+              "deallocated_wrapped_bytes": 3813784,
+              "live_object_bytes": 77233,
+              "live_wrapped_bytes": 78656
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12209,
+              "deallocation_count": 12075,
+              "allocated_object_bytes": 1760876,
+              "deallocated_object_bytes": 1661580,
+              "allocated_wrapped_bytes": 1869664,
+              "deallocated_wrapped_bytes": 1769224,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9669,
+              "deallocation_count": 7561,
+              "allocated_object_bytes": 885363,
+              "deallocated_object_bytes": 730583,
+              "allocated_wrapped_bytes": 968032,
+              "deallocated_wrapped_bytes": 791256,
+              "live_object_bytes": 154780,
+              "live_wrapped_bytes": 176776
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4882,
+              "deallocation_count": 4846,
+              "allocated_object_bytes": 556995,
+              "deallocated_object_bytes": 539969,
+              "allocated_wrapped_bytes": 599568,
+              "deallocated_wrapped_bytes": 582248,
+              "live_object_bytes": 17026,
+              "live_wrapped_bytes": 17320
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1714,
+              "deallocation_count": 1618,
+              "allocated_object_bytes": 190915,
+              "deallocated_object_bytes": 169522,
+              "allocated_wrapped_bytes": 206096,
+              "deallocated_wrapped_bytes": 183736,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 160943,
+              "deallocation_count": 159717,
+              "allocated_object_bytes": 237116872,
+              "deallocated_object_bytes": 235002188,
+              "allocated_wrapped_bytes": 238521848,
+              "deallocated_wrapped_bytes": 236394976,
+              "live_object_bytes": 2114684,
+              "live_wrapped_bytes": 2126872
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95576,
+              "deallocation_count": 95202,
+              "allocated_object_bytes": 6007839,
+              "deallocated_object_bytes": 5873163,
+              "allocated_wrapped_bytes": 7105560,
+              "deallocated_wrapped_bytes": 6967600,
+              "live_object_bytes": 134676,
+              "live_wrapped_bytes": 137960
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 36526,
+              "deallocation_count": 36362,
+              "allocated_object_bytes": 3532848,
+              "deallocated_object_bytes": 3455615,
+              "allocated_wrapped_bytes": 3892440,
+              "deallocated_wrapped_bytes": 3813784,
+              "live_object_bytes": 77233,
+              "live_wrapped_bytes": 78656
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12209,
+              "deallocation_count": 12075,
+              "allocated_object_bytes": 1760876,
+              "deallocated_object_bytes": 1661580,
+              "allocated_wrapped_bytes": 1869664,
+              "deallocated_wrapped_bytes": 1769224,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9669,
+              "deallocation_count": 7561,
+              "allocated_object_bytes": 885363,
+              "deallocated_object_bytes": 730583,
+              "allocated_wrapped_bytes": 968032,
+              "deallocated_wrapped_bytes": 791256,
+              "live_object_bytes": 154780,
+              "live_wrapped_bytes": 176776
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4882,
+              "deallocation_count": 4846,
+              "allocated_object_bytes": 556995,
+              "deallocated_object_bytes": 539969,
+              "allocated_wrapped_bytes": 599568,
+              "deallocated_wrapped_bytes": 582248,
+              "live_object_bytes": 17026,
+              "live_wrapped_bytes": 17320
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1714,
+              "deallocation_count": 1618,
+              "allocated_object_bytes": 190915,
+              "deallocated_object_bytes": 169522,
+              "allocated_wrapped_bytes": 206096,
+              "deallocated_wrapped_bytes": 183736,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 160943,
+              "deallocation_count": 159717,
+              "allocated_object_bytes": 237116872,
+              "deallocated_object_bytes": 235002188,
+              "allocated_wrapped_bytes": 238521848,
+              "deallocated_wrapped_bytes": 236394976,
+              "live_object_bytes": 2114684,
+              "live_wrapped_bytes": 2126872
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9669,
+              "deallocation_count": 7561,
+              "allocated_object_bytes": 885363,
+              "deallocated_object_bytes": 730583,
+              "allocated_wrapped_bytes": 968032,
+              "deallocated_wrapped_bytes": 791256,
+              "live_object_bytes": 154780,
+              "live_wrapped_bytes": 176776
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95576,
+              "deallocation_count": 95202,
+              "allocated_object_bytes": 6007839,
+              "deallocated_object_bytes": 5873163,
+              "allocated_wrapped_bytes": 7105560,
+              "deallocated_wrapped_bytes": 6967600,
+              "live_object_bytes": 134676,
+              "live_wrapped_bytes": 137960
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12209,
+              "deallocation_count": 12075,
+              "allocated_object_bytes": 1760876,
+              "deallocated_object_bytes": 1661580,
+              "allocated_wrapped_bytes": 1869664,
+              "deallocated_wrapped_bytes": 1769224,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 36526,
+              "deallocation_count": 36362,
+              "allocated_object_bytes": 3532848,
+              "deallocated_object_bytes": 3455615,
+              "allocated_wrapped_bytes": 3892440,
+              "deallocated_wrapped_bytes": 3813784,
+              "live_object_bytes": 77233,
+              "live_wrapped_bytes": 78656
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1714,
+              "deallocation_count": 1618,
+              "allocated_object_bytes": 190915,
+              "deallocated_object_bytes": 169522,
+              "allocated_wrapped_bytes": 206096,
+              "deallocated_wrapped_bytes": 183736,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4882,
+              "deallocation_count": 4846,
+              "allocated_object_bytes": 556995,
+              "deallocated_object_bytes": 539969,
+              "allocated_wrapped_bytes": 599568,
+              "deallocated_wrapped_bytes": 582248,
+              "live_object_bytes": 17026,
+              "live_wrapped_bytes": 17320
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 353072,
+        "deallocation_count_delta": 348425,
+        "allocated_bytes_delta": 254042130,
+        "deallocated_bytes_delta": 251340004,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "none"
+      }
+    }
+  ],
+  "puffin_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/puffin/benchmarks/20260518-run-picker-startup-fast/standard.puffin",
+      "bytes": 959362,
+      "sha256": "4bece59893aa1e2f1236fd65d812aae610b1ba3052355d6401da203513c3b4c7",
+      "tracked": false
+    }
+  ],
+  "heap_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260518-run-picker-startup-fast/startup_frames_300.heap.json",
+      "bytes": 4132,
+      "sha256": "ef4b47fa3960fe4e40b1aac900a8938605a5e30741bc83a3a9336d666766c05a",
+      "tracked": false
+    }
+  ],
+  "notes": [
+    "reporting-only benchmark; no pass/fail thresholds applied",
+    "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface",
+    "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode",
+    "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence",
+    "puffin captures are local ignored artifacts under crates/ploke-egui/data/",
+    "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/"
+  ]
+}

@@ -1,0 +1,6 @@
+# Default target: ploke-tree-egui playback browser demo.
+# Operator graph UI (ploke-egui WASM): use crates/ploke-egui/Trunk.toml instead.
+
+[build]
+target = "crates/ploke-tree-egui/index.html"
+dist = "target/trunk/ploke-tree-egui"
