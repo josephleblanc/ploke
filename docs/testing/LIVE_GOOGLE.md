@@ -29,6 +29,16 @@ export PLOKE_LIVE_GOOGLE_CHAT_MODEL=google/gemini-2.5-flash
 `PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID` are accepted by eval-specific
 surfaces, but `PLOKE_LIVE_GOOGLE_CHAT_MODEL` is the shared chat canary model.
 
+Local setup hints are opt-in. To have live-Google setup failures print the
+preflight command, set:
+
+```bash
+export PLOKE_LOCAL_GOOGLE_AUTH_HINTS=1
+```
+
+This is intentionally off unless the environment opts in, so merged code does
+not point unrelated machines at a local setup command by default.
+
 ## Preflight
 
 Run the auth preflight from the same shell before live tests:

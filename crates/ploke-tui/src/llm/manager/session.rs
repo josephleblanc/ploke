@@ -2139,6 +2139,34 @@ mod tests {
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
 
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_setup_or_panic(test_name: &str) {
+        if let Err(error) = Google::route_config_available() {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google route config; route config unavailable: {error}"
+                ))
+            );
+        }
+        if let Err(error) = Google::auth_config_available() {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google ADC; ADC config unavailable: {error}"
+                ))
+            );
+        }
+        if let Err(error) = Google::resolve_bearer_token().await {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google ADC bearer-token resolution; token unavailable: {error}"
+                ))
+            );
+        }
+    }
+
     #[derive(Clone, Default)]
     struct TraceLines(StdArc<StdMutex<Vec<String>>>);
 
@@ -2759,6 +2787,11 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     #[ignore = "live Google tool-call session; requires GOOGLE_PROJECT_ID/GOOGLE_REGION and ADC"]
     async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
+        live_google_setup_or_panic(
+            "live_google_chat_session_executes_list_dir_tool_call_success_or_quota",
+        )
+        .await;
+
         let db = Arc::new(Database::new_init().expect("database initializes"));
         let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),

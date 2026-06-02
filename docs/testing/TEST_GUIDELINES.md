@@ -180,3 +180,6 @@ Live API Endpoint Tests (Google)
   `PLOKE_RUN_LIVE_TESTS=1`. Default to skip in CI.
 - Do not treat `GOOGLE_API_KEY` as the supported direct-Google credential. The
   Google router resolves an ADC bearer token internally.
+- Optional local breadcrumbs are controlled by
+  `PLOKE_LOCAL_GOOGLE_AUTH_HINTS=1`; leave this unset in generic CI or other
+  environments unless the preflight command is useful there.
