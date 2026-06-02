@@ -16,12 +16,13 @@ The command is not just a CLI wrapper. It is the typed runtime for one **parent 
 
 ## Reading notes
 
-- File/line references are from branch `docs/prototype1-state-loop-walkthrough`, based at `3a4ac77e`.
+- File/line references are from branch `docs/prototype1-state-loop-walkthrough`, current local merge `09375711` with turn-live replay emission commit `5a7dbe83` included.
 - This document intentionally distinguishes setup/admission (`loop prototype1-setup`) from the runtime parent turn (`loop prototype1-state`).
 - No secrets are recorded here. Model/provider names and source paths are code/config provenance, not credentials.
 - `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
 - Companion docs:
   - [`campaign-configs.md`](campaign-configs.md): expanded campaign/run-profile config audit, model/provider/route precedence, and config footguns.
+  - [`turn-live-replay.md`](turn-live-replay.md): focused guide to the broad headless-TUI turn-live replay bundle, live observer emissions, replay command, branch tapes, and model routing.
   - [`terminology-conflicts.md`](terminology-conflicts.md): terminology conflicts and proposed conventions.
 
 ## 0. Draft glossary and conceptual map
@@ -114,6 +115,10 @@ Read this section first if you are new to Prototype 1. These are source-grounded
 | Branch evaluation report | Parent-created comparison artifact for a child treatment vs baseline. It stores baseline/treatment campaign ids, evaluator/eval-set identity, branch registry/evaluation paths, disposition, reasons, and compared instances (`Prototype1BranchEvaluationReport`, `cli_facing.rs:7902-7920`). |
 | Treatment evidence | Child-created evidence that its treatment campaign completed far enough to compare: treatment manifest/closure path, eval policy, benchmark family, dataset sources, and per-instance metrics/oracle status (`Prototype1TreatmentEvidence`, `cli_facing.rs:7875-7900`). |
 | Run record | Compressed durable trace of a benchmark/eval run, including agent turns, LLM responses, tool calls, artifacts, and metrics. Protocol closure and replay use these records (`record.rs:37-40`). |
+| Turn-live replay bundle | Broad headless-TUI candidate-generation replay/debug bundle written beside the broad-harness submitted result. The directory path is `submitted_result_path.with_extension("turn-live")` and currently contains `agent-turn-trace.json`, `agent-turn-summary.json`, and `llm-full-responses.jsonl` (`cli_facing.rs:2055-2088`). |
+| Agent-turn trace/summary | Passive `ploke-records` persisted shapes for ordered agent-turn events. `AgentTurnTraceRecord` and `AgentTurnSummaryRecord` are transparent wrappers over the same `AgentTurnArtifactRecord` wire shape today; they do not grant runtime authority (`agent_turn.rs:1-35`). |
+| Full response sidecar | `llm-full-responses.jsonl`, a JSONL sidecar of `RawFullResponseRecord` provider-response envelopes tagged with assistant message id and response index. Replay uses this as the provider-response tape (`llm_response.rs:1-53`). |
+| Replay cursor | `TurnCursor` names artifact family/path/event index inside an agent-turn artifact. `TurnEventStepRef` is the borrowed event-level playback view used to resolve replay anchors (`turn.rs:41-78`). |
 
 ### 0.5 Evaluation, protocol, and model-routing terms
 
@@ -565,7 +570,26 @@ Disk writes:
 - runner-result JSON projections;
 - channel terminal result JSONL.
 
-### 5.6 C4: observe child terminal result
+### 5.6 Broad headless-TUI turn-live replay artifacts
+
+Broad harness candidate generation has an additional observability write boundary before the resulting submitted edit is converted into child files. `run_broad_headless_tui_attempt_with_options` prepares the workspace, reads the prompt, selects a model label, and runs `tui_adapter::run_headless_with_model_capture_responses` (`cli_facing.rs:1532-1620`). That wrapper installs a response tap before entering the normal headless TUI runtime (`tui_adapter.rs:152-173`).
+
+After the headless attempt reaches a terminal outcome, the parent writes two observability bundles:
+
+1. compact `.headless-tui.json` diagnostics (`cli_facing.rs:2042-2053`);
+2. a `.turn-live/` replay bundle via `write_broad_headless_tui_turn_live_bundle` (`cli_facing.rs:2055-2088`).
+
+The `.turn-live/` directory is `slot.published.submitted_result_path().with_extension("turn-live")`. It contains:
+
+- `agent-turn-trace.json`: `AgentTurnTraceRecord(AgentTurnArtifactRecord)`;
+- `agent-turn-summary.json`: `AgentTurnSummaryRecord(AgentTurnArtifactRecord)`;
+- `llm-full-responses.jsonl`: one `RawFullResponseRecord` per captured provider response.
+
+The source `HeadlessRun` records prompt/tool/turn observations, proposal/application attempts, prompt diagnostics, cargo-validation observations, debug relay messages, and captured full provider responses (`tui_adapter.rs:2031-2040`). `HeadlessRun::agent_turn_artifact_record` converts the observed event stream into passive `ploke-records` agent-turn records (`tui_adapter.rs:2094-2189`).
+
+This write boundary is replay evidence, not runtime authority. It lets `ploke-eval run replay turn-live` reconstruct a historical provider-response prefix and re-execute the tool loop in a current workspace. The dedicated companion doc [`turn-live-replay.md`](turn-live-replay.md) covers the replay command, branch tapes, live observer emissions, and model routing details.
+
+### 5.7 C4: observe child terminal result
 
 C4 is implemented in `crates/ploke-eval/src/cli/prototype1_state/c4.rs`.
 
@@ -600,6 +624,8 @@ This table lists the main persistent write boundaries in the `prototype1-state` 
 | Runner result | `record_attempt_runner_result` (`prototype1_process.rs:2961-2974`) | `prototype1/nodes/<node>/results/<runtime>.json`, plus node runner result path | `Prototype1RunnerResult` | Child terminal result projection. |
 | Child binary | C2 build (`c2.rs:481-545`) | `prototype1/nodes/<node>/bin/ploke-eval` | built `ploke-eval` binary | Per-child executable after applying candidate branch. |
 | Child streams | C3 spawn (`c3.rs:147-168`) | child stdout/stderr files | spawned child process stdout/stderr | Process observability. |
+| Broad headless-TUI diagnostics | `write_broad_headless_tui_diagnostics` (`cli_facing.rs:2042-2053`) | `submitted_result_path.with_extension("headless-tui")` | `tui_adapter::evidence::Summary` from `HeadlessRun` | Compact diagnostic summary for broad-harness parent patch generation. |
+| Turn-live replay bundle | `write_broad_headless_tui_turn_live_bundle` (`cli_facing.rs:2055-2088`) | `submitted_result_path.with_extension("turn-live")/{agent-turn-trace.json,agent-turn-summary.json,llm-full-responses.jsonl}` | `AgentTurnArtifactRecord` plus `RawFullResponseRecord`s from `HeadlessRun` | Durable replay/debug evidence for re-running a historical provider prefix through current TUI tools. |
 | Git worktree target writes | backend realize (`backend.rs:1997-2063`) | child worktree files | resolved treatment content | Materialized child candidate. |
 | Git commits | backend `persist_files` (`backend.rs:1812-1901`) | git commits on artifact/child/parent branches | changed workspace files | Durable artifact branch state. |
 | Branch evaluation report | `compare_observed_child_treatment` (`cli_facing.rs:4754-4782`) | branch evaluation JSON | `Prototype1BranchEvaluationReport` | Parent comparison of treatment vs baseline. |
@@ -630,6 +656,10 @@ This table lists the main persistent write boundaries in the `prototype1-state` 
 | `BatchRunSummary` | eval runner batch execution | `run_batch` | Summary of batch eval attempts, selected model/provider, successes/failures, per-instance artifact paths. |
 | `RunArtifactPaths` / `AgentRunArtifactPaths` | eval runner single-run execution | runner persistence | Paths to run manifest, logs, repo/indexing/snapshot status, run record, response trace, submissions, patch projections. |
 | `RunRecord` / agent turn records | live headless TUI/eval runner events | runner record emission | Compressed durable run trace with LLM requests/responses, tool calls, artifacts, metrics. Used by protocol closure and replay. |
+| `AgentTurnTraceRecord` / `AgentTurnSummaryRecord` | `HeadlessRun::agent_turn_artifact_record` from broad headless-TUI events | `write_broad_headless_tui_turn_live_bundle` | Passive trace/summary wrappers around `AgentTurnArtifactRecord`; used by replay inspection and turn-live probes. |
+| `AgentTurnArtifactRecord` | `HeadlessRun` events plus prompt/model/request id | wrapped into trace/summary records | Semantic turn evidence: original prompt, selected model label, user/assistant ids, observed tool/turn events, and patch outcome projection. |
+| `RawFullResponseRecord` | response tap installed by `run_headless_with_model_capture_responses` | `llm-full-responses.jsonl` in the `.turn-live/` bundle | Provider-response tape keyed by assistant message id and response index; replay installs it as recorded provider output. |
+| `ReplayBranchTape` | live-step replay captures new `RawFullResponseRecord`s | `ploke-eval run replay turn-live --branch-out` | Optional operator continuation tape for the next `--branch-in`; not History or campaign authority. |
 | `StoredProtocolArtifact` | protocol procedure run input/output/artifact | `write_protocol_artifact` | Protocol evidence envelope: schema, procedure, subject, run id, model/provider, input/output/artifact. |
 | `StoredProtocolArtifactFile` | filesystem-loaded protocol artifact | `list_protocol_artifacts` / `load_protocol_artifact` | Adds path to stored artifact for summaries, aggregate loading, and compatibility checks. |
 | Protocol aggregate types | protocol artifact list/load | protocol aggregate module | Derived coverage state over segmentation/call-review/segment-review artifacts. Used by protocol closure to know missing work. |
@@ -668,9 +698,36 @@ The protocol model path is:
 
 Protocol retry behavior is local to each request: malformed JSON parse errors are retried up to `PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS` (`cli.rs:7836-7865`, `cli.rs:7867-7901`).
 
-### 8.3 Where model provenance is persisted
+### 8.3 Broad-harness parent-patcher headless TUI model routing
 
-Protocol artifacts store optional `model_id` and `provider_slug` in the artifact envelope (`protocol_artifacts.rs:21-35`, `protocol_artifacts.rs:292-352`). Eval batch summaries store selected model/provider (`runner.rs:3882-3904`). Run intent/registration stores model/provider into run registry intent (`runner.rs:158-214`).
+Broad harness candidate generation is also a live model surface. It is separate from eval/protocol campaign routing: broad parent patch generation uses `BroadTuiAttemptOptions` and the parent-patcher model selection path (`cli_facing.rs:646-715`).
+
+Model path:
+
+1. `BroadTuiAttemptOptions::from_cli` parses explicit broad-TUI `model_id`/provider, or falls back to `load_parent_patcher_model_selection` (`cli_facing.rs:665-694`).
+2. `load_parent_patcher_model_selection` reads the parent-patcher selection, falling back to active model selection only if the parent-patcher selection is missing (`cli.rs:2960-2972`).
+3. `headless_model_selection` chooses direct Google vs OpenRouter and rejects incompatible direct-Google provider pins (`cli.rs:2917-2945`).
+4. `run_broad_headless_tui_attempt_with_options` passes `options.model().cloned()` into `tui_adapter::run_headless_with_model_capture_responses` and records `options.model_label()` into the turn-live bundle, falling back to `unknown-headless-model` only if no model selection is available (`cli_facing.rs:1589-1600`).
+5. `start_attempt_runtime` applies the model by setting `RuntimeConfig.active_model`, `RuntimeConfig.active_router`, and the model provider selection before submitting the prompt (`tui_adapter.rs:306-346`).
+
+The live provider call itself occurs inside the normal `ploke-tui` chat/session path after the prompt is submitted. The turn-live bundle captures provider responses through the response tap and writes them to `llm-full-responses.jsonl` for replay (`tui_adapter.rs:152-173`, `tui_adapter.rs:869-889`, `cli_facing.rs:2077-2083`).
+
+### 8.4 Turn-live replay model routing
+
+`ploke-eval run replay turn-live` has a related but distinct model path. The recorded prefix is not a live API call; it is served from `llm-full-responses.jsonl`. A live call happens only if `--tail live` or `--tail live-step` reaches beyond the installed prefix.
+
+Replay model path:
+
+1. `ReplayTurnLiveCommand::run` sets `model = None` for `--tail stop` when no model/provider override is supplied (`cli.rs:4796-4802`).
+2. Otherwise `resolve_replay_probe_model_selection` parses `--model-id` and optional provider, rejects provider-without-model, or loads the parent-patcher model selection (`cli.rs:4896-4921`).
+3. `ProbeRequest` passes that optional model into `tui_adapter::run_headless_with_model` (`replay/probe.rs:446-453`).
+4. `start_attempt_runtime` applies the runtime model config in the same place as production broad generation (`tui_adapter.rs:306-346`).
+
+Replay branch tapes written by `--branch-out` persist captured live responses as `RawFullResponseRecord`s, not new model config authority (`replay/probe.rs:290-360`, `replay/probe.rs:461-473`).
+
+### 8.5 Where model provenance is persisted
+
+Protocol artifacts store optional `model_id` and `provider_slug` in the artifact envelope (`protocol_artifacts.rs:21-35`, `protocol_artifacts.rs:292-352`). Eval batch summaries store selected model/provider (`runner.rs:3882-3904`). Run intent/registration stores model/provider into run registry intent (`runner.rs:158-214`). Broad turn-live artifacts persist only the selected model label in `AgentTurnArtifactRecord.selected_model`; provider/route provenance for that surface remains in runtime config/selection, not in the agent-turn record family (`agent_turn.rs:37-53`, `cli_facing.rs:1589-1600`).
 
 ## 9. Existing parallelism and missed/weak parallelism
 
@@ -692,6 +749,7 @@ Protocol artifacts store optional `model_id` and `provider_slug` in the artifact
 | Protocol artifact listing/loading | `list_protocol_artifacts` scans/read-loads artifacts one by one (`protocol_artifacts.rs:355-380`, `protocol_artifacts.rs:508-520`). | Bounded parallel read/decode with deterministic sort after join. | Useful once protocol artifacts become numerous. |
 | Protocol registration sync | `write_protocol_artifact` calls `sync_protocol_registration_status` after every artifact write (`protocol_artifacts.rs:345-352`). | Batch/defer sync once after multi-artifact protocol phases. | Must preserve crash/recovery semantics. |
 | Branch comparison writes | Parent compares each successful child as it observes it (`cli_facing.rs:4754-4808`, `cli_facing.rs:5042-5076`). | Batch comparisons after all children if selection does not need incremental results. | Adaptive selection may prefer incremental evidence. |
+| Turn-live replay probes | One probe serially consumes provider tape/live responses, executes tool calls, applies/refreshes workspace state, and stops at a boundary (`replay/probe.rs:368-495`). | Run independent cursors/branches in parallel only with isolated workspaces/processes. | Recorded response tape/taps and workspace proposal/index state are process/workspace mutable; shared-workspace fanout would race. |
 | Run record summary transforms | Runner builds summaries in loops (`runner.rs:3868-3904` and nearby setup summary code). | Low-risk CPU parallelism for large batches, but likely not the first bottleneck. | Provider/API time likely dominates. |
 
 ## 10. Practical stabilization notes
@@ -701,6 +759,8 @@ Protocol artifacts store optional `model_id` and `provider_slug` in the artifact
 - Distinguish projection files from authority files. `node.json`, runner results, and child result files are reconstruction/projection surfaces; the terminal channel result is where successful treatment evidence crosses from child to parent.
 - Baseline and treatment evidence both depend on closure completeness. If a branch comparison looks wrong, inspect closure state, run records, and protocol artifacts before blaming selection.
 - Model routing has two separate live surfaces: eval/headless TUI chat and protocol JSON adjudication. Campaign/profile changes should be traced through both.
+- Broad parent patch generation has its own parent-patcher model route. Turn-live artifacts persist the selected model label and full-response tape, but not a full provider/route authority record.
+- Turn-live live observer emissions are stderr progress signals; the `.turn-live/` files are the durable replay evidence. Do not conflate the two when debugging missing observability.
 - Parallelism changes should be introduced with explicit resource caps from the admitted profile or campaign policy; do not silently widen fanout beyond admitted limits.
 
 ## 11. Quick path index
@@ -743,6 +803,21 @@ Persistence and transport:
 - `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1812-1901`
 - `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1997-2063`
 - `crates/ploke-eval/src/protocol_artifacts.rs:292-352`
+
+Turn-live replay and broad headless TUI:
+
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:646-715`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1532-1620`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:2055-2088`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:152-173`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:470-889`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:1716-1806`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:2031-2354`
+- `crates/ploke-records/src/agent_turn.rs:1-65`
+- `crates/ploke-records/src/llm_response.rs:1-53`
+- `crates/ploke-tree/src/playback/turn.rs:1-259`
+- `crates/ploke-eval/src/replay/turn.rs:1-300`
+- `crates/ploke-eval/src/replay/probe.rs:1-620`
 
 Live model/API boundaries:
 
