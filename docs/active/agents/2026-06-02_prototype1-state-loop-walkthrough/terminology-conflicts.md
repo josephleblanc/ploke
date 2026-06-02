@@ -250,6 +250,31 @@ Open question:
 
 - Should branch evaluation reports explicitly label whether baseline evidence came from generation-0 closure or selected-child promotion?
 
+### 13. Model id / provider / route source across profile and campaign
+
+Current working definition:
+
+- `CampaignManifest.model_id` is the Manifest Model ID: the campaign JSON's optional persisted model field.
+- `ResolvedCampaignConfig.model_id` is the Resolved Model ID: the runtime model id after campaign defaults and validation.
+- Run-profile `[model].id` is the Profile Model ID: an operator default that setup may copy into the generated campaign manifest.
+- `provider_slug` is an OpenRouter provider slug; direct Google is a route source and should not be described as an OpenRouter provider slug.
+
+Why it conflicts:
+
+- Setup CLI, campaign manifests, provider preferences, protocol config, protocol artifacts, and run profiles all carry model/provider words with slightly different authority.
+- Direct Google can be displayed as `google`, while resolved direct-Google campaign/provider state often stores `provider_slug = None`.
+- `--protocol-model-id` sounds independent, but current Prototype 1 baseline setup requires protocol and eval to collapse to the same model/route/provider.
+
+Suggested convention:
+
+- Use `Manifest Model ID`, `Resolved Model ID`, `Profile Model ID`, and `Protocol Model ID` in prose before using unqualified `model_id`.
+- Say `direct Google route`, not `google provider slug`, unless the code path is specifically accepting the compatibility string `google`.
+- In config docs, explain whether a field is a setup source, a persisted campaign source of truth, a runtime materialization, or provenance written after an API call.
+
+Open question:
+
+- Should the code introduce a typed `ModelRoute { id, route, provider }` carrier at profile->campaign and campaign->runtime boundaries to reduce the current flat field overlap?
+
 ## Resolution recommendations from Evalnomicon drafts
 
 This pass reads the conflict list against the current Evalnomicon draft packets,
@@ -326,6 +351,7 @@ structure and can be checked by the compiler.
 | Protocol procedure names | Use `procedure id` for canonical docs/config ids and keep them kebab-case: `tool-call-intent-segments`, `tool-call-review`, `tool-call-segment-review`. Treat snake_case artifact kind strings and filename stems as storage/schema compatibility names, not public procedure names. Add an alias table near config docs if users still encounter `tool_call_intent_segmentation` or similar legacy names. Rationale: protocol artifacts are persisted under procedure-specific filenames/envelopes and are inspected as stored evidence (`persistence/map-2026-05-03/synthesis.md:72-78`); docs should not make filename/kind compatibility drive public vocabulary. |
 | MBE / MSB / Multi-SWE-Bench | Public docs should spell out `Multi-SWE-Bench` on first use. Use `MSB` only for benchmark/submission concepts. Use `Multi-SWE-Bench evaluator` or ``mbe` module` for the local module path instead of implying `MBE` is the canonical user-facing acronym. If future code cleanup is allowed, consider renaming module-facing docs toward `multi_swe_bench` rather than inventing an additional acronym. Rationale: the persistence map names the submission artifact as `multi-swe-bench-submission.jsonl` (`persistence/map-2026-05-03/synthesis.md:71`) while older conceptual notes use `MBE` loosely for external oracle/evaluator background. |
 | Baseline vs parent | Use three explicit terms: `generation-0 campaign baseline`, `active parent baseline evidence`, and `candidate/treatment evidence`. Answer the open question as yes: branch evaluation reports and selection displays should label baseline provenance, at least as `baseline_source = generation0_closure | selected_child_promotion`, plus the baseline campaign/branch/run-record paths. Rationale: the current runtime-loop draft says later parents compare against selected-child treatment evidence promoted into the next parent baseline (`runtime/loop.md:231-252`), while stage docs say generation-0 baseline closure is the startup gate (`stage-overview.md:62-84`). |
+| Model id / provider / route source | Use role-qualified prose terms: `Profile Model ID` for `[model].id`, `Manifest Model ID` for `CampaignManifest.model_id`, `Resolved Model ID` for `ResolvedCampaignConfig.model_id`, and `Protocol Model ID` for protocol JSON config or setup protocol overrides. Treat `provider_slug` as an OpenRouter concept; say `direct Google route` for direct-Google calls. Keep route/model/provider relationships in a typed carrier if refactoring, not by adding longer flat field names. |
 
 ### Suggested implementation/doc follow-ups
 

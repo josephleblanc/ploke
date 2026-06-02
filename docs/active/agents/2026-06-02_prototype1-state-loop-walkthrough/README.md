@@ -20,6 +20,9 @@ The command is not just a CLI wrapper. It is the typed runtime for one **parent 
 - This document intentionally distinguishes setup/admission (`loop prototype1-setup`) from the runtime parent turn (`loop prototype1-state`).
 - No secrets are recorded here. Model/provider names and source paths are code/config provenance, not credentials.
 - `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
+- Companion docs:
+  - [`campaign-configs.md`](campaign-configs.md): expanded campaign/run-profile config audit, model/provider/route precedence, and config footguns.
+  - [`terminology-conflicts.md`](terminology-conflicts.md): terminology conflicts and proposed conventions.
 
 ## 0. Draft glossary and conceptual map
 
