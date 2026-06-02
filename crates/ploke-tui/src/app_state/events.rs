@@ -4,6 +4,7 @@ use ploke_core::CrateId;
 use uuid::Uuid;
 
 use super::core::WorkspaceFreshness;
+use crate::app_state::IndexTarget;
 
 /// Typed mutations for `SystemStatus`. All system state changes flow through
 /// these variants, applied via `SystemStatus::apply`. This centralizes state
@@ -99,6 +100,16 @@ pub enum SystemEvent {
         #[serde(default)]
         ui_payload: Option<ToolUiPayload>,
     },
+    ChatTurnFinished {
+        session_id: Uuid,
+        request_id: Uuid,
+        parent_id: Uuid,
+        assistant_message_id: Uuid,
+        outcome: String,
+        error_id: Option<Uuid>,
+        summary: String,
+        attempts: u32,
+    },
     ReadQuery {
         file_name: String,
         query_name: String,
@@ -122,7 +133,11 @@ pub enum SystemEvent {
         error: Option<String>,
     },
     ReIndex {
-        workspace: String,
+        // 2026-04-20: this target is allowed to rely on implicit loaded-state
+        // semantics only because AppState currently models a single current
+        // loaded workspace context. If that changes, `IndexTarget` variants
+        // like `LoadedWorkspace` must become explicitly identified.
+        target: IndexTarget,
     },
     /// Working directory changed - components should update their cached pwd
     PwdChanged(PathBuf),

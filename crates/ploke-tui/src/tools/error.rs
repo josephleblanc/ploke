@@ -1,9 +1,14 @@
 use ploke_core::ArcStr;
+use ploke_core::tool_contracts::tool_error_code_label;
+pub use ploke_core::tool_contracts::{
+    ToolErrorCode, ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolRetryContext,
+    ToolRetryContextField, ToolRetryContextValue, ToolUiPayload,
+};
 use ploke_core::tool_types::ToolName;
 use ploke_error::DomainError;
 use ploke_error::Error as PlokeError;
 use ploke_llm::LlmError;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Audience for formatting diagnostics.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -13,19 +18,7 @@ pub enum Audience {
     System,
 }
 
-/// Canonical error codes for tool validation and execution.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolErrorCode {
-    FieldTooLarge,
-    WrongType,
-    MissingField,
-    MalformedDiff,
-    InvalidFormat,
-    Io,
-    Timeout,
-    Internal,
-}
+use serde::Deserialize;
 
 /// Structured tool error with audience-aware rendering.
 #[derive(Debug, Clone, Serialize, thiserror::Error)]
@@ -38,7 +31,7 @@ pub struct ToolError {
     pub received: Option<String>,
     pub snippet: Option<String>,
     pub retry_hint: Option<String>,
-    pub retry_context: Option<serde_json::Value>,
+    pub retry_context: Option<ToolRetryContext>,
     #[serde(skip)]
     pub audience: Audience,
     #[serde(skip)]
@@ -86,8 +79,8 @@ impl ToolError {
         self
     }
 
-    pub fn retry_context(mut self, context: serde_json::Value) -> Self {
-        self.retry_context = Some(context);
+    pub fn retry_context(mut self, context: impl Into<ToolRetryContext>) -> Self {
+        self.retry_context = Some(context.into());
         self
     }
 
@@ -96,7 +89,6 @@ impl ToolError {
         self
     }
 
-    /// Human-readable message for a given audience.
     pub fn format_for_audience(&self, audience: Audience) -> String {
         let mut parts: Vec<String> = Vec::new();
 
@@ -130,23 +122,20 @@ impl ToolError {
         parts.join(" — ")
     }
 
-    /// LLM-friendly structured payload embedded in tool result JSON.
-    pub fn to_llm_payload(&self) -> serde_json::Value {
-        serde_json::json!({
-            "ok": false,
-            "tool": self.tool.as_str(),
-            "code": format!("{:?}", self.code),
-            "field": self.field,
-            "expected": self.expected,
-            "received": self.received,
-            "message": self.message,
-            "snippet": self.snippet,
-            "retry_hint": self.retry_hint,
-            "retry_context": self.retry_context,
-        })
+    pub fn to_llm_payload(&self) -> ToolLlmErrorPayload {
+        ToolLlmErrorPayload::from_parts(
+            self.tool,
+            self.code,
+            self.field.map(str::to_string),
+            self.expected.clone(),
+            self.received.clone(),
+            self.message.clone(),
+            self.snippet.clone(),
+            self.retry_hint.clone(),
+            self.retry_context.clone(),
+        )
     }
 
-    /// Wire payload containing both user-facing and LLM payloads.
     pub fn to_wire(&self) -> ToolErrorWire {
         ToolErrorWire {
             user: self.format_for_audience(Audience::User),
@@ -158,6 +147,24 @@ impl ToolError {
     pub fn to_wire_string(&self) -> String {
         serde_json::to_string(&self.to_wire())
             .unwrap_or_else(|_| self.format_for_audience(Audience::User))
+    }
+
+    pub fn to_ui_payload(&self, call_id: ArcStr) -> ToolUiPayload {
+        let mut payload =
+            ToolUiPayload::new(self.tool, call_id, self.format_for_audience(Audience::User));
+        payload.error = Some(self.to_wire());
+        payload.error_code = Some(self.code);
+        payload = payload.with_field("code", tool_error_code_label(self.code));
+        if let Some(field) = self.field {
+            payload = payload.with_field("field", field);
+        }
+        if let Some(expected) = &self.expected {
+            payload = payload.with_field("expected", expected.as_str());
+        }
+        if let Some(received) = &self.received {
+            payload = payload.with_field("received", received.as_str());
+        }
+        payload
     }
 }
 
@@ -209,8 +216,6 @@ impl ToolInvocationError {
 
 impl From<ploke_error::Error> for ToolError {
     fn from(err: ploke_error::Error) -> Self {
-        // Without tool context, fall back to the first known tool; callers should prefer
-        // `ToolError::from_ploke_error_with_tool` for accurate attribution.
         ToolError::from_ploke_error_with_tool(ToolName::RequestCodeContext, err)
     }
 }
@@ -223,20 +228,6 @@ impl ToolError {
             _ => ToolErrorCode::Internal,
         };
         ToolError::new(tool, code, err.to_string())
-    }
-}
-
-/// Payload carried over event bus when a tool fails.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolErrorWire {
-    pub user: String,
-    pub llm: serde_json::Value,
-    pub system: String,
-}
-
-impl ToolErrorWire {
-    pub fn parse(s: &str) -> Option<Self> {
-        serde_json::from_str(s).ok()
     }
 }
 
@@ -257,14 +248,16 @@ pub fn allowed_tool_names() -> Vec<ArcStr> {
         .collect()
 }
 
-/// Convenience for tools that need to surface a user-facing error.
 pub fn tool_ui_error(message: impl Into<String>) -> ploke_error::Error {
     ploke_error::Error::Domain(ploke_error::DomainError::Ui {
         message: message.into(),
     })
 }
 
-/// Convenience for tools that need to surface an IO error.
+pub fn tool_ui_payload_from_error(call_id: ArcStr, err: &ToolError) -> ToolUiPayload {
+    err.to_ui_payload(call_id)
+}
+
 pub fn tool_io_error(message: impl Into<String>) -> ploke_error::Error {
     ploke_error::Error::Domain(ploke_error::DomainError::Io {
         message: message.into(),

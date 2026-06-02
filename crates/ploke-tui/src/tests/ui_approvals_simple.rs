@@ -9,14 +9,19 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app::view::components::approvals::ApprovalsState;
-use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
+use crate::app_state::core::{
+    DiffPreview, EditProposal, EditProposalStatus, derive_edit_proposal_id,
+};
 
 /// Creates a test proposal for verification
 fn create_simple_test_proposal() -> EditProposal {
+    let request_id = Uuid::new_v4();
+    let call_id = crate::ArcStr::from("test-proposal");
     EditProposal {
-        request_id: Uuid::new_v4(),
+        proposal_id: derive_edit_proposal_id(request_id, &call_id),
+        request_id,
         parent_id: Uuid::new_v4(),
-        call_id: "test-proposal".into(),
+        call_id,
         proposed_at_ms: 1234567890,
         edits: vec![],
         edits_ns: vec![],
@@ -136,10 +141,13 @@ mod simple_ui_tests {
         {
             let mut guard = proposals.write().await;
             for i in 0..100 {
+                let request_id = Uuid::new_v4();
+                let call_id = crate::ArcStr::from(format!("perf-test-{}", i));
                 let proposal = EditProposal {
-                    request_id: Uuid::new_v4(),
+                    proposal_id: derive_edit_proposal_id(request_id, &call_id),
+                    request_id,
                     parent_id: Uuid::new_v4(),
-                    call_id: format!("perf-test-{}", i).into(),
+                    call_id,
                     proposed_at_ms: 1234567890 + i,
                     edits: vec![],
                     edits_ns: vec![],

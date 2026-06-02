@@ -1,8 +1,9 @@
 use super::App;
+use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
 use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
-use crate::app_state::IndexTargetDir;
 use crate::app_state::events::SystemEvent;
+use crate::error::ErrorSeverity;
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
@@ -15,7 +16,7 @@ use uuid::Uuid;
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
 use super::utils::display_file_info;
-use crate::app::view::components::model_browser::ModelProviderRow;
+use crate::app::view::components::model_browser::{ModelProviderRow, preferred_provider_key};
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
@@ -77,7 +78,12 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
         AppEvent::Error(error_event) => {
-            let msg = format!("Error: {}", error_event.message);
+            let severity_label = match error_event.severity {
+                ErrorSeverity::Warning => "Warning",
+                ErrorSeverity::Error => "Error",
+                ErrorSeverity::Fatal => "Fatal",
+            };
+            let msg = format!("{severity_label}: {}", error_event.message);
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg,
                 kind: MessageKind::SysInfo,
@@ -97,10 +103,12 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.send_cmd(StateCommand::UpdateDatabase)
         }
         AppEvent::IndexingFailed => {
-            error!("Indexing Failed");
+            warn!("Indexing failed. {}", INDEXING_FAILURE_CONTAINMENT_NOTE);
             app.indexing_state = None;
             app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: String::from("Indexing Failed"),
+                msg: String::from(
+                    "Indexing failed. Runtime kept alive for inspection. Temporary stopgap; fix the underlying setup issue before the next release.",
+                ),
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             })
@@ -242,9 +250,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                SystemEvent::ReIndex { workspace } => {
-                    app.send_cmd(StateCommand::IndexTargetDir {
-                        target_dir: Some(IndexTargetDir::from(workspace)),
+                SystemEvent::ReIndex { target } => {
+                    app.send_cmd(StateCommand::IndexTarget {
+                        target: Some(target),
                         needs_parse: false,
                     });
                 }
@@ -255,6 +263,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 SystemEvent::ToolCallRequested { .. } => {}
                 SystemEvent::ToolCallCompleted { .. } => {}
                 SystemEvent::ToolCallFailed { .. } => {}
+                SystemEvent::ChatTurnFinished { .. } => {}
                 #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
                 SystemEvent::TestHarnessApiResponse { .. } => {
                     // Test harness API response - handled by test subscribers, no UI action needed
@@ -482,14 +491,7 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
 
         // If user pressed 's' while loading, choose a provider automatically now
         if browser_item.pending_select {
-            let tool_provider = browser_item
-                .providers
-                .iter()
-                .find(|p| p.supports_tools)
-                .or_else(|| browser_item.providers.first())
-                .map(|p| p.provider_key.clone());
-
-            if let Some(pk) = tool_provider {
+            if let Some(pk) = preferred_provider_key(&browser_item.providers) {
                 // Defer actual selection to after we release the borrow on model_browser
                 select_after = Some((model_id.clone(), pk));
             }

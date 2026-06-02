@@ -24,6 +24,7 @@ pub struct InputView {
 #[derive(Debug, Clone)]
 pub struct CommandSuggestion {
     pub command: String,
+    pub key_hint: Option<String>,
     pub description: String,
 }
 
@@ -180,8 +181,14 @@ impl InputView {
                 } else {
                     base_desc_style
                 };
+                let key_hint = suggestion
+                    .key_hint
+                    .as_ref()
+                    .map(|hint| format!("  [{hint}]"))
+                    .unwrap_or_default();
                 lines.push(Line::from(vec![
                     Span::styled(suggestion.command.as_str(), command_style),
+                    Span::raw(key_hint),
                     Span::raw("  "),
                     Span::styled(
                         suggestion.description.as_str(),

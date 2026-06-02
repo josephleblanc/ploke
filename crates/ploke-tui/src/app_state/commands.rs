@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ModelId;
 use crate::app::commands::parser::LoadKind;
-use crate::app_state::database::IndexTargetDir;
+use crate::app_state::database::{IndexTarget, IndexTargetDir};
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_core::ArcStr;
@@ -418,8 +418,8 @@ impl LoadCmd {
                     .values()
                     .map(|loaded| {
                         (
-                            loaded.info.name.clone(),
-                            loaded.info.root_path.display().to_string(),
+                            loaded.context.name.clone(),
+                            loaded.context.root_path.display().to_string(),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -902,6 +902,14 @@ pub enum StateCommand {
     Workspace(WorkspaceCmd),
 
     // Indexing operations
+    IndexTarget {
+        // 2026-04-20: command handlers may receive implicit loaded-state
+        // targets such as `LoadedWorkspace` only while AppState has a single
+        // current loaded workspace context. If that assumption changes, this
+        // command should carry an explicit workspace identity instead.
+        target: Option<IndexTarget>,
+        needs_parse: bool,
+    },
     IndexTargetDir {
         target_dir: Option<IndexTargetDir>,
         needs_parse: bool,
@@ -989,10 +997,10 @@ pub enum StateCommand {
         enabled: bool,
     },
     ApproveEdits {
-        request_id: Uuid,
+        proposal_id: Uuid,
     },
     DenyEdits {
-        request_id: Uuid,
+        proposal_id: Uuid,
     },
     /// Approve all pending edit proposals (newest wins when overlaps exist).
     ApprovePendingEdits,
@@ -1050,6 +1058,7 @@ impl StateCommand {
             NavigateList { .. } => "NavigateList",
             NavigateBranch { .. } => "NavigateBranch",
             CreateAssistantMessage { .. } => "CreateAssistantMessage",
+            IndexTarget { .. } => "IndexTarget",
             IndexTargetDir { .. } => "IndexTargetDir",
             PauseIndexing => "PauseIndexing",
             ResumeIndexing => "ResumeIndexing",

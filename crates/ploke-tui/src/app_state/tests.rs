@@ -9,6 +9,7 @@ use ploke_rag::{RagService, TokenBudget};
 use syn_parser::parser::nodes::ToCozoUuid;
 
 use crate::app::message_item::should_render_tool_buttons;
+use crate::app_state::core::derive_edit_proposal_id;
 use crate::app_state::handlers::chat;
 use crate::chat_history::MessageKind;
 use crate::tools::{ToolName, ToolUiPayload};
@@ -278,8 +279,10 @@ async fn test_tool_message_refresh_and_background_sysinfo() {
     let tool_msg_id = Uuid::new_v4();
     let call_id = ArcStr::from("test_call_id");
     let request_id = Uuid::new_v4();
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
     let pending_payload = ToolUiPayload::new(ToolName::ApplyCodeEdit, call_id.clone(), "staged")
         .with_request_id(request_id)
+        .with_proposal_id(proposal_id)
         .with_field("status", "pending");
     assert!(should_render_tool_buttons(&pending_payload));
     chat::add_tool_msg_immediate(

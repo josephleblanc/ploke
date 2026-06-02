@@ -1,6 +1,6 @@
 #![allow(clippy::needless_lifetimes)]
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /* NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
@@ -18,11 +18,14 @@ use similar::{ChangeTag, TextDiff};
 use tracing::debug;
 
 use crate::tools::create_file::CreateFileCtx;
-use crate::tools::{ToolName, ToolUiPayload};
+use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolRetryContext, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
-        core::{BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode},
+        core::{
+            BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode,
+            derive_edit_proposal_id,
+        },
         handlers::chat,
     },
     chat_history::MessageKind,
@@ -48,6 +51,39 @@ where
 }
 pub trait ToolOutput {}
 
+fn has_duplicate_edit_proposal(
+    reg: &std::collections::HashMap<Uuid, EditProposal>,
+    call_id: &ArcStr,
+) -> bool {
+    reg.values().any(|proposal| proposal.call_id == *call_id)
+}
+
+fn file_has_settled_proposal(
+    reg: &std::collections::HashMap<Uuid, EditProposal>,
+    file_path: &Path,
+) -> bool {
+    reg.values().any(|proposal| {
+        matches!(
+            proposal.status,
+            EditProposalStatus::Applied
+                | EditProposalStatus::Failed(_)
+                | EditProposalStatus::Stale(_)
+        ) && proposal.files.iter().any(|path| path == file_path)
+    })
+}
+
+fn used_fuzzy_hunk_match(report: &mpatch::ApplyResult) -> bool {
+    report.hunk_results.iter().any(|status| {
+        matches!(
+            status,
+            mpatch::HunkApplyStatus::Applied {
+                match_type: mpatch::MatchType::Fuzzy { .. },
+                ..
+            }
+        )
+    })
+}
+
 pub(crate) trait LlmTool<T, R, U>
 where
     T: Send + Sync + Clone + Serialize + for<'sea> Deserialize<'sea> + ToolInput<U>,
@@ -55,6 +91,287 @@ where
     U: Send + Sync + Clone + Serialize + for<'sec> Deserialize<'sec>,
 {
     async fn call_tool(&self, tool_input: T) -> R;
+}
+
+pub async fn stage_semantic_edit_proposal(
+    tool_call_params: ToolCallParams,
+    edits: Vec<WriteSnippetData>,
+) -> Option<Uuid> {
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        call_id,
+        ..
+    } = tool_call_params.clone();
+
+    {
+        let reg = state.proposals.read().await;
+        if has_duplicate_edit_proposal(&reg, &call_id) {
+            let msg = format!(
+                "Duplicate {} request ignored for call_id {}",
+                name.as_str(),
+                call_id
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
+            return None;
+        }
+    }
+
+    if edits.is_empty() {
+        tool_call_params.tool_call_failed("No edits provided".to_string());
+        return None;
+    }
+
+    let primary_root = state
+        .with_system_read(|sys| sys.tool_path_context().map(|(p, _)| p.clone()))
+        .await;
+    let editing_cfg = { state.config.read().await.editing.clone() };
+    let files_set: BTreeSet<PathBuf> = edits.iter().map(|edit| edit.file_path.clone()).collect();
+    let mut per_file: Vec<BeforeAfter> = Vec::new();
+    let mut unified_diff = String::new();
+    let mut chat_preview_sections: Vec<String> = Vec::new();
+
+    for path in &files_set {
+        let (file_hash, namespace) = edits
+            .iter()
+            .find(|e| &e.file_path == path)
+            .map(|e| (e.expected_file_hash, e.namespace))
+            .expect("Mismatched path in file edit");
+        let before = match state
+            .io_handle
+            .read_full_verified(path.clone(), file_hash, namespace)
+            .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(err)) => {
+                let msg = format!(
+                    "Cannot stage {} for {} because the file version could not be verified: {err}. Refresh or re-resolve the target before submitting another semantic edit.",
+                    name.as_str(),
+                    path.display()
+                );
+                tool_call_params.tool_call_failed_error(ToolError::new(
+                    name,
+                    ToolErrorCode::Io,
+                    msg,
+                ));
+                return None;
+            }
+            Err(err) => {
+                let msg = format!(
+                    "Cannot stage {} for {} because the file could not be read for verification: {err}.",
+                    name.as_str(),
+                    path.display()
+                );
+                tool_call_params.tool_call_failed_error(ToolError::new(
+                    name,
+                    ToolErrorCode::Io,
+                    msg,
+                ));
+                return None;
+            }
+        };
+        tracing::debug!(?before);
+
+        let mut bytes = before.clone().into_bytes();
+        let mut file_edits: Vec<&WriteSnippetData> =
+            edits.iter().filter(|e| &e.file_path == path).collect();
+        file_edits.sort_by_key(|e| e.start_byte);
+        file_edits.reverse();
+        for e in file_edits {
+            let start = e.start_byte.min(bytes.len());
+            let end = e.end_byte.min(bytes.len());
+            if start > end {
+                continue;
+            }
+            let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
+            new_bytes.extend_from_slice(&bytes[..start]);
+            new_bytes.extend_from_slice(e.replacement.as_bytes());
+            new_bytes.extend_from_slice(&bytes[end..]);
+            bytes = new_bytes;
+        }
+        let after = String::from_utf8_lossy(&bytes).to_string();
+
+        let display_path = if let Some(root) = primary_root.as_ref() {
+            path.strip_prefix(root)
+                .unwrap_or(path.as_path())
+                .to_path_buf()
+        } else {
+            path.clone()
+        };
+        per_file.push(BeforeAfter {
+            file_path: display_path.clone(),
+            before: truncate_lines(&before, editing_cfg.max_preview_lines),
+            after: truncate_lines(&after, editing_cfg.max_preview_lines),
+        });
+        chat_preview_sections.push(diff_chunk_with_context(
+            &display_path,
+            &before,
+            &after,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        ));
+        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            let header_a = format!("a/{}", display_path.display());
+            let header_b = format!("b/{}", display_path.display());
+            let diff = TextDiff::from_lines(&before, &after)
+                .unified_diff()
+                .header(&header_a, &header_b)
+                .to_string();
+            unified_diff.push_str(&diff);
+            if !unified_diff.ends_with('\n') {
+                unified_diff.push('\n');
+            }
+        }
+    }
+
+    let files: Vec<PathBuf> = files_set.into_iter().collect();
+    let display_files: Vec<String> = files
+        .iter()
+        .map(|p| {
+            if let Some(root) = primary_root.as_ref() {
+                p.strip_prefix(root)
+                    .map(|rp| rp.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string())
+            } else {
+                p.display().to_string()
+            }
+        })
+        .collect();
+
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
+        truncate_lines(&filtered, editing_cfg.max_preview_lines)
+    } else {
+        truncate_lines(
+            &chat_preview_sections.join("\n"),
+            editing_cfg.max_preview_lines,
+        )
+    };
+
+    let edit_len = edits.len();
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
+    {
+        let mut reg = state.proposals.write().await;
+        reg.insert(
+            proposal_id,
+            EditProposal {
+                proposal_id,
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                edits,
+                edits_ns: Vec::new(),
+                files: files.clone(),
+                preview: if matches!(
+                    editing_cfg.preview_mode,
+                    crate::app_state::core::PreviewMode::Diff
+                ) {
+                    crate::app_state::core::DiffPreview::UnifiedDiff {
+                        text: unified_diff.clone(),
+                    }
+                } else {
+                    crate::app_state::core::DiffPreview::CodeBlocks {
+                        per_file: per_file.clone(),
+                    }
+                },
+                status: EditProposalStatus::Pending,
+                is_semantic: true,
+            },
+        );
+    }
+    crate::app_state::handlers::proposals::save_proposals(&state).await;
+
+    let summary = format!(
+        r#"Staged code edits (proposal_id: {proposal_id}, request_id: {request_id}, call_id: {call_id:?}).
+Files:
+    {files}
+
+Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
+{preview_snippet}
+
+Approve:  edit approve {proposal_id}
+Deny:     edit deny {proposal_id}{auto_confirm}"#,
+        proposal_id = proposal_id,
+        files = display_files.join("\n  "),
+        preview_label = preview_label,
+        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+        max_lines = editing_cfg.max_preview_lines,
+        preview_snippet = chat_preview_snippet,
+        auto_confirm = if editing_cfg.auto_confirm_edits {
+            "\n\nAuto-approval enabled: applying now..."
+        } else {
+            ""
+        },
+    );
+    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
+
+    let result = ApplyCodeEditResult {
+        ok: true,
+        staged: edit_len,
+        applied: 0,
+        files: display_files.clone(),
+        preview_mode: preview_label.to_string(),
+        auto_confirmed: editing_cfg.auto_confirm_edits,
+    };
+    let ui_payload = ToolUiPayload::new(
+        name,
+        call_id.clone(),
+        format!(
+            "Staged {} edits across {} files",
+            result.staged,
+            result.files.len()
+        ),
+    )
+    .with_proposal_id(proposal_id)
+    .with_request_id(request_id)
+    .with_field("status", "pending")
+    .with_field("staged", result.staged.to_string())
+    .with_field("applied", result.applied.to_string())
+    .with_field("files", result.files.len().to_string())
+    .with_field("preview_mode", result.preview_mode.as_str())
+    .with_field("auto_confirmed", result.auto_confirmed.to_string());
+    let content = match serde_json::to_string(&result) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
+            tool_call_params.tool_call_failed(err);
+            return None;
+        }
+    };
+    let _ = event_bus
+        .realtime_tx
+        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content,
+            ui_payload: Some(ui_payload),
+        }));
+
+    if editing_cfg.auto_confirm_edits {
+        let state2 = Arc::clone(&state);
+        let event_bus2 = Arc::clone(&event_bus);
+        tokio::spawn(async move {
+            approve_edits(&state2, &event_bus2, proposal_id).await;
+        });
+    }
+    Some(proposal_id)
 }
 
 const CHAT_PREVIEW_CONTEXT_LINES: usize = 2;
@@ -159,6 +476,177 @@ fn diff_chunk_with_context(
     out
 }
 
+#[derive(Debug, Clone)]
+enum SemanticCanonTarget {
+    Primary {
+        module_path: Vec<String>,
+        item_name: String,
+    },
+    Method {
+        module_path: Vec<String>,
+        owner_name: String,
+        item_name: String,
+    },
+}
+
+impl SemanticCanonTarget {
+    fn module_path(&self) -> &[String] {
+        match self {
+            Self::Primary { module_path, .. } | Self::Method { module_path, .. } => module_path,
+        }
+    }
+
+    fn item_name(&self) -> &str {
+        match self {
+            Self::Primary { item_name, .. } | Self::Method { item_name, .. } => item_name,
+        }
+    }
+
+    fn owner_name(&self) -> Option<&str> {
+        match self {
+            Self::Primary { .. } => None,
+            Self::Method { owner_name, .. } => Some(owner_name),
+        }
+    }
+}
+
+fn split_canon_for_semantic_target(
+    canon: &str,
+    node_type: NodeType,
+) -> Result<SemanticCanonTarget, String> {
+    let canon_trim = canon.trim();
+    if canon_trim.is_empty() {
+        return Err("Invalid 'canon': empty".to_string());
+    }
+
+    let mut segs = canon_trim
+        .split("::")
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if segs.first().copied() != Some("crate") {
+        segs.insert(0, "crate");
+    }
+
+    match node_type {
+        NodeType::Method => {
+            if segs.len() < 4 {
+                return Err(
+                    "Invalid 'canon': method targets must look like crate::module::Type::method"
+                        .to_string(),
+                );
+            }
+            let item_name = segs.last().expect("checked len").to_string();
+            let owner_name = segs[segs.len() - 2].to_string();
+            let module_path = segs[..segs.len() - 2]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+            if owner_name.is_empty() {
+                return Err("Invalid 'canon': missing method owner type".to_string());
+            }
+            if item_name.is_empty() {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            Ok(SemanticCanonTarget::Method {
+                module_path,
+                owner_name,
+                item_name,
+            })
+        }
+        _ => {
+            if segs.len() < 2 {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            let item_name = segs.last().expect("checked len").to_string();
+            let module_path = segs[..segs.len() - 1]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+            if item_name.is_empty() {
+                return Err("Invalid 'canon': missing item name".to_string());
+            }
+            Ok(SemanticCanonTarget::Primary {
+                module_path,
+                item_name,
+            })
+        }
+    }
+}
+
+fn function_to_method_hint(
+    tool: ToolName,
+    canon: &str,
+    file_path: &PathBuf,
+    module_path: &[String],
+    owner_name: Option<&str>,
+    item_name: &str,
+) -> ToolError {
+    let retry_context = ToolRetryContext::new()
+        .field("requested_node_type", "function")
+        .field("suggested_node_type", "method")
+        .field("file_path", file_path.display().to_string())
+        .field("canon", canon)
+        .field("module_path", module_path.to_vec())
+        .field("owner_name", owner_name)
+        .field("item_name", item_name)
+        .field(
+            "reason",
+            "unique method target exists at the same coordinates",
+        );
+
+    ToolError::new(
+        tool,
+        ToolErrorCode::WrongType,
+        format!(
+            "No matching function target found for canon={} in file={}; the same coordinates resolve uniquely as a method target.",
+            canon,
+            file_path.display()
+        ),
+    )
+    .field("node_type")
+    .expected("method")
+    .received("function")
+    .retry_hint("Retry with node_type=method for this canonical path.")
+    .retry_context(retry_context)
+}
+
+fn ambiguous_method_target_error(
+    tool: ToolName,
+    canon: &str,
+    file_path: &PathBuf,
+    module_path: &[String],
+    owner_name: Option<&str>,
+    item_name: &str,
+    candidate_count: usize,
+) -> ToolError {
+    let retry_context = ToolRetryContext::new()
+        .field("requested_node_type", "method")
+        .field("file_path", file_path.display().to_string())
+        .field("canon", canon)
+        .field("module_path", module_path.to_vec())
+        .field("owner_name", owner_name)
+        .field("item_name", item_name)
+        .field("candidate_count", candidate_count)
+        .field(
+            "reason",
+            "multiple method targets matched after corrected method parsing",
+        );
+
+    ToolError::new(
+        tool,
+        ToolErrorCode::InvalidFormat,
+        format!(
+            "Ambiguous method target for canon={} in file={}; {} candidates matched after method parsing.",
+            canon,
+            file_path.display(),
+            candidate_count
+        ),
+    )
+    .field("canon")
+    .retry_hint("Disambiguate the owner type or use a more specific canonical path.")
+    .retry_context(retry_context)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetContextInput {
     pub request_id: Uuid,
@@ -186,46 +674,20 @@ impl ToolInput<serde_json::Value> for GetContextInput {
     }
 }
 
-pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
+pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) -> Option<Uuid> {
     let ToolCallParams {
         state,
         event_bus,
-        request_id,
-        parent_id,
-        name,
         typed_req,
-        call_id,
+        ..
     } = tool_call_params.clone();
     if let Some(parse_failure) = state
         .with_system_read(|sys| sys.last_parse_failure().cloned())
         .await
     {
         tool_call_params.tool_call_failed(parse_failure.message.clone());
-        return;
+        return None;
     }
-    // Idempotency: guard duplicate requests
-    {
-        let reg = state.proposals.read().await;
-        if reg.contains_key(&request_id) {
-            let msg = format!(
-                "Duplicate apply_code_edit request ignored for request_id {}",
-                request_id
-            );
-            #[cfg(test)]
-            eprintln!("Detected duplicate for state.proposals.read");
-            tool_call_params.tool_call_failed(msg.clone());
-            chat::add_msg_immediate(
-                &state,
-                &event_bus,
-                Uuid::new_v4(),
-                msg,
-                MessageKind::SysInfo,
-            )
-            .await;
-            return;
-        }
-    }
-
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
         chat::add_msg_immediate(
@@ -236,22 +698,70 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             MessageKind::SysInfo,
         )
         .await;
-        return;
+        return None;
     }
 
-    // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
+    let edits = match resolve_code_edit_request(&state, &typed_req).await {
+        Ok(edits) => edits,
+        Err(err) => {
+            tool_call_params.tool_call_failed_error(err);
+            return None;
+        }
+    };
+
+    stage_semantic_edit_proposal(tool_call_params, edits).await
+}
+
+/// Resolve `apply_code_edit` semantic/splice requests into concrete byte-span
+/// writes without staging proposals, emitting events, or applying edits.
+pub async fn resolve_code_edit_request(
+    state: &AppState,
+    request: &ApplyCodeEditRequest,
+) -> Result<Vec<WriteSnippetData>, ToolError> {
+    let tool = ToolName::ApplyCodeEdit;
+    if request.edits.is_empty() {
+        return Err(ToolError::new(
+            tool,
+            ToolErrorCode::InvalidFormat,
+            "No edits provided",
+        ));
+    }
+
     let tool_paths = state
         .with_system_read(|sys| {
-            sys.tool_path_context()
-                .map(|(p, pol)| (p.clone(), pol.clone()))
+            sys.write_path_context()
+                .map(|(p, pol, scope)| (p, pol, scope))
         })
         .await;
-    let primary_root = tool_paths.as_ref().map(|(p, _)| p.clone());
-    let editing_cfg = { state.config.read().await.editing.clone() };
-    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
-    let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let resolve_path = |path: &str| -> Result<(PathBuf, bool), ToolError> {
+        let p = PathBuf::from(path);
+        let file_was_relative = !p.is_absolute();
+        let abs_path = match &tool_paths {
+            Some((primary, policy, scope)) => {
+                path_scoping::resolve_write_path(p.as_path(), primary, policy, scope.as_ref())
+                    .map_err(|err| {
+                        ToolError::new(
+                            tool,
+                            ToolErrorCode::InvalidFormat,
+                            format!("invalid path: {err}"),
+                        )
+                    })?
+            }
+            None => {
+                if p.is_absolute() {
+                    p
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(p)
+                }
+            }
+        };
+        Ok((abs_path, file_was_relative))
+    };
 
-    for edit in typed_req.edits.iter() {
+    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(request.edits.len());
+    for edit in request.edits.iter() {
         match edit {
             Edit::Splice {
                 file_path,
@@ -261,28 +771,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 replacement,
                 namespace,
             } => {
-                let p = PathBuf::from(file_path);
-                let abs_path = match &tool_paths {
-                    Some((primary, policy)) => {
-                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
-                            Ok(pb) => pb,
-                            Err(err) => {
-                                let msg = format!("invalid path: {}", err);
-                                tool_call_params.tool_call_failed(msg);
-                                return;
-                            }
-                        }
-                    }
-                    None => {
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(p)
-                        }
-                    }
-                };
+                let (abs_path, _) = resolve_path(file_path)?;
                 let ws = WriteSnippetData {
                     id: uuid::Uuid::new_v4(),
                     name: abs_path
@@ -296,7 +785,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     replacement: replacement.clone(),
                     namespace: *namespace,
                 };
-                files_set.insert(abs_path.clone());
                 edits.push(ws);
             }
             Edit::Canonical {
@@ -305,69 +793,19 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 node_type,
                 code,
             } => {
-                if !NodeType::primary_nodes().contains(node_type) {
+                if !NodeType::primary_and_assoc_nodes().contains(node_type) {
                     let err = format!(
-                        "Unsupported node type '{}': only primary_nodes() are supported for code editing",
+                        "Unsupported node type '{}': only primary_and_assoc_nodes() are supported for code editing",
                         node_type.relation_str()
                     );
-                    tool_call_params.tool_call_failed(err);
-                    return;
+                    return Err(ToolError::new(tool, ToolErrorCode::WrongType, err));
                 }
-                // TODO: Clean up the next 20 lines or so
-                let p = PathBuf::from(file);
-                let file_was_relative = !p.is_absolute();
-                let abs_path = match &tool_paths {
-                    Some((primary, policy)) => {
-                        match path_scoping::resolve_tool_path(p.as_path(), primary, policy) {
-                            Ok(pb) => pb,
-                            Err(err) => {
-                                let msg = format!("invalid path: {}", err);
-                                tool_call_params.tool_call_failed(msg);
-                                return;
-                            }
-                        }
-                    }
-                    None => {
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(p)
-                        }
-                    }
-                };
+                let (abs_path, file_was_relative) = resolve_path(file)?;
                 let canon_trim = canon.trim();
-                if canon_trim.is_empty() {
-                    tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string());
-                    return;
-                }
-                let (mods_slice, item_name) = match canon_trim.rfind("::") {
-                    Some(idx) => (&canon_trim[..idx], &canon_trim[idx + 2..]),
-                    None => ("", canon_trim),
-                };
-                if item_name.is_empty() {
-                    tool_call_params
-                        .tool_call_failed("Invalid 'canon': missing item name".to_string());
-                    return;
-                }
-                let mod_path_owned: Vec<String> = if mods_slice.is_empty() {
-                    vec!["crate".to_string()]
-                } else {
-                    let segs = mods_slice
-                        .split("::")
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    if segs.first().map(|s| s.as_str()) != Some("crate") {
-                        let mut with_crate = Vec::with_capacity(segs.len() + 1);
-                        with_crate.push("crate".to_string());
-                        with_crate.extend(segs.into_iter());
-                        with_crate
-                    } else {
-                        segs
-                    }
-                };
+                let semantic_target = split_canon_for_semantic_target(canon_trim, *node_type)
+                    .map_err(|msg| ToolError::new(tool, ToolErrorCode::InvalidFormat, msg))?;
+                let mod_path_owned = semantic_target.module_path().to_vec();
+                let item_name = semantic_target.item_name();
                 let mut nodes = match ploke_db::helpers::graph_resolve_exact(
                     &state.db,
                     node_type.relation_str(),
@@ -378,8 +816,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     Ok(v) => v,
                     Err(e) => {
                         let err = format!("DB resolve failed: {}", e);
-                        tool_call_params.tool_call_failed(err);
-                        return;
+                        return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
                     }
                 };
                 if nodes.is_empty() {
@@ -393,8 +830,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         Ok(v) => v,
                         Err(e) => {
                             let err = format!("DB relaxed resolve failed: {}", e);
-                            tool_call_params.tool_call_failed(err);
-                            return;
+                            return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
                         }
                     };
                     let filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
@@ -410,6 +846,53 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         })
                         .collect();
                     if filtered.is_empty() {
+                        if matches!(node_type, NodeType::Function) {
+                            let method_target =
+                                match split_canon_for_semantic_target(canon_trim, NodeType::Method)
+                                {
+                                    Ok(target) => target,
+                                    Err(e) => {
+                                        return Err(ToolError::new(
+                                            tool,
+                                            ToolErrorCode::InvalidFormat,
+                                            e,
+                                        ));
+                                    }
+                                };
+                            let method_nodes = match ploke_db::helpers::graph_resolve_exact(
+                                &state.db,
+                                NodeType::Method.relation_str(),
+                                &abs_path,
+                                method_target.module_path(),
+                                method_target.item_name(),
+                            ) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    let err = format!("DB method probe failed: {}", e);
+                                    return Err(ToolError::new(tool, ToolErrorCode::Internal, err));
+                                }
+                            };
+                            if method_nodes.len() == 1 {
+                                return Err(function_to_method_hint(
+                                    tool,
+                                    canon,
+                                    &abs_path,
+                                    method_target.module_path(),
+                                    method_target.owner_name(),
+                                    method_target.item_name(),
+                                ));
+                            } else if method_nodes.len() > 1 {
+                                return Err(ambiguous_method_target_error(
+                                    tool,
+                                    canon,
+                                    &abs_path,
+                                    method_target.module_path(),
+                                    method_target.owner_name(),
+                                    method_target.item_name(),
+                                    method_nodes.len(),
+                                ));
+                            }
+                        }
                         let cfiles: Vec<String> = filtered
                             .iter()
                             .map(|ed| ed.file_path.display().to_string())
@@ -420,8 +903,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             abs_path.display(),
                             cfiles
                         );
-                        tool_call_params.tool_call_failed(err);
-                        return;
+                        return Err(ToolError::new(tool, ToolErrorCode::InvalidFormat, err));
                     }
                     if filtered.len() > 1 {
                         let cfiles: Vec<String> = filtered
@@ -435,20 +917,20 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             abs_path.display(),
                             cfiles
                         );
-                        tool_call_params.tool_call_failed(err);
-                        return;
+                        return Err(ToolError::new(tool, ToolErrorCode::InvalidFormat, err));
                     }
                     nodes = filtered;
                 }
                 if nodes.len() > 1 {
-                    let err = format!(
-                        "Ambiguous node resolution ({} candidates) for canon={} in file={}",
-                        nodes.len(),
+                    return Err(ambiguous_method_target_error(
+                        tool,
                         canon,
-                        abs_path.display()
-                    );
-                    tool_call_params.tool_call_failed(err);
-                    return;
+                        &abs_path,
+                        semantic_target.module_path(),
+                        semantic_target.owner_name(),
+                        semantic_target.item_name(),
+                        nodes.len(),
+                    ));
                 }
                 let ed = nodes.remove(0);
                 let ws = WriteSnippetData {
@@ -461,234 +943,20 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     replacement: code.clone(),
                     namespace: ed.namespace,
                 };
-                files_set.insert(ed.file_path.clone());
                 edits.push(ws);
             }
             Edit::Patch { .. } => {
-                tracing::trace!("Patch found in apply_code_edit_tool call");
+                tracing::trace!("Patch found in resolve_code_edit_request call");
             }
         }
     }
 
-    // Build preview (reuse minimal version from prior implementation)
-    let mut per_file: Vec<BeforeAfter> = Vec::new();
-    let mut unified_diff = String::new();
-    let mut chat_preview_sections: Vec<String> = Vec::new();
-
-    for path in files_set.iter() {
-        // Fetch full file content via IoManager (verified against tracking hash)
-        let (file_hash, namespace) = edits
-            .iter()
-            .find(|e| &e.file_path == path)
-            .map(|e| (e.expected_file_hash, e.namespace))
-            .expect("Mismatched path in file edit");
-        let tracking_hash_before = file_hash;
-        // Read via IoManager with tracking-hash verification; fall back to a placeholder on error.
-        let before = match state
-            .io_handle
-            .read_full_verified(path.clone(), file_hash, namespace)
-            .await
-        {
-            Ok(Ok(s)) => s,
-            _ => "<unreadable or binary file>".to_string(),
-        };
-        tracing::debug!(?before);
-        // Apply all edits for this file in-memory (descending by start to keep indices stable)
-        let mut bytes = before.clone().into_bytes();
-        let mut file_edits: Vec<&WriteSnippetData> =
-            edits.iter().filter(|e| &e.file_path == path).collect();
-        file_edits.sort_by_key(|e| e.start_byte);
-        file_edits.reverse();
-        for e in file_edits {
-            let start = e.start_byte.min(bytes.len());
-            let end = e.end_byte.min(bytes.len());
-            if start > end {
-                continue;
-            }
-            let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
-            new_bytes.extend_from_slice(&bytes[..start]);
-            new_bytes.extend_from_slice(e.replacement.as_bytes());
-            new_bytes.extend_from_slice(&bytes[end..]);
-            bytes = new_bytes;
-        }
-        let after = String::from_utf8_lossy(&bytes).to_string();
-
-        let display_path = if let Some(root) = primary_root.as_ref() {
-            path.strip_prefix(root)
-                .unwrap_or(path.as_path())
-                .to_path_buf()
-        } else {
-            path.clone()
-        };
-        per_file.push(BeforeAfter {
-            file_path: display_path.clone(),
-            before: truncate_lines(&before, editing_cfg.max_preview_lines),
-            after: truncate_lines(&after, editing_cfg.max_preview_lines),
-        });
-        chat_preview_sections.push(diff_chunk_with_context(
-            &display_path,
-            &before,
-            &after,
-            CHAT_PREVIEW_CONTEXT_LINES,
-        ));
-        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            let header_a = format!("a/{}", display_path.display());
-            let header_b = format!("b/{}", display_path.display());
-            let diff = TextDiff::from_lines(&before, &after)
-                .unified_diff()
-                .header(&header_a, &header_b)
-                .to_string();
-            unified_diff.push_str(&diff);
-            if !unified_diff.ends_with('\n') {
-                unified_diff.push('\n');
-            }
-        }
-    }
-
-    let files: Vec<PathBuf> = files_set.into_iter().collect();
-    let display_files: Vec<String> = files
-        .iter()
-        .map(|p| {
-            if let Some(root) = primary_root.as_ref() {
-                p.strip_prefix(root)
-                    .map(|rp| rp.display().to_string())
-                    .unwrap_or_else(|_| p.display().to_string())
-            } else {
-                p.display().to_string()
-            }
-        })
-        .collect();
-
-    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        "diff"
-    } else {
-        "codeblock"
-    };
-
-    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
-        truncate_lines(&filtered, editing_cfg.max_preview_lines)
-    } else {
-        truncate_lines(
-            &chat_preview_sections.join("\n"),
-            editing_cfg.max_preview_lines,
-        )
-    };
-
-    let edit_len = edits.len();
-    // Stash proposal in registry
-    {
-        let mut reg = state.proposals.write().await;
-        reg.insert(
-            request_id,
-            EditProposal {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                edits,
-                // TODO: Change edits_ns to a None or otherwise handle better
-                edits_ns: Vec::new(),
-                files: files.clone(),
-                preview: if matches!(
-                    editing_cfg.preview_mode,
-                    crate::app_state::core::PreviewMode::Diff
-                ) {
-                    crate::app_state::core::DiffPreview::UnifiedDiff {
-                        text: unified_diff.clone(),
-                    }
-                } else {
-                    crate::app_state::core::DiffPreview::CodeBlocks {
-                        per_file: per_file.clone(),
-                    }
-                },
-                status: EditProposalStatus::Pending,
-                is_semantic: true,
-            },
-        );
-    }
-    // Persist proposals (best-effort)
-    crate::app_state::handlers::proposals::save_proposals(&state).await;
-
-    // Emit SysInfo summary with how to approve/deny
-    let summary = format!(
-        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
-Files:
-    {files}
-
-Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
-{preview_snippet}
-
-Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{auto_confirm}"#,
-        files = display_files.join("\n  "),
-        preview_label = preview_label,
-        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
-        max_lines = editing_cfg.max_preview_lines,
-        preview_snippet = chat_preview_snippet,
-        auto_confirm = if editing_cfg.auto_confirm_edits {
-            "\n\nAuto-approval enabled: applying now..."
-        } else {
-            ""
-        },
-    );
-    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
-
-    // Emit a typed ToolCallCompleted so the LLM loop can proceed deterministically.
-    let result = ApplyCodeEditResult {
-        ok: true,
-        staged: edit_len,
-        applied: 0,
-        files: display_files.clone(),
-        preview_mode: preview_label.to_string(),
-        auto_confirmed: editing_cfg.auto_confirm_edits,
-    };
-    let ui_payload = ToolUiPayload::new(
-        ToolName::ApplyCodeEdit,
-        call_id.clone(),
-        format!(
-            "Staged {} edits across {} files",
-            result.staged,
-            result.files.len()
-        ),
-    )
-    .with_request_id(request_id)
-    .with_field("status", "pending")
-    .with_field("staged", result.staged.to_string())
-    .with_field("applied", result.applied.to_string())
-    .with_field("files", result.files.len().to_string())
-    .with_field("preview_mode", result.preview_mode.as_str())
-    .with_field("auto_confirmed", result.auto_confirmed.to_string());
-    let content = match serde_json::to_string(&result) {
-        Ok(s) => s,
-        Err(e) => {
-            let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
-            tool_call_params.tool_call_failed(err);
-            return;
-        }
-    };
-    let _ = event_bus
-        .realtime_tx
-        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            content,
-            ui_payload: Some(ui_payload),
-        }));
-
-    if editing_cfg.auto_confirm_edits {
-        let state2 = Arc::clone(&state);
-        let event_bus2 = Arc::clone(&event_bus);
-        tokio::spawn(async move {
-            approve_edits(&state2, &event_bus2, request_id).await;
-        });
-    }
+    Ok(edits)
 }
 
 pub async fn apply_ns_code_edit_tool(
     tool_call_params: ToolCallParams,
-) -> Result<(), ploke_error::Error> {
+) -> Result<Uuid, ploke_error::Error> {
     let ToolCallParams {
         state,
         event_bus,
@@ -700,62 +968,78 @@ pub async fn apply_ns_code_edit_tool(
     } = tool_call_params.clone();
     let editing_cfg = { state.config.read().await.editing.clone() };
     let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
-    let files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    let count = typed_req.edits.len();
-    let mut patches = typed_req.edits.into_iter().filter_map(|ed| match ed {
-        Edit::Patch {
-            file,
-            diff,
-            reasoning,
-        } => Some((file, diff, reasoning)),
-        _ => None,
-    });
-    if count > 1 {
-        tracing::error!("found multiple patches in apply_ns_code_edit_tool\ncount: {count}");
+    {
+        let reg = state.proposals.read().await;
+        if has_duplicate_edit_proposal(&reg, &call_id) {
+            let msg = format!(
+                "Duplicate {} request ignored for call_id {}",
+                name.as_str(),
+                call_id
+            );
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Duplicate non-semantic patch request".to_string(),
+            }));
+        }
     }
-    if let Some((file, diff, reasoning)) = patches.next() {
+    let mut patches: Vec<(String, String, String)> = typed_req
+        .edits
+        .into_iter()
+        .filter_map(|ed| match ed {
+            Edit::Patch {
+                file,
+                diff,
+                reasoning,
+            } => Some((file, diff, reasoning)),
+            _ => None,
+        })
+        .collect();
+    if patches.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No patches provided".to_string(),
+        }));
+    }
+
+    let (primary_root, policy, scope) = state
+        .with_system_read(|sys| {
+            sys.write_path_context()
+                .map(|(p, pol, scope)| (p, pol, scope))
+        })
+        .await
+        .ok_or_else(|| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message:
+                    "No workspace is loaded; load a workspace before using non_semantic_patch."
+                        .to_string(),
+            })
+        })?;
+
+    let mut per_file: Vec<BeforeAfter> = Vec::with_capacity(patches.len());
+    let mut unified_diff = String::new();
+    let mut edits_ns: Vec<NsWriteSnippetData> = Vec::with_capacity(patches.len());
+    let mut files: Vec<PathBuf> = Vec::with_capacity(patches.len());
+    let mut display_files: Vec<String> = Vec::with_capacity(patches.len());
+    let mut chat_preview_sections: Vec<String> = Vec::with_capacity(patches.len());
+    let mut seen_files: BTreeSet<PathBuf> = BTreeSet::new();
+
+    for (file, diff, _reasoning) in patches.drain(..) {
         use mpatch::ApplyOptions;
         let state_cfg = state.config.read().await;
         let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);
 
-        // let p = PathBuf::from(file);
-        // let file_was_relative = !p.is_absolute();
-        // let abs_path = if let Some(root) = crate_root.as_ref() {
-        //     match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-        //         Ok(pb) => pb,
-        //         Err(err) => {
-        //             let msg = format!("invalid path: {}", err);
-        //             tool_call_params.tool_call_failed(msg);
-        //             return;
-        //         }
-        //     }
-        // } else if p.is_absolute() {
-        //     p
-        // } else {
-        //     std::env::current_dir()
-        //         .unwrap_or_else(|_| PathBuf::from("."))
-        //         .join(p)
-        // };
-
-        let (primary_root, policy) = state
-            .with_system_read(|sys| {
-                sys.tool_path_context()
-                    .map(|(p, pol)| (p.clone(), pol.clone()))
-            })
-            .await
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
-                    message:
-                        "No workspace is loaded; load a workspace before using non_semantic_patch."
-                            .to_string(),
-                })
-            })?;
-
         let requested_path = PathBuf::from(file.as_str());
-        let abs_path = path_scoping::resolve_tool_path(
+        let abs_path = path_scoping::resolve_write_path(
             requested_path.as_path(),
             &primary_root,
             &policy,
+            scope.as_ref(),
         )
         .map_err(|err| {
             ploke_error::Error::Domain(DomainError::Io {
@@ -764,6 +1048,13 @@ pub async fn apply_ns_code_edit_tool(
                 ),
             })
         })?;
+        if !seen_files.insert(abs_path.clone()) {
+            let msg = format!(
+                "multiple non_semantic_patch entries targeted '{}'; combine them into one unified diff per file",
+                abs_path.display()
+            );
+            return Err(ploke_error::Error::Domain(DomainError::Io { message: msg }));
+        }
 
         let request = ploke_io::ReadFileRequest {
             file_path: abs_path.clone(),
@@ -791,7 +1082,6 @@ pub async fn apply_ns_code_edit_tool(
                 "failed to unwrap content for file {:?}",
                 file_path.to_string_lossy()
             );
-            tool_call_params.tool_call_failed(msg.clone());
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         })?;
 
@@ -805,42 +1095,80 @@ pub async fn apply_ns_code_edit_tool(
 
         debug!(?abs_path);
 
-        use mpatch::{apply_patches_to_dir, parse_auto};
-        let patches = parse_auto(&diff).map_err(|e| {
-            let msg = e.to_string();
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        })?;
-
         // Pick a namespace. If you really don’t have one yet, re-use your placeholder.
         let namespace = PROJECT_NAMESPACE_UUID;
 
-        let patch_result = mpatch::parse_single_patch(&diff).map_err(|e| {
-            let msg = format!("invalid unified diff: {}", e);
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        });
-        let patch = patch_result.map_err(|e| {
-            let msg = format!("failed to patch {}: {}", abs_path.display(), e);
-            tool_call_params.tool_call_failed(msg.clone());
-            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-        })?;
-
-        let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
-            String::new(),
-            |mut acc, s| {
-                acc.push_str(&s);
-                acc
-            },
+        tracing::info!(
+            target: "ns-patch",
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            exists,
+            byte_len,
+            io_truncated,
+            expected_file_hash = ?file_hash,
+            diff_bytes = diff.len(),
+            fuzz_factor = apply_options.fuzz_factor,
+            dry_run = apply_options.dry_run,
+            "ns_patch staging file"
         );
 
+        tracing::info!(
+            target: "ns-patch",
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            patch_api = "try_apply_patch_to_content",
+            "ns_patch: before try_apply_patch_to_content"
+        );
+        let touched_by_settled_proposal = {
+            let reg = state.proposals.read().await;
+            file_has_settled_proposal(&reg, &abs_path)
+        };
         let apply_patch_result =
-            mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
+            ploke_io::try_apply_ns_diff_to_content(&diff, &content, state_cfg.editing.patch_cfg)
+                .map_err(|e| {
+                    let msg = format!("failed to patch {}: {}", abs_path.display(), e);
+                    tracing::error!(
+                        target: "ns-patch",
+                        request_id = %request_id,
+                        call_id = %call_id,
+                        file = %abs_path.display(),
+                        patch_api = "try_apply_patch_to_content",
+                        error = %e,
+                        "ns_patch staging rejected patch"
+                    );
+                    ploke_error::Error::Domain(DomainError::Io { message: msg })
+                })?;
+        if touched_by_settled_proposal && used_fuzzy_hunk_match(&apply_patch_result.report) {
+            let msg = format!(
+                "failed to patch {}: patch matched only fuzzily after an earlier settled proposal touched the same file; refresh the file and submit a diff against the current content",
+                abs_path.display()
+            );
+            tracing::error!(
+                target: "ns-patch",
+                request_id = %request_id,
+                call_id = %call_id,
+                file = %abs_path.display(),
+                "ns_patch staging rejected stale same-file patch"
+            );
+            return Err(ploke_error::Error::Domain(DomainError::Io { message: msg }));
+        }
+        tracing::info!(
+            target: "ns-patch",
+            request_id = %request_id,
+            call_id = %call_id,
+            file = %abs_path.display(),
+            before_len = content.len(),
+            after_len = apply_patch_result.new_content.len(),
+            changed = apply_patch_result.new_content != content,
+            "ns_patch staging preview computed"
+        );
         let display_path = abs_path
             .strip_prefix(&primary_root)
             .unwrap_or(abs_path.as_path())
             .to_path_buf();
-        let per_file = BeforeAfter {
+        let before_after = BeforeAfter {
             file_path: display_path.clone(),
             before: content,
             after: apply_patch_result.new_content,
@@ -857,87 +1185,124 @@ pub async fn apply_ns_code_edit_tool(
             options,
             large_file_policy,
         };
-        let edits_ns: Vec<NsWriteSnippetData> = vec![sn_write_data];
-        let files = vec![file_path_for_registry];
-        let display_files: Vec<String> = files
-            .iter()
-            .map(|p| {
-                p.strip_prefix(&primary_root)
-                    .map(|rp| rp.display().to_string())
-                    .unwrap_or_else(|_| p.display().to_string())
-            })
-            .collect();
-        let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            "diff"
-        } else {
-            "codeblock"
-        };
-        let max_lines = editing_cfg.max_preview_lines;
-        let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            let filtered =
-                filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
-            truncate_lines(&filtered, max_lines)
-        } else {
-            let chunk = diff_chunk_with_context(
-                &display_path,
-                &per_file.before,
-                &per_file.after,
-                CHAT_PREVIEW_CONTEXT_LINES,
-            );
-            truncate_lines(&chunk, max_lines)
-        };
-        let mut reg = state.proposals.write().await;
-        reg.insert(
+        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            unified_diff.push_str(sn_write_data.diff.as_ref());
+            if !unified_diff.ends_with('\n') {
+                unified_diff.push('\n');
+            }
+        }
+        chat_preview_sections.push(diff_chunk_with_context(
+            &display_path,
+            &before_after.before,
+            &before_after.after,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        ));
+        edits_ns.push(sn_write_data);
+        files.push(file_path_for_registry);
+        display_files.push(display_path.display().to_string());
+        per_file.push(before_after);
+    }
+
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+    let max_lines = editing_cfg.max_preview_lines;
+    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
+        truncate_lines(&filtered, max_lines)
+    } else {
+        truncate_lines(&chat_preview_sections.join("\n"), max_lines)
+    };
+
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        files = ?display_files,
+        preview_mode = preview_label,
+        unified_diff_bytes = unified_diff.len(),
+        preview_chars = chat_preview_snippet.len(),
+        "ns_patch staging proposal"
+    );
+    let proposal_id = derive_edit_proposal_id(request_id, &call_id);
+    let mut reg = state.proposals.write().await;
+    reg.insert(
+        proposal_id,
+        EditProposal {
+            proposal_id,
             request_id,
-            EditProposal {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                edits,
-                edits_ns,
-                files: files.clone(),
-                preview: if matches!(
-                    editing_cfg.preview_mode,
-                    crate::app_state::core::PreviewMode::Diff
-                ) {
-                    crate::app_state::core::DiffPreview::UnifiedDiff {
-                        text: unified_diff.clone(),
-                    }
-                } else {
-                    crate::app_state::core::DiffPreview::CodeBlocks {
-                        per_file: vec![per_file.clone()],
-                    }
-                },
-                status: EditProposalStatus::Pending,
-                is_semantic: false,
+            parent_id,
+            call_id: call_id.clone(),
+            proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+            edits,
+            edits_ns,
+            files: files.clone(),
+            preview: if matches!(
+                editing_cfg.preview_mode,
+                crate::app_state::core::PreviewMode::Diff
+            ) {
+                crate::app_state::core::DiffPreview::UnifiedDiff {
+                    text: unified_diff.clone(),
+                }
+            } else {
+                crate::app_state::core::DiffPreview::CodeBlocks {
+                    per_file: per_file.clone(),
+                }
             },
-        );
+            status: EditProposalStatus::Pending,
+            is_semantic: false,
+        },
+    );
+    drop(reg);
 
-        crate::app_state::handlers::proposals::save_proposals(&state).await;
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        "ns_patch persisting staged proposal"
+    );
+    crate::app_state::handlers::proposals::save_proposals(&state).await;
 
-        let summary = format!(
-            r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+    let summary = format!(
+        r#"Staged code edits (proposal_id: {proposal_id}, request_id: {request_id}, call_id: {call_id:?}).
 Files:
     {files}
 
 Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
 {preview_snippet}
 
-Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{auto_confirm}"#,
-            files = display_files.join("\n  "),
-            preview_label = preview_label,
-            context_lines = CHAT_PREVIEW_CONTEXT_LINES,
-            max_lines = max_lines,
-            preview_snippet = chat_preview_snippet,
-            auto_confirm = if editing_cfg.auto_confirm_edits {
-                "\n\nAuto-approval enabled: applying now..."
-            } else {
-                ""
-            },
-        );
-        chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
-    }
-    Ok(())
+Approve:  edit approve {proposal_id}
+Deny:     edit deny {proposal_id}{auto_confirm}"#,
+        proposal_id = proposal_id,
+        files = display_files.join("\n  "),
+        preview_label = preview_label,
+        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+        max_lines = max_lines,
+        preview_snippet = chat_preview_snippet,
+        auto_confirm = if editing_cfg.auto_confirm_edits {
+            "\n\nAuto-approval enabled: applying now..."
+        } else {
+            ""
+        },
+    );
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        call_id = %call_id,
+        file_count = files.len(),
+        auto_confirm = editing_cfg.auto_confirm_edits,
+        "ns_patch publishing staged proposal summary"
+    );
+    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
+    tracing::info!(
+        target: "ns-patch",
+        request_id = %request_id,
+        call_id = %call_id,
+        "ns_patch staging complete"
+    );
+    Ok(proposal_id)
 }

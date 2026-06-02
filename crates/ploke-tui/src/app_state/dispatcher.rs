@@ -2,17 +2,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::ErrorExt;
-use crate::llm::ProviderSlug;
-use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
-use crate::llm::router_only::RouterVariants;
-use crate::llm::{EndpointKey, ModelId, ProviderKey};
+use crate::llm::{ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, MessageUpdatedEvent, RagEvent, rag};
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
-use ploke_embed::config::OpenRouterConfig;
+use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
@@ -23,18 +20,45 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace_span, warn};
 
-use super::IndexTargetDir;
 use super::commands::{
     IndexCmd, IndexResolveError, LoadCmd, LoadResolveError, LoadValidationError, StateCommand,
     Validate, WorkspaceCmd, emit_validation_error, validate_workspace_cmd,
 };
 use super::core::AppState;
 use super::events::SystemEvent;
+use super::{IndexTarget, IndexTargetDir};
 use super::{database, handlers};
 use crate::AppEvent;
 use crate::chat_history::MessageKind;
 use crate::error::{EventCtx, Message, UiError};
 use uuid::Uuid;
+
+fn openrouter_embedding_config(model: &str, dims: usize) -> OpenRouterConfig {
+    if model == "mistralai/codestral-embed-2505" {
+        OpenRouterConfig {
+            model: model.to_string(),
+            dimensions: Some(dims),
+            request_dimensions: None,
+            snippet_batch_size: 100,
+            max_in_flight: 2,
+            requests_per_second: None,
+            max_attempts: 5,
+            initial_backoff_ms: 250,
+            max_backoff_ms: 10000,
+            input_type: Some("code-snippet".into()),
+            provider_order: None,
+            allow_fallbacks: None,
+            timeout_secs: 30,
+            truncate_policy: TruncatePolicy::Truncate,
+        }
+    } else {
+        OpenRouterConfig {
+            model: model.to_string(),
+            dimensions: Some(dims),
+            ..Default::default()
+        }
+    }
+}
 
 /// The central command dispatcher for AppState.
 ///
@@ -171,6 +195,13 @@ pub async fn state_manager(
 
             StateCommand::Load(cmd) => {
                 handle_load_cmd(&state, &event_bus, cmd).await;
+            }
+
+            StateCommand::IndexTarget {
+                target,
+                needs_parse,
+            } => {
+                spawn_index_target(&state, &event_bus, target, needs_parse);
             }
 
             StateCommand::IndexTargetDir {
@@ -354,11 +385,11 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            StateCommand::ApproveEdits { request_id } => {
-                rag::editing::approve_edits(&state, &event_bus, request_id).await;
+            StateCommand::ApproveEdits { proposal_id } => {
+                rag::editing::approve_edits(&state, &event_bus, proposal_id).await;
             }
-            StateCommand::DenyEdits { request_id } => {
-                rag::editing::deny_edits(&state, &event_bus, request_id).await;
+            StateCommand::DenyEdits { proposal_id } => {
+                rag::editing::deny_edits(&state, &event_bus, proposal_id).await;
             }
             StateCommand::ApprovePendingEdits => {
                 rag::editing::approve_pending_edits(&state, &event_bus).await;
@@ -392,40 +423,9 @@ pub async fn state_manager(
                     }
                 };
 
-                // Ensure a ModelPrefs entry exists for this model key
-                reg.models
-                    .entry(model_id.clone().key)
-                    .or_insert_with(|| ModelPrefs {
-                        model_key: model_id.clone().key,
-                        ..Default::default()
-                    });
-
-                // Ensure OpenRouter is allowed (for now we only support OpenRouter)
-                let mp = reg
-                    .models
-                    .get_mut(&model_id.clone().key)
-                    .expect("entry ensured above");
-                if !mp
-                    .allowed_routers
-                    .iter()
-                    .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
-                {
-                    mp.allowed_routers.push(RouterVariants::OpenRouter(
-                        crate::llm::router_only::openrouter::OpenRouter,
-                    ));
-                }
+                reg.select_model_provider(&model_id, provider_key.as_ref());
 
                 let msg = if let Some(provider) = provider_key {
-                    // Add/update selected endpoint preference
-                    let ModelId { key, variant } = model_id.clone();
-                    let ek = EndpointKey {
-                        model: key,
-                        provider: provider.clone(),
-                        variant,
-                    };
-                    if !mp.selected_endpoints.iter().any(|e| e == &ek) {
-                        mp.selected_endpoints.push(ek);
-                    }
                     // otherwise selected model without provider, which is fine.
                     format!(
                         "Switched active model to {} via provider {}",
@@ -497,11 +497,7 @@ pub async fn state_manager(
                 let embedding_set = EmbeddingSet::new(emb_provider, emb_model_id.clone(), shape);
                 // Rebuild or reuse embedder based on provider selection.
                 let new_embedder = if provider.as_ref().contains("openrouter") {
-                    let or_cfg = OpenRouterConfig {
-                        model: m.clone(),
-                        dimensions: Some(dims as usize),
-                        ..Default::default()
-                    };
+                    let or_cfg = openrouter_embedding_config(&m, dims as usize);
                     match OpenRouterBackend::new(&or_cfg) {
                         Ok(backend) => Arc::new(EmbeddingProcessor::new(
                             EmbeddingSource::OpenRouter(backend),
@@ -615,6 +611,19 @@ fn spawn_index_workspace(
     let event_bus = Arc::clone(event_bus);
     tokio::spawn(async move {
         handlers::indexing::index_workspace(&state, &event_bus, target_dir, needs_parse).await;
+    });
+}
+
+fn spawn_index_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: Option<IndexTarget>,
+    needs_parse: bool,
+) {
+    let state = Arc::clone(state);
+    let event_bus = Arc::clone(event_bus);
+    tokio::spawn(async move {
+        handlers::indexing::index_target(&state, &event_bus, target, needs_parse).await;
     });
 }
 

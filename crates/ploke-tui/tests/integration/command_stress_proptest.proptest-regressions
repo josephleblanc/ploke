@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a3e5fcbd439f7517a6b31c9cb00a01fe170852767c6d7a0d43af9a530ee2ed70 # shrinks to schedule = [(0, Delete { id: [59, 3, 64, 88, 69, 164, 15, 22, 122, 227, 96, 15, 82, 34, 8, 128] })], inputs = ["/edit preview lines 19", "/edit preview lines 56"]

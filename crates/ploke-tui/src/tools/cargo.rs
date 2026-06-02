@@ -1,8 +1,9 @@
 //! Cargo tool integration for running `cargo check` or `cargo test` with JSON diagnostics.
 //!
 //! This tool shells out to `cargo` with `--message-format=json` and parses the line-delimited
-//! JSON stream to extract compiler diagnostics and artifact counts. Non-JSON output is kept in
-//! bounded tails to aid debugging when build scripts or test binaries emit extra text.
+//! JSON stream to extract compiler diagnostics and artifact counts. Warning diagnostics are
+//! omitted from the response by default; non-JSON output is kept in bounded tails to aid debugging
+//! when build scripts or test binaries emit extra text.
 //!
 //! # Usage
 //!
@@ -24,7 +25,12 @@
 //! ).unwrap();
 //! assert!(params.test_args.is_some());
 //! ```
-use std::{borrow::Cow, collections::VecDeque, path::Path, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use cargo_metadata::Message;
 use serde::{Deserialize, Serialize};
@@ -35,11 +41,10 @@ use tokio::{
 };
 
 use super::{
-    Tool, ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
+    Tool, ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName, ToolResult,
     ToolUiPayload, ToolVerbosity, tool_io_error, tool_ui_error,
 };
 use crate::tracing_setup::TOOL_CALL_TARGET;
-use ploke_test_utils::workspace_root;
 
 const MAX_DIAGNOSTICS: usize = 50;
 const MAX_SPANS_PER_DIAGNOSTIC: usize = 3;
@@ -63,6 +68,8 @@ const BINS_DESC: &str = "Check/test all binary targets (--bins).";
 const EXAMPLES_DESC: &str = "Check/test all example targets (--examples).";
 const BENCHES_DESC: &str = "Check/test all bench targets (--benches).";
 const TEST_ARGS_DESC: &str = "Arguments for the test binary (only for cargo test).";
+const INCLUDE_WARNINGS_DESC: &str =
+    "Include compiler warning diagnostics in the response diagnostics list.";
 
 lazy_static::lazy_static! {
     static ref CARGO_PARAMETERS: serde_json::Value = serde_json::json!({
@@ -126,6 +133,11 @@ lazy_static::lazy_static! {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": TEST_ARGS_DESC
+            },
+            "include_warnings": {
+                "type": "boolean",
+                "description": INCLUDE_WARNINGS_DESC,
+                "default": false
             }
         },
         "required": ["command"],
@@ -133,13 +145,10 @@ lazy_static::lazy_static! {
     });
 }
 
-/// Supported cargo subcommands.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CargoCommand {
-    Test,
-    Check,
-}
+pub use ploke_core::tool_contracts::{
+    CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
+    CargoToolParamsOwned, CargoToolResult,
+};
 
 impl CargoCommand {
     fn as_str(self) -> &'static str {
@@ -148,14 +157,6 @@ impl CargoCommand {
             CargoCommand::Check => "check",
         }
     }
-}
-
-/// Execution scope for the cargo invocation.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CargoScope {
-    Focused,
-    Workspace,
 }
 
 impl CargoScope {
@@ -216,89 +217,8 @@ pub struct CargoToolParams<'a> {
     pub benches: bool,
     #[serde(default, borrow)]
     pub test_args: Option<Vec<Cow<'a, str>>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CargoToolParamsOwned {
-    pub command: CargoCommand,
-    pub scope: CargoScope,
-    pub package: Option<String>,
-    pub features: Option<Vec<String>>,
-    pub all_features: bool,
-    pub no_default_features: bool,
-    pub target: Option<String>,
-    pub profile: Option<String>,
-    pub release: bool,
-    pub lib: bool,
-    pub tests: bool,
-    pub bins: bool,
-    pub examples: bool,
-    pub benches: bool,
-    pub test_args: Option<Vec<String>>,
-}
-
-/// Result payload emitted by the cargo tool.
-///
-/// Diagnostics are capped for size safety; tails contain the last observed non-JSON output.
-#[derive(Debug, Clone, Serialize)]
-pub struct CargoToolResult {
-    pub ok: bool,
-    pub status_reason: CargoStatusReason,
-    pub command: CargoCommand,
-    pub scope: CargoScope,
-    pub manifest_path: String,
-    pub exit_code: Option<i32>,
-    pub duration_ms: u64,
-    pub summary: CargoSummary,
-    pub diagnostics: Vec<CargoDiagnostic>,
-    pub stderr_tail: Vec<String>,
-    pub non_json_stdout_tail: Vec<String>,
-    pub json_parse_errors_tail: Vec<String>,
-    pub raw_messages_truncated: bool,
-}
-
-/// Summary counts derived from cargo JSON messages.
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct CargoSummary {
-    pub errors: u32,
-    pub warnings: u32,
-    pub notes: u32,
-    pub artifacts: u32,
-    pub other_messages: u32,
-}
-
-/// Condensed diagnostic for LLM/UI consumption.
-#[derive(Debug, Clone, Serialize)]
-pub struct CargoDiagnostic {
-    pub level: String,
-    pub message: String,
-    pub code: Option<String>,
-    pub spans: Vec<CargoSpan>,
-    pub rendered: Option<String>,
-}
-
-/// Source span attached to a diagnostic.
-#[derive(Debug, Clone, Serialize)]
-pub struct CargoSpan {
-    pub file_name: String,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub column_start: u32,
-    pub column_end: u32,
-    pub is_primary: bool,
-}
-
-/// Final status category for a cargo invocation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CargoStatusReason {
-    Success,
-    CompileFailed,
-    TestsFailedOrRuntime,
-    CargoFailedOrInvalidArgs,
-    Timeout,
-    Canceled,
-    Killed,
+    #[serde(default)]
+    pub include_warnings: bool,
 }
 
 impl CargoStatusReason {
@@ -349,8 +269,8 @@ impl Tool for CargoTool {
         ToolName::Cargo
     }
 
-    fn description() -> ToolDescr {
-        ToolDescr::Cargo
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {
@@ -384,6 +304,7 @@ impl Tool for CargoTool {
                 .test_args
                 .as_ref()
                 .map(|v| v.iter().map(|s| s.to_string()).collect()),
+            include_warnings: params.include_warnings,
         }
     }
 
@@ -423,6 +344,7 @@ impl Tool for CargoTool {
             examples = params.examples,
             benches = params.benches,
             test_args = ?params.test_args.as_ref().map(|v| v.iter().map(|s| s.as_ref()).collect::<Vec<_>>()),
+            include_warnings = params.include_warnings,
         )
     )]
     async fn execute<'de>(
@@ -441,7 +363,7 @@ impl Tool for CargoTool {
         let crate_root = tokio::fs::canonicalize(crate_root)
             .await
             .map_err(|err| tool_io_error(format!("Failed to resolve crate root: {err}")))?;
-        let current_workspace = workspace_root();
+        let current_workspace = loaded_workspace_root(&ctx).await?;
         if !crate_root.starts_with(&current_workspace) {
             return Err(tool_ui_error(format!(
                 "Focused crate path is outside the current workspace; database may be from another clone. focused={}, workspace={}",
@@ -576,7 +498,7 @@ impl Tool for CargoTool {
             .take()
             .ok_or_else(|| tool_io_error("Failed to capture cargo stderr".to_string()))?;
 
-        let stdout_task = tokio::spawn(read_stdout(stdout));
+        let stdout_task = tokio::spawn(read_stdout(stdout, params.include_warnings));
         let stderr_task = tokio::spawn(read_stderr(stderr));
 
         let (tool_verbosity, tooling) = {
@@ -677,6 +599,19 @@ impl Tool for CargoTool {
             ui_payload: Some(ui_payload),
         })
     }
+}
+
+async fn loaded_workspace_root(ctx: &super::Ctx) -> Result<PathBuf, ploke_error::Error> {
+    let current_workspace = ctx
+        .state
+        .with_system_read(|sys| sys.loaded_workspace_root())
+        .await
+        .ok_or_else(|| {
+            tool_ui_error("No workspace is currently loaded; load a workspace first.")
+        })?;
+    tokio::fs::canonicalize(current_workspace)
+        .await
+        .map_err(|err| tool_io_error(format!("Failed to resolve workspace root: {err}")))
 }
 
 fn validate_params(params: &CargoToolParams<'_>) -> Result<(), ToolInvocationError> {
@@ -807,6 +742,7 @@ async fn load_metadata(
 
 async fn read_stdout(
     stdout: tokio::process::ChildStdout,
+    include_warnings: bool,
 ) -> Result<StdoutState, ploke_error::Error> {
     let mut state = StdoutState::default();
     let mut lines = BufReader::new(stdout).lines();
@@ -815,15 +751,15 @@ async fn read_stdout(
         .await
         .map_err(|err| tool_io_error(format!("stdout read failed: {err}")))?
     {
-        parse_stdout_line(&line, &mut state);
+        parse_stdout_line(&line, &mut state, include_warnings);
     }
     Ok(state)
 }
 
-fn parse_stdout_line(line: &str, state: &mut StdoutState) {
+fn parse_stdout_line(line: &str, state: &mut StdoutState, include_warnings: bool) {
     if line.starts_with('{') {
         match serde_json::from_str::<Message>(line) {
-            Ok(msg) => handle_message(msg, state),
+            Ok(msg) => handle_message(msg, state, include_warnings),
             Err(err) => {
                 if push_tail(
                     &mut state.json_parse_errors_tail,
@@ -843,7 +779,7 @@ fn parse_stdout_line(line: &str, state: &mut StdoutState) {
     }
 }
 
-fn handle_message(msg: Message, state: &mut StdoutState) {
+fn handle_message(msg: Message, state: &mut StdoutState, include_warnings: bool) {
     match msg {
         Message::CompilerMessage(msg) => {
             let diag = msg.message;
@@ -861,9 +797,11 @@ fn handle_message(msg: Message, state: &mut StdoutState) {
                 }
                 _ => {}
             }
-            if state.diagnostics.len() < MAX_DIAGNOSTICS {
+            if include_diagnostic(&diag.level, include_warnings)
+                && state.diagnostics.len() < MAX_DIAGNOSTICS
+            {
                 state.diagnostics.push(convert_diagnostic(diag));
-            } else {
+            } else if include_diagnostic(&diag.level, include_warnings) {
                 state.raw_messages_truncated = true;
             }
         }
@@ -874,6 +812,16 @@ fn handle_message(msg: Message, state: &mut StdoutState) {
             state.summary.other_messages += 1;
         }
     }
+}
+
+fn include_diagnostic(
+    level: &cargo_metadata::diagnostic::DiagnosticLevel,
+    include_warnings: bool,
+) -> bool {
+    !matches!(
+        level,
+        cargo_metadata::diagnostic::DiagnosticLevel::Warning if !include_warnings
+    )
 }
 
 fn convert_diagnostic(diag: cargo_metadata::diagnostic::Diagnostic) -> CargoDiagnostic {
@@ -1020,28 +968,68 @@ fn format_details(result: &CargoToolResult) -> String {
             out.push('\n');
         }
     }
-    if !result.stderr_tail.is_empty() {
+    let stderr_tail = display_stderr_tail(result);
+    if !stderr_tail.is_empty() {
         out.push_str("Stderr tail:\n");
-        for line in result.stderr_tail.iter().take(20) {
+        for line in stderr_tail {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.non_json_stdout_tail.is_empty() {
         out.push_str("Stdout tail:\n");
-        for line in result.non_json_stdout_tail.iter().take(20) {
+        for line in latest_lines(&result.non_json_stdout_tail, 20) {
             out.push_str(line);
             out.push('\n');
         }
     }
     if !result.json_parse_errors_tail.is_empty() {
         out.push_str("JSON parse errors:\n");
-        for line in result.json_parse_errors_tail.iter().take(10) {
+        for line in latest_lines(&result.json_parse_errors_tail, 10) {
             out.push_str(line);
             out.push('\n');
         }
     }
     out.trim_end().to_string()
+}
+
+fn display_stderr_tail(result: &CargoToolResult) -> Vec<&str> {
+    let filtered: Vec<&str> = result
+        .stderr_tail
+        .iter()
+        .map(String::as_str)
+        .filter(|line| !is_cargo_progress_line(line))
+        .collect();
+    if !filtered.is_empty() {
+        return latest_ref_lines(&filtered, 20);
+    }
+    if result.ok {
+        return Vec::new();
+    }
+    latest_lines(&result.stderr_tail, 20)
+}
+
+fn latest_lines(lines: &[String], limit: usize) -> Vec<&str> {
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    latest_ref_lines(&refs, limit)
+}
+
+fn latest_ref_lines<'a>(lines: &[&'a str], limit: usize) -> Vec<&'a str> {
+    let start = lines.len().saturating_sub(limit);
+    lines[start..].to_vec()
+}
+
+fn is_cargo_progress_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("Blocking ")
+        || trimmed.starts_with("Building ")
+        || trimmed.starts_with("Checking ")
+        || trimmed.starts_with("Compiling ")
+        || trimmed.starts_with("Doc-tests ")
+        || trimmed.starts_with("Documenting ")
+        || trimmed.starts_with("Finished ")
+        || trimmed.starts_with("Fresh ")
+        || trimmed.starts_with("Running ")
 }
 
 fn display_exit_code(exit_code: Option<i32>) -> String {
@@ -1102,6 +1090,12 @@ fn enforce_response_cap(result: &mut CargoToolResult, max_bytes: usize) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event_bus::{EventBus, EventBusCaps};
+    use crate::test_utils::mock::create_mock_app_state;
+    use ploke_core::ArcStr;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use uuid::Uuid;
 
     #[test]
     fn deserialize_params_autoscopes_package_to_workspace() {
@@ -1131,6 +1125,7 @@ mod tests {
             examples: false,
             benches: false,
             test_args: None,
+            include_warnings: false,
         };
 
         let mut with_package = base.clone();
@@ -1162,8 +1157,8 @@ mod tests {
     #[test]
     fn parse_stdout_line_handles_non_json_and_invalid_json() {
         let mut state = StdoutState::default();
-        parse_stdout_line("not-json", &mut state);
-        parse_stdout_line("{oops", &mut state);
+        parse_stdout_line("not-json", &mut state, false);
+        parse_stdout_line("{oops", &mut state, false);
         assert_eq!(state.non_json_stdout_tail.len(), 1);
         assert_eq!(state.json_parse_errors_tail.len(), 1);
     }
@@ -1171,8 +1166,32 @@ mod tests {
     #[test]
     fn parse_stdout_line_handles_build_finished() {
         let mut state = StdoutState::default();
-        parse_stdout_line(r#"{"reason":"build-finished","success":true}"#, &mut state);
+        parse_stdout_line(
+            r#"{"reason":"build-finished","success":true}"#,
+            &mut state,
+            false,
+        );
         assert_eq!(state.summary.other_messages, 1);
+    }
+
+    #[test]
+    fn deserialize_params_defaults_warning_diagnostics_off() {
+        let params = CargoTool::deserialize_params(r#"{"command":"check"}"#).unwrap();
+        assert!(!params.include_warnings);
+
+        let params =
+            CargoTool::deserialize_params(r#"{"command":"check","include_warnings":true}"#)
+                .unwrap();
+        assert!(params.include_warnings);
+    }
+
+    #[test]
+    fn include_diagnostic_respects_warning_flag() {
+        use cargo_metadata::diagnostic::DiagnosticLevel;
+
+        assert!(!include_diagnostic(&DiagnosticLevel::Warning, false));
+        assert!(include_diagnostic(&DiagnosticLevel::Warning, true));
+        assert!(include_diagnostic(&DiagnosticLevel::Error, false));
     }
 
     #[test]
@@ -1206,5 +1225,85 @@ mod tests {
         };
         let truncated = enforce_response_cap(&mut result, 512);
         assert!(truncated);
+    }
+
+    // regr:cargotail:22-05-26_14-10
+    #[test]
+    fn format_details_shows_latest_test_output_and_filters_success_progress() {
+        let mut stdout_tail = Vec::new();
+        stdout_tail.push("running 20 tests".to_string());
+        for index in 0..24 {
+            stdout_tail.push(format!("test sample::{index:02} ... ok"));
+        }
+        stdout_tail.push("test result: ok. 20 passed; 0 failed; 0 ignored".to_string());
+
+        let result = CargoToolResult {
+            ok: true,
+            status_reason: CargoStatusReason::Success,
+            command: CargoCommand::Test,
+            scope: CargoScope::Focused,
+            manifest_path: "/repo/crates/regex/Cargo.toml".to_string(),
+            exit_code: Some(0),
+            duration_ms: 1567,
+            summary: CargoSummary::default(),
+            diagnostics: Vec::new(),
+            stderr_tail: vec![
+                "   Compiling memchr v2.4.1".to_string(),
+                "   Compiling log v0.4.14".to_string(),
+                "   Compiling grep-regex v0.1.9 (/repo/crates/regex)".to_string(),
+                "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.24s"
+                    .to_string(),
+                "     Running unittests src/lib.rs (/repo/target/debug/deps/grep_regex)"
+                    .to_string(),
+                "   Doc-tests grep_regex".to_string(),
+            ],
+            non_json_stdout_tail: stdout_tail,
+            json_parse_errors_tail: Vec::new(),
+            raw_messages_truncated: false,
+        };
+
+        let details = format_details(&result);
+        assert!(
+            !details.contains("Stderr tail:"),
+            "successful cargo progress stderr should not dominate details:\n{details}"
+        );
+        assert!(details.contains("Stdout tail:"));
+        assert!(details.contains("test sample::23 ... ok"));
+        assert!(details.contains("test result: ok. 20 passed; 0 failed; 0 ignored"));
+        assert!(
+            !details.contains("running 20 tests"),
+            "details should show the newest retained stdout lines, not the oldest:\n{details}"
+        );
+        assert!(!details.contains("Compiling memchr"));
+        assert!(!details.contains("Running unittests"));
+    }
+
+    #[tokio::test]
+    async fn loaded_workspace_root_reads_from_state() {
+        let workspace_root = tempdir().expect("workspace tempdir");
+        let state = Arc::new(create_mock_app_state());
+        state
+            .with_system_raw(|sys| {
+                sys.set_loaded_workspace(
+                    workspace_root.path().to_path_buf(),
+                    vec![workspace_root.path().to_path_buf()],
+                    Some(workspace_root.path().to_path_buf()),
+                );
+            })
+            .await;
+
+        let ctx = crate::tools::Ctx {
+            state,
+            event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: ArcStr::from("functions.cargo:0"),
+        };
+
+        let loaded = loaded_workspace_root(&ctx).await.expect("workspace root");
+        let expected = tokio::fs::canonicalize(workspace_root.path())
+            .await
+            .expect("canonicalize");
+        assert_eq!(loaded, expected);
     }
 }

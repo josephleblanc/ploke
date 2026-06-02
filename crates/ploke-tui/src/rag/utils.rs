@@ -1,4 +1,6 @@
-use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
+use crate::tools::{
+    ToolError, ToolErrorCode, ToolName, ToolUiPayload, tool_ui_payload_from_error,
+};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
@@ -8,6 +10,28 @@ pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
     let budget = token_budget;
     let top_k = (budget / 200) as usize;
     top_k.clamp(5, 20)
+}
+
+pub(crate) fn max_results_for_budget(
+    token_budget_total: u32,
+    token_budget_per_result: u32,
+) -> usize {
+    let total = token_budget_total.max(1) as usize;
+    let per_result = (token_budget_per_result.max(1) as usize).min(total);
+    (total / per_result).max(1)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn max_results_respects_total_and_per_result_caps() {
+        assert_eq!(max_results_for_budget(1_000, 250), 4);
+        assert_eq!(max_results_for_budget(1_000, 400), 2);
+        assert_eq!(max_results_for_budget(100, 400), 1);
+        assert_eq!(max_results_for_budget(0, 0), 1);
+    }
 }
 
 // Strongly-typed request for apply_code_edit
@@ -54,6 +78,7 @@ pub enum Edit {
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Function,
+    Method,
     Const,
     Enum,
     Impl,
@@ -68,9 +93,30 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    pub const ALL: [Self; 13] = [
+        Self::Function,
+        Self::Method,
+        Self::Const,
+        Self::Enum,
+        Self::Impl,
+        Self::Import,
+        Self::Macro,
+        Self::Module,
+        Self::Static,
+        Self::Struct,
+        Self::Trait,
+        Self::TypeAlias,
+        Self::Union,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        self.as_relation()
+    }
+
     pub fn as_relation(&self) -> &'static str {
         match self {
             NodeKind::Function => "function",
+            NodeKind::Method => "method",
             NodeKind::Const => "const",
             NodeKind::Enum => "enum",
             NodeKind::Impl => "impl",
@@ -83,6 +129,80 @@ impl NodeKind {
             NodeKind::TypeAlias => "type_alias",
             NodeKind::Union => "union",
         }
+    }
+
+    pub fn allowed_values() -> [&'static str; 13] {
+        Self::ALL.map(|kind| kind.as_relation())
+    }
+
+    pub fn schema_description() -> String {
+        let values = Self::allowed_values().join(", ");
+        format!(
+            "The kind of code item this is. Use `method` for items defined inside `impl` or `trait` blocks and `function` for free functions. Must be one of: {values}"
+        )
+    }
+
+    pub fn schema_property() -> serde_json::Value {
+        serde_json::json!({
+            "type": "string",
+            "enum": Self::allowed_values(),
+            "description": Self::schema_description(),
+        })
+    }
+
+    pub fn lookup_hint(self) -> Option<&'static str> {
+        match self {
+            NodeKind::Function => Some(
+                "Hint: if this item is defined inside an `impl` or `trait`, retry with node_kind=method.",
+            ),
+            NodeKind::Method => {
+                Some("Hint: if this item is a free function, retry with node_kind=function.")
+            }
+            _ => None,
+        }
+    }
+}
+
+impl std::str::FromStr for NodeKind {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "function" => Ok(Self::Function),
+            "method" => Ok(Self::Method),
+            "const" => Ok(Self::Const),
+            "enum" => Ok(Self::Enum),
+            "impl" => Ok(Self::Impl),
+            "import" => Ok(Self::Import),
+            "macro" => Ok(Self::Macro),
+            "module" => Ok(Self::Module),
+            "static" => Ok(Self::Static),
+            "struct" => Ok(Self::Struct),
+            "trait" => Ok(Self::Trait),
+            "type_alias" => Ok(Self::TypeAlias),
+            "union" => Ok(Self::Union),
+            _ => Err("invalid node kind"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeKind;
+
+    #[test]
+    fn node_kind_includes_method() {
+        assert_eq!(NodeKind::Method.as_relation(), "method");
+        assert!(NodeKind::allowed_values().contains(&"method"));
+
+        let parsed = "method".parse::<NodeKind>().expect("parse method");
+        assert!(matches!(parsed, NodeKind::Method));
+    }
+
+    #[test]
+    fn node_kind_lookup_hint_mentions_method_for_function() {
+        let hint = NodeKind::Function.lookup_hint().expect("function hint");
+        assert!(hint.contains("node_kind=method"));
     }
 }
 
@@ -142,7 +262,7 @@ impl ToolCallParams {
                 parent_id: self.parent_id,
                 call_id: self.call_id.clone(),
                 error: error.to_wire_string(),
-                ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+                ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
             }));
     }
 
@@ -157,7 +277,7 @@ impl ToolCallParams {
             parent_id: self.parent_id,
             call_id: self.call_id.clone(),
             error: error.to_wire_string(),
-            ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+            ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
         }
     }
 }

@@ -41,17 +41,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::app::commands::unit_tests::harness::{
-    DebugStateCommand, TestRuntime, ValidationProbeEvent,
-};
+use crate::app::commands::harness::{DebugStateCommand, TestRuntime, ValidationProbeEvent};
 use crate::app::commands::{exec, parser};
 use crate::app_state::core::WorkspaceFreshness;
 use crate::test_support::config_home_lock;
-use crate::user_config::{CommandStyle, WorkspaceRegistry, WorkspaceRegistryEntry};
+use crate::user_config::{
+    CommandStyle, PLOKE_WORKSPACE_REGISTRY_PATH_ENV, WorkspaceRegistry, WorkspaceRegistryEntry,
+};
 use ploke_core::WorkspaceInfo;
 use ploke_test_utils::{
-    FIXTURE_NODES_CANONICAL, WS_FIXTURE_01_CANONICAL, WS_FIXTURE_01_MEMBER_SINGLE,
-    fresh_backup_fixture_db,
+    FIXTURE_NODES_CANONICAL, PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, WS_FIXTURE_01_CANONICAL,
+    WS_FIXTURE_01_MEMBER_SINGLE, fresh_backup_fixture_db,
 };
 use tempfile::{TempDir, tempdir};
 use tokio::time::timeout;
@@ -360,6 +360,15 @@ impl TestCase {
     fn with_error(mut self, expected: ExpectedUiError) -> Self {
         self.with_resolve_ui_error(expected)
     }
+
+    fn expects_validation_trace(&self) -> bool {
+        self.expected_resolved_load_ref_contains.is_some()
+            || self.expected_resolved_index_target_contains.is_some()
+            || self.expected_focus_root_contains.is_some()
+            || !matches!(self.expected_validation, ValidationExpectation::None)
+            || self.expected_error.message_contains.is_some()
+            || self.expected_error.recovery_suggestion.is_some()
+    }
 }
 
 impl Default for ValidationExpectation {
@@ -371,44 +380,78 @@ impl Default for ValidationExpectation {
 // Backwards compatibility alias - all NoDbTestCase usages should work
 pub type NoDbTestCase = TestCase;
 
-struct XdgConfigHomeGuard {
-    old_xdg: Option<String>,
+struct WorkspaceRegistryEnvGuard {
+    old_registry_path: Option<String>,
+    old_xdg_config_home: Option<String>,
+    old_snapshot_fixture_dir: Option<String>,
 }
 
-impl XdgConfigHomeGuard {
-    fn set_to(path: &std::path::Path) -> Self {
-        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+impl WorkspaceRegistryEnvGuard {
+    fn set_registry_path(path: &std::path::Path) -> Self {
+        let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+        let old_xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+        let snapshot_fixture_dir = path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("db_snapshot_fixtures");
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", path);
+            std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, path);
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
         }
-        Self { old_xdg }
+        Self {
+            old_registry_path,
+            old_xdg_config_home,
+            old_snapshot_fixture_dir,
+        }
     }
 }
 
-impl Drop for XdgConfigHomeGuard {
+impl Drop for WorkspaceRegistryEnvGuard {
     fn drop(&mut self) {
-        if let Some(old_xdg) = self.old_xdg.take() {
+        if let Some(old_registry_path) = self.old_registry_path.take() {
             unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", old_xdg);
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old_registry_path);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
+            }
+        }
+        if let Some(old_xdg_config_home) = self.old_xdg_config_home.take() {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old_xdg_config_home);
             }
         } else {
             unsafe {
                 std::env::remove_var("XDG_CONFIG_HOME");
             }
         }
+        if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+            unsafe {
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+            }
+        }
     }
 }
 
 struct LoadRegistrySandbox {
-    _lock: tokio::sync::MutexGuard<'static, ()>,
+    // Field drop order matters: restore registry env before releasing the lock.
+    _registry_guard: WorkspaceRegistryEnvGuard,
     _tmp_dir: TempDir,
-    _xdg_guard: XdgConfigHomeGuard,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn setup_load_registry() -> LoadRegistrySandbox {
     let lock = config_home_lock().lock().await;
     let tmp_dir = tempdir().expect("temp xdg config dir");
-    let xdg_guard = XdgConfigHomeGuard::set_to(tmp_dir.path());
+    let registry_path = tmp_dir.path().join("workspaces.toml");
+    let registry_guard = WorkspaceRegistryEnvGuard::set_registry_path(&registry_path);
 
     let repo_root = ploke_test_utils::workspace_root();
     let fixture_crate_root = repo_root.join("tests/fixture_crates/fixture_nodes");
@@ -420,20 +463,23 @@ async fn setup_load_registry() -> LoadRegistrySandbox {
             workspace_id: fixture_crate.id.uuid().to_string(),
             workspace_name: fixture_crate.name.clone(),
             workspace_root: fixture_crate_root.clone(),
-            snapshot_file: FIXTURE_NODES_CANONICAL.path(),
+            snapshot_file: FIXTURE_NODES_CANONICAL
+                .checked_path()
+                .expect("fixture_nodes snapshot should validate")
+                .into_path(),
             focused_root: Some(fixture_crate_root.clone()),
             member_roots: vec![fixture_crate_root],
             active_embedding_set_rel: None,
         }],
     };
     registry
-        .save_to_path(&WorkspaceRegistry::default_registry_path())
+        .save_to_path(&registry_path)
         .expect("save test workspace registry");
 
     LoadRegistrySandbox {
         _lock: lock,
         _tmp_dir: tmp_dir,
-        _xdg_guard: xdg_guard,
+        _registry_guard: registry_guard,
     }
 }
 
@@ -553,8 +599,7 @@ async fn run_test_cases(cases: &[TestCase]) {
         let mut app = rt.into_app_with_state_pwd(pwd_path).await;
         for case in group_cases {
             let trace =
-                send_command_and_collect(&mut app, case.input, &mut debug_rx, &mut validation_rx)
-                    .await;
+                send_command_and_collect(&mut app, case, &mut debug_rx, &mut validation_rx).await;
             assert_case_trace(case, &trace);
         }
     }
@@ -1003,7 +1048,12 @@ async fn run_test_case(case: &TestCase) {
         .send(Ok(Event::Key(KeyEvent::from(KeyCode::Enter))))
         .expect("send enter");
 
-    let mut trace = collect_case_trace(&mut debug_rx, &mut validation_rx).await;
+    let mut trace = collect_case_trace(
+        &mut debug_rx,
+        &mut validation_rx,
+        case.expects_validation_trace(),
+    )
+    .await;
     trace.parsed = parsed_debug;
     app_task.abort();
     let _ = app_task.await;
@@ -1024,12 +1074,18 @@ async fn run_no_db_test_case(case: &NoDbTestCase) {
 async fn collect_case_trace(
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
     validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+    wait_for_validation: bool,
 ) -> CaseTrace {
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
+    const VALIDATION_TIMEOUT: Duration = Duration::from_secs(1);
+    const OPTIONAL_VALIDATION_TIMEOUT: Duration = Duration::from_millis(10);
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(10);
+
     let mut commands = Vec::new();
     let mut validations = Vec::new();
 
-    match timeout(Duration::from_millis(100), debug_rx.recv()).await {
-        Ok(Some(cmd)) => commands.push(cmd),
+    let first_command = match timeout(COMMAND_TIMEOUT, debug_rx.recv()).await {
+        Ok(Some(cmd)) => cmd,
         Ok(None) => {
             return CaseTrace {
                 parsed: String::new(),
@@ -1044,17 +1100,28 @@ async fn collect_case_trace(
                 validations,
             };
         }
-    }
+    };
+    let command_sequence = first_command.sequence();
+    commands.push(first_command);
 
-    if let Ok(Some(validation)) = timeout(Duration::from_millis(100), validation_rx.recv()).await {
-        validations.push(validation);
-    }
+    let initial_validation_timeout = if wait_for_validation {
+        VALIDATION_TIMEOUT
+    } else {
+        OPTIONAL_VALIDATION_TIMEOUT
+    };
+    collect_matching_validation(
+        validation_rx,
+        command_sequence,
+        initial_validation_timeout,
+        &mut validations,
+    )
+    .await;
 
     let mut idle_rounds = 0;
     while idle_rounds < 2 {
         let mut got_any = false;
 
-        match timeout(Duration::from_millis(10), debug_rx.recv()).await {
+        match timeout(IDLE_TIMEOUT, debug_rx.recv()).await {
             Ok(Some(cmd)) => {
                 commands.push(cmd);
                 got_any = true;
@@ -1063,9 +1130,11 @@ async fn collect_case_trace(
             Err(_) => {}
         }
 
-        match timeout(Duration::from_millis(10), validation_rx.recv()).await {
+        match timeout(IDLE_TIMEOUT, validation_rx.recv()).await {
             Ok(Some(validation)) => {
-                validations.push(validation);
+                if validation.sequence() == command_sequence {
+                    validations.push(validation);
+                }
                 got_any = true;
             }
             Ok(None) => break,
@@ -1084,6 +1153,30 @@ async fn collect_case_trace(
         parsed: String::new(),
         commands,
         validations,
+    }
+}
+
+async fn collect_matching_validation(
+    validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
+    command_sequence: u64,
+    wait: Duration,
+    validations: &mut Vec<ValidationProbeEvent>,
+) {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) else {
+            break;
+        };
+        match timeout(remaining, validation_rx.recv()).await {
+            Ok(Some(validation)) if validation.sequence() == command_sequence => {
+                validations.push(validation);
+                break;
+            }
+            Ok(Some(_stale_validation)) => {
+                continue;
+            }
+            Ok(None) | Err(_) => break,
+        }
     }
 }
 
@@ -2278,15 +2371,17 @@ async fn test_load_validate_allows_stale_state_with_force() {
 /// Helper to send a command and collect the resulting StateCommand and events
 async fn send_command_and_collect(
     app: &mut crate::app::App,
-    command: &str,
+    case: &TestCase,
     debug_rx: &mut tokio::sync::mpsc::Receiver<DebugStateCommand>,
     validation_rx: &mut tokio::sync::mpsc::Receiver<ValidationProbeEvent>,
 ) -> CaseTrace {
+    let command = case.input;
     let parsed = parser::parse(app, command, CommandStyle::Slash);
     let parsed_debug = format!("{:?}", parsed);
     exec::execute(app, parsed);
     tokio::task::yield_now().await;
-    let mut trace = collect_case_trace(debug_rx, validation_rx).await;
+    let mut trace =
+        collect_case_trace(debug_rx, validation_rx, case.expects_validation_trace()).await;
     trace.parsed = parsed_debug;
     trace
 }

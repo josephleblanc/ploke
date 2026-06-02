@@ -19,18 +19,18 @@ Legend:
 | list_dir | `crates/ploke-tui/src/tools/list_dir.rs` | deserialize; validation in execute; exec errors from fs | Yes | Yes (path + io hints) | No | Good retry hints for path format; handles missing dir as ok result. |
 | ns_read | `crates/ploke-tui/src/tools/ns_read.rs` | deserialize; validation in execute; exec errors from IO manager | Yes | Yes (path + file/dir hint) | No | Has explicit hint text for path + file/dir. |
 | ns_patch | `crates/ploke-tui/src/tools/ns_patch.rs` | deserialize; validation in execute; exec errors from patching | Yes | Yes (path hint) | No | Hint covers path format but not diff format issues. |
-| code_item_lookup | `crates/ploke-tui/src/tools/code_item_lookup.rs` | deserialize; validation in execute (empty fields, node_kind, .rs, path) | No | None | No | Validation errors are user-facing strings but no retry_hint field; relies on message text. |
-| get_code_edges | `crates/ploke-tui/src/tools/get_code_edges.rs` | deserialize; validation in execute (empty fields, node_kind, .rs, path) | No | None | No | Similar to code_item_lookup; no retry_hint. |
+| code_item_lookup | `crates/ploke-tui/src/tools/code_item_lookup.rs` | deserialize; preflight module_path validation; validation in execute (empty fields, node_kind, .rs, path) | Yes | Yes (module path + exact-lookup recovery hints) | No | Successful results return an item-level `canon_path` for apply_code_edit. |
+| get_code_edges | `crates/ploke-tui/src/tools/get_code_edges.rs` | deserialize; preflight module_path validation; validation in execute (empty fields, node_kind, .rs, path) | Yes | Yes (module path + exact-lookup recovery hints) | No | Successful results return an item-level `node_info.canon_path` for apply_code_edit. |
 | cargo | `crates/ploke-tui/src/tools/cargo.rs` | deserialize; validation/exec; IO/process errors | No | None | No | Uses `tool_ui_error`/`tool_io_error`, but no `adapt_error` override for hints. |
 
 ## Observations
 
 - The error infrastructure exists (`crates/ploke-tui/src/tools/error.rs`), but only 3 tools add retry hints via `adapt_error` overrides.
 - `create_file` and `apply_code_edit` bypass the Tool trait emission by sending `ToolCallFailed` directly, which can cause duplicate failure events when the tool also returns an Err upstream.
-- Several tools surface clear user-facing error strings, but do not provide structured retry guidance (`retry_hint`) for the model.
+- Several tools still surface clear user-facing error strings, but do not provide structured retry guidance (`retry_hint`) for the model.
 
 ## Suggested follow-ups (for implementation phase)
 
 - Normalize all tools to emit errors via `Tool::emit_err` and avoid direct `ToolCallFailed` except where strictly necessary.
-- Add `adapt_error` overrides (or augment error generation) for tools lacking retry hints: request_code_context, code_edit, create_file, code_item_lookup, get_code_edges, cargo.
+- Add `adapt_error` overrides (or augment error generation) for tools lacking retry hints: request_code_context, code_edit, create_file, cargo.
 - Standardize retry guidance format per tool, including required fields and examples.

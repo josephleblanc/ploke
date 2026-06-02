@@ -36,18 +36,90 @@ pub struct CanonicalEditBorrowed<'a> {
     pub code: Cow<'a, str>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct CodeEditParamsOwned {
-    pub edits: Vec<CanonicalEditOwned>,
-    pub confidence: Option<f32>,
+pub use ploke_core::tool_contracts::{CanonicalEditOwned, CodeEditParamsOwned, GraphNodeType};
+
+impl From<NodeType> for GraphNodeType {
+    fn from(value: NodeType) -> Self {
+        match value {
+            NodeType::Function => Self::Function,
+            NodeType::Struct => Self::Struct,
+            NodeType::Enum => Self::Enum,
+            NodeType::Trait => Self::Trait,
+            NodeType::Module => Self::Module,
+            NodeType::Const => Self::Const,
+            NodeType::Impl => Self::Impl,
+            NodeType::Import => Self::Import,
+            NodeType::Macro => Self::Macro,
+            NodeType::Static => Self::Static,
+            NodeType::TypeAlias => Self::TypeAlias,
+            NodeType::Union => Self::Union,
+            NodeType::Method => Self::Method,
+            NodeType::Param => Self::Param,
+            NodeType::Variant => Self::Variant,
+            NodeType::Field => Self::Field,
+            NodeType::Attribute => Self::Attribute,
+            NodeType::GenericType => Self::GenericType,
+            NodeType::GenericLifetime => Self::GenericLifetime,
+            NodeType::GenericConst => Self::GenericConst,
+            NodeType::NamedType => Self::NamedType,
+            NodeType::ReferenceType => Self::ReferenceType,
+            NodeType::SliceType => Self::SliceType,
+            NodeType::ArrayType => Self::ArrayType,
+            NodeType::TupleType => Self::TupleType,
+            NodeType::FunctionType => Self::FunctionType,
+            NodeType::NeverType => Self::NeverType,
+            NodeType::InferredType => Self::InferredType,
+            NodeType::RawPointerType => Self::RawPointerType,
+            NodeType::TraitObjectType => Self::TraitObjectType,
+            NodeType::ImplTraitType => Self::ImplTraitType,
+            NodeType::ParenType => Self::ParenType,
+            NodeType::MacroType => Self::MacroType,
+            NodeType::UnknownType => Self::UnknownType,
+            NodeType::SyntaxEdge => Self::SyntaxEdge,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct CanonicalEditOwned {
-    pub file: String,
-    pub canon: String,
-    pub node_type: NodeType,
-    pub code: String,
+impl From<GraphNodeType> for NodeType {
+    fn from(value: GraphNodeType) -> Self {
+        match value {
+            GraphNodeType::Function => Self::Function,
+            GraphNodeType::Struct => Self::Struct,
+            GraphNodeType::Enum => Self::Enum,
+            GraphNodeType::Trait => Self::Trait,
+            GraphNodeType::Module => Self::Module,
+            GraphNodeType::Const => Self::Const,
+            GraphNodeType::Impl => Self::Impl,
+            GraphNodeType::Import => Self::Import,
+            GraphNodeType::Macro => Self::Macro,
+            GraphNodeType::Static => Self::Static,
+            GraphNodeType::TypeAlias => Self::TypeAlias,
+            GraphNodeType::Union => Self::Union,
+            GraphNodeType::Method => Self::Method,
+            GraphNodeType::Param => Self::Param,
+            GraphNodeType::Variant => Self::Variant,
+            GraphNodeType::Field => Self::Field,
+            GraphNodeType::Attribute => Self::Attribute,
+            GraphNodeType::GenericType => Self::GenericType,
+            GraphNodeType::GenericLifetime => Self::GenericLifetime,
+            GraphNodeType::GenericConst => Self::GenericConst,
+            GraphNodeType::NamedType => Self::NamedType,
+            GraphNodeType::ReferenceType => Self::ReferenceType,
+            GraphNodeType::SliceType => Self::SliceType,
+            GraphNodeType::ArrayType => Self::ArrayType,
+            GraphNodeType::TupleType => Self::TupleType,
+            GraphNodeType::FunctionType => Self::FunctionType,
+            GraphNodeType::NeverType => Self::NeverType,
+            GraphNodeType::InferredType => Self::InferredType,
+            GraphNodeType::RawPointerType => Self::RawPointerType,
+            GraphNodeType::TraitObjectType => Self::TraitObjectType,
+            GraphNodeType::ImplTraitType => Self::ImplTraitType,
+            GraphNodeType::ParenType => Self::ParenType,
+            GraphNodeType::MacroType => Self::MacroType,
+            GraphNodeType::UnknownType => Self::UnknownType,
+            GraphNodeType::SyntaxEdge => Self::SyntaxEdge,
+        }
+    }
 }
 
 impl super::Tool for GatCodeEdit {
@@ -58,8 +130,8 @@ impl super::Tool for GatCodeEdit {
     fn name() -> super::ToolName {
         super::ToolName::ApplyCodeEdit
     }
-    fn description() -> super::ToolDescr {
-        super::ToolDescr::ApplyCodeEdit
+    fn description() -> super::ToolDescription {
+        Self::name().description()
     }
     fn schema() -> &'static serde_json::Value {
         CODE_EDIT_PARAMETERS.deref()
@@ -81,7 +153,7 @@ impl super::Tool for GatCodeEdit {
                 .map(|e| CanonicalEditOwned {
                     file: e.file.clone().into_owned(),
                     canon: e.canon.clone().into_owned(),
-                    node_type: e.node_type,
+                    node_type: GraphNodeType::from(e.node_type),
                     code: e.code.clone().into_owned(),
                 })
                 .collect(),
@@ -120,18 +192,23 @@ impl super::Tool for GatCodeEdit {
             typed_req,
             call_id,
         };
-        apply_code_edit_tool(params_env).await;
+        let proposal_id = apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        print_code_edit_results(&ctx, request_id, ToolName::ApplyCodeEdit).await
+        print_code_edit_results(&ctx, proposal_id, request_id, ToolName::ApplyCodeEdit).await
     }
 }
 
 pub async fn print_code_edit_results(
     ctx: &Ctx,
+    proposal_id: Option<Uuid>,
     request_id: Uuid,
     tool_name: ToolName,
 ) -> Result<ToolResult, ploke_error::Error> {
-    let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
+    let proposal_opt = if let Some(proposal_id) = proposal_id {
+        ctx.state.proposals.read().await.get(&proposal_id).cloned()
+    } else {
+        None
+    };
     if let Some(prop) = proposal_opt {
         let primary_root = ctx
             .state
@@ -180,6 +257,7 @@ pub async fn print_code_edit_results(
             structured_result.files.len()
         );
         let ui_payload = super::ToolUiPayload::new(tool_name, ctx.call_id.clone(), summary)
+            .with_proposal_id(prop.proposal_id)
             .with_request_id(request_id)
             .with_field("status", "pending")
             .with_field("staged", structured_result.staged.to_string())
@@ -226,8 +304,8 @@ lazy_static::lazy_static! {
                     "type": "object",
                     "properties": {
                         "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
-                        "canon": { "type": "string", "description": "Canonical path to the node, e.g. crate::module::Item" },
-                        "node_type": { "type": "string", "description": "Node type (function|struct|enum|...)." },
+                        "canon": { "type": "string", "description": "Canonical path to a semantic target, e.g. crate::module::Item or crate::module::Type::method." },
+                        "node_type": semantic_node_type_schema_property(),
                         "code": { "type": "string", "description": "Replacement code for the node." }
                     },
                     "required": ["file", "canon", "node_type", "code"],
@@ -243,6 +321,21 @@ lazy_static::lazy_static! {
         },
         "required": ["edits"],
     });
+}
+
+fn semantic_node_type_schema_property() -> serde_json::Value {
+    let values = NodeType::primary_and_assoc_nodes()
+        .iter()
+        .map(|node_type| node_type.relation_str())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "type": "string",
+        "enum": values,
+        "description": format!(
+            "Semantic node type accepted by apply_code_edit. Methods are valid direct targets. Must be one of: {}",
+            values.join(", ")
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -287,6 +380,41 @@ mod tests {
             Some("canonical")
         );
     }
+
+    #[test]
+    fn schema_guidance_mentions_method_targets() {
+        let schema = &*CODE_EDIT_PARAMETERS;
+        let node_type = schema
+            .get("properties")
+            .and_then(|props| props.get("edits"))
+            .and_then(|edits| edits.get("items"))
+            .and_then(|items| items.get("properties"))
+            .and_then(|props| props.get("node_type"))
+            .and_then(|value| value.get("description"))
+            .and_then(|desc| desc.as_str())
+            .expect("node_type schema description");
+        let canon = schema
+            .get("properties")
+            .and_then(|props| props.get("edits"))
+            .and_then(|edits| edits.get("items"))
+            .and_then(|items| items.get("properties"))
+            .and_then(|props| props.get("canon"))
+            .and_then(|value| value.get("description"))
+            .and_then(|desc| desc.as_str())
+            .expect("canon schema description");
+
+        // Verify node_type description mentions method as a valid node type
+        assert!(
+            node_type.to_lowercase().contains("method"),
+            "node_type description should mention 'method' as a valid node type, got: {}",
+            node_type
+        );
+        assert!(
+            !node_type.to_lowercase().contains("not direct targets"),
+            "node_type description should not contain negative guidance"
+        );
+        assert!(canon.contains("Type::method"));
+    }
 }
 
 #[cfg(test)]
@@ -320,10 +448,10 @@ mod gat_tests {
     #[test]
     fn name_desc_and_schema_present() {
         assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
-        assert!(matches!(
+        assert_eq!(
             GatCodeEdit::description(),
-            ToolDescr::ApplyCodeEdit
-        ));
+            ToolName::ApplyCodeEdit.description()
+        );
         let schema = GatCodeEdit::schema();
         assert!(schema.as_object().unwrap().contains_key("properties"));
     }
@@ -356,34 +484,28 @@ mod gat_tests {
     fn de_to_value() -> color_eyre::Result<()> {
         let schema = GatCodeEdit::schema();
         let v = serde_json::to_value(schema).expect("serialize");
-        eprintln!("{}", serde_json::to_string_pretty(&v)?);
-        let expected = json!({
-            "type": "object",
-            "properties": {
-                "edits": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
-                            "canon": { "type": "string", "description": "Canonical path to the node, e.g. crate::module::Item" },
-                            "node_type": { "type": "string", "description": "Node type (function|struct|enum|...)." },
-                            "code": { "type": "string", "description": "Replacement code for the node." }
-                        },
-                        "required": ["file", "canon", "node_type", "code"],
-                        "additionalProperties": false
-                    }
-                },
-                "confidence": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "description": "Optional confidence indicator for the edit proposal."
-                }
-            },
-            "required": ["edits"],
-        });
-        assert_eq!(expected, v);
+        let node_type = v
+            .get("properties")
+            .and_then(|p| p.get("edits"))
+            .and_then(|e| e.get("items"))
+            .and_then(|i| i.get("properties"))
+            .and_then(|p| p.get("node_type"))
+            .and_then(|n| n.as_object())
+            .expect("node_type schema");
+        let enum_vals = node_type
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("enum values");
+        let enum_vals: Vec<&str> = enum_vals
+            .iter()
+            .map(|v| v.as_str().expect("string enum value"))
+            .collect();
+        let expected: Vec<&str> = NodeType::primary_and_assoc_nodes()
+            .iter()
+            .map(|ty| ty.relation_str())
+            .collect();
+        assert_eq!(enum_vals, expected);
+        assert!(enum_vals.contains(&"method"));
 
         Ok(())
     }

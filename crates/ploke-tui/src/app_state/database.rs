@@ -43,7 +43,7 @@ use crate::{
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     user_config::{WorkspaceRegistry, WorkspaceRegistryEntry},
-    utils::parse_errors::format_parse_failure,
+    utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure},
 };
 
 use super::*;
@@ -131,6 +131,54 @@ impl IndexTargetDir {
             }
         }
         None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexTarget {
+    WorkspaceRoot(PathBuf),
+    CrateRoot(PathBuf),
+    // 2026-04-20: `LoadedWorkspace` is intentionally "the one current loaded
+    // workspace in AppState", not a Cargo-native workspace name/identity.
+    // If AppState ever supports multiple loaded workspace contexts, replace
+    // this implicit variant with an explicit workspace identity such as
+    // `LoadedWorkspace(WorkspaceId)` or an equivalent typed handle.
+    LoadedWorkspace,
+    LoadedCrate(CrateId),
+}
+
+impl IndexTarget {
+    pub fn resolve_against_loaded_state(
+        &self,
+        status: &super::core::SystemStatus,
+    ) -> Option<IndexTargetDir> {
+        match self {
+            Self::WorkspaceRoot(path) | Self::CrateRoot(path) => {
+                Some(IndexTargetDir::new(path.clone()))
+            }
+            Self::LoadedWorkspace => status.loaded_workspace_root().map(IndexTargetDir::new),
+            Self::LoadedCrate(crate_id) => status.loaded_crate(crate_id).map(|loaded| {
+                let loaded_root = &loaded.context.root_path;
+                let member_roots = status.loaded_workspace_member_roots();
+                let is_workspace_member = member_roots.iter().any(|root| root == loaded_root);
+
+                if is_workspace_member && let Some(workspace_root) = status.loaded_workspace_root()
+                {
+                    IndexTargetDir::new(workspace_root)
+                } else {
+                    IndexTargetDir::new(loaded_root.clone())
+                }
+            }),
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Self::WorkspaceRoot(path) => format!("workspace root {}", path.display()),
+            Self::CrateRoot(path) => format!("crate root {}", path.display()),
+            Self::LoadedWorkspace => "loaded workspace".to_string(),
+            Self::LoadedCrate(crate_id) => format!("loaded crate {crate_id:?}"),
+        }
     }
 }
 
@@ -661,12 +709,13 @@ async fn current_workspace_registry_entry(
 fn default_snapshot_file_for_entry(
     entry: &WorkspaceRegistryEntry,
 ) -> Result<PathBuf, ploke_error::Error> {
-    let config_dir = dirs::config_local_dir().ok_or_else(|| {
+    let registry_path = WorkspaceRegistry::default_registry_path();
+    let registry_dir = registry_path.parent().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-            msg: "Could not locate default config directory on system",
+            msg: "Could not locate workspace registry parent directory",
         })
     })?;
-    Ok(config_dir.join("ploke").join("data").join(format!(
+    Ok(registry_dir.join("data").join(format!(
         "{}_{}.sqlite",
         entry.workspace_name, entry.workspace_id
     )))
@@ -1326,9 +1375,14 @@ async fn scan_for_change_target(
                 }
                 Err(err) => {
                     let msg = format_parse_failure(&crate_path, &err);
+                    let diagnostics = extract_nested_parser_diagnostics(&err);
                     state
                         .with_system_txn(|txn| {
-                            txn.record_parse_failure(crate_path.clone(), msg.clone());
+                            txn.record_parse_failure_with_diagnostics(
+                                crate_path.clone(),
+                                msg.clone(),
+                                diagnostics.clone(),
+                            );
                         })
                         .await;
                     event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1345,9 +1399,14 @@ async fn scan_for_change_target(
             Ok(merged) => merged,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1368,9 +1427,14 @@ module tree process or run_parse_no_transform"
             Ok(tree) => tree,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1643,7 +1707,7 @@ module tree process or run_parse_no_transform"
         if emit_reindex {
             trace!("Finishing scanning, sending message to reindex workspace");
             event_bus.send(AppEvent::System(SystemEvent::ReIndex {
-                workspace: crate_name.to_string(),
+                target: IndexTarget::LoadedCrate(target.crate_id),
             }));
         }
         let _ = scan_tx.send(Some(changed_filenames));
@@ -1728,22 +1792,10 @@ pub(super) async fn workspace_update(
         let _ = scan_rx.await;
     }
 
-    let workspace_target = state
-        .with_system_read(|sys| {
-            sys.loaded_workspace_root()
-                .or_else(|| sys.focused_crate_root())
-                .ok_or_else(|| {
-                    ploke_error::Error::Domain(DomainError::Ui {
-                        message: "No loaded crate or workspace is available to update.".to_string(),
-                    })
-                })
-        })
-        .await?;
-
-    crate::app_state::handlers::indexing::index_workspace(
+    crate::app_state::handlers::indexing::index_target(
         state,
         event_bus,
-        Some(IndexTargetDir::new(workspace_target)),
+        Some(IndexTarget::LoadedWorkspace),
         false,
     )
     .await;
@@ -2019,29 +2071,74 @@ mod tests {
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
     use ploke_db::multi_embedding::debug::DebugAll;
     use ploke_embed::indexer::EmbeddingProcessor;
+    use ploke_test_utils::PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV;
     use ploke_transform::schema::crate_node::CrateContextSchema;
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
     use crate::test_support::config_home_lock;
+    use crate::user_config::PLOKE_WORKSPACE_REGISTRY_PATH_ENV;
 
-    struct XdgConfigHomeGuard {
-        old_xdg: Option<String>,
+    #[test]
+    fn loaded_crate_index_target_preserves_workspace_root_for_member() {
+        let workspace_root = PathBuf::from("/repo/workspace");
+        let member_a = workspace_root.join("crates/ploke-protocol");
+        let member_b = workspace_root.join("crates/ploke-tui");
+        let member_a_id = CrateId::from_root_path(&member_a);
+
+        let mut status = SystemStatus::default();
+        status.set_loaded_workspace(
+            workspace_root.clone(),
+            vec![member_a.clone(), member_b],
+            Some(member_a),
+        );
+
+        let resolved = IndexTarget::LoadedCrate(member_a_id)
+            .resolve_against_loaded_state(&status)
+            .expect("loaded crate target should resolve");
+
+        assert_eq!(resolved.as_path(), workspace_root.as_path());
     }
 
-    impl XdgConfigHomeGuard {
+    struct WorkspaceRegistryPathGuard {
+        old_xdg: Option<String>,
+        old_registry_path: Option<String>,
+        old_snapshot_fixture_dir: Option<String>,
+    }
+
+    impl WorkspaceRegistryPathGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+            let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+            let registry_path = path.join("ploke").join("workspaces.toml");
+            let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
             unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", path);
+                std::env::remove_var("XDG_CONFIG_HOME");
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, registry_path);
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             }
-            Self { old_xdg }
+            Self {
+                old_xdg,
+                old_registry_path,
+                old_snapshot_fixture_dir,
+            }
         }
     }
 
-    impl Drop for XdgConfigHomeGuard {
+    impl Drop for WorkspaceRegistryPathGuard {
         fn drop(&mut self) {
+            restore_workspace_registry_path(self.old_registry_path.take());
             restore_xdg_config_home(self.old_xdg.take());
+            if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+                unsafe {
+                    std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+                }
+            }
         }
     }
 
@@ -2088,13 +2185,25 @@ mod tests {
         }
     }
 
+    fn restore_workspace_registry_path(old_path: Option<String>) {
+        if let Some(old) = old_path {
+            unsafe {
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let crate_name = "fixture_crate";
+        let crate_name = "fixture_crate_restore_embeddings";
         let crate_root = tmp_config.path().join(crate_name);
         std::fs::create_dir_all(&crate_root).expect("crate root dir");
 
@@ -2229,11 +2338,14 @@ mod tests {
     async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
+        let workspace_name = "fixture_crate_missing_registry";
         let data_dir = tmp_config.path().join("ploke/data");
         std::fs::create_dir_all(&data_dir).expect("create data dir");
-        let stale_backup = data_dir.join("fixture_crate_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        let stale_backup = data_dir.join(format!(
+            "{workspace_name}_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        ));
         std::fs::write(&stale_backup, "not-a-real-backup").expect("write stale backup");
 
         let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
@@ -2245,7 +2357,7 @@ mod tests {
         let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
-        let err = load_db(&fresh_state, &bus, "fixture_crate".to_string())
+        let err = load_db(&fresh_state, &bus, workspace_name.to_string())
             .await
             .expect_err("missing registry entry should fail");
         assert!(
@@ -2258,9 +2370,9 @@ mod tests {
     async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_first_populated_fallback";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
@@ -2348,9 +2460,9 @@ mod tests {
     async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_metadata_mismatch";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());

@@ -679,6 +679,7 @@ impl App {
             .iter()
             .map(|(display, is_dir, _, _)| CommandSuggestion {
                 command: display.clone(),
+                key_hint: None,
                 description: if *is_dir {
                     "dir".to_string()
                 } else {
@@ -744,6 +745,7 @@ impl App {
             .iter()
             .map(|entry| CommandSuggestion {
                 command: format!("{prefix}{}", entry.completion),
+                key_hint: entry.key_hint.map(|hint| hint.to_string()),
                 description: entry.description.to_string(),
             })
             .collect::<Vec<_>>();
@@ -1505,23 +1507,23 @@ impl App {
                             // if let Some(msg) = path.get(selected)
                             //     && let Some(payload) = msg.tool_payload()
                             //     && should_render_tool_buttons(payload)
-                            //     && let Some(req_id) = payload.request_id
+                            //     && let Some(proposal_id) = payload.proposal_id
                             // {
-                            //     return Some(req_id);
+                            //     return Some(proposal_id);
                             // }
-                            let req_id = path
+                            let proposal_id = path
                                 .get(selected)
                                 .and_then(|msg| msg.tool_payload())
                                 .filter(|p| should_render_tool_buttons(p))
-                                .and_then(|payload| payload.request_id);
-                            if req_id.is_some() {
-                                return req_id;
+                                .and_then(|payload| payload.proposal_id);
+                            if proposal_id.is_some() {
+                                return proposal_id;
                             }
                             None
                         })
                     });
 
-                    if let Some(request_id) = should_trigger {
+                    if let Some(proposal_id) = should_trigger {
                         let is_yes = self
                             .confirmation_states
                             .get(
@@ -1536,9 +1538,9 @@ impl App {
                             .unwrap_or(true);
 
                         if is_yes {
-                            self.send_cmd(StateCommand::ApproveEdits { request_id });
+                            self.send_cmd(StateCommand::ApproveEdits { proposal_id });
                         } else {
-                            self.send_cmd(StateCommand::DenyEdits { request_id });
+                            self.send_cmd(StateCommand::DenyEdits { proposal_id });
                         }
                     }
                 }
@@ -1592,13 +1594,13 @@ impl App {
             if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
                 let _ = match (approve, kind) {
                     (true, ProposalKind::Edit) => {
-                        cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
+                        cmd_tx.try_send(StateCommand::ApproveEdits { proposal_id: id })
                     }
                     (true, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
                     }
                     (false, ProposalKind::Edit) => {
-                        cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
+                        cmd_tx.try_send(StateCommand::DenyEdits { proposal_id: id })
                     }
                     (false, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
@@ -2001,6 +2003,7 @@ impl App {
                     supports_tools,
                     // Provider rows populated later
                     providers: Vec::new(),
+                    direct_route: m.route_source.is_direct_google(),
                     expanded: false,
                     loading_providers: false,
                     pending_select: false,
@@ -2089,6 +2092,69 @@ impl App {
         commands::exec::execute(self, command);
     }
 
+    #[cfg(any(test, feature = "test_harness"))]
+    pub async fn run_command_text(&mut self, command_text: &str) {
+        self.input_buffer = command_text.to_string();
+        self.execute_command();
+        self.pump_pending_events().await;
+    }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub async fn pump_pending_events(&mut self) -> usize {
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let mut handled = 0usize;
+        loop {
+            let mut progressed = false;
+
+            loop {
+                match self.event_rx.try_recv() {
+                    Ok(event) => {
+                        events::handle_event(self, event).await;
+                        self.needs_redraw = true;
+                        handled += 1;
+                        progressed = true;
+                    }
+                    Err(TryRecvError::Lagged(_)) => {
+                        progressed = true;
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                }
+            }
+
+            loop {
+                match self.bg_event_rx.try_recv() {
+                    Ok(event) => {
+                        events::handle_event(self, event).await;
+                        self.needs_redraw = true;
+                        handled += 1;
+                        progressed = true;
+                    }
+                    Err(TryRecvError::Lagged(_)) => {
+                        progressed = true;
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+
+        handled
+    }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub fn test_embedding_browser_item_ids(&self) -> Vec<ModelId> {
+        self.overlay_manager
+            .embedding_browser_state()
+            .map(|eb| eb.items.iter().map(|item| item.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: commands::help_commands_markdown(),
@@ -2115,26 +2181,6 @@ impl App {
 
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: lines.join("\n"),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        });
-    }
-
-    fn check_api_keys(&self) {
-        // This would need to be async to check the actual config
-        // For now, we'll provide a helpful message
-        let help_msg = r#"API Key Configuration Check:
-
- To use LLM features, you need to set your API keys:
- - For OpenRouter models: export OPENROUTER_API_KEY="your-key-here"
- - For OpenAI models: export OPENAI_API_KEY="your-key-here"
- - For Anthropic models: export ANTHROPIC_API_KEY="your-key-here"
-
- After setting the environment variable, restart the application.
- Use 'model list' to see available models."#;
-
-        self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: help_msg.to_string(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });

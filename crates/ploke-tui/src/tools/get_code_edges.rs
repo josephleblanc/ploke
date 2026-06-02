@@ -3,7 +3,8 @@ use std::{ops::Deref, path::Path};
 use itertools::Itertools;
 use ploke_core::{
     rag_types::{CanonPath, ConciseContext, NodeFilepath},
-    tool_types::{ToolDescr, ToolName},
+    tool_descriptions::ToolDescription,
+    tool_types::ToolName,
 };
 use ploke_db::{
     helpers::{graph_resolve_edges, graph_resolve_exact},
@@ -12,24 +13,12 @@ use ploke_db::{
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
-use crate::tools::{Tool, ValidatesAbolutePath};
+use crate::rag::utils::NodeKind;
+use crate::tools::{
+    Tool, ToolError, ToolErrorCode, ToolInvocationError, ValidatesAbolutePath, lookup_support,
+};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
-const MODULE_PATH: &str = r#"canonical module path, e.g. "crate::mod_one::nested_mod".
-    Note that this does not include the target item's identifier."#;
-const NODE_KIND: &str = r#"The kind of code item this is. Must be one of:
-- function
-- const
-- enum
-- impl
-- import (e.g. `use` statement)
-- macro
-- module
-- static
-- struct
-- trait
-- type_alias
-- union"#;
 const ITEM_NAME: &str = r#"The name of the item being search for, e.g.
 if looking for
 
@@ -46,8 +35,8 @@ lazy_static::lazy_static! {
         "properties": {
             "item_name": { "type": "string", "description": ITEM_NAME },
             "file_path": { "type": "string", "description": FILE_DESC },
-            "node_kind": { "type": "string", "description": NODE_KIND },
-            "module_path": { "type": "string", "description": MODULE_PATH },
+            "node_kind": NodeKind::schema_property(),
+            "module_path": { "type": "string", "description": lookup_support::MODULE_PATH_DESC },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -73,6 +62,7 @@ impl<'a> ValidatesAbolutePath for EdgesParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct EdgesParamsOwned {
     pub item_name: String,
     pub file_path: String,
@@ -96,12 +86,30 @@ impl Tool for CodeItemEdges {
         ToolName::CodeItemEdges
     }
 
-    fn description() -> ploke_core::tool_types::ToolDescr {
-        ToolDescr::CodeItemEdges
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {
         ITEM_EDGES_LOOKUP_PARAMETERS.deref()
+    }
+
+    fn adapt_error(err: ToolInvocationError) -> ToolError {
+        match err {
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Ui { message },
+            )) => ToolError::new(
+                ToolName::CodeItemEdges,
+                ToolErrorCode::InvalidFormat,
+                message,
+            )
+            .retry_hint(lookup_support::LOOKUP_RETRY_HINT),
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Io { message },
+            )) => ToolError::new(ToolName::CodeItemEdges, ToolErrorCode::Io, message)
+                .retry_hint(lookup_support::LOOKUP_RETRY_HINT),
+            other => other.into_tool_error(ToolName::CodeItemEdges),
+        }
     }
 
     fn build(_ctx: &super::Ctx) -> Self
@@ -118,6 +126,16 @@ impl Tool for CodeItemEdges {
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
         }
+    }
+
+    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolInvocationError> {
+        let params: EdgesParams<'a> =
+            serde_json::from_str(json).map_err(|source| ToolInvocationError::Deserialize {
+                source,
+                raw: Some(json.to_string()),
+            })?;
+        lookup_support::validate_module_path(Self::name(), params.module_path.as_ref())?;
+        Ok(params)
     }
 
     async fn execute<'de>(
@@ -142,29 +160,15 @@ impl Tool for CodeItemEdges {
             }));
         };
 
-        let allowed_kinds = [
-            "function",
-            "const",
-            "enum",
-            "impl",
-            "import",
-            "macro",
-            "module",
-            "static",
-            "struct",
-            "trait",
-            "type_alias",
-            "union",
-        ];
-        if !allowed_kinds.contains(&params.node_kind.as_ref()) {
-            return Err(ploke_error::Error::Domain(DomainError::Ui {
+        let node_kind = params.node_kind.as_ref().parse::<NodeKind>().map_err(|_| {
+            ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
                     "Invalid node_kind `{}`. Allowed: {}",
                     params.node_kind,
-                    allowed_kinds.join(", ")
+                    NodeKind::allowed_values().join(", ")
                 ),
-            }));
-        }
+            })
+        })?;
 
         let (primary_root, policy) = ctx
             .state
@@ -204,27 +208,31 @@ for a more fuzzy search."#
 
         if mod_path.is_empty() || mod_path.first().map(|s| s.as_str()) != Some("crate") {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
-                message: r#"This tool only finds code items defined in the crate loaded as the crate focus. module_path must start with "crate", e.g. crate::module::submodule"#
-                    .to_string(),
+                message: lookup_support::module_path_error_message(params.module_path.as_ref()),
             }));
         }
 
         let resolved_item = match graph_resolve_exact(
             &ctx.state.db,
-            params.node_kind.as_ref(),
+            node_kind.as_relation(),
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
+                let hint = node_kind
+                    .lookup_hint()
+                    .map(|s| format!(" {s}"))
+                    .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
-                        params.node_kind
+                        node_kind.as_str(),
+                        hint
                     ),
                 }));
             }
@@ -238,7 +246,7 @@ for a more fuzzy search."#
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
-                        params.node_kind,
+                        node_kind.as_str(),
                         err
                     ),
                 }));
@@ -251,6 +259,7 @@ for a more fuzzy search."#
                 )));
             }
         };
+        let resolved_item_id = resolved_item[0].id;
 
         let mod_path_vec = params
             .module_path
@@ -260,7 +269,7 @@ for a more fuzzy search."#
             .collect_vec();
         let resolved_edges = graph_resolve_edges(
             &ctx.state.db,
-            &params.node_kind,
+            node_kind.as_relation(),
             &abs_path,
             &mod_path_vec,
             &params.item_name,
@@ -287,9 +296,14 @@ for a more fuzzy search."#
             )))
         })?;
         let concise_context = ConciseContext {
+            id: resolved_item_id,
             file_path: NodeFilepath::new(rel_path.display().to_string()),
-            canon_path: CanonPath::new(params.module_path.to_string()),
+            canon_path: CanonPath::new(lookup_support::item_canon_path(
+                params.module_path.as_ref(),
+                params.item_name.as_ref(),
+            )),
             snippet,
+            type_context: None,
         };
 
         let node_edge_info = NodeEdgeInfo {
@@ -365,4 +379,54 @@ fn check_empty(
         }));
     };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::Tool;
+
+    #[test]
+    fn schema_includes_method_node_kind() {
+        let schema = <CodeItemEdges as Tool>::schema();
+        let node_kind = schema
+            .get("properties")
+            .and_then(|p| p.get("node_kind"))
+            .and_then(|nk| nk.as_object())
+            .expect("node_kind schema");
+        let enum_vals = node_kind
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("enum values");
+        let enum_vals: Vec<&str> = enum_vals
+            .iter()
+            .map(|v| v.as_str().expect("string enum value"))
+            .collect();
+        assert!(enum_vals.contains(&"method"));
+        assert_eq!(enum_vals.first().copied(), Some("function"));
+    }
+
+    #[test]
+    fn invalid_module_path_fails_during_preflight_validation() {
+        let args = r#"{"file_path":"proc_macros/ploke-db-derive/src/lib.rs","item_name":"FieldSpec","module_path":"ploke_db_derive","node_kind":"struct"}"#;
+        let err = <CodeItemEdges as Tool>::deserialize_params(args)
+            .expect_err("package-name module_path should fail preflight");
+        let ToolInvocationError::Validation(err) = err else {
+            panic!("expected validation error");
+        };
+
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(err.field, Some("module_path"));
+        assert_eq!(
+            err.expected.as_deref(),
+            Some(lookup_support::MODULE_PATH_EXPECTED)
+        );
+        assert_eq!(err.received.as_deref(), Some("ploke_db_derive"));
+        assert!(
+            err.retry_hint
+                .as_deref()
+                .expect("retry hint")
+                .contains("request_code_context")
+        );
+    }
 }

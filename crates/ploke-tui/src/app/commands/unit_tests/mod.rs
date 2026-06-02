@@ -7,15 +7,24 @@
 //      - single crate (needs fixture setup in fixture db registry)
 //      - multiple crates (needs fixture setup in fixture db registry)
 
-use std::sync::Arc;
+use std::{collections::HashSet, str::FromStr, sync::Arc};
 
 use lazy_static::lazy_static;
+use ploke_llm::router_only::{RouterVariants, google::Google};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tokio::sync::Mutex;
+use tokio::time::{Duration, Instant, timeout};
+use uuid::Uuid;
 
+use crate::app::App;
 use crate::app::commands::exec::execute;
+use crate::app::commands::harness::{TestRuntime, setup_test_app_from_db};
 use crate::app::commands::parser::Command;
-use crate::app::{App, commands::unit_tests::harness::setup_test_app_from_db};
+use crate::app_state::StateCommand;
+use crate::chat_history::MessageKind;
+use crate::llm::manager::ChatEvt;
+use crate::llm::manager::LlmEvent;
+use crate::llm::manager::events::{ContextPlan, ContextPlanMessage};
 use crate::user_config::CommandStyle;
 
 lazy_static! {
@@ -33,10 +42,167 @@ lazy_static! {
         // helper builder
         setup_test_app_from_db(&fixture_db)
     };
+    static ref OPENROUTER_API_KEY_TEST_LOCK: Mutex<()> = Mutex::new(());
+}
+
+struct OpenRouterApiKeyGuard {
+    previous: Option<String>,
+}
+
+impl OpenRouterApiKeyGuard {
+    fn set_to(value: &str) -> Self {
+        let previous = std::env::var("OPENROUTER_API_KEY").ok();
+        unsafe {
+            std::env::set_var("OPENROUTER_API_KEY", value);
+        }
+        Self { previous }
+    }
+
+    fn clear() -> Self {
+        let previous = std::env::var("OPENROUTER_API_KEY").ok();
+        unsafe {
+            std::env::remove_var("OPENROUTER_API_KEY");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for OpenRouterApiKeyGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            unsafe {
+                std::env::set_var("OPENROUTER_API_KEY", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("OPENROUTER_API_KEY");
+            }
+        }
+    }
 }
 
 mod decision_tree;
-mod harness;
+
+async fn wait_for_google_router(state: &Arc<crate::app_state::AppState>) {
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if matches!(
+                state.config.read().await.active_router,
+                RouterVariants::Google(_)
+            ) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for active_router=google");
+}
+
+async fn wait_for_active_model(
+    state: &Arc<crate::app_state::AppState>,
+    expected: &crate::llm::ModelId,
+) {
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if state.config.read().await.active_model == *expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for active model selection");
+}
+
+#[cfg(feature = "live_api_tests")]
+async fn assistant_ids(state: &Arc<crate::app_state::AppState>) -> HashSet<Uuid> {
+    let chat = state.chat.0.read().await;
+    chat.messages
+        .values()
+        .filter(|message| message.kind == MessageKind::Assistant)
+        .map(|message| message.id)
+        .collect()
+}
+
+#[cfg(feature = "live_api_tests")]
+async fn assistant_snapshot(state: &Arc<crate::app_state::AppState>) -> Vec<String> {
+    let chat = state.chat.0.read().await;
+    let mut snapshot = chat
+        .messages
+        .values()
+        .filter(|message| message.kind == MessageKind::Assistant)
+        .map(|message| {
+            let mut chars = message.content.chars();
+            let preview: String = chars.by_ref().take(240).collect();
+            let suffix = if chars.next().is_some() { "..." } else { "" };
+            format!(
+                "id={} status={:?} content={:?}{}",
+                message.id, message.status, preview, suffix
+            )
+        })
+        .collect::<Vec<_>>();
+    snapshot.sort();
+    snapshot
+}
+
+#[cfg(feature = "live_api_tests")]
+async fn wait_for_final_assistant_content(
+    state: &Arc<crate::app_state::AppState>,
+    existing_assistant_ids: &HashSet<Uuid>,
+    placeholder_assistant_id: Uuid,
+    expected: &str,
+) -> Result<String, Vec<String>> {
+    // This is a harness-specific final-response wait, not a generic chat-history helper.
+    // `ChatTurnFinished.assistant_message_id` is the placeholder created before the first
+    // provider request. A tool-call step can update that placeholder to "Calling tools..."
+    // and mark it Completed; the final provider answer may then be inserted as a new
+    // assistant message. Do not collapse this back to "only check the placeholder id"
+    // unless the chat-loop message contract changes.
+    let expected = expected.to_ascii_lowercase();
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    loop {
+        let found = {
+            let chat = state.chat.0.read().await;
+            chat.messages
+                .values()
+                .filter(|message| {
+                    message.kind == MessageKind::Assistant
+                        && (message.id == placeholder_assistant_id
+                            || !existing_assistant_ids.contains(&message.id))
+                })
+                .find_map(|message| {
+                    message
+                        .content
+                        .to_ascii_lowercase()
+                        .contains(&expected)
+                        .then(|| message.content.clone())
+                })
+        };
+
+        if let Some(content) = found {
+            return Ok(content);
+        }
+
+        if Instant::now() >= deadline {
+            return Err(assistant_snapshot(state).await);
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(feature = "live_api_tests")]
+fn live_google_chat_model() -> String {
+    let raw = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+        .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+    if raw.contains('/') {
+        raw
+    } else {
+        format!("google/{raw}")
+    }
+}
 
 // ============================================================================
 // TEST CASE 1: /index with no db loaded at workspace root
@@ -98,6 +264,188 @@ async fn test_index_workspace_dot_normalizes_to_current_workspace() {
         }
         _ => panic!("Unexpected command variant: {:?}", command),
     }
+}
+
+#[tokio::test]
+async fn test_model_router_parser_show_and_set() {
+    let app = TEST_APP_NODES_CANNONICAL_FRESH.lock().await;
+
+    let show = crate::app::commands::parser::parse(&app, "/model router", CommandStyle::Slash);
+    assert!(matches!(show, Command::ModelRouter(None)));
+
+    let set_google =
+        crate::app::commands::parser::parse(&app, "/model router google", CommandStyle::Slash);
+    match set_google {
+        Command::ModelRouter(Some(router)) => assert_eq!(router, "google"),
+        other => panic!("unexpected command variant: {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[cfg(feature = "live_api_tests")]
+async fn live_google_harness_router_command_runs_list_dir_through_llm_manager() {
+    // This test is the live command-harness surface:
+    // `/model router google` -> `/model use google/...` -> `AddUserMessage` ->
+    // `llm_manager` -> live Google -> EventBus tool dispatch -> `list_dir` ->
+    // final assistant response. Do not replace it with the direct
+    // `ChatSession<Google>` canary or a non-live command test.
+    //
+    // It intentionally has no route/auth skip helper. With `live_api_tests`
+    // enabled, missing Google route config or ADC auth is a live-test setup
+    // failure, not a reason to silently pass this surface.
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let rt = TestRuntime::new(&fixture_db)
+        .spawn_state_manager()
+        // The direct `ChatSession<Google>` canary manually processes tool calls.
+        // This harness test must use the real EventBus runner so `llm_manager`
+        // dispatches `ToolCallRequested` into the normal tool processor.
+        .spawn_event_bus()
+        .spawn_llm_manager();
+    let state = rt.state_arc();
+    let event_bus = rt.event_bus_arc();
+    let cmd_tx = rt.command_sender();
+    let mut realtime_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+    let mut background_rx = event_bus.subscribe(crate::EventPriority::Background);
+    let workspace_root = std::env::current_dir().expect("current dir");
+    rt.setup_loaded_workspace(
+        workspace_root.clone(),
+        vec![workspace_root.clone()],
+        Some(workspace_root.clone()),
+    )
+    .await;
+    let mut app = rt.into_app(workspace_root);
+
+    app.run_command_text("/model router google").await;
+    wait_for_google_router(&state).await;
+
+    let model = live_google_chat_model();
+    let expected_model =
+        crate::llm::ModelId::from_str(&model).expect("live Google model id parses");
+    app.run_command_text(&format!("/model use {model}")).await;
+    wait_for_active_model(&state, &expected_model).await;
+
+    let existing_assistant_ids = assistant_ids(&state).await;
+    let user_msg_id = Uuid::new_v4();
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    let prompt = "Call the list_dir tool exactly once with dir \".\" and max_entries 3. After the tool result, reply with the word listed.";
+    cmd_tx
+        .send(StateCommand::AddUserMessage {
+            content: prompt.to_string(),
+            new_user_msg_id: user_msg_id,
+            completion_tx,
+        })
+        .await
+        .expect("state command channel accepts user message");
+    completion_rx.await.expect("user message is inserted");
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match background_rx.recv().await.expect("event bus open") {
+                crate::AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
+                    parent_id,
+                    ..
+                })) if parent_id == user_msg_id => return,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for ChatEvt::Request from AddUserMessage");
+
+    // The command harness does not run the prompt-construction task itself.
+    // `AddUserMessage` above proves the state manager emitted the live request;
+    // this event bridges that request into `llm_manager` without bypassing route
+    // selection, provider execution, EventBus tool dispatch, or chat-state updates.
+    let estimated_tokens = prompt.len() / 4;
+    let context_plan = ContextPlan {
+        plan_id: Uuid::new_v4(),
+        parent_id: user_msg_id,
+        estimated_total_tokens: estimated_tokens,
+        included_messages: vec![ContextPlanMessage {
+            message_id: Some(user_msg_id),
+            kind: MessageKind::User,
+            estimated_tokens,
+        }],
+        excluded_messages: Vec::new(),
+        included_rag_parts: Vec::new(),
+        rag_stats: None,
+    };
+    event_bus.send(crate::AppEvent::Llm(LlmEvent::ChatCompletion(
+        ChatEvt::PromptConstructed {
+            parent_id: user_msg_id,
+            formatted_prompt: vec![crate::llm::RequestMessage::new_user(prompt.to_string())],
+            context_plan,
+        },
+    )));
+
+    let mut requested_tools = 0usize;
+    let mut completed_tools = 0usize;
+    let mut requested_tool_names = Vec::new();
+
+    let (outcome, attempts, assistant_message_id, summary) =
+        timeout(Duration::from_secs(120), async {
+            loop {
+                match realtime_rx.recv().await.expect("event bus open") {
+                    crate::AppEvent::System(crate::SystemEvent::ToolCallRequested {
+                        tool_call,
+                        ..
+                    }) => {
+                        requested_tools += 1;
+                        requested_tool_names.push(tool_call.function.name);
+                    }
+                    crate::AppEvent::System(crate::SystemEvent::ToolCallCompleted { .. }) => {
+                        completed_tools += 1;
+                    }
+                    crate::AppEvent::System(crate::SystemEvent::ChatTurnFinished {
+                        outcome,
+                        attempts,
+                        assistant_message_id,
+                        summary,
+                        ..
+                    }) => return (outcome, attempts, assistant_message_id, summary),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for live Google chat turn to finish");
+
+    assert_eq!(outcome, "completed", "chat turn summary: {summary}");
+    assert_eq!(
+        requested_tool_names,
+        vec![crate::tools::ToolName::ListDir],
+        "expected exactly one list_dir request"
+    );
+    assert_eq!(requested_tools, 1, "chat turn summary: {summary}");
+    assert_eq!(completed_tools, 1, "chat turn summary: {summary}");
+    assert_eq!(
+        attempts, 2,
+        "tool session should include one Google tool-call step and one final-response step"
+    );
+
+    // Final assistant text is part of this test's acceptance surface. Counting a
+    // completed chat turn and a completed tool call is not enough.
+    let assistant_content = wait_for_final_assistant_content(
+        &state,
+        &existing_assistant_ids,
+        assistant_message_id,
+        "listed",
+    )
+    .await
+    .unwrap_or_else(|assistant_messages| {
+        panic!(
+            "timed out waiting for final assistant response containing `listed`; \
+             placeholder_assistant_message_id={assistant_message_id}; \
+             requested_tools={requested_tools}; completed_tools={completed_tools}; \
+             requested_tool_names={requested_tool_names:?}; chat turn summary: {summary}; \
+             assistant_messages={assistant_messages:#?}"
+        )
+    });
+    assert!(
+        assistant_content.to_ascii_lowercase().contains("listed"),
+        "unexpected assistant content: {assistant_content:?}"
+    );
 }
 
 #[tokio::test]
@@ -183,6 +531,78 @@ async fn test_load_crate_nonexistent_should_suggest_index() {
     //     severity: ErrorSeverity::Error,
     // })
     // Plus a message suggesting: "Use `/index crate <path>` to index it first"
+}
+
+#[tokio::test]
+async fn test_check_api_reports_openrouter_key_prefix() {
+    let _guard = OPENROUTER_API_KEY_TEST_LOCK.lock().await;
+    let _env_guard = OpenRouterApiKeyGuard::set_to("sk_test_abcdef123456");
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+
+    let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
+    let mut events = rt.events_builder().build_app_only();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .take()
+        .expect("debug_string_rx should be available after spawn_state_manager");
+    let pwd = std::env::current_dir().expect("current dir");
+    let mut app = rt.into_app(pwd);
+
+    let command = crate::app::commands::parser::parse(&app, "/check api", CommandStyle::Slash);
+    assert!(matches!(command, Command::CheckApi));
+
+    execute(&mut app, command);
+
+    let debug_cmd = timeout(Duration::from_millis(500), debug_rx.recv())
+        .await
+        .expect("debug recv timeout")
+        .expect("debug channel closed")
+        .as_str()
+        .to_string();
+    assert!(
+        debug_cmd.contains("AddMessageImmediate"),
+        "Expected AddMessageImmediate, got: {debug_cmd}"
+    );
+    assert!(
+        debug_cmd.contains("OpenRouter API key found: sk_tes..."),
+        "Expected masked OpenRouter key prefix, got: {debug_cmd}"
+    );
+}
+
+#[tokio::test]
+async fn test_check_api_reports_missing_openrouter_key() {
+    let _guard = OPENROUTER_API_KEY_TEST_LOCK.lock().await;
+    let _env_guard = OpenRouterApiKeyGuard::clear();
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+
+    let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
+    let mut events = rt.events_builder().build_app_only();
+    let mut debug_rx = events
+        .app_actor_events
+        .debug_string_rx
+        .take()
+        .expect("debug_string_rx should be available after spawn_state_manager");
+    let pwd = std::env::current_dir().expect("current dir");
+    let mut app = rt.into_app(pwd);
+
+    let command = crate::app::commands::parser::parse(&app, "/check api", CommandStyle::Slash);
+    assert!(matches!(command, Command::CheckApi));
+
+    execute(&mut app, command);
+
+    let debug_cmd = timeout(Duration::from_millis(500), debug_rx.recv())
+        .await
+        .expect("debug recv timeout")
+        .expect("debug channel closed")
+        .as_str()
+        .to_string();
+    assert!(
+        debug_cmd.contains("OpenRouter API key not found in OPENROUTER_API_KEY."),
+        "Expected missing-key message, got: {debug_cmd}"
+    );
 }
 
 // ============================================================================
