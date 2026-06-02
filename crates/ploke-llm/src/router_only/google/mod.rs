@@ -245,6 +245,7 @@ impl HasModels for Google {
     type Models = Model;
     type Error = LlmError;
 
+    #[allow(clippy::manual_async_fn)]
     fn fetch_models(
         _client: &reqwest::Client,
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
@@ -422,6 +423,7 @@ impl Router for Google {
         Ok(token)
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn resolve_bearer_token() -> impl std::future::Future<Output = Result<String, LlmError>> + Send
     {
         async { google_adc_bearer_token().await }

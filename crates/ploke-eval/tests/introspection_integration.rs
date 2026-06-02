@@ -104,6 +104,7 @@ async fn open_test_db() -> ploke_db::Database {
 // ====================================================================================
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn setup_phase_has_indexed_crates() {
     let record = load_test_record();
 
@@ -165,6 +166,7 @@ fn setup_phase_has_indexed_crates() {
 }
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn setup_phase_has_valid_db_timestamp() {
     let record = load_test_record();
 
@@ -187,6 +189,7 @@ fn setup_phase_has_valid_db_timestamp() {
 // ====================================================================================
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn lookup_finds_known_structs() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -219,6 +222,7 @@ async fn lookup_finds_known_structs() {
 }
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn lookup_finds_known_functions() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -247,6 +251,7 @@ async fn lookup_finds_known_functions() {
 }
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn lookup_returns_none_for_nonexistent() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -275,6 +280,7 @@ async fn lookup_returns_none_for_nonexistent() {
 // ====================================================================================
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn replay_query_returns_historical_data() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -302,6 +308,7 @@ async fn replay_query_returns_historical_data() {
 }
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn replay_query_functions_at_turn() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -327,6 +334,7 @@ async fn replay_query_functions_at_turn() {
 }
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn replay_query_returns_error_for_nonexistent_turn() {
     let record = load_test_record();
     let db = open_test_db().await;
@@ -356,6 +364,7 @@ async fn replay_query_returns_error_for_nonexistent_turn() {
 // ====================================================================================
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn conversations_returns_turns() {
     let record = load_test_record();
 
@@ -379,6 +388,7 @@ fn conversations_returns_turns() {
 }
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn tool_calls_returns_all_calls() {
     let record = load_test_record();
 
@@ -414,6 +424,7 @@ fn tool_calls_returns_all_calls() {
 // ====================================================================================
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn run_record_has_valid_metadata() {
     let record = load_test_record();
 
@@ -437,6 +448,7 @@ fn run_record_has_valid_metadata() {
 }
 
 #[test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 fn time_travel_index_matches_turns() {
     let record = load_test_record();
 
@@ -463,6 +475,7 @@ fn time_travel_index_matches_turns() {
 }
 
 #[tokio::test]
+#[ignore = "requires external BurntSushi__ripgrep-2209 eval run; set PLOKE_EVAL_INTROSPECTION_RUN_DIR"]
 async fn db_state_query_executes_at_timestamp() {
     let record = load_test_record();
     let db = open_test_db().await;

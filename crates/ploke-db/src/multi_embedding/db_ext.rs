@@ -945,7 +945,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         match result {
             Ok(count) => Ok(true),
             Err(e) if e == DbError::Cozo(expected_err_msg) => Ok(false),
-            Err(e) => Err(DbError::from(e)),
+            Err(e) => Err(e),
         }
         //
         // Ok(is_present)
@@ -1334,9 +1334,7 @@ pub fn print_all_relations(db: &cozo::Db<cozo::MemStorage>) -> Result<(), DbErro
 pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_error::Error> {
     let mut default_dir = dirs::config_local_dir().ok_or_else(|| {
         let err_msg = "Could not locate default config directory on system";
-        let e =
-            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg });
-        e
+        ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg })
     })?;
     default_dir.push("ploke/data");
     let valid_file = match find_file_by_prefix(default_dir.as_path(), &crate_name).await {
@@ -1358,11 +1356,10 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
     // db.clear_hnsw_idx().await?;
 
     db.import_backup_with_embeddings(&valid_file)
-        .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
     let selection = db
         .restore_embedding_set(&crate_name)
-        .map_err(crate::DbError::from)?;
+        .map_err(ploke_error::Error::from)?;
     if let Some((set, reason)) = selection {
         tracing::info!(
             "Restored embedding set {:?} via {:?}",

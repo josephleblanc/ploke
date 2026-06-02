@@ -824,7 +824,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let return_type = match &func.sig.output {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => {
-                    let type_id = get_or_create_type(self.state, &*ty);
+                    let type_id = get_or_create_type(self.state, ty);
                     // RelationKind::FunctionReturn removed. TypeId is stored in FunctionNode.return_type.
                     Some(type_id)
                 }
@@ -1816,7 +1816,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let return_type = match &method.sig.output {
                     ReturnType::Default => None,
                     ReturnType::Type(_, ty) => {
-                        let type_id = get_or_create_type(self.state, &*ty);
+                        let type_id = get_or_create_type(self.state, ty);
                         // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
                         Some(type_id)
                     }
@@ -2028,7 +2028,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let return_type = match &method.sig.output {
                     ReturnType::Default => None,
                     ReturnType::Type(_, ty) => {
-                        let type_id = get_or_create_type(self.state, &*ty);
+                        let type_id = get_or_create_type(self.state, ty);
                         // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
                         Some(type_id)
                     }

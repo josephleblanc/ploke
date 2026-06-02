@@ -127,6 +127,7 @@ impl ErrorContext {
 ///         .with_path(path) // attaches path only if read fails
 /// }
 /// ```
+#[allow(clippy::result_large_err)]
 pub trait ContextExt<T> {
     fn with_path(self, path: impl Into<PathBuf>) -> Result<T>;
     fn with_span(self, span: SourceSpan) -> Result<T>;

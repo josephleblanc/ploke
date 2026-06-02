@@ -225,7 +225,7 @@ pub async fn assemble_context_with_type_context(
     // Build preliminary parts (with placeholder file path and no ranges for now).
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
     let mut skipped_io_errors = 0usize;
-    for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
+    for (i, (res, node_paths)) in batch.into_iter().zip(node_paths).enumerate() {
         let id = node_ids
             .get(i)
             .copied()

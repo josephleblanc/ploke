@@ -283,6 +283,7 @@ async fn test_model_router_parser_show_and_set() {
 
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
+#[ignore = "live Google route/tool-call test; requires GOOGLE_PROJECT_ID/GOOGLE_REGION and ADC"]
 async fn live_google_harness_router_command_runs_list_dir_through_llm_manager() {
     // This test is the live command-harness surface:
     // `/model router google` -> `/model use google/...` -> `AddUserMessage` ->

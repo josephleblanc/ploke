@@ -39,28 +39,28 @@ impl<T> ResultExt<T> for Result<T> {
     }
 
     fn emit_warning(self, policy: &impl ErrorPolicy) -> Self {
-        if let Err(ref e) = self {
-            if policy.classify(e) == super::Severity::Warning {
-                policy.emit(e);
-            }
+        if let Err(ref e) = self
+            && policy.classify(e) == super::Severity::Warning
+        {
+            policy.emit(e);
         }
         self
     }
 
     fn emit_error(self, policy: &impl ErrorPolicy) -> Self {
-        if let Err(ref e) = self {
-            if policy.classify(e) == super::Severity::Error {
-                policy.emit(e);
-            }
+        if let Err(ref e) = self
+            && policy.classify(e) == super::Severity::Error
+        {
+            policy.emit(e);
         }
         self
     }
 
     fn emit_fatal(self, policy: &impl ErrorPolicy) -> Self {
-        if let Err(ref e) = self {
-            if policy.classify(e) == super::Severity::Fatal {
-                policy.emit(e);
-            }
+        if let Err(ref e) = self
+            && policy.classify(e) == super::Severity::Fatal
+        {
+            policy.emit(e);
         }
         self
     }
@@ -80,6 +80,7 @@ impl<T> ResultExt<T> for Result<T> {
 /// assert!(items.clone().first_error().is_some());
 /// let collected = items.collect_ok(); // -> Err(_)
 /// ```
+#[allow(clippy::result_large_err)]
 pub trait IterResultExt<T>: Sized {
     fn collect_ok(self) -> Result<Vec<T>>;
     fn first_error(self) -> Option<super::Error>;

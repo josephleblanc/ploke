@@ -905,11 +905,11 @@ fn import_backup_fixture_db(
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
             let prior_rels = plain_backup_import_relations(fixture, &db)?;
-            db.import_from_backup(&fixture_path, &prior_rels)
+            db.import_from_backup(fixture_path, &prior_rels)
                 .map_err(DbError::from)?;
         }
         FixtureImportMode::BackupWithEmbeddings => {
-            import_backup_with_embeddings_for_fixture(fixture, &db, &fixture_path)?;
+            import_backup_with_embeddings_for_fixture(fixture, &db, fixture_path)?;
         }
     }
 
@@ -922,10 +922,8 @@ pub fn plain_backup_import_relations(
     db: &Database,
 ) -> Result<Vec<String>, Error> {
     match fixture.status {
-        FixtureStatus::TypedTypeGraph => db
-            .prior_rels_for_typed_type_graph_backup_import()
-            .map_err(Error::from),
-        _ => db.prior_rels_for_plain_backup_import().map_err(Error::from),
+        FixtureStatus::TypedTypeGraph => db.prior_rels_for_typed_type_graph_backup_import(),
+        _ => db.prior_rels_for_plain_backup_import(),
     }
 }
 
@@ -957,12 +955,11 @@ pub fn backup_fixture_path_or_seed(fixture: &'static FixtureDb) -> Result<PathBu
         return default_fixture_path_or_matching_seed(fixture_path, &seed_path);
     }
 
-    if !explicit_fixture_dir {
-        if let Some(path) = home_config_snapshot_fixture_path(fixture) {
-            if path.exists() {
-                return default_fixture_path_or_matching_seed(path, &seed_path);
-            }
-        }
+    if !explicit_fixture_dir
+        && let Some(path) = home_config_snapshot_fixture_path(fixture)
+        && path.exists()
+    {
+        return default_fixture_path_or_matching_seed(path, &seed_path);
     }
 
     if seed_path.exists() {
@@ -1235,11 +1232,13 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_prefers_seed_when_candidate_differs() {
         let temp_dir = unique_fixture_test_dir("fixture-path-differs");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
         std::fs::write(&candidate_path, b"not this worktree's fixture")
             .expect("write differing fixture candidate");
+        std::fs::write(&seed_path, b"this worktree's fixture")
+            .expect("write seed fixture candidate");
 
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
         let resolved = default_fixture_path_or_matching_seed(candidate_path, &seed_path)
             .expect("resolve fixture candidate");
 
@@ -1250,8 +1249,9 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_keeps_candidate_when_seed_matches() {
         let temp_dir = unique_fixture_test_dir("fixture-path-matches");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
+        std::fs::write(&seed_path, b"matching fixture").expect("write seed fixture candidate");
         std::fs::copy(&seed_path, &candidate_path).expect("copy matching fixture candidate");
 
         let resolved = default_fixture_path_or_matching_seed(candidate_path.clone(), &seed_path)

@@ -486,15 +486,16 @@ impl IoManager {
     }
 
     fn truncate_to_limit(mut content: String, max_bytes: Option<usize>) -> (String, bool) {
-        if let Some(limit) = max_bytes {
-            if limit > 0 && content.len() > limit {
-                let mut cut = limit.min(content.len());
-                while cut > 0 && !content.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                content.truncate(cut);
-                return (content, true);
+        if let Some(limit) = max_bytes
+            && limit > 0
+            && content.len() > limit
+        {
+            let mut cut = limit.min(content.len());
+            while cut > 0 && !content.is_char_boundary(cut) {
+                cut -= 1;
             }
+            content.truncate(cut);
+            return (content, true);
         }
         (content, false)
     }

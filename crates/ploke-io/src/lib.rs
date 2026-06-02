@@ -2,7 +2,8 @@
     unused_variables,
     unused_imports,
     dead_code,
-    clippy::duplicated_attributes
+    clippy::duplicated_attributes,
+    clippy::result_large_err
 )]
 //! ploke-io — Async I/O actor for safe, concurrent file operations
 //!

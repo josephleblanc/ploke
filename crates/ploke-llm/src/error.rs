@@ -316,11 +316,11 @@ impl LlmError {
                 body_snippet,
             } => {
                 let mut msg = format!("Failed to deserialize response data: {message}");
-                if let Some(snippet) = body_snippet {
-                    if !message.contains(snippet) {
-                        msg.push_str("\nbody excerpt: ");
-                        msg.push_str(snippet);
-                    }
+                if let Some(snippet) = body_snippet
+                    && !message.contains(snippet)
+                {
+                    msg.push_str("\nbody excerpt: ");
+                    msg.push_str(snippet);
                 }
                 msg
             }

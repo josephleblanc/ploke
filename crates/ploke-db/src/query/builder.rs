@@ -194,7 +194,7 @@ impl NodeType {
         let star: &'static str = " *";
         let left: &'static str = " {";
         let right: &'static str = " }";
-        let rhs = NodeType::primary_nodes()
+        NodeType::primary_nodes()
             .iter()
             .map(|n| {
                 [star]
@@ -205,8 +205,7 @@ impl NodeType {
                     .chain(&[right])
                     .join("")
             })
-            .join(" or ");
-        rhs
+            .join(" or ")
     }
 
     pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [&'static str; 5] =
@@ -219,7 +218,7 @@ impl NodeType {
         let left: &'static str = " {";
         let right: &'static str = " @ 'NOW' }";
         let hash: &'static str = "hash";
-        let rhs = NodeType::primary_nodes()
+        NodeType::primary_nodes()
             .iter()
             .map(|n| {
                 [star]
@@ -241,8 +240,7 @@ impl NodeType {
                     .chain(&[right])
                     .join("")
             })
-            .join(" or ");
-        rhs
+            .join(" or ")
     }
 }
 

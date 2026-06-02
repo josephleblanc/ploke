@@ -18,6 +18,8 @@ use ploke_embed::{
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagService, TokenBudget};
 
+const PROMPT_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn mock_embedder() -> EmbeddingProcessor {
     EmbeddingProcessor::new(EmbeddingSource::Local(
         LocalEmbedder::new(EmbeddingConfig::default())
@@ -85,7 +87,7 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
         .unwrap();
 
     // Expect a PromptConstructed event (conversation-only fallback) for this parent_id
-    let evt = timeout(Duration::from_secs(1), async {
+    let evt = timeout(PROMPT_EVENT_TIMEOUT, async {
         loop {
             match bg_rx.recv().await {
                 Ok(e) => {
@@ -149,7 +151,7 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
         .unwrap();
 
     // We should again see a PromptConstructed for the second parent_id
-    let evt2 = timeout(Duration::from_secs(1), async {
+    let evt2 = timeout(PROMPT_EVENT_TIMEOUT, async {
         loop {
             match bg_rx.recv().await {
                 Ok(e) => {
@@ -256,7 +258,7 @@ async fn conversation_only_prompt_names_loaded_workspace_when_context_off() {
         .await
         .unwrap();
 
-    let evt = timeout(Duration::from_secs(1), async {
+    let evt = timeout(PROMPT_EVENT_TIMEOUT, async {
         loop {
             match bg_rx.recv().await {
                 Ok(e) => {

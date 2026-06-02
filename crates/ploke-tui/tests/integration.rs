@@ -1,3 +1,15 @@
+#![allow(
+    unused_imports,
+    clippy::await_holding_lock,
+    clippy::field_reassign_with_default,
+    clippy::manual_checked_ops,
+    clippy::needless_borrow,
+    clippy::needless_return,
+    clippy::single_component_path_imports,
+    clippy::useless_vec,
+    clippy::wrong_self_convention
+)]
+
 use std::sync::OnceLock;
 
 use tokio::sync::Mutex as TokioMutex;

@@ -154,20 +154,17 @@ impl IoManagerBuilder {
             // Start watcher thread if enabled and roots are configured (feature-gated).
             #[cfg(feature = "watcher")]
             {
-                if self.enable_watcher {
-                    if let Some(ref roots) = roots_opt {
-                        let debounce = if self.watcher_debounce == std::time::Duration::default() {
-                            std::time::Duration::from_millis(250)
-                        } else {
-                            self.watcher_debounce
-                        };
-                        let _watcher_handle = crate::watcher::start_watcher(
-                            roots.clone(),
-                            debounce,
-                            events_tx.clone(),
-                        );
-                        // intentionally detached; process lifetime-bound
-                    }
+                if self.enable_watcher
+                    && let Some(ref roots) = roots_opt
+                {
+                    let debounce = if self.watcher_debounce == std::time::Duration::default() {
+                        std::time::Duration::from_millis(250)
+                    } else {
+                        self.watcher_debounce
+                    };
+                    let _watcher_handle =
+                        crate::watcher::start_watcher(roots.clone(), debounce, events_tx.clone());
+                    // intentionally detached; process lifetime-bound
                 }
             }
 

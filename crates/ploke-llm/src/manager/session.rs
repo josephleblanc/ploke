@@ -662,6 +662,7 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn trace_chat_http_start(
     request_id: u64,
     attempt: u32,
@@ -796,6 +797,7 @@ fn trace_chat_http_status_error(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn trace_chat_http_retry_scheduled(
     request_id: u64,
     attempt: u32,
@@ -909,6 +911,7 @@ fn trace_chat_http_error(event: ChatHttpErrorTrace<'_>) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn trace_chat_http_retry_suppressed(
     request_id: u64,
     attempt: u32,
