@@ -17,7 +17,6 @@ use crate::ui::inspector::{
     turn_outcome_tool_count,
 };
 use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
-#[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
@@ -29,6 +28,7 @@ use std::sync::Arc;
 pub(crate) struct InspectorOpenState {
     force_open: Option<InspectorPanelSection>,
     force_exclusive: bool,
+    force_tool_decode_expanded: bool,
 }
 
 #[derive(Debug, Default)]
@@ -37,14 +37,23 @@ pub(crate) struct InspectorRenderCache {
     parent_create_row_rebuilds: usize,
     text_galleys: Vec<CachedTextGalley>,
     id_galleys: Vec<CachedIdGalley>,
-    #[cfg(not(target_arch = "wasm32"))]
     tool_argument_decodes: Vec<ToolArgumentDecodeEntry>,
-    #[cfg(not(target_arch = "wasm32"))]
     tool_result_decodes: Vec<ToolResultDecodeEntry>,
-    #[cfg(not(target_arch = "wasm32"))]
     text_size_summaries: Vec<TextSizeSummaryEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_tool_decode_expanded: bool,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_tool_decode_ns: u64,
 }
 
 impl InspectorRenderCache {
@@ -63,6 +72,15 @@ impl InspectorRenderCache {
     #[cfg(test)]
     fn parent_create_row_rebuilds(&self) -> usize {
         self.parent_create_row_rebuilds
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) fn take_benchmark_tool_decode_ns(&mut self) -> u64 {
+        std::mem::take(&mut self.benchmark_tool_decode_ns)
     }
 
     fn text_galley(
@@ -202,7 +220,6 @@ impl InspectorRenderCache {
         galley
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn tool_arguments(
         &mut self,
         call_id: &str,
@@ -228,7 +245,6 @@ impl InspectorRenderCache {
         self.tool_argument_decodes[index].decoded.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn tool_result(
         &mut self,
         call_id: &str,
@@ -254,7 +270,6 @@ impl InspectorRenderCache {
         self.tool_result_decodes[index].decoded.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn text_size_summary(&mut self, text: &str) -> Arc<str> {
         let key = TextSizeSummaryKey {
             bytes: text.len(),
@@ -287,7 +302,6 @@ impl InspectorRenderCache {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolArgumentDecodeEntry {
     call_id: Arc<str>,
@@ -296,7 +310,6 @@ struct ToolArgumentDecodeEntry {
     decoded: Arc<PersistedToolCallArguments>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolResultDecodeEntry {
     call_id: Arc<str>,
@@ -305,14 +318,12 @@ struct ToolResultDecodeEntry {
     decoded: Arc<PersistedToolResultContent>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextSizeSummaryKey {
     bytes: usize,
     lines: usize,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct TextSizeSummaryEntry {
     key: TextSizeSummaryKey,
@@ -445,10 +456,19 @@ impl InspectorOpenState {
         section: Option<crate::benchmark::BenchmarkInspectorSection>,
         exclusive: bool,
     ) -> Self {
+        let force_tool_decode_expanded = matches!(
+            section,
+            Some(crate::benchmark::BenchmarkInspectorSection::ToolDecode)
+        );
         Self {
             force_open: section.map(InspectorPanelSection::from_benchmark),
             force_exclusive: exclusive,
+            force_tool_decode_expanded,
         }
+    }
+
+    fn tool_decode_expanded(self) -> bool {
+        self.force_tool_decode_expanded
     }
 
     fn open(self, section: InspectorPanelSection) -> Option<bool> {
@@ -514,6 +534,7 @@ impl InspectorPanelSection {
             crate::benchmark::BenchmarkInspectorSection::PatchDebug => Self::PatchDebug,
             crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::SourceRefs,
             crate::benchmark::BenchmarkInspectorSection::ArtifactIds => Self::ArtifactIds,
+            crate::benchmark::BenchmarkInspectorSection::ToolDecode => Self::RunRecords,
         }
     }
 }
@@ -636,6 +657,15 @@ pub(crate) fn render_right_inspector(
     open_state: InspectorOpenState,
     mut actions: Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
 ) {
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    {
+        render_cache.benchmark_tool_decode_expanded = open_state.tool_decode_expanded();
+        render_cache.benchmark_tool_decode_ns = 0;
+    }
     {
         let _span = tracing::trace_span!("inspector_scroll_area_layout").entered();
         egui::ScrollArea::vertical()
@@ -3925,23 +3955,47 @@ fn render_tool_arguments_section(
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let call_id = tool.request.call_id.as_str();
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    let tool_sections_open = render_cache.benchmark_tool_decode_expanded;
+    #[cfg(not(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    )))]
+    let tool_sections_open = true;
     show_inspector_collapsing(
         ui,
         egui::CollapsingHeader::new("tool call arguments")
             .id_salt(("run-record-tool-arguments", index, call_id))
-            .default_open(true),
+            .default_open(tool_sections_open),
         |ui| {
-            #[cfg(not(target_arch = "wasm32"))]
             {
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                ))]
+                let decode_start = std::time::Instant::now();
                 let decoded = render_cache.tool_arguments(
                     call_id,
                     tool.request.tool.as_str(),
                     tool.request.arguments.as_str(),
                 );
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                ))]
+                {
+                    render_cache.benchmark_tool_decode_ns +=
+                        decode_start.elapsed().as_nanos() as u64;
+                }
                 render_decoded_tool_arguments(ui, render_cache, decoded.as_ref());
             }
-            #[cfg(target_arch = "wasm32")]
-            tool_kv_text(ui, render_cache, "decode", "native_only");
 
             show_inspector_collapsing(
                 ui,
@@ -3991,17 +4045,46 @@ fn render_tool_result_section(
         ui,
         egui::CollapsingHeader::new("tool call content")
             .id_salt(("run-record-tool-content", index, call_id))
-            .default_open(false),
+            .default_open({
+                #[cfg(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                ))]
+                {
+                    render_cache.benchmark_tool_decode_expanded
+                }
+                #[cfg(not(all(
+                    not(target_arch = "wasm32"),
+                    feature = "dev",
+                    feature = "native-benchmark"
+                )))]
+                {
+                    false
+                }
+            }),
         |ui| match &tool.result {
             ploke_records::run_record::ToolResult::Completed(_) => {
-                #[cfg(not(target_arch = "wasm32"))]
                 {
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    let decode_start = std::time::Instant::now();
                     let decoded =
                         render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        feature = "dev",
+                        feature = "native-benchmark"
+                    ))]
+                    {
+                        render_cache.benchmark_tool_decode_ns +=
+                            decode_start.elapsed().as_nanos() as u64;
+                    }
                     render_decoded_tool_result(ui, render_cache, decoded.as_ref());
                 }
-                #[cfg(target_arch = "wasm32")]
-                tool_kv_text(ui, render_cache, "decode", "native_only");
 
                 show_inspector_collapsing(
                     ui,
@@ -4192,7 +4275,6 @@ fn render_tool_failure_content(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_decoded_tool_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4211,7 +4293,6 @@ fn render_decoded_tool_arguments(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_call_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4350,7 +4431,6 @@ fn render_tool_call_arguments(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_decoded_tool_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4369,7 +4449,6 @@ fn render_decoded_tool_result(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_result_content(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4483,7 +4562,6 @@ fn render_tool_result_content(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_patch_like_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4502,7 +4580,6 @@ fn render_patch_like_result(
     render_string_list(ui, render_cache, "files", files);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_code_item_query(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4517,7 +4594,6 @@ fn render_code_item_query(
     tool_kv_text(ui, render_cache, "module path", module_path);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_concise_context(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4536,7 +4612,6 @@ fn render_concise_context(
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_str(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4548,7 +4623,6 @@ fn render_optional_str(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4560,7 +4634,6 @@ fn render_optional_string_list(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4573,7 +4646,6 @@ fn render_string_list(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4585,7 +4657,6 @@ fn render_optional_u32(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u64(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4597,7 +4668,6 @@ fn render_optional_u64(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_i32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4609,7 +4679,6 @@ fn render_optional_i32(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_f32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4651,19 +4720,16 @@ fn tool_kv_bool(
     tool_kv_text(ui, render_cache, key, if value { "true" } else { "false" });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u32(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u32) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u64(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u64) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_usize(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4683,7 +4749,6 @@ fn tool_kv_debug(
     tool_kv_owned(ui, render_cache, key, format!("{value:?}"));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_text_size_summary(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -4703,7 +4768,6 @@ fn cached_wrapped_monospace_label(
     ui.add(egui::Label::new(galley).wrap())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn list_item_key(index: usize) -> &'static str {
     match index {
         0 => "1",

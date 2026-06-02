@@ -43,7 +43,7 @@ use crate::llm::manager::loop_error::{
 use crate::llm::manager::semantics::{self, RecoveryDecision};
 use crate::tools::{
     ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload,
-    allowed_tool_names, validate_and_sanitize_tool_calls,
+    allowed_tool_names, tool_ui_payload_from_error, validate_and_sanitize_tool_calls,
 };
 use ploke_llm::LlmError;
 use tokio::time::sleep;
@@ -1895,7 +1895,7 @@ pub async fn execute_tools_via_event_bus(
                         let tool_error = ToolError::new(tool_name, ToolErrorCode::Timeout, message)
                             .retry_hint("Increase tool_call_timeout_secs or use a smaller command");
                         let ui_payload =
-                            Some(ToolUiPayload::from_error(call_id_for_error, &tool_error));
+                            Some(tool_ui_payload_from_error(call_id_for_error, &tool_error));
                         ToolCallUiError {
                             error: tool_error.to_wire_string(),
                             ui_payload,

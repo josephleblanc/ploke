@@ -51,3 +51,11 @@ cargo run -p ploke-egui --features "dev native-benchmark" -- \
   --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 \
   --benchmark-suite standard
 ```
+
+## WASM parity regression (Phase 0)
+
+- **Pre-edit baseline:** [`20260602-wasm-parity-baseline/`](20260602-wasm-parity-baseline/) — full `standard()` suite including parity instrumentation scenarios.
+- **Gated scenarios:** all names in `BenchmarkScenario::regression_gated()` (see [`20260602-wasm-parity-baseline/README.md`](20260602-wasm-parity-baseline/README.md) after baseline run).
+- **Parity-only scenarios (added Phase 0):** `graph_snapshot_replace_cold`, `inspector_tool_decode_expanded_300`, `graph_catalog_idle_300`.
+- **Regression tests:** `cargo test -p ploke-egui --features dev,native-benchmark benchmark_regression` (baseline + fixture + compare harness). Orchestrator numeric gate: `benchmark_regression_against_baseline` with `--ignored` after baseline refresh on the same machine (zero tolerance vs `report.json`).
+- **Baseline refresh:** user-approved commit only (orchestrator).

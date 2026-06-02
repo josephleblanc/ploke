@@ -145,13 +145,10 @@ lazy_static::lazy_static! {
     });
 }
 
-/// Supported cargo subcommands.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CargoCommand {
-    Test,
-    Check,
-}
+pub use ploke_core::tool_contracts::{
+    CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
+    CargoToolParamsOwned, CargoToolResult,
+};
 
 impl CargoCommand {
     fn as_str(self) -> &'static str {
@@ -160,14 +157,6 @@ impl CargoCommand {
             CargoCommand::Check => "check",
         }
     }
-}
-
-/// Execution scope for the cargo invocation.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CargoScope {
-    Focused,
-    Workspace,
 }
 
 impl CargoScope {
@@ -230,97 +219,6 @@ pub struct CargoToolParams<'a> {
     pub test_args: Option<Vec<Cow<'a, str>>>,
     #[serde(default)]
     pub include_warnings: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-pub struct CargoToolParamsOwned {
-    pub command: CargoCommand,
-    pub scope: CargoScope,
-    pub package: Option<String>,
-    pub features: Option<Vec<String>>,
-    pub all_features: bool,
-    pub no_default_features: bool,
-    pub target: Option<String>,
-    pub profile: Option<String>,
-    pub release: bool,
-    pub lib: bool,
-    pub tests: bool,
-    pub bins: bool,
-    pub examples: bool,
-    pub benches: bool,
-    pub test_args: Option<Vec<String>>,
-    #[serde(default)]
-    pub include_warnings: bool,
-}
-
-/// Result payload emitted by the cargo tool.
-///
-/// Diagnostics are capped for size safety; tails contain the last observed non-JSON output.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-pub struct CargoToolResult {
-    pub ok: bool,
-    pub status_reason: CargoStatusReason,
-    pub command: CargoCommand,
-    pub scope: CargoScope,
-    pub manifest_path: String,
-    pub exit_code: Option<i32>,
-    pub duration_ms: u64,
-    pub summary: CargoSummary,
-    pub diagnostics: Vec<CargoDiagnostic>,
-    pub stderr_tail: Vec<String>,
-    pub non_json_stdout_tail: Vec<String>,
-    pub json_parse_errors_tail: Vec<String>,
-    pub raw_messages_truncated: bool,
-}
-
-/// Summary counts derived from cargo JSON messages.
-#[derive(Debug, Clone, Serialize, Default)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-pub struct CargoSummary {
-    pub errors: u32,
-    pub warnings: u32,
-    pub notes: u32,
-    pub artifacts: u32,
-    pub other_messages: u32,
-}
-
-/// Condensed diagnostic for LLM/UI consumption.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-pub struct CargoDiagnostic {
-    pub level: String,
-    pub message: String,
-    pub code: Option<String>,
-    pub spans: Vec<CargoSpan>,
-    pub rendered: Option<String>,
-}
-
-/// Source span attached to a diagnostic.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-pub struct CargoSpan {
-    pub file_name: String,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub column_start: u32,
-    pub column_end: u32,
-    pub is_primary: bool,
-}
-
-/// Final status category for a cargo invocation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
-#[serde(rename_all = "snake_case")]
-pub enum CargoStatusReason {
-    Success,
-    CompileFailed,
-    TestsFailedOrRuntime,
-    CargoFailedOrInvalidArgs,
-    Timeout,
-    Canceled,
-    Killed,
 }
 
 impl CargoStatusReason {

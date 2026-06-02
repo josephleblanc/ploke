@@ -8,7 +8,7 @@ mod tests;
 
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ploke_tree::{
     FsRunStore, FsRunStoreError, Graph, GraphSnapshot, GraphSnapshotError, RunRecordSet,
@@ -27,6 +27,16 @@ pub fn graph_from_run_records(records: &RunRecordSet) -> Graph {
 
 pub fn graph_from_snapshot(path: impl AsRef<Path>) -> Result<Graph, ImportError> {
     Ok(GraphSnapshot::read_json(path)?.graph())
+}
+
+pub fn graph_from_snapshot_bytes(bytes: &[u8]) -> Result<Graph, ImportError> {
+    let snapshot: GraphSnapshot = serde_json::from_slice(bytes).map_err(|source| {
+        ImportError::Snapshot(GraphSnapshotError::Json {
+            path: PathBuf::from("<bytes>"),
+            source,
+        })
+    })?;
+    Ok(snapshot.graph())
 }
 
 #[derive(Debug)]

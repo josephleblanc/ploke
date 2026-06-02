@@ -22,10 +22,20 @@ use ploke_tree::GraphSnapshot;
     feature = "dev",
     feature = "native-benchmark"
 ))]
+use crate::benchmark::benchmark_graph_snapshot_fixture_path;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
 use crate::benchmark::{
     BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkInspectorSection,
     BenchmarkSelectionTarget, BenchmarkWriteResult, InspectorSectionPhase, InspectorSequenceStage,
 };
+use crate::bootstrap::GraphCatalog;
+use crate::run_catalog::RunCatalog;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
     GraphIdentity, RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
@@ -33,6 +43,12 @@ use crate::diagnostics::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::import::graph_from_run_root;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "dev",
+    feature = "native-benchmark"
+))]
+use crate::import::graph_from_snapshot_bytes;
 #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
 #[cfg(not(target_arch = "wasm32"))]
@@ -95,6 +111,13 @@ pub struct OperatorApp {
         feature = "native-benchmark"
     ))]
     benchmark_inspector_exclusive: bool,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_graph_catalog_visible: bool,
+    graph_catalog: GraphCatalog,
 }
 
 impl OperatorApp {
@@ -146,7 +169,18 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_exclusive: false,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_graph_catalog_visible: false,
+            graph_catalog: GraphCatalog::new(),
         }
+    }
+
+    pub fn graph_catalog_mut(&mut self) -> &mut GraphCatalog {
+        &mut self.graph_catalog
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -189,6 +223,13 @@ impl OperatorApp {
                 feature = "native-benchmark"
             ))]
             benchmark_inspector_exclusive: false,
+            #[cfg(all(
+                not(target_arch = "wasm32"),
+                feature = "dev",
+                feature = "native-benchmark"
+            ))]
+            benchmark_graph_catalog_visible: false,
+            graph_catalog: GraphCatalog::new(),
         }
     }
 
@@ -245,17 +286,25 @@ impl OperatorApp {
     fn current_run_name(&self) -> Option<&str> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            return self
-                .run_picker
-                .selected_run_name()
-                .or(self.graph_snapshot_label.as_deref())
-                .filter(|name| !name.is_empty());
+            return native_run_label(&self.run_picker, self.graph_snapshot_label.as_deref());
         }
-
         #[cfg(target_arch = "wasm32")]
         {
-            None
+            self.graph_catalog.current_label()
         }
+    }
+
+    fn replace_graph(&mut self, graph: Graph) {
+        let mode = self.view.mode();
+        self.graph = graph;
+        self.dashboard_tree =
+            crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
+        self.graph_revision = self.graph_revision.next();
+        self.view = GraphView::default();
+        self.view.set_mode(mode);
+        self.inspector_cache = InspectorCache::default();
+        self.inspector_render_cache = shell::InspectorRenderCache::default();
+        self.patch_diff_cache = PatchDiffCache::default();
     }
 
     #[cfg_attr(
@@ -267,10 +316,11 @@ impl OperatorApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.render_run_picker(ui);
-                #[cfg(not(target_arch = "wasm32"))]
-                self.render_graph_snapshot_controls(ui);
-                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.render_run_picker(ui);
+                    self.render_graph_snapshot_controls(ui);
+                }
+                self.show_run_catalog(ui);
                 ui.separator();
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
@@ -307,6 +357,33 @@ impl OperatorApp {
                 }
             });
     }
+
+    fn show_run_catalog(&mut self, ui: &mut egui::Ui) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(graph) = self.graph_catalog.show(ui, false) {
+                self.replace_graph(graph);
+            }
+            return;
+        }
+
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        {
+            let mut catalog = NativeBenchmarkCatalog {
+                catalog: &mut self.graph_catalog,
+                visible: self.benchmark_graph_catalog_visible,
+            };
+            let graph_catalog_start = Instant::now();
+            if let Some(graph) = catalog.show(ui, true) {
+                self.replace_graph(graph);
+            }
+            self.record_benchmark_component("graph_catalog", graph_catalog_start);
+        }
+    }
 }
 
 impl eframe::App for OperatorApp {
@@ -335,6 +412,7 @@ impl eframe::App for OperatorApp {
         ))]
         let top_strip_start = Instant::now();
         {
+            #[cfg(not(target_arch = "wasm32"))]
             let _span = tracing::trace_span!("egui_panel_top_strip_layout").entered();
             egui::Panel::top("top_strip")
                 .default_size(layout::TOP_STRIP_HEIGHT)
@@ -362,6 +440,7 @@ impl eframe::App for OperatorApp {
         ))]
         let run_navigation_start = Instant::now();
         {
+            #[cfg(not(target_arch = "wasm32"))]
             let _span = tracing::trace_span!("egui_panel_run_navigation_layout").entered();
             egui::Panel::left("run_navigation")
                 .default_size(layout::LEFT_SIDEBAR_WIDTH)
@@ -385,6 +464,7 @@ impl eframe::App for OperatorApp {
         ))]
         let timeline_start = Instant::now();
         {
+            #[cfg(not(target_arch = "wasm32"))]
             let _span = tracing::trace_span!("egui_panel_timeline_layout").entered();
             egui::Panel::bottom("timeline")
                 .default_size(layout::BOTTOM_TIMELINE_HEIGHT)
@@ -412,6 +492,7 @@ impl eframe::App for OperatorApp {
         ))]
         let central_start = Instant::now();
         {
+            #[cfg(not(target_arch = "wasm32"))]
             let _span = tracing::trace_span!("egui_panel_central_layout").entered();
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 profiling::scope!("ploke-egui.frame.central");
@@ -483,6 +564,20 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         self.record_benchmark_component("central_graph", central_start);
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        ))]
+        {
+            let decode_ns = self.inspector_render_cache.take_benchmark_tool_decode_ns();
+            if decode_ns > 0 {
+                self.record_benchmark_component(
+                    "inspector_tool_decode",
+                    Instant::now() - std::time::Duration::from_nanos(decode_ns),
+                );
+            }
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -496,9 +591,16 @@ impl eframe::App for OperatorApp {
         ))]
         let capture_start = Instant::now();
         {
+            #[cfg(not(target_arch = "wasm32"))]
             let _span = tracing::trace_span!("benchmark_finish_frame").entered();
             profiling::finish_frame!();
         }
+        #[cfg(not(all(
+            not(target_arch = "wasm32"),
+            feature = "dev",
+            feature = "native-benchmark"
+        )))]
+        profiling::finish_frame!();
         #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
         {
             let _span = tracing::trace_span!("puffin_capture").entered();
@@ -608,19 +710,6 @@ impl OperatorApp {
                 self.graph_snapshot_status = Some(format!("Graph snapshot export failed: {error}"));
             }
         }
-    }
-
-    fn replace_graph(&mut self, graph: Graph) {
-        let mode = self.view.mode();
-        self.graph = graph;
-        self.dashboard_tree =
-            crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
-        self.graph_revision = self.graph_revision.next();
-        self.view = GraphView::default();
-        self.view.set_mode(mode);
-        self.inspector_cache = InspectorCache::default();
-        self.inspector_render_cache = shell::InspectorRenderCache::default();
-        self.patch_diff_cache = PatchDiffCache::default();
     }
 
     fn emit_diagnostics(&mut self, ctx: &egui::Context) {
@@ -907,6 +996,9 @@ impl OperatorApp {
                     report
                         .notes
                         .push(format!("forced_inspector_section={}", section.as_str()));
+                    if section == BenchmarkInspectorSection::ToolDecode {
+                        self.benchmark_inspector_exclusive = true;
+                    }
                 }
                 if reset_patch_cache {
                     self.patch_diff_cache = PatchDiffCache::default();
@@ -982,6 +1074,36 @@ impl OperatorApp {
                 | InspectorSectionPhase::IdleCollapsed
                 | InspectorSectionPhase::IdleAfterUnselect => {}
             },
+            BenchmarkAction::ReplaceGraphFromSnapshotFixture => {
+                let load_start = Instant::now();
+                let fixture = benchmark_graph_snapshot_fixture_path();
+                match std::fs::read(&fixture) {
+                    Ok(bytes) => match graph_from_snapshot_bytes(&bytes) {
+                        Ok(graph) => {
+                            self.replace_graph(graph);
+                            report.notes.push(format!(
+                                "graph_snapshot_replace_cold_load_ns={}",
+                                load_start.elapsed().as_nanos()
+                            ));
+                            report
+                                .notes
+                                .push(format!("graph_snapshot_fixture={}", fixture.display()));
+                        }
+                        Err(error) => {
+                            report
+                                .notes
+                                .push(format!("graph_snapshot_replace_error={error}"));
+                        }
+                    },
+                    Err(error) => report
+                        .notes
+                        .push(format!("graph_snapshot_fixture_read_error={error}")),
+                }
+            }
+            BenchmarkAction::SetGraphCatalogVisible => {
+                self.benchmark_graph_catalog_visible = true;
+                report.notes.push("graph_catalog_visible=true".to_owned());
+            }
         }
         report
     }

@@ -34,5 +34,4 @@ pub mod run_profile;
 pub mod run_record;
 pub mod scheduler;
 pub mod selection;
-#[cfg(feature = "tool-contracts")]
 pub mod tool_contracts;

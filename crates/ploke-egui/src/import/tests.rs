@@ -22,6 +22,42 @@ use ploke_tree::{Graph, PassiveEvidence, RunForestInput, RunRecordSet, Transitio
 use super::*;
 
 #[test]
+fn graph_from_snapshot_bytes_matches_path_import() {
+    let records = empty_record_set();
+    let snapshot = ploke_tree::GraphSnapshot::from_records(records.clone());
+    let bytes = serde_json::to_vec(&snapshot).expect("encode snapshot");
+    let from_bytes = graph_from_snapshot_bytes(&bytes).expect("decode snapshot bytes");
+    let from_records = graph_from_run_records(&records);
+    assert_eq!(from_bytes, from_records);
+}
+
+fn empty_record_set() -> RunRecordSet {
+    RunRecordSet {
+        forest_input: RunForestInput {
+            scheduler: SchedulerStateRecord {
+                schema_version: "prototype1-scheduler.v1".to_owned(),
+                campaign_id: CampaignId("campaign-ui".to_owned()),
+                updated_at: "2026-05-20T00:00:00Z".to_owned(),
+                policy: Default::default(),
+                frontier_node_ids: Vec::new(),
+                completed_node_ids: Vec::new(),
+                failed_node_ids: Vec::new(),
+                last_continuation_decision: None,
+                nodes: Vec::new(),
+            },
+            node_records: Vec::new(),
+            parent_identity: None,
+            successor_ready: Vec::new(),
+            successor_completion: Vec::new(),
+            passive_evidence: PassiveEvidence::default(),
+        },
+        history_blocks: Vec::new(),
+        transition_journal: TransitionJournal::default(),
+        agent_turn_records: Default::default(),
+    }
+}
+
+#[test]
 fn import_delegates_to_ploke_tree_graph() {
     let records = RunRecordSet {
         forest_input: RunForestInput {

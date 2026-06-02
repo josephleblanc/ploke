@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::{
     app_state::{core::EditProposalStatus, handlers::chat},
     chat_history::MessageKind,
-    tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload},
+    tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload, tool_ui_payload_from_error},
     utils::consts::DEBUG_TOOLS,
 };
 
@@ -323,7 +323,7 @@ async fn apply_ns_edit(
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
-            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+            let ui_payload = tool_ui_payload_from_error(call_id_val.clone(), &err)
                 .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "failed");
@@ -487,7 +487,7 @@ async fn apply_semantic_edit(
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
-            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+            let ui_payload = tool_ui_payload_from_error(call_id_val.clone(), &err)
                 .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "failed");
@@ -607,7 +607,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, propos
             // Bridge: mark tool call failed with denial
             let err_msg = "Edit proposal denied by user".to_string();
             let err = ToolError::new(tool_name, ToolErrorCode::Internal, err_msg.clone());
-            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+            let ui_payload = tool_ui_payload_from_error(call_id_val.clone(), &err)
                 .with_proposal_id(proposal_id)
                 .with_request_id(request_id)
                 .with_field("status", "denied");
@@ -1033,7 +1033,7 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
                 ToolErrorCode::Internal,
                 err_msg.clone(),
             );
-            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+            let ui_payload = tool_ui_payload_from_error(call_id_val.clone(), &err)
                 .with_request_id(request_id)
                 .with_field("status", "denied");
             let ui_payload_for_chat = ui_payload.clone();

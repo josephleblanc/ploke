@@ -38,6 +38,8 @@ pub mod rag_types;
 pub mod workspace;
 pub mod workspace_glob;
 
+#[cfg(feature = "tool-contracts")]
+pub mod tool_contracts;
 #[cfg(feature = "json")]
 pub mod tool_descriptions;
 #[cfg(feature = "json")]

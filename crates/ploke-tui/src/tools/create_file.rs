@@ -183,7 +183,7 @@ impl CreateFileCtx {
                 parent_id: self.parent_id,
                 call_id: self.call_id.clone(),
                 error: error.to_wire_string(),
-                ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+                ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
             }));
     }
     pub(super) fn tool_call_err(&self, error: String) -> SystemEvent {
@@ -197,7 +197,7 @@ impl CreateFileCtx {
             parent_id: self.parent_id,
             call_id: self.call_id.clone(),
             error: error.to_wire_string(),
-            ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+            ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
         }
     }
 }

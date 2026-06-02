@@ -27,6 +27,7 @@ parallel-hash = ["blake3/rayon"]
 read-tokio = ["tokio/io-util", "tokio/fs"]
 parallel-walk = ["dep:rayon"]              # only if you actually use rayon APIs
 json = ["dep:serde_json"]
+tool-contracts = ["json"]
 # Feature flag for the UUID refactor
 
 [dev-dependencies]

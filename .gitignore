@@ -116,6 +116,7 @@ research-papers
 crates/ploke-tree-egui/dist/index.html
 crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b.js
 crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b_bg.wasm
+crates/ploke-egui/dist/
 crates/ploke-egui/docs/profiling/benchmarks/*/report.json
 research-symlink
 .tmp/*

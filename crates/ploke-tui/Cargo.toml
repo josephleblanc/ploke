@@ -122,7 +122,7 @@ default = [
     "ploke-llm-refactor",
     "typed_type_graph",
 ]
-tool_contracts = []
+tool_contracts = ["ploke-core/tool-contracts"]
 flakey_test = ["live_api_tests"]
 # tests that wait a few seconds for a reply
 long_test = ["live_api_tests"]

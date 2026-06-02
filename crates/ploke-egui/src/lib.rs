@@ -32,10 +32,11 @@ static GLOBAL_ALLOCATOR: tracking_allocator::Allocator<std::alloc::System> =
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod benchmark;
+pub mod bootstrap;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+pub mod run_catalog;
 pub mod demo;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod diagnostics;
 pub mod import;
 #[cfg(not(target_arch = "wasm32"))]

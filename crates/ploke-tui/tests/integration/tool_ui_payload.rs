@@ -1,6 +1,8 @@
 use ploke_core::ArcStr;
 use ploke_core::tool_types::ToolName;
-use ploke_tui::tools::{ToolError, ToolErrorCode, ToolUiPayload, ToolVerbosity};
+use ploke_tui::tools::{
+    ToolError, ToolErrorCode, ToolUiPayload, ToolVerbosity, tool_ui_payload_from_error,
+};
 
 #[test]
 fn render_tool_payload_respects_verbosity() {
@@ -34,7 +36,7 @@ fn render_error_payload_includes_error_code() {
     )
     .field("search_term");
 
-    let payload = ToolUiPayload::from_error(ArcStr::from("call-err"), &err);
+    let payload = tool_ui_payload_from_error(ArcStr::from("call-err"), &err);
     let rendered = payload.render(ToolVerbosity::Normal);
 
     assert!(rendered.contains("missing search_term"));

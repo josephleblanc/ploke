@@ -64,8 +64,19 @@ pub mod validators;
 pub use error::{
     Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, ToolLlmErrorPayload,
     ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField, ToolRetryContextValue,
-    allowed_tool_names, tool_io_error, tool_ui_error,
+    allowed_tool_names, tool_io_error, tool_ui_error, tool_ui_payload_from_error,
 };
+#[cfg(feature = "tool_contracts")]
+pub use ploke_core::tool_contracts::{
+    ApplyCodeEditResult, ApplyNsPatchResult, CanonicalEditOwned, CargoCommand, CargoDiagnostic,
+    CargoScope, CargoSpan, CargoStatusReason, CargoSummary, CargoToolParamsOwned, CargoToolResult,
+    CodeEditParamsOwned, ConciseContext, CreateFileParamsOwned, CreateFileResult, EdgesParamsOwned,
+    GraphNodeType, InsertRustContainerKind, InsertRustItemParamsOwned, ListDirEntry,
+    ListDirParamsOwned, ListDirResult, LookupParamsOwned, NsPatchOwned, NsPatchParamsOwned,
+    NsReadParamsOwned, NsReadResult, RequestCodeContextParamsOwned, RequestCodeContextResult,
+    ToolItemKind,
+};
+#[cfg(not(feature = "tool_contracts"))]
 pub use ploke_core::rag_types::{
     ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult,
 };
@@ -716,7 +727,7 @@ fn write_path_field(tool_name: ToolName) -> &'static str {
 }
 
 fn emit_tool_error(ctx: &Ctx, error: ToolError) {
-    let ui_payload = Some(ToolUiPayload::from_error(ctx.call_id.clone(), &error));
+    let ui_payload = Some(tool_ui_payload_from_error(ctx.call_id.clone(), &error));
     let _ = ctx
         .event_bus
         .realtime_tx
@@ -794,7 +805,7 @@ pub trait Tool {
     }
 
     fn emit_err(ctx: &Ctx, error: ToolError) {
-        let ui_payload = Some(ToolUiPayload::from_error(ctx.call_id.clone(), &error));
+        let ui_payload = Some(tool_ui_payload_from_error(ctx.call_id.clone(), &error));
         let _ =
             ctx.event_bus
                 .realtime_tx

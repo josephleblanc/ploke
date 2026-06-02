@@ -1,47 +1,28 @@
-//! Re-exports of the serializable tool transport contracts.
+//! Wasm-safe tool transport contracts for persisted run records and UI readers.
 //!
-//! These types are defined beside the `ploke-tui` tools because the tool
-//! implementation is the place where the LLM-facing argument and result shapes
-//! are maintained. `ploke-records` re-exports the owned transport DTOs instead
-//! of mirroring them so persisted tool-call readers use the same Rust shapes the
-//! tools use when serializing/deserializing LLM tool traffic.
-//!
-//! This module is intentionally only a passive records surface. It must not
-//! expose `ploke-tui` execution state, app context, event buses, async tool
-//! execution, database handles, or edit authority. The goal is type identity for
-//! persisted/replay/UI readers, not access to the TUI runtime.
+//! Serde-owned DTOs live in `ploke_core::tool_contracts`. This module re-exports them
+//! and provides decode helpers that use only `serde_json` (no `ploke-tui` / `mio`).
 
-pub use ploke_core::tool_types::ToolName;
-#[cfg(not(target_arch = "wasm32"))]
-pub use ploke_tui::tools::{
-    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult, ToolErrorCode,
-    ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField,
+pub use ploke_core::tool_contracts::{
+    ApplyCodeEditResult, ApplyNsPatchResult, CanonicalEditOwned, CargoCommand, CargoDiagnostic,
+    CargoScope, CargoSpan, CargoStatusReason, CargoSummary, CargoToolParamsOwned, CargoToolResult,
+    CodeEditParamsOwned, ConciseContext, CreateFileParamsOwned, CreateFileResult, EdgesParamsOwned,
+    GraphNodeType, InsertRustContainerKind, InsertRustItemParamsOwned, LegacySearchArguments,
+    ListDirEntry, ListDirParamsOwned, ListDirResult, LookupParamsOwned, NsPatchOwned,
+    NsPatchParamsOwned, NsReadParamsOwned, NsReadResult, PersistedToolCallArguments,
+    PersistedToolResultContent, RequestCodeContextParamsOwned, RequestCodeContextResult,
+    ToolArgumentDecodeError, ToolArgumentParseFailure, ToolCallArguments, ToolErrorCode,
+    ToolErrorWire, ToolItemKind, ToolLlmErrorPayload, ToolLlmErrorValue, ToolResultContent,
+    ToolResultDecodeError, ToolResultParseFailure, ToolRetryContext, ToolRetryContextField,
     ToolRetryContextValue, ToolUiField, ToolUiPayload, ToolVerbosity,
-    cargo::{
-        CargoCommand, CargoDiagnostic, CargoScope, CargoSpan, CargoStatusReason, CargoSummary,
-        CargoToolParamsOwned, CargoToolResult,
-    },
-    code_edit::{CanonicalEditOwned, CodeEditParamsOwned},
-    code_item_lookup::LookupParamsOwned,
-    create_file::CreateFileParamsOwned,
-    get_code_edges::EdgesParamsOwned,
-    insert_rust_item::InsertRustItemParamsOwned,
-    list_dir::{ListDirEntry, ListDirParamsOwned, ListDirResult},
-    ns_patch::{ApplyNsPatchResult, NsPatchOwned, NsPatchParamsOwned},
-    ns_read::{NsReadParamsOwned, NsReadResult},
-    request_code_context::RequestCodeContextParamsOwned,
 };
+pub use ploke_core::tool_types::ToolName;
 
-#[cfg(not(target_arch = "wasm32"))]
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 /// Provider-supplied tool argument JSON captured as persisted text.
-///
-/// This is intentionally transparent on the wire so older run records that
-/// stored `"arguments": "{...}"` continue to deserialize, while production
-/// readers get a named carrier instead of a bare `String`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct ToolArgumentsJson {
@@ -67,7 +48,6 @@ impl ToolArgumentsJson {
         &self.raw
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn decode_for_tool(&self, tool: &str) -> PersistedToolCallArguments {
         decode_tool_arguments(tool, &self.raw)
     }
@@ -93,113 +73,6 @@ impl fmt::Display for ToolArgumentsJson {
     }
 }
 
-/// Typed persisted view of a tool-call argument payload.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "state", content = "record", rename_all = "snake_case")]
-pub enum PersistedToolCallArguments {
-    Decoded(ToolCallArguments),
-    ParseFailure(ToolArgumentParseFailure),
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl PersistedToolCallArguments {
-    pub fn decoded(&self) -> Option<&ToolCallArguments> {
-        match self {
-            Self::Decoded(arguments) => Some(arguments),
-            Self::ParseFailure(_) => None,
-        }
-    }
-
-    pub fn parse_failure(&self) -> Option<&ToolArgumentParseFailure> {
-        match self {
-            Self::Decoded(_) => None,
-            Self::ParseFailure(failure) => Some(failure),
-        }
-    }
-}
-
-/// Closed enum of currently owned tool argument DTOs.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "tool", content = "arguments")]
-pub enum ToolCallArguments {
-    #[serde(rename = "request_code_context")]
-    RequestCodeContext(RequestCodeContextParamsOwned),
-    #[serde(rename = "apply_code_edit")]
-    ApplyCodeEdit(CodeEditParamsOwned),
-    #[serde(rename = "insert_rust_item")]
-    InsertRustItem(InsertRustItemParamsOwned),
-    #[serde(rename = "create_file")]
-    CreateFile(CreateFileParamsOwned),
-    #[serde(rename = "non_semantic_patch")]
-    NsPatch(NsPatchParamsOwned),
-    #[serde(rename = "read_file")]
-    NsRead(NsReadParamsOwned),
-    #[serde(rename = "code_item_lookup")]
-    CodeItemLookup(LookupParamsOwned),
-    #[serde(rename = "code_item_edges")]
-    CodeItemEdges(EdgesParamsOwned),
-    #[serde(rename = "cargo")]
-    Cargo(CargoToolParamsOwned),
-    #[serde(rename = "list_dir")]
-    ListDir(ListDirParamsOwned),
-    #[serde(rename = "search_code")]
-    SearchCode(LegacySearchArguments),
-    #[serde(rename = "search_symbols")]
-    SearchSymbols(LegacySearchArguments),
-    #[serde(rename = "query_codebase")]
-    QueryCodebase(LegacySearchArguments),
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ToolCallArguments {
-    pub fn tool_name(&self) -> Option<ToolName> {
-        match self {
-            Self::RequestCodeContext(_) => Some(ToolName::RequestCodeContext),
-            Self::ApplyCodeEdit(_) => Some(ToolName::ApplyCodeEdit),
-            Self::InsertRustItem(_) => Some(ToolName::InsertRustItem),
-            Self::CreateFile(_) => Some(ToolName::CreateFile),
-            Self::NsPatch(_) => Some(ToolName::NsPatch),
-            Self::NsRead(_) => Some(ToolName::NsRead),
-            Self::CodeItemLookup(_) => Some(ToolName::CodeItemLookup),
-            Self::CodeItemEdges(_) => Some(ToolName::CodeItemEdges),
-            Self::Cargo(_) => Some(ToolName::Cargo),
-            Self::ListDir(_) => Some(ToolName::ListDir),
-            Self::SearchCode(_) | Self::SearchSymbols(_) | Self::QueryCodebase(_) => None,
-        }
-    }
-}
-
-/// Historical search tool argument shape kept for replay/protocol context.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LegacySearchArguments {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub search_term: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub query: Option<String>,
-}
-
-/// Typed record emitted when a persisted/provider argument string cannot be
-/// decoded into the tool-specific DTO.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolArgumentParseFailure {
-    pub tool: String,
-    pub raw_arguments: String,
-    pub error: ToolArgumentDecodeError,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ToolArgumentDecodeError {
-    UnknownTool { tool: String },
-    InvalidJson { message: String },
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArguments {
     match tool {
         "search_code" => return decode_as(tool, raw, ToolCallArguments::SearchCode),
@@ -244,7 +117,6 @@ pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArgument
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn decode_as<T>(
     tool: &str,
     raw: &str,
@@ -265,93 +137,6 @@ where
     }
 }
 
-/// Typed persisted view of a tool result `content` payload.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "state", content = "record", rename_all = "snake_case")]
-pub enum PersistedToolResultContent {
-    Decoded(ToolResultContent),
-    ParseFailure(ToolResultParseFailure),
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl PersistedToolResultContent {
-    pub fn decoded(&self) -> Option<&ToolResultContent> {
-        match self {
-            Self::Decoded(result) => Some(result),
-            Self::ParseFailure(_) => None,
-        }
-    }
-
-    pub fn parse_failure(&self) -> Option<&ToolResultParseFailure> {
-        match self {
-            Self::Decoded(_) => None,
-            Self::ParseFailure(failure) => Some(failure),
-        }
-    }
-}
-
-/// Closed enum of currently owned tool result DTOs.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "tool", content = "result")]
-pub enum ToolResultContent {
-    #[serde(rename = "request_code_context")]
-    RequestCodeContext(RequestCodeContextResult),
-    #[serde(rename = "apply_code_edit")]
-    ApplyCodeEdit(ApplyCodeEditResult),
-    #[serde(rename = "insert_rust_item")]
-    InsertRustItem(ApplyCodeEditResult),
-    #[serde(rename = "create_file")]
-    CreateFile(CreateFileResult),
-    #[serde(rename = "non_semantic_patch")]
-    NsPatch(ApplyNsPatchResult),
-    #[serde(rename = "read_file")]
-    NsRead(NsReadResult),
-    #[serde(rename = "code_item_lookup")]
-    CodeItemLookup(ConciseContext),
-    #[serde(rename = "cargo")]
-    Cargo(CargoToolResult),
-    #[serde(rename = "list_dir")]
-    ListDir(ListDirResult),
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ToolResultContent {
-    pub fn tool_name(&self) -> ToolName {
-        match self {
-            Self::RequestCodeContext(_) => ToolName::RequestCodeContext,
-            Self::ApplyCodeEdit(_) => ToolName::ApplyCodeEdit,
-            Self::InsertRustItem(_) => ToolName::InsertRustItem,
-            Self::CreateFile(_) => ToolName::CreateFile,
-            Self::NsPatch(_) => ToolName::NsPatch,
-            Self::NsRead(_) => ToolName::NsRead,
-            Self::CodeItemLookup(_) => ToolName::CodeItemLookup,
-            Self::Cargo(_) => ToolName::Cargo,
-            Self::ListDir(_) => ToolName::ListDir,
-        }
-    }
-}
-
-/// Typed record emitted when a persisted tool result string cannot be decoded.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolResultParseFailure {
-    pub tool: String,
-    pub raw_content: String,
-    pub error: ToolResultDecodeError,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ToolResultDecodeError {
-    UnknownTool { tool: String },
-    UnsupportedToolResult { tool: String },
-    InvalidJson { message: String },
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultContent {
     let Some(tool_name) = tool_name_from_persisted(tool) else {
         return PersistedToolResultContent::ParseFailure(ToolResultParseFailure {
@@ -397,7 +182,6 @@ pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultC
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn decode_result_as<T>(
     tool: &str,
     raw: &str,
@@ -418,7 +202,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
     match tool {
         "request_code_context" => Some(ToolName::RequestCodeContext),
@@ -435,7 +218,7 @@ fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -699,5 +482,31 @@ mod tests {
             Some("InvalidFormat"),
             "public index keeps the previous LLM-facing debug code label"
         );
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests {
+    use super::*;
+
+    #[test]
+    fn wasm32_decode_tool_arguments_smoke() {
+        let decoded = decode_tool_arguments("list_dir", r#"{"dir":"crates"}"#);
+        assert!(matches!(
+            decoded,
+            PersistedToolCallArguments::Decoded(ToolCallArguments::ListDir(_))
+        ));
+    }
+
+    #[test]
+    fn wasm32_decode_tool_result_content_smoke() {
+        let decoded = decode_tool_result_content(
+            "list_dir",
+            r#"{"ok":true,"dir":"crates","exists":true,"truncated":false,"entries":[]}"#,
+        );
+        assert!(matches!(
+            decoded,
+            PersistedToolResultContent::Decoded(ToolResultContent::ListDir(_))
+        ));
     }
 }

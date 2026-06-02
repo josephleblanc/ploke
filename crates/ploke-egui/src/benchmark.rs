@@ -45,6 +45,11 @@ const INSPECTOR_SECTION_PHASE_FRAMES: usize = 30;
 const TOP_FRAME_LIMIT: usize = 10;
 const TOP_HEAP_LIMIT: usize = 32;
 const RUN_PICKER_DISCOVERY_WARNING_NS: u64 = 250_000_000;
+pub const PARITY_BASELINE_DIR: &str = "docs/profiling/benchmarks/20260602-wasm-parity-baseline";
+
+pub const BENCHMARK_GRAPH_SNAPSHOT_FIXTURE: &str =
+    "benchmark-fixtures/standard-prototype1-graph-snapshot.json";
+
 const FOCUSED_CALLSITE_SCOPES: &[&str] = &[
     "eframe_run_native",
     "selection_inspector",
@@ -97,6 +102,9 @@ pub enum BenchmarkScenario {
     ModeLineage300,
     ModeArtifactTree300,
     ToggleHideUnconsideredChildren300,
+    GraphSnapshotReplaceCold,
+    InspectorToolDecodeExpanded300,
+    GraphCatalogIdle300,
 }
 
 impl BenchmarkScenario {
@@ -121,6 +129,9 @@ impl BenchmarkScenario {
             "mode_lineage_300" => Ok(Self::ModeLineage300),
             "mode_artifact_tree_300" => Ok(Self::ModeArtifactTree300),
             "toggle_hide_unconsidered_children_300" => Ok(Self::ToggleHideUnconsideredChildren300),
+            "graph_snapshot_replace_cold" => Ok(Self::GraphSnapshotReplaceCold),
+            "inspector_tool_decode_expanded_300" => Ok(Self::InspectorToolDecodeExpanded300),
+            "graph_catalog_idle_300" => Ok(Self::GraphCatalogIdle300),
             other => Err(format!("unknown benchmark scenario '{other}'")),
         }
     }
@@ -142,7 +153,15 @@ impl BenchmarkScenario {
             Self::ModeLineage300,
             Self::ModeArtifactTree300,
             Self::ToggleHideUnconsideredChildren300,
+            Self::GraphSnapshotReplaceCold,
+            Self::InspectorToolDecodeExpanded300,
+            Self::GraphCatalogIdle300,
         ]
+    }
+
+    /// Scenarios included in the wasm-parity perf regression gate (standard + GAP instrumentation).
+    pub fn regression_gated() -> Vec<Self> {
+        Self::standard()
     }
 
     pub fn name(self) -> String {
@@ -176,6 +195,9 @@ impl BenchmarkScenario {
             Self::ToggleHideUnconsideredChildren300 => {
                 "toggle_hide_unconsidered_children_300".to_owned()
             }
+            Self::GraphSnapshotReplaceCold => "graph_snapshot_replace_cold".to_owned(),
+            Self::InspectorToolDecodeExpanded300 => "inspector_tool_decode_expanded_300".to_owned(),
+            Self::GraphCatalogIdle300 => "graph_catalog_idle_300".to_owned(),
         }
     }
 
@@ -252,12 +274,26 @@ impl BenchmarkScenario {
             Self::ToggleHideUnconsideredChildren300 => {
                 BenchmarkAction::ToggleHideUnconsideredChildren
             }
+            Self::GraphSnapshotReplaceCold => BenchmarkAction::None,
+            Self::InspectorToolDecodeExpanded300 => BenchmarkAction::SelectArtifact {
+                inspector_section: Some(BenchmarkInspectorSection::ToolDecode),
+                reset_patch_cache: false,
+            },
+            Self::GraphCatalogIdle300 => BenchmarkAction::None,
         }
     }
 
     fn action_for_completed_frames(self, completed_frames: usize) -> Option<BenchmarkAction> {
         if let Some(sequence) = self.inspector_section_phase_sequence() {
             return sequence.action_for_completed_frames(completed_frames);
+        }
+
+        if self == Self::GraphSnapshotReplaceCold {
+            return (completed_frames == 0)
+                .then_some(BenchmarkAction::ReplaceGraphFromSnapshotFixture);
+        }
+        if self == Self::GraphCatalogIdle300 {
+            return (completed_frames == 0).then_some(BenchmarkAction::SetGraphCatalogVisible);
         }
 
         if self != Self::InspectorSectionsSequence30 {
@@ -331,6 +367,8 @@ pub enum BenchmarkAction {
     },
     SetMode(GraphViewMode),
     ToggleHideUnconsideredChildren,
+    ReplaceGraphFromSnapshotFixture,
+    SetGraphCatalogVisible,
 }
 
 impl BenchmarkAction {
@@ -360,6 +398,8 @@ impl BenchmarkAction {
             Self::SetMode(GraphViewMode::ArtifactAndLineage) => "set_mode_artifact_and_lineage",
             Self::SetMode(GraphViewMode::Empty) => "set_mode_empty",
             Self::ToggleHideUnconsideredChildren => "toggle_hide_unconsidered_children",
+            Self::ReplaceGraphFromSnapshotFixture => "graph_snapshot_replace_cold",
+            Self::SetGraphCatalogVisible => "graph_catalog_idle",
         }
     }
 }
@@ -513,6 +553,7 @@ pub enum BenchmarkInspectorSection {
     PatchDebug,
     SourceRefs,
     ArtifactIds,
+    ToolDecode,
 }
 
 impl BenchmarkInspectorSection {
@@ -537,6 +578,7 @@ impl BenchmarkInspectorSection {
             Self::PatchDebug => "patch_debug",
             Self::SourceRefs => "source_refs",
             Self::ArtifactIds => "artifact_ids",
+            Self::ToolDecode => "tool_decode",
         }
     }
 
@@ -549,6 +591,7 @@ impl BenchmarkInspectorSection {
             "patch_debug" => Some(Self::PatchDebug),
             "source_refs" => Some(Self::SourceRefs),
             "artifact_ids" => Some(Self::ArtifactIds),
+            "tool_decode" => Some(Self::ToolDecode),
             _ => None,
         }
     }
@@ -562,6 +605,7 @@ impl BenchmarkInspectorSection {
             Self::PatchDebug => "inspector_patch_debug_expanded",
             Self::SourceRefs => "inspector_source_refs_expanded",
             Self::ArtifactIds => "inspector_artifact_ids_expanded",
+            Self::ToolDecode => "inspector_tool_decode_expanded",
         }
     }
 }
@@ -1750,9 +1794,337 @@ fn component_reports(
 
 fn component_parent(component: &str) -> Option<&'static str> {
     match component {
-        "diagnostics" => Some("run_navigation"),
+        "diagnostics" | "graph_catalog" => Some("run_navigation"),
+        "inspector_tool_decode" => Some("central_graph"),
         _ => None,
     }
+}
+
+pub fn parity_baseline_report_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(PARITY_BASELINE_DIR)
+        .join("report.json")
+}
+
+pub fn benchmark_graph_snapshot_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BENCHMARK_GRAPH_SNAPSHOT_FIXTURE)
+}
+
+pub fn load_benchmark_report(path: &Path) -> Result<BenchmarkReport, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[derive(Debug)]
+pub struct BenchmarkRegressionFailure {
+    pub scenario: String,
+    pub field: String,
+    pub baseline: String,
+    pub actual: String,
+}
+
+impl std::fmt::Display for BenchmarkRegressionFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "scenario={} field={} baseline={} actual={}",
+            self.scenario, self.field, self.baseline, self.actual
+        )
+    }
+}
+
+pub fn compare_benchmark_reports(
+    baseline: &BenchmarkReport,
+    actual: &BenchmarkReport,
+) -> Result<(), Vec<BenchmarkRegressionFailure>> {
+    let mut failures = Vec::new();
+    for scenario_name in BenchmarkScenario::regression_gated()
+        .iter()
+        .map(|scenario| scenario.name())
+    {
+        let Some(baseline_scenario) = baseline
+            .scenarios
+            .iter()
+            .find(|report| report.name == scenario_name)
+        else {
+            failures.push(BenchmarkRegressionFailure {
+                scenario: scenario_name.clone(),
+                field: "scenario.missing_in_baseline".to_owned(),
+                baseline: "present".to_owned(),
+                actual: "missing".to_owned(),
+            });
+            continue;
+        };
+        let Some(actual_scenario) = actual
+            .scenarios
+            .iter()
+            .find(|report| report.name == scenario_name)
+        else {
+            failures.push(BenchmarkRegressionFailure {
+                scenario: scenario_name.clone(),
+                field: "scenario.missing_in_actual".to_owned(),
+                baseline: "present".to_owned(),
+                actual: "missing".to_owned(),
+            });
+            continue;
+        };
+        compare_scenario_reports(baseline_scenario, actual_scenario, &mut failures);
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
+}
+
+fn compare_scenario_reports(
+    baseline: &ScenarioReport,
+    actual: &ScenarioReport,
+    failures: &mut Vec<BenchmarkRegressionFailure>,
+) {
+    let scenario = baseline.name.clone();
+    compare_duration_stat(
+        failures,
+        &scenario,
+        "frame_stats.median_ns",
+        baseline.frame_stats.median_ns,
+        actual.frame_stats.median_ns,
+    );
+    compare_duration_stat(
+        failures,
+        &scenario,
+        "frame_stats.p95_ns",
+        baseline.frame_stats.p95_ns,
+        actual.frame_stats.p95_ns,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocation_count.median",
+        baseline.allocation_frames.per_frame.allocation_count.median,
+        actual.allocation_frames.per_frame.allocation_count.median,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocation_count.p95",
+        baseline.allocation_frames.per_frame.allocation_count.p95,
+        actual.allocation_frames.per_frame.allocation_count.p95,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocated_object_bytes.median",
+        baseline
+            .allocation_frames
+            .per_frame
+            .allocated_object_bytes
+            .median,
+        actual
+            .allocation_frames
+            .per_frame
+            .allocated_object_bytes
+            .median,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocated_object_bytes.p95",
+        baseline
+            .allocation_frames
+            .per_frame
+            .allocated_object_bytes
+            .p95,
+        actual
+            .allocation_frames
+            .per_frame
+            .allocated_object_bytes
+            .p95,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocated_wrapped_bytes.median",
+        baseline
+            .allocation_frames
+            .per_frame
+            .allocated_wrapped_bytes
+            .median,
+        actual
+            .allocation_frames
+            .per_frame
+            .allocated_wrapped_bytes
+            .median,
+    );
+    compare_value_stat(
+        failures,
+        &scenario,
+        "allocation_frames.per_frame.allocated_wrapped_bytes.p95",
+        baseline
+            .allocation_frames
+            .per_frame
+            .allocated_wrapped_bytes
+            .p95,
+        actual
+            .allocation_frames
+            .per_frame
+            .allocated_wrapped_bytes
+            .p95,
+    );
+    compare_heap_slope(failures, &scenario, baseline, actual);
+    for baseline_component in &baseline.component_timings {
+        let Some(actual_component) = actual
+            .component_timings
+            .iter()
+            .find(|component| component.component == baseline_component.component)
+        else {
+            failures.push(BenchmarkRegressionFailure {
+                scenario: scenario.clone(),
+                field: format!("component_timings.{}.missing", baseline_component.component),
+                baseline: "present".to_owned(),
+                actual: "missing".to_owned(),
+            });
+            continue;
+        };
+        compare_duration_stat(
+            failures,
+            &scenario,
+            &format!(
+                "component_timings.{}.median_ns",
+                baseline_component.component
+            ),
+            baseline_component.stats.median_ns,
+            actual_component.stats.median_ns,
+        );
+        compare_duration_stat(
+            failures,
+            &scenario,
+            &format!("component_timings.{}.p95_ns", baseline_component.component),
+            baseline_component.stats.p95_ns,
+            actual_component.stats.p95_ns,
+        );
+        if let (Some(baseline_share), Some(actual_share)) = (
+            baseline_component.median_percent_of_frame_x100,
+            actual_component.median_percent_of_frame_x100,
+        ) {
+            if actual_share > baseline_share {
+                failures.push(BenchmarkRegressionFailure {
+                    scenario: scenario.clone(),
+                    field: format!(
+                        "component_timings.{}.median_percent_of_frame_x100",
+                        baseline_component.component
+                    ),
+                    baseline: baseline_share.to_string(),
+                    actual: actual_share.to_string(),
+                });
+            }
+        }
+    }
+}
+
+fn compare_duration_stat(
+    failures: &mut Vec<BenchmarkRegressionFailure>,
+    scenario: &str,
+    field: &str,
+    baseline: Option<u64>,
+    actual: Option<u64>,
+) {
+    if actual > baseline {
+        failures.push(BenchmarkRegressionFailure {
+            scenario: scenario.to_owned(),
+            field: field.to_owned(),
+            baseline: format_optional_u64(baseline),
+            actual: format_optional_u64(actual),
+        });
+    }
+}
+
+fn compare_value_stat(
+    failures: &mut Vec<BenchmarkRegressionFailure>,
+    scenario: &str,
+    field: &str,
+    baseline: Option<u64>,
+    actual: Option<u64>,
+) {
+    if actual > baseline {
+        failures.push(BenchmarkRegressionFailure {
+            scenario: scenario.to_owned(),
+            field: field.to_owned(),
+            baseline: format_optional_u64(baseline),
+            actual: format_optional_u64(actual),
+        });
+    }
+}
+
+fn compare_heap_slope(
+    failures: &mut Vec<BenchmarkRegressionFailure>,
+    scenario: &str,
+    baseline: &ScenarioReport,
+    actual: &ScenarioReport,
+) {
+    if heap_slope_rank(actual.allocation_frames.slope)
+        > heap_slope_rank(baseline.allocation_frames.slope)
+    {
+        failures.push(BenchmarkRegressionFailure {
+            scenario: scenario.to_owned(),
+            field: "allocation_frames.slope".to_owned(),
+            baseline: baseline.allocation_frames.slope.as_str().to_owned(),
+            actual: actual.allocation_frames.slope.as_str().to_owned(),
+        });
+        return;
+    }
+    if baseline.allocation_frames.slope == HeapSlope::Growing
+        && actual.allocation_frames.slope == HeapSlope::Growing
+    {
+        compare_value_stat(
+            failures,
+            scenario,
+            "allocation_frames.last_50.allocated_wrapped_bytes.median",
+            baseline
+                .allocation_frames
+                .last_50
+                .stats
+                .allocated_wrapped_bytes
+                .median,
+            actual
+                .allocation_frames
+                .last_50
+                .stats
+                .allocated_wrapped_bytes
+                .median,
+        );
+        compare_value_stat(
+            failures,
+            scenario,
+            "allocation_frames.last_50.allocated_wrapped_bytes.p95",
+            baseline
+                .allocation_frames
+                .last_50
+                .stats
+                .allocated_wrapped_bytes
+                .p95,
+            actual
+                .allocation_frames
+                .last_50
+                .stats
+                .allocated_wrapped_bytes
+                .p95,
+        );
+    }
+}
+
+fn heap_slope_rank(slope: HeapSlope) -> u8 {
+    match slope {
+        HeapSlope::Plateau => 0,
+        HeapSlope::Inconclusive => 1,
+        HeapSlope::Growing => 2,
+    }
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "None".to_owned())
 }
 
 fn allocation_frame_report(frames: &[FrameSample]) -> AllocationFrameReport {
@@ -2683,6 +3055,160 @@ mod tests {
         assert!(!is_benchmark_relevant_dirty_path(&paths[0]));
         assert!(is_benchmark_relevant_dirty_path(&paths[1]));
         assert!(!is_benchmark_relevant_dirty_path(&paths[2]));
+    }
+
+    #[test]
+    fn compare_benchmark_reports_rejects_frame_time_regression() {
+        let baseline = ScenarioReport {
+            name: "warm_idle_300".to_owned(),
+            target_frames: 300,
+            frame_stats: DurationStats {
+                count: 300,
+                median_ns: Some(1_000_000),
+                p95_ns: Some(1_100_000),
+                ..DurationStats::default()
+            },
+            top_frames: Vec::new(),
+            component_timings: Vec::new(),
+            allocation_frames: AllocationFrameReport::default(),
+            phase_windows: Vec::new(),
+            heap_profile: HeapScenarioProfile::default(),
+            allocations: AllocationDelta::default(),
+            action: BenchmarkActionReport::for_action(BenchmarkAction::None),
+        };
+        let mut actual = baseline.clone();
+        actual.frame_stats.median_ns = Some(1_000_001);
+        let baseline_report = BenchmarkReport {
+            schema_version: BENCHMARK_REPORT_VERSION.to_owned(),
+            suite: "standard".to_owned(),
+            created_at_unix_ms: 0,
+            commit: GitInfo {
+                short_sha: None,
+                full_sha: None,
+            },
+            dirty_state: DirtyState {
+                dirty: Some(false),
+                classification: DirtyStateClassification::Clean,
+                relevant_dirty: Some(false),
+                paths: Vec::new(),
+                relevant_paths: Vec::new(),
+                unrelated_paths: Vec::new(),
+                scope: "fixture".to_owned(),
+            },
+            command: "fixture".to_owned(),
+            run_root: STANDARD_RUN_ROOT.to_owned(),
+            feature_set: Vec::new(),
+            scenarios_requested: vec!["warm_idle_300".to_owned()],
+            callsite_sampling: None,
+            run_readiness: None,
+            startup: StartupProfile::default(),
+            scenarios: vec![baseline],
+            puffin_artifacts: Vec::new(),
+            heap_artifacts: Vec::new(),
+            notes: Vec::new(),
+        };
+        let mut actual_report = baseline_report.clone();
+        actual_report.scenarios = vec![actual];
+        let failures =
+            compare_benchmark_reports(&baseline_report, &actual_report).expect_err("regression");
+        assert!(failures.iter().any(|failure| {
+            failure.field == "frame_stats.median_ns" && failure.scenario == "warm_idle_300"
+        }));
+    }
+
+    #[test]
+    fn benchmark_regression() {
+        let baseline_path = parity_baseline_report_path();
+        assert!(
+            baseline_path.is_file(),
+            "missing parity baseline at {} (run Phase 0 baseline capture first)",
+            baseline_path.display()
+        );
+        let baseline = load_benchmark_report(&baseline_path).expect("load baseline");
+        for scenario in BenchmarkScenario::regression_gated() {
+            let name = scenario.name();
+            assert!(
+                baseline.scenarios.iter().any(|report| report.name == name),
+                "baseline missing gated scenario {name}"
+            );
+        }
+        assert!(
+            benchmark_graph_snapshot_fixture_path().is_file(),
+            "missing benchmark graph snapshot fixture at {}",
+            benchmark_graph_snapshot_fixture_path().display()
+        );
+        compare_benchmark_reports(&baseline, &baseline).expect("compare harness sanity");
+    }
+
+    /// Full zero-tolerance compare vs committed baseline. Run only after refreshing baseline
+    /// on the same machine/profile; back-to-back harness runs can differ slightly without code changes.
+    #[test]
+    #[ignore = "orchestrator gate: cargo test -p ploke-egui --features dev,native-benchmark benchmark_regression_against_baseline -- --ignored --nocapture"]
+    fn benchmark_regression_against_baseline() {
+        let run_root = Path::new(STANDARD_RUN_ROOT);
+        if !run_root.join("scheduler.json").is_file() {
+            eprintln!(
+                "benchmark_regression_against_baseline skipped: STANDARD_RUN_ROOT missing at {}",
+                run_root.display()
+            );
+            return;
+        }
+        let readiness = benchmark_run_readiness(run_root).expect("readiness probe");
+        assert!(
+            readiness.ready,
+            "standard run root not ready: {}",
+            readiness.summary()
+        );
+
+        let baseline_path = parity_baseline_report_path();
+        let baseline = load_benchmark_report(&baseline_path).expect("load baseline");
+
+        let output_dir = benchmark_test_output_dir().join("regression-compare");
+        let _ = fs::remove_dir_all(&output_dir);
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir
+            .parent()
+            .and_then(|path| path.parent())
+            .expect("workspace root");
+        let status = Command::new(env!("CARGO"))
+            .current_dir(workspace_root)
+            .args([
+                "run",
+                "-p",
+                "ploke-egui",
+                "--features",
+                "dev,native-benchmark",
+                "--",
+                "--run-root",
+                STANDARD_RUN_ROOT,
+                "--benchmark-suite",
+                "standard",
+                "--benchmark-output",
+            ])
+            .arg(output_dir.to_string_lossy().as_ref())
+            .status()
+            .expect("spawn benchmark run");
+        assert!(status.success(), "benchmark run failed: {status:?}");
+
+        let actual =
+            load_benchmark_report(&output_dir.join("report.json")).expect("load actual report");
+        if let Err(failures) = compare_benchmark_reports(&baseline, &actual) {
+            for failure in &failures {
+                eprintln!("{failure}");
+            }
+            panic!("benchmark regression: {} failure(s)", failures.len());
+        }
+        let _ = fs::remove_dir_all(&output_dir);
+    }
+
+    #[test]
+    fn benchmark_regression_skips_when_standard_run_root_missing() {
+        let run_root = Path::new(STANDARD_RUN_ROOT);
+        if run_root.join("scheduler.json").is_file() {
+            return;
+        }
+        let readiness = benchmark_run_readiness(run_root).expect("readiness");
+        assert!(!readiness.ready);
     }
 
     #[test]

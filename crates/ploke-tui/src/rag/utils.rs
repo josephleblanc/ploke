@@ -1,4 +1,6 @@
-use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
+use crate::tools::{
+    ToolError, ToolErrorCode, ToolName, ToolUiPayload, tool_ui_payload_from_error,
+};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
@@ -260,7 +262,7 @@ impl ToolCallParams {
                 parent_id: self.parent_id,
                 call_id: self.call_id.clone(),
                 error: error.to_wire_string(),
-                ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+                ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
             }));
     }
 
@@ -275,7 +277,7 @@ impl ToolCallParams {
             parent_id: self.parent_id,
             call_id: self.call_id.clone(),
             error: error.to_wire_string(),
-            ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
+            ui_payload: Some(tool_ui_payload_from_error(self.call_id.clone(), &error)),
         }
     }
 }
