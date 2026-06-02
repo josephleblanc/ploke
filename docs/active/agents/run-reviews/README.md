@@ -91,3 +91,36 @@ state without checking newer code, History records, and run artifacts.
   applied patch/submission output, successful issue-linked tests, empty
   successful read defects, formatting/doc-comment patch-quality gaps, protocol
   edit-state projection drift, and current child-plan readiness.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-broad-harness.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-broad-harness.md)
+  Broad-harness child review for parent slot `node-552c19a55f53dbe6`, covering a
+  900s timeout with a verified one-file `ploke-error` diff, focused validation
+  only, absent submitted result, and no benchmark/admission usefulness.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r2-broad-harness.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r2-broad-harness.md)
+  Broad-harness r2 review, classifying a timed-out/no-edit attempt with no
+  submitted result, no proposal events, clean workspace state, empty successful
+  read defects, and benchmark-useless outcome.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r3-broad-harness.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r3-broad-harness.md)
+  Broad-harness r3 review, covering a timed-out trace-bearing attempt with a
+  verified dirty `ploke-db/src/helpers.rs` diff, missing submitted result,
+  non-final validation, and no descendant-performance proof.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r4-broad-harness.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r4-broad-harness.md)
+  Broad-harness r4 review, covering a timed-out trace-bearing attempt with a
+  verified two-file `ploke-db` diff, incomplete ordered apply projection for the
+  second proposal, focused validation gaps, and absent submitted result.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r5-provider-unavailable.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r5-provider-unavailable.md)
+  Broad-harness r5 provider-unavailable review, separating Google/Vertex
+  `HTTP_429 RESOURCE_EXHAUSTED` from model/patch failure and verifying no
+  submitted result, no proposal events, and no workspace diff.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r6-broad-harness.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r6-broad-harness.md)
+  Broad-harness r6 applied-candidate review, covering the `FanOut` concurrency
+  edit in `ploke-protocol/src/procedure.rs`, focused cargo validation, request
+  contract mismatch, unmeasured benchmark value, and missing authority/admission
+  artifacts.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r7-r9-incomplete-child-state.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-node-552c19a55f53dbe6-r7-r9-incomplete-child-state.md)
+  Incomplete child-state note, not a durable successful run review: r7 is
+  workspace-only with no trace/result/diff, and r8-r9 are request-only.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-child-run-review-fanin.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-child-run-review-fanin.md)
+  Fan-in synthesis for the child run-review cards, separating timed-out attempts,
+  provider-unavailable r5, applied-but-unadmitted r6, and incomplete r7-r9 state
+  while mapping findings to alive bugs, blocker-repair work, and adjudication
+  signals.
