@@ -3,38 +3,624 @@
 Status: draft walkthrough / implementation audit
 Command: `ploke-eval loop prototype1-state`
 Base branch: `feature/ploke-loop`
-Scope: `crates/ploke-eval`, with live-model/protocol boundaries into `ploke-protocol` where relevant.
+Audit branch: `docs/prototype1-state-loop-walkthrough`
+Scope: `crates/ploke-eval`, with live protocol boundaries into `ploke-protocol`.
 
 ## Purpose
 
 This guide explains the current implementation path for `ploke-eval loop prototype1-state` so future work on the Prototype 1 observable self-improving loop can reason about configuration, execution phases, disk writes, persisted data, live API/model routing, and parallelism opportunities.
 
+The command is not just a CLI wrapper. It is the typed parent-turn runtime for the Prototype 1 loop. A parent checkout enters the command with a checkout-carried parent identity or a successor handoff invocation. It plans children, runs them through C1-C4 state transitions, observes terminal child results, compares treatments against the parent baseline, selects a successor, and may launch the successor parent runtime.
+
 ## Reading notes
 
-- File/line references are to the source snapshot on branch `docs/prototype1-state-loop-walkthrough`, based at `3a4ac77e`.
-- The focus is the typed parent turn path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`, plus C1-C4 child transitions.
-- This document intentionally distinguishes setup/admission (`prototype1-setup`) from the runtime turn (`prototype1-state`).
+- File/line references are from branch `docs/prototype1-state-loop-walkthrough`, based at `3a4ac77e`.
+- This document intentionally distinguishes setup/admission (`loop prototype1-setup`) from the runtime parent turn (`loop prototype1-state`).
+- No secrets are recorded here. Model/provider names and source paths are code/config provenance, not credentials.
+- `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
 
-## Outline
+## 1. Command entrypoint and dispatch
 
-1. Command entrypoint and configuration loading.
-2. Campaign config and admitted run-profile config.
-3. Full parent-turn execution path.
-4. Child C1-C4 state-machine path.
-5. Disk-write boundaries.
-6. Persisted data types and originating runtime types.
-7. Live API calls and where models are selected.
-8. Parallelism that exists today and missed/weak parallelism opportunities.
-9. Practical debugging/stabilization notes.
+### 1.1 Binary entry
 
-## Draft evidence spine
+`crates/ploke-eval/src/main.rs` parses the Clap CLI, initializes tracing, then calls `Cli::run()` (`main.rs:5-20`). The `Cli` type is re-exported from `crates/ploke-eval/src/lib.rs`.
 
-The verified high-level path is:
+### 1.2 Top-level loop dispatch
 
-- `crates/ploke-eval/src/main.rs` parses the CLI and calls `Cli::run()`.
-- `crates/ploke-eval/src/cli.rs` dispatches `LoopSubcommand::Prototype1State(cmd)` to `cmd.run().await`.
-- `Prototype1StateCommand::run` calls `run_turn` in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`.
-- `run_turn` resolves repo/campaign/config/admitted run shape, validates parent identity or successor handoff, appends parent-start evidence, establishes baseline, plans children, runs fanout, compares child treatments, selects a successor, and may hand off to the next parent.
-- Each child proceeds through C1 materialize, C2 build, C3 spawn/ready, and C4 observe/result.
+The `loop` command variants include `Prototype1State(Prototype1StateCommand)` (`crates/ploke-eval/src/cli.rs:539-568`). The dispatch arm sends `LoopSubcommand::Prototype1State(cmd)` to `cmd.run().await` (`cli.rs:1445-1457`).
 
-The expanded walkthrough below will replace this outline with detailed evidence tables and step-by-step notes.
+`Prototype1StateCommand` is the concrete CLI shape for the parent turn (`cli.rs:609-661`). Its fields are:
+
+- `--campaign`: explicit campaign id. The comment says default is parent identity, then active selection (`cli.rs:612-614`). The live resolver is stricter than normal active-selection flows for this path.
+- `--node-id`: candidate node id. During `--init-parent-identity`, this is the generation-0 parent node (`cli.rs:616-618`).
+- `--repo-root`: active parent checkout root; defaults to cwd (`cli.rs:620-622`).
+- `--init-parent-identity`, `--identity-branch`, `--identity-instance`: bootstrap path for generation-0 parent checkout identity (`cli.rs:624-634`).
+- `--handoff-invocation`: successor handoff token from the previous parent runtime (`cli.rs:636-638`).
+- `--stop-after`: state-machine stop point, default `Complete` (`cli.rs:640-641`).
+- `--successor-selection`, `--successor-selection-seed`, `--successor-selection-metrics`: successor-selection controls (`cli.rs:643-653`).
+- `--candidate-generator`: defaults to `BroadHarnessRequest` (`cli.rs:655-657`).
+- `--format`: table/json output (`cli.rs:659-660`).
+
+The sibling `Prototype1RunnerCommand` is the persisted child runtime entrypoint (`cli.rs:699-720`). Parent C3 writes an invocation, then launches the child binary with `loop prototype1-runner --invocation <path> --execute --format json`.
+
+## 2. Two config planes: campaign and run-profile
+
+There are two durable config planes that matter for this loop:
+
+1. The campaign config says what campaign, dataset, storage roots, model route, eval policy, and protocol policy are being evaluated.
+2. The admitted run-profile says what operator-approved Prototype 1 behavior is allowed for this campaign: target selection, candidate generation, search limits, selection policy, protocol knobs, execution stop/staleness, and control caps.
+
+### 2.1 Campaign config
+
+`CampaignManifest` is the persisted campaign manifest (`crates/ploke-eval/src/campaign.rs:27-53`). It carries:
+
+- `schema_version`
+- `campaign_id`
+- `benchmark_family`
+- `dataset_sources`
+- `model_id`
+- `provider_slug`
+- `route_source`
+- `required_procedures`
+- `instances_root`
+- `batches_root`
+- `eval`
+- `protocol`
+- `framework`
+
+`ResolvedCampaignConfig` is the materialized runtime config (`campaign.rs:123-138`). It has non-optional model/route/storage fields after defaulting and validation.
+
+The setup path constructs a Prototype 1 campaign in `prepare_prototype1_loop_campaign` (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7553-7714`). That function:
+
+- resolves profile/CLI/default model choices;
+- resolves eval route/provider;
+- enforces shared baseline eval/protocol model routing when baseline protocol is enabled;
+- chooses campaign id, defaulting to `prototype1-<batch-id-sanitized>`;
+- writes a selected-instance slice dataset (`cli_facing.rs:7717-7771`);
+- writes the campaign manifest;
+- resolves it into `ResolvedCampaignConfig`.
+
+`resolve_campaign_config` loads and validates a campaign manifest (`campaign.rs:478-572`). `ensure_prototype1_baseline_closure_state` either loads the existing closure state or recomputes it (`cli_facing.rs:409-418`). Recompute writes the closure-state JSON (`crates/ploke-eval/src/closure.rs:254-298`).
+
+### 2.2 Run-profile config
+
+The run-profile schema is `prototype1-run-profile.v1` (`crates/ploke-eval/src/cli/prototype1_state/profile.rs:29`). `Prototype1RunProfile` persists these sections (`profile.rs:37-59`):
+
+- `storage`
+- `target`
+- `model`
+- `search`
+- `generation`
+- `selection`
+- `protocol`
+- `execution`
+- `control`
+
+Validation is centralized in `Prototype1RunProfile::validate` (`profile.rs:61-85`). It validates target/model/search/generation/protocol/execution/control/selection and rejects legacy generation with multiple target instances.
+
+Important profile methods:
+
+- `search_policy()` maps profile search config into `Prototype1SearchPolicy` (`profile.rs:95-104`).
+- `protocol_policy()` maps profile protocol config into `ProtocolCampaignPolicy` (`profile.rs:107-113`).
+- `default_parallel_cap()` and `patch_generation_parallel_cap()` derive profile-approved fanout caps (`profile.rs:87-93`).
+
+#### 2.2.1 Profile model defaults
+
+`ModelDefaults` persists:
+
+- `id`: model id string
+- `route_source`: `openrouter` or `direct-google`
+- `provider`: provider slug
+
+Refs: `profile.rs:130-142`.
+
+Validation parses model ids as `ModelId`, validates provider strings as `ProviderKey`, and rejects `direct-google` plus any non-`google` provider (`profile.rs:149-179`). The route-source serde accepts aliases such as `open-router`, `open_router`, `direct_google`, and `google` (`profile.rs:183-218`).
+
+#### 2.2.2 Profile protocol controls
+
+`Protocol` persists:
+
+- `max_tokens`
+- `tool_review_parallelism`
+- `reasoning`
+
+Refs: `profile.rs:577-585`. Validation rejects zero tokens or zero review parallelism and validates reasoning (`profile.rs:587-600`).
+
+#### 2.2.3 Profile execution controls
+
+`Execution` persists:
+
+- `stop_after`
+- `observe_child_stale_after_secs`
+- `trace_jsonl`
+- `debug_tools`
+- `mbe`
+
+Refs: `profile.rs:635-646`. `Execution::state_stop_after` maps profile stop-after to `Prototype1StateStopAfter` (`profile.rs:658-665`), and `observe_child_stale_after` returns the child-observation timeout (`profile.rs:667-669`).
+
+#### 2.2.4 Profile control caps
+
+`Control` persists:
+
+- `mode`
+- `parallel_cap`
+
+Refs: `profile.rs:747-753`. Validation rejects zero and rejects any cap that widens the search-derived fanout; `parallel_cap` may only narrow admitted parallelism (`profile.rs:755-767`).
+
+### 2.3 Profile loading and admission
+
+`load_operator_profile` resolves a name/path, reads TOML, parses it, and validates it (`profile.rs:822-835`, `profile.rs:911-919`). Bare names resolve under `~/.ploke-eval/profiles/prototype1/<name>.toml` (`profile.rs:922-930`).
+
+`admit_run_profile` writes two campaign-local artifacts (`profile.rs:837-864`):
+
+1. `prototype1/run-profile.toml`: pretty TOML copy of the operator profile.
+2. `prototype1/run-profile.commitment.json`: commitment/provenance JSON.
+
+`RunProfileCommitment` includes (`profile.rs:800-807`):
+
+- `schema_version`
+- `profile_path`
+- `sha256`
+- `source_path`
+- `admitted_at`
+
+`write_commitment` serializes it as pretty JSON (`profile.rs:948-954`). `load_admitted_run_profile` reads `run-profile.toml`, loads or creates a commitment, and rejects digest mismatch (`profile.rs:868-903`).
+
+### 2.4 How `prototype1-state` chooses profile vs CLI config
+
+`Prototype1StateRunShape` is the compact runtime shape used by `prototype1-state` (`cli_facing.rs:946-957`). It includes stop-after, stale timeout, candidate-generation config, successor-selection controls, oracle mode/evidence, and metrics policy.
+
+- `from_command` uses CLI flags and defaults (`cli_facing.rs:959-972`).
+- `from_profile` uses the admitted run-profile (`cli_facing.rs:974-988`).
+- `resolve` first tries `profile::load_admitted_run_profile(manifest_path)` and only falls back to command flags if there is no admitted profile (`cli_facing.rs:990-999`).
+
+This is important for stability: after setup admits a profile, `prototype1-state` should normally be profile-driven, not ad hoc CLI-driven.
+
+## 3. Setup vs runtime turn
+
+### 3.1 Setup/admission path
+
+`loop prototype1-setup` dispatches to `Prototype1LoopCommand::run_setup`, which calls `prepare_prototype1_parent_setup` (`cli_facing.rs:154-170`). Setup:
+
+1. loads optional operator profile;
+2. prepares or loads a benchmark batch;
+3. resolves the primary instance;
+4. prepares the campaign;
+5. admits the run profile;
+6. ensures baseline closure state;
+7. registers the root parent node;
+8. checks out the fresh parent branch;
+9. writes parent identity;
+10. commits parent identity into the active checkout;
+11. validates the parent checkout;
+12. prints the next `loop prototype1-state --repo-root .` command.
+
+Refs: `cli_facing.rs:195-301`.
+
+### 3.2 Runtime turn path
+
+`loop prototype1-state` is `Prototype1StateCommand::run` -> `run_turn` (`cli_facing.rs:6477-6488`). `run()` only wraps error handling for successor handoff failure recording. The runtime work is in `run_turn`.
+
+## 4. Full parent-turn execution path
+
+The parent turn is easiest to read as a sequence of authority transitions and evidence writes.
+
+### 4.1 Resolve repo, campaign, config, closure, journal
+
+`run_turn` begins by resolving:
+
+1. `repo_root`: `--repo-root` or current directory (`cli_facing.rs:6488-6493`).
+2. `campaign_id`: `resolve_prototype1_state_campaign` (`cli_facing.rs:6494`).
+3. active monitor target (`cli_facing.rs:6495`).
+4. `manifest_path`: `campaign_manifest_path` (`cli_facing.rs:6496`).
+5. `run_shape`: admitted profile or command fallback (`cli_facing.rs:6497`).
+6. `resolved_campaign`: `resolve_campaign_config` (`cli_facing.rs:6498-6499`).
+7. baseline closure state (`cli_facing.rs:6500`).
+8. transition journal path and `PrototypeJournal` (`cli_facing.rs:6501-6502`).
+
+Disk write in this phase:
+
+- `ensure_prototype1_baseline_closure_state` may recompute/write closure state JSON (`closure.rs:254-298`).
+- Opening `PrototypeJournal` does not write; each later `journal.append` writes JSONL.
+
+### 4.2 Optional parent identity bootstrap
+
+If `--init-parent-identity` is set, `run_turn` calls `initialize_prototype1_parent_identity` and returns after printing identity (`cli_facing.rs:6512-6540`).
+
+Disk writes in this path:
+
+- parent identity JSON at `.ploke/prototype1/parent_identity.json`, via `write_parent_identity` (`crates/ploke-eval/src/cli/prototype1_state/identity.rs:222-239`);
+- setup path also persists the active checkout files through git commit (`cli_facing.rs:267-280` and backend commit path below).
+
+### 4.3 Resolve parent identity or successor handoff
+
+If `--handoff-invocation` is present, the invocation is loaded and must be `InvocationAuthority::Successor`; child invocations are rejected (`cli_facing.rs:6543-6556`). The successor invocation is validated into a `ParentIdentity` (`cli_facing.rs:6544-6547`).
+
+If no handoff is present, `resolve_prototype1_parent_identity` loads the active checkout parent identity (`cli_facing.rs:6557-6559`).
+
+The parent is then loaded as `Parent<Unchecked>` with or without a runtime id (`cli_facing.rs:6572-6607`). `acknowledge_prototype1_state_handoff` checks/acknowledges startup authority and yields a ready parent plus optional handoff invocation (`cli_facing.rs:6608-6614`).
+
+### 4.4 Append parent-start evidence
+
+The parent start is persisted immediately:
+
+- `JournalEntry::ParentStarted` append (`cli_facing.rs:6629-6642`).
+- parent resource sample at `ParentStart` (`cli_facing.rs:6643-6652`).
+
+The journal path is `<campaign-root>/prototype1/transition-journal.jsonl`; append creates parent dirs, opens append/create, writes a JSON line, and syncs (`crates/ploke-eval/src/cli/prototype1_state/journal.rs:672-713`).
+
+### 4.5 Establish baseline
+
+`establish_parent_baseline` chooses between:
+
+- generation 0: establish initial parent baseline;
+- later generation: promote selected child baseline.
+
+Refs: `cli_facing.rs:420-433`.
+
+Generation-0 baseline calls:
+
+- `advance_eval_closure` (`cli_facing.rs:435-441`);
+- `advance_protocol_closure` (`cli_facing.rs:443-445`);
+- `load_closure_state` and `complete_baseline_from_closure` (`cli_facing.rs:447-449`).
+
+Selected-child baseline promotion reads the child branch evaluation report JSON and validates campaign/branch match (`cli_facing.rs:451-487`).
+
+Disk writes in baseline:
+
+- eval closure writes batch/run manifests and run artifacts through `advance_eval_closure`;
+- protocol closure writes protocol artifacts through `advance_protocol_closure`;
+- closure recompute writes closure state JSON.
+
+### 4.6 Resolve search policy and child budget
+
+For `Complete` runs, `run_turn` loads search policy from admitted run-profile if present; otherwise from scheduler state (`cli_facing.rs:6670-6679`). It rejects live complete runs with legacy candidate generation (`cli_facing.rs:6682-6686`). It enforces generation and total-node hard stops before planning children (`cli_facing.rs:6687-6701`).
+
+### 4.7 Resolve/generate child plan
+
+`resolve_child_plan` is called with campaign, manifest, repo root, parent, candidate-generation config, optional explicit node id, and child budget (`cli_facing.rs:6702-6711`). It returns `PlannedChildren`: parent, plan, children, and rejected surface attempts (`cli_facing.rs:6712-6717`).
+
+The plan publication path uses the `ChildPlan` message file under `prototype1/messages/child-plan/<parent-node-id>.json` (`crates/ploke-eval/src/cli/prototype1_state/parent.rs:278-289`). The live write is performed while locking the message sender and calling `write_child_plan_file` (`cli_facing.rs:1217-1232`).
+
+Disk write:
+
+- `ChildPlan` JSON message.
+
+### 4.8 Choose fanout mode and run children
+
+`run_turn` chooses among three paths:
+
+1. rejected-only plan: no child runs, selection is computed from rejected surface attempts (`cli_facing.rs:6748-6757`);
+2. `Complete` + adaptive batch: `run_adaptive_child_fanout` (`cli_facing.rs:6757-6776`);
+3. otherwise: `run_child_fanout` then one successor-selection pass (`cli_facing.rs:6777-6805`).
+
+`run_child_fanout` uses blocking tasks around `run_planned_child` and applies budget/schedule controls (`cli_facing.rs:5123-5245`). `run_adaptive_child_fanout` runs child batches and re-runs selection after each batch, allowing early stop when a successor is accepted (`cli_facing.rs:5248-5314`).
+
+### 4.9 Selection and continuation
+
+After child outcomes, `ParentSelection` computes candidates and optional successor (`cli_facing.rs:6792-6801`). If a successor exists, `live_successor_continuation_decision` enforces hard continuation gates: direct-child, generation, node-count, stop-on-keep, require-keep, and History traversal conditions (`cli_facing.rs:6856-6863`; detailed helper around `cli_facing.rs:5327-5400`).
+
+The chosen successor decision is appended to the journal as `JournalEntry::Successor(selected_with_decision)` (`cli_facing.rs:6885-6899`). If continuation is disallowed, `JournalEntry::Successor(stopped)` is appended (`cli_facing.rs:6923-6940`).
+
+### 4.10 Successor handoff
+
+If continuation is allowed, `spawn_and_handoff_prototype1_successor` installs/starts the successor parent runtime (`cli_facing.rs:6904-6922`). The successor invocation argv is generated in `invocation.rs` as `loop prototype1-state --campaign ... --repo-root ... --handoff-invocation ... --stop-after complete --format json` (`crates/ploke-eval/src/cli/prototype1_state/invocation.rs:65-91`).
+
+Disk writes in handoff include successor invocation JSON and channel messages. Invocation JSON paths are `prototype1/nodes/<node>/invocations/<runtime>.json`; the writer creates parent dirs and writes pretty JSON (`invocation.rs:490-538`).
+
+### 4.11 Parent completion report
+
+Before returning, `run_turn` appends a parent resource sample at `ParentComplete` (`cli_facing.rs:6946-6955`), builds `Prototype1StateReport`, and prints table/json (`cli_facing.rs:6956-7030`). If this turn itself was a successor invocation, `record_prototype1_successor_completion` records completion (`cli_facing.rs:7033-7040`).
+
+## 5. Child execution path: C1-C4 plus child runner
+
+`run_planned_child` executes a planned child through C1-C4 (`cli_facing.rs:4811-5104`). The typed child runner then evaluates the materialized treatment branch and returns a terminal result over the channel.
+
+### 5.1 C1: materialize branch
+
+C1 is implemented in `crates/ploke-eval/src/cli/prototype1_state/c1.rs`.
+
+`C1::from_child_plan` validates the campaign/node/request/resolved branch consistency and verifies parent target content against recorded source (`c1.rs:436-518`).
+
+Normal/single-file C1 transition:
+
+- append before journal entry (`c1.rs:836-843`);
+- backend realizes workspace/worktree (`c1.rs:851-866`);
+- remove stale child binary if present (`c1.rs:867-873`);
+- write updated node projection and runner request (`c1.rs:875-893`);
+- append after journal entry (`c1.rs:930-937`).
+
+Broad-harness C1 transition:
+
+- validate admitted workspace/artifact evidence and changed paths (`c1.rs:591-694`);
+- append before journal (`c1.rs:696-703`);
+- remove stale child binary and write node/request projections (`c1.rs:712-738`);
+- append after journal (`c1.rs:768-775`).
+
+Disk writes:
+
+- child worktree target files through backend;
+- node projection JSON;
+- runner request JSON;
+- transition journal JSONL;
+- possible stale binary removal.
+
+### 5.2 C2: build child binary
+
+C2 is implemented in `crates/ploke-eval/src/cli/prototype1_state/c2.rs`.
+
+`BuildChild::transition`:
+
+- append before journal (`c2.rs:313-323`);
+- create scratch target dir and child binary dir (`c2.rs:332-345`);
+- run `cargo check` with `CARGO_TARGET_DIR` (`c2.rs:347-370`);
+- on check failure, write failed node projection and after journal (`c2.rs:381-408`);
+- run `cargo build` with `CARGO_TARGET_DIR` (`c2.rs:411-434`);
+- on build failure, write failed node projection and after journal (`c2.rs:445-472`);
+- copy built binary to node bin path, clean scratch dir, write `BinaryBuilt` node projection, append after journal (`c2.rs:481-545`).
+
+Disk writes:
+
+- scratch cargo target dir under the node;
+- promoted child binary under `prototype1/nodes/<node>/bin/ploke-eval`;
+- node projection JSON;
+- transition journal JSONL;
+- scratch cleanup via `fs::remove_dir_all` (`c2.rs:75-94`).
+
+### 5.3 C3: spawn child and wait for ready
+
+C3 is implemented in `crates/ploke-eval/src/cli/prototype1_state/c3.rs`.
+
+`SpawnChild::transition`:
+
+- build child invocation and write invocation JSON (`c3.rs:439-461`);
+- append spawn-starting journal entry (`c3.rs:464-483`);
+- create/open stdout/stderr stream files (`c3.rs:147-168`, `c3.rs:484-503`);
+- spawn child process with env vars and current directory set to child artifact root (`c3.rs:484-503`);
+- append spawn-spawned journal entry (`c3.rs:515-531`);
+- wait for child `Ready` over file channel (`c3.rs:533-537`);
+- on ready, write node `Running` projection and append observed/acknowledged journal entry (`c3.rs:540-592`);
+- on rejected spawn, write node `Failed` projection and append observed/rejected journal entry (`c3.rs:594-638`);
+- readiness loop polls channel and child exit until timeout (`c3.rs:649-700`).
+
+Disk writes:
+
+- child invocation JSON;
+- stdout/stderr stream files;
+- channel JSONL ready/evaluating/result messages from child;
+- node projection JSON;
+- transition journal JSONL.
+
+### 5.4 Child runner: `prototype1-runner --execute`
+
+The child process executes `execute_prototype1_runner_invocation` in `crates/ploke-eval/src/cli/prototype1_process.rs` (`prototype1_process.rs:2977-3129`).
+
+Function path:
+
+1. `execute_prototype1_runner_invocation(invocation_path)` loads the executable invocation and requires `InvocationAuthority::Child`; successor invocations are rejected (`prototype1_process.rs:2977-2994`).
+2. It resolves campaign manifest, node, runner request, and resolved branch from the invocation (`prototype1_process.rs:2995-2998`).
+3. It constructs a typed `Child` with journal path, runtime id, node refs, paths, and process id (`prototype1_process.rs:3009-3031`).
+4. It opens a child-side channel from invocation endpoints (`prototype1_process.rs:3032-3034`).
+5. It transitions child to ready and sends `Ready` over the channel (`prototype1_process.rs:3035-3048`).
+6. It transitions child to evaluating and sends `Evaluating` (`prototype1_process.rs:3051-3068`).
+7. It calls `run_prototype1_resolved_branch_treatment` (`prototype1_process.rs:3070-3078`).
+8. It converts success into `build_succeeded_runner_result` plus treatment evidence, or failure into `build_treatment_failed_runner_result` with no treatment payload (`prototype1_process.rs:3080-3099`).
+9. It writes attempt and node runner-result projections via `record_attempt_runner_result` (`prototype1_process.rs:3100-3110`).
+10. It transitions to result-written and sends terminal result over channel (`prototype1_process.rs:3111-3119`).
+
+`record_attempt_runner_result` writes two result projections and updates node projection (`prototype1_process.rs:2961-2974`):
+
+- `prototype1/nodes/<node>/results/<runtime>.json`;
+- `node.runner_result_path`;
+- node projection with projected status.
+
+### 5.5 Child self-evaluation of the treatment branch
+
+`run_prototype1_resolved_branch_treatment` performs the child-side evaluation (`prototype1_process.rs:3131-3333`). The important phases are:
+
+1. materialize/ensure treatment branch (`prototype1_process.rs:3189-3199`);
+2. resolve baseline campaign (`prototype1_process.rs:3201-3205`);
+3. prepare treatment campaign (`prototype1_process.rs:3206-3210`);
+4. prepare instance target cache (`prototype1_process.rs:3211-3216`);
+5. advance eval closure for treatment campaign (`prototype1_process.rs:3217-3234`);
+6. advance protocol closure for treatment campaign (`prototype1_process.rs:3236-3247`);
+7. load treatment closure state (`prototype1_process.rs:3249-3254`);
+8. build treatment evidence (`prototype1_process.rs:3255-3267`);
+9. require complete treatment and validate patch projection (`prototype1_process.rs:3268-3279`).
+
+Disk writes:
+
+- treatment campaign manifest;
+- treatment eval batches/runs/records;
+- treatment protocol artifacts;
+- treatment closure state;
+- runner-result JSON projections;
+- channel terminal result JSONL.
+
+### 5.6 C4: observe child terminal result
+
+C4 is implemented in `crates/ploke-eval/src/cli/prototype1_state/c4.rs`.
+
+`ObserveChild::transition`:
+
+- append observe-before journal entry (`c4.rs:266-277`);
+- read child-to-parent channel for `ToParent::Result` (`c4.rs:194-217`);
+- on failed runner result, append observe-after journal (`c4.rs:328-358`);
+- on success, require treatment evidence and append observe-after journal (`c4.rs:361-407`);
+- time out if no terminal result before stale timeout (`c4.rs:410-424`).
+
+After C4 success, `run_planned_child` calls `compare_observed_child_treatment` to build the branch evaluation report and branch registry entry (`cli_facing.rs:5042-5076`, `cli_facing.rs:4754-4808`).
+
+## 6. Disk-write boundaries
+
+This table lists the main persistent write boundaries in the `prototype1-state` path.
+
+| Boundary | Writer | Path / artifact | Originating runtime value | Meaning |
+|---|---|---|---|---|
+| Parent identity | `write_parent_identity` (`identity.rs:222-239`) | `.ploke/prototype1/parent_identity.json` | `ParentIdentity` | Checkout-carried authority for the active parent. |
+| Admitted profile | `admit_run_profile` (`profile.rs:837-853`) | `<campaign>/prototype1/run-profile.toml` | `Prototype1RunProfile` from `OperatorRunProfile` | Campaign-local execution contract. |
+| Profile commitment | `write_commitment` (`profile.rs:948-954`) | `<campaign>/prototype1/run-profile.commitment.json` | `RunProfileCommitment` | Digest/provenance guard for admitted profile. |
+| Campaign manifest | `save_campaign_manifest` via `prepare_prototype1_loop_campaign` (`cli_facing.rs:7553-7714`) | `<campaign>/campaign.json` | `CampaignManifest` | Durable campaign config. |
+| Slice dataset | `write_prototype1_slice_dataset` (`cli_facing.rs:7717-7771`) | `<campaign>/slice.jsonl` | Selected prepared dataset entries | Dataset subset for this Prototype 1 campaign. |
+| Closure state | `recompute_closure_state` (`closure.rs:254-298`) | closure-state JSON | `ClosureState` | Snapshot of registry/eval/protocol completeness. |
+| Transition journal | `PrototypeJournal::append` (`journal.rs:672-713`) | `<campaign>/prototype1/transition-journal.jsonl` | `JournalEntry` | Append-only recovery/audit/event stream. |
+| Child plan | `write_child_plan_file` via lock (`cli_facing.rs:1217-1232`) | `prototype1/messages/child-plan/<parent>.json` | `ChildPlan` | Parent-published child plan message. |
+| Channel messages | `FileTransport::append` (`channel.rs:757-790`) | `parent-to-child.jsonl`, `child-to-parent.jsonl` | Channel envelope with `ToParent`/`ToChild` body | Durable parent-child IPC. |
+| Node projection | `write_node_projection` calls in C1/C2/C3 and runner | `prototype1/nodes/<node>/node.json` | `Prototype1NodeRecord` projection | Current child node status/projection. |
+| Runner request | `write_runner_request_at` from C1 | `prototype1/nodes/<node>/runner-request.json` | `Prototype1RunnerRequest` | Child executable request contract. |
+| Invocation | `write_invocation` (`invocation.rs:525-538`) | `prototype1/nodes/<node>/invocations/<runtime>.json` | `ExecutableInvocation` | Token/argv/authority for child or successor process. |
+| Runner result | `record_attempt_runner_result` (`prototype1_process.rs:2961-2974`) | `prototype1/nodes/<node>/results/<runtime>.json`, plus node runner result path | `Prototype1RunnerResult` | Child terminal result projection. |
+| Child binary | C2 build (`c2.rs:481-545`) | `prototype1/nodes/<node>/bin/ploke-eval` | built `ploke-eval` binary | Per-child executable after applying candidate branch. |
+| Child streams | C3 spawn (`c3.rs:147-168`) | child stdout/stderr files | spawned child process stdout/stderr | Process observability. |
+| Git worktree target writes | backend realize (`backend.rs:1997-2063`) | child worktree files | resolved treatment content | Materialized child candidate. |
+| Git commits | backend `persist_files` (`backend.rs:1812-1901`) | git commits on artifact/child/parent branches | changed workspace files | Durable artifact branch state. |
+| Branch evaluation report | `compare_observed_child_treatment` (`cli_facing.rs:4754-4782`) | branch evaluation JSON | `Prototype1BranchEvaluationReport` | Parent comparison of treatment vs baseline. |
+| Branch registry | `record_parent_comparison` (`branch_registry.rs:72-91`, `branch_registry.rs:122-130`) | branch registry JSONL | parent comparison record | Append-only branch evaluation history. |
+| Batch eval summary | `run_batch` (`runner.rs:3743-3904`) | `batch-run-summary.json` | `BatchRunSummary` | Batch-level eval attempt summary. |
+| MSB submission aggregate | `run_batch` (`runner.rs:3743-3780`) | `multi-swe-bench-submission.jsonl` | per-instance submissions | Aggregated benchmark submission. |
+| Protocol artifact | `write_protocol_artifact` (`protocol_artifacts.rs:292-352`) | protocol artifact JSON | typed input/output/artifact body | Durable protocol evidence with model/provider provenance. |
+
+## 7. Persisted data types and semantics
+
+| Persisted type | Originating type / producer | Persisted by | Semantic meaning and use |
+|---|---|---|---|
+| `CampaignManifest` | setup campaign builder | `prepare_prototype1_loop_campaign` | Durable campaign definition: dataset, model/route/provider, eval/protocol policies, roots. Used by `resolve_campaign_config`. |
+| `ResolvedCampaignConfig` | `resolve_campaign_config` from manifest | not usually persisted directly | Runtime materialization of campaign config. Drives eval/protocol/closure execution. |
+| `Prototype1RunProfile` | operator TOML profile | `admit_run_profile` | Durable operator-approved Prototype 1 behavior for one campaign. Used by `Prototype1StateRunShape::resolve`, search policy, protocol policy, execution timeout/stop, control caps. |
+| `RunProfileCommitment` | admitted profile text + source | `write_commitment` | Integrity/provenance guard for campaign-local profile. Used by admitted-profile load to detect drift. |
+| `ParentIdentity` | root setup or selected successor node | `write_parent_identity` | Checkout-carried identity and authority for current parent. Used to prevent ambiguous continuation. |
+| `ClosureState` | closure recompute over registry/run/protocol artifacts | `recompute_closure_state` | Snapshot of campaign registry/eval/protocol completeness. Used for baseline and treatment evidence. |
+| `ChildPlan` | parent planning / candidate generation | `write_child_plan_file` | Parent-published plan containing one or more child files/nodes/requests. Used to materialize C1 children. |
+| `Prototype1NodeRecord` projection | node state transitions | `write_node_projection` | Current persisted projection of child/parent node metadata and status. Used for observability, runner request/result, selection material. |
+| `Prototype1RunnerRequest` | C1 materialized child request | `write_runner_request_at` | Durable child executable contract: workspace, binary, target, branch request, stop policy. Loaded through invocation by child runner. |
+| `ExecutableInvocation` / `InvocationAuthority` | C3 child spawn or successor handoff | `write_invocation` | Durable authority token plus argv/runtime/channel paths. Separates child invocations from successor parent invocations. |
+| Channel envelope with `ToParent` / `ToChild` | parent/child channel send calls | `FileTransport::append` | Durable JSONL IPC between parent and child/successor. Used for ready/evaluating/result/successor status. |
+| `JournalEntry` | parent/C1-C4/successor/resource events | `PrototypeJournal::append` | Append-only execution/recovery trace. Primary observability spine for transitions. |
+| `Prototype1RunnerResult` | child runner success/failure builder | `record_attempt_runner_result` | Child terminal result projection. Success may be accompanied by treatment evidence in terminal channel result. |
+| `Prototype1TreatmentEvidence` | child treatment evaluation | `build_prototype1_treatment_evidence`, then terminal channel/result path | Evidence that treatment campaign completed and can be compared to baseline. |
+| `Prototype1BranchEvaluationReport` | parent comparison of treatment vs baseline | `compare_observed_child_treatment` | Branch score/comparison artifact used for selection and baseline promotion in later generations. |
+| `BatchRunSummary` | eval runner batch execution | `run_batch` | Summary of batch eval attempts, selected model/provider, successes/failures, per-instance artifact paths. |
+| `RunArtifactPaths` / `AgentRunArtifactPaths` | eval runner single-run execution | runner persistence | Paths to run manifest, logs, repo/indexing/snapshot status, run record, response trace, submissions, patch projections. |
+| `RunRecord` / agent turn records | live headless TUI/eval runner events | runner record emission | Compressed durable run trace with LLM requests/responses, tool calls, artifacts, metrics. Used by protocol closure and replay. |
+| `StoredProtocolArtifact` | protocol procedure run input/output/artifact | `write_protocol_artifact` | Protocol evidence envelope: schema, procedure, subject, run id, model/provider, input/output/artifact. |
+| `StoredProtocolArtifactFile` | filesystem-loaded protocol artifact | `list_protocol_artifacts` / `load_protocol_artifact` | Adds path to stored artifact for summaries, aggregate loading, and compatibility checks. |
+| Protocol aggregate types | protocol artifact list/load | protocol aggregate module | Derived coverage state over segmentation/call-review/segment-review artifacts. Used by protocol closure to know missing work. |
+
+## 8. Live API calls and model routing
+
+### 8.1 Eval/chat model routing
+
+The model path for benchmark/eval runs is:
+
+1. Campaign config supplies `model_id`, `provider_slug`, and `route_source`.
+2. `advance_eval_closure` passes `Some(config.model_id.clone())` and parsed provider into `execute_batch_eval_for_manifest` (`crates/ploke-eval/src/cli.rs:6937-6945`).
+3. `execute_batch_eval_for_manifest` constructs `RunMsbAgentBatchRequest` (`cli.rs:1719-1737`).
+4. `RunMsbAgentBatchRequest::run` calls `run_batch` (`runner.rs:3699-3711`).
+5. `run_batch` parses requested model id, resolves model, loads provider preference, resolves route, and records selected provider (`runner.rs:3730-3741`).
+6. For each instance, `run_batch` runs `RunMsbAgentSingleRequest::run()` sequentially (`runner.rs:3753-3768`).
+7. `configure_headless_benchmark_chat` sets benchmark chat policy and model runtime (`runner.rs:126-130`).
+8. `configure_eval_model_runtime` sets `RuntimeConfig.active_model`, `RuntimeConfig.active_router`, and model-provider selection (`runner.rs:116-124`).
+
+`resolve_route_for_model` is also a live network boundary for OpenRouter route/provider metadata: direct Google models return a direct route, while OpenRouter models call `OpenRouter::fetch_model_endpoints` through a `reqwest::Client` (`runner.rs:2501-2536`).
+
+### 8.2 Protocol JSON model routing
+
+The protocol model path is:
+
+1. Campaign/protocol policy enters `advance_protocol_closure`.
+2. `advance_protocol_closure` passes `config.model_id`, `config.route_source`, `config.provider_slug`, `policy.max_concurrency`, `policy.tool_review_parallelism`, `policy.max_tokens`, and `policy.reasoning` to `execute_protocol_run_tasks` (`cli.rs:7011-7021`).
+3. `execute_protocol_run_tasks` fans out per record/run with `JoinSet` and gates review calls with a semaphore (`cli.rs:1745-1846`).
+4. `execute_protocol_run_task` performs segmentation, call reviews, and segment reviews (`cli.rs:7249-7357`).
+5. `protocol_llm_config` resolves model id and route/provider into `JsonLlmConfig` (`cli.rs:7741-7761`).
+6. `effective_protocol_reasoning` disables auto reasoning for direct Google routes (`cli.rs:7764-7773`).
+7. `JsonAdjudicator::new(client.clone(), config.clone())` is used for protocol procedures:
+   - intent segmentation (`cli.rs:7639-7641`);
+   - tool-call review (`cli.rs:7845-7848`);
+   - tool-call segment review (`cli.rs:7879-7884`).
+
+Protocol retry behavior is local to each request: malformed JSON parse errors are retried up to `PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS` (`cli.rs:7836-7865`, `cli.rs:7867-7901`).
+
+### 8.3 Where model provenance is persisted
+
+Protocol artifacts store optional `model_id` and `provider_slug` in the artifact envelope (`protocol_artifacts.rs:21-35`, `protocol_artifacts.rs:292-352`). Eval batch summaries store selected model/provider (`runner.rs:3882-3904`). Run intent/registration stores model/provider into run registry intent (`runner.rs:158-214`).
+
+## 9. Existing parallelism and missed/weak parallelism
+
+### 9.1 Existing parallelism
+
+- Child fanout: `run_child_fanout` executes planned children through blocking tasks (`cli_facing.rs:5123-5245`).
+- Adaptive child fanout: `run_adaptive_child_fanout` runs batches and can stop early when selection accepts a successor (`cli_facing.rs:5248-5314`).
+- Protocol run fanout: `execute_protocol_run_tasks` uses `JoinSet` over protocol run tasks and `Semaphore` for review permits (`cli.rs:1745-1846`).
+- Tool-call reviews: `review_calls` spawns one task per call subject and uses semaphore permits (`cli.rs:7775-7807`, `cli.rs:7809-7834`).
+
+### 9.2 Sequential sections that could be parallelized or batched
+
+| Sequential section | Current behavior | Parallelism/batching opportunity | Notes |
+|---|---|---|---|
+| Eval batch loop | `advance_eval_closure` loops `for plan in &plans` and awaits each batch (`cli.rs:6904-6951`). | Bounded parallel batch execution if registry/storage conflicts are resolved. | Need protect shared batch roots, run registry, provider quota, and logs. |
+| Instances inside one eval batch | `run_batch` loops `for task_id in &prepared.instances` and awaits each single run (`runner.rs:3753-3866`). | Bounded per-instance eval fanout. | High value, but must isolate repo/cache/indexing outputs and provider concurrency. |
+| Adaptive child fanout | Runs batches and reselects after each batch (`cli_facing.rs:5248-5314`). | If early-stop is disabled or not needed, use larger non-adaptive fanout. | Current sequentiality is partly semantic: early selection can save expensive child runs. |
+| Segment reviews | `execute_protocol_run_task` loops missing segment indices sequentially (`cli.rs:7326-7342`). | Use same bounded `JoinSet`/semaphore pattern as `review_calls`. | Independent segment review requests are natural parallel candidates. |
+| Protocol artifact listing/loading | `list_protocol_artifacts` scans/read-loads artifacts one by one (`protocol_artifacts.rs:355-380`, `protocol_artifacts.rs:508-520`). | Bounded parallel read/decode with deterministic sort after join. | Useful once protocol artifacts become numerous. |
+| Protocol registration sync | `write_protocol_artifact` calls `sync_protocol_registration_status` after every artifact write (`protocol_artifacts.rs:345-352`). | Batch/defer sync once after multi-artifact protocol phases. | Must preserve crash/recovery semantics. |
+| Branch comparison writes | Parent compares each successful child as it observes it (`cli_facing.rs:4754-4808`, `cli_facing.rs:5042-5076`). | Batch comparisons after all children if selection does not need incremental results. | Adaptive selection may prefer incremental evidence. |
+| Run record summary transforms | Runner builds summaries in loops (`runner.rs:3868-3904` and nearby setup summary code). | Low-risk CPU parallelism for large batches, but likely not the first bottleneck. | Provider/API time likely dominates. |
+
+## 10. Practical stabilization notes
+
+- Treat `parent_identity.json` as authority, not just metadata. Runtime continuation should be rooted in checkout-carried identity or successor invocation.
+- Treat the transition journal as the recovery/audit spine. A missing or incomplete journal entry often means a transition was not durably recorded even if projections exist.
+- Distinguish projection files from authority files. `node.json`, runner results, and child result files are reconstruction/projection surfaces; the terminal channel result is where successful treatment evidence crosses from child to parent.
+- Baseline and treatment evidence both depend on closure completeness. If a branch comparison looks wrong, inspect closure state, run records, and protocol artifacts before blaming selection.
+- Model routing has two separate live surfaces: eval/headless TUI chat and protocol JSON adjudication. Campaign/profile changes should be traced through both.
+- Parallelism changes should be introduced with explicit resource caps from the admitted profile or campaign policy; do not silently widen fanout beyond admitted limits.
+
+## 11. Quick path index
+
+Entrypoint and config:
+
+- `crates/ploke-eval/src/main.rs:5-20`
+- `crates/ploke-eval/src/cli.rs:539-568`
+- `crates/ploke-eval/src/cli.rs:609-661`
+- `crates/ploke-eval/src/cli.rs:1445-1457`
+- `crates/ploke-eval/src/campaign.rs:27-53`
+- `crates/ploke-eval/src/campaign.rs:123-138`
+- `crates/ploke-eval/src/campaign.rs:478-572`
+- `crates/ploke-eval/src/cli/prototype1_state/profile.rs:37-59`
+- `crates/ploke-eval/src/cli/prototype1_state/profile.rs:837-864`
+- `crates/ploke-eval/src/cli/prototype1_state/profile.rs:868-903`
+
+Parent runtime:
+
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:946-999`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6477-7043`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:5123-5314`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:5327-5400`
+
+Child state machine:
+
+- `crates/ploke-eval/src/cli/prototype1_state/c1.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/c2.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/c3.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/c4.rs`
+- `crates/ploke-eval/src/cli/prototype1_process.rs:2961-3333`
+
+Persistence and transport:
+
+- `crates/ploke-eval/src/cli/prototype1_state/identity.rs:222-239`
+- `crates/ploke-eval/src/cli/prototype1_state/journal.rs:672-713`
+- `crates/ploke-eval/src/cli/prototype1_state/channel.rs:245-253`
+- `crates/ploke-eval/src/cli/prototype1_state/channel.rs:757-790`
+- `crates/ploke-eval/src/cli/prototype1_state/invocation.rs:490-538`
+- `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1812-1901`
+- `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1997-2063`
+- `crates/ploke-eval/src/protocol_artifacts.rs:292-352`
+
+Live model/API boundaries:
+
+- `crates/ploke-eval/src/runner.rs:116-130`
+- `crates/ploke-eval/src/runner.rs:2501-2536`
+- `crates/ploke-eval/src/runner.rs:3699-3911`
+- `crates/ploke-eval/src/cli.rs:6875-7051`
+- `crates/ploke-eval/src/cli.rs:7249-7357`
+- `crates/ploke-eval/src/cli.rs:7741-7901`
