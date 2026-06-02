@@ -1750,23 +1750,52 @@ fn live_google_headless_tui_model_id() -> String {
 }
 
 #[cfg(feature = "live_api_tests")]
+fn live_google_broad_headless_canary_base_dir_from_override(
+    override_dir: Option<PathBuf>,
+) -> PathBuf {
+    override_dir.unwrap_or_else(|| {
+        crate::layout::ploke_eval_home()
+            .unwrap_or_else(|_| PathBuf::from(".ploke-eval"))
+            .join("probes")
+            .join("live-google-broad-headless")
+    })
+}
+
+#[cfg(feature = "live_api_tests")]
+fn live_google_broad_headless_canary_base_dir() -> PathBuf {
+    live_google_broad_headless_canary_base_dir_from_override(
+        std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR").map(PathBuf::from),
+    )
+}
+
+#[cfg(feature = "live_api_tests")]
+#[test]
+fn live_google_broad_headless_canary_default_root_is_durable() {
+    let root = live_google_broad_headless_canary_base_dir_from_override(None);
+
+    assert!(
+        root.ends_with(Path::new("probes").join("live-google-broad-headless")),
+        "default broad-headless Google preflight root should live under ploke-eval probes, got {}",
+        root.display()
+    );
+    assert!(
+        !root.starts_with(std::env::temp_dir()),
+        "default broad-headless Google preflight root should not use /tmp: {}",
+        root.display()
+    );
+}
+
+#[cfg(feature = "live_api_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "expected-failing counterexample for the unsupported Google Vertex broad headless-TUI path"]
-async fn xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_published_request() {
-    // regr:googlevertex:23-05-26_19-10
+#[ignore = "live direct-Google broad headless-TUI preflight; requires Google ADC/Vertex quota"]
+async fn live_google_direct_broad_headless_tui_preflight_applies_edit_from_published_request() {
+    // regr:googlevertex:23-05-26_19-10 resolved 2026-06-02.
     //
-    // This is intentionally tracked as a counterexample, not as proof of the
-    // supported Google route. It preserves the earlier endpoint experiment:
-    // ploke-eval published request -> cli_facing runner -> tui_adapter ->
-    // vanilla ploke-tui llm_manager -> Google router configured for the Vertex
-    // OpenAI-compatible/ADC path.
-    //
-    // Keep the supported Google path covered by the direct-Google registry,
-    // model-picker, session-loop, eval-router, and protocol tests. If we later
-    // decide to support this Vertex broad-headless endpoint path, remove the
-    // tracker row in docs/active/agents/expected-failing-regression-tests.md,
-    // rename/unignore this test, and make the assertions below the positive
-    // acceptance contract for that newly supported path.
+    // This is the positive live preflight for the Prototype 1 published-request
+    // -> cli_facing runner -> tui_adapter -> vanilla ploke-tui llm_manager ->
+    // direct Google/Vertex OpenAI-compatible route. Run it before direct-Google
+    // Prototype 1 live campaigns when provider/quota health is uncertain.
+    // It is intentionally ignored because it spends live Google provider calls.
     crate::test_support::install_default_google_route_env();
     let model_id = live_google_headless_tui_model_id();
     let options = BroadTuiAttemptOptions::from_cli(
@@ -1783,9 +1812,7 @@ async fn xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_publis
     ));
     assert!(model.provider().is_none());
 
-    let base = std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ploke-eval-live-google-broad-headless"));
+    let base = live_google_broad_headless_canary_base_dir();
     let artifact_root = base.join(format!("run-{}", uuid::Uuid::new_v4().simple()));
     fs::create_dir_all(&artifact_root).expect("create live artifact root");
     println!(
