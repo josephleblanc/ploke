@@ -1,6 +1,6 @@
 # `syn_parser` known limitations
 
-This document records behaviors that are **expected today**: valid Rust that `rustc` accepts for a given configuration may still fail module-tree merge with `DuplicatePath`, or may include items from multiple cfg branches at once. **Pre-expansion parsing** uses `syn::parse_file` per file; sources that never compile, or that only compile after proc-macro expansion, may fail parsing or produce partial-parse errors. See [ADR-025](adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md) for file-vs-inline staging; the items below include issues **outside** that ADR’s scope.
+This document records behaviors that are **expected today**: valid Rust that `rustc` accepts for a given configuration may still fail module-tree merge with `DuplicatePath`, may include items from multiple cfg branches at once, or may omit module declarations hidden behind pre-expansion macros. **Pre-expansion parsing** uses `syn::parse_file` per file; sources that never compile, that only compile after proc-macro expansion, or that expose important module declarations only through macro expansion may fail parsing, produce partial-parse errors, or produce an incomplete reachable module graph. See [ADR-025](adrs/accepted/ADR-025-module-tree-staged-file-duplicate-definitions.md) for file-vs-inline staging; the items below include issues **outside** that ADR’s scope.
 
 **Manifest discovery** uses `cargo_toml` with on-disk completion; the former KL-005 gap (stricter deserialization than Cargo) is **resolved** — see [KL-005](known_limitations/KL-005-manifest-stricter-than-cargo-defaults.md) for history and regression tests.
 
@@ -81,3 +81,54 @@ This document records behaviors that are **expected today**: valid Rust that `ru
 **Repro tests** (`crates/ingest/syn_parser`):
 
 - `repro_duplicate_item_placeholder_trait_signatures`
+
+---
+
+## L6 — Macro-wrapped module declarations are not discovered
+
+**KL index:** [KL-007](known_limitations/KL-007-macro-wrapped-module-declarations.md).
+
+**Symptom:** A source file exists on disk and rustc may include it for some
+feature/cfg configuration, but the parsed graph does not contain the module or
+items because the `mod` declaration is hidden inside a macro invocation.
+
+**Cause:** The parser visits ordinary pre-expansion `syn::ItemMod` values. A
+macro invocation such as Hyper's `cfg_feature! { pub mod client; }` parses as a
+macro item, not as a module declaration. Without expansion or a targeted
+preprocessor, nested files such as `src/client/dispatch.rs` are not reachable
+through module discovery.
+
+**Workarounds (future):** expansion pipeline, targeted declaration-wrapper macro
+handling, or an explicit feature-aware corpus parse mode.
+
+**Observed corpus case:**
+
+- `hyperium/hyper`: `src/client/dispatch.rs::channel` exists, but is gated
+  behind macro-wrapped `client` and `dispatch` module declarations. The current
+  typed graph corpus test uses reachable `src/common/watch.rs::channel` instead.
+
+---
+
+## L7 — Some typed type graph constraint surfaces are not emitted as reachable relations
+
+**KL index:** [KL-008](known_limitations/KL-008-typed-type-graph-constraint-surfaces.md).
+
+**Symptom:** Real-corpus `typed_type_graph` DB contracts can select both the
+owner and target rows, but `type_targets_reachable_from_owner` still lacks
+complete real-corpus coverage for where-clause predicates and some associated
+item details.
+
+**Cause:** The v2 type graph currently emits `type_use` roots for ordinary item
+type slots, generic declaration bounds, generic-param-owned bounds, type
+where-clause predicates, qualified projection traits, and trait associated type
+bounds. Generic defaults and associated type/const items as precise owners are
+not yet represented as complete traversable `type_use -> type_contains ->
+type_relation` surfaces.
+
+**Workarounds (future):** Add first-class typed graph roots for where
+predicates, and parse associated type/const items as precise owners for
+associated defaults and impl associated type definitions.
+
+**Repro tests / fixtures** (`ploke-db`, with `typed_type_graph`):
+
+- `type_graph_queries::corpus_contracts::associated_type_bounds::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`

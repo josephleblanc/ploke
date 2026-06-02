@@ -1,0 +1,67 @@
+
+M      = set of named metrics
+M_op   = set of operationalized metrics
+
+O, N, C = obvious, non-obvious, conceptual metrics
+D       = uncaptured dimensions
+
+X      = set of procedure specifications
+E      = set of executors
+S      = set of typed procedure states
+V      = set of values
+P(A)   = power set of A, i.e. the set of all subsets of A
+A × B  = Cartesian product of A and B, i.e. the set of ordered pairs (a, b)
+
+
+M = O ∪ N ∪ C
+M_op = O ∪ N
+
+O ∩ N = ∅
+O ∩ C = ∅
+N ∩ C = ∅
+D ∩ M = ∅
+
+Roughly, as common maturation path
+D -> C -> N -> O
+
+-------------------------------------------------------------------------------
+
+Procedure, Executor, And State
+
+
+For a procedure specification `x ∈ X`:
+
+I_x ⊆ S   = admissible input states for x
+O_x ⊆ S   = admissible output states for x
+
+For an executor `e ∈ E`:
+
+--
+
+State, Values, and Metrics
+
+Each state may carry one or more typed values:
+val : S -> P(V)
+
+Some states are metric-bearing:
+metric : S -> P(M × V)
+
+--
+
+
+For a procedure `x`, define:
+
+T_x ⊆ M    = target metrics of x
+U_x ⊆ S    = evidential output states of x
+K_x ⊆ S    = supporting-metric states of x
+
+t ∈ T_x   => t is a terminal metric the procedure is meant to produce
+u ∈ U_x   => u is instrumentally relevant to some downstream target metric
+k ∈ K_x   => k carries a supporting metric worth recording in its own right
+
+
+K_x ∩ U_x may be non-empty
+
+--
+
+For a produced state s 

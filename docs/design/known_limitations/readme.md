@@ -74,7 +74,21 @@ is visible without reading the full note.
 - deferred: **N/A**
 - resolved: **N/A**
 
-**KL-007+** — *placeholder* — assign the next free id when adding a new limitation;
+**KL-007** — [`KL-007-macro-wrapped-module-declarations.md`](KL-007-macro-wrapped-module-declarations.md)
+
+- discovered: **2026-05-06** (typed type graph corpus contract over `hyperium/hyper`)
+- reproduced: **2026-05-06** (observed in live corpus parse: `src/client/dispatch.rs::channel` absent; `src/common/watch.rs::channel` reachable)
+- deferred: **N/A**
+- resolved: **N/A**
+
+**KL-008** — [`KL-008-typed-type-graph-constraint-surfaces.md`](KL-008-typed-type-graph-constraint-surfaces.md)
+
+- discovered: **2026-05-10** (typed type graph real-corpus contract expansion)
+- reproduced: **2026-05-10** ([`corpus_contracts.rs`](../../../crates/ploke-db/tests/unit/type_graph_queries/corpus_contracts.rs); associated type bounds now pass, remaining surfaces need new strict contracts)
+- deferred: **N/A**
+- resolved: **N/A**
+
+**KL-009+** — *placeholder* — assign the next free id when adding a new limitation;
 update this readme in the same PR.
 
 ---
