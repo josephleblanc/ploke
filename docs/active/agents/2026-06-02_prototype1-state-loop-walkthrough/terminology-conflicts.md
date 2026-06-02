@@ -1,7 +1,7 @@
 # 2026-06-02 Prototype 1 state-loop terminology conflicts and questions
 
 Status: draft terminology audit companion
-Related walkthrough: [`2026-06-02_prototype1-state-loop-walkthrough.md`](2026-06-02_prototype1-state-loop-walkthrough.md)
+Related walkthrough: [`README.md`](README.md)
 Scope: terms used around `ploke-eval loop prototype1-state`
 
 ## Purpose
