@@ -2505,7 +2505,7 @@ pub struct ModelCommand {
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Manage the persisted default provider selection for a model",
+    about = "Manage OpenRouter provider preferences and inspect effective model providers",
     after_help = "\
 Examples:
 
@@ -2536,7 +2536,7 @@ pub struct ParentPatcherCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProviderSubcommand {
-    /// Persist the default provider for the current or specified model.
+    /// Persist the OpenRouter default provider for the current or specified model.
     Set {
         /// Provider slug to remember for the model.
         provider_slug: String,
@@ -2545,13 +2545,13 @@ pub enum ProviderSubcommand {
         #[arg(long)]
         model_id: Option<String>,
     },
-    /// Show the persisted default provider for the current or specified model.
+    /// Show the effective provider for the current or specified model.
     Current {
         /// Model id to inspect. Defaults to the current active model.
         #[arg(long)]
         model_id: Option<String>,
     },
-    /// Clear the persisted default provider for the current or specified model.
+    /// Clear the persisted OpenRouter default provider for the current or specified model.
     Clear {
         /// Model id to update. Defaults to the current active model.
         #[arg(long)]
@@ -2604,7 +2604,7 @@ The output shows provider slug, provider name, tool support, and context length.
     /// Persist or inspect the model used for parent broad-harness patch generation.
     #[command(name = "parent-patcher")]
     ParentPatcher(ParentPatcherCommand),
-    /// Persist or inspect the default provider for a model.
+    /// Manage OpenRouter provider preferences and inspect effective providers.
     Provider(ProviderCommand),
     /// Persist the active model selection.
     Set {
@@ -2898,6 +2898,13 @@ fn current_provider_for_model(
     model_id: Option<String>,
 ) -> Result<(ModelId, Option<ProviderKey>), PrepareError> {
     let model = resolve_provider_model_id(model_id)?;
+    if registry_route_source(&model)?.is_some_and(|source| source.is_direct_google()) {
+        let provider = ProviderKey::new("google").map_err(|err| PrepareError::DatabaseSetup {
+            phase: "direct_google_provider_key",
+            detail: err.to_string(),
+        })?;
+        return Ok((model, Some(provider)));
+    }
     let provider = load_provider_for_model(&model)?;
     Ok((model, provider))
 }
@@ -14108,6 +14115,69 @@ mod tests {
         assert!(cfg.provider_slug.is_none());
         assert_eq!(cfg.provider_display(), "google");
         assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::disabled());
+    }
+
+    #[test]
+    fn provider_current_reports_google_for_direct_google_registry_row() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("registry.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("registry json"),
+        )
+        .expect("write registry");
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "google/gemini-3.5-flash": {
+                        "slug": "google-ai-studio"
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+
+        let (model, provider) =
+            current_provider_for_model(Some("google/gemini-3.5-flash".to_string()))
+                .expect("current provider");
+
+        assert_eq!(model.to_string(), "google/gemini-3.5-flash");
+        let provider = provider.expect("direct Google provider sentinel");
+        assert_eq!(provider.slug.as_str(), "google");
     }
 
     #[test]
