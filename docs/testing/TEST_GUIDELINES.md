@@ -16,6 +16,11 @@ Env Gating Patterns
   - `PLOKE_RUN_EXEC_LIVE_TESTS=1` (in-crate exec_live_tests diagnostics)
   - `PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS=1` (real tools roundtrip smoke)
   Choose low‑cost models/providers when enabled.
+- Live Google tests: require Google ADC, `GOOGLE_PROJECT_ID`, `GOOGLE_REGION`,
+  an explicit live gate, and a supported model id such as
+  `PLOKE_LIVE_GOOGLE_CHAT_MODEL=google/gemini-2.5-flash`. Use
+  `cargo xtask auth google --strict-live` as the setup preflight. See
+  [`LIVE_GOOGLE.md`](LIVE_GOOGLE.md).
 - Expensive integration (git/MCP): require PLOKE_E2E_MCP=1.
 
 Live Gates: No Green‑on‑Skip
@@ -167,3 +172,11 @@ Live API Endpoint Tests (OpenRouter)
     - Ask for guidance before continuing.
 - Gating: require `OPENROUTER_API_KEY` and an explicit gate (e.g., `PLOKE_RUN_LIVE_TESTS=1`). Default to skip in CI.
 - Capture useful metadata (endpoint chosen, prices, rate-limits) in logs/artifacts under `target/test-output/` when helpful.
+
+Live API Endpoint Tests (Google)
+- Prefer the direct Google route preflight before any ignored live Google test:
+  `cargo xtask auth google --strict-live`.
+- Gating: require Google ADC, `GOOGLE_PROJECT_ID`, `GOOGLE_REGION`, and
+  `PLOKE_RUN_LIVE_TESTS=1`. Default to skip in CI.
+- Do not treat `GOOGLE_API_KEY` as the supported direct-Google credential. The
+  Google router resolves an ADC bearer token internally.
