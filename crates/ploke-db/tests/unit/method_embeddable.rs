@@ -721,8 +721,6 @@ fn search_similar_for_set_finds_method_node() {
     let query_vector: Vec<f32> = test_vector.iter().map(|&v| v as f32).collect();
 
     // Attempt to search for the method node
-    // Note: Currently this will likely fail because search_similar_for_set uses
-    // ANCESTOR_RULES_NOW which doesn't include METHOD_NODE_ANCESTOR_RULE
     let search_result = db.deref().search_similar_for_set(
         &embedding_set,
         ploke_db::NodeType::Method,

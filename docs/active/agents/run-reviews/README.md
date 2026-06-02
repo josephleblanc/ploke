@@ -86,3 +86,8 @@ state without checking newer code, History records, and run artifacts.
   covering non-empty patch/submission output, model-visible cargo results,
   final cargo-scope mismatch, completed protocol artifacts, repaired malformed
   adjudicator JSON, and child-plan record gaps.
+- [`2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-baseline-eval-protocol.md`](2026-06-01-p1-gemini35-flash-direct-15g2x3-par2-20260601-173956-baseline-eval-protocol.md)
+  Baseline eval and protocol review for `BurntSushi__ripgrep-2209`, covering
+  applied patch/submission output, successful issue-linked tests, empty
+  successful read defects, formatting/doc-comment patch-quality gaps, protocol
+  edit-state projection drift, and current child-plan readiness.

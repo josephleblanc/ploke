@@ -2017,8 +2017,11 @@ fn recreate_embedding_db_with_processor(
             .count_unembedded_nonfiles()
             .map_err(|err| format!("count remaining unembedded nodes: {err}"))?;
         if remaining_unembedded != 0 {
+            let diagnostic = embedding_regeneration_diagnostic(&db, remaining_unembedded)
+                .await
+                .unwrap_or_else(|err| format!("diagnostic unavailable: {err}"));
             return Err(format!(
-                "{backend_label} embedding recreation left {remaining_unembedded} unembedded nodes"
+                "{backend_label} embedding recreation left {remaining_unembedded} unembedded nodes\n{diagnostic}"
             ));
         }
 
@@ -2030,6 +2033,83 @@ fn recreate_embedding_db_with_processor(
 
         Ok(db)
     })
+}
+
+async fn embedding_regeneration_diagnostic(
+    db: &Database,
+    remaining_unembedded: usize,
+) -> Result<String, String> {
+    let diagnostic_limit = remaining_unembedded.saturating_add(16).max(64);
+    let groups = db
+        .get_unembedded_node_data(diagnostic_limit, 0)
+        .map_err(|err| format!("fetch remaining unembedded node data: {err}"))?;
+    let mut lines = Vec::new();
+    let mut fetchable_total = 0usize;
+
+    let mut residual_rows = Vec::new();
+    for group in groups {
+        if group.v.is_empty() {
+            continue;
+        }
+        fetchable_total += group.v.len();
+        lines.push(format!(
+            "- {}: fetchable_remaining={}",
+            group.ty.relation_str(),
+            group.v.len()
+        ));
+        for row in group.v.iter().take(8) {
+            lines.push(format!(
+                "  fetchable sample: id={} name={} path={} bytes={}..{}",
+                row.id,
+                row.name,
+                row.file_path.display(),
+                row.start_byte,
+                row.end_byte
+            ));
+        }
+        residual_rows.extend(group.v);
+    }
+
+    if lines.is_empty() {
+        lines.push(
+            "no remaining rows are fetchable through Database::get_unembedded_node_data"
+                .to_string(),
+        );
+    }
+    lines.insert(
+        0,
+        format!("fetchable remaining after indexing: {fetchable_total}"),
+    );
+    if !residual_rows.is_empty() {
+        let io = IoManagerHandle::new();
+        let snippet_results = io
+            .get_snippets_batch(residual_rows.clone())
+            .await
+            .map_err(|err| format!("read residual snippets: {err}"))?;
+        io.shutdown().await;
+        let snippet_failures = residual_rows
+            .iter()
+            .zip(snippet_results.iter())
+            .filter_map(|(row, result)| {
+                result.as_ref().err().map(|err| {
+                    format!(
+                        "  snippet failure: id={} name={} path={} bytes={}..{} error={err}",
+                        row.id,
+                        row.name,
+                        row.file_path.display(),
+                        row.start_byte,
+                        row.end_byte
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        lines.push(format!(
+            "residual snippet failures: {}",
+            snippet_failures.len()
+        ));
+        lines.extend(snippet_failures.into_iter().take(12));
+    }
+    Ok(lines.join("\n"))
 }
 
 fn print_manual_recreation_help(

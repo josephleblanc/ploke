@@ -1624,6 +1624,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
                 target_id: child, 
                 relation_kind: \"Contains\"
             }}
+            {METHOD_NODE_ANCESTOR_RULE}
 
             ancestor[desc, asc] := parent_of[desc, asc]
             ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]

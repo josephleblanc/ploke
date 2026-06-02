@@ -1420,13 +1420,29 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     #[tokio::test]
     async fn test_search_type_aliases() -> Result<(), Error> {
         init_tracing_once();
-        let rag = &DEFAULT_TEST_RAG;
-        let db = &DEFAULT_TEST_RAG.db;
+
+        let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
+        let db = Arc::new(db_raw);
+        let rag = init_test_rag_bm25(Arc::clone(&db)).await;
 
         let search_term = "DisplayableContainer";
 
+        let sparse_res: Vec<(Uuid, f32)> = rag
+            .search_bm25_strict(search_term, 10, LOADED_WORKSPACE_SCOPE)
+            .await?;
+
+        eprintln!("checking sparse search");
+        assert!(
+            !sparse_res.is_empty(),
+            "Sparse search returned no results for '{}'",
+            search_term
+        );
+        let ordered_node_ids: Vec<Uuid> = sparse_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+
         let search_res: Vec<(Uuid, f32)> =
             rag.search(search_term, 10, LOADED_WORKSPACE_SCOPE).await?;
+        eprintln!("checking dense search");
         assert!(
             !search_res.is_empty(),
             "Dense search returned no results for '{}'",
@@ -1434,7 +1450,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         );
 
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 

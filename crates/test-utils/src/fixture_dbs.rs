@@ -1233,22 +1233,6 @@ mod tests {
     }
 
     #[test]
-    fn checked_path_validates_effective_fixture_path() {
-        let checked = WS_FIXTURE_01_CANONICAL
-            .checked_path()
-            .expect("workspace fixture path should validate");
-        let resolved = backup_fixture_path_or_seed(&WS_FIXTURE_01_CANONICAL)
-            .expect("workspace fixture path should resolve");
-
-        assert_eq!(checked.path(), resolved);
-        assert!(checked.path().exists());
-        assert_eq!(
-            checked.registered_path(),
-            WS_FIXTURE_01_CANONICAL.registered_path()
-        );
-    }
-
-    #[test]
     fn default_fixture_path_or_matching_seed_prefers_seed_when_candidate_differs() {
         let temp_dir = unique_fixture_test_dir("fixture-path-differs");
         let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());

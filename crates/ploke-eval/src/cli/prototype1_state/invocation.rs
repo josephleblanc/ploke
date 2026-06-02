@@ -223,28 +223,6 @@ impl Invocation {
 }
 
 impl ChildInvocation {
-    /// Create the executable leaf-child invocation used by the live runner.
-    pub(crate) fn new(
-        campaign_id: String,
-        node_id: String,
-        runtime_id: RuntimeId,
-        journal_path: PathBuf,
-        channel_root: PathBuf,
-    ) -> Self {
-        Self {
-            inner: Invocation::child(
-                campaign_id,
-                node_id,
-                runtime_id,
-                journal_path,
-                channel_root,
-                None,
-                None,
-                None,
-            ),
-        }
-    }
-
     /// Create the executable leaf-child invocation with the typed runtime
     /// payload needed to evaluate without reading node/request projection files.
     pub(crate) fn with_bootstrap(
@@ -608,76 +586,6 @@ pub(crate) fn write_successor_invocation_for_retired_parent(
     invocation: &SuccessorInvocation,
 ) -> Result<(), PrepareError> {
     write_successor_invocation(path, invocation)
-}
-
-/// Directory containing successor-ready acknowledgements for one node.
-pub(crate) fn successor_ready_dir(node_dir: &Path) -> PathBuf {
-    node_dir.join("successor-ready")
-}
-
-/// Successor-ready acknowledgement path for one concrete runtime.
-pub(crate) fn successor_ready_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
-    successor_ready_dir(node_dir).join(format!("{runtime_id}.json"))
-}
-
-/// Directory containing successor completion records for one node.
-pub(crate) fn successor_completion_dir(node_dir: &Path) -> PathBuf {
-    node_dir.join("successor-completion")
-}
-
-/// Successor completion path for one concrete runtime.
-pub(crate) fn successor_completion_path(node_dir: &Path, runtime_id: RuntimeId) -> PathBuf {
-    successor_completion_dir(node_dir).join(format!("{runtime_id}.json"))
-}
-
-/// Persist one successor-ready acknowledgement.
-pub(crate) fn write_successor_ready_record(
-    path: &Path,
-    record: &SuccessorReadyRecord,
-) -> Result<(), PrepareError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
-    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// Load one persisted successor-ready acknowledgement.
-pub(crate) fn load_successor_ready_record(
-    path: &Path,
-) -> Result<SuccessorReadyRecord, PrepareError> {
-    let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// Persist one successor completion record.
-pub(crate) fn write_successor_completion_record(
-    path: &Path,
-    record: &SuccessorCompletionRecord,
-) -> Result<(), PrepareError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
-    fs::write(path, bytes).map_err(|source| PrepareError::WriteManifest {
-        path: path.to_path_buf(),
-        source,
-    })
 }
 
 #[cfg(test)]

@@ -652,6 +652,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         let script = format!(
             r#"
 {ancestor_rules}
+{method_ancestor_rule}
 {root_module_rule}
 
     has_embedding[id] := *{embed_rel} {{
@@ -683,6 +684,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         :limit $limit
      "#,
             ancestor_rules = ANCESTOR_RULES_NOW,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
             root_module_rule = ROOT_MODULE_RULE,
             node_relation_name = node_relation_name,
             embed_rel = embed_rel,

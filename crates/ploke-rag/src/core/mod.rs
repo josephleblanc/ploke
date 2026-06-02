@@ -570,16 +570,12 @@ impl RagService {
 
         for node_type in node_types {
             let params = self.cfg.params_for(node_type);
-            let max_hits = if params.max_hits == 0 {
-                top_k
-            } else {
-                params.max_hits
-            };
+            let max_hits = params.max_hits.max(top_k);
             let args = SimilarArgs {
                 db: &self.db,
                 vector_query: &query_embedding,
                 scope,
-                k: top_k,
+                k: top_k * 8,
                 ef: params.ef, // Configurable ef value
                 ty: node_type,
                 max_hits,

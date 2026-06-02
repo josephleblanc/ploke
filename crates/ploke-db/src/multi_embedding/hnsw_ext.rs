@@ -351,6 +351,7 @@ has_embedding[id, name, distance] :=
     ) -> Result<EmbedDataVerbose, ploke_error::Error> {
         let mut params = BTreeMap::new();
         params.insert("k".into(), DataValue::from(k as i64));
+        let ef = ef.max(k);
         params.insert("ef".into(), DataValue::from(ef as i64));
         params.insert("limit".into(), DataValue::from(limit as i64));
         params.insert("vector_query".into(), Self::vec_to_param(vector_query));
