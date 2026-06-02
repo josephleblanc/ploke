@@ -5575,6 +5575,62 @@ Suggested action: Verify API credentials and retry."#;
         );
     }
 
+    // RED regression for the 2026-06-02 direct-Google broad-headless run:
+    // `Budget::max_attempts == 1` bounded only the outer harness turn while the
+    // inner TUI tool loop could keep making provider-step requests. Run with
+    // `--ignored` until a provider-step cap is wired into this adapter path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "RED until broad headless TUI enforces a provider-step cap"]
+    async fn xfail_broad_headless_caps_provider_steps() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let fixture = prepare_live_canary(
+            "recorded-provider-step-budget",
+            "Replay repeated protected edits to exercise the inner provider-step budget.",
+        )
+        .expect("prepare provider-step budget fixture");
+
+        let expected_cap = 15_usize;
+        let replay_steps = expected_cap + 5;
+        let tape = repeated_protected_ns_patch_tape(&fixture.artifact_root, replay_steps);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
+        let budget = Budget::new(1, 120).expect("valid one-attempt budget");
+        let run = run_headless_with_model(
+            &fixture.workspace,
+            &fixture.prompt,
+            budget,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            &[],
+            None,
+        )
+        .await
+        .expect("recorded provider-step budget run should return evidence");
+
+        let mut snapshots = Vec::new();
+        collect_request_snapshots(&request_rx, &mut snapshots);
+        let turn_attempts = run.events().iter().rev().find_map(|event| match event {
+            Event::Turn { attempts, .. } => Some(*attempts),
+            _ => None,
+        });
+
+        assert!(
+            snapshots.len() <= expected_cap,
+            "broad headless run must cap provider steps separately from outer max_attempts; \
+             outer max_attempts=1, expected provider requests <= {expected_cap}, \
+             observed {}, turn_attempts={turn_attempts:?}, terminal={:?}",
+            snapshots.len(),
+            run.terminal()
+        );
+        assert!(
+            matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("tool call chain limit")),
+            "provider-step cap should surface as a budget/chain-limit terminal, got {:?}",
+            run.terminal()
+        );
+    }
+
     fn recorded_replay_test_mutex() -> &'static tokio::sync::Mutex<()> {
         crate::test_support::llm_lock()
     }
@@ -5982,6 +6038,37 @@ Suggested action: Verify API credentials and retry."#;
                 stop_response_record(assistant_id, 2, "recorded-same-file-final"),
             ],
         )
+    }
+
+    fn repeated_protected_ns_patch_tape(
+        run_dir: &Path,
+        count: usize,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        let assistant_id = Uuid::new_v4();
+        let protected_rel = Path::new("Cargo.toml");
+        let mut records = Vec::new();
+        for index in 0..count {
+            let call_id = format!("call_budget_protected_{index}");
+            let request = ns_patch_request(
+                &call_id,
+                protected_rel.display().to_string(),
+                protected_ns_patch_diff(protected_rel),
+                "Exercise provider-step budget with repeated protected writes",
+                Some(0.50),
+            );
+            records.push(tool_response_record(
+                assistant_id,
+                index,
+                format!("recorded-budget-protected-{index}"),
+                &request,
+            ));
+        }
+        records.push(stop_response_record(
+            assistant_id,
+            count,
+            "recorded-budget-final",
+        ));
+        load_recorded_tape(run_dir, assistant_id, records)
     }
 
     fn ns_patch_request(
