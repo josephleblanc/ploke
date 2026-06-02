@@ -15,12 +15,12 @@ requirements in view.
 The critical ingestion primitives already exist:
 
 - `syn_parser` can parse a Cargo workspace and validate selected members via
-  [`crates/ingest/syn_parser/src/lib.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs).
+  [`crates/ingest/syn_parser/src/lib.rs`](../../../crates/ingest/syn_parser/src/lib.rs).
 - `ploke-transform` can insert `workspace_metadata` and transform every parsed
   crate in that workspace via
-  [`crates/ingest/ploke-transform/src/transform/workspace.rs`](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs).
+  [`crates/ingest/ploke-transform/src/transform/workspace.rs`](../../../crates/ingest/ploke-transform/src/transform/workspace.rs).
 - The embed/index stage is already DB-wide once nodes are present, via
-  [`crates/ingest/ploke-embed/src/indexer/mod.rs`](/home/brasides/code/ploke/crates/ingest/ploke-embed/src/indexer/mod.rs).
+  [`crates/ingest/ploke-embed/src/indexer/mod.rs`](../../../crates/ingest/ploke-embed/src/indexer/mod.rs).
 
 The main blocker is orchestration in `ploke-tui`, not missing parser/transform
 support. `/index start` and the current `IndexWorkspace` handler still resolve a
@@ -32,13 +32,13 @@ RAG/tool behavior are still centered on one focused crate as well.
 
 ### Ingestion
 
-- [`crates/ingest/syn_parser/src/lib.rs`](/home/brasides/code/ploke/crates/ingest/syn_parser/src/lib.rs)
+- [`crates/ingest/syn_parser/src/lib.rs`](../../../crates/ingest/syn_parser/src/lib.rs)
   exposes `parse_workspace(...)`, validates selected members against
   `[workspace].members`, and returns both workspace metadata and per-crate parse
   outputs.
-- [`crates/ingest/ploke-transform/src/transform/workspace.rs`](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/transform/workspace.rs)
+- [`crates/ingest/ploke-transform/src/transform/workspace.rs`](../../../crates/ingest/ploke-transform/src/transform/workspace.rs)
   persists `workspace_metadata` and then transforms each parsed crate graph.
-- [`crates/ingest/ploke-transform/src/schema/mod.rs`](/home/brasides/code/ploke/crates/ingest/ploke-transform/src/schema/mod.rs)
+- [`crates/ingest/ploke-transform/src/schema/mod.rs`](../../../crates/ingest/ploke-transform/src/schema/mod.rs)
   already includes the workspace schema in full schema creation.
 
 ### Embeddings and Indexes
@@ -50,21 +50,21 @@ RAG/tool behavior are still centered on one focused crate as well.
 - `ploke-db` already has multi-embedding support and per-set HNSW relations, but
   the public runtime still behaves as if one embedding set is globally active in
   a loaded DB. The main touchpoints are
-  [`crates/ploke-db/src/database.rs`](/home/brasides/code/ploke/crates/ploke-db/src/database.rs)
+  [`crates/ploke-db/src/database.rs`](../../../crates/ploke-db/src/database.rs)
   and
-  [`crates/ploke-db/src/multi_embedding/db_ext.rs`](/home/brasides/code/ploke/crates/ploke-db/src/multi_embedding/db_ext.rs).
+  [`crates/ploke-db/src/multi_embedding/db_ext.rs`](../../../crates/ploke-db/src/multi_embedding/db_ext.rs).
 - BM25 exists, but it is rebuilt from the whole DB into one actor-owned in-memory
   sparse index rather than tracked per workspace. See
-  [`crates/ploke-db/src/bm25_index/mod.rs`](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/mod.rs)
+  [`crates/ploke-db/src/bm25_index/mod.rs`](../../../crates/ploke-db/src/bm25_index/mod.rs)
   and
-  [`crates/ploke-db/src/bm25_index/bm25_service.rs`](/home/brasides/code/ploke/crates/ploke-db/src/bm25_index/bm25_service.rs).
+  [`crates/ploke-db/src/bm25_index/bm25_service.rs`](../../../crates/ploke-db/src/bm25_index/bm25_service.rs).
 
 ## Required Changes Before Workspace-Wide `/index`
 
 ### 1. Replace crate-root indexing orchestration with workspace-root orchestration
 
 Current behavior in
-[`crates/ploke-tui/src/app_state/handlers/indexing.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
+[`crates/ploke-tui/src/app_state/handlers/indexing.rs`](../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
 still:
 
 - resolves one `target_dir`
@@ -87,7 +87,7 @@ to need major new capability for the initial version.
 
 ### 2. Add workspace inventory/state in TUI
 
-[`crates/ploke-tui/src/app_state/core.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
+[`crates/ploke-tui/src/app_state/core.rs`](../../../crates/ploke-tui/src/app_state/core.rs)
 already has useful ingredients:
 
 - `workspace_roots`
@@ -109,10 +109,10 @@ source of truth for:
 ### 3. Expand command surface from crate-scoped to workspace-scoped
 
 The command/help surface in
-[`crates/ploke-tui/src/app/commands/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/mod.rs),
-[`crates/ploke-tui/src/app/commands/exec.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app/commands/exec.rs),
+[`crates/ploke-tui/src/app/commands/mod.rs`](../../../crates/ploke-tui/src/app/commands/mod.rs),
+[`crates/ploke-tui/src/app/commands/exec.rs`](../../../crates/ploke-tui/src/app/commands/exec.rs),
 and
-[`crates/ploke-tui/src/app_state/commands.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/commands.rs)
+[`crates/ploke-tui/src/app_state/commands.rs`](../../../crates/ploke-tui/src/app_state/commands.rs)
 still exposes:
 
 - `index start [directory]`
@@ -135,7 +135,7 @@ conflict validation.
 
 ## Required Changes Before Workspace Save/Load Works
 
-[`crates/ploke-tui/src/app_state/database.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
+[`crates/ploke-tui/src/app_state/database.rs`](../../../crates/ploke-tui/src/app_state/database.rs)
 is still built around one focused crate:
 
 - `save_db(...)` names the backup from `focused_crate_name()`
@@ -167,7 +167,7 @@ The current prefix-based backup lookup is too weak for multi-crate workflows.
 `ploke-rag` currently searches globally over the loaded DB:
 
 - dense search iterates all primary node types in
-  [`crates/ploke-rag/src/core/mod.rs`](/home/brasides/code/ploke/crates/ploke-rag/src/core/mod.rs)
+  [`crates/ploke-rag/src/core/mod.rs`](../../../crates/ploke-rag/src/core/mod.rs)
 - BM25 search talks to one actor-backed sparse index over the current DB
 - `get_context(...)` assumes retrieval already produced the right scope
 
@@ -186,13 +186,13 @@ workspace by default, with optional crate restriction.
 `ploke-tui` still gates tools on `focused_crate()` and resolves file IO relative
 to the focused crate root. Verified examples:
 
-- [`crates/ploke-tui/src/llm/manager/mod.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/llm/manager/mod.rs)
+- [`crates/ploke-tui/src/llm/manager/mod.rs`](../../../crates/ploke-tui/src/llm/manager/mod.rs)
   injects a prompt hint that tools operate on the focused crate.
-- [`crates/ploke-tui/src/rag/context.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/rag/context.rs)
+- [`crates/ploke-tui/src/rag/context.rs`](../../../crates/ploke-tui/src/rag/context.rs)
   tells the user to `index start <path>` or `load crate <name>` when nothing is
   focused.
-- [`crates/ploke-tui/src/tools/ns_read.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/ns_read.rs),
-  [`crates/ploke-tui/src/tools/code_edit.rs`](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs),
+- [`crates/ploke-tui/src/tools/ns_read.rs`](../../../crates/ploke-tui/src/tools/ns_read.rs),
+  [`crates/ploke-tui/src/tools/code_edit.rs`](../../../crates/ploke-tui/src/tools/code_edit.rs),
   and related tools require `focused_crate_root()`.
 
 Workspace semantic edit therefore needs two changes:

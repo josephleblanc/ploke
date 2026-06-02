@@ -24,15 +24,40 @@ name>" or similar.
 
 Current behavior in `ploke-tui`:
 
-| Message type | Source in conversation | Minimal | Normal (default) | Verbose | Notes |
-|---|---|---|---|---|---|
-| `User` | `Message.content` | Same as normal | Full content | Same as normal | Not controlled by tool verbosity. |
-| `Assistant` | `Message.content` | Same as normal | Full content | Same as normal | Not controlled by tool verbosity. |
-| `System` | `Message.content` | Same as normal | Full content | Same as normal | Not controlled by tool verbosity. |
-| `SysInfo` | `Message.content` | Same as normal | Full content | Same as normal | Not controlled by tool verbosity; often used for diagnostics/status text. |
-| `Tool` with `tool_payload` | `ToolUiPayload::render(...)` | `Tool: <name> - <summary>` | `Tool`, `Summary`, and all `Fields` | Normal + `Details` block | This is the only message type currently affected by verbosity. |
-| `Tool` without `tool_payload` | `Message.content` | Same as normal | Full content | Same as normal | Fallback path if payload not attached. |
-| User-facing annotations | `MessageAnnotation` with `Audience::User` | Same as normal | Rendered under message | Same as normal | Annotation display is independent of tool verbosity. |
+```text
+┌────────────┬────────────────┬───────────┬──────────────┬──────────┬──────────────────────────────┐
+│ Message    │ Source in      │ Minimal   │ Normal       │ Verbose  │ Notes                        │
+│ type       │ conversation   │           │ (default)    │          │                              │
+╞════════════╪════════════════╪═══════════╪══════════════╪══════════╪══════════════════════════════╡
+│ `User`     │ `Message.      │ Same as   │ Full content │ Same as  │ Not controlled by tool       │
+│            │ content`       │ normal    │              │ normal   │ verbosity.                   │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ `Assistan- │ `Message.      │ Same as   │ Full content │ Same as  │ Not controlled by tool       │
+│ t`         │ content`       │ normal    │              │ normal   │ verbosity.                   │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ `System`   │ `Message.      │ Same as   │ Full content │ Same as  │ Not controlled by tool       │
+│            │ content`       │ normal    │              │ normal   │ verbosity.                   │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ `SysInfo`  │ `Message.      │ Same as   │ Full content │ Same as  │ Not controlled by tool       │
+│            │ content`       │ normal    │              │ normal   │ verbosity; often used for    │
+│            │                │           │              │          │ diagnostics/status text.     │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ `Tool`     │ `ToolUiPayloa- │ `Tool:    │ `Tool`,      │ Normal + │ This is the only message     │
+│ with       │ d::render(...) │ <name> -  │ `Summary`,   │ `Detail- │ type currently affected by   │
+│ `tool_     │ `              │ <summary  │ and all      │ s` block │ verbosity.                   │
+│ payload`   │                │ >`        │ `Fields`     │          │                              │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ `Tool`     │ `Message.      │ Same as   │ Full content │ Same as  │ Fallback path if payload not │
+│ without    │ content`       │ normal    │              │ normal   │ attached.                    │
+│ `tool_     │                │           │              │          │                              │
+│ payload`   │                │           │              │          │                              │
+├────────────┼────────────────┼───────────┼──────────────┼──────────┼──────────────────────────────┤
+│ User-      │ `MessageAnnot- │ Same as   │ Rendered     │ Same as  │ Annotation display is        │
+│ facing     │ ation` with    │ normal    │ under        │ normal   │ independent of tool          │
+│ annotatio- │ `Audience::    │           │ message      │          │ verbosity.                   │
+│ ns         │ User`          │           │              │          │                              │
+└────────────┴────────────────┴───────────┴──────────────┴──────────┴──────────────────────────────┘
+```
 
 Important current limitation: the conversation renderer still includes the full message path (no per-kind filtering mode yet), so lowering verbosity reduces tool payload detail but does not hide message classes.
 
@@ -40,50 +65,162 @@ Important current limitation: the conversation renderer still includes the full 
 
 Primary control points and dataflow:
 
-| Layer | File(s) | Function(s) / Path | Responsibility |
-|---|---|---|---|
-| Tool payload model | `crates/ploke-tui/src/tools/ui.rs` | `ToolVerbosity`, `ToolUiPayload::render` | Defines verbosity levels and rendering format for tool payloads. |
-| Conversation render path | `crates/ploke-tui/src/app/message_item.rs` | `render_message_content` | Applies `tool_verbosity` when rendering tool messages; non-tool messages bypass verbosity. |
-| App-level runtime state | `crates/ploke-tui/src/app/mod.rs` | `App::tool_verbosity`, `apply_tool_verbosity`, `cycle_tool_verbosity` | Stores active runtime verbosity and updates config state. |
-| Command parsing | `crates/ploke-tui/src/app/commands/parser.rs` | parse `tool verbosity` subcommands | Converts user command text to verbosity actions. |
-| Command execution | `crates/ploke-tui/src/app/commands/exec.rs` | `ToolVerbositySet`, `ToolVerbosityToggle`, `ToolVerbosityShow` | Applies/queries verbosity through app runtime methods. |
-| Keybinding entrypoint | `crates/ploke-tui/src/app/input/keymap.rs` | `Action::ToggleToolVerbosity` on `v` | Fast toggle in Normal mode. |
-| Settings overlay | `crates/ploke-tui/src/app/view/components/config_overlay.rs` | `"Tool Verbosity"` enum item + `selected_tool_verbosity` + apply | UI control for changing verbosity without command line text. |
-| Persistence model | `crates/ploke-tui/src/user_config.rs`, `crates/ploke-tui/src/app_state/core.rs` | `UserConfig.tool_verbosity` <-> `RuntimeConfig.tool_verbosity` | Persists verbosity across sessions. |
-| Tool result producers | `crates/ploke-tui/src/tools/*.rs` | `ToolUiPayload::new(...).with_field(...).with_details(...)` | Determines how much structured information exists to be displayed at each verbosity. |
+```text
+┌──────────┬────────────────────────────┬────────────────────────┬─────────────────────────────────┐
+│ Layer    │ File(s)                    │ Function(s) / Path     │ Responsibility                  │
+╞══════════╪════════════════════════════╪════════════════════════╪═════════════════════════════════╡
+│ Tool     │ `crates/ploke-tui/src/     │ `ToolVerbosity`,       │ Defines verbosity levels and    │
+│ payload  │ tools/ui.rs`               │ `ToolUiPayload::       │ rendering format for tool       │
+│ model    │                            │ render`                │ payloads.                       │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Convers- │ `crates/ploke-tui/src/app/ │ `render_message_       │ Applies `tool_verbosity` when   │
+│ ation    │ message_item.rs`           │ content`               │ rendering tool messages;        │
+│ render   │                            │                        │ non-tool messages bypass        │
+│ path     │                            │                        │ verbosity.                      │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ App-     │ `crates/ploke-tui/src/app/ │ `App::tool_verbosity`, │ Stores active runtime verbosity │
+│ level    │ mod.rs`                    │ `apply_tool_           │ and updates config state.       │
+│ runtime  │                            │ verbosity`,            │                                 │
+│ state    │                            │ `cycle_tool_verbosity` │                                 │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Command  │ `crates/ploke-tui/src/app/ │ parse `tool verbosity` │ Converts user command text to   │
+│ parsing  │ commands/parser.rs`        │ subcommands            │ verbosity actions.              │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Command  │ `crates/ploke-tui/src/app/ │ `ToolVerbositySet`,    │ Applies/queries verbosity       │
+│ executi- │ commands/exec.rs`          │ `ToolVerbosityToggle`, │ through app runtime methods.    │
+│ on       │                            │ `ToolVerbosityShow`    │                                 │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Keybind- │ `crates/ploke-tui/src/app/ │ `Action::              │ Fast toggle in Normal mode.     │
+│ ing      │ input/keymap.rs`           │ ToggleToolVerbosity`   │                                 │
+│ entrypo- │                            │ on `v`                 │                                 │
+│ int      │                            │                        │                                 │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Settings │ `crates/ploke-tui/src/app/ │ `"Tool Verbosity"`     │ UI control for changing         │
+│ overlay  │ view/components/config_    │ enum item +            │ verbosity without command line  │
+│          │ overlay.rs`                │ `selected_tool_        │ text.                           │
+│          │                            │ verbosity` + apply     │                                 │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Persist- │ `crates/ploke-tui/src/     │ `UserConfig.tool_      │ Persists verbosity across       │
+│ ence     │ user_config.rs`,           │ verbosity` <->         │ sessions.                       │
+│ model    │ `crates/ploke-tui/src/app_ │ `RuntimeConfig.tool_   │                                 │
+│          │ state/core.rs`             │ verbosity`             │                                 │
+├──────────┼────────────────────────────┼────────────────────────┼─────────────────────────────────┤
+│ Tool     │ `crates/ploke-tui/src/     │ `ToolUiPayload::new(.. │ Determines how much structured  │
+│ result   │ tools/*.rs`                │ .).with_field(...).    │ information exists to be        │
+│ produce- │                            │ with_details(...)`     │ displayed at each verbosity.    │
+│ rs       │                            │                        │                                 │
+└──────────┴────────────────────────────┴────────────────────────┴─────────────────────────────────┘
+```
 
 ### User-facing Verbosity Controls
 
-| Control surface | Values | Scope | Persistence | Current behavior |
-|---|---|---|---|---|
-| Normal mode keybind `v` | Cycles `minimal -> normal -> verbose` | Runtime app session | Yes (written into runtime config state) | Quick toggle; emits SysInfo confirmation message. |
-| Command: `tool verbosity <minimal\|normal\|verbose\|toggle>` | Explicit set/toggle | Runtime app session | Yes | Main textual control for power users. |
-| Command: `tool verbosity` | N/A (read-only) | Runtime app session | N/A | Prints current verbosity in SysInfo. |
-| Config overlay: `UI -> Tool Verbosity` | `Minimal`, `Normal`, `Verbose` | Runtime app session | Yes | Interactive settings control. |
-| Config file (`UserConfig.tool_verbosity`) | `minimal`, `normal`, `verbose` | Startup default + persisted preference | Yes | Seeds runtime default; currently defaults to `normal`. |
+```text
+┌─────────────────────────┬───────────────┬────────────────┬────────────────┬──────────────────────┐
+│ Control surface         │ Values        │ Scope          │ Persistence    │ Current behavior     │
+╞═════════════════════════╪═══════════════╪════════════════╪════════════════╪══════════════════════╡
+│ Normal mode keybind `v` │ Cycles        │ Runtime app    │ Yes (written   │ Quick toggle; emits  │
+│                         │ `minimal ->   │ session        │ into runtime   │ SysInfo confirmation │
+│                         │ normal ->     │                │ config state)  │ message.             │
+│                         │ verbose`      │                │                │                      │
+├─────────────────────────┼───────────────┼────────────────┼────────────────┼──────────────────────┤
+│ Command: `tool          │ Explicit      │ Runtime app    │ Yes            │ Main textual control │
+│ verbosity               │ set/toggle    │ session        │                │ for power users.     │
+│ <minimal|normal|verbos- │               │                │                │                      │
+│ e|toggle>`              │               │                │                │                      │
+├─────────────────────────┼───────────────┼────────────────┼────────────────┼──────────────────────┤
+│ Command: `tool          │ N/A           │ Runtime app    │ N/A            │ Prints current       │
+│ verbosity`              │ (read-only)   │ session        │                │ verbosity in         │
+│                         │               │                │                │ SysInfo.             │
+├─────────────────────────┼───────────────┼────────────────┼────────────────┼──────────────────────┤
+│ Config overlay: `UI ->  │ `Minimal`,    │ Runtime app    │ Yes            │ Interactive settings │
+│ Tool Verbosity`         │ `Normal`,     │ session        │                │ control.             │
+│                         │ `Verbose`     │                │                │                      │
+├─────────────────────────┼───────────────┼────────────────┼────────────────┼──────────────────────┤
+│ Config file             │ `minimal`,    │ Startup        │ Yes            │ Seeds runtime        │
+│ (`UserConfig.tool_      │ `normal`,     │ default +      │                │ default; currently   │
+│ verbosity`)             │ `verbose`     │ persisted      │                │ defaults to          │
+│                         │               │ preference     │                │ `normal`.            │
+└─────────────────────────┴───────────────┴────────────────┴────────────────┴──────────────────────┘
+```
 
 Behavioral note: these controls currently change only tool message formatting, not conversation message filtering (User/Assistant/System/SysInfo visibility).
 
 ### Verbosity State Locations
 
-| Location type | File | Data structure / field | Mutated by | Read by | Notes |
-|---|---|---|---|---|---|
-| Enum definition | `crates/ploke-tui/src/tools/ui.rs` | `ToolVerbosity::{Minimal, Normal, Verbose}` | N/A (type definition) | All verbosity call sites | Canonical verbosity domain. |
-| Persisted user config | `crates/ploke-tui/src/user_config.rs` | `UserConfig.tool_verbosity` | Config load/save pipeline | Runtime config construction | Serialized preference in user config. |
-| Runtime config (state) | `crates/ploke-tui/src/app_state/core.rs` | `RuntimeConfig.tool_verbosity` | `App::apply_tool_verbosity`, config overlay apply | App startup/init and overlay hydration | Shared config state used by app runtime. |
-| App runtime cache | `crates/ploke-tui/src/app/mod.rs` | `App.tool_verbosity` | `App::new`, `apply_tool_verbosity`, overlay sync path in `on_key_event` | Conversation rendering, copy selection, key toggle cycle | Immediate in-memory value used each frame. |
-| Overlay UI state | `crates/ploke-tui/src/app/view/components/config_overlay.rs` | UI enum item `"Tool Verbosity"` + selected value | Overlay navigation/selection + `apply_to_runtime_config` | `selected_tool_verbosity` in app event loop | Acts as temporary editing buffer before commit. |
-| Tool payload instance field | `crates/ploke-tui/src/tools/ui.rs` | `ToolUiPayload.verbosity` | Tool producers via `.with_verbosity(...)` | Currently not used by render path (render uses global argument) | Stored per payload, but global verbosity presently wins at render time. |
-| Tool payload content shape | `crates/ploke-tui/src/tools/*.rs` | `ToolUiPayload.fields`, `details`, `summary` | Individual tool implementations | `ToolUiPayload::render` | Not the selected level itself, but defines what data each level can expose. |
+```text
+┌──────────┬────────────────┬─────────────┬──────────────────┬────────────────┬────────────────────┐
+│ Location │ File           │ Data        │ Mutated by       │ Read by        │ Notes              │
+│ type     │                │ structure / │                  │                │                    │
+│          │                │ field       │                  │                │                    │
+╞══════════╪════════════════╪═════════════╪══════════════════╪════════════════╪════════════════════╡
+│ Enum     │ `crates/ploke- │ `ToolVerbo- │ N/A (type        │ All verbosity  │ Canonical          │
+│ definit- │ tui/src/tools/ │ sity::      │ definition)      │ call sites     │ verbosity domain.  │
+│ ion      │ ui.rs`         │ {Minimal,   │                  │                │                    │
+│          │                │ Normal,     │                  │                │                    │
+│          │                │ Verbose}`   │                  │                │                    │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ Persist- │ `crates/ploke- │ `UserConfi- │ Config load/save │ Runtime config │ Serialized         │
+│ ed user  │ tui/src/user_  │ g.tool_     │ pipeline         │ construction   │ preference in user │
+│ config   │ config.rs`     │ verbosity`  │                  │                │ config.            │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ Runtime  │ `crates/ploke- │ `RuntimeCo- │ `App::apply_     │ App            │ Shared config      │
+│ config   │ tui/src/app_   │ nfig.tool_  │ tool_verbosity`, │ startup/init   │ state used by app  │
+│ (state)  │ state/core.rs` │ verbosity`  │ config overlay   │ and overlay    │ runtime.           │
+│          │                │             │ apply            │ hydration      │                    │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ App      │ `crates/ploke- │ `App.tool_  │ `App::new`,      │ Conversation   │ Immediate          │
+│ runtime  │ tui/src/app/   │ verbosity`  │ `apply_tool_     │ rendering,     │ in-memory value    │
+│ cache    │ mod.rs`        │             │ verbosity`,      │ copy           │ used each frame.   │
+│          │                │             │ overlay sync     │ selection, key │                    │
+│          │                │             │ path in          │ toggle cycle   │                    │
+│          │                │             │ `on_key_event`   │                │                    │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ Overlay  │ `crates/ploke- │ UI enum     │ Overlay          │ `selected_     │ Acts as temporary  │
+│ UI state │ tui/src/app/   │ item `"Tool │ navigation/      │ tool_          │ editing buffer     │
+│          │ view/          │ Verbosity"` │ selection +      │ verbosity` in  │ before commit.     │
+│          │ components/    │ + selected  │ `apply_to_       │ app event loop │                    │
+│          │ config_        │ value       │ runtime_config`  │                │                    │
+│          │ overlay.rs`    │             │                  │                │                    │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ Tool     │ `crates/ploke- │ `ToolUiPay- │ Tool producers   │ Currently not  │ Stored per         │
+│ payload  │ tui/src/tools/ │ load.       │ via              │ used by render │ payload, but       │
+│ instance │ ui.rs`         │ verbosity`  │ `.with_          │ path (render   │ global verbosity   │
+│ field    │                │             │ verbosity(...)`  │ uses global    │ presently wins at  │
+│          │                │             │                  │ argument)      │ render time.       │
+├──────────┼────────────────┼─────────────┼──────────────────┼────────────────┼────────────────────┤
+│ Tool     │ `crates/ploke- │ `ToolUiPay- │ Individual tool  │ `ToolUiPayloa- │ Not the selected   │
+│ payload  │ tui/src/tools/ │ load.       │ implementations  │ d::render`     │ level itself, but  │
+│ content  │ *.rs`          │ fields`,    │                  │                │ defines what data  │
+│ shape    │                │ `details`,  │                  │                │ each level can     │
+│          │                │ `summary`   │                  │                │ expose.            │
+└──────────┴────────────────┴─────────────┴──────────────────┴────────────────┴────────────────────┘
+```
 
 Mutation paths (high-level):
 
-| Entry path | Function chain | State transitions |
-|---|---|---|
-| Normal mode keybind `v` | `keymap -> Action::ToggleToolVerbosity -> App::cycle_tool_verbosity -> App::apply_tool_verbosity` | `App.tool_verbosity` updated, then `RuntimeConfig.tool_verbosity` updated asynchronously, with optional SysInfo confirmation. |
-| Command `tool verbosity <...>` | `commands/parser -> commands/exec -> App::apply_tool_verbosity` | Same as above, but explicit value from command args. |
-| Config overlay change | `ConfigOverlayState::apply_to_runtime_config` + `App::on_key_event` sync block | `RuntimeConfig.tool_verbosity` updated in config state; app copies selected value back into `App.tool_verbosity`. |
-| Startup hydration | `UserConfig -> RuntimeConfig (From<UserConfig>) -> App::new(tool_verbosity)` | Persisted value becomes runtime default. |
+```text
+┌────────────┬──────────────────────────────────┬──────────────────────────────────────────────────┐
+│ Entry path │ Function chain                   │ State transitions                                │
+╞════════════╪══════════════════════════════════╪══════════════════════════════════════════════════╡
+│ Normal     │ `keymap ->                       │ `App.tool_verbosity` updated, then               │
+│ mode       │ Action::ToggleToolVerbosity ->   │ `RuntimeConfig.tool_verbosity` updated           │
+│ keybind    │ App::cycle_tool_verbosity ->     │ asynchronously, with optional SysInfo            │
+│ `v`        │ App::apply_tool_verbosity`       │ confirmation.                                    │
+├────────────┼──────────────────────────────────┼──────────────────────────────────────────────────┤
+│ Command    │ `commands/parser ->              │ Same as above, but explicit value from command   │
+│ `tool      │ commands/exec ->                 │ args.                                            │
+│ verbosity  │ App::apply_tool_verbosity`       │                                                  │
+│ <...>`     │                                  │                                                  │
+├────────────┼──────────────────────────────────┼──────────────────────────────────────────────────┤
+│ Config     │ `ConfigOverlayState::apply_to_   │ `RuntimeConfig.tool_verbosity` updated in config │
+│ overlay    │ runtime_config` +                │ state; app copies selected value back into       │
+│ change     │ `App::on_key_event` sync block   │ `App.tool_verbosity`.                            │
+├────────────┼──────────────────────────────────┼──────────────────────────────────────────────────┤
+│ Startup    │ `UserConfig -> RuntimeConfig     │ Persisted value becomes runtime default.         │
+│ hydration  │ (From<UserConfig>) ->            │                                                  │
+│            │ App::new(tool_verbosity)`        │                                                  │
+└────────────┴──────────────────────────────────┴──────────────────────────────────────────────────┘
+```
 
 ## Survey of SysInfo and System Message Kinds
 
@@ -95,34 +232,95 @@ Quick volume snapshot (emit-site count, rough): `app/commands/exec.rs` (~41), `a
 
 `System` is low-frequency and currently used for special/internal paths:
 
-| Kind | Primary source(s) | Current intent | Suggested `VerbosityLevel` |
-|---|---|---|---|
-| Base system prompt message (`PROMPT_HEADER`) | `chat_history.rs` (`BASE_SYSTEM_PROMPT`) | Core LLM instruction context, not user-facing status | `Debug` (or hidden by default in conversation UI) |
-| LLM loop overflow/secondary errors emitted into chat | `llm/manager/session.rs` (`emit_loop_error`) | Hard failure surfaced when assistant placeholder is already used | `Error` |
-| Tool failed helper message (`Tool call failed: ...`) | `llm/manager/session.rs` (`add_tool_failed_message`) | Failure fallback as `System` (helper currently appears unused) | `Error` |
-| Fallback/system notes inserted into request context (not chat message) | `rag/context.rs` (`RequestMessage::new_system(...)`) | Prompt construction metadata for LLM, not direct user feedback | `Debug` |
+```text
+┌─────────────────────────────┬─────────────────────┬─────────────────────────┬────────────────────┐
+│ Kind                        │ Primary source(s)   │ Current intent          │ Suggested          │
+│                             │                     │                         │ `VerbosityLevel`   │
+╞═════════════════════════════╪═════════════════════╪═════════════════════════╪════════════════════╡
+│ Base system prompt message  │ `chat_history.rs`   │ Core LLM instruction    │ `Debug` (or hidden │
+│ (`PROMPT_HEADER`)           │ (`BASE_SYSTEM_      │ context, not            │ by default in      │
+│                             │ PROMPT`)            │ user-facing status      │ conversation UI)   │
+├─────────────────────────────┼─────────────────────┼─────────────────────────┼────────────────────┤
+│ LLM loop overflow/secondary │ `llm/manager/       │ Hard failure surfaced   │ `Error`            │
+│ errors emitted into chat    │ session.rs`         │ when assistant          │                    │
+│                             │ (`emit_loop_error`) │ placeholder is already  │                    │
+│                             │                     │ used                    │                    │
+├─────────────────────────────┼─────────────────────┼─────────────────────────┼────────────────────┤
+│ Tool failed helper message  │ `llm/manager/       │ Failure fallback as     │ `Error`            │
+│ (`Tool call failed: ...`)   │ session.rs`         │ `System` (helper        │                    │
+│                             │ (`add_tool_failed_  │ currently appears       │                    │
+│                             │ message`)           │ unused)                 │                    │
+├─────────────────────────────┼─────────────────────┼─────────────────────────┼────────────────────┤
+│ Fallback/system notes       │ `rag/context.rs`    │ Prompt construction     │ `Debug`            │
+│ inserted into request       │ (`RequestMessage::  │ metadata for LLM, not   │                    │
+│ context (not chat message)  │ new_system(...)`)   │ direct user feedback    │                    │
+└─────────────────────────────┴─────────────────────┴─────────────────────────┴────────────────────┘
+```
 
 ### SysInfo Message Kinds
 
 `SysInfo` is the main operational/user-feedback channel, currently mixing user-facing updates with debug-heavy detail.
 
-| Category | Primary source(s) | Examples | Suggested `VerbosityLevel` |
-|---|---|---|---|
-| UI/command acknowledgements | `app/mod.rs`, `app/commands/exec.rs`, `app_state/dispatcher.rs` | "Tool verbosity set to ...", "Context mode set to ...", "Copied selection.", help output, config save/load confirmations | `Info` |
-| Model/provider/browser interaction warnings | `app/events.rs`, `app/commands/exec.rs` | Missing API key, no matching models/endpoints, failed endpoint fetch | `Warn` (hard failures as `Error`) |
-| Indexing + DB lifecycle status | `app/events.rs`, `app_state/handlers/indexing.rs`, `app_state/handlers/db.rs`, `app_state/database.rs` | "Indexing...", "Indexing Succeeded", backup/load success, embedding restore notices | Success paths `Info`; degraded-but-recovered `Warn`; failures `Error` |
-| RAG/search diagnostics and result dumps | `rag/search.rs` | BM25/dense/hybrid status, req_id-tagged result lists, score dumps | `Debug` (summary-only signal could be `Info`) |
-| Tool proposal workflow summaries | `rag/tools.rs`, `tools/create_file.rs`, `rag/editing.rs` | Staged edit/create previews, approve/deny instructions, overlap/stale proposal notes, rescan summaries | Stage/preview blobs `Debug`; proposal state changes `Info`; overlap/retry guidance `Warn`; apply failures `Error` |
-| General error funnel currently emitted as SysInfo | `app/events.rs` (`AppEvent::Error`), many command handlers | `"Error: ..."` messages routed through `SysInfo` kind | `Error` |
+```text
+┌─────────────┬─────────────────────────┬──────────────────────────────┬───────────────────────────┐
+│ Category    │ Primary source(s)       │ Examples                     │ Suggested                 │
+│             │                         │                              │ `VerbosityLevel`          │
+╞═════════════╪═════════════════════════╪══════════════════════════════╪═══════════════════════════╡
+│ UI/command  │ `app/mod.rs`,           │ "Tool verbosity set to ...", │ `Info`                    │
+│ acknowledg- │ `app/commands/exec.rs`, │ "Context mode set to ...",   │                           │
+│ ements      │ `app_state/dispatcher.  │ "Copied selection.", help    │                           │
+│             │ rs`                     │ output, config save/load     │                           │
+│             │                         │ confirmations                │                           │
+├─────────────┼─────────────────────────┼──────────────────────────────┼───────────────────────────┤
+│ Model/      │ `app/events.rs`,        │ Missing API key, no matching │ `Warn` (hard failures as  │
+│ provider/   │ `app/commands/exec.rs`  │ models/endpoints, failed     │ `Error`)                  │
+│ browser     │                         │ endpoint fetch               │                           │
+│ interaction │                         │                              │                           │
+│ warnings    │                         │                              │                           │
+├─────────────┼─────────────────────────┼──────────────────────────────┼───────────────────────────┤
+│ Indexing +  │ `app/events.rs`,        │ "Indexing...", "Indexing     │ Success paths `Info`;     │
+│ DB          │ `app_state/handlers/    │ Succeeded", backup/load      │ degraded-but-recovered    │
+│ lifecycle   │ indexing.rs`,           │ success, embedding restore   │ `Warn`; failures `Error`  │
+│ status      │ `app_state/handlers/db. │ notices                      │                           │
+│             │ rs`,                    │                              │                           │
+│             │ `app_state/database.rs` │                              │                           │
+├─────────────┼─────────────────────────┼──────────────────────────────┼───────────────────────────┤
+│ RAG/search  │ `rag/search.rs`         │ BM25/dense/hybrid status,    │ `Debug` (summary-only     │
+│ diagnostics │                         │ req_id-tagged result lists,  │ signal could be `Info`)   │
+│ and result  │                         │ score dumps                  │                           │
+│ dumps       │                         │                              │                           │
+├─────────────┼─────────────────────────┼──────────────────────────────┼───────────────────────────┤
+│ Tool        │ `rag/tools.rs`,         │ Staged edit/create previews, │ Stage/preview blobs       │
+│ proposal    │ `tools/create_file.rs`, │ approve/deny instructions,   │ `Debug`; proposal state   │
+│ workflow    │ `rag/editing.rs`        │ overlap/stale proposal       │ changes `Info`;           │
+│ summaries   │                         │ notes, rescan summaries      │ overlap/retry guidance    │
+│             │                         │                              │ `Warn`; apply failures    │
+│             │                         │                              │ `Error`                   │
+├─────────────┼─────────────────────────┼──────────────────────────────┼───────────────────────────┤
+│ General     │ `app/events.rs`         │ `"Error: ..."` messages      │ `Error`                   │
+│ error       │ (`AppEvent::Error`),    │ routed through `SysInfo`     │                           │
+│ funnel      │ many command handlers   │ kind                         │                           │
+│ currently   │                         │                              │                           │
+│ emitted as  │                         │                              │                           │
+│ SysInfo     │                         │                              │                           │
+└─────────────┴─────────────────────────┴──────────────────────────────┴───────────────────────────┘
+```
 
 ### Context Inclusion Note (Important for Future Filtering)
 
 `SysInfo` context inclusion is currently mixed by insertion API, not by message intent:
 
-| Path | Behavior |
-|---|---|
-| `chat::add_msg_immediate(...)` with `MessageKind::SysInfo` | Defaults to pinned context behavior (eligible for LLM context inclusion) |
-| `chat::add_msg_immediate_sysinfo_unpinned(...)` | Explicitly UI-only, excluded from LLM context |
+```text
+┌───────────────────────────────────────────┬──────────────────────────────────────────────────────┐
+│ Path                                      │ Behavior                                             │
+╞═══════════════════════════════════════════╪══════════════════════════════════════════════════════╡
+│ `chat::add_msg_immediate(...)` with       │ Defaults to pinned context behavior (eligible for    │
+│ `MessageKind::SysInfo`                    │ LLM context inclusion)                               │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ `chat::add_msg_immediate_sysinfo_         │ Explicitly UI-only, excluded from LLM context        │
+│ unpinned(...)`                            │                                                      │
+└───────────────────────────────────────────┴──────────────────────────────────────────────────────┘
+```
 
 Current consequence: several noisy diagnostic `SysInfo` messages can be pinned unless callers opt into unpinned APIs. Message verbosity filtering should ideally separate:
 1. visibility policy in conversation UI, and
@@ -130,12 +328,23 @@ Current consequence: several noisy diagnostic `SysInfo` messages can be pinned u
 
 ### Initial Classification Heuristic (for implementation planning)
 
-| Signal pattern | Default classification |
-|---|---|
-| Message text starts with `Error:` / explicit failed operation / timeout / invalid path | `Error` |
-| Missing configuration/data but app continues (missing key, no model match, no workspace selected, stale overlap) | `Warn` |
-| Success/ack/state transition intended for normal user workflow | `Info` |
-| Detailed dumps, previews, perf/score data, req_id-heavy diagnostics, long help/debug payloads | `Debug` |
+```text
+┌────────────────────────────────────────────────────────────────────────────────┬─────────────────┐
+│ Signal pattern                                                                 │ Default         │
+│                                                                                │ classification  │
+╞════════════════════════════════════════════════════════════════════════════════╪═════════════════╡
+│ Message text starts with `Error:` / explicit failed operation / timeout /      │ `Error`         │
+│ invalid path                                                                   │                 │
+├────────────────────────────────────────────────────────────────────────────────┼─────────────────┤
+│ Missing configuration/data but app continues (missing key, no model match, no  │ `Warn`          │
+│ workspace selected, stale overlap)                                             │                 │
+├────────────────────────────────────────────────────────────────────────────────┼─────────────────┤
+│ Success/ack/state transition intended for normal user workflow                 │ `Info`          │
+├────────────────────────────────────────────────────────────────────────────────┼─────────────────┤
+│ Detailed dumps, previews, perf/score data, req_id-heavy diagnostics, long      │ `Debug`         │
+│ help/debug payloads                                                            │                 │
+└────────────────────────────────────────────────────────────────────────────────┴─────────────────┘
+```
 
 ## Actionable Next Steps
 
@@ -350,55 +559,241 @@ immediate acknowledgement messages now appear.
 
 ### 9) Documentation matrix (completed)
 
-| Command | Feedback | Data structures/state touched | Feedback definition location | Placeholder | Validation |
-|---|---|---|---|---|---|
-| `index start [directory]` | `SysInfo` ack + indexing status messages | `StateCommand::IndexWorkspace`, indexing state | `app/commands/exec.rs`, `app_state/handlers/indexing.rs`, `app/events.rs` | No | Covered indirectly by existing indexing tests; explicit feedback policy matrix only |
-| `index pause` | `SysInfo: Indexing pause requested.` | `StateCommand::PauseIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
-| `index resume` | `SysInfo: Indexing resume requested.` | `StateCommand::ResumeIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
-| `index cancel` | `SysInfo: Indexing cancel requested.` | `StateCommand::CancelIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
-| `check api` | API key guidance `SysInfo` | none (display only) | `app/commands/exec.rs` | No | Covered by survey/manual path |
-| `copy` | `SysInfo` copy success/failure | selected message state, clipboard | `app/mod.rs` | No | Existing copy tests |
-| `model list` | `SysInfo` active model + provider pins | runtime config model registry | `app/commands/exec.rs` | No | Existing model command tests |
-| `model info` | `SysInfo` model + params + provider pins | runtime config model/params | `app/commands/exec.rs` | No | Existing model command tests |
-| `model use <name>` | model switch feedback (`SysInfo`) + active model indicator UI | `StateCommand::SwitchModel`, `SystemEvent::ModelSwitched`, app indicator | `app_state/models.rs`, `app/events.rs` | No | Existing model/event tests |
-| `model refresh [--local]` | immediate refresh/reload `SysInfo` | config/registry reload path | `app/commands/exec.rs` | No | Survey/manual path |
-| `model load [path]` | immediate `Loading configuration...` + success/failure `SysInfo` | `UserConfig::load_from_path`, runtime config replace | `app/commands/exec.rs` | No | `command_feedback_policy::io_commands_emit_user_feedback_within_500ms` |
-| `model save [path] [--with-keys]` | immediate `Saving configuration...` + success/failure `SysInfo` | `RuntimeConfig::to_user_config`, file write | `app/commands/exec.rs` | No | Survey/manual path |
-| `model search <keyword>` | immediate model browser overlay, async results | model browser overlay state + llm event bus | `app/commands/exec.rs`, `app/events.rs` | No | Existing UI/browser tests |
-| `embedding search <keyword>` | immediate embedding browser overlay, async results | embedding browser overlay + llm event bus | `app/commands/exec.rs`, `app/events.rs` | No | Existing UI/browser tests |
-| `model providers <model_id>` | validation/auth/fetch `SysInfo` | network request + provider parsing | `app/commands/exec.rs` | No | `command_feedback_policy::io_commands_emit_user_feedback_within_500ms` |
-| `provider strictness <...>` | `SysInfo` confirmation | runtime config model registry strictness | `app/commands/exec.rs` | No | Survey/manual path |
-| `provider tools-only <on|off>` | `SysInfo` confirmation | runtime config gating flag | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
-| `provider select ...` / `provider pin ...` | `SysInfo` model/provider selection feedback | registry selected endpoints + active model | `app_state/dispatcher.rs` | No | Existing provider tests + survey |
-| `bm25 rebuild` | request/result/failure `SysInfo` | RAG BM25 service | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
-| `bm25 status` | status/failure `SysInfo` | RAG BM25 service | `rag/search.rs` | No | Existing BM25 tests |
-| `bm25 save <path>` | immediate ack + result/failure `SysInfo` | RAG BM25 save path | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
-| `bm25 load <path>` | immediate ack + result/failure `SysInfo` | RAG BM25 load path | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
-| `bm25 search <query> [top_k]` | immediate ack + results/failure `SysInfo` | RAG search | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
-| `hybrid <query> [top_k]` | immediate ack + results/failure `SysInfo` | RAG hybrid search | `app/commands/exec.rs`, `rag/search.rs` | No | Existing hybrid tests |
-| `preview [on|off|toggle]` | immediate UI state change (preview pane) | `App.show_context_preview` | `app/commands/exec.rs` | No | Existing UI tests |
-| `edit preview mode <code|diff>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
-| `edit preview lines <N>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
-| `edit auto <on|off>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
-| `edit approve <request_id>` | approval/rescan/failure `SysInfo` | proposals map + apply/edit pipeline | `rag/editing.rs` | No | `post_apply_rescan.rs` + editing tests |
-| `edit deny <request_id>` | deny confirmation/failure `SysInfo` | proposals map | `rag/editing.rs` | No | editing tests |
-| `create approve <request_id>` | approval/rescan/failure `SysInfo` | create proposals map + apply pipeline | `rag/editing.rs` | No | editing tests |
-| `create deny <request_id>` | deny confirmation/failure `SysInfo` | create proposals map | `rag/editing.rs` | No | editing tests |
-| `tool verbosity <...|toggle>` | `SysInfo` confirmation/show | app/runtime tool verbosity fields | `app/mod.rs`, `app/commands/exec.rs` | No | existing command tests |
-| `verbosity profile <...|show>` | `SysInfo` confirmation/show | runtime default profile + render policy | `app/mod.rs`, `app/commands/exec.rs` | No | `command_feedback_policy` + `command_verbosity_profile.rs` |
-| `help [topic]` | help text `SysInfo` | none | `app/commands/exec.rs` | No | existing help render tests |
-| `search <query>` | immediate context-browser overlay + async results | context browser overlay + search dispatch | `app/commands/exec.rs`, `app/events.rs` | No | existing context browser tests |
-| `update` | immediate scan ack + summary `SysInfo` | `ScanForChange` + db update dispatch | `app/commands/exec.rs` | No | survey/manual path |
-| `quit` | app exit | app lifecycle | `app/commands/exec.rs` | No | `command_quit.rs` |
+```text
+┌───────────┬────────────────┬─────────────────┬─────────────────┬──────────┬──────────────────────┐
+│ Command   │ Feedback       │ Data            │ Feedback        │ Placeho- │ Validation           │
+│           │                │ structures/     │ definition      │ lder     │                      │
+│           │                │ state touched   │ location        │          │                      │
+╞═══════════╪════════════════╪═════════════════╪═════════════════╪══════════╪══════════════════════╡
+│ `index    │ `SysInfo` ack  │ `StateCommand:: │ `app/commands/  │ No       │ Covered indirectly   │
+│ start     │ + indexing     │ IndexWorkspace  │ exec.rs`,       │          │ by existing indexing │
+│ [directo- │ status         │ `, indexing     │ `app_state/     │          │ tests; explicit      │
+│ ry]`      │ messages       │ state           │ handlers/       │          │ feedback policy      │
+│           │                │                 │ indexing.rs`,   │          │ matrix only          │
+│           │                │                 │ `app/events.rs` │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `index    │ `SysInfo:      │ `StateCommand:: │ `app/commands/  │ No       │ `command_feedback_   │
+│ pause`    │ Indexing pause │ PauseIndexing`, │ exec.rs`        │          │ policy::non_io_      │
+│           │ requested.`    │ indexing        │                 │          │ commands_emit_user_  │
+│           │                │ control channel │                 │          │ feedback_within_     │
+│           │                │                 │                 │          │ 500ms`               │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `index    │ `SysInfo:      │ `StateCommand:: │ `app/commands/  │ No       │ `command_feedback_   │
+│ resume`   │ Indexing       │ ResumeIndexing  │ exec.rs`        │          │ policy::non_io_      │
+│           │ resume         │ `, indexing     │                 │          │ commands_emit_user_  │
+│           │ requested.`    │ control channel │                 │          │ feedback_within_     │
+│           │                │                 │                 │          │ 500ms`               │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `index    │ `SysInfo:      │ `StateCommand:: │ `app/commands/  │ No       │ `command_feedback_   │
+│ cancel`   │ Indexing       │ CancelIndexing  │ exec.rs`        │          │ policy::non_io_      │
+│           │ cancel         │ `, indexing     │                 │          │ commands_emit_user_  │
+│           │ requested.`    │ control channel │                 │          │ feedback_within_     │
+│           │                │                 │                 │          │ 500ms`               │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `check    │ API key        │ none (display   │ `app/commands/  │ No       │ Covered by           │
+│ api`      │ guidance       │ only)           │ exec.rs`        │          │ survey/manual path   │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `copy`    │ `SysInfo` copy │ selected        │ `app/mod.rs`    │ No       │ Existing copy tests  │
+│           │ success/       │ message state,  │                 │          │                      │
+│           │ failure        │ clipboard       │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ `SysInfo`      │ runtime config  │ `app/commands/  │ No       │ Existing model       │
+│ list`     │ active model + │ model registry  │ exec.rs`        │          │ command tests        │
+│           │ provider pins  │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ `SysInfo`      │ runtime config  │ `app/commands/  │ No       │ Existing model       │
+│ info`     │ model + params │ model/params    │ exec.rs`        │          │ command tests        │
+│           │ + provider     │                 │                 │          │                      │
+│           │ pins           │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ model switch   │ `StateCommand:: │ `app_state/     │ No       │ Existing model/event │
+│ use       │ feedback       │ SwitchModel`,   │ models.rs`,     │          │ tests                │
+│ <name>`   │ (`SysInfo`) +  │ `SystemEvent::  │ `app/events.rs` │          │                      │
+│           │ active model   │ ModelSwitched`, │                 │          │                      │
+│           │ indicator UI   │ app indicator   │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ immediate      │ config/registry │ `app/commands/  │ No       │ Survey/manual path   │
+│ refresh   │ refresh/reload │ reload path     │ exec.rs`        │          │                      │
+│ [--       │ `SysInfo`      │                 │                 │          │                      │
+│ local]`   │                │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ immediate      │ `UserConfig::   │ `app/commands/  │ No       │ `command_feedback_   │
+│ load      │ `Loading       │ load_from_      │ exec.rs`        │          │ policy::io_commands_ │
+│ [path]`   │ configuration  │ path`, runtime  │                 │          │ emit_user_feedback_  │
+│           │ ...` +         │ config replace  │                 │          │ within_500ms`        │
+│           │ success/       │                 │                 │          │                      │
+│           │ failure        │                 │                 │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ immediate      │ `RuntimeConfig  │ `app/commands/  │ No       │ Survey/manual path   │
+│ save      │ `Saving        │ ::to_user_      │ exec.rs`        │          │                      │
+│ [path]    │ configuration  │ config`, file   │                 │          │                      │
+│ [--with-  │ ...` +         │ write           │                 │          │                      │
+│ keys]`    │ success/       │                 │                 │          │                      │
+│           │ failure        │                 │                 │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ immediate      │ model browser   │ `app/commands/  │ No       │ Existing UI/browser  │
+│ search    │ model browser  │ overlay state + │ exec.rs`,       │          │ tests                │
+│ <keyword  │ overlay, async │ llm event bus   │ `app/events.rs` │          │                      │
+│ >`        │ results        │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `embeddi- │ immediate      │ embedding       │ `app/commands/  │ No       │ Existing UI/browser  │
+│ ng search │ embedding      │ browser overlay │ exec.rs`,       │          │ tests                │
+│ <keyword  │ browser        │ + llm event bus │ `app/events.rs` │          │                      │
+│ >`        │ overlay, async │                 │                 │          │                      │
+│           │ results        │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `model    │ validation/    │ network request │ `app/commands/  │ No       │ `command_feedback_   │
+│ providers │ auth/fetch     │ + provider      │ exec.rs`        │          │ policy::io_commands_ │
+│ <model_   │ `SysInfo`      │ parsing         │                 │          │ emit_user_feedback_  │
+│ id>`      │                │                 │                 │          │ within_500ms`        │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `provider │ `SysInfo`      │ runtime config  │ `app/commands/  │ No       │ Survey/manual path   │
+│ strictne- │ confirmation   │ model registry  │ exec.rs`        │          │                      │
+│ ss <...>` │                │ strictness      │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `provider │ off>`          │ `SysInfo`       │ runtime config  │ `app/    │ No                   │
+│ tools-    │                │ confirmation    │ gating flag     │ command- │                      │
+│ only <on  │                │                 │                 │ s/exec.  │                      │
+│           │                │                 │                 │ rs`      │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `provider │ `SysInfo`      │ registry        │ `app_state/     │ No       │ Existing provider    │
+│ select    │ model/provider │ selected        │ dispatcher.rs`  │          │ tests + survey       │
+│ ...` /    │ selection      │ endpoints +     │                 │          │                      │
+│ `provider │ feedback       │ active model    │                 │          │                      │
+│ pin ...`  │                │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `bm25     │ request/       │ RAG BM25        │ `app/commands/  │ No       │ Existing BM25 tests  │
+│ rebuild`  │ result/failure │ service         │ exec.rs`,       │          │                      │
+│           │ `SysInfo`      │                 │ `rag/search.rs` │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `bm25     │ status/failure │ RAG BM25        │ `rag/search.rs` │ No       │ Existing BM25 tests  │
+│ status`   │ `SysInfo`      │ service         │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `bm25     │ immediate ack  │ RAG BM25 save   │ `app/commands/  │ No       │ Existing BM25 tests  │
+│ save      │ +              │ path            │ exec.rs`,       │          │                      │
+│ <path>`   │ result/failure │                 │ `rag/search.rs` │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `bm25     │ immediate ack  │ RAG BM25 load   │ `app/commands/  │ No       │ Existing BM25 tests  │
+│ load      │ +              │ path            │ exec.rs`,       │          │                      │
+│ <path>`   │ result/failure │                 │ `rag/search.rs` │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `bm25     │ immediate ack  │ RAG search      │ `app/commands/  │ No       │ Existing BM25 tests  │
+│ search    │ +              │                 │ exec.rs`,       │          │                      │
+│ <query>   │ results/       │                 │ `rag/search.rs` │          │                      │
+│ [top_k]`  │ failure        │                 │                 │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `hybrid   │ immediate ack  │ RAG hybrid      │ `app/commands/  │ No       │ Existing hybrid      │
+│ <query>   │ +              │ search          │ exec.rs`,       │          │ tests                │
+│ [top_k]`  │ results/       │                 │ `rag/search.rs` │          │                      │
+│           │ failure        │                 │                 │          │                      │
+│           │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `preview  │ off            │ toggle]`        │ immediate UI    │ `App.    │ `app/commands/exec.  │
+│ [on       │                │                 │ state change    │ show_    │ rs`                  │
+│           │                │                 │ (preview pane)  │ context  │                      │
+│           │                │                 │                 │ _previe- │                      │
+│           │                │                 │                 │ w`       │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `edit     │ diff>`         │ `SysInfo`       │ runtime editing │ `app_    │ No                   │
+│ preview   │                │ confirmation    │ config          │ state/   │                      │
+│ mode      │                │                 │                 │ dispatc- │                      │
+│ <code     │                │                 │                 │ her.rs`  │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `edit     │ `SysInfo`      │ runtime editing │ `app_state/     │ No       │ Existing             │
+│ preview   │ confirmation   │ config          │ dispatcher.rs`  │          │ parser/dispatcher    │
+│ lines     │                │                 │                 │          │ tests                │
+│ <N>`      │                │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `edit     │ off>`          │ `SysInfo`       │ runtime editing │ `app_    │ No                   │
+│ auto <on  │                │ confirmation    │ config          │ state/   │                      │
+│           │                │                 │                 │ dispatc- │                      │
+│           │                │                 │                 │ her.rs`  │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `edit     │ approval/      │ proposals map + │ `rag/editing.   │ No       │ `post_apply_rescan.  │
+│ approve   │ rescan/failure │ apply/edit      │ rs`             │          │ rs` + editing tests  │
+│ <request  │ `SysInfo`      │ pipeline        │                 │          │                      │
+│ _id>`     │                │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `edit     │ deny           │ proposals map   │ `rag/editing.   │ No       │ editing tests        │
+│ deny      │ confirmation/  │                 │ rs`             │          │                      │
+│ <request  │ failure        │                 │                 │          │                      │
+│ _id>`     │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `create   │ approval/      │ create          │ `rag/editing.   │ No       │ editing tests        │
+│ approve   │ rescan/failure │ proposals map + │ rs`             │          │                      │
+│ <request  │ `SysInfo`      │ apply pipeline  │                 │          │                      │
+│ _id>`     │                │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `create   │ deny           │ create          │ `rag/editing.   │ No       │ editing tests        │
+│ deny      │ confirmation/  │ proposals map   │ rs`             │          │                      │
+│ <request  │ failure        │                 │                 │          │                      │
+│ _id>`     │ `SysInfo`      │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `tool     │ toggle>`       │ `SysInfo`       │ app/runtime     │ `app/    │ No                   │
+│ verbosity │                │ confirmation/   │ tool verbosity  │ mod.rs`, │                      │
+│ <...      │                │ show            │ fields          │ `app/    │                      │
+│           │                │                 │                 │ command- │                      │
+│           │                │                 │                 │ s/exec.  │                      │
+│           │                │                 │                 │ rs`      │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `verbosi- │ show>`         │ `SysInfo`       │ runtime default │ `app/    │ No                   │
+│ ty        │                │ confirmation/   │ profile +       │ mod.rs`, │                      │
+│ profile   │                │ show            │ render policy   │ `app/    │                      │
+│ <...      │                │                 │                 │ command- │                      │
+│           │                │                 │                 │ s/exec.  │                      │
+│           │                │                 │                 │ rs`      │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `help     │ help text      │ none            │ `app/commands/  │ No       │ existing help render │
+│ [topic]`  │ `SysInfo`      │                 │ exec.rs`        │          │ tests                │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `search   │ immediate      │ context browser │ `app/commands/  │ No       │ existing context     │
+│ <query>`  │ context-       │ overlay +       │ exec.rs`,       │          │ browser tests        │
+│           │ browser        │ search dispatch │ `app/events.rs` │          │                      │
+│           │ overlay +      │                 │                 │          │                      │
+│           │ async results  │                 │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `update`  │ immediate scan │ `ScanForChange` │ `app/commands/  │ No       │ survey/manual path   │
+│           │ ack + summary  │ + db update     │ exec.rs`        │          │                      │
+│           │ `SysInfo`      │ dispatch        │                 │          │                      │
+├───────────┼────────────────┼─────────────────┼─────────────────┼──────────┼──────────────────────┤
+│ `quit`    │ app exit       │ app lifecycle   │ `app/commands/  │ No       │ `command_quit.rs`    │
+│           │                │                 │ exec.rs`        │          │                      │
+└───────────┴────────────────┴─────────────────┴─────────────────┴──────────┴──────────────────────┘
+```
 
 ### Commands not fully mocked/tested under step 5
 
-| Command(s) | Why not fully covered by step-5 harness test | Needed setup |
-|---|---|---|
-| `model search`, `embedding search` (successful remote fetch path) | Existing policy test covers immediate UI feedback pattern but not deterministic remote success payloads | Router/network mock for OpenRouter model list endpoints to validate successful async result rendering deterministically |
-| `model providers` (successful remote fetch path) | Policy test validates immediate error/validation feedback; not deterministic success path under network variance | Endpoint mock returning `endpoints` payload to assert formatted provider listing |
-| `index start` full run with parse/index work | Existing indexing tests validate responsiveness and completion, but not strict 500ms command-ack for all workspaces | Stable fixture workspace + explicit ack timing assertion in app-harness command-input test |
-| `update` full scan result timing under heavy workspace | Policy coverage is immediate ack only; summary timing depends on filesystem and scan workload | File-system fixture or IO mock with controllable scan delay and deterministic completion signal |
+```text
+┌─────────────────────┬────────────────────────────────────┬───────────────────────────────────────┐
+│ Command(s)          │ Why not fully covered by step-5    │ Needed setup                          │
+│                     │ harness test                       │                                       │
+╞═════════════════════╪════════════════════════════════════╪═══════════════════════════════════════╡
+│ `model search`,     │ Existing policy test covers        │ Router/network mock for OpenRouter    │
+│ `embedding search`  │ immediate UI feedback pattern but  │ model list endpoints to validate      │
+│ (successful remote  │ not deterministic remote success   │ successful async result rendering     │
+│ fetch path)         │ payloads                           │ deterministically                     │
+├─────────────────────┼────────────────────────────────────┼───────────────────────────────────────┤
+│ `model providers`   │ Policy test validates immediate    │ Endpoint mock returning `endpoints`   │
+│ (successful remote  │ error/validation feedback; not     │ payload to assert formatted provider  │
+│ fetch path)         │ deterministic success path under   │ listing                               │
+│                     │ network variance                   │                                       │
+├─────────────────────┼────────────────────────────────────┼───────────────────────────────────────┤
+│ `index start` full  │ Existing indexing tests validate   │ Stable fixture workspace + explicit   │
+│ run with            │ responsiveness and completion, but │ ack timing assertion in app-harness   │
+│ parse/index work    │ not strict 500ms command-ack for   │ command-input test                    │
+│                     │ all workspaces                     │                                       │
+├─────────────────────┼────────────────────────────────────┼───────────────────────────────────────┤
+│ `update` full scan  │ Policy coverage is immediate ack   │ File-system fixture or IO mock with   │
+│ result timing under │ only; summary timing depends on    │ controllable scan delay and           │
+│ heavy workspace     │ filesystem and scan workload       │ deterministic completion signal       │
+└─────────────────────┴────────────────────────────────────┴───────────────────────────────────────┘
+```
 
 ### 10) Add more setup (next)
 
