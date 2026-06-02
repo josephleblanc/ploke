@@ -1636,6 +1636,59 @@ fn broad_headless_tui_diagnostics_path_sits_beside_submitted_result() {
 }
 
 #[test]
+fn turn_live_bundle() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "turn live bundle fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        Vec::new(),
+        Some(tui_adapter::HeadlessTerminal::CompletedWithoutEdit {
+            outcome: "completed".to_string(),
+            summary: "diagnostic bundle".to_string(),
+        }),
+    );
+
+    write_broad_headless_tui_turn_live_bundle(&slot, &run, "diagnose the run", "test/model")
+        .expect("write turn-live bundle");
+
+    let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let full_response_path = dir.join(ploke_records::llm_response::FULL_RESPONSE_TRACE_FILE);
+    assert!(trace_path.exists(), "missing {}", trace_path.display());
+    assert!(summary_path.exists(), "missing {}", summary_path.display());
+    assert!(
+        full_response_path.exists(),
+        "missing {}",
+        full_response_path.display()
+    );
+
+    let trace: ploke_records::agent_turn::AgentTurnTraceRecord =
+        serde_json::from_slice(&fs::read(&trace_path).expect("read turn-live trace"))
+            .expect("decode turn-live trace");
+    assert_eq!(trace.0.task_id, slot.published.request_id());
+    assert_eq!(trace.0.selected_model, "test/model");
+    assert_eq!(trace.0.issue_prompt, "diagnose the run");
+}
+
+#[test]
 fn broad_tui_attempt_options_can_lower_published_live_budget() {
     let contract =
         crate::cli::prototype1_state::edit_surface::harness_request::contract::Bundle::prototype1(
