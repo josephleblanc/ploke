@@ -7,7 +7,14 @@ use std::{
 };
 
 use ploke_db::{Database, NodeType};
-use ploke_records::agent_turn::{AgentTurnTraceRecord, ObservedTurnEventRecord};
+use ploke_records::{
+    agent_turn::{
+        AgentTurnTraceRecord, ObservedTurnEventRecord,
+        ToolRequestRecord as PersistedToolRequestRecord,
+    },
+    tool_contracts::{PersistedToolCallArguments, ToolCallArguments},
+};
+use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
@@ -16,7 +23,11 @@ use ploke_tui::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
     },
-    tools::{Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName, ns_patch::NsPatch},
+    tools::{
+        Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName,
+        ns_patch::NsPatch,
+        ns_read::{NsRead, NsReadResult},
+    },
     user_config::{ChatPolicy, ChatTimeoutStrategy},
 };
 use serde::Deserialize;
@@ -33,6 +44,12 @@ use crate::{
     },
     spec::PrepareError,
 };
+
+const READ_FIX_TRACE: &str = "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/messages/edit-harness-result/node-552c19a55f53dbe6-r2.headless-tui.json";
+const READ_FIX_WORKSPACE: &str = "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/workspaces/edit-harness/node-552c19a55f53dbe6-r2";
+const READ_FIX_EVENT_INDEX: usize = 80;
+const READ_FIX_CALL_ID: &str = "function-call-cd7bb6c0-97b8-4928-9324-57aa0c08b4e5";
+const READ_FIX_TARGET: &str = "real_tui_resolver_touch_is_checked_before_adapter_apply";
 
 #[derive(Debug, Deserialize)]
 struct RecordedApplyCodeEditToolRequest {
@@ -391,6 +408,201 @@ async fn replay_ns_patch_request(
         ui_payload,
     } = NsPatch::execute(params, ctx.clone()).await?;
     NsPatch::emit_completed(&ctx, content, ui_payload);
+    Ok(())
+}
+
+fn compact_headless_tool_request(path: &Path, event_index: usize) -> PersistedToolRequestRecord {
+    let text = std::fs::read_to_string(path).expect("read compact headless evidence");
+    let summary: crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Summary =
+        serde_json::from_str(&text).expect("compact headless evidence should parse");
+    let event = summary
+        .events
+        .get(event_index)
+        .unwrap_or_else(|| panic!("missing compact headless event {event_index}"));
+    let mut requests =
+        crate::replay::self_edit::tool_requests_from_events(std::slice::from_ref(event))
+            .expect("compact headless event should convert to a tool request");
+    assert_eq!(requests.len(), 1);
+    requests.remove(0)
+}
+
+async fn replay_ns_read_request(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &PersistedToolRequestRecord,
+) -> Result<NsReadResult, Box<dyn std::error::Error>> {
+    let request_id = Uuid::parse_str(&request.request_id).expect("request_id should be a uuid");
+    let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid");
+    let ctx = Ctx {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        call_id: ploke_core::ArcStr::from(request.call_id.clone()),
+    };
+
+    let params = NsRead::deserialize_params(request.arguments.as_str())
+        .expect("historical read_file payload should deserialize");
+    let ploke_tui::tools::ToolResult {
+        content,
+        ui_payload,
+    } = NsRead::execute(params, ctx.clone()).await?;
+    let parsed = serde_json::from_str::<NsReadResult>(&content)?;
+    NsRead::emit_completed(&ctx, content, ui_payload);
+    Ok(parsed)
+}
+
+async fn replay_read_workspace_state(workspace: &Path) -> Arc<AppState> {
+    let fixture_db =
+        Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+    let runtime = TestRuntime::new(&fixture_db);
+    runtime
+        .setup_loaded_workspace(
+            workspace.to_path_buf(),
+            vec![workspace.to_path_buf()],
+            Some(workspace.to_path_buf()),
+        )
+        .await;
+
+    let state = runtime.state_arc();
+    let policy = state
+        .with_system_read(|sys| sys.derive_path_policy(&[]).expect("path policy after load"))
+        .await;
+    state
+        .io_handle
+        .update_roots(Some(policy.roots.clone()), Some(policy.symlink_policy))
+        .await;
+    state
+}
+
+fn shared_path_stem(left: &Path, right: &Path) -> PathBuf {
+    let mut stem = PathBuf::new();
+    for (left_component, right_component) in left.components().zip(right.components()) {
+        if left_component != right_component {
+            break;
+        }
+        stem.push(left_component.as_os_str());
+    }
+    stem
+}
+
+fn path_after_stem<'a>(path: &'a Path, stem: &Path) -> &'a Path {
+    path.strip_prefix(stem).unwrap_or(path)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "historical compact broad-harness replay of read_file fix"]
+async fn read_fix() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
+    let trace_path = PathBuf::from(READ_FIX_TRACE);
+    let workspace = PathBuf::from(READ_FIX_WORKSPACE);
+    assert!(
+        trace_path.exists(),
+        "expected compact headless evidence at {}",
+        trace_path.display()
+    );
+    assert!(
+        workspace.exists(),
+        "expected replay workspace at {}",
+        workspace.display()
+    );
+
+    let request = compact_headless_tool_request(&trace_path, READ_FIX_EVENT_INDEX);
+    assert_eq!(request.call_id, READ_FIX_CALL_ID);
+    assert_eq!(request.tool, "read_file");
+    let PersistedToolCallArguments::Decoded(ToolCallArguments::NsRead(args)) =
+        request.arguments.decode_for_tool(&request.tool)
+    else {
+        panic!("expected compact event to decode as read_file arguments");
+    };
+    assert_eq!(
+        args.file,
+        "crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs"
+    );
+    assert_eq!(args.start_line, Some(1750));
+    assert_eq!(args.end_line, Some(1800));
+
+    let state = replay_read_workspace_state(&workspace).await;
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+    let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+    let request_id = Uuid::parse_str(&request.request_id).expect("request_id uuid");
+    let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id uuid");
+
+    let read_result = replay_ns_read_request(state, Arc::clone(&event_bus), &request).await?;
+    let completed_result = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = event_rx.recv().await.expect("event bus dropped");
+            if let AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id: observed_request_id,
+                parent_id: observed_parent_id,
+                call_id,
+                content,
+                ..
+            }) = event
+                && observed_request_id == request_id
+                && observed_parent_id == parent_id
+                && call_id.as_ref() == READ_FIX_CALL_ID
+            {
+                break serde_json::from_str::<NsReadResult>(&content)
+                    .expect("ToolCallCompleted content should be full NsReadResult JSON");
+            }
+        }
+    })
+    .await
+    .expect("expected ToolCallCompleted for replayed read_file within timeout");
+
+    let content = read_result
+        .content
+        .as_deref()
+        .expect("read_file result should include content");
+    let emitted_content = completed_result
+        .content
+        .as_deref()
+        .expect("emitted read_file result should include content");
+    let shared_stem = shared_path_stem(&trace_path, &workspace);
+    let trace_display = path_after_stem(&trace_path, &shared_stem);
+    let workspace_display = path_after_stem(&workspace, &shared_stem);
+    println!(
+        "\nREAD_FIX call_id={}\n\
+    shared_stem={}\n\
+    trace={}\n\
+    workspace={}\n\
+    file={}\n\
+    range={:?}-{:?}\n\
+    ok={}\n\
+    exists={}\n\
+    truncated={}\n\
+    byte_len={:?}\n\
+    content_chars={}\n\
+    contains_target={}\n\
+    target_lines:\n{}\n",
+        request.call_id,
+        shared_stem.display(),
+        trace_display.display(),
+        workspace_display.display(),
+        args.file,
+        args.start_line,
+        args.end_line,
+        read_result.ok,
+        read_result.exists,
+        read_result.truncated,
+        read_result.byte_len,
+        content.chars().count(),
+        content.contains(READ_FIX_TARGET),
+        content.trim_end(),
+    );
+
+    assert!(read_result.ok);
+    assert!(read_result.exists);
+    assert!(
+        !content.is_empty(),
+        "compact r2 replay should no longer reproduce successful empty read_file content"
+    );
+    assert_eq!(emitted_content, content);
+    assert!(
+        content.contains(READ_FIX_TARGET),
+        "replayed read_file should return the requested high-line range"
+    );
     Ok(())
 }
 

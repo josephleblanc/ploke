@@ -187,10 +187,11 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
         let byte_cap = max_bytes
             .map(|v| v as usize)
             .unwrap_or(DEFAULT_READ_BYTE_CAP);
+        let has_line_range = start_line.is_some() || end_line.is_some();
 
         let request = ReadFileRequest {
             file_path: abs_path,
-            range: if start_line.is_some() || end_line.is_some() {
+            range: if has_line_range {
                 Some(ReadRange {
                     start_line,
                     end_line,
@@ -198,7 +199,7 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             } else {
                 None
             },
-            max_bytes: Some(byte_cap),
+            max_bytes: if has_line_range { None } else { Some(byte_cap) },
             strategy: ReadStrategy::Plain,
         };
 
@@ -222,12 +223,17 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             file_hash,
         } = read_resp;
 
-        let (content, slice_truncated) = match content {
+        let (content, slice_truncated, cap_truncated) = match content {
             Some(src) => {
                 let (sliced, truncated) = slice_content_lines(src, start_line, end_line);
-                (Some(sliced), truncated)
+                let (capped, cap_truncated) = if has_line_range {
+                    truncate_utf8_to_limit(sliced, byte_cap)
+                } else {
+                    (sliced, false)
+                };
+                (Some(capped), truncated, cap_truncated)
             }
-            None => (None, false),
+            None => (None, false, false),
         };
 
         let result = NsReadResult {
@@ -237,7 +243,7 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             byte_len,
             start_line,
             end_line,
-            truncated: io_truncated || slice_truncated,
+            truncated: io_truncated || slice_truncated || cap_truncated,
             content,
             file_hash,
         };
@@ -248,7 +254,10 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
         };
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("exists", result.exists.to_string())
-            .with_field("truncated", (io_truncated || slice_truncated).to_string())
+            .with_field(
+                "truncated",
+                (io_truncated || slice_truncated || cap_truncated).to_string(),
+            )
             .with_field(
                 "lines",
                 match (result.start_line, result.end_line) {
@@ -292,6 +301,18 @@ fn slice_content_lines(
 
     let end_clamped = end_byte.min(total_len);
     (content[start_byte..end_clamped].to_string(), truncated)
+}
+
+fn truncate_utf8_to_limit(mut content: String, max_bytes: usize) -> (String, bool) {
+    if max_bytes > 0 && content.len() > max_bytes {
+        let mut cut = max_bytes.min(content.len());
+        while cut > 0 && !content.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        content.truncate(cut);
+        return (content, true);
+    }
+    (content, false)
 }
 
 /// Compute byte offsets for the requested line window, noting truncation when the requested lines

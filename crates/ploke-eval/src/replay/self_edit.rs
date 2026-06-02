@@ -389,7 +389,7 @@ fn selected_events(
     summary.events.iter().take(end).cloned().collect()
 }
 
-fn tool_requests_from_events(
+pub(crate) fn tool_requests_from_events(
     events: &[tui_adapter::evidence::Event],
 ) -> Result<Vec<ToolRequestRecord>, PrepareError> {
     let mut requests = Vec::new();

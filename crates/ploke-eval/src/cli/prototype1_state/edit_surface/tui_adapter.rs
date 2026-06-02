@@ -5307,6 +5307,186 @@ Suggested action: Verify API credentials and retry."#;
         requests
     }
 
+    #[test]
+    #[ignore = "historical diagnostic for successful empty read_file completions"]
+    fn read_diag() -> Result<(), Box<dyn std::error::Error>> {
+        // Follow-up: once we have a second run demonstrating the fix, extend this
+        // diagnostic with a second part that compares the historical bad trace
+        // against the fixed run's read_file completions.
+        let run_path = PathBuf::from(
+            "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/",
+        );
+        let trace_path = run_path
+            .join("messages/edit-harness-result/node-552c19a55f53dbe6-r2.headless-tui.json");
+        let trace = fs::read_to_string(&trace_path).unwrap_or_else(|source| {
+            panic!(
+                "read historical headless trace {}: {source}",
+                trace_path.display()
+            )
+        });
+        let summary: evidence::Summary = serde_json::from_str(&trace).unwrap_or_else(|source| {
+            panic!(
+                "parse historical headless trace {} as evidence::Summary: {source}",
+                trace_path.display()
+            )
+        });
+
+        let diagnostics = historical_empty_read_file_diagnostics(&summary);
+        println!(
+            "READ_FILE_DIAG trace={} empty_successes_with_real_lines={}",
+            trace_path.display(),
+            diagnostics.len()
+        );
+        for diagnostic in &diagnostics {
+            let diagnostic_file = diagnostic.observed_file.strip_prefix(&run_path)?;
+            println!(
+                "\nREAD_FILE_DIAG call_id={}\n\
+    requested={}\n\
+    observed={}\n\
+    range={:?}-{:?}\n\
+    byte_len={:?}\n\
+    truncated={}\n\
+    line_count={}\n\
+    first_line={}\n\
+    target_line={}\n",
+                diagnostic.call_id,
+                diagnostic.requested_file,
+                diagnostic_file.display(),
+                diagnostic.start_line,
+                diagnostic.end_line,
+                diagnostic.byte_len,
+                diagnostic.truncated,
+                diagnostic.direct_line_count,
+                diagnostic.first_direct_line,
+                diagnostic
+                    .target_line
+                    .as_deref()
+                    .unwrap_or("<no target marker in range>"),
+            );
+        }
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.call_id
+                == "function-call-cd7bb6c0-97b8-4928-9324-57aa0c08b4e5"
+                && diagnostic.direct_line_count > 0),
+            "expected historical r2 trace to reproduce the tests.rs empty successful read"
+        );
+        Ok(())
+    }
+
+    struct EmptyReadFileDiagnostic {
+        call_id: String,
+        requested_file: String,
+        observed_file: PathBuf,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        byte_len: Option<u64>,
+        truncated: bool,
+        direct_line_count: usize,
+        first_direct_line: String,
+        target_line: Option<String>,
+    }
+
+    fn historical_empty_read_file_diagnostics(
+        summary: &evidence::Summary,
+    ) -> Vec<EmptyReadFileDiagnostic> {
+        let mut requests =
+            HashMap::<String, ploke_records::tool_contracts::NsReadParamsOwned>::new();
+        let mut diagnostics = Vec::new();
+
+        for event in &summary.events {
+            match event {
+                evidence::Event::ToolRequest {
+                    call_id,
+                    tool,
+                    arguments,
+                    ..
+                } if tool == "read_file"
+                    && arguments.chars == arguments.preview.chars().count() =>
+                {
+                    let captured = ploke_records::tool_contracts::ToolArgumentsJson::from(
+                        arguments.preview.clone(),
+                    );
+                    if let ploke_records::tool_contracts::PersistedToolCallArguments::Decoded(
+                        ploke_records::tool_contracts::ToolCallArguments::NsRead(params),
+                    ) = captured.decode_for_tool(tool)
+                    {
+                        requests.insert(call_id.clone(), params);
+                    }
+                }
+                evidence::Event::ToolCompleted { call_id, content } => {
+                    let Some(request) = requests.get(call_id) else {
+                        continue;
+                    };
+                    let Ok(result) = serde_json::from_str::<
+                        ploke_records::tool_contracts::NsReadResult,
+                    >(&content.preview) else {
+                        continue;
+                    };
+                    if !result.ok
+                        || !result.exists
+                        || result.content.as_deref() != Some("")
+                        || !result.truncated
+                    {
+                        continue;
+                    }
+                    let observed_file = PathBuf::from(&result.file_path);
+                    let Some((direct_line_count, first_direct_line, target_line)) =
+                        direct_line_range_preview(
+                            &observed_file,
+                            request.start_line,
+                            request.end_line,
+                        )
+                    else {
+                        continue;
+                    };
+                    diagnostics.push(EmptyReadFileDiagnostic {
+                        call_id: call_id.clone(),
+                        requested_file: request.file.clone(),
+                        observed_file,
+                        start_line: request.start_line,
+                        end_line: request.end_line,
+                        byte_len: result.byte_len,
+                        truncated: result.truncated,
+                        direct_line_count,
+                        first_direct_line,
+                        target_line,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        diagnostics
+    }
+
+    fn direct_line_range_preview(
+        path: &Path,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    ) -> Option<(usize, String, Option<String>)> {
+        let content = fs::read_to_string(path).ok()?;
+        let start = start_line.unwrap_or(1).max(1);
+        let end = end_line.unwrap_or(start).max(start);
+        let mut lines = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let line_no = u32::try_from(index + 1).ok()?;
+                (line_no >= start && line_no <= end).then_some(line)
+            })
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            return None;
+        }
+        let target = lines
+            .iter()
+            .find(|line| line.contains("real_tui_resolver_touch_is_checked_before_adapter_apply"))
+            .map(|line| line.trim().to_string());
+        let first = lines.remove(0).trim().to_string();
+        Some((1 + lines.len(), first, target))
+    }
+
     fn historical_ns_patch_params(
         tool: &str,
         arguments: &str,
