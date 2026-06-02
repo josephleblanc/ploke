@@ -10,7 +10,10 @@ pub mod wire;
 
 pub mod embeddings;
 
-pub use error::LlmError;
+pub use error::{
+    ApiErrorSource, HttpBodyFailure, HttpFailure, HttpPhase, HttpReceiveFailure, HttpReceivePhase,
+    HttpSendFailure, LlmError,
+};
 pub use request::endpoint::EndpointsResponse;
 pub use types::enums::*;
 pub use types::meta::LLMMetadata;
@@ -19,18 +22,31 @@ pub use types::newtypes::{
     ApiKeyEnv, Author, BaseUrl, EmbeddingModelName, EmbeddingResponseId, EndpointKey, IdError,
     ModelName, ModelSlug, ProviderConfig, ProviderKey, ProviderName, ProviderSlug, Transport,
 };
-pub use types::params::LLMParameters;
+pub use types::params::{LLMParameters, ReasoningConfig};
 pub use wire::WireRequest;
 
 pub use manager::{
-    ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step, handle_endpoint_request_async,
+    ChatHttpConfig, ChatStepError, ChatStepOutcome, ProviderAttempt, ProviderAttemptOutcome,
+    ProviderAttemptTimeline, ProviderFailurePhase, ProviderRetryDecision, RecordedResponse,
+    RecordedResponseTape, RequestMessage, ResponseIndex, chat_step, chat_step_with_attempts,
+    handle_endpoint_request_async,
 };
+pub use registry::calibration::{
+    AttemptTimeout, CalibrationInput, GoogleCalibrationKey, OpenRouterCalibrationKey,
+    ProviderTiming, RetryTuning, RouterCalibration,
+};
+pub use registry::route::{GoogleRoute, LlmRoute, OpenRouterRoute};
 
+pub use embeddings::{
+    EmbClientConfig, fetch_and_write_embedding_models_registry, load_embedding_models_registry,
+    write_embedding_models_registry,
+};
+pub use router_only::openrouter::OpenRouter;
 pub use router_only::{HasModels, Router};
 pub use utils::const_settings::{HTTP_REFERER, HTTP_TITLE};
 
 use serde::{Deserialize, Serialize};
 
-/// The default number of seconds for timeout on LLM request loop.
+/// The default number of seconds for a non-streaming LLM HTTP response.
 // TODO: Add this to user config
-pub const LLM_TIMEOUT_SECS: u64 = 45;
+pub const LLM_TIMEOUT_SECS: u64 = 300;

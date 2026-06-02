@@ -6,10 +6,12 @@ use crate::NodeType;
 use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-use crate::multi_embedding::db_ext::EmbeddingExt;
+use crate::get_by_id::NodePaths;
+use crate::multi_embedding::db_ext::{EmbeddingExt, METHOD_NODE_ANCESTOR_RULE};
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
-use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper, Vector};
+use crate::result::{get_byte_offsets, get_pos};
+use cozo::{DataValue, Db, MemStorage, NamedRows, ScriptMutability, UuidWrapper, Vector};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
@@ -42,6 +44,86 @@ lazy_static! {
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 pub const ACTIVE_EMBEDDING_SET_REL: &str = "active_embedding_set";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeRelationImportMode {
+    CurrentSchema,
+    PlainFixture,
+}
+
+fn is_typed_type_graph_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "type_relation"
+            | "type_use"
+            | "type_contains"
+            | "type_use_param_slot"
+            | "type_use_field_slot"
+            | "type_use_trait_super_slot"
+            | "type_use_generic_bound_slot"
+            | "type_use_generic_param_bound_slot"
+            | "type_use_where_subject_slot"
+            | "type_use_where_bound_slot"
+            | "type_use_where_generic_param_bound_slot"
+            | "type_use_associated_type_bound_slot"
+    )
+}
+
+fn snippet_context_nodes(
+    query_result: QueryResult,
+) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
+    let span_index = get_pos(&query_result.headers, "span").map_err(PlokeError::from)?;
+    let canon_index = get_pos(&query_result.headers, "canon_path").map_err(PlokeError::from)?;
+
+    query_result
+        .row_refs()
+        .map(|row| {
+            let id = row.get::<Uuid>("id").map_err(PlokeError::from)?;
+            let name = row.get::<String>("name").map_err(PlokeError::from)?;
+            let file_path_str = row.get::<String>("file_path").map_err(PlokeError::from)?;
+            let node_tracking_hash =
+                TrackingHash(row.get::<Uuid>("hash").map_err(PlokeError::from)?);
+            let file_tracking_hash =
+                TrackingHash(row.get::<Uuid>("file_hash").map_err(PlokeError::from)?);
+            let namespace = row.get::<Uuid>("namespace").map_err(PlokeError::from)?;
+            let span_value = row.data_value(span_index).map_err(PlokeError::from)?;
+            let span_slice = span_value.get_slice().ok_or_else(|| {
+                PlokeError::from(DbError::Cozo(format!(
+                    "Expected span to be a list, found {span_value:?}"
+                )))
+            })?;
+            let (start_byte, end_byte) = get_byte_offsets(&span_slice);
+
+            let canon_value = row.data_value(canon_index).map_err(PlokeError::from)?;
+            let canon_slice = canon_value.get_slice().ok_or_else(|| {
+                PlokeError::from(DbError::Cozo(format!(
+                    "Expected canon_path to be a list, found {canon_value:?}"
+                )))
+            })?;
+            let mut canon = canon_slice.iter().filter_map(|p| p.get_str()).join("::");
+            canon.push_str("::");
+            canon.push_str(&name);
+
+            let file_path = std::path::PathBuf::from(&file_path_str);
+            Ok((
+                EmbeddingData {
+                    id,
+                    name,
+                    file_path,
+                    start_byte,
+                    end_byte,
+                    node_tracking_hash,
+                    file_tracking_hash,
+                    namespace,
+                },
+                NodePaths {
+                    file: file_path_str,
+                    canon,
+                },
+            ))
+        })
+        .collect()
+}
 
 /// Reason an embedding set was chosen during restore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1327,6 +1409,8 @@ target[id] := input[id_str], id = to_uuid(id_str)
     }
 
     pub fn new_with_active_set(db: Db<MemStorage>, active_set: Arc<RwLock<EmbeddingSet>>) -> Self {
+        crate::type_graph::fixed_rules::register_ploke_fixed_rules(&db)
+            .expect("register ploke fixed rules");
         Self {
             db,
             active_embedding_set: active_set,
@@ -1361,15 +1445,50 @@ target[id] := input[id_str], id = to_uuid(id_str)
         Ok(())
     }
 
-    /// Relation names for [`cozo::Db::import_from_backup`] when the `.sqlite` snapshot may omit
-    /// `compilation_unit*` tables (older fixtures). Call [`Self::ensure_compilation_unit_relations`]
-    /// after import.
-    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+    /// Current-schema relation names for [`cozo::Db::import_from_backup`] when the `.sqlite`
+    /// snapshot may omit `compilation_unit*` tables. Call
+    /// [`Self::ensure_compilation_unit_relations`] after import.
+    pub fn prior_rels_for_current_schema_backup_import(&self) -> Result<Vec<String>, PlokeError> {
         Ok(self
             .relations_vec()?
             .into_iter()
             .filter(|r| !r.starts_with("compilation_unit"))
             .collect())
+    }
+
+    /// Relation names for active plain fixtures that are shared between the legacy and typed
+    /// type-resolution build profiles.
+    ///
+    /// In the normal profile this includes `resolved_type_use`. In the `typed_type_graph`
+    /// profile, active non-typed fixtures intentionally do not claim typed type graph coverage, so
+    /// typed type graph relations remain empty after import. Typed graph corpus fixtures must use
+    /// [`Self::prior_rels_for_typed_type_graph_backup_import`] instead.
+    pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        #[cfg(not(feature = "typed_type_graph"))]
+        {
+            self.prior_rels_for_current_schema_backup_import()
+        }
+
+        #[cfg(feature = "typed_type_graph")]
+        {
+            let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+            relations.retain(|r| !is_typed_type_graph_relation(r));
+            Ok(relations)
+        }
+    }
+
+    /// Relation names for source-pinned typed type graph backup fixtures.
+    pub fn prior_rels_for_typed_type_graph_backup_import(&self) -> Result<Vec<String>, PlokeError> {
+        #[cfg(feature = "typed_type_graph")]
+        {
+            self.prior_rels_for_current_schema_backup_import()
+        }
+        #[cfg(not(feature = "typed_type_graph"))]
+        {
+            Err(PlokeError::from(DbError::Cozo(
+                "typed type graph backup import requires the typed_type_graph feature".to_string(),
+            )))
+        }
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
@@ -1768,6 +1887,54 @@ target[id] := input[id_str], id = to_uuid(id_str)
         Ok(QueryResult::from(result))
     }
 
+    /// Execute a raw CozoScript query at a specific historical timestamp.
+    ///
+    /// Historical queries must opt in by using `@ 'NOW'` validity markers in the
+    /// same places a present-time query would. This helper rewrites those markers
+    /// to `@ <timestamp_micros>` and rejects scripts that do not contain any such
+    /// marker, so callers do not silently fall back to present-time semantics.
+    ///
+    /// The timestamp should be in microseconds since the UNIX epoch.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let ts = db.current_validity_micros()?;
+    /// // ... insert more data ...
+    /// // Query state at the original timestamp
+    /// let result = db.raw_query_at_timestamp(
+    ///     "?[name] := *nodes{ name, id @ 'NOW' }",
+    ///     ts
+    /// )?;
+    /// ```
+    pub fn raw_query_at_timestamp(
+        &self,
+        script: &str,
+        timestamp_micros: i64,
+    ) -> Result<QueryResult, DbError> {
+        const VALIDITY_NOW_MARKER: &str = "@ 'NOW'";
+
+        if !script.contains(VALIDITY_NOW_MARKER) {
+            return Err(DbError::QueryConstruction(
+                "historical query requires at least one `@ 'NOW'` validity marker".into(),
+            ));
+        }
+
+        // Cozo requires the validity timestamp to be a compile-time constant,
+        // so the explicit historical path rewrites the standard NOW markers.
+        let modified_script =
+            script.replace(VALIDITY_NOW_MARKER, &format!("@ {}", timestamp_micros));
+
+        let result = self
+            .db
+            .run_script(
+                &modified_script,
+                std::collections::BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
     /// Execute a CozoScript query and preserve the Rust callsite + logical query name on errors.
     #[track_caller]
     pub fn raw_query_with_context(&self, ctx: QueryContext) -> Result<QueryResult, DbError> {
@@ -2068,6 +2235,26 @@ target[id] := input[id_str], id = to_uuid(id_str)
     /// Import a backup in two passes so embedding-set metadata is read first, allowing per-set
     /// vector relations to be created before vector rows are imported.
     pub fn import_backup_with_embeddings(&self, backup: &Path) -> Result<(), DbError> {
+        self.import_backup_with_embeddings_inner(backup, TypeRelationImportMode::CurrentSchema)
+    }
+
+    /// Import an embedding backup for an active non-typed fixture.
+    ///
+    /// This uses the same profile-neutral graph relation selection as
+    /// [`Self::prior_rels_for_plain_backup_import`]. Typed type graph corpus backups must use
+    /// [`Self::import_backup_with_embeddings`] so their typed graph relations are imported.
+    pub fn import_plain_fixture_backup_with_embeddings(
+        &self,
+        backup: &Path,
+    ) -> Result<(), DbError> {
+        self.import_backup_with_embeddings_inner(backup, TypeRelationImportMode::PlainFixture)
+    }
+
+    fn import_backup_with_embeddings_inner(
+        &self,
+        backup: &Path,
+        type_relation_import: TypeRelationImportMode,
+    ) -> Result<(), DbError> {
         // Ensure base relations exist in the fresh DB.
         self.ensure_embedding_set_relation()
             .map_err(|e| DbError::Cozo(e.to_string()))?;
@@ -2120,9 +2307,14 @@ target[id] := input[id_str], id = to_uuid(id_str)
             }
         }
 
-        let mut relations: Vec<String> = self
-            .relations_vec()
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let mut relations: Vec<String> = match type_relation_import {
+            TypeRelationImportMode::CurrentSchema => self
+                .prior_rels_for_current_schema_backup_import()
+                .map_err(|e| DbError::Cozo(e.to_string()))?,
+            TypeRelationImportMode::PlainFixture => self
+                .prior_rels_for_plain_backup_import()
+                .map_err(|e| DbError::Cozo(e.to_string()))?,
+        };
         relations.retain(|r| r != ACTIVE_EMBEDDING_SET_REL);
         for set in &sets {
             relations.push(set.rel_name().as_ref().to_string());
@@ -2131,10 +2323,6 @@ target[id] := input[id_str], id = to_uuid(id_str)
         // Deduplicate to avoid duplicate import entries.
         let mut uniq = HashSet::new();
         relations.retain(|r| uniq.insert(r.clone()));
-
-        // Snapshots may omit compilation-unit relations; importing them by name fails on legacy
-        // backups. Recreate after import via `ensure_compilation_unit_relations`.
-        relations.retain(|r| !r.starts_with("compilation_unit"));
 
         self.db
             .import_from_backup(backup, &relations)
@@ -2293,6 +2481,65 @@ target[id] := input[id_str], id = to_uuid(id_str)
                 })
             })
             .collect()
+    }
+
+    /// Count all nodes belonging to a crate namespace.
+    ///
+    /// This counts all descendant nodes (via syntax_edge containment) starting from
+    /// the file_mod roots for the given namespace.
+    pub fn count_nodes_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError> {
+        let namespace_lit = namespace.to_string();
+        let count_rows = self.raw_query(&format!(
+            r#"
+root[id] := *file_mod {{ owner_id: id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+desc[id] := root[id]
+desc[id] := parent_of[id, parent], desc[parent]
+?[count(id)] := desc[id]
+"#
+        ))?;
+
+        if count_rows.rows.is_empty() {
+            return Ok(0);
+        }
+
+        let count = count_rows.rows[0]
+            .first()
+            .and_then(|v| v.get_int())
+            .ok_or_else(|| DbError::QueryExecution("failed to get node count".into()))?;
+
+        Ok(count as usize)
+    }
+
+    /// Count nodes that have embeddings for the given namespace.
+    ///
+    /// This uses the active embedding set to count how many nodes in the namespace
+    /// have embeddings stored in the current active embedding relation.
+    pub fn count_embedded_for_namespace(&self, namespace: Uuid) -> Result<usize, DbError> {
+        let namespace_lit = namespace.to_string();
+        let embedding_rel = self.with_active_set(|set| set.rel_name().to_string())?;
+
+        let count_rows = self.raw_query(&format!(
+            r#"
+root[id] := *file_mod {{ owner_id: id, namespace @ 'NOW' }}, namespace = to_uuid("{namespace_lit}")
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+desc[id] := root[id]
+desc[id] := parent_of[id, parent], desc[parent]
+embedded_node[id] := desc[id], *{embedding_rel} {{ node_id: id @ 'NOW' }}
+?[count(id)] := embedded_node[id]
+"#
+        ))?;
+
+        if count_rows.rows.is_empty() {
+            return Ok(0);
+        }
+
+        let count = count_rows.rows[0]
+            .first()
+            .and_then(|v| v.get_int())
+            .ok_or_else(|| DbError::QueryExecution("failed to get embedded node count".into()))?;
+
+        Ok(count as usize)
     }
 
     pub fn collect_namespace_inventory(
@@ -2870,6 +3117,93 @@ desc[id] := parent_of[id, parent], desc[parent]
             .get_nodes_ordered_for_set(nodes, &active_embedding_set)
     }
 
+    /// Retrieves ordered node metadata suitable for snippet reads without requiring embeddings.
+    ///
+    /// Search backends already return node ids. Dense search proves those ids through the active
+    /// embedding index, but sparse BM25 can produce valid ids before any embedding relation has
+    /// been populated. Snippet assembly needs file paths and spans for those ids regardless of
+    /// which retrieval backend found them.
+    pub fn get_snippet_nodes_ordered(
+        &self,
+        nodes: Vec<Uuid>,
+    ) -> Result<Vec<EmbeddingData>, PlokeError> {
+        self.get_snippet_context_nodes_ordered(nodes)
+            .map(|nodes| nodes.into_iter().map(|(node, _paths)| node).collect())
+    }
+
+    /// Retrieves ordered snippet metadata and path projection in one strict batch query.
+    pub fn get_snippet_context_nodes_ordered(
+        &self,
+        nodes: Vec<Uuid>,
+    ) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
+        if nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let has_node_rule = NodeType::primary_and_assoc_nodes()
+            .iter()
+            .map(|ty| {
+                format!(
+                    r#"
+snippet_node[id, name, hash, span] :=
+    *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}}
+"#,
+                    rel = ty.relation_str()
+                )
+            })
+            .join("\n");
+
+        let script = format!(
+            r#"
+target_ids[id, ordering] <- $data
+
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+{method_ancestor_rule}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+{has_node_rule}
+
+batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
+    snippet_node[id, name, hash, span],
+    ancestor[id, mod_id],
+    *module{{id: mod_id, path: canon_path, tracking_hash: file_hash @ 'NOW'}},
+    *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}},
+    target_ids[id, ordering]
+
+?[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
+    batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering]
+:sort ordering
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
+            has_node_rule = has_node_rule
+        );
+
+        let ids_data: Vec<DataValue> = nodes
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| {
+                DataValue::List(vec![
+                    DataValue::Uuid(UuidWrapper(id)),
+                    DataValue::from(i as i64),
+                ])
+            })
+            .collect();
+
+        let mut params = BTreeMap::new();
+        params.insert("data".into(), DataValue::List(ids_data));
+
+        let query_result = self
+            .run_script(&script, params, ScriptMutability::Immutable)
+            .map(QueryResult::from)
+            .map_err(DbError::from)
+            .map_err(PlokeError::from)?;
+
+        snippet_context_nodes(query_result)
+    }
+
     // TODO:migrate-multi-embed-full
     // Update callsites to use new API without relying on wrapper function
     pub fn get_unembed_rel(
@@ -3242,15 +3576,25 @@ mod tests {
 
     fn fresh_local_backup_fixture_db(fixture: &'static FixtureDb) -> Result<Database, PlokeError> {
         let db = Database::init_with_schema()?;
-        let fixture_path = fixture.path();
+        let fixture_path = fixture.checked_path()?.into_path();
         match fixture.import_mode {
             ploke_test_utils::fixture_dbs::FixtureImportMode::PlainBackup => {
-                let prior_rels = db.prior_rels_for_plain_backup_import()?;
+                let prior_rels = match fixture.status {
+                    ploke_test_utils::fixture_dbs::FixtureStatus::TypedTypeGraph => {
+                        db.prior_rels_for_typed_type_graph_backup_import()?
+                    }
+                    _ => db.prior_rels_for_plain_backup_import()?,
+                };
                 db.import_from_backup(&fixture_path, &prior_rels)
                     .map_err(DbError::from)?;
             }
             ploke_test_utils::fixture_dbs::FixtureImportMode::BackupWithEmbeddings => {
-                db.import_backup_with_embeddings(&fixture_path)?;
+                match fixture.status {
+                    ploke_test_utils::fixture_dbs::FixtureStatus::TypedTypeGraph => {
+                        db.import_backup_with_embeddings(&fixture_path)?
+                    }
+                    _ => db.import_plain_fixture_backup_with_embeddings(&fixture_path)?,
+                }
             }
         }
         db.ensure_compilation_unit_relations()?;
@@ -4072,6 +4416,142 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn count_nodes_for_namespace_returns_accurate_counts() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        assert_eq!(
+            crate_contexts.len(),
+            2,
+            "expected two crate contexts for ws_fixture_01"
+        );
+
+        for context in &crate_contexts {
+            let node_count = db
+                .count_nodes_for_namespace(context.namespace)
+                .expect("should count nodes for namespace");
+            let inventory = db
+                .collect_namespace_inventory(context.namespace)
+                .expect("namespace inventory should build");
+
+            assert_eq!(
+                node_count,
+                inventory.descendant_ids.len(),
+                "count_nodes_for_namespace should match descendant_ids count for {}",
+                context.name
+            );
+            assert!(
+                node_count > 0,
+                "namespace {} should have at least one node",
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_embedded_for_namespace_returns_zero_without_embeddings() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+
+        // Without setting up embeddings, count should be 0
+        for context in &crate_contexts {
+            let embedded_count = db
+                .count_embedded_for_namespace(context.namespace)
+                .expect("should count embedded nodes for namespace");
+            assert_eq!(
+                embedded_count, 0,
+                "namespace {} should have 0 embedded nodes before setup",
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_embedded_for_namespace_returns_accurate_counts_with_embeddings()
+    -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        db.setup_multi_embedding()?;
+
+        let crate_contexts = db
+            .list_crate_context_rows()
+            .expect("workspace fixture should expose crate_context rows");
+        assert_eq!(
+            crate_contexts.len(),
+            2,
+            "expected two crate contexts for ws_fixture_01"
+        );
+
+        let active_set = db.with_active_set(|set| set.clone())?;
+
+        // Seed some embeddings for each namespace
+        for context in &crate_contexts {
+            let inventory = db
+                .collect_namespace_inventory(context.namespace)
+                .expect("namespace inventory should build");
+
+            // Get a few nodes from the namespace to embed
+            let nodes_to_embed: Vec<Uuid> =
+                inventory.descendant_ids.iter().take(3).copied().collect();
+
+            if !nodes_to_embed.is_empty() {
+                let embeddings: Vec<(Uuid, Vec<f32>)> = nodes_to_embed
+                    .iter()
+                    .map(|&id| (id, vec![0.0_f32; active_set.dims() as usize]))
+                    .collect();
+                db.update_embeddings_batch(embeddings)?;
+            }
+        }
+
+        // Now verify counts
+        for context in &crate_contexts {
+            let embedded_count = db
+                .count_embedded_for_namespace(context.namespace)
+                .expect("should count embedded nodes for namespace");
+            let node_count = db
+                .count_nodes_for_namespace(context.namespace)
+                .expect("should count nodes for namespace");
+
+            assert!(
+                embedded_count <= node_count,
+                "embedded count ({}) should not exceed total node count ({}) for {}",
+                embedded_count,
+                node_count,
+                context.name
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn count_nodes_for_namespace_returns_zero_for_unknown_namespace() -> Result<(), PlokeError> {
+        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let unknown_namespace = Uuid::new_v4();
+
+        let count = db
+            .count_nodes_for_namespace(unknown_namespace)
+            .expect("should return count without error");
+        assert_eq!(count, 0, "unknown namespace should have 0 nodes");
+
+        let embedded_count = db
+            .count_embedded_for_namespace(unknown_namespace)
+            .expect("should return embedded count without error");
+        assert_eq!(
+            embedded_count, 0,
+            "unknown namespace should have 0 embedded nodes"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state()
     -> Result<(), PlokeError> {
@@ -4636,6 +5116,142 @@ id = to_uuid("{exported_seeded_node}")"#
             }
             other => panic!("expected conflict report, got {other:?}"),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_returns_historical_state() -> Result<(), DbError> {
+        // Set up a fresh database
+        let db = setup_db();
+
+        // Create a simple test relation with Validity for time travel
+        db.raw_query_mut(
+            r#":create test_items {
+                id: Int,
+                at: Validity,
+                =>
+                name: String
+            }"#,
+        )?;
+
+        // Insert first item
+        db.raw_query_mut(
+            r#"?[id, name, at] <- [[1, "first", "ASSERT"]]
+            :put test_items { id => name, at }"#,
+        )?;
+
+        // Get the current validity timestamp after first insert
+        let ts_after_first = db.current_validity_micros()?;
+
+        // Small delay to ensure timestamp advances (Cozo timestamps are microsecond-precision)
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        // Insert second item
+        db.raw_query_mut(
+            r#"?[id, name, at] <- [[2, "second", "ASSERT"]]
+            :put test_items { id => name, at }"#,
+        )?;
+
+        // Query at NOW - should see both items
+        let current_result =
+            db.raw_query(r#"?[id, name] := *test_items{ id, name, at @ 'NOW' }"#)?;
+        assert_eq!(
+            current_result.rows.len(),
+            2,
+            "Should see both items at NOW, got: {:?}",
+            current_result.rows
+        );
+
+        // Query at the historical timestamp - should only see the first item
+        let historical_result = db.raw_query_at_timestamp(
+            r#"?[id, name] := *test_items{ id, name, at @ 'NOW' }"#,
+            ts_after_first,
+        )?;
+        assert_eq!(
+            historical_result.rows.len(),
+            1,
+            "Should see only first item at historical timestamp, got: {:?}",
+            historical_result.rows
+        );
+
+        // Verify the content of the historical result
+        let first_id = historical_result.rows[0][0]
+            .get_int()
+            .ok_or_else(|| DbError::QueryExecution("Expected int id".into()))?;
+        let first_name = historical_result.rows[0][1]
+            .get_str()
+            .ok_or_else(|| DbError::QueryExecution("Expected string name".into()))?;
+        assert_eq!(first_id, 1);
+        assert_eq!(first_name, "first");
+
+        Ok(())
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_requires_validity_marker() {
+        let db = setup_db();
+
+        let err = db
+            .raw_query_at_timestamp("?[id] := [[1]]", 123)
+            .expect_err("historical helper should reject scripts without @ 'NOW'");
+
+        assert!(
+            matches!(err, DbError::QueryConstruction(_)),
+            "expected query-construction error, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("@ 'NOW'"),
+            "error should mention the required validity marker: {err}"
+        );
+    }
+
+    #[test]
+    fn raw_query_at_timestamp_rewrites_all_validity_markers() -> Result<(), DbError> {
+        let db = setup_db();
+
+        db.raw_query_mut(
+            r#":create left_items {
+                id: Int,
+                at: Validity,
+            }"#,
+        )?;
+        db.raw_query_mut(
+            r#":create right_items {
+                id: Int,
+                at: Validity,
+            }"#,
+        )?;
+
+        db.raw_query_mut(
+            r#"?[id, at] <- [[1, "ASSERT"]]
+            :put left_items { id, at }"#,
+        )?;
+        let left_only_timestamp = db.current_validity_micros()?;
+
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        db.raw_query_mut(
+            r#"?[id, at] <- [[1, "ASSERT"]]
+            :put right_items { id, at }"#,
+        )?;
+
+        let join_query = r#"
+?[id] := *left_items{ id, at: left_at @ 'NOW' }, *right_items{ id, at: right_at @ 'NOW' }
+"#;
+
+        let current_result = db.raw_query(join_query)?;
+        assert_eq!(
+            current_result.rows.len(),
+            1,
+            "current query should see the later right_items insert"
+        );
+
+        let historical_result = db.raw_query_at_timestamp(join_query, left_only_timestamp)?;
+        assert!(
+            historical_result.rows.is_empty(),
+            "historical query should replace both NOW markers and hide right_items"
+        );
 
         Ok(())
     }

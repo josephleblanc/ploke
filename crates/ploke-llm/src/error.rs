@@ -1,22 +1,191 @@
 use thiserror::Error;
 
 use crate::response::{FinishReason, OpenAiResponse};
+use ploke_core::ArcStr;
+use ploke_error::{
+    LlmBodyFailure as StableLlmBodyFailure, LlmReceiveFailure as StableLlmReceiveFailure,
+    LlmReceivePhase as StableLlmReceivePhase, LlmSendFailure as StableLlmSendFailure,
+    LlmTransportFailure as StableLlmTransportFailure, LlmTransportPhase as StableLlmTransportPhase,
+};
 
 use super::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HttpFailure {
+    pub url: Option<String>,
+    pub elapsed_ms: Option<u128>,
+    pub detail: String,
+    pub phase: HttpPhase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HttpPhase {
+    Send(HttpSendFailure),
+    Receive(HttpReceiveFailure),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HttpSendFailure {
+    Timeout,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HttpReceiveFailure {
+    pub status: Option<u16>,
+    pub phase: HttpReceivePhase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HttpReceivePhase {
+    Headers,
+    Body(HttpBodyFailure),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HttpBodyFailure {
+    Timeout,
+    ReadFailed,
+    DecodeFailed,
+}
+
+impl HttpFailure {
+    pub fn send(
+        url: Option<String>,
+        elapsed_ms: Option<u128>,
+        detail: impl Into<String>,
+        phase: HttpSendFailure,
+    ) -> Self {
+        Self {
+            url,
+            elapsed_ms,
+            detail: detail.into(),
+            phase: HttpPhase::Send(phase),
+        }
+    }
+
+    pub fn receive(
+        url: Option<String>,
+        elapsed_ms: Option<u128>,
+        status: Option<u16>,
+        detail: impl Into<String>,
+        phase: HttpReceivePhase,
+    ) -> Self {
+        Self {
+            url,
+            elapsed_ms,
+            detail: detail.into(),
+            phase: HttpPhase::Receive(HttpReceiveFailure { status, phase }),
+        }
+    }
+
+    pub fn diagnostic(&self) -> String {
+        let mut msg = self.to_string();
+        msg.push_str("\ntransport detail: ");
+        msg.push_str(&self.detail);
+        msg
+    }
+
+    pub fn to_ploke_transport_failure(&self) -> StableLlmTransportFailure {
+        StableLlmTransportFailure {
+            url: self.url.clone(),
+            elapsed_ms: self.elapsed_ms,
+            detail: self.detail.clone(),
+            phase: match &self.phase {
+                HttpPhase::Send(HttpSendFailure::Timeout) => {
+                    StableLlmTransportPhase::Send(StableLlmSendFailure::Timeout)
+                }
+                HttpPhase::Send(HttpSendFailure::Failed) => {
+                    StableLlmTransportPhase::Send(StableLlmSendFailure::Failed)
+                }
+                HttpPhase::Receive(receive) => {
+                    StableLlmTransportPhase::Receive(StableLlmReceiveFailure {
+                        status: receive.status,
+                        phase: match &receive.phase {
+                            HttpReceivePhase::Headers => StableLlmReceivePhase::Headers,
+                            HttpReceivePhase::Body(HttpBodyFailure::Timeout) => {
+                                StableLlmReceivePhase::Body(StableLlmBodyFailure::Timeout)
+                            }
+                            HttpReceivePhase::Body(HttpBodyFailure::ReadFailed) => {
+                                StableLlmReceivePhase::Body(StableLlmBodyFailure::ReadFailed)
+                            }
+                            HttpReceivePhase::Body(HttpBodyFailure::DecodeFailed) => {
+                                StableLlmReceivePhase::Body(StableLlmBodyFailure::DecodeFailed)
+                            }
+                        },
+                    })
+                }
+            },
+        }
+    }
+}
+
+impl std::fmt::Display for HttpFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let summary = match &self.phase {
+            HttpPhase::Send(HttpSendFailure::Timeout) => {
+                "Timed out while sending request to LLM provider."
+            }
+            HttpPhase::Send(HttpSendFailure::Failed) => {
+                "Failed while sending request to LLM provider."
+            }
+            HttpPhase::Receive(HttpReceiveFailure {
+                phase: HttpReceivePhase::Headers,
+                ..
+            }) => "Failed while receiving response headers from LLM provider.",
+            HttpPhase::Receive(HttpReceiveFailure {
+                phase: HttpReceivePhase::Body(HttpBodyFailure::Timeout),
+                ..
+            }) => "Timed out while reading provider response body after receiving headers.",
+            HttpPhase::Receive(HttpReceiveFailure {
+                phase: HttpReceivePhase::Body(HttpBodyFailure::ReadFailed),
+                ..
+            }) => "Failed while reading provider response body after receiving headers.",
+            HttpPhase::Receive(HttpReceiveFailure {
+                phase: HttpReceivePhase::Body(HttpBodyFailure::DecodeFailed),
+                ..
+            }) => "Provider response body could not be decoded after receiving headers.",
+        };
+
+        write!(f, "{summary}")?;
+        if let HttpPhase::Receive(HttpReceiveFailure {
+            status: Some(status),
+            ..
+        }) = &self.phase
+        {
+            write!(f, " status={status}")?;
+        }
+        if let Some(elapsed_ms) = self.elapsed_ms {
+            write!(f, " elapsed_ms={elapsed_ms}")?;
+        }
+        if let Some(url) = &self.url {
+            write!(f, " url={url}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for HttpFailure {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiErrorSource {
+    HttpStatusBody,
+    TopLevelError,
+    ChoiceError,
+}
 
 /// Represents errors that can occur during LLM interactions.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LlmError {
     #[error("Invalid Conversion: {0}")]
     Conversion(String),
-    /// Error related to network connectivity or the HTTP request itself.
-    #[error("Network request failed: {message}")]
-    Request {
-        message: String,
-        /// Optional URL for additional context.
-        url: Option<String>,
-        /// Hint for retry logic/diagnostics.
-        is_timeout: bool,
+    #[error(transparent)]
+    Http(#[from] HttpFailure),
+    #[error("Var error: {message}, original: {original}")]
+    Var {
+        message: &'static str,
+        original: String,
     },
 
     /// The API provider returned a non-success status code.
@@ -28,6 +197,14 @@ pub enum LlmError {
         url: Option<String>,
         /// Truncated body snippet for diagnostics.
         body_snippet: Option<String>,
+        /// Embedded router/provider API error code from the response body, if available.
+        api_code: Option<ArcStr>,
+        /// Raw provider name as returned by the router, if available.
+        provider_name: Option<ArcStr>,
+        /// Best-effort canonical provider slug, if available.
+        provider_slug: Option<ArcStr>,
+        /// The protocol surface where this API error was observed.
+        error_source: ApiErrorSource,
     },
 
     /// The request was rejected due to rate limiting.
@@ -74,6 +251,15 @@ pub enum LlmError {
     #[error("ChatStep Error: {0}")]
     ChatStep(String),
 
+    /// A recorded replay source was consumed to its configured boundary.
+    ///
+    /// This is a replay/harness terminal condition, not evidence that the
+    /// provider returned malformed model output. Keep it distinct from
+    /// `ChatStep` so recorded-only probes can stop without surfacing
+    /// `INVALID_MODEL_RESPONSE`.
+    #[error("Replay exhausted: {0}")]
+    ReplayExhausted(String),
+
     #[error("FinishReason Error: {msg}")]
     FinishError {
         msg: String,
@@ -82,31 +268,40 @@ pub enum LlmError {
     },
 }
 
+impl From<std::env::VarError> for LlmError {
+    fn from(value: std::env::VarError) -> Self {
+        LlmError::Var {
+            message: "Error from env variable",
+            original: value.to_string(),
+        }
+    }
+}
+
 impl LlmError {
     /// Returns a diagnostic string with contextual fields for UI/log surfaces.
     pub fn diagnostic(&self) -> String {
         match self {
-            LlmError::Request {
-                message,
-                url,
-                is_timeout,
-            } => {
-                let mut msg = format!("Network request failed: {message}");
-                if let Some(u) = url {
-                    msg.push_str(&format!("\nurl: {u}"));
-                }
-                if *is_timeout {
-                    msg.push_str("\ncontext: timed out");
-                }
-                msg
-            }
+            LlmError::Http(http) => http.diagnostic(),
             LlmError::Api {
                 status,
                 message,
                 url,
                 body_snippet,
+                api_code,
+                provider_name,
+                provider_slug,
+                error_source,
             } => {
                 let mut msg = format!("API error (status {status}): {message}");
+                msg.push_str(&format!("\nsource: {:?}", error_source));
+                if let Some(code) = api_code {
+                    msg.push_str("\napi_code: ");
+                    msg.push_str(code);
+                }
+                if let Some(provider) = provider_slug.as_ref().or(provider_name.as_ref()) {
+                    msg.push_str("\nprovider: ");
+                    msg.push_str(provider);
+                }
                 if let Some(u) = url {
                     msg.push_str(&format!("\nurl: {u}"));
                 }
@@ -140,23 +335,23 @@ impl LlmError {
 impl From<LlmError> for ploke_error::Error {
     fn from(error: LlmError) -> Self {
         match error {
-            LlmError::Request {
+            LlmError::Http(http) => ploke_error::Error::Internal(
+                ploke_error::InternalError::LlmTransport(http.to_ploke_transport_failure()),
+            ),
+            LlmError::Api {
+                status,
                 message,
-                is_timeout,
+                api_code,
                 ..
             } => ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
-                std::sync::Arc::new(if is_timeout {
-                    std::io::Error::new(std::io::ErrorKind::TimedOut, message)
-                } else {
-                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, message)
-                }),
-            )),
-            LlmError::Api {
-                status, message, ..
-            } => ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
                 std::sync::Arc::new(std::io::Error::other(format!(
-                    "API error {}: {}",
-                    status, message
+                    "API error {}{}: {}",
+                    status,
+                    api_code
+                        .as_ref()
+                        .map(|code| format!(" (api_code={code})"))
+                        .unwrap_or_default(),
+                    message
                 ))),
             )),
             LlmError::RateLimited => ploke_error::Error::Warning(
@@ -169,9 +364,14 @@ impl From<LlmError> for ploke_error::Error {
                 })
             }
             LlmError::Timeout => ploke_error::Error::Internal(
-                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
-                    std::io::Error::new(std::io::ErrorKind::TimedOut, "Request timed out"),
-                )),
+                ploke_error::InternalError::LlmTransport(ploke_error::LlmTransportFailure {
+                    url: None,
+                    elapsed_ms: None,
+                    detail: "Request timed out".to_string(),
+                    phase: ploke_error::LlmTransportPhase::Send(
+                        ploke_error::LlmSendFailure::Timeout,
+                    ),
+                }),
             ),
             LlmError::ContentFilter => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Content blocked by safety filter".to_string()),
@@ -203,8 +403,13 @@ impl From<LlmError> for ploke_error::Error {
             err_chat @ LlmError::ChatStep(_) => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_chat.to_string()),
             ),
-            // TODO: Add more match arms for levels of error by `FinishReason`
+            err_replay @ LlmError::ReplayExhausted(_) => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_replay.to_string()),
+            ),
             err_llm @ LlmError::FinishError { .. } => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
+            ),
+            err_llm @ LlmError::Var { .. } => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
             ),
         }

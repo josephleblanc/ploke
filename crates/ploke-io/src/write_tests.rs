@@ -1,4 +1,6 @@
 use crate::handle::IoManagerHandle;
+use crate::{Diff, NsWriteSnippetData, PatchApplyOptions};
+use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{CreateFileData, CreateFileResult, OnExists};
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use quote::ToTokens;
@@ -6,6 +8,15 @@ use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
 use uuid::Uuid;
+
+const SIMPLE_NS_PATCH_DIFF: &str = r#"--- a/notes.txt
++++ b/notes.txt
+@@ -1,3 +1,3 @@
+ alpha
+-beta
++delta
+ gamma
+"#;
 
 pub(crate) fn compute_hash(content: &str, file_path: &Path, namespace: Uuid) -> TrackingHash {
     let file = syn::parse_file(content).expect("Failed to parse content");
@@ -135,6 +146,43 @@ async fn test_write_invalid_range() {
     let handle = IoManagerHandle::new();
     let results = handle.write_snippets_batch(vec![req]).await.unwrap();
     assert!(results[0].is_err(), "expected OutOfRange error");
+
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_write_batch_ns_applies_patch_and_returns_new_hash() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("notes.txt");
+    fs::write(&file_path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let expected_hash =
+        crate::actor::read_and_compute_hash(&file_path, LargeFilePolicy::Skip, u64::MAX)
+            .expect("hash file")
+            .expect("hash outcome");
+
+    let req = NsWriteSnippetData {
+        id: Uuid::new_v4(),
+        file_path: file_path.clone(),
+        expected_file_hash: Some(expected_hash),
+        namespace: PROJECT_NAMESPACE_UUID,
+        diff: Diff::from(SIMPLE_NS_PATCH_DIFF.to_string()),
+        options: PatchApplyOptions::default(),
+        large_file_policy: LargeFilePolicy::Skip,
+    };
+
+    let handle = IoManagerHandle::new();
+    let results = handle.write_batch_ns(vec![req]).await.unwrap();
+    assert_eq!(results.len(), 1);
+    let write_result = results
+        .into_iter()
+        .next()
+        .unwrap()
+        .expect("ns patch should succeed");
+
+    let new_content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(new_content, "alpha\ndelta\ngamma\n");
+    assert_ne!(write_result.new_file_hash, expected_hash);
 
     handle.shutdown().await;
 }

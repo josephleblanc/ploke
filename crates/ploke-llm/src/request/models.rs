@@ -31,6 +31,24 @@ use crate::{
 
 use super::ModelPricing;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRouteSource {
+    #[default]
+    OpenRouter,
+    DirectGoogle,
+}
+
+impl ModelRouteSource {
+    pub fn is_openrouter(&self) -> bool {
+        matches!(self, Self::OpenRouter)
+    }
+
+    pub fn is_direct_google(&self) -> bool {
+        matches!(self, Self::DirectGoogle)
+    }
+}
+
 /// Represents a model `/models` from OpenRouter's API.
 /// https://openrouter.ai/api/v1/models
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +122,9 @@ pub struct ResponseItem {
     /// (also appears in endpoints)
     #[serde(default)]
     pub supported_parameters: Option<Vec<SupportedParameters>>,
+    /// Which router/source supplied this registry row.
+    #[serde(default, skip_serializing_if = "ModelRouteSource::is_openrouter")]
+    pub route_source: ModelRouteSource,
 }
 
 impl PartialOrd for ResponseItem {

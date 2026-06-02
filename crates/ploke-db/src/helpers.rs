@@ -2,6 +2,7 @@ use crate::{
     Database, DbError, NodeType,
     database::to_string,
     get_by_id::COMMON_FIELDS_EMBEDDED,
+    multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
     result::{get_pos, typed_rows::ResolvedEdgeData},
 };
 use ploke_core::io_types::EmbeddingData;
@@ -9,6 +10,14 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+
+fn lookup_ancestor_rules_now() -> String {
+    format!(
+        r#"ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}"#
+    )
+}
 
 /// Resolve nodes by canonical module path and item name within a specific file at NOW.
 /// Returns EmbeddingData rows suitable for IO/snippet operations.
@@ -29,15 +38,11 @@ pub fn graph_resolve_exact(
         .unwrap_or_else(|_| "\"\"".to_string());
     let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
     let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
 
     let script = format!(
         r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
-
-ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
+{ancestor_rules}
 module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
@@ -89,18 +94,14 @@ pub fn graph_resolve_edges(
         .unwrap_or_else(|_| "\"\"".to_string());
     let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
     let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
 
     let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
 
     let script = format!(
         r#"
 {common_fields_embedded}
-
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
-
-ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+{ancestor_rules}
 
 module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
@@ -312,13 +313,11 @@ pub fn resolve_nodes_by_canon(
 ) -> Result<Vec<EmbeddingData>, DbError> {
     let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
     let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
 
     let script = format!(
         r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
-
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+{ancestor_rules}
 
 module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
@@ -707,6 +706,28 @@ mod tests {
     }
 
     #[test]
+    fn graph_resolve_exact_matches_fixture_nodes_method() -> Result<(), DbError> {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+            .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/impls.rs");
+        let module_path = vec!["crate".to_string(), "impls".to_string()];
+        let rows = super::graph_resolve_exact(&db, "method", &file_path, &module_path, "new")?;
+
+        assert_eq!(rows.len(), 1, "expected a single method result");
+        assert_eq!(rows[0].name, "new");
+        assert_eq!(rows[0].file_path, file_path);
+        assert!(
+            rows[0].start_byte < rows[0].end_byte,
+            "method span should be non-empty"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn resolve_nodes_by_canon_falls_back_when_paths_differ() -> Result<(), DbError> {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
             .expect("database must be set up correctly");
@@ -745,6 +766,34 @@ mod tests {
         assert_eq!(
             canonical_rows[0].file_path, canonical_path,
             "file path should reflect the stored canonical location"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_nodes_by_canon_matches_module_lookup() -> Result<(), DbError> {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+            .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/const_static.rs");
+        let module_path = vec!["crate".to_string(), "const_static".to_string()];
+        let item_name = "const_static";
+
+        let strict_hit =
+            super::graph_resolve_exact(&db, "module", &file_path, &module_path, item_name)?;
+        assert_eq!(strict_hit.len(), 1, "expected strict resolver to match");
+
+        let canonical_rows = super::resolve_nodes_by_canon(&db, "module", &module_path, item_name)?;
+        assert!(
+            canonical_rows.len() >= 1,
+            "canonical lookup should find at least one matching module node"
+        );
+        assert!(
+            canonical_rows.iter().any(|row| row.id == strict_hit[0].id),
+            "canonical lookup should include the strict resolver's module node id"
         );
 
         Ok(())

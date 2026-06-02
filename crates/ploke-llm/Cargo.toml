@@ -18,6 +18,8 @@ tracing = { workspace = true }
 
 # http handling
 reqwest = { version = "0.12", features = ["json"] }
+http = {version = "1.1"}
+google-cloud-auth = "1.10"
 
 # used mostly in tests for convenience, refactor local error
 # type and remove this later
@@ -49,7 +51,8 @@ ploke-test-utils = { path = "../test-utils" }
 tracing-subscriber = { workspace = true }
 
 [features]
-default = ["live_api_tests"]
+default = []
 live_api_tests = []
 test_harness = []
 flakey_test = []
+qwen_reasoning_fix = []

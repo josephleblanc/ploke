@@ -69,12 +69,14 @@ string_enum_with_unknown!(
         IncludeReasoning => "include_reasoning",
         LogitBias => "logit_bias",
         Logprobs => "logprobs",
+        MaxCompletionTokens => "max_completion_tokens",
         MaxTokens => "max_tokens",
         MinP => "min_p",
         PresencePenalty => "presence_penalty",
         Reasoning => "reasoning",
         RepetitionPenalty => "repetition_penalty",
         ResponseFormat => "response_format",
+        ParallelToolCalls => "parallel_tool_calls",
         Seed => "seed",
         Stop => "stop",
         StructuredOutputs => "structured_outputs",
@@ -86,9 +88,21 @@ string_enum_with_unknown!(
         TopLogprobs => "top_logprobs",
         TopP => "top_p",
         WebSearchOptions => "web_search_options",
-        Verbosity => "verbosity"
+        Verbosity => "verbosity",
+        ReasoningEffort => "reasoning_effort"
     }
 );
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Xhigh,
+    High,
+    Medium,
+    Low,
+    Minimal,
+    None,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -143,7 +157,21 @@ string_enum_with_unknown!(
     {
         TextToText => "text->text",
         TextImageToText => "text+image->text",
+        TextImageFileToText => "text+image+file->text",
+        TextImageVideoToText => "text+image+video->text",
+        TextAudioToText => "text+audio->text",
+        TextImageFileVideoToText => "text+image+file+video->text",
+        TextImageFileAudioToText => "text+image+file+audio->text",
+        TextImageAudioVideoToText => "text+image+audio+video->text",
+        TextImageToTextAudio => "text+image->text+audio",
+        TextAudioToTextAudio => "text+audio->text+audio",
         TextImageToTextImage => "text+image->text+image",
+        TextFileToText => "text+file->text",
+        TextImageFileToTextImage => "text+image+file->text+image",
+        TextImageFileAudioVideoToText => "text+image+file+audio+video->text",
+        TextImageFileAudioVideoToTextImage => "text+image+file+audio+video->text+image",
+        TextImageToEmbeddings => "text+image->embeddings",
+        TextImageFileAudioVideoToEmbeddings => "text+image+file+audio+video->embeddings",
         TextToEmbeddings => "text->embeddings"
     }
 );
@@ -155,6 +183,7 @@ string_enum_with_unknown!(
         Claude => "Claude",
         Cohere => "Cohere",
         DeepSeek => "DeepSeek",
+        Gemma => "Gemma",
         GPT => "GPT",
         Gemini => "Gemini",
         Grok => "Grok",

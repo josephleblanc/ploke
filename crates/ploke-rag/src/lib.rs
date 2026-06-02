@@ -120,9 +120,13 @@ fn ensure_tracer_initialized() {
     // Tests configure tracing themselves; no-op to avoid interfering with test harness.
 }
 
-use ploke_core::{EmbeddingData, RetrievalScope};
+use ploke_core::{
+    EmbeddingData, RetrievalScope,
+    rag_types::{TypeContextInfo, TypeContextKind},
+};
 use ploke_db::{
-    Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
+    Database, DbError, NodeType, SimilarArgs, TypeContextOptions, TypeContextRelation,
+    TypeContextSeed, TypedEmbedData,
     bm25_index::bm25_service::{self, Bm25Cmd},
     search_similar_args,
 };
@@ -142,9 +146,12 @@ pub use fusion::{
 pub mod context;
 pub use context::{
     ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter, assemble_context,
+    assemble_context_with_type_context,
 };
 pub mod core;
-pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};
+pub use core::{
+    NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy, TypeContextConfig,
+};
 pub use ploke_db::bm25_index::bm25_service::Bm25Status;
 
 const BM25_TIMEOUT_MS: u64 = 250;

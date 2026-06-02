@@ -9,8 +9,11 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Author, EndpointKey, LLMParameters, ModelKey, ModelSlug,
-    router_only::{RouterVariants, openrouter::ProviderPreferences},
+    Author, EndpointKey, LLMParameters, ModelKey, ModelSlug, ProviderKey,
+    router_only::{
+        RouterVariants,
+        openrouter::{OpenRouter, ProviderPreferences},
+    },
     types::model_types::ModelVariant,
 };
 
@@ -64,6 +67,19 @@ impl ModelPrefs {
             .as_ref()
             .and_then(|def_pr| self.profiles.get(&def_pr.name))
     }
+
+    pub fn selected_endpoint(&self) -> Option<&EndpointKey> {
+        self.selected_endpoints.last()
+    }
+
+    pub fn selected_provider_preferences(&self) -> Option<ProviderPreferences> {
+        self.selected_endpoint().map(|endpoint| {
+            ProviderPreferences::default()
+                .with_only([endpoint.provider.slug.clone()])
+                .with_allow_fallbacks(false)
+                .with_require_parameters(true)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -72,6 +88,42 @@ pub struct RegistryPrefs {
     pub models: HashMap<ModelKey, ModelPrefs>,
     pub strictness: ModelRegistryStrictness,
     pub router_prefs: HashMap<RouterVariants, ProviderPreferences>,
+}
+
+impl RegistryPrefs {
+    pub fn select_model_provider(
+        &mut self,
+        model_id: &crate::ModelId,
+        provider_key: Option<&ProviderKey>,
+    ) {
+        let crate::ModelId { key, variant } = model_id.clone();
+        let mp = self
+            .models
+            .entry(key.clone())
+            .or_insert_with(|| ModelPrefs {
+                model_key: key,
+                ..Default::default()
+            });
+
+        if !mp
+            .allowed_routers
+            .iter()
+            .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
+        {
+            mp.allowed_routers
+                .push(RouterVariants::OpenRouter(OpenRouter));
+        }
+
+        if let Some(provider) = provider_key {
+            let ek = EndpointKey {
+                model: model_id.key.clone(),
+                provider: provider.clone(),
+                variant,
+            };
+            mp.selected_endpoints.retain(|e| e != &ek);
+            mp.selected_endpoints.push(ek);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

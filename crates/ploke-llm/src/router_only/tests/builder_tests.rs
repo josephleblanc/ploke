@@ -1,6 +1,6 @@
 use crate::{
-    LLMParameters, ModelKey, manager::RequestMessage, router_only::openrouter::OpenRouter,
-    types::model_types::ModelId,
+    LLMParameters, ModelKey, ReasoningConfig, ReasoningEffort, manager::RequestMessage,
+    router_only::openrouter::OpenRouter, types::model_types::ModelId,
 };
 use color_eyre::Result;
 use std::str::FromStr;
@@ -101,6 +101,7 @@ fn test_builder_with_model() -> Result<()> {
     let request = TestChatCompRequest::default().with_model(model.clone());
 
     assert_eq!(request.core.model, model);
+    assert_eq!(request.model_key, Some(model.key));
     Ok(())
 }
 
@@ -109,6 +110,10 @@ fn test_builder_with_model_str() -> Result<()> {
     let request = TestChatCompRequest::default().with_model_str("test/model")?;
 
     assert_eq!(request.core.model.to_string(), "test/model");
+    assert_eq!(
+        request.model_key.map(|key| key.to_string()).as_deref(),
+        Some("test/model")
+    );
     Ok(())
 }
 
@@ -117,6 +122,16 @@ fn test_builder_with_json_response() -> Result<()> {
     let request = TestChatCompRequest::default().with_json_response();
 
     assert!(request.core.response_format.is_some());
+    Ok(())
+}
+
+#[test]
+fn test_builder_with_reasoning_effort_none() -> Result<()> {
+    let request = TestChatCompRequest::default()
+        .with_reasoning(ReasoningConfig::default().with_effort(ReasoningEffort::None));
+
+    let serialized = serde_json::to_value(&request)?;
+    assert_eq!(serialized["reasoning"]["effort"], "none");
     Ok(())
 }
 
