@@ -12,6 +12,13 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
+/// Shared tracing target for cross-crate execution debugging during eval and tool runs.
+///
+/// Operator surfaces such as `ploke-eval --debug-tools` can enable this target to follow one
+/// execution path across crates. Keep durable logs on this target sparse and sanity-oriented;
+/// prefer removing temporary callsites after diagnosis.
+pub const EXECUTION_DEBUG_TARGET: &str = "ploke_exec";
+
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +38,10 @@ pub mod rag_types;
 pub mod workspace;
 pub mod workspace_glob;
 
+#[cfg(feature = "tool-contracts")]
+pub mod tool_contracts;
+#[cfg(feature = "json")]
+pub mod tool_descriptions;
 #[cfg(feature = "json")]
 pub mod tool_types;
 
@@ -111,6 +122,7 @@ mod ids {
     // Import TypeKind into the ids module scope
     use crate::{IdConversionError, TypeKind}; // Add IdConversionError
 
+    #[cfg(feature = "cozo")]
     use cozo::{DataValue, UuidWrapper};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -389,6 +401,40 @@ mod ids {
             Self::Synthetic(type_uuid)
         }
 
+        /// Generates a canonical `Resolved` `TypeId` for a semantically resolved item-backed type.
+        ///
+        /// This is the type-side counterpart to path-based node resolution: once a named type has
+        /// been justified against a canonical defining item path, this constructor turns that
+        /// stable target identity into a `TypeId::Resolved`.
+        pub fn generate_resolved(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            logical_type_path: &[String],
+            cfgs: &[String],
+        ) -> Result<Self, IdConversionError> {
+            let canonical_file_path = file_path.canonicalize().map_err(|e| {
+                IdConversionError::IoError(file_path.display().to_string(), e.to_string())
+            })?;
+            let fp_bytes: &[u8] = canonical_file_path.as_os_str().as_encoded_bytes();
+
+            let resolved_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::TYPE_CANON_FILE::")
+                .chain(fp_bytes)
+                .chain(b"::TYPE_CANON_PATH::")
+                .chain(logical_type_path.join("::").as_bytes())
+                .chain(b"::TYPE_CFG::")
+                .chain(cfgs.join("::").as_bytes())
+                .copied()
+                .collect();
+
+            Ok(Self::Resolved(uuid::Uuid::new_v5(
+                &PROJECT_NAMESPACE_UUID,
+                &resolved_data,
+            )))
+        }
+
         // Removed generate_contextual_synthetic function.
         // Contextual disambiguation for Self/Generics is deferred to Step 3.
 
@@ -427,30 +473,35 @@ mod ids {
     }
 
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for &TypeId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for TrackingHash {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.0))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for CanonId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
         }
     }
     #[allow(clippy::from_over_into)]
+    #[cfg(feature = "cozo")]
     impl Into<DataValue> for PubPathId {
         fn into(self) -> DataValue {
             DataValue::Uuid(UuidWrapper(self.uuid()))
@@ -916,6 +967,11 @@ pub enum TypeKind {
         // Trait bounds are in related_types
     },
     //ANCHOR_END: ImplTrait
+    TraitBound {
+        path: Vec<String>,
+        is_fully_qualified: bool,
+        // Generic/associated/parenthesized arguments are in related_types
+    },
     Paren {
         // Inner type is in related_types[0]
     },

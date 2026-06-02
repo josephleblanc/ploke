@@ -1,11 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tool_descriptions::{
+    ToolDescription, ToolDescriptionArtifactRelPath, tool_description,
+    tool_description_artifact_relpath,
+};
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 pub enum ToolName {
     #[serde(rename = "request_code_context")]
     RequestCodeContext,
     #[serde(rename = "apply_code_edit")]
     ApplyCodeEdit,
+    #[serde(rename = "insert_rust_item")]
+    InsertRustItem,
     #[serde(rename = "create_file")]
     CreateFile,
     #[serde(rename = "non_semantic_patch", alias = "ns_patch")]
@@ -23,9 +30,10 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 9] = [
+    pub const ALL: [ToolName; 10] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
+        ToolName::InsertRustItem,
         ToolName::CreateFile,
         ToolName::NsPatch,
         ToolName::NsRead,
@@ -40,6 +48,7 @@ impl ToolName {
         match self {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
+            InsertRustItem => "insert_rust_item",
             CreateFile => "create_file",
             NsPatch => "non_semantic_patch",
             NsRead => "read_file",
@@ -104,7 +113,7 @@ pub struct ToolDefinition {
 #[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolFunctionDef {
     pub name: ToolName,
-    pub description: ToolDescr,
+    pub description: String,
     // TODO: We want to make this something more type-safe, e.g. instead of Value, it should be
     // generic over the types that implement a tool-calling trait
     // - DO NOT use dynamic dispatch
@@ -124,62 +133,20 @@ impl From<ToolFunctionDef> for ToolDefinition {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
-pub enum ToolDescr {
-    #[serde(rename = "Request additional code context from the repository up to a token budget.")]
-    RequestCodeContext,
-    #[serde(
-        rename = "Apply canonical code edits to one or more nodes identified by canonical path."
-    )]
-    ApplyCodeEdit,
-    #[serde(
-        rename = "Create a new Rust source file atomically within the workspace, staging for approval."
-    )]
-    CreateFile,
-    #[serde(
-        rename = r#"Apply a non-semantic code edit. This tool is most useful in two cases:
+impl ToolName {
+    pub fn description(self) -> ToolDescription {
+        tool_description(self)
+    }
 
-1. You need to read/edit non-rust files
-    - While this application as a whole is focused on Rust code, the user may ask you to read or even edit non-Rust files.
-    - This `non_semantic_patch` tool can be used to patch non-Rust files.
-
-2. The parser that allows for semantic edits fails on the target directory
-    - usually because there is an error in the target crate (e.g. a missing closing bracket).
-    - In this case, this `non_semantic_patch tool can be used to apply a code edit.
-    - DO NOT use this tool on Rust files (*.rs) before trying to use the semantic code edit tool first.
-"#
-    )]
-    NsPatch,
-    #[serde(
-        rename = "Read workspace files before editing. Paths must be absolute or workspace-root-relative. Supports optional line ranges and truncation limits to keep responses concise."
-    )]
-    NsRead,
-    #[serde(
-        rename = r#"Find the definition of a known code item. Better than grep. 
-
-Returns the code snippet of the item if it exists, and provides positive proof if the item does not exist.
-
-Use this tool when you want to look up a given code item. 
-
-Pro tip: use it with parallel tool calls to look up as many code items as you want.
-"#
-    )]
-    CodeItemLookup,
-    #[serde(
-        rename = r#"Shows all edges for the target item. Useful for discovering nearby code items."#
-    )]
-    CodeItemEdges,
-    #[serde(rename = "Run cargo check or cargo test with JSON diagnostics output.")]
-    Cargo,
-    #[serde(
-        rename = "List files in a directory (workspace-root scoped) without shell access. Returns a structured entry list with names, kinds, and optional size/mtime metadata."
-    )]
-    ListDir,
+    pub fn description_artifact_relpath(self) -> ToolDescriptionArtifactRelPath {
+        tool_description_artifact_relpath(self)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ToolName;
+    use super::{ToolFunctionDef, ToolName};
+    use crate::tool_descriptions::tool_description;
 
     #[test]
     fn tool_name_serializes_to_canonical_strings() {
@@ -197,5 +164,43 @@ mod tests {
 
         assert_eq!(read_alias, ToolName::NsRead);
         assert_eq!(patch_alias, ToolName::NsPatch);
+    }
+
+    #[test]
+    fn apply_code_edit_description_points_to_method_lookup() {
+        let description = tool_description(ToolName::ApplyCodeEdit).to_lowercase();
+        assert!(description.contains("node_type=method"));
+        assert!(description.contains("semantic targets"));
+        assert!(description.contains("code_item_lookup"));
+        assert!(description.contains("non_semantic_patch"));
+    }
+
+    #[test]
+    fn non_semantic_patch_description_warns_on_rust_files() {
+        let description = tool_description(ToolName::NsPatch).to_lowercase();
+        assert!(description.contains("non-rust files"));
+        assert!(description.contains("rust files"));
+        assert!(description.contains("semantic code edit tool"));
+    }
+
+    #[test]
+    fn insert_rust_item_tool_name_serializes() {
+        let name = serde_json::to_string(&ToolName::InsertRustItem).expect("serialize");
+        assert_eq!(name, "\"insert_rust_item\"");
+    }
+
+    #[test]
+    fn tool_function_def_serializes_description_as_string() {
+        let function = ToolFunctionDef {
+            name: ToolName::ApplyCodeEdit,
+            description: tool_description(ToolName::ApplyCodeEdit).to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        };
+
+        let value = serde_json::to_value(function).expect("serialize");
+        assert_eq!(
+            value.get("description").and_then(|v| v.as_str()),
+            Some(tool_description(ToolName::ApplyCodeEdit))
+        );
     }
 }
