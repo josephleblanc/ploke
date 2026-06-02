@@ -120,6 +120,8 @@ This is a Rust workspace. User-facing application code is in `crates/ploke-tui`,
 ## Coding Style & Naming Conventions
 Use Rust 2024 with the workspace Rust version from `Cargo.toml`. Follow standard Rust naming: `snake_case` for functions/modules, `PascalCase` for types and traits, and `SCREAMING_SNAKE_CASE` for constants. Prefer typed boundaries, structured errors, and focused modules that match existing crate layout. Run `cargo fmt --all` before handing off code.
 
+Hard variable/field naming rule: do not name variables or fields with more than three semantic parts. Three is an upper bound, not a goal. If a proposed name needs four or more parts, encode the relationship structurally with a typed carrier, nested field, enum variant, or typestate parameter instead of flattening it into a descriptive name. Prefer shapes like `Runtime<Successor> { id }`, `Selection { chosen }`, or `SelectedChild { node }` over names like `selected_candidate_membership_id` or `selected_child_node_id`.
+
 ## Testing Guidelines
 Place unit tests beside the code they cover and integration tests under each crate’s `tests/` directory. Fixture-backed tests should declare their asset requirements through `xtask` when practical. Gate live provider or network tests behind existing feature flags such as `live_api_tests` or explicit ignored tests, and document required environment variables in the test or nearby README.
 

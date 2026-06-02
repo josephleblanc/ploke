@@ -67,7 +67,7 @@ Suggested convention:
 
 Open question:
 
-- Should result reports distinguish `selected_child_node_id` from `successor_runtime_id` more explicitly?
+- Should result reports carry separate typed selected-child and successor-runtime records more explicitly, instead of flattening those relationships into long id field names?
 
 ### 4. Runtime vs run vs turn
 
@@ -299,15 +299,26 @@ order: sealed History first, then parent/profile admission evidence, transition
 journal, typed boxes/invocations, benchmark/protocol artifacts, and finally
 scheduler/branch/node/monitor/dashboard projections (`start-here/evidence-and-artifacts.md:6-25`).
 
+Hard variable/field naming rule: do not name variables or fields with more than
+three semantic parts. Three is an upper bound, not a goal. If a proposed name
+needs four or more parts, the relationship should be encoded structurally with a
+typed carrier, nested field, enum variant, or typestate parameter instead of a
+flattened descriptive name. For example, do not introduce fields like
+`selected_candidate_membership_id` or `selected_child_node_id`. Prefer a
+structural shape such as `Selection { chosen: CandidateMembership }`,
+`SelectedChild { node: SearchNodeRef }`, or `Runtime<Successor> { id }`. The
+short field name is evidence that the relationship is preserved by the type
+structure and can be checked by the compiler.
+
 ### Recommended resolutions by conflict
 
 | Conflict | Recommended resolution |
 | --- | --- |
 | Node | In Prototype 1 docs, use `search node` or `Prototype 1 search node` for `Prototype1NodeRecord`/scheduler-owned node records. Use `code graph node` or `syntax node` for parsed/indexed code facts. Use `candidate artifact` or `descendant artifact` for the material code state. Rationale: persistence docs classify `nodes/<node-id>/node.json` as a scheduler-owned node record/projection (`persistence/map-2026-05-03/synthesis.md:40-42`), while the edit-surface model says code graph nodes are a derived view over an Artifact (`edit-surface/model.md:190-210`). |
-| Parent id / parent node id / node id | Keep `node_id` as the active search-node id in code discussions. In prose, write `active parent search node id` for the parent node that owns child-plan publication, and `predecessor search node id` or `search-tree parent node id` for the edge to the prior node. Reserve `parent_id` for the active parent identity coordinate until the code is renamed. Prefer a future code/doc alias `active_parent_id` if this becomes a passive record field. Rationale: the start-here docs use `parent node id` for child-plan ownership (`stage-overview.md:91-103`) and the operator map separates active parent checkout, campaign root, and child worktree (`prototype1-loop-operator.md:12-28`). |
-| Child vs successor | Adopt the lifecycle ladder from the runtime-loop draft: `proposed child`, `realized child artifact`, `built child`, `acknowledged child runtime`, `evaluated child`, `selected successor`, `successor runtime` (`runtime/loop.md:184-210`). Do not say a child process becomes the successor. Say an evaluated child/candidate artifact is selected, then a fresh successor runtime is launched/admitted. Persisted reports should separate `selected_child_node_id` or selected candidate membership from `successor_runtime_id`. Rationale: the child role is leaf evaluation only (`runtime/child.md:20-49`), while successor validation precedes entry into parent authority (`runtime/authority.md:191-199`). |
+| Parent id / parent node id / node id | Keep `node_id` as the active search-node id in code discussions. In prose, write `active parent search node id` for the parent node that owns child-plan publication, and `predecessor search node id` or `search-tree parent node id` for the edge to the prior node. Do not turn those prose phrases into flat field names. Prefer structural carriers such as `ParentIdentity { id, node }`, `SearchNode { id }`, or `NodeEdge { parent, child }`, where the surrounding type names the relationship and fields stay short. Rationale: the start-here docs use `parent node id` for child-plan ownership (`stage-overview.md:91-103`) and the operator map separates active parent checkout, campaign root, and child worktree (`prototype1-loop-operator.md:12-28`). |
+| Child vs successor | Adopt the lifecycle ladder from the runtime-loop draft: `proposed child`, `realized child artifact`, `built child`, `acknowledged child runtime`, `evaluated child`, `selected successor`, `successor runtime` (`runtime/loop.md:184-210`). Do not say a child process becomes the successor. Say an evaluated child/candidate artifact is selected, then a fresh successor runtime is launched/admitted. Persisted reports should keep the selected child and successor runtime as separate typed values, not fields named like `selected_child_node_id` and `successor_runtime_id`. Rationale: the child role is leaf evaluation only (`runtime/child.md:20-49`), while successor validation precedes entry into parent authority (`runtime/authority.md:191-199`). |
 | Runtime vs run vs turn | Use `runtime` for an OS process hydrated from an Artifact and occupying exactly one `Role<State>` (`edit-surface/model.md:303-340`). Use `runtime attempt` where a `RuntimeId` is present. Use `benchmark run` or `eval run` for `RunRecord` / run manifests. Use `parent turn` or `parent control turn` for one controller pass through the active parent. Use `agent turn` for LLM/tool turns inside run records. Avoid unqualified `run` in new docs unless the command name itself uses it. |
-| Branch / treatment branch / artifact branch / git branch | Keep `treatment branch id` for branch-registry/candidate identity. Use `git ref` or `checkout branch` for VCS names. Prefer `selected Artifact` over `selected branch` when discussing handoff, because handoff installs the selected Artifact into the active checkout before launching the successor (`stage-overview.md:175-188`, `prototype1-loop-operator.md:92-112`). Consider deprecating `artifact_branch` in prose in favor of `artifact checkout ref` or `active checkout git ref`; if code changes later, `GitRef`/`CheckoutRef` would be clearer than another `branch` field. |
+| Branch / treatment branch / artifact branch / git branch | Keep `treatment branch id` as prose for branch-registry/candidate identity, but prefer a typed `TreatmentBranch { id }` or equivalent carrier in code. Use `GitRef`, `CheckoutRef`, or another typed ref for VCS names. Prefer `selected Artifact` over `selected branch` when discussing handoff, because handoff installs the selected Artifact into the active checkout before launching the successor (`stage-overview.md:175-188`, `prototype1-loop-operator.md:92-112`). Avoid long flat fields such as `artifact_checkout_ref` if the relationship can be represented as `Artifact { checkout: CheckoutRef }` or `Checkout { git: GitRef }`. |
 | Artifact vs worktree vs source state | Use `Artifact` for source/tree material that can hydrate a Runtime (`edit-surface/model.md:119-139`). Use `derived Artifact` for a checked/applied candidate transition (`edit-surface/model.md:497-568`). Use `worktree` for a mutable local filesystem handle; it is not durable identity. Use `source state` for candidate-generation input content/state, not for the whole checkout unless a specific record says that. Rationale: the lineage draft warns that an uncommitted worktree can be lost and therefore is a poor graph identity (`runtime/artifact-runtime-lineage.md:68-91`), while operator docs warn child worktrees are temporary surfaces, not successor homes (`stage-overview.md:51-60`). |
 | Authority vs projection | Replace loose `authority` with one of: `authority substrate`, `authority-bearing admission input`, `transition evidence`, `runtime channel evidence`, or `projection`. Sealed History is the intended authority substrate; parent identity/profile commitments and invocations are admission inputs; transition journal entries are transition evidence; node/scheduler/branch/latest-result/dashboard files are projections unless explicitly converted/admitted. Rationale: History/Crown docs say scheduler snapshots, branch registries, CLI reports, and dashboards are projections, not History authority (`history-crown.md:5-18`), and the channel plan says attempt results/projections should not drive live lifecycle advancement (`runtime/parent-child-channel.md:202-231`). |
 | History / lineage / Crown / scheduler tree | Use `History lineage` for admitted lineage facts and Crown handoff claims; use `search tree` or `scheduler frontier` for candidate planning/status. Do not call scheduler state “History” unless the record has been sealed/admitted or explicitly imported by policy. Rationale: book-level `History` is an authenticated store over sealed lineage-local blocks and `Crown` is one-at-a-time lineage mutation authority, not a process id, git branch, path, or global singleton (`history-crown.md:5-30`). The persistence map classifies scheduler/node/branch surfaces as mutable projections and sealed block streams as local History authority (`persistence/map-2026-05-03/synthesis.md:40-60`). |
@@ -321,14 +332,19 @@ scheduler/branch/node/monitor/dashboard projections (`start-here/evidence-and-ar
 1. Add a short “Terminology precedence” note to the walkthrough glossary:
    role/state/authority terms win for control-flow claims; file names are named
    as projections unless the doc identifies an admission transition.
-2. In future passive record docs, prefer these field aliases even if current code
-   fields remain unchanged:
-   - `search_node_id` for scheduler/Prototype 1 node identity;
-   - `active_parent_search_node_id` for the parent node that owns a child plan;
-   - `predecessor_search_node_id` for tree ancestry;
-   - `runtime_attempt_id` where `RuntimeId` is an attempt identity;
-   - `checkout_git_ref` or `artifact_checkout_ref` for VCS branch names;
-   - `selected_candidate_membership_id` / `selected_child_node_id` distinct from
+2. In future passive record docs, do not solve ambiguity by concatenating more
+   qualifiers into field names. Use the three-part limit as a design alarm:
+   - prefer `SearchNode { id }` over `search_node_id` when the surrounding type
+     can carry the search-node meaning;
+   - prefer `Parent { node }` or `ParentIdentity { node }` over
+     `active_parent_search_node_id`;
+   - prefer `NodeEdge { parent, child }` over `predecessor_search_node_id`;
+   - prefer `Runtime<Attempt> { id }` or `Attempt { runtime }` over
+     `runtime_attempt_id` when the distinction is structural;
+   - prefer `Checkout { git: GitRef }` over `checkout_git_ref`;
+   - prefer `Selection { chosen }`, `SelectedChild { node }`, and
+     `Runtime<Successor> { id }` over flat fields such as
+     `selected_candidate_membership_id`, `selected_child_node_id`, or
      `successor_runtime_id`.
 3. In operator docs, prefer the stage vocabulary from `drafts/start-here/`:
    setup/admission, baseline eval, baseline protocol, child planning,
