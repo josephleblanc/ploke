@@ -85,7 +85,7 @@ use ploke_core::ItemKind;
 use std::collections::HashMap;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{Attribute, ExpectedTraitNode, PrimaryNodeIdTrait};
-use syn_parser::parser::types::VisibilityKind;
+use syn_parser::parser::types::{GenericParamKind, VisibilityKind};
 
 pub const LOG_TEST_TRAIT: &str = "log_test_trait";
 
@@ -935,7 +935,32 @@ fn test_trait_node_complex_generic_trait_paranoid() {
 
     // Generics <'a, T: Debug + Clone, S: Send + Sync> where T: 'a
     assert_eq!(trait_node.generic_params.len(), 3);
-    // TODO: Add detailed checks for generic param kinds, bounds, and where clauses
+    let t_param = &trait_node.generic_params[1];
+    let GenericParamKind::Type { name, bounds, .. } = &t_param.kind else {
+        panic!("expected T generic param to be a type param");
+    };
+    assert_eq!(name, "T");
+    assert_eq!(bounds.len(), 2, "expected Debug + Clone bounds on T");
+    for expected in ["Debug", "Clone"] {
+        let bound = find_type_node(
+            graph,
+            bounds
+                .iter()
+                .copied()
+                .find(|id| {
+                    matches!(
+                        &find_type_node(graph, *id).kind,
+                        TypeKind::TraitBound { path, .. } if path == &[expected]
+                    )
+                })
+                .expect("expected named trait bound to be present"),
+        );
+        assert!(
+            matches!(&bound.kind, TypeKind::TraitBound { path, .. } if path == &[expected]),
+            "expected `{expected}` bound to remain a structural TraitBound, found {:#?}",
+            bound
+        );
+    }
 
     // Methods (fn complex_process(&'a self, item: T, other: S) -> &'a T;)
     assert_eq!(trait_node.methods.len(), 1);
@@ -1190,10 +1215,10 @@ fn test_other_trait_nodes() {
     let super_trait_id = node.super_traits[0];
     let super_trait_type = find_type_node(graph, super_trait_id);
     assert!(
-        matches!(&super_trait_type.kind, TypeKind::Named { path, .. } if path == &["SimpleTrait"]),
-        "\nExpected path: '&[\"SimpleTrait\"]' for TypeKind::Named in TypeNode, found: 
-    TypeKind::Named path:{:?}
-    Complete super_trait TypeNode: 
+        matches!(&super_trait_type.kind, TypeKind::TraitBound { path, .. } if path == &["SimpleTrait"]),
+        "\nExpected path: '&[\"SimpleTrait\"]' for TypeKind::TraitBound in TypeNode, found: 
+    TypeKind path:{:?}
+    Complete super_trait TypeNode:
 {:#?}",
         &super_trait_type.kind,
         &super_trait_type
@@ -1242,7 +1267,7 @@ fn test_other_trait_nodes() {
     let super_trait_id = node.super_traits[0];
     let super_trait_type = find_type_node(graph, super_trait_id);
     assert!(
-        matches!(&super_trait_type.kind, TypeKind::Named { path, .. } if path == &["GenericTrait"])
+        matches!(&super_trait_type.kind, TypeKind::TraitBound { path, .. } if path == &["GenericTrait"])
     );
     assert_eq!(super_trait_type.related_types.len(), 1); // <T>
     assert_eq!(node.methods.len(), 1); // generic_super_method

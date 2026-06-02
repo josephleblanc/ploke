@@ -1,10 +1,11 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
-use crate::parser::types::GenericParamNode;
+use crate::parser::type_slots::TraitTypeUseId;
+use crate::parser::types::{AssociatedTypeBound, GenericParamNode, TypeWherePredicate};
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -23,15 +24,19 @@ pub struct TraitNode {
     pub visibility: VisibilityKind,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     // TODO: Update super_traits to use a Vec of TraitNodeId
-    pub super_traits: Vec<TypeId>,
+    pub super_traits: Vec<TraitTypeUseId>,
+    /// Trait-position bounds declared on associated types, e.g.
+    /// `trait TimeZone { type Offset: Offset; }`.
+    #[serde(default)]
+    pub associated_type_bounds: Vec<AssociatedTypeBound>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
     pub cfgs: Vec<String>,
-    // TODO: Add fields for associated consts and types if needed
-    // pub associated_consts: Vec<ConstNode>,
-    // pub associated_types: Vec<TypeAliasNode>,
+    // Associated const/type ownership is represented by TraitAssociatedItem relations.
 }
 
 impl TraitNode {

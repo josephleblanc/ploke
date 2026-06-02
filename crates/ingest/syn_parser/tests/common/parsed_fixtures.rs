@@ -29,3 +29,24 @@ lazy_static! {
     pub static ref PARSED_FIXTURE_CRATE_TYPES: Vec<ParsedCodeGraph> =
         run_phases_and_collect("fixture_types");
 }
+
+lazy_static! {
+    /// Parsed data for the "fixture_path_resolution" crate.
+    /// Used for path-resolution and relation-heavy phase 3 tests.
+    pub static ref PARSED_FIXTURE_CRATE_PATH_RESOLUTION: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_path_resolution");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_spp_edge_cases_no_cfg" crate.
+    /// Used for shortest-path and re-export edge cases without cfg duplication pressure.
+    pub static ref PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_spp_edge_cases_no_cfg");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_spp_edge_cases" crate.
+    /// Used for the cfg-heavy shortest-path and re-export canary tests.
+    pub static ref PARSED_FIXTURE_CRATE_SPP_EDGE_CASES: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_spp_edge_cases");
+}

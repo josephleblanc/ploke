@@ -1,13 +1,17 @@
-use ploke_core::{TypeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::TypeId;
+#[cfg(not(feature = "typed_type_graph"))]
+use ploke_core::TypeKind;
 
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
 
 use super::nodes::GenericParamNodeId;
+use super::type_slots::{OrdinaryTypeUseId, TraitTypeUseId, ordinary_type_use_base_id};
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
+#[cfg(not(feature = "typed_type_graph"))]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeNode {
     pub id: TypeId,
@@ -15,6 +19,8 @@ pub struct TypeNode {
     // Reference to related types (e.g., generic arguments)
     pub related_types: Vec<TypeId>,
 }
+#[cfg(feature = "typed_type_graph")]
+pub use super::type_nodes::TypeNode;
 //ANCHOR_END: TypeNode
 
 // TypeKind moved to ploke_core
@@ -29,19 +35,44 @@ pub struct GenericParamNode {
     pub kind: GenericParamKind,
 }
 
+/// A type predicate from a `where` clause, such as `where T: Clone` or
+/// `where Vec<T>: LocalTrait`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct TypeWherePredicate {
+    pub subject: OrdinaryTypeUseId,
+    pub bounds: Vec<TraitTypeUseId>,
+}
+
+/// A trait-position bound declared on an associated type item.
+///
+/// This keeps `trait X { type A: Y + Z; type B: W; }` lossless enough for
+/// downstream type-use coordinates without making associated type declarations
+/// first-class graph owners yet.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct AssociatedTypeBound {
+    pub associated_type_index: usize,
+    pub associated_type_name: String,
+    pub bound_index: usize,
+    pub bound_type_id: TraitTypeUseId,
+}
+
 impl GenericParamNode {
     pub fn name_if_type_id(&self, ty_id: TypeId) -> Option<&str> {
         match &self.kind {
             GenericParamKind::Type { name, default, .. } => {
                 if let Some(type_id) = r#default {
-                    if type_id == &ty_id { Some(name) } else { None }
+                    if ordinary_type_use_base_id(*type_id) == ty_id {
+                        Some(name)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             }
             GenericParamKind::Lifetime { .. } => None,
             GenericParamKind::Const { name, type_id } => {
-                if type_id == &ty_id {
+                if ordinary_type_use_base_id(*type_id) == ty_id {
                     Some(name)
                 } else {
                     None
@@ -57,8 +88,8 @@ impl GenericParamNode {
 pub enum GenericParamKind {
     Type {
         name: String,
-        bounds: Vec<TypeId>,
-        default: Option<TypeId>,
+        bounds: Vec<TraitTypeUseId>,
+        default: Option<OrdinaryTypeUseId>,
     },
     Lifetime {
         name: String,
@@ -66,7 +97,7 @@ pub enum GenericParamKind {
     },
     Const {
         name: String,
-        type_id: TypeId,
+        type_id: OrdinaryTypeUseId,
     },
 }
 
@@ -81,7 +112,7 @@ impl GenericParamKind {
     }
 
     /// Returns the type bounds of the generic parameter, if applicable.
-    pub fn bounds(&self) -> Option<&[TypeId]> {
+    pub fn bounds(&self) -> Option<&[TraitTypeUseId]> {
         match self {
             GenericParamKind::Type { bounds, .. } => Some(bounds),
             GenericParamKind::Lifetime { .. } => None, // Lifetimes have string bounds, handled separately if needed
@@ -99,7 +130,7 @@ impl GenericParamKind {
     }
 
     /// Returns the default type of the generic parameter, if applicable.
-    pub fn default(&self) -> Option<&TypeId> {
+    pub fn default(&self) -> Option<&OrdinaryTypeUseId> {
         match self {
             GenericParamKind::Type { default, .. } => default.as_ref(),
             GenericParamKind::Lifetime { .. } => None,
@@ -108,7 +139,7 @@ impl GenericParamKind {
     }
 
     /// Returns the type ID of the const generic parameter, if applicable.
-    pub fn const_type_id(&self) -> Option<&TypeId> {
+    pub fn const_type_id(&self) -> Option<&OrdinaryTypeUseId> {
         match self {
             GenericParamKind::Type { .. } => None,
             GenericParamKind::Lifetime { .. } => None,

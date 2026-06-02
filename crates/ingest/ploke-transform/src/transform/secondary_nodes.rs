@@ -73,7 +73,10 @@ pub(super) fn process_params(
             DataValue::from(i as i64),
         ),
         (param_schema.name().to_string(), param_name),
-        (param_schema.type_id().to_string(), param.type_id.into()),
+        (
+            param_schema.type_id().to_string(),
+            param.type_id.to_cozo_uuid(),
+        ),
         (
             param_schema.is_mutable().to_string(),
             DataValue::from(param.is_mutable),
@@ -235,7 +238,7 @@ pub(super) fn process_fields(
         (schema.name().to_string(), cozo_name),
         (schema.owner_id().to_string(), any_node_id.to_cozo_uuid()),
         (schema.index().to_string(), DataValue::from(i as i64)),
-        (schema.type_id().to_string(), type_id.into()),
+        (schema.type_id().to_string(), type_id.to_cozo_uuid()),
         (schema.vis_kind().to_string(), vis_kind),
         (
             schema.vis_path().to_string(),

@@ -66,6 +66,12 @@ pub struct OpenRouterConfig {
     pub max_backoff_ms: u64,
     /// Optional hint to OpenRouter about the input type.
     pub input_type: Option<String>,
+    /// Optional ordered provider slugs to route embeddings through on OpenRouter.
+    #[serde(default)]
+    pub provider_order: Option<Vec<String>>,
+    /// Whether OpenRouter may fall back away from the requested embedding providers.
+    #[serde(default)]
+    pub allow_fallbacks: Option<bool>,
     /// Per-request timeout in seconds for embeddings.
     #[serde(default = "default_openrouter_timeout_secs")]
     pub timeout_secs: u64,
@@ -87,6 +93,8 @@ impl Default for OpenRouterConfig {
             initial_backoff_ms: default_openrouter_initial_backoff_ms(),
             max_backoff_ms: default_openrouter_max_backoff_ms(),
             input_type: None,
+            provider_order: None,
+            allow_fallbacks: None,
             timeout_secs: default_openrouter_timeout_secs(),
             truncate_policy: TruncatePolicy::Truncate,
         }

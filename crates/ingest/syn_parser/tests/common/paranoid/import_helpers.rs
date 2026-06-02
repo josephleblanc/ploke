@@ -1,9 +1,10 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
+use syn_parser::TestIds;
 use syn_parser::parser::{
-    nodes::{GraphNode, ImportNode}, // Added ImportNode
+    ParsedCodeGraph,                                    // Import calculate_cfg_hash_bytes
+    nodes::{GraphNode, ImportNode, PrimaryNodeIdTrait}, // Added ImportNode
     visitor::calculate_cfg_hash_bytes,
-    ParsedCodeGraph, // Import calculate_cfg_hash_bytes
 };
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ImportNode
@@ -69,7 +70,11 @@ pub fn find_import_node_paranoid<'a>(
     assert!(
         !candidates.is_empty(),
         "No ImportNode found matching criteria: visible_name='{}', path={:?}, original_name={:?}, is_glob={} in file '{}'",
-        visible_name, expected_path, expected_original_name, expected_is_glob, file_path.display()
+        visible_name,
+        expected_path,
+        expected_original_name,
+        expected_is_glob,
+        file_path.display()
     );
 
     // 5. Filter further by module association using the ModuleNode's items list
@@ -84,7 +89,7 @@ pub fn find_import_node_paranoid<'a>(
 
     let module_candidates: Vec<&ImportNode> = candidates
         .into_iter()
-        .filter(|i| module_items.contains(&i.id)) // Check ID against module items
+        .filter(|i| module_items.contains(&i.id.into())) // Check ID against module items
         .collect();
 
     // 6. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -146,15 +151,26 @@ pub fn find_import_node_paranoid<'a>(
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context hashing
         id_gen_name.as_str(),
-        item_kind,            // Pass the correct ItemKind
-        Some(module_node.id), // Pass the containing module's ID as parent scope
-        cfg_bytes.as_deref(), // Pass calculated CFG bytes
+        item_kind,                       // Pass the correct ItemKind
+        Some(module_node.id.base_tid()), // Pass the containing module's ID as parent scope
+        cfg_bytes.as_deref(),            // Pass calculated CFG bytes
     );
 
     assert_eq!(
-        import_id, regenerated_id,
+        import_id.base_tid(),
+        regenerated_id,
         "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}'.\nItemKind: {:?}\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
-        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind, Some(module_node.id), scope_cfgs, item_cfgs, provisional_effective_cfgs
+        import_id,
+        regenerated_id,
+        visible_name,
+        expected_path,
+        expected_module_path,
+        file_path.display(),
+        item_kind,
+        Some(module_node.id.base_tid()),
+        scope_cfgs,
+        item_cfgs,
+        provisional_effective_cfgs
     );
 
     // 8. Return the validated node

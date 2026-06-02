@@ -165,11 +165,42 @@ impl CozoBackend {
         }
     }
 
-    pub async fn compute_batch(&self, _snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+    pub async fn compute_batch(&self, snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+        if self.endpoint.starts_with("mock://") {
+            return Ok(snippets
+                .iter()
+                .map(|snippet| mock_embedding(snippet, self.dimensions))
+                .collect());
+        }
+
         Err(EmbedError::NotImplemented(
             "Cozo embeddings not implemented".to_string(),
         ))
     }
+}
+
+fn mock_embedding(text: &str, dimensions: usize) -> Vec<f32> {
+    let mut seed = 0xcbf29ce484222325_u64;
+    for byte in text.as_bytes() {
+        seed ^= u64::from(*byte);
+        seed = seed.wrapping_mul(0x100000001b3);
+    }
+
+    (0..dimensions)
+        .map(|idx| {
+            seed ^= idx as u64;
+            seed = seed.wrapping_mul(0x9e3779b97f4a7c15);
+            let scaled = ((seed >> 40) as u32) as f32 / ((1_u32 << 24) as f32);
+            (scaled * 2.0) - 1.0
+        })
+        .collect()
+}
+
+fn shutdown_callback_manager(shutdown: &crossbeam_channel::Sender<()>) {
+    match shutdown.send(()) {
+        Ok(_) => tracing::debug!("Sending shutdown message"),
+        Err(e) => tracing::error!("Cannot send shutdown message, other side dropped: {e}"),
+    };
 }
 
 pub type IndexProgress = f64;
@@ -336,7 +367,21 @@ impl IndexerTask {
                                 IndexStatus::Failed(s)=>{
                                     tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",
                                         s,status.errors);
-                                        panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);
+                                    let _ = shutdown.send(());
+                                    let task_result = (&mut idx_handle)
+                                        .await
+                                        .map_err(|err| EmbedError::JoinFailed(err.to_string()))?;
+                                    if callback_handler.is_finished() {
+                                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        callback_handler.join().expect("Callback errror - not finished")?;
+                                    }
+                                    return Err(task_result
+                                        .err()
+                                        .unwrap_or_else(|| EmbedError::Embedding(format!(
+                                            "Indexing failed with message: {s}\nErrors: {:?}",
+                                            status.errors
+                                        )))
+                                        .into());
                                 }
                                 IndexStatus::Idle => {todo!()},
                                 IndexStatus::Running => {},
@@ -346,12 +391,12 @@ impl IndexerTask {
                                     received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
                                     if callback_handler.is_finished() {
                                         callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                                        tracing::debug!("Callback Handler is Finished: {:?}", callback_handler);
                                         callback_handler.join().expect("Callback errror - not finished")?;
                                         break;
                                     } else {
                                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        shutdown_callback_manager(&shutdown);
                                         // break;
                                     }
                                 },
@@ -370,16 +415,12 @@ impl IndexerTask {
                 res = &mut idx_handle => {
                     if callback_handler.is_finished() {
                         callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
-                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                        tracing::debug!("Callback Handler is Finished: {:?}", callback_handler);
                         callback_handler.join().expect("Callback errror - not finished")?;
                         break;
                     } else {
                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                        // shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
-                        match shutdown.send(()) {
-                            Ok(_) => tracing::info!("Sending shutdown message"),
-                            Err(e) => tracing::error!("Cannot send shutdown message, other side dropped"),
-                        };
+                        shutdown_callback_manager(&shutdown);
                         // break;
                     }
                     let task_result = res.expect("Task panicked");
@@ -454,7 +495,6 @@ impl IndexerTask {
 
         ploke_db::create_index_primary_with_index(&db_clone)?;
 
-        tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
             "Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}"
@@ -528,13 +568,13 @@ impl IndexerTask {
 
             match self
                 .process_batch(batch, |current, num_not_proc| {
-                    tracing::info!("Indexed {current}/{num_not_proc}")
+                    tracing::debug!("Indexed {current}/{num_not_proc}")
                 })
                 .await
             {
                 Ok(_) => {
                     state.recent_processed += node_count;
-                    tracing::info!(
+                    tracing::debug!(
                         "Processed batch: {}/{}",
                         state.recent_processed,
                         state.num_not_proc
@@ -545,7 +585,7 @@ impl IndexerTask {
                                 "state.recent_processed > num_not_proc | there is a miscount of nodes somewhere"
                             );
                         }
-                        tracing::info!(
+                        tracing::debug!(
                             "Break: {} >= {}",
                             state.recent_processed,
                             state.num_not_proc
@@ -591,7 +631,7 @@ impl IndexerTask {
 
         let total_processed = self.total_processed.load(Ordering::SeqCst);
         if total_processed >= state.num_not_proc {
-            tracing::info!(
+            tracing::debug!(
                 "Indexing completed: {}/{} - recently_processed: {}",
                 total_processed,
                 state.num_not_proc,
@@ -615,7 +655,7 @@ impl IndexerTask {
                 }
                 match resp_rx.await {
                     Ok(Ok(())) => {
-                        tracing::info!("BM25 FinalizeSeed acknowledged");
+                        tracing::debug!("BM25 FinalizeSeed acknowledged");
                     }
                     Ok(Err(err_msg)) => {
                         let msg = format!("BM25 FinalizeSeed failed: {}", err_msg);
@@ -708,7 +748,7 @@ impl IndexerTask {
             );
 
             if !nodes.is_empty() {
-                tracing::info!(
+                tracing::debug!(
                     "<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>",
                     node_type.relation_str(),
                     self.total_processed
@@ -733,7 +773,7 @@ impl IndexerTask {
 
         self.total_processed
             .fetch_add(total_counted, Ordering::SeqCst);
-        tracing::info!(
+        tracing::debug!(
             "<<< | total_processed after: {:?} >>>",
             self.total_processed,
         );
@@ -743,6 +783,27 @@ impl IndexerTask {
             Ok(None)
         }
         // ANCHOR_END: next_batch_primary_nodes
+    }
+
+    /// Advance the internal batch cursor to `batch_number` and return that batch.
+    ///
+    /// `batch_number` is 1-based: `1` returns the first batch, `2` the second, etc.
+    pub async fn replay_batch(
+        &self,
+        batch_number: usize,
+    ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
+        if batch_number == 0 {
+            return Ok(None);
+        }
+
+        let num_not_proc = self.db.count_unembedded_nonfiles()?;
+        for _ in 1..batch_number {
+            if self.next_batch(num_not_proc).await?.is_none() {
+                return Ok(None);
+            }
+        }
+
+        self.next_batch(num_not_proc).await
     }
 
     #[instrument(skip_all, fields(batch_size))]
@@ -801,7 +862,7 @@ impl IndexerTask {
                 Err(e) => tracing::warn!("Snippet error: {:?}", e),
             }
         }
-        tracing::info!(
+        tracing::debug!(
             "snippet results | num_to_embed: {}, valid_nodes: {}, valid_emb_data: {}, valid_snippets: {}",
             num_to_embed,
             valid_nodes.len(),
@@ -974,7 +1035,7 @@ fn log_embedding_failure_context(
 
 fn log_row(r: Vec<DataValue>) {
     for (i, row) in r.iter().enumerate() {
-        tracing::info!("{}: {:?}", i, row);
+        tracing::debug!("{}: {:?}", i, row);
     }
 }
 pub(crate) fn log_stuff(

@@ -9,7 +9,7 @@ syn_parser = { path = "../syn_parser" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
-ploke-core = { path = "../../ploke-core" }
+ploke-core = { path = "../../ploke-core", features = ["cozo"] }
 ploke-common = { path = "../../common" }
 uuid = { workspace = true }
 
@@ -34,5 +34,6 @@ harness = false
 default = ["type_bearing_ids"]
 debug = []
 type_bearing_ids = []
+typed_type_graph = ["syn_parser/typed_type_graph"]
 # get relations to have a mapping to higher level abstractions.
 level_up_relations = []

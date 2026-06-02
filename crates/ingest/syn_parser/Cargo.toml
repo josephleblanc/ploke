@@ -8,6 +8,7 @@ authors = ["Joseph LeBlanc <joseph.t.leblanc@protonmail.com>"]
 [dependencies]
 # Parsing and code generation
 syn = { workspace = true }
+syn1 = { package = "syn", version = "1.0", features = ["full", "visit"] }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
 
@@ -68,6 +69,14 @@ anyhow = "1.0"
 name = "parse_pipeline"
 harness = false
 
+[[bench]]
+name = "type_resolution"
+harness = false
+
+[[bench]]
+name = "type_resolution_corpus"
+harness = false
+
 # Feature flags
 [features]
 default = [
@@ -84,6 +93,7 @@ verbose_debug = []
 temp_target = []
 not_wip_marker = []
 type_bearing_ids = []
+typed_type_graph = []
 ghost_data_graphs = []
 validate = []
 public_path = []
@@ -92,3 +102,4 @@ reexport = []
 # Post-MVP feature
 workspace_vis = []
 cfg_eval = []
+convert_keyword_2015 = []

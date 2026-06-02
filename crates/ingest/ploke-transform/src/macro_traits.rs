@@ -205,7 +205,8 @@ impl IntoCozo for FunctionNode {
         );
         map.insert(
             "return_type_id".into(),
-            self.return_type.map_or(DataValue::Null, |id| id.into()),
+            self.return_type
+                .map_or(DataValue::Null, |id| id.to_cozo_uuid()),
         );
         map.insert(
             "docstring".into(),

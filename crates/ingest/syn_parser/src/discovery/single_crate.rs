@@ -13,7 +13,7 @@
 //! These entry points are intentionally narrow so downstream phases can depend on strongly typed
 //! structs instead of re-reading `Cargo.toml` or the filesystem.
 
-use ploke_core::PROJECT_NAMESPACE_UUID;
+use ploke_core::{CrateId, PROJECT_NAMESPACE_UUID};
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -569,6 +569,9 @@ pub struct TargetSelector {
 /// (`String`, `Uuid`, `PathBuf`, `Vec<PathBuf>`) are `Send + Sync`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CrateContext {
+    /// The unique identifier for this crate, derived from its root path.
+    /// This is a path-based UUID that identifies the crate instance.
+    pub id: CrateId,
     /// The simple name of the crate (e.g., "syn_parser").
     pub name: String,
     /// The resolved version string for the crate (e.g., "0.1.0").

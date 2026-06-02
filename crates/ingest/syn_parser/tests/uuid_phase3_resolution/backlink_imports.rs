@@ -13,25 +13,23 @@
 //!
 //! ## Structure & Rationale
 //!
-//! * A single helper (`expect_backlink_for_item`) asserts that a relation exists from a definition
-//!   identified by module path/name/kind to the targeted import node.
-//! * A lightweight macro (`backlink_case!`) expands into individual `#[test]` functions so that
-//!   each item still shows up independently in test output, while avoiding duplicated boilerplate.
+//! * Uses the shared relation-paranoid harness so each test resolves the exact definition node and
+//!   exact import node, then asserts that one and only one `ImportedBy` relation links them.
+//! * A lightweight macro expands into individual `#[test]` functions so each item still shows up
+//!   independently in test output while sharing the cached graph/tree fixture.
 //! * The parsed graph + module tree are cached via `lazy_static!` so the fixture is only parsed
 //!   once, keeping the regression tests fast enough for frequent local runs or pre-commit hooks.
 //! * Additional fixture imports should only require adding another `backlink_case!` entry plus
 //!   referencing the item in the fixture coverage doc.
 
-use env_logger;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
 use syn_parser::parser::ParsedCodeGraph;
-use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::AnyNodeId;
 use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;
-use crate::common::resolution::find_item_id_by_path_name_kind_checked;
+use crate::common::relation_paranoid::{ExpectedTreeRelation, import, item};
+use crate::paranoid_tree_relation_case;
 
 const FIXTURE_NAME: &str = "fixture_nodes";
 const DEFAULT_IMPORTS_MODULE_PATH: &[&str] = &["crate", "imports"];
@@ -40,74 +38,31 @@ lazy_static! {
     static ref BACKLINK_FIXTURE: (ParsedCodeGraph, ModuleTree) = build_tree_for_tests(FIXTURE_NAME);
 }
 
-fn expect_backlink_for_item(
-    definition_module_path: &[&str],
-    definition_name: &str,
-    definition_kind: ItemKind,
-    import_module_path: &[&str],
-    import_visible_name: &str,
-) {
-    let _ = env_logger::builder().is_test(true).try_init();
-    let (graph, tree) = &*BACKLINK_FIXTURE;
-
-    let def_any_id = find_item_id_by_path_name_kind_checked(
-        graph,
-        definition_module_path,
-        definition_name,
-        definition_kind,
-    )
-    .unwrap_or_else(|err| {
-        panic!(
-            "Failed to locate definition {}::{definition_name} ({definition_kind:?}): {err:?}",
-            definition_module_path.join("::"),
-        )
-    });
-
-    let imports_module = graph
-        .find_module_by_path_checked(&module_path_vec(import_module_path))
-        .expect("imports module path should exist in fixture");
-
-    let import = imports_module
-        .imports
-        .iter()
-        .find(|imp| imp.visible_name == import_visible_name)
-        .unwrap_or_else(|| {
-            panic!(
-                "Import `{}` not found in module {:?}",
-                import_visible_name, import_module_path
-            )
-        });
-
-    let import_any_id = AnyNodeId::from(import.id);
-
-    let has_backlink = tree.tree_relations().iter().any(|tr| {
-        let rel = tr.rel();
-        rel.source() == def_any_id && rel.target() == import_any_id
-    });
-
-    assert!(
-        has_backlink,
-        "Expected backlink from definition {}::{definition_name} ({definition_kind:?}) to import `{}`.",
-        definition_module_path.join("::"),
-        import_visible_name
-    );
-}
-
 macro_rules! backlink_case {
     ($name:ident, $path:expr, $item:expr, $kind:expr, $import:expr) => {
-        #[test]
-        fn $name() {
-            expect_backlink_for_item($path, $item, $kind, DEFAULT_IMPORTS_MODULE_PATH, $import);
-        }
+        paranoid_tree_relation_case!(
+            $name,
+            graph: &BACKLINK_FIXTURE.0,
+            tree: &BACKLINK_FIXTURE.1,
+            expected: ExpectedTreeRelation::ImportedBy {
+                source: item($path, $item, $kind),
+                target: import(DEFAULT_IMPORTS_MODULE_PATH, $import),
+            }
+        );
     };
 }
 
 macro_rules! backlink_case_in_module {
     ($name:ident, $path:expr, $item:expr, $kind:expr, $import_module:expr, $import:expr) => {
-        #[test]
-        fn $name() {
-            expect_backlink_for_item($path, $item, $kind, $import_module, $import);
-        }
+        paranoid_tree_relation_case!(
+            $name,
+            graph: &BACKLINK_FIXTURE.0,
+            tree: &BACKLINK_FIXTURE.1,
+            expected: ExpectedTreeRelation::ImportedBy {
+                source: item($path, $item, $kind),
+                target: import($import_module, $import),
+            }
+        );
     };
 }
 
@@ -271,7 +226,3 @@ backlink_case!(
     ItemKind::Struct,
     "CfgStructAlias"
 );
-
-fn module_path_vec(path: &[&str]) -> Vec<String> {
-    path.iter().map(|seg| (*seg).to_string()).collect()
-}

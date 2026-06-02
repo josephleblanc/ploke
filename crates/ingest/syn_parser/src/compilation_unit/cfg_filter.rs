@@ -131,6 +131,15 @@ fn cfgs_for_uuid(graph: &ParsedCodeGraph, id: Uuid) -> Option<&[String]> {
             return Some(n.cfgs());
         }
     }
+    #[cfg(feature = "typed_type_graph")]
+    if graph
+        .type_graph()
+        .iter()
+        .any(|t: &TypeNode| t.id().uuid() == id)
+    {
+        return None;
+    }
+    #[cfg(not(feature = "typed_type_graph"))]
     if graph
         .type_graph()
         .iter()

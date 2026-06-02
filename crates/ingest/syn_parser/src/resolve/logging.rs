@@ -5,7 +5,9 @@ where
     Self: RelationIndexer,
 {
     fn modules(&self) -> &HashMap<ModuleNodeId, ModuleNode>;
+    #[cfg(feature = "validate")]
     fn pending_imports(&self) -> &Vec<PendingImport>;
+    #[cfg(feature = "validate")]
     fn pending_exports(&self) -> Option<&Vec<PendingExport>>;
     fn log_access_restricted_check_ancestor(
         &self,
@@ -137,6 +139,7 @@ where
 
     /// Logs detailed information about a relation for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups.
+    #[cfg(feature = "validate")]
     fn log_relation_verbose(&self, rel: TreeRelation) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Relation Details:", "Verbose Log:".log_header());
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", rel.rel().to_string().log_name()); // Use rel()
@@ -150,6 +153,7 @@ where
 
     /// Logs detailed information about a relation for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups.
+    #[cfg(feature = "validate")]
     fn log_relation_verbose_target(&self, rel: TreeRelation, target: &str) {
         debug!(target: target, "{} Relation Details:", "Verbose Log:".log_header());
         debug!(target: target, "  Kind: {}", rel.rel().to_string().log_name()); // Use rel()
@@ -163,6 +167,7 @@ where
 
     /// Logs detailed information about a NodeId for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups within the ModuleTree.
+    #[cfg(feature = "validate")]
     fn log_node_id_verbose(&self, node_id: AnyNodeId) {
         // Changed: Parameter is AnyNodeId
         // Try to convert AnyNodeId to ModuleNodeId for module lookup
