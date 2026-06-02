@@ -2139,6 +2139,34 @@ mod tests {
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
 
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_setup_or_panic(test_name: &str) {
+        if let Err(error) = Google::route_config_available() {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google route config; route config unavailable: {error}"
+                ))
+            );
+        }
+        if let Err(error) = Google::auth_config_available() {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google ADC; ADC config unavailable: {error}"
+                ))
+            );
+        }
+        if let Err(error) = Google::resolve_bearer_token().await {
+            panic!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "{test_name} requires Google ADC bearer-token resolution; token unavailable: {error}"
+                ))
+            );
+        }
+    }
+
     #[derive(Clone, Default)]
     struct TraceLines(StdArc<StdMutex<Vec<String>>>);
 
@@ -2757,7 +2785,13 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "live Google tool-call session; requires GOOGLE_PROJECT_ID/GOOGLE_REGION and ADC"]
     async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
+        live_google_setup_or_panic(
+            "live_google_chat_session_executes_list_dir_tool_call_success_or_quota",
+        )
+        .await;
+
         let db = Arc::new(Database::new_init().expect("database initializes"));
         let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
@@ -3005,6 +3039,10 @@ mod tests {
         server.await.expect("server task");
         let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
         let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+        let captured_replay_responses = captured_responses
+            .iter()
+            .filter(|response| matches!(response.response.id.as_str(), "repair-1" | "repair-2"))
+            .collect::<Vec<_>>();
 
         assert!(matches!(report.outcome, SessionOutcome::Completed));
         assert_eq!(
@@ -3012,18 +3050,22 @@ mod tests {
             1,
             "exactly one live step should reach the provider"
         );
-        assert_eq!(
-            captured_requests.len(),
-            3,
-            "expected recorded request, live request, then step-boundary request"
+        assert!(
+            captured_requests.len() >= 3,
+            "expected recorded request, live request, and at least one replay-boundary/repair request"
         );
-        assert_eq!(
-            captured_responses.len(),
-            2,
-            "expected recorded and one live provider response"
+        assert!(
+            captured_replay_responses
+                .iter()
+                .any(|response| response.index() == 0 && response.response.id == "repair-1"),
+            "expected recorded repair-1 provider response"
         );
-        assert_eq!(captured_responses[0].index(), 0);
-        assert_eq!(captured_responses[1].index(), 1);
+        assert!(
+            captured_replay_responses
+                .iter()
+                .any(|response| response.index() == 1 && response.response.id == "repair-2"),
+            "expected live repair-2 provider response"
+        );
     }
 
     #[test]

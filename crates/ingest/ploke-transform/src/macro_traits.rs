@@ -45,7 +45,7 @@ where
             .map(|s| DataValue::from(s.as_str()))
             .collect();
 
-        let attr_params = BTreeMap::from([
+        BTreeMap::from([
             (schema.owner_id().to_string(), self.any_id().to_cozo_uuid()),
             (schema.index().to_string(), DataValue::from(i)),
             (
@@ -54,8 +54,7 @@ where
             ),
             (schema.value().to_string(), value),
             (schema.args().to_string(), DataValue::List(args)),
-        ]);
-        attr_params
+        ])
     }
 
     fn cozo_btree(&self) -> BTreeMap<String, DataValue>;

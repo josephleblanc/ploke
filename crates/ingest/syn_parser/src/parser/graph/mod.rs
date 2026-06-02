@@ -565,10 +565,9 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         #[cfg(feature = "typed_type_graph")]
         {
-            return self
-                .type_graph()
+            self.type_graph()
                 .iter()
-                .find(|t| t.id().uuid() == type_id.uuid());
+                .find(|t| t.id().uuid() == type_id.uuid())
         }
         #[cfg(not(feature = "typed_type_graph"))]
         self.type_graph().iter().find(|t| t.id == type_id)
@@ -578,7 +577,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         #[cfg(feature = "typed_type_graph")]
         {
             let _ = type_id;
-            return None;
+            None
         }
         #[cfg(not(feature = "typed_type_graph"))]
         self.resolve_type(type_id).map(|t| &t.kind)

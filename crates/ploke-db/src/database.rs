@@ -1263,7 +1263,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
             .active_embedding_set
             .read()
             .map_err(|_| DbError::ActiveSetPoisoned)?;
-        Ok(f(&*guard))
+        Ok(f(&guard))
     }
 
     pub fn active_model_id(&self) -> Result<EmbeddingModelId, DbError> {
@@ -1279,7 +1279,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
             .active_embedding_set
             .write()
             .map_err(|_| DbError::ActiveSetPoisoned)?;
-        Ok(f(&mut *guard))
+        Ok(f(&mut guard))
     }
 
     /// Common convenience: replace the whole set.
@@ -1287,7 +1287,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
         self.update_active_set(|slot| *slot = new_set).map(|_| ())
     }
 
-    pub fn rel_names_with_tracking_hash<'a>(&'a self) -> Result<Vec<String>, DbError> {
+    pub fn rel_names_with_tracking_hash(&self) -> Result<Vec<String>, DbError> {
         fn filter_is_th(db: &Database, rel_name: &str) -> Result<bool, DbError> {
             let script_th_col = format!("::columns {rel_name}");
             let is_th = db
@@ -2657,14 +2657,8 @@ desc[id] := parent_of[id, parent], desc[parent]
                     &inventory.descendant_ids,
                 )?;
             } else if relation == "method" {
-                let key_fields = MethodNodeSchema::SCHEMA
-                    .keys()
-                    .map(|field| *field)
-                    .collect::<Vec<_>>();
-                let val_fields = MethodNodeSchema::SCHEMA
-                    .vals()
-                    .map(|field| *field)
-                    .collect::<Vec<_>>();
+                let key_fields = MethodNodeSchema::SCHEMA.keys().copied().collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA.vals().copied().collect::<Vec<_>>();
                 self.retract_relation_rows_by_id(
                     &relation,
                     &key_fields,

@@ -1,5 +1,12 @@
 //! High-performance text retrieval from code graph database
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(
+    unused_variables,
+    unused_imports,
+    dead_code,
+    clippy::mutable_key_type,
+    clippy::result_large_err,
+    clippy::too_many_arguments
+)]
 
 extern crate self as ploke_db;
 

@@ -109,6 +109,7 @@ const GITHUB_FIXTURE_AXUM_REQUIRED_PATHS: &[&str] = &[
     GITHUB_FIXTURE_AXUM_CRATE_MANIFEST,
     GITHUB_FIXTURE_AXUM_LIB,
 ];
+const HISTORICAL_HEADLESS_TUI_TRACE: &str = "crates/ploke-eval/src/tests/fixtures/historical-headless-tui/node-01c9e8fdc70e3ee8.headless-tui.json";
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 const PLOKE_FIXTURE_HOME_ENV: &str = "PLOKE_FIXTURE_HOME";
 const GITHUB_CORPUS_LOCK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -308,6 +309,13 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
         },
         description: "Ignored axum checkout used by syn_parser workspace regression tests.",
         remediation: "Run `cargo xtask setup-github-fixtures` to clone the required axum fixture checkout.",
+        integrity: None,
+    },
+    FixtureCheck {
+        id: "historical_tui_trace",
+        target: FixtureTarget::Path(HISTORICAL_HEADLESS_TUI_TRACE),
+        description: "Checked-in headless TUI trace fixture replayed by ploke-eval historical protected-edit regression coverage.",
+        remediation: "Restore the historical headless TUI trace fixture or regenerate it from the prototype1/headless TUI replay workflow before running the full workspace test gate.",
         integrity: None,
     },
     FixtureCheck {

@@ -187,10 +187,11 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
         let byte_cap = max_bytes
             .map(|v| v as usize)
             .unwrap_or(DEFAULT_READ_BYTE_CAP);
+        let has_line_range = start_line.is_some() || end_line.is_some();
 
         let request = ReadFileRequest {
             file_path: abs_path,
-            range: if start_line.is_some() || end_line.is_some() {
+            range: if has_line_range {
                 Some(ReadRange {
                     start_line,
                     end_line,
@@ -198,7 +199,7 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             } else {
                 None
             },
-            max_bytes: Some(byte_cap),
+            max_bytes: (!has_line_range).then_some(byte_cap),
             strategy: ReadStrategy::Plain,
         };
 
@@ -225,7 +226,12 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
         let (content, slice_truncated) = match content {
             Some(src) => {
                 let (sliced, truncated) = slice_content_lines(src, start_line, end_line);
-                (Some(sliced), truncated)
+                if has_line_range {
+                    let (capped, byte_truncated) = truncate_to_utf8_limit(sliced, byte_cap);
+                    (Some(capped), truncated || byte_truncated)
+                } else {
+                    (Some(sliced), truncated)
+                }
             }
             None => (None, false),
         };
@@ -292,6 +298,19 @@ fn slice_content_lines(
 
     let end_clamped = end_byte.min(total_len);
     (content[start_byte..end_clamped].to_string(), truncated)
+}
+
+fn truncate_to_utf8_limit(mut content: String, max_bytes: usize) -> (String, bool) {
+    if content.len() <= max_bytes {
+        return (content, false);
+    }
+
+    let mut end = max_bytes.min(content.len());
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    content.truncate(end);
+    (content, true)
 }
 
 /// Compute byte offsets for the requested line window, noting truncation when the requested lines
@@ -426,15 +445,18 @@ mod tests {
             .map(|line| format!("line-{line:04}-abcdefghijklmnopqrstuvwxyz\n"))
             .collect::<String>();
         assert!(input.len() > DEFAULT_READ_BYTE_CAP);
-        let capped_prefix = input[..DEFAULT_READ_BYTE_CAP].to_string();
 
-        let (out, truncated) = slice_content_lines(capped_prefix, Some(1_000), Some(1_002));
+        let (sliced, slice_truncated) = slice_content_lines(input, Some(1_000), Some(1_002));
+        let (out, byte_truncated) = truncate_to_utf8_limit(sliced, DEFAULT_READ_BYTE_CAP);
 
         assert!(
-            out.contains("line-1000\nline-1001\nline-1002\n"),
+            out.contains("line-1000-abcdefghijklmnopqrstuvwxyz\n")
+                && out.contains("line-1001-abcdefghijklmnopqrstuvwxyz\n")
+                && out.contains("line-1002-abcdefghijklmnopqrstuvwxyz\n"),
             "line range inside the original file must not become an empty successful read"
         );
-        assert!(truncated);
+        assert!(slice_truncated);
+        assert!(!byte_truncated);
     }
 
     #[test]

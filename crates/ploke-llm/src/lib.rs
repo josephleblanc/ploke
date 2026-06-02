@@ -1,3 +1,9 @@
+#![allow(
+    clippy::large_enum_variant,
+    clippy::result_large_err,
+    reason = "LLM route and error types carry structured response diagnostics"
+)]
+
 pub mod error;
 pub mod manager;
 pub mod registry;

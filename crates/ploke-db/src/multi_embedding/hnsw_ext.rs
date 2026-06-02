@@ -199,7 +199,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
 
         let mut neighbors = Vec::new();
         for row in result.rows {
-            let id = match row.get(0) {
+            let id = match row.first() {
                 Some(DataValue::Uuid(UuidWrapper(uuid))) => *uuid,
                 _ => continue,
             };
@@ -251,7 +251,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             let s = format!("::indices {}", script);
             info!("trying basic script:\n\t{}", s.log_magenta());
             let out = self
-                .run_script(&s, BTreeMap::new(), ScriptMutability::Immutable)
+                .run_script(s.as_str(), BTreeMap::new(), ScriptMutability::Immutable)
                 .map_err(DbError::from)
                 .map(|r| format!("{r:?}\n"))?;
             debug!(%out);
@@ -261,7 +261,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             let s = script;
             info!("trying basic script:\n\t{}", s.log_magenta());
             let out = self
-                .run_script(&s, BTreeMap::new(), ScriptMutability::Immutable)
+                .run_script(s, BTreeMap::new(), ScriptMutability::Immutable)
                 .map_err(DbError::from)
                 .map(|r| format!("{r:?}\n"))?;
             debug!(%out);

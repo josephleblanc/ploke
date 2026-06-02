@@ -127,7 +127,7 @@ fn process_func(
         .collect();
 
     // Insert into functions table
-    let func_params = BTreeMap::from([
+    BTreeMap::from([
         (schema.id().to_string(), function.id.into()),
         // ("at".to_string(), "'ASSERT'".into()),
         (
@@ -150,8 +150,7 @@ fn process_func(
         // May remove this. Might be useful for debugging, less sure about in queries vs. the
         // `Contains` edge. Needs testing in `ploke-db`
         (schema.module_id().to_string(), module_id.into()),
-    ]);
-    func_params
+    ])
 }
 
 fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {

@@ -134,7 +134,7 @@ presence or absence, never values:
 
 ```bash
 env | rg -q '^OPENROUTER_API_KEY='
-env | rg -q '^GOOGLE_API_KEY='
+cargo xtask auth google --strict-live --report-only
 ```
 
 If the worktree shell does not inherit the provider env but the main checkout

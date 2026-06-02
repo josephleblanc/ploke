@@ -72,7 +72,7 @@ impl EmbeddingSet {
         let dims = shape.dimension;
         // Note sanitization step.
         let rel_name =
-            EmbRelName::new_from_string(sanitize_embedding_relation_name(&model.to_string(), dims));
+            EmbRelName::new_from_string(sanitize_embedding_relation_name(model.as_ref(), dims));
         let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,

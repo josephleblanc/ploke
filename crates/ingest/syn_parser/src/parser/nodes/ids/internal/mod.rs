@@ -384,26 +384,23 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
         cfg_bytes: Option<&[u8]>,
         parent_scope_id: Option<NodeId>,
     ) {
-        if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
-            if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
-                && debug_target_item == name
-            // allow for filtering by command env variable
-            {
-                // Check if specific log is enabled
-                debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " VisitorState Id Generation ".log_header());
-                debug!(target: LOG_TEST_ID_REGEN,
-                    "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
-                    name.log_name(), // item name being processed by visitor
-                    item_kind.log_comment_debug(),
-                    self.crate_namespace(),
-                    &self.current_file_path().as_os_str().log_comment_debug(),
-                    &self.current_module_path().log_path_debug(), // This is the 'relative_path' for the item's ID context
-                    name.log_name(),
-                    item_kind.log_comment_debug(),
-                    parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
-                    cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
-                );
-            }
+        if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET")
+            && log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
+            && debug_target_item == name
+        {
+            debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " VisitorState Id Generation ".log_header());
+            debug!(target: LOG_TEST_ID_REGEN,
+                "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
+                name.log_name(), // item name being processed by visitor
+                item_kind.log_comment_debug(),
+                self.crate_namespace(),
+                &self.current_file_path().as_os_str().log_comment_debug(),
+                &self.current_module_path().log_path_debug(), // This is the 'relative_path' for the item's ID context
+                name.log_name(),
+                item_kind.log_comment_debug(),
+                parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+                cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
+            );
         }
     }
     fn crate_namespace(&self) -> Uuid;

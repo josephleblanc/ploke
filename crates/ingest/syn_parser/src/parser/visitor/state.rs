@@ -124,7 +124,7 @@ impl VisitorState {
                         "Encountered syn::Visibility::Restricted with an empty path. \
                         This might be due to an unusual 'pub(in )' construct. \
                         Proceeding with VisibilityKind::Restricted(empty_path). Original syn::Visibility: {}",
-                        vis.to_token_stream().to_string()
+                        vis.to_token_stream()
                     );
                     VisibilityKind::Restricted(Vec::new())
                 } else if restricted.path.leading_colon.is_none()

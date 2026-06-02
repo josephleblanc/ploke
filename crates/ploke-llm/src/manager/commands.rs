@@ -16,7 +16,7 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 enum Comman {
     Update(update::Cmd),
     Search(search::Cmd),
-    Error(LlmError),
+    Error(Box<LlmError>),
 }
 
 // in progress/conceptual

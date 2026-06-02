@@ -1,4 +1,11 @@
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(
+    unused_variables,
+    unused_imports,
+    dead_code,
+    clippy::large_enum_variant,
+    clippy::result_large_err,
+    clippy::too_many_arguments
+)]
 pub mod indexer;
 // Removed embedding_service (replaced by concrete type in indexer)
 pub mod cancel_token;

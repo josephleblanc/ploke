@@ -31,6 +31,7 @@ use serde_json::Value;
 use std::path::Path;
 
 // Re-export command modules
+pub mod auth;
 pub mod check;
 pub mod db;
 pub mod orchestrate;
@@ -82,6 +83,9 @@ impl OutputFormat {
 /// Format a value for human-readable output.
 fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskError> {
     let json = serde_json::to_value(value).map_err(|e| XtaskError::new(e.to_string()))?;
+    if let Some(rendered) = format_human_google_auth(&json) {
+        return Ok(rendered);
+    }
     if let Some(rendered) = format_human_structural_naming(&json) {
         return Ok(rendered);
     }
@@ -97,6 +101,138 @@ fn format_human<T: Serialize>(value: &T) -> std::result::Result<String, XtaskErr
 
     // Fallback for commands without a custom human renderer yet.
     serde_json::to_string_pretty(&json).map_err(|e| XtaskError::new(e.to_string()))
+}
+
+fn format_human_google_auth(value: &Value) -> Option<String> {
+    let obj = value.as_object()?;
+    if obj.get("kind")?.as_str()? != "google_auth_preflight" {
+        return None;
+    }
+
+    let passed = obj.get("passed").and_then(Value::as_bool).unwrap_or(false);
+    let strict_live = obj
+        .get("strict_live")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let live_gate = obj
+        .get("live_gate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let route = obj.get("route").and_then(Value::as_object)?;
+    let auth = obj.get("auth").and_then(Value::as_object)?;
+    let model = obj.get("model").and_then(Value::as_object)?;
+
+    let mut out = String::new();
+    out.push_str(if passed {
+        "Google auth preflight passed\n"
+    } else {
+        "Google auth preflight failed\n"
+    });
+
+    let project_id = route
+        .get("project_id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unset>");
+    let region = route
+        .get("region")
+        .and_then(Value::as_str)
+        .unwrap_or("<unset>");
+    out.push_str(&format!(
+        "Route: {} (GOOGLE_PROJECT_ID={project_id}, GOOGLE_REGION={region})\n",
+        status_word(
+            route
+                .get("available")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        )
+    ));
+    if let Some(url) = route.get("completion_url").and_then(Value::as_str) {
+        out.push_str(&format!("Completion URL: {url}\n"));
+    }
+    if let Some(error) = route.get("error").and_then(Value::as_str) {
+        out.push_str(&format!("Route error: {error}\n"));
+    }
+
+    let adc_config = auth
+        .get("adc_config_available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let bearer = auth
+        .get("bearer_token_available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let credentials_env = auth
+        .get("google_application_credentials_set")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    out.push_str(&format!(
+        "ADC: config={}, bearer_token={}, GOOGLE_APPLICATION_CREDENTIALS={}\n",
+        status_word(adc_config),
+        status_word(bearer),
+        if credentials_env { "set" } else { "not set" }
+    ));
+    if let Some(error) = auth.get("adc_config_error").and_then(Value::as_str) {
+        out.push_str(&format!("ADC config error: {error}\n"));
+    }
+    if let Some(error) = auth.get("bearer_token_error").and_then(Value::as_str) {
+        out.push_str(&format!("Bearer-token error: {error}\n"));
+    }
+
+    let raw_model = model
+        .get("raw")
+        .and_then(Value::as_str)
+        .unwrap_or("<unset>");
+    let normalized_model = model
+        .get("normalized")
+        .and_then(Value::as_str)
+        .unwrap_or(raw_model);
+    let model_source = model
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    out.push_str(&format!(
+        "Model: {} ({}, source={model_source})\n",
+        normalized_model,
+        status_word(
+            model
+                .get("parses")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        )
+    ));
+    if let Some(error) = model.get("parse_error").and_then(Value::as_str) {
+        out.push_str(&format!("Model parse error: {error}\n"));
+    }
+
+    out.push_str(&format!(
+        "Strict live gate: {}{}",
+        if live_gate { "enabled" } else { "not enabled" },
+        if strict_live { " (required)\n" } else { "\n" }
+    ));
+
+    if let Some(warnings) = obj.get("warnings").and_then(Value::as_array) {
+        if !warnings.is_empty() {
+            out.push_str("\nWarnings:\n");
+            for warning in warnings.iter().filter_map(Value::as_str) {
+                out.push_str(&format!("- {warning}\n"));
+            }
+        }
+    }
+
+    if let Some(commands) = obj.get("next_commands").and_then(Value::as_array) {
+        if !commands.is_empty() {
+            out.push_str("\nFocused live canaries:\n");
+            for command in commands.iter().filter_map(Value::as_str) {
+                out.push_str(&format!("- {command}\n"));
+            }
+        }
+    }
+
+    Some(out.trim_end().to_string())
+}
+
+fn status_word(passed: bool) -> &'static str {
+    if passed { "ok" } else { "missing" }
 }
 
 fn format_human_structural_naming(value: &Value) -> Option<String> {

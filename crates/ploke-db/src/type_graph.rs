@@ -868,12 +868,11 @@ impl Database {
 
         for target in self.type_targets_reachable_from_owner(owner_id)? {
             let relation = if self.is_type_alias(owner_id)? {
-                let relation = if self.is_const_generic_alias(owner_id)? {
+                if self.is_const_generic_alias(owner_id)? {
                     TypeContextRelation::ConstGenericAlias
                 } else {
                     TypeContextRelation::AliasExpansion
-                };
-                relation
+                }
             } else if target.depth == 0 && !owner_is_field {
                 TypeContextRelation::TypeDefinitionImpact
             } else {

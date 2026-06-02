@@ -222,7 +222,7 @@ pub fn run_discovery_phase_with_target(
 
         // --- Combine into CrateContext (Always created, might have empty files) ---
         let context = CrateContext {
-            id: CrateId::from_root_path(&crate_root_path),
+            id: CrateId::from_root_path(crate_root_path),
             name: crate_name.clone(),
             version: crate_version,
             namespace,

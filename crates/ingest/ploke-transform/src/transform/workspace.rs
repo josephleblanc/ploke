@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_core::WorkspaceId;
@@ -69,7 +69,7 @@ fn process_workspace_metadata(
         workspace
             .members
             .iter()
-            .map(cozo_file_value)
+            .map(|path| cozo_file_value(path.as_path()))
             .collect::<Result<Vec<_>, _>>()?,
     );
     let exclude = workspace
@@ -78,7 +78,7 @@ fn process_workspace_metadata(
         .map(|paths| {
             paths
                 .iter()
-                .map(cozo_file_value)
+                .map(|path| cozo_file_value(path.as_path()))
                 .collect::<Result<Vec<_>, _>>()
                 .map(DataValue::List)
         })
@@ -120,7 +120,7 @@ fn cozo_file(path: &Path) -> Result<&str, TransformError> {
         .ok_or_else(|| TransformError::Transformation("Could not parse workspace path".to_string()))
 }
 
-fn cozo_file_value(path: &PathBuf) -> Result<DataValue, TransformError> {
+fn cozo_file_value(path: &Path) -> Result<DataValue, TransformError> {
     cozo_file(path).map(DataValue::from)
 }
 

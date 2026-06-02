@@ -5777,15 +5777,30 @@ mod tests {
 
         crate::test_support::install_default_google_route_env();
         if let Err(error) = Google::route_config_available() {
-            eprintln!("skipping live Google route test: route config unavailable: {error}");
+            eprintln!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "skipping live Google route test: route config unavailable: {error}"
+                ))
+            );
             return None;
         }
         if let Err(error) = Google::auth_config_available() {
-            eprintln!("skipping live Google route test: ADC config unavailable: {error}");
+            eprintln!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "skipping live Google route test: ADC config unavailable: {error}"
+                ))
+            );
             return None;
         }
         if let Err(error) = Google::resolve_bearer_token().await {
-            eprintln!("skipping live Google route test: ADC token unavailable: {error}");
+            eprintln!(
+                "{}",
+                Google::with_local_auth_preflight_hint(format!(
+                    "skipping live Google route test: ADC token unavailable: {error}"
+                ))
+            );
             return None;
         }
 
@@ -5793,7 +5808,12 @@ mod tests {
         let registry = match crate::model_registry::fetch_google_model_registry().await {
             Ok(registry) => registry,
             Err(error) => {
-                eprintln!("skipping live Google route test: catalog unavailable: {error}");
+                eprintln!(
+                    "{}",
+                    Google::with_local_auth_preflight_hint(format!(
+                        "skipping live Google route test: catalog unavailable: {error}"
+                    ))
+                );
                 return None;
             }
         };

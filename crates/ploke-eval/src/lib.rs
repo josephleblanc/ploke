@@ -128,10 +128,10 @@ pub(crate) mod test_support {
             (true, false) => "Google ADC auth",
             (true, true) => unreachable!("handled above"),
         };
-        let message = format!(
+        let message = Google::with_local_auth_preflight_hint(format!(
             "skipping {test_name}: direct Google route is configured for this live test, \
              but missing {missing}; prototype1 did not exercise the live Gemini path"
-        );
+        ));
         if strict_live_tests_requested() {
             panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
         }
