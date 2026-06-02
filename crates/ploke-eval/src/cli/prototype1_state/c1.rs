@@ -1,0 +1,948 @@
+#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C1 -> C2 scaffold is not wired into the live controller yet
+
+//! Explicit `C1 -> C2` prototype configuration transition.
+//!
+//! Temporary note:
+//! This file now treats child realization as a backend-mediated workspace
+//! operation rather than as an in-place mutation of the parent workspace. Git
+//! worktrees are the first backend, but the transition logic should stay
+//! independent of that concrete choice.
+//!
+//! `C1` is the aligned parent state:
+//! - the parent process is running
+//! - the live artifact world still matches the stored source content
+//!
+//! `C2` is the diverged parent state:
+//! - the same parent process is still running
+//! - the child artifact world has been realized in a separate workspace
+//!
+//! The transition is move-only and the state distinction is carried in the type
+//! parameters:
+//! - `Prototype<Parent, Parent, Absent, Unacknowledged>` for `C1`
+//! - `Prototype<Parent, Child, Absent, Unacknowledged>` for `C2`
+//!
+//! Consuming `Prototype<Parent, Parent, Absent, Unacknowledged>` is the only
+//! way to produce `Prototype<Parent, Child, Absent, Unacknowledged>`, which
+//! prevents accidentally re-running the same state value twice.
+
+use std::fs;
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
+
+use thiserror::Error;
+use tracing::{debug, instrument};
+
+use crate::intervention::{
+    CommitError, CommitPhase, Configuration, Intervention, Outcome,
+    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1NodeStatus,
+    Prototype1RunnerRequest, RecordStore, ResolvedTreatmentBranch, Surface, project_node_status,
+    project_node_workspace_root, write_node_projection, write_runner_request_projection,
+};
+use crate::spec::PrepareError;
+
+use super::backend::{BackendError, GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
+use super::edit_surface::harness_request;
+use super::event::{
+    ContentHash, Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World,
+};
+use super::journal::{Entry, JournalEntry, PrototypeJournal};
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Marker for the currently running parent lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Parent;
+
+/// Marker for the candidate child lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Child;
+
+/// Shared marker family for prototype lineage states.
+pub(crate) trait Lineage: sealed::Sealed {
+    const MARK: LineageMark;
+}
+
+impl sealed::Sealed for Parent {}
+
+impl Lineage for Parent {
+    const MARK: LineageMark = LineageMark::Parent;
+}
+
+impl sealed::Sealed for Child {}
+
+impl Lineage for Child {
+    const MARK: LineageMark = LineageMark::Child;
+}
+
+/// Shared marker family for whether the promoted child binary exists.
+pub(crate) trait ChildBinaryState: sealed::Sealed {
+    const PRESENT: bool;
+}
+
+/// Shared marker family for whether the child runtime has acknowledged itself.
+pub(crate) trait ChildAckState: sealed::Sealed {
+    const ACKNOWLEDGED: bool;
+}
+
+/// Marker for a configuration where no promoted child binary exists yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Absent;
+
+/// Marker for a configuration where a promoted child binary exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Present;
+
+impl sealed::Sealed for Absent {}
+
+impl ChildBinaryState for Absent {
+    const PRESENT: bool = false;
+}
+
+impl sealed::Sealed for Present {}
+
+impl ChildBinaryState for Present {
+    const PRESENT: bool = true;
+}
+
+/// Marker for a configuration where the child runtime has not yet
+/// acknowledged itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Unacknowledged;
+
+/// Marker for a configuration where the child runtime has acknowledged
+/// itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Acknowledged;
+
+impl sealed::Sealed for Unacknowledged {}
+
+impl ChildAckState for Unacknowledged {
+    const ACKNOWLEDGED: bool = false;
+}
+
+impl sealed::Sealed for Acknowledged {}
+
+impl ChildAckState for Acknowledged {
+    const ACKNOWLEDGED: bool = true;
+}
+
+/// Artifact-bearing payload of a prototype configuration.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Artifact<L: Lineage> {
+    /// Repo root containing the live artifact world.
+    pub repo_root: PathBuf,
+    /// Branch target currently being mediated.
+    pub target_relpath: PathBuf,
+    /// Stored source hash for the branch target.
+    pub source_content_hash: ContentHash,
+    /// Observed live content hash at the target.
+    pub current_content_hash: ContentHash,
+    /// Proposed branch content hash for the target.
+    pub proposed_content_hash: ContentHash,
+    pub(crate) _lineage: PhantomData<L>,
+}
+
+/// Binary-bearing payload of a prototype configuration.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Binary<L: Lineage, ChildState: ChildBinaryState, AckState: ChildAckState> {
+    /// Whether the currently active parent process is still running.
+    pub parent_running: bool,
+    /// Where the promoted child binary belongs once it exists.
+    pub child_path: PathBuf,
+    /// Which concrete child runtime instance is currently known, if any.
+    pub child_runtime: Option<RuntimeId>,
+    pub(crate) _lineage: PhantomData<L>,
+    pub(crate) _child: PhantomData<ChildState>,
+    pub(crate) _ack: PhantomData<AckState>,
+}
+
+/// One prototype configuration indexed by running-binary lineage and
+/// artifact-world lineage.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Prototype<
+    Running: Lineage,
+    ArtifactWorld: Lineage,
+    ChildState: ChildBinaryState,
+    AckState: ChildAckState,
+> {
+    pub(in crate::cli::prototype1_state) campaign_id: String,
+    pub(in crate::cli::prototype1_state) campaign_manifest_path: PathBuf,
+    pub(in crate::cli::prototype1_state) node: Prototype1NodeRecord,
+    pub(in crate::cli::prototype1_state) request: Prototype1RunnerRequest,
+    pub(in crate::cli::prototype1_state) resolved: ResolvedTreatmentBranch,
+    pub(crate) artifact: Artifact<ArtifactWorld>,
+    pub(crate) binary: Binary<Running, ChildState, AckState>,
+}
+
+/// `C1`: parent binary over parent artifact world.
+pub(crate) type C1 = Prototype<Parent, Parent, Absent, Unacknowledged>;
+
+/// `C2`: parent binary over child artifact world.
+pub(crate) type C2 = Prototype<Parent, Child, Absent, Unacknowledged>;
+
+impl<
+    Running: Lineage,
+    ArtifactWorld: Lineage,
+    ChildState: ChildBinaryState,
+    AckState: ChildAckState,
+> Configuration for Prototype<Running, ArtifactWorld, ChildState, AckState>
+{
+    type ArtifactState = Artifact<ArtifactWorld>;
+    type BinaryState = Binary<Running, ChildState, AckState>;
+
+    fn artifact_state(&self) -> &Self::ArtifactState {
+        &self.artifact
+    }
+
+    fn binary_state(&self) -> &Self::BinaryState {
+        &self.binary
+    }
+}
+
+impl<
+    Running: Lineage,
+    ArtifactWorld: Lineage,
+    ChildState: ChildBinaryState,
+    AckState: ChildAckState,
+> Prototype<Running, ArtifactWorld, ChildState, AckState>
+{
+    pub(crate) fn campaign_id(&self) -> &str {
+        &self.campaign_id
+    }
+
+    pub(crate) fn campaign_manifest_path(&self) -> &Path {
+        &self.campaign_manifest_path
+    }
+
+    pub(crate) fn node(&self) -> &Prototype1NodeRecord {
+        &self.node
+    }
+
+    pub(crate) fn request(&self) -> &Prototype1RunnerRequest {
+        &self.request
+    }
+
+    pub(crate) fn resolved(&self) -> &ResolvedTreatmentBranch {
+        &self.resolved
+    }
+
+    pub(crate) fn artifact(&self) -> &Artifact<ArtifactWorld> {
+        &self.artifact
+    }
+
+    pub(crate) fn binary(&self) -> &Binary<Running, ChildState, AckState> {
+        &self.binary
+    }
+
+    fn child_lifecycle(&self) -> Option<super::event::ChildRuntimeLifecycle> {
+        if !ChildState::PRESENT {
+            return None;
+        }
+        if AckState::ACKNOWLEDGED {
+            Some(super::event::ChildRuntimeLifecycle::Acknowledged)
+        } else {
+            Some(super::event::ChildRuntimeLifecycle::Built)
+        }
+    }
+
+    fn entry(&self, transition_id: TransitionId, phase: CommitPhase) -> Entry {
+        Entry {
+            transition_id,
+            phase,
+            recorded_at: RecordedAt::now(),
+            generation: self.node.generation,
+            refs: Refs {
+                // TODO(2026-04-26): These string clones are the durable-record
+                // ownership boundary, not ideal local working-state semantics.
+                // Keep pressure on this: journal construction may need owned
+                // text, but we should not let that normalize casual clone use
+                // elsewhere. Tighten value-like carriers first (`ContentHash`,
+                // then likely some IDs) so only truly record-owned fields clone.
+                campaign_id: self.campaign_id.clone(),
+                node_id: self.node.node_id.clone(),
+                instance_id: self.node.instance_id.clone(),
+                source_state_id: self.node.source_state_id.clone(),
+                branch_id: self.node.branch_id.clone(),
+                candidate_id: self.node.candidate_id.clone(),
+                branch_label: self.resolved.branch.branch_label.clone(),
+                spec_id: self.resolved.branch.synthesized_spec_id.clone(),
+            },
+            paths: Paths {
+                repo_root: self.artifact.repo_root.clone(),
+                workspace_root: self.artifact.repo_root.clone(),
+                binary_path: self.node.binary_path.clone(),
+                target_relpath: self.artifact.target_relpath.clone(),
+                absolute_path: self.artifact.repo_root.join(&self.artifact.target_relpath),
+            },
+            world: World {
+                node_status: self.node.status,
+                running_binary: self.binary.parent_running,
+                running_lineage: Running::MARK,
+                artifact_lineage: ArtifactWorld::MARK,
+                child_lifecycle: self.child_lifecycle(),
+            },
+            hashes: Hashes {
+                // TODO(2026-04-26): These clones are downstream of
+                // `ContentHash(String)`. Once the journal/event carrier uses a
+                // fixed-size digest with value semantics, tighten this up so
+                // hash propagation here is copy-like rather than heap-backed.
+                source: self.artifact.source_content_hash.clone(),
+                current: self.artifact.current_content_hash.clone(),
+                proposed: self.artifact.proposed_content_hash.clone(),
+            },
+        }
+    }
+}
+
+impl<L: Lineage> Artifact<L> {
+    pub(crate) fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    pub(crate) fn target_relpath(&self) -> &Path {
+        &self.target_relpath
+    }
+
+    pub(crate) fn source_content_hash(&self) -> &ContentHash {
+        &self.source_content_hash
+    }
+
+    pub(crate) fn current_content_hash(&self) -> &ContentHash {
+        &self.current_content_hash
+    }
+
+    pub(crate) fn proposed_content_hash(&self) -> &ContentHash {
+        &self.proposed_content_hash
+    }
+}
+
+impl<L: Lineage, ChildState: ChildBinaryState, AckState: ChildAckState>
+    Binary<L, ChildState, AckState>
+{
+    pub(crate) fn parent_running(&self) -> bool {
+        self.parent_running
+    }
+
+    pub(crate) fn child_path(&self) -> &Path {
+        &self.child_path
+    }
+
+    pub(crate) fn child_runtime(&self) -> Option<RuntimeId> {
+        self.child_runtime
+    }
+}
+
+/// Typed failure for the `C1 -> C2` materialization transition.
+#[derive(Debug, Error)]
+pub(crate) enum MaterializeBranchError {
+    #[error("failed to load node record '{node_id}'")]
+    LoadNode {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to resolve parent repo root '{path}' to its git worktree root")]
+    ResolveParentRepoRoot {
+        path: PathBuf,
+        #[source]
+        source: BackendError,
+    },
+    #[error("child plan request does not match node '{node_id}'")]
+    InvalidChildPlanRequest { node_id: String },
+    #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
+    ResolveBranch {
+        node_id: String,
+        branch_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to read target artifact '{path}': {source}")]
+    ReadTarget {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(
+        "expected live artifact at '{path}' to match stored source content before materialization"
+    )]
+    SourceMismatch {
+        path: PathBuf,
+        expected_source_hash: ContentHash,
+        observed_hash: ContentHash,
+    },
+    #[error("failed to realize child workspace for branch '{branch_id}'")]
+    RealizeWorkspace {
+        branch_id: String,
+        #[source]
+        source: BackendError,
+    },
+    #[error("failed to remove stale child binary '{path}': {source}")]
+    RemoveStaleChildBinary {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to update node '{node_id}' status to workspace_staged")]
+    UpdateNodeStatus {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("broad harness child '{node_id}' is missing admitted workspace evidence")]
+    MissingHarnessWorkspace { node_id: String },
+    #[error("broad harness child '{node_id}' is missing admitted artifact evidence")]
+    MissingHarnessArtifact { node_id: String },
+    #[error("broad harness child '{node_id}' has no admitted changed paths")]
+    EmptyHarnessChangeSet { node_id: String },
+    #[error(
+        "broad harness child '{node_id}' source root '{observed}' did not match parent root '{expected}'"
+    )]
+    HarnessSourceRootMismatch {
+        node_id: String,
+        expected: PathBuf,
+        observed: PathBuf,
+    },
+    #[error(
+        "broad harness child '{node_id}' {field} artifact '{observed}' did not match '{expected}'"
+    )]
+    HarnessArtifactMismatch {
+        node_id: String,
+        field: &'static str,
+        expected: String,
+        observed: String,
+    },
+    #[error("broad harness child '{node_id}' candidate workspace '{path}' is not a directory")]
+    HarnessWorkspaceMissing { node_id: String, path: PathBuf },
+    #[error(
+        "broad harness child '{node_id}' admitted changed path '{path}' is missing from candidate workspace"
+    )]
+    HarnessChangedPathMissing { node_id: String, path: PathBuf },
+    #[error("failed to measure broad harness child '{node_id}' candidate artifact")]
+    HarnessArtifactMeasurement {
+        node_id: String,
+        #[source]
+        source: BackendError,
+    },
+    #[error(
+        "broad harness child '{node_id}' candidate artifact surface changed after admission: expected tree {expected_tree}, observed tree {observed_tree}"
+    )]
+    HarnessArtifactSurfaceMismatch {
+        node_id: String,
+        expected_tree: String,
+        observed_tree: String,
+    },
+}
+
+impl Prototype<Parent, Parent, Absent, Unacknowledged> {
+    /// Validate an aligned `C1` state from a received child-plan payload.
+    pub(crate) fn from_child_plan(
+        campaign_id: impl Into<String>,
+        campaign_manifest_path: impl Into<PathBuf>,
+        node: Prototype1NodeRecord,
+        request: Prototype1RunnerRequest,
+        resolved: ResolvedTreatmentBranch,
+        repo_root: impl Into<PathBuf>,
+    ) -> Result<Self, MaterializeBranchError> {
+        let campaign_id = campaign_id.into();
+        let campaign_manifest_path = campaign_manifest_path.into();
+        let repo_root = repo_root.into();
+        let repo_root = GitWorktreeBackend
+            .worktree_root(&repo_root)
+            .map_err(|source| MaterializeBranchError::ResolveParentRepoRoot {
+                path: repo_root.clone(),
+                source,
+            })?;
+        if request.node_id != node.node_id
+            || request.campaign_id != campaign_id
+            || request.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || node.schema_version != PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            || request.branch_id != node.branch_id
+            || request.generation != node.generation
+            || request.instance_id != node.instance_id
+            || request.source_state_id != node.source_state_id
+            || request.target_relpath != node.target_relpath
+            || request.binary_path != node.binary_path
+            || resolved.instance_id != node.instance_id
+            || resolved.source_state_id != node.source_state_id
+            || resolved.parent_branch_id != node.parent_branch_id
+            || resolved.target_relpath != node.target_relpath
+            || resolved.branch.branch_id != node.branch_id
+            || resolved.branch.candidate_id != node.candidate_id
+        {
+            return Err(MaterializeBranchError::InvalidChildPlanRequest {
+                node_id: node.node_id,
+            });
+        }
+
+        let absolute_path = repo_root.join(&resolved.target_relpath);
+        let child_path = node.binary_path.clone();
+        let current = fs::read_to_string(&absolute_path).map_err(|source| {
+            MaterializeBranchError::ReadTarget {
+                path: absolute_path.clone(),
+                source,
+            }
+        })?;
+        let observed_hash = ContentHash::of(&current);
+
+        if current != resolved.source_content {
+            return Err(MaterializeBranchError::SourceMismatch {
+                path: absolute_path,
+                expected_source_hash: ContentHash(resolved.source_content_hash.clone()),
+                observed_hash,
+            });
+        }
+
+        Ok(Self {
+            campaign_id,
+            campaign_manifest_path,
+            node,
+            request,
+            resolved: resolved.clone(),
+            artifact: Artifact {
+                repo_root,
+                target_relpath: resolved.target_relpath.clone(),
+                source_content_hash: ContentHash(resolved.source_content_hash.clone()),
+                current_content_hash: ContentHash::of(&resolved.source_content),
+                proposed_content_hash: ContentHash(resolved.branch.proposed_content_hash.clone()),
+                _lineage: PhantomData,
+            },
+            binary: Binary {
+                parent_running: true,
+                child_path,
+                child_runtime: None,
+                _lineage: PhantomData,
+                _child: PhantomData,
+                _ack: PhantomData,
+            },
+        })
+    }
+}
+
+/// Concrete bounded surface for the tool-description target mediated by the
+/// `C1 -> C2` materialization transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ToolDescriptionSurface;
+
+impl Surface<Prototype<Parent, Parent, Absent, Unacknowledged>> for ToolDescriptionSurface {
+    type Target = PathBuf;
+    type ReadView = String;
+    type Error = MaterializeBranchError;
+
+    fn read_view(
+        &self,
+        config: &Prototype<Parent, Parent, Absent, Unacknowledged>,
+        target: &Self::Target,
+    ) -> Result<Self::ReadView, Self::Error> {
+        let absolute_path = config.artifact.repo_root.join(target);
+        fs::read_to_string(&absolute_path).map_err(|source| MaterializeBranchError::ReadTarget {
+            path: absolute_path,
+            source,
+        })
+    }
+}
+
+/// Concrete intervention mediating
+/// `Prototype<Parent, Parent, Absent, Unacknowledged> ->
+/// Prototype<Parent, Child, Absent, Unacknowledged>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MaterializeBranch<B = GitWorktreeBackend> {
+    transition_id: TransitionId,
+    backend: B,
+}
+
+impl MaterializeBranch<GitWorktreeBackend> {
+    pub(crate) fn new() -> Self {
+        Self {
+            transition_id: TransitionId::new(),
+            backend: GitWorktreeBackend,
+        }
+    }
+}
+
+impl<B> MaterializeBranch<B> {
+    pub(crate) fn with_backend(backend: B) -> Self {
+        Self {
+            transition_id: TransitionId::new(),
+            backend,
+        }
+    }
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, from, evidence, records),
+        fields(
+            phase = "materialize_child_artifact",
+            transition = "C1->C2",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+        )
+    )]
+    pub(crate) fn transition_with_harness(
+        &self,
+        from: Prototype<Parent, Parent, Absent, Unacknowledged>,
+        evidence: &harness_request::child::Evidence,
+        records: &mut PrototypeJournal,
+    ) -> Result<
+        Outcome<Prototype<Parent, Child, Absent, Unacknowledged>, std::convert::Infallible>,
+        CommitError<MaterializeBranchError, <PrototypeJournal as RecordStore>::Error>,
+    > {
+        let workspace = evidence
+            .workspace()
+            .ok_or_else(|| MaterializeBranchError::MissingHarnessWorkspace {
+                node_id: from.node.node_id.clone(),
+            })
+            .map_err(CommitError::Transition)?;
+        let artifact = evidence
+            .artifact()
+            .ok_or_else(|| MaterializeBranchError::MissingHarnessArtifact {
+                node_id: from.node.node_id.clone(),
+            })
+            .map_err(CommitError::Transition)?;
+        if evidence.changed_paths().is_empty() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::EmptyHarnessChangeSet {
+                    node_id: from.node.node_id.clone(),
+                },
+            ));
+        }
+        if workspace.source_root != from.artifact.repo_root {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessSourceRootMismatch {
+                    node_id: from.node.node_id.clone(),
+                    expected: from.artifact.repo_root.clone(),
+                    observed: workspace.source_root.clone(),
+                },
+            ));
+        }
+        let Some(node_base) = from.node.base_artifact_id.as_ref() else {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "base",
+                    expected: artifact.base_artifact_id.to_string(),
+                    observed: "<missing node base artifact>".to_string(),
+                },
+            ));
+        };
+        if node_base != &artifact.base_artifact_id {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "base",
+                    expected: node_base.to_string(),
+                    observed: artifact.base_artifact_id.to_string(),
+                },
+            ));
+        }
+        let Some(node_derived) = from.node.derived_artifact_id.as_ref() else {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "derived",
+                    expected: artifact.derived_artifact_id.to_string(),
+                    observed: "<missing node derived artifact>".to_string(),
+                },
+            ));
+        };
+        if node_derived != &artifact.derived_artifact_id {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactMismatch {
+                    node_id: from.node.node_id.clone(),
+                    field: "derived",
+                    expected: node_derived.to_string(),
+                    observed: artifact.derived_artifact_id.to_string(),
+                },
+            ));
+        }
+        if !workspace.candidate_root.is_dir() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessWorkspaceMissing {
+                    node_id: from.node.node_id.clone(),
+                    path: workspace.candidate_root.clone(),
+                },
+            ));
+        }
+        for relpath in evidence.changed_paths() {
+            let path = workspace.candidate_root.join(relpath);
+            if !path.is_file() {
+                return Err(CommitError::Transition(
+                    MaterializeBranchError::HarnessChangedPathMissing {
+                        node_id: from.node.node_id.clone(),
+                        path,
+                    },
+                ));
+            }
+        }
+        let observed_surface = GitWorktreeBackend
+            .artifact_surface(&workspace.candidate_root)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::HarnessArtifactMeasurement {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
+        if &observed_surface != evidence.artifact_surface() {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::HarnessArtifactSurfaceMismatch {
+                    node_id: from.node.node_id.clone(),
+                    expected_tree: format!("{:?}", evidence.artifact_surface().tree_key()),
+                    observed_tree: format!("{:?}", observed_surface.tree_key()),
+                },
+            ));
+        }
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                from.entry(self.transition_id, CommitPhase::Before),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::Before,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            workspace_root = %workspace.candidate_root.display(),
+            "recorded broad harness materialize before entry"
+        );
+
+        if from.node.binary_path.exists() {
+            fs::remove_file(&from.node.binary_path).map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RemoveStaleChildBinary {
+                    path: from.node.binary_path.clone(),
+                    source,
+                })
+            })?;
+        }
+        let updated_node = project_node_workspace_root(
+            &project_node_status(&from.node, Prototype1NodeStatus::WorkspaceStaged),
+            workspace.candidate_root.clone(),
+        );
+        let mut updated_request = from.request.clone();
+        updated_request.workspace_root = workspace.candidate_root.clone();
+        write_node_projection(&updated_node).map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        write_runner_request_projection(&updated_request, &updated_node.runner_request_path)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
+
+        let next = Prototype {
+            campaign_id: from.campaign_id,
+            campaign_manifest_path: from.campaign_manifest_path,
+            node: updated_node,
+            request: updated_request,
+            resolved: from.resolved.clone(),
+            artifact: Artifact {
+                repo_root: workspace.candidate_root.clone(),
+                target_relpath: from.resolved.target_relpath.clone(),
+                source_content_hash: ContentHash(from.resolved.source_content_hash.clone()),
+                current_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                proposed_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                _lineage: PhantomData,
+            },
+            binary: Binary {
+                parent_running: true,
+                child_path: from.node.binary_path.clone(),
+                child_runtime: None,
+                _lineage: PhantomData,
+                _child: PhantomData,
+                _ack: PhantomData,
+            },
+        };
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                next.entry(self.transition_id, CommitPhase::After),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::After,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %next.node.node_id,
+            branch_id = %next.resolved.branch.branch_id,
+            workspace_root = %next.artifact.repo_root.display(),
+            "recorded broad harness materialize after entry"
+        );
+
+        Ok(Outcome::Advanced(next))
+    }
+}
+
+impl<B>
+    Intervention<
+        Prototype<Parent, Parent, Absent, Unacknowledged>,
+        Prototype<Parent, Child, Absent, Unacknowledged>,
+    > for MaterializeBranch<B>
+where
+    B: WorkspaceBackend<Root = PathBuf>,
+{
+    type Surface = ToolDescriptionSurface;
+    type Journal = PrototypeJournal;
+    type Error = MaterializeBranchError;
+    type Rejected = std::convert::Infallible;
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, from, records),
+        fields(
+            phase = "materialize_child_artifact",
+            transition = "C1->C2",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+        )
+    )]
+    fn transition(
+        &self,
+        from: Prototype<Parent, Parent, Absent, Unacknowledged>,
+        records: &mut Self::Journal,
+    ) -> Result<
+        Outcome<Prototype<Parent, Child, Absent, Unacknowledged>, Self::Rejected>,
+        CommitError<Self::Error, <Self::Journal as crate::intervention::RecordStore>::Error>,
+    > {
+        let current = ToolDescriptionSurface
+            .read_view(&from, &from.resolved.target_relpath.clone())
+            .map_err(CommitError::Transition)?;
+        let absolute_path = from.artifact.repo_root.join(&from.resolved.target_relpath);
+
+        if current != from.resolved.source_content {
+            return Err(CommitError::Transition(
+                MaterializeBranchError::SourceMismatch {
+                    path: absolute_path,
+                    expected_source_hash: ContentHash(from.resolved.source_content_hash.clone()),
+                    observed_hash: ContentHash::of(&current),
+                },
+            ));
+        }
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                from.entry(self.transition_id, CommitPhase::Before),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::Before,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            "recorded materialize before entry"
+        );
+
+        let realized = self
+            .backend
+            .realize(&RealizeRequest {
+                repo_root: from.artifact.repo_root.clone(),
+                node_id: from.node.node_id.clone(),
+                node_dir: from.node.node_dir.clone(),
+                target_relpath: from.resolved.target_relpath.clone(),
+                source_content: from.resolved.source_content.clone(),
+                proposed_content: from.resolved.branch.proposed_content.clone(),
+            })
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RealizeWorkspace {
+                    branch_id: from.resolved.branch.branch_id.clone(),
+                    source,
+                })
+            })?;
+        if from.node.binary_path.exists() {
+            fs::remove_file(&from.node.binary_path).map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::RemoveStaleChildBinary {
+                    path: from.node.binary_path.clone(),
+                    source,
+                })
+            })?;
+        }
+        let updated_node = project_node_workspace_root(
+            &project_node_status(&from.node, Prototype1NodeStatus::WorkspaceStaged),
+            realized.root.clone(),
+        );
+        let mut updated_request = from.request.clone();
+        updated_request.workspace_root = realized.root.clone();
+        write_node_projection(&updated_node).map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        write_runner_request_projection(&updated_request, &updated_node.runner_request_path)
+            .map_err(|source| {
+                CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
+                    node_id: from.node.node_id.clone(),
+                    source,
+                })
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            workspace_root = %realized.root.display(),
+            "realized child workspace and persisted runner workspace root"
+        );
+
+        let next = Prototype {
+            campaign_id: from.campaign_id,
+            campaign_manifest_path: from.campaign_manifest_path,
+            node: updated_node,
+            request: updated_request,
+            resolved: from.resolved.clone(),
+            artifact: Artifact {
+                repo_root: realized.root,
+                target_relpath: from.resolved.target_relpath.clone(),
+                source_content_hash: ContentHash(from.resolved.source_content_hash.clone()),
+                current_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                proposed_content_hash: ContentHash(
+                    from.resolved.branch.proposed_content_hash.clone(),
+                ),
+                _lineage: PhantomData,
+            },
+            binary: Binary {
+                parent_running: true,
+                child_path: from.node.binary_path.clone(),
+                child_runtime: None,
+                _lineage: PhantomData,
+                _child: PhantomData,
+                _ack: PhantomData,
+            },
+        };
+
+        records
+            .append(JournalEntry::MaterializeBranch(
+                next.entry(self.transition_id, CommitPhase::After),
+            ))
+            .map_err(|source| CommitError::Record {
+                phase: CommitPhase::After,
+                source,
+            })?;
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %next.node.node_id,
+            branch_id = %next.resolved.branch.branch_id,
+            workspace_root = %next.artifact.repo_root.display(),
+            "recorded materialize after entry"
+        );
+
+        Ok(Outcome::Advanced(next))
+    }
+}
