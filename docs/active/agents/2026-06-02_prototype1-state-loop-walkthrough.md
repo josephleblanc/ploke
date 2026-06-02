@@ -10,7 +10,9 @@ Scope: `crates/ploke-eval`, with live protocol boundaries into `ploke-protocol`.
 
 This guide explains the current implementation path for `ploke-eval loop prototype1-state` so future work on the Prototype 1 observable self-improving loop can reason about configuration, execution phases, disk writes, persisted data, live API/model routing, and parallelism opportunities.
 
-The command is not just a CLI wrapper. It is the typed parent-turn runtime for the Prototype 1 loop. A parent checkout enters the command with a checkout-carried parent identity or a successor handoff invocation. It plans children, runs them through C1-C4 state transitions, observes terminal child results, compares treatments against the parent baseline, selects a successor, and may launch the successor parent runtime.
+This document is written for developers who may be new to this part of the project. The glossary below defines the project-specific vocabulary before the walkthrough uses it. The most important early definition is **node**: in this Prototype 1 loop, a node is a persisted candidate state in the self-improvement search tree, represented by `Prototype1NodeRecord`. It is not an AST node, graph node from `ploke-tree`, or generic UI node.
+
+The command is not just a CLI wrapper. It is the typed runtime for one **parent turn**. A parent checkout enters the command with a checkout-carried parent identity or a successor handoff invocation. It plans child nodes, runs them through C1-C4 state transitions, observes terminal child results, compares treatments against the parent baseline, selects a successor, and may launch the successor parent runtime.
 
 ## Reading notes
 
@@ -18,6 +20,129 @@ The command is not just a CLI wrapper. It is the typed parent-turn runtime for t
 - This document intentionally distinguishes setup/admission (`loop prototype1-setup`) from the runtime parent turn (`loop prototype1-state`).
 - No secrets are recorded here. Model/provider names and source paths are code/config provenance, not credentials.
 - `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
+
+## 0. Draft glossary and conceptual map
+
+Read this section first if you are new to Prototype 1. These are source-grounded working definitions, not final product terminology. The loop vocabulary is still evolving, so future passes should refine these definitions as the code and architecture stabilize. The words below are used with narrower meanings than their everyday meanings.
+
+### 0.1 Core loop and search terms
+
+| Term | Definition |
+|---|---|
+| Prototype 1 | The current experimental self-improvement harness in `ploke-eval`. It runs a baseline, generates candidate code changes, evaluates child candidates, records evidence, and may continue from a selected successor. The active parent command is `ploke-eval loop prototype1-state`. |
+| Loop | One or more parent turns chained by successor handoffs. A single invocation of `prototype1-state` runs one parent turn; if it selects and launches a successor, the next runtime invokes the same command for the next turn. |
+| Parent turn | One execution of `Prototype1StateCommand::run_turn`. It resolves a parent checkout, establishes baseline evidence, plans children, runs/evaluates children, selects a successor, and optionally launches the successor (`cli_facing.rs:6477-7043`). |
+| Parent | The current controlling runtime/checkout for one generation of the search. In code, `Parent<S>` carries a `RuntimeId`, `ParentIdentity`, `Prototype1NodeRecord`, and typestate marker (`parent.rs:78-85`). The parent is responsible for planning and selecting children. |
+| Child | A leaf evaluation runtime spawned by the parent to evaluate one candidate node. A child uses the `prototype1-runner --execute` path, evaluates one treatment branch, writes a runner result, sends a terminal result to the parent, and exits (`invocation.rs:17-18`, `prototype1_process.rs:2977-3129`). |
+| Successor | The selected continuation runtime after a parent turn. Unlike a child, a successor is not a leaf evaluator; it is the next parent runtime, launched with a `Successor` invocation and then entering `prototype1-state` again (`invocation.rs:17-19`, `invocation.rs:65-91`). |
+| Node | A persisted candidate state in the Prototype 1 search tree, represented by `Prototype1NodeRecord` (`scheduler.rs:282-312`). A node identifies a campaign, generation, benchmark instance, source state, target file, candidate branch, workspace, binary path, runner request/result paths, and current status. It is not a Rust syntax tree node or `ploke-tree` graph node. |
+| Parent node | The node represented by the active parent checkout. For generation 0, setup creates a root parent identity from the initial node. For later generations, the selected child node becomes the next parent identity (`identity.rs:87-135`). |
+| Child node | A node planned by the parent for generation `parent.generation + 1`. The child plan code states this direct-child rule explicitly (`parent.rs:126-137`). |
+| Generation | Search-tree depth. Generation 0 is the initial parent. Children planned by a parent are generation + 1 (`Prototype1NodeRecord.generation`, `scheduler.rs:286-289`; direct-child rule in `parent.rs:134-136`). |
+| Candidate | A proposed treatment change that can become a branch/node. `candidate_id` identifies the generated proposal inside a treatment branch (`TreatmentBranchNode`, `branch_registry.rs:134-155`). |
+| Candidate branch / treatment branch | A concrete proposed code state for a target file/source state. `TreatmentBranchNode` stores `branch_id`, `candidate_id`, label, proposed content/hash, patch/artifact identifiers, and status (`branch_registry.rs:134-155`). |
+| Branch id | Stable-ish string identity for one treatment branch. For generated treatment branches it is derived from source state id, target path, and candidate id (`treatment_branch_id`, `branch_registry.rs:254-267`). |
+| Candidate id | Identity of the proposal inside a candidate set. It is distinct from `branch_id`; the branch id combines candidate id with source state and target path. |
+| Source state id | Identity of the source content/state from which candidate branches were generated. It appears in node records, runner requests, resolved branches, and branch registry entries (`scheduler.rs:289-290`, `branch_registry.rs:221-231`). |
+| Target relpath | Repo-relative file path that the candidate/treatment is trying to modify (`Prototype1NodeRecord.target_relpath`, `scheduler.rs:301-304`). |
+| Instance id | Benchmark instance id for the eval target. It ties nodes/eval records to a dataset instance (`Prototype1NodeRecord.instance_id`, `scheduler.rs:288-289`). |
+| Operation target | Graph-level description of what one runtime operates over. Currently the live `OperationTarget` variant is `Artifact { artifact_id }` (`loop_graph.rs:130-134`). |
+| Artifact | A recoverable code/content state. `ArtifactId` is backend-neutral: it may later be a git commit/tree id, digest, artifact-manifest id, etc.; dirty worktrees should not get an artifact id until recoverable (`loop_graph.rs:58-66`). |
+| Patch | A generated or composed code change. `PatchId` identifies the patch record, not just a candidate branch name (`loop_graph.rs:92-99`). |
+| Runtime | One concrete process attempt participating in the loop. Runtime identity is not the same as node identity: a node can have runtime attempts; each attempt gets a `RuntimeId` (`loop_graph.rs:33-41`). |
+| Runtime id | UUID-backed durable identity for one runtime attempt (`RuntimeId`, `loop_graph.rs:33-56`). It appears in invocations, channel paths, transition evidence, and runner result paths. |
+| Authority | In this doc, authority means “the persisted/typed evidence that allows a runtime to do a role-specific action.” Examples: parent identity lets a checkout claim a parent coordinate, a child invocation allows leaf evaluation only, and a successor invocation allows the next parent bootstrap. |
+| Projection | A persisted view/cache of state, not necessarily the authority source. Example: `node.json` is a node projection; the transition journal and invocation/channel evidence often carry stronger runtime evidence. |
+
+### 0.2 Configuration terms
+
+| Term | Definition |
+|---|---|
+| Campaign | A durable evaluation scope: benchmark family, dataset sources, roots, eval policy, protocol policy, selected model/provider/route, and required procedures. The persisted type is `CampaignManifest` (`campaign.rs:27-53`). |
+| Campaign manifest | The JSON manifest for one campaign. `resolve_campaign_config` loads and validates it into `ResolvedCampaignConfig` (`campaign.rs:478-572`). |
+| Resolved campaign config | Runtime form of the campaign manifest after defaults and validation. It carries non-optional fields needed by eval/protocol/closure execution (`campaign.rs:123-138`). |
+| Run-profile | Operator-approved TOML config for Prototype 1 behavior. The persisted type is `Prototype1RunProfile`, with `storage`, `target`, `model`, `search`, `generation`, `selection`, `protocol`, `execution`, and `control` sections (`profile.rs:37-59`). |
+| Operator profile | Source TOML profile selected by path/name before admission. Bare names resolve under `~/.ploke-eval/profiles/prototype1/<name>.toml` (`profile.rs:911-930`). |
+| Admitted run-profile | Campaign-local copy of the operator profile plus a digest commitment. After admission, `prototype1-state` prefers this profile over CLI defaults (`profile.rs:837-864`, `cli_facing.rs:990-999`). |
+| Run-profile commitment | JSON provenance/integrity record for an admitted profile: schema, profile path, SHA-256 digest, source path, admission timestamp (`profile.rs:800-807`, `profile.rs:948-954`). |
+| Run shape | Compact runtime settings for one parent turn: stop-after, stale timeout, candidate generation, successor selection, oracle mode/evidence, and metrics policy (`Prototype1StateRunShape`, `cli_facing.rs:946-999`). |
+| Search policy | Limits and scheduling policy for complete parent turns. It controls maximum generations/nodes and child scheduling/budget, either from admitted profile or scheduler state (`cli_facing.rs:6670-6701`). |
+| Child budget | The max/min number of child candidates allowed for a parent turn. Complete runs reserve budget from search policy; non-complete/debug runs usually force one child (`cli_facing.rs:6687-6736`). |
+| Stop-after | CLI/profile control that stops the state machine at a named point for debugging or runs through `Complete` for the full loop (`Prototype1StateCommand.stop_after`, `cli.rs:640-641`; profile mapping at `profile.rs:658-665`). |
+| Observe-child stale timeout | Duration the parent waits for a child terminal result before treating observation as stale/timed out (`Execution.observe_child_stale_after`, `profile.rs:667-669`; C4 timeout at `c4.rs:410-424`). |
+| Parallel cap | Profile-level cap that may narrow, but not widen, search-derived fanout. Validation rejects zero or widening caps (`profile.rs:747-767`). |
+
+### 0.3 Planning and candidate-generation terms
+
+| Term | Definition |
+|---|---|
+| Candidate generator | Strategy used before child-plan publication. Current command variants include `Legacy`, `BroadHarnessRequest`, and `DeterministicTuiTools`; live complete runs reject legacy generation (`cli.rs:655-657`, `cli_facing.rs:893-925`, `cli_facing.rs:6682-6686`). |
+| Broad harness request | Candidate-generation mode where the parent publishes a harness request and expects request-bound child-plan responses. The parent typestate includes `AwaitingHarnessPlan` for this path (`parent.rs:44-52`). |
+| Deterministic TUI tools | Candidate-generation mode that uses checked edit-surface evidence instead of legacy free-form generation. The code validates that checked edits match expected edit surface and target (`cli_facing.rs:1002-1078`). |
+| Edit surface | The specific file/content surface being edited. Candidate-generation validation ensures the checked edit surface and target path match the child node (`cli_facing.rs:1041-1078`). |
+| Checked surface edit | Evidence-bearing generated edit used by deterministic candidate generation. It carries patch/artifact ids and surface evidence that can be projected into `ChildFiles` (`cli_facing.rs:1041-1078`). |
+| Rejected surface attempt | Candidate-generation evidence for attempts that did not become runnable child nodes. Complete runs can still project these rejected attempts into selection/reporting (`cli_facing.rs:6745-6757`). |
+| Child plan | Cross-runtime parent message containing planned children. `ChildPlanFiles` stores parent node id, child generation, `children: Vec<ChildFiles>`, and rejected surface attempts (`parent.rs:110-123`). |
+| Child files | Bundle for one planned child: node record, runner request, resolved treatment branch, and optional surface evidence (`parent.rs:200-206`). C1 consumes this bundle to materialize the child. |
+| Resolved treatment branch | Fully resolved treatment candidate for one instance/source/target: source content/hash, selected branch, and `TreatmentBranchNode` (`branch_registry.rs:220-231`). |
+
+### 0.4 Persistence and observability terms
+
+| Term | Definition |
+|---|---|
+| Parent identity | Checkout-local JSON at `.ploke/prototype1/parent_identity.json`. It names campaign, parent/node id, generation, branch/artifact coordinate, optional instance, and predecessor links (`identity.rs:1-12`, `identity.rs:27-35`). |
+| Parent checkout / active parent checkout | Git checkout/worktree that carries the active parent identity and can run `prototype1-state`. Child worktrees do not carry parent control state and are rejected by parent-control commands (`identity.rs:8-12`). |
+| Worktree | Git working tree used to materialize a parent or child candidate. C1/C2/C3 operate on child worktrees and binaries; successor handoff advances/uses the active parent checkout. |
+| Transition journal | Append-only JSONL event stream for parent/C1-C4/successor/resource events. `PrototypeJournal::append` creates parent dirs, writes one JSON line, and syncs (`journal.rs:672-713`). |
+| Journal entry | One typed transition/event record appended to the transition journal. Examples include `ParentStarted`, C1-C4 before/after entries, resource samples, and successor records. |
+| Resource sample | Journal evidence about process/system resources at a phase such as parent start or parent complete (`cli_facing.rs:6643-6652`, `cli_facing.rs:6946-6955`). |
+| MessageBox | File-backed typed message container used for parent/child plan publication. The child-plan message file lives under `prototype1/messages/child-plan/<parent-node-id>.json` (`parent.rs:278-289`). |
+| Channel | Role-indexed parent/child runtime transport. It separates protocol authority from transport mechanics; in the live path the transport is file-backed JSONL (`channel.rs:3-8`, `channel.rs:413-454`). |
+| ToParent / ToChild | Channel message bodies. `ToParent` includes `Ready`, `Evaluating`, `Result`, `ResultWritten`, `SuccessorReady`, `SuccessorCompletion`, `Failed`, and `Exited`; `ToChild` currently includes `Cancel` (`channel.rs:374-411`). |
+| Invocation | Persisted bootstrap record for one runtime attempt. It includes role, campaign, node, runtime id, journal path, channel root, and optionally node/request/resolved branch or active parent root (`invocation.rs:1-11`, `invocation.rs:111-133`). |
+| Invocation authority | Classification of an invocation as `Child` or `Successor`; the command rejects using one role where the other is required (`invocation.rs:149-153`, `prototype1_process.rs:2977-2994`, `cli_facing.rs:6543-6556`). |
+| Runner request | Durable child executable contract: campaign/node/generation/instance/source, branch id, target/workspace/binary, stop-on-error, and runner args (`Prototype1RunnerRequest`, `scheduler.rs:339-362`). |
+| Runner result | Child terminal result projection: campaign/node/branch/status, disposition, optional treatment campaign/evaluation path/detail/exit/stdout/stderr, and timestamp (`Prototype1RunnerResult`, `scheduler.rs:314-337`). |
+| Runner disposition | Coarse outcome of a child runtime: `Succeeded`, `CompileFailed`, or `TreatmentFailed` (`scheduler.rs:274-280`). |
+| Node status | Lifecycle status of a node projection: `Planned`, `WorkspaceStaged`, `BinaryBuilt`, `Running`, `Succeeded`, or `Failed` (`Prototype1NodeStatus`, `scheduler.rs:263-272`). |
+| Node projection | Persisted `Prototype1NodeRecord` file, usually `prototype1/nodes/<node>/node.json`. It is the current view of node metadata/status and is updated by C1/C2/C3 and runner result recording. |
+| Child streams | Persisted stdout/stderr files for a spawned child process (`c3.rs:147-168`, `c3.rs:484-503`). |
+| Branch registry | Campaign-local record of synthesized/selected/applied/restored/dropped treatment branches and parent comparisons. Snapshot type is `Prototype1BranchRegistry`; append-only branch log records parent comparisons (`branch_registry.rs:18-29`, `branch_registry.rs:46-70`, `branch_registry.rs:193-202`). |
+| Branch evaluation report | Parent-created comparison artifact for a child treatment vs baseline. It stores baseline/treatment campaign ids, evaluator/eval-set identity, branch registry/evaluation paths, disposition, reasons, and compared instances (`Prototype1BranchEvaluationReport`, `cli_facing.rs:7902-7920`). |
+| Treatment evidence | Child-created evidence that its treatment campaign completed far enough to compare: treatment manifest/closure path, eval policy, benchmark family, dataset sources, and per-instance metrics/oracle status (`Prototype1TreatmentEvidence`, `cli_facing.rs:7875-7900`). |
+| Run record | Compressed durable trace of a benchmark/eval run, including agent turns, LLM responses, tool calls, artifacts, and metrics. Protocol closure and replay use these records (`record.rs:37-40`). |
+
+### 0.5 Evaluation, protocol, and model-routing terms
+
+| Term | Definition |
+|---|---|
+| Baseline | Evidence for the parent/current branch before applying a child treatment. Generation 0 establishes it by advancing eval/protocol closure for the baseline campaign; later generations promote selected child baseline evidence (`cli_facing.rs:420-487`). |
+| Treatment | The child candidate branch evaluated against the baseline. The child creates a treatment campaign, advances eval/protocol closure for it, then returns treatment evidence (`prototype1_process.rs:3131-3333`). |
+| Closure state | JSON summary of whether registry, eval, and protocol requirements are complete/missing/partial/etc. `ClosureState` stores config, registry summary, eval summary, protocol summary, and per-instance rows (`closure.rs:54-64`). |
+| Eval closure | Part of closure state/evidence that tracks benchmark/eval runs and whether expected run records/submissions are complete. `advance_eval_closure` creates missing eval artifacts before recomputing closure. |
+| Protocol closure | Part of closure state/evidence that tracks required protocol procedures over run records: tool-call intent segmentation, tool-call review, and tool-call segment review (`closure.rs:29-37`, `campaign.rs:21-24`). |
+| Closure class | Status enum for closure sections: `complete`, `failed`, `missing`, `ineligible`, `incompatible`, or `partial` (`ClosureClass`, `closure.rs:89-98`). |
+| Benchmark family | Which benchmark type the campaign targets. Default campaign benchmark family is `MultiSweBenchRust` (`campaign.rs:197-198`). |
+| Multi-SWE-Bench / MSB | Benchmark/harness family represented by `MultiSweBenchSource` and submission files named `multi-swe-bench-submission.jsonl`; the MBE module invokes `multi_swe_bench.harness.run_evaluation` (`mbe/mod.rs:21-27`, `mbe/mod.rs:1481-1489`). |
+| MBE | Local module name for Multi-SWE-Bench evaluation/harness integration. It writes `mbe-evaluation-config.json`, invokes the external `multi_swe_bench.harness.run_evaluation` module, and reads `final_report.json` / `report.json` (`mbe/mod.rs:21-27`, `mbe/mod.rs:76-121`). |
+| Oracle evaluation | Multi-SWE-Bench harness verdict evidence for submitted patches. It appears in treatment instance evidence and compared instance reports (`cli_facing.rs:7896-7899`, `cli_facing.rs:7955-7957`). |
+| Operational metrics | Run metrics used by branch evaluation and successor selection. Branch evaluation compares baseline metrics vs treatment metrics and returns keep/reject plus reasons (`branch_evaluation.rs:5-23`, `branch_evaluation.rs:25-80`). |
+| Branch disposition | `Keep` or `Reject` result from branch evaluation (`BranchDisposition`, `branch_evaluation.rs:11-16`). It is evidence for successor selection; it is not by itself authority to continue. |
+| Successor selection | Procedure that decides whether a child candidate becomes the next parent. `SuccessorDecision` stores candidate node, selected branch, branch disposition, outcome, findings, and rationale (`successor_selection/mod.rs:1-17`, `successor_selection/decision.rs:8-19`). |
+| Successor outcome | Selection outcome: `Accepted`, `ExploreFrom`, or `Stop` (`successor_selection/decision.rs:83-89`). |
+| History | Durable authority surface for admitted lineage facts: authenticated store over sealed lineage-local blocks. The History docs explicitly distinguish authority from scheduler snapshots, branch registries, CLI reports, metrics dashboards, and projections (`history.rs:52-65`). |
+| History traversal | Successor-selection strategy that projects candidate evidence from History and current-generation candidates, then scores/selects a successor (`successor_selection/mod.rs:8-17`, `successor_selection/traversal.rs:64-86`). |
+| Lineage | Policy-governed projection over admitted artifact continuity inside History (`history.rs:57-65`). In this loop, successor handoff tries to preserve one lineage of parent authority. |
+| Crown | History typestate authority for the current ruler/parent. The History docs use `Crown<Ruling>`/`Crown<Locked>` to describe who may admit handoff facts for a lineage (`history.rs:81-100`, `history.rs:116-129`). |
+| Protocol procedure | One structured analysis pass over run records. Default required procedures are `tool-call-intent-segments`, `tool-call-review`, and `tool-call-segment-review` (`campaign.rs:21-24`, `closure.rs:29-37`). |
+| Protocol artifact | JSON evidence envelope written for a protocol procedure. It stores schema/procedure/subject/run id/model/provider plus typed input/output/artifact body (`protocol_artifacts.rs:21-35`, `protocol_artifacts.rs:292-352`). |
+| Protocol aggregate | Derived view loaded from protocol artifacts to determine coverage/completeness for required protocol procedures (`closure.rs:10-12`). |
+| JSON adjudicator | LLM-backed structured JSON reviewer used by protocol procedures. It is created with a `reqwest::Client` and `JsonLlmConfig` for intent segmentation and review calls (`cli.rs:7639-7641`, `cli.rs:7845-7848`, `cli.rs:7879-7884`). |
+| Model id | Identifier of the LLM model used for eval/chat or protocol JSON calls. Campaign/profile config supplies it; runtime config stores selected model/provenance in run/protocol artifacts. |
+| Provider slug | Provider route selected for a model, such as OpenRouter provider slug or `google` for direct Google route. The run profile validates provider strings and direct-Google compatibility (`profile.rs:149-179`). |
+| Route source | How a model call is routed. In this doc/code path, relevant sources are OpenRouter and direct Google. `ModelDefaults.route_source` validates aliases such as `openrouter`, `open-router`, `direct-google`, and `google` (`profile.rs:130-142`, `profile.rs:183-218`). |
+| Live API call | Any network call to a model/provider or provider metadata endpoint. Two major surfaces exist here: eval/headless TUI chat calls and protocol JSON adjudication calls. `resolve_route_for_model` also calls OpenRouter endpoint metadata for non-direct-Google routes (`runner.rs:2501-2536`). |
+| Headless TUI / eval chat | Non-interactive benchmark execution path that configures `RuntimeConfig` for chat/tool use without a human TUI session. `configure_headless_benchmark_chat` applies benchmark chat policy and model runtime (`runner.rs:126-130`). |
 
 ## 1. Command entrypoint and dispatch
 
