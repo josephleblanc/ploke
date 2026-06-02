@@ -15,6 +15,10 @@ use std::{
 use chrono::Utc;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
+use ploke_records::{
+    agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord},
+    llm_response::FULL_RESPONSE_TRACE_FILE,
+};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1582,7 +1586,10 @@ async fn run_broad_headless_tui_attempt_with_options(
         slot.published.workspace_path()
     };
 
-    let run = tui_adapter::run_headless_with_model(
+    let selected_model = options
+        .model_label()
+        .unwrap_or_else(|| "unknown-headless-model".to_string());
+    let run = tui_adapter::run_headless_with_model_capture_responses(
         tui_workspace,
         &prompt,
         budget,
@@ -1601,6 +1608,7 @@ async fn run_broad_headless_tui_attempt_with_options(
             detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
         })?;
     write_broad_headless_tui_diagnostics(slot, &run)?;
+    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)?;
     finish_broad_headless_tui_attempt(
         &backend,
         slot,
@@ -2042,6 +2050,41 @@ fn write_broad_headless_tui_diagnostics(
 
 fn broad_headless_tui_diagnostics_path(submitted_result_path: &Path) -> PathBuf {
     submitted_result_path.with_extension("headless-tui.json")
+}
+
+fn write_broad_headless_tui_turn_live_bundle(
+    slot: &HarnessRequestSlot,
+    run: &tui_adapter::HeadlessRun,
+    prompt: &str,
+    selected_model: &str,
+) -> Result<(), PrepareError> {
+    let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
+    fs::create_dir_all(&dir).map_err(|source| PrepareError::CreateOutputDir {
+        path: dir.clone(),
+        source,
+    })?;
+    let artifact =
+        run.agent_turn_artifact_record(slot.published.request_id(), selected_model, prompt);
+    write_json_file_pretty(
+        &dir.join("agent-turn-trace.json"),
+        &AgentTurnTraceRecord(artifact.clone()),
+    )?;
+    write_json_file_pretty(
+        &dir.join("agent-turn-summary.json"),
+        &AgentTurnSummaryRecord(artifact),
+    )?;
+
+    let mut jsonl = String::new();
+    for record in run.full_response_records() {
+        jsonl.push_str(&serde_json::to_string(record).map_err(PrepareError::Serialize)?);
+        jsonl.push('\n');
+    }
+    let path = dir.join(FULL_RESPONSE_TRACE_FILE);
+    fs::write(&path, jsonl).map_err(|source| PrepareError::WriteManifest { path, source })
+}
+
+fn broad_headless_tui_turn_live_dir(submitted_result_path: &Path) -> PathBuf {
+    submitted_result_path.with_extension("turn-live")
 }
 
 fn broad_harness_child_from_admitted(

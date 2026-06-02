@@ -12,12 +12,22 @@ use std::{
     fs,
     marker::PhantomData,
     path::{Path, PathBuf},
+    sync::{Mutex, mpsc::Receiver},
     time::{Duration, Instant},
 };
 
 use ploke_llm::{
     ModelId, ProviderKey,
+    manager::RecordedResponse,
     router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
+};
+use ploke_records::{
+    agent_turn::{
+        AgentTurnArtifactRecord, MessageSnapshotRecord, ObservedTurnEventRecord,
+        PatchArtifactRecord, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
+        TurnFinishedRecord,
+    },
+    llm_response::RawFullResponseRecord,
 };
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::{Deserialize, Serialize};
@@ -127,6 +137,50 @@ pub(crate) async fn run_headless_with_model(
     evidence_roots: &[EvidenceRoot],
     model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
+    run_headless_with_model_inner(
+        workspace_path,
+        prompt,
+        budget,
+        edit_policy,
+        evidence_roots,
+        model,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn run_headless_with_model_capture_responses(
+    workspace_path: &Path,
+    prompt: &str,
+    budget: Budget,
+    edit_policy: BroadEditPolicy,
+    evidence_roots: &[EvidenceRoot],
+    model: Option<ModelSelection>,
+) -> Result<HeadlessRun, Error> {
+    let (response_tx, response_rx) = std::sync::mpsc::channel();
+    let response_rx = Mutex::new(response_rx);
+    let _response_tap_guard = ploke_tui::llm::install_response_tap(response_tx);
+    run_headless_with_model_inner(
+        workspace_path,
+        prompt,
+        budget,
+        edit_policy,
+        evidence_roots,
+        model,
+        Some(&response_rx),
+    )
+    .await
+}
+
+async fn run_headless_with_model_inner(
+    workspace_path: &Path,
+    prompt: &str,
+    budget: Budget,
+    edit_policy: BroadEditPolicy,
+    evidence_roots: &[EvidenceRoot],
+    model: Option<ModelSelection>,
+    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
+) -> Result<HeadlessRun, Error> {
     let mut run = HeadlessRun::new();
     let mut turn = 1_u32;
     let extra_read_roots = evidence_read_roots(evidence_roots);
@@ -160,6 +214,7 @@ pub(crate) async fn run_headless_with_model(
                 turn,
                 &mut run,
                 &observer,
+                response_rx,
             )
             .await?;
             runtime.app.pump_pending_events().await;
@@ -420,6 +475,7 @@ async fn run_attempt(
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
+    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
 ) -> Result<AttemptEnd, Error> {
     use ploke_tui::{AppEvent, app_state::events::SystemEvent};
 
@@ -678,19 +734,26 @@ async fn run_attempt(
                 }
             }
             AppEvent::System(SystemEvent::ChatTurnFinished {
+                session_id,
                 request_id,
                 parent_id,
+                assistant_message_id,
                 outcome,
+                error_id,
                 attempts,
                 summary,
-                ..
             }) if parent_id == active_parent_id => {
                 run.events.push(Event::Turn {
+                    session_id: session_id.to_string(),
                     request_id: request_id.to_string(),
+                    parent_id: parent_id.to_string(),
+                    assistant_message_id: assistant_message_id.to_string(),
                     outcome: outcome.clone(),
+                    error_id: error_id.map(|id| id.to_string()),
                     attempts,
                     summary: summary.clone(),
                 });
+                drain_response_records(run, assistant_message_id, response_rx);
                 observer.emit(format!(
                     "attempt {turn} turn_finished outcome={} attempts={} summary={}",
                     outcome,
@@ -801,6 +864,28 @@ fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
         .last()
         .copied()
         .map(|primary| (primary, proposal_ids))
+}
+
+fn drain_response_records(
+    run: &mut HeadlessRun,
+    assistant_message_id: Uuid,
+    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
+) {
+    let Some(response_rx) = response_rx else {
+        return;
+    };
+    let Ok(response_rx) = response_rx.lock() else {
+        return;
+    };
+    run.full_response_records
+        .extend(
+            response_rx
+                .try_iter()
+                .map(|recorded_response| RawFullResponseRecord {
+                    assistant_message_id,
+                    recorded_response,
+                }),
+        );
 }
 
 fn record_batch_terminal(
@@ -1943,14 +2028,22 @@ fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
     prompt
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct HeadlessRun {
     attempts: Vec<HeadlessAttempt>,
     events: Vec<Event>,
     validations: Vec<CargoValidationObservation>,
     debug_relay: DebugRelay,
     prompt_diagnostics: Vec<PromptDiagnostic>,
+    full_response_records: Vec<RawFullResponseRecord>,
     terminal: Option<HeadlessTerminal>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolRequestContext<'a> {
+    request_id: &'a str,
+    parent_id: &'a str,
+    tool: &'a str,
 }
 
 impl HeadlessRun {
@@ -1961,6 +2054,7 @@ impl HeadlessRun {
             validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
+            full_response_records: Vec::new(),
             terminal: None,
         }
     }
@@ -1989,8 +2083,139 @@ impl HeadlessRun {
         &self.prompt_diagnostics
     }
 
+    pub(crate) fn full_response_records(&self) -> &[RawFullResponseRecord] {
+        &self.full_response_records
+    }
+
     pub(crate) fn evidence(&self) -> evidence::Summary {
         evidence::Summary::from(self)
+    }
+
+    pub(crate) fn agent_turn_artifact_record(
+        &self,
+        task_id: &str,
+        selected_model: &str,
+        issue_prompt: &str,
+    ) -> AgentTurnArtifactRecord {
+        let mut tool_requests = HashMap::<&str, ToolRequestContext<'_>>::new();
+        let mut events = Vec::new();
+        let mut terminal_record = None;
+        let mut final_assistant_message = None;
+
+        for event in &self.events {
+            match event {
+                Event::ToolRequest {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    tool,
+                    arguments,
+                } => {
+                    let context = ToolRequestContext {
+                        request_id,
+                        parent_id,
+                        tool,
+                    };
+                    tool_requests.insert(call_id.as_str(), context);
+                    events.push(ObservedTurnEventRecord::ToolRequested(tool_request_record(
+                        context, call_id, arguments,
+                    )));
+                }
+                Event::Tool { call_id, result } => {
+                    if let Some(request) = tool_requests.get(call_id.as_str()) {
+                        match result {
+                            Tool::Completed { content } => {
+                                events.push(ObservedTurnEventRecord::ToolCompleted(
+                                    tool_completed_record(*request, call_id, content),
+                                ));
+                            }
+                            Tool::Failed { error } => {
+                                events.push(ObservedTurnEventRecord::ToolFailed(
+                                    tool_failed_record(*request, call_id, error),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Event::AssistantMessage {
+                    id,
+                    status,
+                    content,
+                } => {
+                    let record = assistant_message_snapshot_record(id, status, content);
+                    final_assistant_message = Some(record.clone());
+                    events.push(ObservedTurnEventRecord::MessageUpdated(record));
+                }
+                Event::Turn {
+                    session_id,
+                    request_id,
+                    parent_id,
+                    assistant_message_id,
+                    outcome,
+                    error_id,
+                    attempts,
+                    summary,
+                } => {
+                    let record = turn_finished_record(TurnRecordParts {
+                        session_id,
+                        request_id,
+                        parent_id,
+                        assistant_message_id,
+                        outcome,
+                        error_id: error_id.as_deref(),
+                        summary,
+                        attempts: *attempts,
+                    });
+                    terminal_record = Some(record.clone());
+                    events.push(ObservedTurnEventRecord::TurnFinished(record));
+                }
+                Event::Proposal { .. } | Event::Outcome(_) => {}
+            }
+        }
+
+        AgentTurnArtifactRecord {
+            task_id: task_id.to_string(),
+            selected_model: selected_model.to_string(),
+            issue_prompt: issue_prompt.to_string(),
+            user_message_id: self.observed_user_message_id(),
+            events,
+            prompt_debug: None,
+            terminal_record,
+            final_assistant_message,
+            patch_artifact: self.patch_artifact_record(),
+            llm_prompt: Vec::new(),
+            llm_response: None,
+        }
+    }
+
+    fn observed_user_message_id(&self) -> String {
+        observed_user_message_id(&self.events)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn patch_artifact_record(&self) -> PatchArtifactRecord {
+        let applied = self.applied_edit().is_some();
+        let mut saw_proposal = false;
+        let mut all_proposals_applied = true;
+        for attempt in self
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.proposal_id.is_some())
+        {
+            saw_proposal = true;
+            all_proposals_applied &=
+                matches!(attempt.result, HeadlessAttemptResult::Applied { .. });
+        }
+        PatchArtifactRecord {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied,
+            all_proposals_applied: saw_proposal && all_proposals_applied,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: false,
+            all_expected_files_changed: false,
+        }
     }
 
     fn has_observed_activity(&self) -> bool {
@@ -2028,8 +2253,103 @@ impl HeadlessRun {
             validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
+            full_response_records: Vec::new(),
             terminal,
         }
+    }
+}
+
+fn observed_user_message_id(events: &[Event]) -> Option<&str> {
+    events.iter().find_map(|event| match event {
+        Event::Turn { parent_id, .. } | Event::ToolRequest { parent_id, .. } => {
+            Some(parent_id.as_str())
+        }
+        _ => None,
+    })
+}
+
+fn tool_request_record(
+    context: ToolRequestContext<'_>,
+    call_id: &str,
+    arguments: &str,
+) -> ToolRequestRecord {
+    ToolRequestRecord {
+        request_id: context.request_id.to_owned(),
+        parent_id: context.parent_id.to_owned(),
+        call_id: call_id.to_owned(),
+        tool: context.tool.to_owned(),
+        arguments: arguments.to_owned().into(),
+    }
+}
+
+fn tool_completed_record(
+    context: ToolRequestContext<'_>,
+    call_id: &str,
+    content: &str,
+) -> ToolCompletedRecord {
+    ToolCompletedRecord {
+        request_id: context.request_id.to_owned(),
+        parent_id: context.parent_id.to_owned(),
+        call_id: call_id.to_owned(),
+        tool: context.tool.to_owned(),
+        content: content.to_owned(),
+        ui_payload: None,
+        latency_ms: 0,
+    }
+}
+
+fn tool_failed_record(
+    context: ToolRequestContext<'_>,
+    call_id: &str,
+    error: &str,
+) -> ToolFailedRecord {
+    ToolFailedRecord {
+        request_id: context.request_id.to_owned(),
+        parent_id: context.parent_id.to_owned(),
+        call_id: call_id.to_owned(),
+        tool: Some(context.tool.to_owned()),
+        error: error.to_owned(),
+        ui_payload: None,
+        latency_ms: 0,
+    }
+}
+
+fn assistant_message_snapshot_record(
+    id: &str,
+    status: &str,
+    content: &str,
+) -> MessageSnapshotRecord {
+    MessageSnapshotRecord {
+        id: id.to_owned(),
+        kind: "assistant".to_string(),
+        status: status.to_owned(),
+        tool_call_id: None,
+        content_len: content.chars().count(),
+        content_preview: truncate_chars(content, MAX_EVIDENCE_EVENT_CHARS),
+    }
+}
+
+struct TurnRecordParts<'a> {
+    session_id: &'a str,
+    request_id: &'a str,
+    parent_id: &'a str,
+    assistant_message_id: &'a str,
+    outcome: &'a str,
+    error_id: Option<&'a str>,
+    summary: &'a str,
+    attempts: u32,
+}
+
+fn turn_finished_record(parts: TurnRecordParts<'_>) -> TurnFinishedRecord {
+    TurnFinishedRecord {
+        session_id: parts.session_id.to_owned(),
+        request_id: parts.request_id.to_owned(),
+        parent_id: parts.parent_id.to_owned(),
+        assistant_message_id: parts.assistant_message_id.to_owned(),
+        outcome: parts.outcome.to_owned(),
+        error_id: parts.error_id.map(str::to_owned),
+        summary: parts.summary.to_owned(),
+        attempts: parts.attempts,
     }
 }
 
@@ -2663,8 +2983,16 @@ pub(crate) mod evidence {
             content: Text,
         },
         Turn {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            session_id: Option<String>,
             request_id: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            parent_id: Option<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            assistant_message_id: Option<String>,
             outcome: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            error_id: Option<String>,
             attempts: u32,
             summary: Text,
         },
@@ -2860,13 +3188,21 @@ pub(crate) mod evidence {
                     content: Text::from(content.as_str()),
                 },
                 super::Event::Turn {
+                    session_id,
                     request_id,
+                    parent_id,
+                    assistant_message_id,
                     outcome,
+                    error_id,
                     attempts,
                     summary,
                 } => Self::Turn {
+                    session_id: Some(session_id.clone()),
                     request_id: request_id.clone(),
+                    parent_id: Some(parent_id.clone()),
+                    assistant_message_id: Some(assistant_message_id.clone()),
                     outcome: outcome.clone(),
+                    error_id: error_id.clone(),
                     attempts: *attempts,
                     summary: Text::from(summary.as_str()),
                 },
@@ -3438,8 +3774,12 @@ pub(crate) enum Event {
         content: String,
     },
     Turn {
+        session_id: String,
         request_id: String,
+        parent_id: String,
+        assistant_message_id: String,
         outcome: String,
+        error_id: Option<String>,
         attempts: u32,
         summary: String,
     },
@@ -3731,6 +4071,70 @@ mod tests {
 
         assert!(matches!(selection.router(), RouterVariants::Google(_)));
         assert!(selection.provider().is_none());
+    }
+
+    #[test]
+    fn turn_live() {
+        let session_id = Uuid::from_u128(0x1111);
+        let request_id = Uuid::from_u128(0x2222);
+        let parent_id = Uuid::from_u128(0x3333);
+        let assistant_id = Uuid::from_u128(0x4444);
+        let call_id = "call-read-1".to_string();
+        let response = stop_response_record(assistant_id, 0, "chatcmpl-turn-live");
+        let run = HeadlessRun {
+            attempts: Vec::new(),
+            events: vec![
+                Event::ToolRequest {
+                    request_id: request_id.to_string(),
+                    parent_id: parent_id.to_string(),
+                    call_id: call_id.clone(),
+                    tool: "read_file".to_string(),
+                    arguments: r#"{"file_path":"src/lib.rs"}"#.to_string(),
+                },
+                Event::Turn {
+                    session_id: session_id.to_string(),
+                    request_id: request_id.to_string(),
+                    parent_id: parent_id.to_string(),
+                    assistant_message_id: assistant_id.to_string(),
+                    outcome: "completed".to_string(),
+                    error_id: None,
+                    attempts: 1,
+                    summary: "done".to_string(),
+                },
+            ],
+            validations: Vec::new(),
+            debug_relay: DebugRelay::new(),
+            prompt_diagnostics: Vec::new(),
+            full_response_records: vec![response],
+            terminal: Some(HeadlessTerminal::CompletedWithoutEdit {
+                outcome: "completed".to_string(),
+                summary: "done".to_string(),
+            }),
+        };
+
+        let artifact = run.agent_turn_artifact_record("task-1", "test/model", "inspect src/lib.rs");
+        let turn = artifact
+            .terminal_record
+            .as_ref()
+            .expect("turn-live artifact records terminal turn");
+        assert_eq!(artifact.user_message_id, parent_id.to_string());
+        assert_eq!(turn.session_id, session_id.to_string());
+        assert_eq!(turn.request_id, request_id.to_string());
+        assert_eq!(turn.parent_id, parent_id.to_string());
+        assert_eq!(turn.assistant_message_id, assistant_id.to_string());
+        assert!(matches!(
+            artifact.events.first(),
+            Some(ObservedTurnEventRecord::ToolRequested(record))
+                if record.call_id == call_id
+                    && record.parent_id == parent_id.to_string()
+                    && record.request_id == request_id.to_string()
+        ));
+
+        let [record] = run.full_response_records() else {
+            panic!("expected one captured full-response record");
+        };
+        assert!(record.matches_assistant_message(assistant_id));
+        assert_eq!(record.response_index().get(), 0);
     }
 
     #[test]
@@ -4257,6 +4661,7 @@ Suggested action: Verify API credentials and retry."#;
             validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
+            full_response_records: Vec::new(),
             terminal: Some(HeadlessTerminal::Applied {
                 proposal_id,
                 applied_proposal_ids: vec![proposal_id],
@@ -4310,6 +4715,7 @@ Suggested action: Verify API credentials and retry."#;
             validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
+            full_response_records: Vec::new(),
             terminal: Some(HeadlessTerminal::Exhausted {
                 attempts: 2,
                 last: feedback.clone(),
@@ -4601,6 +5007,7 @@ Suggested action: Verify API credentials and retry."#;
             validations: Vec::new(),
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: vec![diagnostic],
+            full_response_records: Vec::new(),
             terminal: Some(HeadlessTerminal::ContextUnavailable {
                 reason: reason.clone(),
             }),
@@ -4993,6 +5400,7 @@ Suggested action: Verify API credentials and retry."#;
             1,
             &mut run,
             &LiveObserver::disabled(),
+            None,
         )
         .await
         .expect("same-file recorded replay should finish");
@@ -5131,6 +5539,7 @@ Suggested action: Verify API credentials and retry."#;
             1,
             &mut run,
             &LiveObserver::disabled(),
+            None,
         )
         .await
         .expect("gated recorded replay should finish");
@@ -5305,6 +5714,186 @@ Suggested action: Verify API credentials and retry."#;
             "expected {count} historical Cargo.toml ns_patch requests in replay trace"
         );
         requests
+    }
+
+    #[test]
+    #[ignore = "historical diagnostic for successful empty read_file completions"]
+    fn read_diag() -> Result<(), Box<dyn std::error::Error>> {
+        // Follow-up: once we have a second run demonstrating the fix, extend this
+        // diagnostic with a second part that compares the historical bad trace
+        // against the fixed run's read_file completions.
+        let run_path = PathBuf::from(
+            "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/",
+        );
+        let trace_path = run_path
+            .join("messages/edit-harness-result/node-552c19a55f53dbe6-r2.headless-tui.json");
+        let trace = fs::read_to_string(&trace_path).unwrap_or_else(|source| {
+            panic!(
+                "read historical headless trace {}: {source}",
+                trace_path.display()
+            )
+        });
+        let summary: evidence::Summary = serde_json::from_str(&trace).unwrap_or_else(|source| {
+            panic!(
+                "parse historical headless trace {} as evidence::Summary: {source}",
+                trace_path.display()
+            )
+        });
+
+        let diagnostics = historical_empty_read_file_diagnostics(&summary);
+        println!(
+            "READ_FILE_DIAG trace={} empty_successes_with_real_lines={}",
+            trace_path.display(),
+            diagnostics.len()
+        );
+        for diagnostic in &diagnostics {
+            let diagnostic_file = diagnostic.observed_file.strip_prefix(&run_path)?;
+            println!(
+                "\nREAD_FILE_DIAG call_id={}\n\
+    requested={}\n\
+    observed={}\n\
+    range={:?}-{:?}\n\
+    byte_len={:?}\n\
+    truncated={}\n\
+    line_count={}\n\
+    first_line={}\n\
+    target_line={}\n",
+                diagnostic.call_id,
+                diagnostic.requested_file,
+                diagnostic_file.display(),
+                diagnostic.start_line,
+                diagnostic.end_line,
+                diagnostic.byte_len,
+                diagnostic.truncated,
+                diagnostic.direct_line_count,
+                diagnostic.first_direct_line,
+                diagnostic
+                    .target_line
+                    .as_deref()
+                    .unwrap_or("<no target marker in range>"),
+            );
+        }
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.call_id
+                == "function-call-cd7bb6c0-97b8-4928-9324-57aa0c08b4e5"
+                && diagnostic.direct_line_count > 0),
+            "expected historical r2 trace to reproduce the tests.rs empty successful read"
+        );
+        Ok(())
+    }
+
+    struct EmptyReadFileDiagnostic {
+        call_id: String,
+        requested_file: String,
+        observed_file: PathBuf,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        byte_len: Option<u64>,
+        truncated: bool,
+        direct_line_count: usize,
+        first_direct_line: String,
+        target_line: Option<String>,
+    }
+
+    fn historical_empty_read_file_diagnostics(
+        summary: &evidence::Summary,
+    ) -> Vec<EmptyReadFileDiagnostic> {
+        let mut requests =
+            HashMap::<String, ploke_records::tool_contracts::NsReadParamsOwned>::new();
+        let mut diagnostics = Vec::new();
+
+        for event in &summary.events {
+            match event {
+                evidence::Event::ToolRequest {
+                    call_id,
+                    tool,
+                    arguments,
+                    ..
+                } if tool == "read_file"
+                    && arguments.chars == arguments.preview.chars().count() =>
+                {
+                    let captured = ploke_records::tool_contracts::ToolArgumentsJson::from(
+                        arguments.preview.clone(),
+                    );
+                    if let ploke_records::tool_contracts::PersistedToolCallArguments::Decoded(
+                        ploke_records::tool_contracts::ToolCallArguments::NsRead(params),
+                    ) = captured.decode_for_tool(tool)
+                    {
+                        requests.insert(call_id.clone(), params);
+                    }
+                }
+                evidence::Event::ToolCompleted { call_id, content } => {
+                    let Some(request) = requests.get(call_id) else {
+                        continue;
+                    };
+                    let Ok(result) = serde_json::from_str::<
+                        ploke_records::tool_contracts::NsReadResult,
+                    >(&content.preview) else {
+                        continue;
+                    };
+                    if !result.ok
+                        || !result.exists
+                        || result.content.as_deref() != Some("")
+                        || !result.truncated
+                    {
+                        continue;
+                    }
+                    let observed_file = PathBuf::from(&result.file_path);
+                    let Some((direct_line_count, first_direct_line, target_line)) =
+                        direct_line_range_preview(
+                            &observed_file,
+                            request.start_line,
+                            request.end_line,
+                        )
+                    else {
+                        continue;
+                    };
+                    diagnostics.push(EmptyReadFileDiagnostic {
+                        call_id: call_id.clone(),
+                        requested_file: request.file.clone(),
+                        observed_file,
+                        start_line: request.start_line,
+                        end_line: request.end_line,
+                        byte_len: result.byte_len,
+                        truncated: result.truncated,
+                        direct_line_count,
+                        first_direct_line,
+                        target_line,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        diagnostics
+    }
+
+    fn direct_line_range_preview(
+        path: &Path,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    ) -> Option<(usize, String, Option<String>)> {
+        let content = fs::read_to_string(path).ok()?;
+        let start = start_line.unwrap_or(1).max(1);
+        let end = end_line.unwrap_or(start).max(start);
+        let mut lines = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let line_no = u32::try_from(index + 1).ok()?;
+                (line_no >= start && line_no <= end).then_some(line)
+            })
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            return None;
+        }
+        let target = lines
+            .iter()
+            .find(|line| line.contains("real_tui_resolver_touch_is_checked_before_adapter_apply"))
+            .map(|line| line.trim().to_string());
+        let first = lines.remove(0).trim().to_string();
+        Some((1 + lines.len(), first, target))
     }
 
     fn historical_ns_patch_params(
