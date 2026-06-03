@@ -5,6 +5,7 @@ use crate::ui::id_display::{CopyableExpandable, CopyableText};
 use eframe::egui;
 use ploke_records::protocol::ArtifactBody;
 use ploke_tree::Graph;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::call_review::{
@@ -316,8 +317,34 @@ pub(crate) fn render_eval_protocol_for_graph(
             "intervention applies",
             stats.intervention_apply_count,
         );
+
+        let review_stats = dashboard.protocol_review_stats();
+        render_count_map(ui, render_cache, "overall", &review_stats.overall);
+        render_count_map(ui, render_cache, "redundancy", &review_stats.redundancy);
+        render_count_map(
+            ui,
+            render_cache,
+            "recoverability",
+            &review_stats.recoverability,
+        );
         render_eval_protocol_visual_summary(ui, render_cache, dashboard.visual_summary());
         render_protocol_artifact_drilldowns(ui, render_cache, &dashboard);
+    }
+}
+
+fn render_count_map(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    prefix: &str,
+    counts: &BTreeMap<String, usize>,
+) {
+    if counts.is_empty() {
+        cached_kv_text(ui, render_cache, prefix, "none");
+        return;
+    }
+    for (label, count) in counts {
+        let row_label = format!("{prefix}.{label}");
+        cached_kv_usize(ui, render_cache, row_label.as_str(), *count);
     }
 }
 

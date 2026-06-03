@@ -4,7 +4,8 @@ use ploke_records::protocol::ArtifactBody;
 use ploke_records::run_record::SubmissionArtifactState;
 use ploke_tree::{
     ClosureEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunRecordEvidence,
-    RunRecordSummary, graph::{EvalProtocolEvidence, ProtocolReviewStats},
+    RunRecordSummary,
+    graph::{EvalProtocolEvidence, ProtocolReviewStats},
 };
 
 pub(crate) struct EvalProtocolDashboard<'g> {

@@ -246,8 +246,7 @@ mod wasm {
                         return;
                     };
                     let Ok(result) = reader.result() else {
-                        *pending_error.borrow_mut() =
-                            Some(format!("file read failed for {label}"));
+                        *pending_error.borrow_mut() = Some(format!("file read failed for {label}"));
                         return;
                     };
                     let Ok(array_buffer) = result.dyn_into::<js_sys::ArrayBuffer>() else {

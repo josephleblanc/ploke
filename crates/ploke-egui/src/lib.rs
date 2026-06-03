@@ -35,12 +35,12 @@ pub mod benchmark;
 pub mod bootstrap;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
-pub mod run_catalog;
 pub mod demo;
 pub mod diagnostics;
 pub mod import;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod perf;
+pub mod run_catalog;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod run_picker;
 pub mod ui;

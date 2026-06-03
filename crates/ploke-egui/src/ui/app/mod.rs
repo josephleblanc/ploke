@@ -35,9 +35,6 @@ use crate::benchmark::{
     BenchmarkSelectionTarget, BenchmarkWriteResult, InspectorSectionPhase, InspectorSequenceStage,
 };
 use crate::bootstrap::GraphCatalog;
-use crate::run_catalog::RunCatalog;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::diagnostics::{
     GraphIdentity, RunSnapshot, SnapshotObservation, SnapshotSink, artifact_component_breakdown,
@@ -53,6 +50,9 @@ use crate::import::graph_from_run_root;
 use crate::import::graph_from_snapshot_bytes;
 #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
+use crate::run_catalog::RunCatalog;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::diff::PatchDiffCache;

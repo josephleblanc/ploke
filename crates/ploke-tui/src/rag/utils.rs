@@ -1,6 +1,4 @@
-use crate::tools::{
-    ToolError, ToolErrorCode, ToolName, ToolUiPayload, tool_ui_payload_from_error,
-};
+use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload, tool_ui_payload_from_error};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};

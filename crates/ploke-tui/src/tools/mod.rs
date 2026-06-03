@@ -66,6 +66,10 @@ pub use error::{
     ToolLlmErrorValue, ToolRetryContext, ToolRetryContextField, ToolRetryContextValue,
     allowed_tool_names, tool_io_error, tool_ui_error, tool_ui_payload_from_error,
 };
+#[cfg(not(feature = "tool_contracts"))]
+pub use ploke_core::rag_types::{
+    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult,
+};
 #[cfg(feature = "tool_contracts")]
 pub use ploke_core::tool_contracts::{
     ApplyCodeEditResult, ApplyNsPatchResult, CanonicalEditOwned, CargoCommand, CargoDiagnostic,
@@ -75,10 +79,6 @@ pub use ploke_core::tool_contracts::{
     ListDirParamsOwned, ListDirResult, LookupParamsOwned, NsPatchOwned, NsPatchParamsOwned,
     NsReadParamsOwned, NsReadResult, RequestCodeContextParamsOwned, RequestCodeContextResult,
     ToolItemKind,
-};
-#[cfg(not(feature = "tool_contracts"))]
-pub use ploke_core::rag_types::{
-    ApplyCodeEditResult, ConciseContext, CreateFileResult, RequestCodeContextResult,
 };
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 

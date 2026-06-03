@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::tool_types::ToolName;
 use crate::ArcStr;
+use crate::tool_types::ToolName;
 
 use super::error::{ToolErrorCode, ToolErrorWire};
 

@@ -16,4 +16,4 @@ pub use error::{
     ToolErrorCode, ToolErrorWire, ToolLlmErrorPayload, ToolLlmErrorValue, ToolRetryContext,
     ToolRetryContextField, ToolRetryContextValue,
 };
-pub use ui::{tool_error_code_label, ToolUiField, ToolUiPayload, ToolVerbosity};
+pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity, tool_error_code_label};
