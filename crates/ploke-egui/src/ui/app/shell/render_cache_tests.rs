@@ -1,4 +1,5 @@
 use super::{cache::ParentCreateRowsKey, *};
+use crate::ui::theme::{AppTheme, NamedScheme};
 
 #[test]
 fn parent_create_render_rows_reuse_allocated_text_for_stable_key() {
@@ -28,6 +29,50 @@ fn parent_create_render_rows_reuse_allocated_text_for_stable_key() {
     let third_tools = Arc::as_ptr(&cache.parent_create_rows(changed).tools);
     assert_eq!(cache.parent_create_row_rebuilds(), 2);
     assert_ne!(first_tools, third_tools);
+}
+
+#[test]
+fn inspector_text_galley_uses_placeholder_for_theme_fallback() {
+    let mut cache = InspectorRenderCache::default();
+
+    egui::__run_test_ui(|ui| {
+        AppTheme {
+            scheme: NamedScheme::TokyoNight,
+        }
+        .apply_to_context(ui.ctx());
+
+        let dark = cache.text_galley(ui, "turn", CachedTextKind::Monospace);
+        let dark_color = dark
+            .job
+            .sections
+            .first()
+            .map(|section| section.format.color)
+            .expect("galley section");
+
+        AppTheme {
+            scheme: NamedScheme::GruvboxLight,
+        }
+        .apply_to_context(ui.ctx());
+
+        let light = cache.text_galley(ui, "turn", CachedTextKind::Monospace);
+        let light_color = light
+            .job
+            .sections
+            .first()
+            .map(|section| section.format.color)
+            .expect("galley section");
+
+        assert_eq!(dark_color, egui::Color32::PLACEHOLDER);
+        assert_eq!(light_color, egui::Color32::PLACEHOLDER);
+        assert_ne!(
+            ui.visuals().text_color(),
+            AppTheme {
+                scheme: NamedScheme::TokyoNight,
+            }
+            .tokens()
+            .text
+        );
+    });
 }
 
 #[test]

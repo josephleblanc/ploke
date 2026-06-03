@@ -84,12 +84,9 @@ impl GraphEdgeShape {
 
     fn label_galley(&mut self, ctx: &egui_graphs::DrawContext) -> Arc<Galley> {
         let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_LABEL_LAYOUT).entered();
-        let tokens = tokens_from_ctx(ctx.ctx);
         let key = EdgeLabelGalleyKey {
             font_size: self.style.label.font_size,
-            theme_key: tokens.cache_theme_key(),
         };
-        let text_color = tokens.edge_label_text();
         match &self.label_galley {
             Some(cached) if cached.key == key => cached.galley.clone(),
             _ => {
@@ -97,7 +94,7 @@ impl GraphEdgeShape {
                     fonts.layout_no_wrap(
                         self.label.to_string(),
                         FontId::monospace(self.style.label.font_size),
-                        text_color,
+                        Color32::PLACEHOLDER,
                     )
                 });
                 self.label_galley = Some(EdgeLabelGalley {
@@ -144,7 +141,6 @@ struct EdgeLabelGalley {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct EdgeLabelGalleyKey {
     font_size: f32,
-    theme_key: u8,
 }
 
 impl<N, Ty, Ix, D> egui_graphs::DisplayEdge<N, GraphEdgePayload, Ty, Ix, D> for GraphEdgeShape
@@ -225,7 +221,10 @@ where
                 Id::new("ploke-egui.edge-labels"),
             ));
             label_painter.add(Shape::rect_filled(placement.background, 2.0, label_bg));
-            label_painter.add(TextShape::new(placement.text_pos, galley, label_text));
+            label_painter.add(
+                TextShape::new(placement.text_pos, galley, label_text)
+                    .with_override_text_color(label_text),
+            );
         }
 
         shapes

@@ -306,12 +306,8 @@ impl PaletteTokens {
     }
 
     pub fn edge_label_background(self) -> Color32 {
-        let base = if self.is_dark {
-            self.panel
-        } else {
-            self.background
-        };
-        tint_alpha(base, if self.is_dark { 210 } else { 240 })
+        let base = self.panel;
+        tint_alpha(base, if self.is_dark { 210 } else { 235 })
     }
 
     pub fn install_on_context(self, ctx: &egui::Context) {
