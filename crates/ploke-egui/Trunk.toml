@@ -2,6 +2,11 @@
 #   trunk build --config crates/ploke-egui/Trunk.toml
 #   trunk serve --config crates/ploke-egui/Trunk.toml
 #
+# Default startup fetch: /benchmark-fixtures/standard-prototype1-graph-snapshot.json
+# Custom export at startup: copy/symlink JSON into benchmark-fixtures/, then
+#   ?graph=/benchmark-fixtures/your-export.json
+# Or use Trunk.asset-both.toml to also serve graph-assets/ (see docs/plan/wasm-protocol-dashboard/README.md).
+#
 # Root Trunk.toml still targets ploke-tree-egui (playback browser demo).
 
 [build]

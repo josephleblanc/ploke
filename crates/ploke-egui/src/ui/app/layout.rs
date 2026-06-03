@@ -21,3 +21,24 @@ pub(crate) const INSPECTOR_MARGIN_INNER: egui::Margin = egui::Margin {
     top: 8,
     bottom: 8,
 };
+
+/// Left run-navigation panel: keep padding on the outer edges only so the seam
+/// against [`central_dashboard_panel_frame`] does not leave an unpainted gutter.
+pub(crate) fn run_navigation_panel_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::side_top_panel(style).inner_margin(egui::Margin {
+        left: 8,
+        right: 0,
+        top: 2,
+        bottom: 2,
+    })
+}
+
+/// Central tile tree panel: zero left inner margin where it meets the left sidebar.
+pub(crate) fn central_dashboard_panel_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::central_panel(style).inner_margin(egui::Margin {
+        left: 0,
+        right: 8,
+        top: 8,
+        bottom: 8,
+    })
+}

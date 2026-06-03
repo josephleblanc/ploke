@@ -1,5 +1,5 @@
 use crate::ui::id_display::{self, CopyableExpandable, CopyableRunName};
-use crate::ui::view::{GraphViewDiagnostics, GraphViewMode};
+use crate::ui::view::GraphViewMode;
 use eframe::egui;
 
 const INSPECTOR_SCROLL_END_FALLBACK_PADDING: f32 = 240.0;
@@ -38,40 +38,6 @@ pub(crate) fn render_top_strip(
 pub(crate) fn add_inspector_scroll_end_padding(ui: &mut egui::Ui, viewport_height: f32) {
     let anchor_height = ui.spacing().interact_size.y;
     ui.add_space(inspector_scroll_end_padding(viewport_height, anchor_height));
-}
-
-#[cfg_attr(
-    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
-    tracing::instrument(skip_all, name = "timeline")
-)]
-pub(crate) fn render_bottom_timeline(
-    ui: &mut egui::Ui,
-    diagnostics: Option<&GraphViewDiagnostics>,
-    selection_synced: bool,
-) {
-    ui.horizontal(|ui| {
-        ui.label("Timeline");
-        ui.separator();
-        if let Some(diagnostics) = diagnostics {
-            ui.label(format!(
-                "nodes={}, edges={}",
-                diagnostics.node_count, diagnostics.edge_count
-            ));
-        } else {
-            ui.label("spans=0");
-        }
-        ui.separator();
-        ui.label(format!(
-            "selection={}",
-            if selection_synced {
-                "synced"
-            } else {
-                "not_applicable"
-            }
-        ));
-        ui.separator();
-        ui.label("order_strength=blocked");
-    });
 }
 
 fn inspector_scroll_end_padding(viewport_height: f32, anchor_height: f32) -> f32 {

@@ -6,7 +6,7 @@ rust-version.workspace = true
 description = "egui run playback browser for Ploke"
 
 [dependencies]
-ploke-protocol = { workspace = true }
+ploke-protocol = { path = "../ploke-protocol", default-features = false }
 ploke-records = { workspace = true }
 ploke-tree = { workspace = true }
 ploke-egui-macros = { workspace = true }

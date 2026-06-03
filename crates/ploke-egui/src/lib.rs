@@ -23,16 +23,15 @@
 //! needed by that surface. Runtime authority and active loop behavior stay out
 //! of this crate.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod allocation;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod benchmark;
+pub mod bootstrap;
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-benchmark"))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: tracking_allocator::Allocator<std::alloc::System> =
     tracking_allocator::Allocator::system();
 
-#[cfg(not(target_arch = "wasm32"))]
-pub mod benchmark;
-pub mod bootstrap;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 pub mod demo;

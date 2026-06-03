@@ -1,6 +1,8 @@
+use crate::ui::id_display::{self, CopyableText};
 use crate::ui::render::text::*;
 use crate::ui::text::style as text_style;
 use eframe::egui;
+use ploke_protocol::Confidence;
 use ploke_records::protocol::ArtifactBody;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
@@ -8,13 +10,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use super::eval_protocol::{
-    render_call_review_reasoning_spotlight, selected_eval_protocol_call_review_key,
-    set_selected_eval_protocol_call_review,
+    selected_eval_protocol_call_review_key, set_selected_eval_protocol_call_review,
 };
 use super::fields::*;
 use super::{InspectorRenderCache, show_inspector_collapsing};
 
 const CALL_REVIEW_SCAN_HOVER_PREVIEW_BYTES: usize = 220;
+const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH: f32 = 10.0;
+const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT: f32 = 4.0;
+const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CallReviewFilter {
@@ -903,9 +907,399 @@ pub(crate) fn confidence_emphasis(confidence: ploke_protocol::Confidence) -> Sca
     }
 }
 
+pub(crate) fn usefulness_verdict_label(verdict: ploke_protocol::UsefulnessVerdict) -> &'static str {
+    match verdict {
+        ploke_protocol::UsefulnessVerdict::KeyProgress => "key",
+        ploke_protocol::UsefulnessVerdict::HelpfulButNonEssential => "helpful",
+        ploke_protocol::UsefulnessVerdict::LowValue => "low",
+        ploke_protocol::UsefulnessVerdict::NoValue => "none",
+        ploke_protocol::UsefulnessVerdict::Unclear => "unclear",
+    }
+}
+
+pub(crate) fn usefulness_verdict_emphasis(
+    verdict: ploke_protocol::UsefulnessVerdict,
+) -> ScanValueEmphasis {
+    match verdict {
+        ploke_protocol::UsefulnessVerdict::KeyProgress
+        | ploke_protocol::UsefulnessVerdict::HelpfulButNonEssential => ScanValueEmphasis::Normal,
+        ploke_protocol::UsefulnessVerdict::LowValue
+        | ploke_protocol::UsefulnessVerdict::Unclear => ScanValueEmphasis::Warn,
+        ploke_protocol::UsefulnessVerdict::NoValue => ScanValueEmphasis::Error,
+    }
+}
+
+pub(crate) fn redundancy_verdict_label(verdict: ploke_protocol::RedundancyVerdict) -> &'static str {
+    match verdict {
+        ploke_protocol::RedundancyVerdict::Distinct => "distinct",
+        ploke_protocol::RedundancyVerdict::Overlapping => "overlap",
+        ploke_protocol::RedundancyVerdict::RedundantRepeat => "repeat",
+        ploke_protocol::RedundancyVerdict::SearchThrash => "thrash",
+        ploke_protocol::RedundancyVerdict::Unclear => "unclear",
+    }
+}
+
+pub(crate) fn redundancy_verdict_emphasis(
+    verdict: ploke_protocol::RedundancyVerdict,
+) -> ScanValueEmphasis {
+    match verdict {
+        ploke_protocol::RedundancyVerdict::Distinct
+        | ploke_protocol::RedundancyVerdict::Overlapping => ScanValueEmphasis::Normal,
+        ploke_protocol::RedundancyVerdict::Unclear => ScanValueEmphasis::Warn,
+        ploke_protocol::RedundancyVerdict::RedundantRepeat
+        | ploke_protocol::RedundancyVerdict::SearchThrash => ScanValueEmphasis::Error,
+    }
+}
+
+pub(crate) fn recoverability_verdict_label(
+    verdict: ploke_protocol::RecoverabilityVerdict,
+) -> &'static str {
+    match verdict {
+        ploke_protocol::RecoverabilityVerdict::NoRecoveryNeeded => "ok",
+        ploke_protocol::RecoverabilityVerdict::ClearNextStep => "clear",
+        ploke_protocol::RecoverabilityVerdict::PartialNextStep => "partial",
+        ploke_protocol::RecoverabilityVerdict::NoClearRecovery => "blocked",
+        ploke_protocol::RecoverabilityVerdict::Unclear => "unclear",
+    }
+}
+
+pub(crate) fn recoverability_verdict_emphasis(
+    verdict: ploke_protocol::RecoverabilityVerdict,
+) -> ScanValueEmphasis {
+    match verdict {
+        ploke_protocol::RecoverabilityVerdict::NoRecoveryNeeded
+        | ploke_protocol::RecoverabilityVerdict::ClearNextStep => ScanValueEmphasis::Normal,
+        ploke_protocol::RecoverabilityVerdict::PartialNextStep
+        | ploke_protocol::RecoverabilityVerdict::Unclear => ScanValueEmphasis::Warn,
+        ploke_protocol::RecoverabilityVerdict::NoClearRecovery => ScanValueEmphasis::Error,
+    }
+}
+
+#[ploke_egui_macros::profile_scope(crate::allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_SPOTLIGHT)]
+pub(super) fn render_call_review_reasoning_spotlight(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
+) {
+    let selected_artifact_key = selected_eval_protocol_call_review_key(ui);
+    ui.add_space(4.0);
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().widgets.active.weak_bg_fill)
+        .stroke(egui::Stroke::new(1.0, ui.visuals().selection.bg_fill))
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                cached_label(ui, render_cache, "LLM Reasoning Spotlight");
+                if let Some(artifact_key) = selected_artifact_key.as_deref() {
+                    cached_artifact_file_value(
+                        ui,
+                        render_cache,
+                        ("call-review-spotlight-artifact", artifact_key),
+                        artifact_key,
+                    );
+                }
+            });
+
+            let Some(artifact_key) = selected_artifact_key.as_deref() else {
+                cached_label(
+                    ui,
+                    render_cache,
+                    "Select a call row to pin its LLM reasoning here.",
+                );
+                return;
+            };
+            let Some(artifact) = protocol_artifacts.index.get(artifact_key) else {
+                cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
+                cached_kv_id(ui, render_cache, "reasoning", "not_available");
+                return;
+            };
+            let ArtifactBody::ToolCallReview(payload) = &artifact.body else {
+                cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
+                cached_kv_id(ui, render_cache, "reasoning", "not_applicable");
+                return;
+            };
+
+            let output = &payload.output;
+            let focal = &payload.input.focal;
+            ui.horizontal_wrapped(|ui| {
+                cached_label(ui, render_cache, "call");
+                let mut index_buffer = itoa::Buffer::new();
+                cached_monospace_label(ui, render_cache, index_buffer.format(focal.index));
+                cached_monospace_label(ui, render_cache, focal.tool_name.as_str());
+                scan_value_label(
+                    ui,
+                    render_cache,
+                    overall_verdict_label(output.overall),
+                    overall_verdict_emphasis(output.overall),
+                );
+                scan_value_label(
+                    ui,
+                    render_cache,
+                    confidence_label(output.overall_confidence),
+                    confidence_emphasis(output.overall_confidence),
+                );
+                scan_value_label(
+                    ui,
+                    render_cache,
+                    call_review_failure_label(payload),
+                    failure_emphasis(payload),
+                );
+            });
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                render_call_review_spotlight_verdict_card(
+                    ui,
+                    render_cache,
+                    "usefulness",
+                    usefulness_verdict_label(output.usefulness.verdict),
+                    usefulness_verdict_emphasis(output.usefulness.verdict),
+                    output.usefulness.confidence,
+                );
+                render_call_review_spotlight_verdict_card(
+                    ui,
+                    render_cache,
+                    "redundancy",
+                    redundancy_verdict_label(output.redundancy.verdict),
+                    redundancy_verdict_emphasis(output.redundancy.verdict),
+                    output.redundancy.confidence,
+                );
+                render_call_review_spotlight_verdict_card(
+                    ui,
+                    render_cache,
+                    "recoverability",
+                    recoverability_verdict_label(output.recoverability.verdict),
+                    recoverability_verdict_emphasis(output.recoverability.verdict),
+                    output.recoverability.confidence,
+                );
+            });
+
+            ui.add_space(4.0);
+            render_call_review_spotlight_signals(ui, render_cache, &output.signals);
+
+            ui.add_space(2.0);
+            render_call_review_spotlight_rationale_bullet(
+                ui,
+                render_cache,
+                "Usefulness",
+                output.usefulness.rationale.as_str(),
+            );
+            render_call_review_spotlight_rationale_bullet(
+                ui,
+                render_cache,
+                "Redundancy",
+                output.redundancy.rationale.as_str(),
+            );
+            render_call_review_spotlight_rationale_bullet(
+                ui,
+                render_cache,
+                "Recoverability",
+                output.recoverability.rationale.as_str(),
+            );
+        });
+}
+
+fn render_call_review_spotlight_verdict_card(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    title: &str,
+    verdict: &str,
+    verdict_emphasis: ScanValueEmphasis,
+    confidence: Confidence,
+) {
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(6, 4))
+        .show(ui, |ui| {
+            ui.set_min_width(88.0);
+            ui.vertical(|ui| {
+                cached_label(ui, render_cache, title);
+                scan_value_label(ui, render_cache, verdict, verdict_emphasis);
+                render_call_review_spotlight_confidence_bar(ui, confidence);
+            });
+        });
+}
+
+fn render_call_review_spotlight_confidence_bar(ui: &mut egui::Ui, confidence: Confidence) {
+    const LEVELS: [Confidence; 3] = [Confidence::Low, Confidence::Medium, Confidence::High];
+    let segment_count = LEVELS.len() as f32;
+    let width = segment_count * CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH
+        + (segment_count - 1.0) * CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP;
+    let hover = format!("Confidence: {}", confidence_label(confidence));
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT),
+        egui::Sense::hover(),
+    );
+    response.on_hover_text(hover);
+
+    let inactive = ui.visuals().widgets.noninteractive.weak_bg_fill;
+    let active = confidence_bar_active_color(ui, confidence_emphasis(confidence));
+    let mut left = rect.left();
+    for level in LEVELS {
+        let segment_rect = egui::Rect::from_min_size(
+            egui::pos2(left, rect.top()),
+            egui::vec2(
+                CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH,
+                CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT,
+            ),
+        );
+        let fill = if level == confidence {
+            active
+        } else {
+            inactive
+        };
+        ui.painter().rect_filled(segment_rect, 1.0, fill);
+        left += CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH
+            + CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP;
+    }
+}
+
+fn confidence_bar_active_color(ui: &egui::Ui, emphasis: ScanValueEmphasis) -> egui::Color32 {
+    match emphasis {
+        ScanValueEmphasis::Normal => ui.visuals().selection.bg_fill,
+        ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(),
+        ScanValueEmphasis::Error => text_style::inspector_error_text_color(),
+    }
+}
+
+fn render_call_review_spotlight_signals(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    signals: &ploke_protocol::LocalAnalysisSignals,
+) {
+    cached_label(ui, render_cache, "signals");
+    egui::Grid::new("call-review-spotlight-signals")
+        .num_columns(2)
+        .spacing([12.0, 2.0])
+        .show(ui, |ui| {
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "repeated tools",
+                signals.repeated_tool_name_count,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "distinct tools",
+                signals.distinct_tool_count,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "similar searches",
+                signals.similar_search_neighbors,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "directory pivots",
+                signals.directory_pivots,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "scope turns",
+                signals.scope_turn_count,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "search calls",
+                signals.search_calls_in_scope,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "read calls",
+                signals.read_calls_in_scope,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "browse calls",
+                signals.browse_calls_in_scope,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "edit calls",
+                signals.edit_calls_in_scope,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "execute calls",
+                signals.execute_calls_in_scope,
+            );
+            render_call_review_spotlight_signal_row(
+                ui,
+                render_cache,
+                "failed calls",
+                signals.failed_calls_in_scope,
+            );
+            if let Some(value) = signals.uncovered_calls_in_source {
+                render_call_review_spotlight_signal_row(ui, render_cache, "uncovered calls", value);
+            }
+            if let Some(value) = signals.labeled_segments_in_source {
+                render_call_review_spotlight_signal_row(
+                    ui,
+                    render_cache,
+                    "labeled segments",
+                    value,
+                );
+            }
+            if let Some(value) = signals.ambiguous_segments_in_source {
+                render_call_review_spotlight_signal_row(
+                    ui,
+                    render_cache,
+                    "ambiguous segments",
+                    value,
+                );
+            }
+        });
+}
+
+fn render_call_review_spotlight_signal_row(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: usize,
+) {
+    cached_label(ui, render_cache, key);
+    let mut buffer = itoa::Buffer::new();
+    cached_monospace_label(ui, render_cache, buffer.format(value));
+}
+
+fn render_call_review_spotlight_rationale_bullet(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    category: &str,
+    rationale: &str,
+) {
+    let copy_value = CopyableText::new(rationale);
+    let row_width = ui.available_width();
+    ui.horizontal_top(|ui| {
+        ui.label(egui::RichText::new("•").weak());
+        let content_width = ui.available_width().min(row_width);
+        ui.vertical(|ui| {
+            ui.set_max_width(content_width);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(category).strong());
+                id_display::copy_button(ui, &copy_value);
+            });
+            let response = cached_wrapped_monospace_label(ui, render_cache, rationale);
+            id_display::attach_copy_context_menu(&response, &copy_value);
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::bounded_utf8_prefix;
+    use super::{
+        bounded_utf8_prefix, confidence_label, recoverability_verdict_label,
+        redundancy_verdict_label, usefulness_verdict_label,
+    };
+    use ploke_protocol::{Confidence, RecoverabilityVerdict, RedundancyVerdict, UsefulnessVerdict};
 
     #[test]
     fn call_review_hover_preview_respects_utf8_boundaries() {
@@ -917,5 +1311,28 @@ mod tests {
         let (prefix, truncated) = bounded_utf8_prefix(text, 5);
         assert_eq!(prefix, "abcd");
         assert!(truncated);
+    }
+
+    #[test]
+    fn call_review_spotlight_verdict_labels_are_short() {
+        assert_eq!(
+            usefulness_verdict_label(UsefulnessVerdict::HelpfulButNonEssential),
+            "helpful"
+        );
+        assert_eq!(
+            redundancy_verdict_label(RedundancyVerdict::Distinct),
+            "distinct"
+        );
+        assert_eq!(
+            recoverability_verdict_label(RecoverabilityVerdict::NoRecoveryNeeded),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn call_review_spotlight_confidence_labels_match_protocol() {
+        assert_eq!(confidence_label(Confidence::Low), "low");
+        assert_eq!(confidence_label(Confidence::Medium), "medium");
+        assert_eq!(confidence_label(Confidence::High), "high");
     }
 }

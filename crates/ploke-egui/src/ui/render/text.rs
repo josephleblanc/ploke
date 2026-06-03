@@ -31,6 +31,7 @@ pub(crate) struct CachedTextStyleKey {
     pixels_per_point: u32,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<&str> for TextSizeSummaryKey {
     fn from(v: &str) -> Self {
         Self {

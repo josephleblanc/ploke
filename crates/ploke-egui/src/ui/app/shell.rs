@@ -25,17 +25,17 @@ mod llm_trace;
 mod parent_create;
 mod protocol_detail;
 mod run_records;
+mod timeline;
 use self::fields::*;
 use self::llm_trace::render_run_record_turn_llm_trace;
 use self::run_records::{
-    patch_projection_check_state_label, render_decoded_tool_arguments, render_decoded_tool_result,
-    render_run_record_tool_steps, render_run_record_turns, render_token_usage,
-    submission_artifact_state_label,
+    patch_projection_check_state_label, render_run_record_tool_steps, render_run_record_turns,
+    render_token_usage, submission_artifact_state_label,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
 pub(crate) use cache::InspectorRenderCache;
-pub(crate) use chrome::{
-    add_inspector_scroll_end_padding, render_bottom_timeline, render_top_strip,
-};
+pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};
 pub(crate) use identity::{
     render_artifact_ids_for_inspector, render_identity, render_lineage_authority_for_inspector,
@@ -55,6 +55,7 @@ pub(super) use protocol_detail::{
     render_tool_call_review_detail, render_tool_call_segment_review_artifact,
 };
 pub(crate) use run_records::render_run_records_for_inspector;
+pub(crate) use timeline::render_bottom_timeline;
 #[cfg(test)]
 mod render_cache_tests;
 

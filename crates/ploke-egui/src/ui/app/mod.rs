@@ -416,6 +416,8 @@ impl eframe::App for OperatorApp {
         ))]
         self.benchmark_begin_frame();
         let top_graph_has_content = graph_has_content(&self.graph);
+        let run_navigation_frame = layout::run_navigation_panel_frame(ui.style());
+        let central_dashboard_frame = layout::central_dashboard_panel_frame(ui.style());
 
         #[cfg(all(
             not(target_arch = "wasm32"),
@@ -455,6 +457,7 @@ impl eframe::App for OperatorApp {
             egui::Panel::left("run_navigation")
                 .default_size(layout::LEFT_SIDEBAR_WIDTH)
                 .max_size(layout::LEFT_SIDEBAR_MAX_WIDTH)
+                .frame(run_navigation_frame)
                 .show_inside(ui, |ui| {
                     profiling::scope!("ploke-egui.frame.run-navigation");
                     self.render_run_navigation_panel(ui);
@@ -482,6 +485,7 @@ impl eframe::App for OperatorApp {
                     let selection_synced = self.view.selected_node(&self.graph).is_some();
                     shell::render_bottom_timeline(
                         ui,
+                        &self.graph,
                         self.view.diagnostics().as_ref(),
                         selection_synced,
                     );
@@ -502,75 +506,78 @@ impl eframe::App for OperatorApp {
         let central_start = Instant::now();
         {
             let _span = tracing::trace_span!(scope::EGUI_PANEL_CENTRAL_LAYOUT).entered();
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                profiling::scope!("ploke-egui.frame.central");
+            egui::CentralPanel::default()
+                .frame(central_dashboard_frame)
+                .show_inside(ui, |ui| {
+                    profiling::scope!("ploke-egui.frame.central");
 
-                let mut actions = Vec::new();
-                let mut behavior = crate::ui::dashboard::tiles::TreeBehavior {
-                    graph: &self.graph,
-                    view: &mut self.view,
-                    inspector_cache: &mut self.inspector_cache,
-                    inspector_render_cache: &mut self.inspector_render_cache,
-                    patch_diff_cache: &mut self.patch_diff_cache,
-                    graph_revision: self.graph_revision,
-                    actions: &mut actions,
-                    #[cfg(all(
-                        not(target_arch = "wasm32"),
-                        feature = "dev",
-                        feature = "native-benchmark"
-                    ))]
-                    benchmark_inspector_section: self.benchmark_inspector_section,
-                    #[cfg(all(
-                        not(target_arch = "wasm32"),
-                        feature = "dev",
-                        feature = "native-benchmark"
-                    ))]
-                    benchmark_inspector_exclusive: self.benchmark_inspector_exclusive,
-                    #[cfg(all(
-                        not(target_arch = "wasm32"),
-                        feature = "dev",
-                        feature = "native-benchmark"
-                    ))]
-                    benchmark_eval_protocol_render_mode: self.benchmark_eval_protocol_render_mode,
-                };
+                    let mut actions = Vec::new();
+                    let mut behavior = crate::ui::dashboard::tiles::TreeBehavior {
+                        graph: &self.graph,
+                        view: &mut self.view,
+                        inspector_cache: &mut self.inspector_cache,
+                        inspector_render_cache: &mut self.inspector_render_cache,
+                        patch_diff_cache: &mut self.patch_diff_cache,
+                        graph_revision: self.graph_revision,
+                        actions: &mut actions,
+                        #[cfg(all(
+                            not(target_arch = "wasm32"),
+                            feature = "dev",
+                            feature = "native-benchmark"
+                        ))]
+                        benchmark_inspector_section: self.benchmark_inspector_section,
+                        #[cfg(all(
+                            not(target_arch = "wasm32"),
+                            feature = "dev",
+                            feature = "native-benchmark"
+                        ))]
+                        benchmark_inspector_exclusive: self.benchmark_inspector_exclusive,
+                        #[cfg(all(
+                            not(target_arch = "wasm32"),
+                            feature = "dev",
+                            feature = "native-benchmark"
+                        ))]
+                        benchmark_eval_protocol_render_mode: self
+                            .benchmark_eval_protocol_render_mode,
+                    };
 
-                self.dashboard_tree.ui(&mut behavior, ui);
+                    self.dashboard_tree.ui(&mut behavior, ui);
 
-                for action in actions {
-                    use crate::ui::dashboard::tiles::{Pane, TreeAction};
-                    match action {
-                        TreeAction::Pin(reference) => {
-                            let pane = Pane::PinnedInspector(reference);
-                            let id = self.dashboard_tree.tiles.insert_pane(pane);
-                            if let Some(root) = self.dashboard_tree.root {
-                                if let Some(egui_tiles::Tile::Container(container)) =
-                                    self.dashboard_tree.tiles.get_mut(root)
-                                {
-                                    container.add_child(id);
+                    for action in actions {
+                        use crate::ui::dashboard::tiles::{Pane, TreeAction};
+                        match action {
+                            TreeAction::Pin(reference) => {
+                                let pane = Pane::PinnedInspector(reference);
+                                let id = self.dashboard_tree.tiles.insert_pane(pane);
+                                if let Some(root) = self.dashboard_tree.root {
+                                    if let Some(egui_tiles::Tile::Container(container)) =
+                                        self.dashboard_tree.tiles.get_mut(root)
+                                    {
+                                        container.add_child(id);
+                                    }
+                                } else {
+                                    self.dashboard_tree.root = Some(id);
                                 }
-                            } else {
-                                self.dashboard_tree.root = Some(id);
                             }
-                        }
-                        TreeAction::PinSection(reference, section) => {
-                            let pane = Pane::InspectorSection(reference, section);
-                            let id = self.dashboard_tree.tiles.insert_pane(pane);
-                            if let Some(root) = self.dashboard_tree.root {
-                                if let Some(egui_tiles::Tile::Container(container)) =
-                                    self.dashboard_tree.tiles.get_mut(root)
-                                {
-                                    container.add_child(id);
+                            TreeAction::PinSection(reference, section) => {
+                                let pane = Pane::InspectorSection(reference, section);
+                                let id = self.dashboard_tree.tiles.insert_pane(pane);
+                                if let Some(root) = self.dashboard_tree.root {
+                                    if let Some(egui_tiles::Tile::Container(container)) =
+                                        self.dashboard_tree.tiles.get_mut(root)
+                                    {
+                                        container.add_child(id);
+                                    }
+                                } else {
+                                    self.dashboard_tree.root = Some(id);
                                 }
-                            } else {
-                                self.dashboard_tree.root = Some(id);
                             }
-                        }
-                        TreeAction::Remove(tile_id) => {
-                            self.dashboard_tree.tiles.remove(tile_id);
+                            TreeAction::Remove(tile_id) => {
+                                self.dashboard_tree.tiles.remove(tile_id);
+                            }
                         }
                     }
-                }
-            });
+                });
         }
         #[cfg(all(
             not(target_arch = "wasm32"),

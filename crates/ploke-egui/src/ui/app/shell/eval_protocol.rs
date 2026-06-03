@@ -1,17 +1,12 @@
 use crate::ui::eval_protocol::EvalProtocolDashboard;
 use crate::ui::eval_protocol::EvalProtocolVisualSummary;
-use crate::ui::id_display;
-use crate::ui::id_display::{CopyableExpandable, CopyableText};
 use eframe::egui;
 use ploke_records::protocol::ArtifactBody;
 use ploke_tree::Graph;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::call_review::{
-    confidence_emphasis, confidence_label, overall_verdict_emphasis, overall_verdict_label,
-    render_call_review_scan, scan_value_label,
-};
+use super::call_review::render_call_review_scan;
 use super::fields::*;
 use super::{
     EvalProtocolRenderMode, InspectorRenderCache, closure_status_label, evidence_state_label,
@@ -615,84 +610,4 @@ pub(super) fn render_selected_eval_protocol_call_review(
     };
 
     render_tool_call_review_detail(ui, render_cache, artifact_key, artifact, payload, true);
-}
-
-#[ploke_egui_macros::profile_scope(crate::allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_SPOTLIGHT)]
-pub(super) fn render_call_review_reasoning_spotlight(
-    ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
-    protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
-) {
-    let selected_artifact_key = selected_eval_protocol_call_review_key(ui);
-    ui.add_space(4.0);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().widgets.active.weak_bg_fill)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().selection.bg_fill))
-        .inner_margin(egui::Margin::same(6))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                cached_label(ui, render_cache, "LLM Reasoning Spotlight");
-                if let Some(artifact_key) = selected_artifact_key.as_deref() {
-                    cached_artifact_file_value(
-                        ui,
-                        render_cache,
-                        ("call-review-spotlight-artifact", artifact_key),
-                        artifact_key,
-                    );
-                }
-            });
-
-            let Some(artifact_key) = selected_artifact_key.as_deref() else {
-                cached_label(
-                    ui,
-                    render_cache,
-                    "Select a call row to pin its LLM reasoning here.",
-                );
-                return;
-            };
-            let Some(artifact) = protocol_artifacts.index.get(artifact_key) else {
-                cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
-                cached_kv_id(ui, render_cache, "reasoning", "not_available");
-                return;
-            };
-            let ArtifactBody::ToolCallReview(payload) = &artifact.body else {
-                cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
-                cached_kv_id(ui, render_cache, "reasoning", "not_applicable");
-                return;
-            };
-
-            let focal = &payload.input.focal;
-            ui.horizontal_wrapped(|ui| {
-                cached_label(ui, render_cache, "call");
-                let mut index_buffer = itoa::Buffer::new();
-                cached_monospace_label(ui, render_cache, index_buffer.format(focal.index));
-                cached_monospace_label(ui, render_cache, focal.tool_name.as_str());
-                scan_value_label(
-                    ui,
-                    render_cache,
-                    overall_verdict_label(payload.output.overall),
-                    overall_verdict_emphasis(payload.output.overall),
-                );
-                scan_value_label(
-                    ui,
-                    render_cache,
-                    confidence_label(payload.output.overall_confidence),
-                    confidence_emphasis(payload.output.overall_confidence),
-                );
-            });
-
-            ui.horizontal(|ui| {
-                cached_label(ui, render_cache, "synthesis");
-                let copy_value = CopyableText::new(payload.output.synthesis_rationale.as_str());
-                id_display::copy_button(ui, &copy_value);
-            });
-            let copy_value = CopyableText::new(payload.output.synthesis_rationale.as_str());
-            let response = cached_wrapped_monospace_label(
-                ui,
-                render_cache,
-                payload.output.synthesis_rationale.as_str(),
-            )
-            .on_hover_text(copy_value.hover_text(false, false));
-            id_display::attach_copy_context_menu(&response, &copy_value);
-        });
 }
