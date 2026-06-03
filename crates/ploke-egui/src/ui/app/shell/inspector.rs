@@ -111,6 +111,7 @@ impl InspectorPanelSection {
             crate::benchmark::BenchmarkInspectorSection::PatchDebug => Self::PatchDebug,
             crate::benchmark::BenchmarkInspectorSection::SourceRefs => Self::SourceRefs,
             crate::benchmark::BenchmarkInspectorSection::ArtifactIds => Self::ArtifactIds,
+            crate::benchmark::BenchmarkInspectorSection::ToolDecode => Self::RunRecords,
         }
     }
 }

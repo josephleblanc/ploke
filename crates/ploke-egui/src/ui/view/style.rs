@@ -139,4 +139,3 @@ impl Default for StatusColors {
         PaletteTokens::tokyo_night().status_colors()
     }
 }
-

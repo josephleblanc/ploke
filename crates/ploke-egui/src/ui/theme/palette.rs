@@ -308,11 +308,10 @@ impl PaletteTokens {
 }
 
 pub fn tokens_from_ui(ui: &egui::Ui) -> PaletteTokens {
-    ui.ctx()
-        .data(|data| {
-            data.get_temp::<PaletteTokens>(theme_tokens_id())
-                .unwrap_or_else(|| NamedScheme::default().tokens())
-        })
+    ui.ctx().data(|data| {
+        data.get_temp::<PaletteTokens>(theme_tokens_id())
+            .unwrap_or_else(|| NamedScheme::default().tokens())
+    })
 }
 
 #[derive(Debug, Clone, Copy)]

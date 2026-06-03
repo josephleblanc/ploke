@@ -360,7 +360,10 @@ fn turn_color(turn: &TurnRecord, tokens: PaletteTokens) -> Color32 {
     }
 }
 
-fn tool_color(tool: &ploke_records::run_record::ToolExecutionRecord, tokens: PaletteTokens) -> Color32 {
+fn tool_color(
+    tool: &ploke_records::run_record::ToolExecutionRecord,
+    tokens: PaletteTokens,
+) -> Color32 {
     match &tool.result {
         ToolResult::Failed(_) => tokens.error,
         ToolResult::Completed(_) => tokens.success,

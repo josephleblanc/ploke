@@ -31,6 +31,12 @@ pub(crate) struct InspectorRenderCache {
     text_size_summaries: Vec<TextSizeSummaryEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    benchmark_tool_decode_ns: u64,
 }
 
 impl InspectorRenderCache {
@@ -64,6 +70,15 @@ impl InspectorRenderCache {
     #[cfg(test)]
     pub(super) fn parent_create_row_rebuilds(&self) -> usize {
         self.parent_create_row_rebuilds
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        feature = "dev",
+        feature = "native-benchmark"
+    ))]
+    pub(crate) fn take_benchmark_tool_decode_ns(&mut self) -> u64 {
+        std::mem::take(&mut self.benchmark_tool_decode_ns)
     }
 
     pub(super) fn text_galley(

@@ -56,7 +56,6 @@ use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::diff::PatchDiffCache;
-use crate::ui::theme::AppTheme;
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "dev",
@@ -64,6 +63,7 @@ use crate::ui::theme::AppTheme;
 ))]
 use crate::ui::inspector::default_selections;
 use crate::ui::inspector::{GraphRevision, InspectorCache, SelectionInspector};
+use crate::ui::theme::AppTheme;
 use crate::ui::view::{ArtifactTreeFilters, GraphView, GraphViewDiagnostics, GraphViewMode};
 
 #[derive(Debug)]
