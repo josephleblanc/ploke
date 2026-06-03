@@ -1156,8 +1156,8 @@ fn render_call_review_spotlight_confidence_bar(ui: &mut egui::Ui, confidence: Co
 fn confidence_bar_active_color(ui: &egui::Ui, emphasis: ScanValueEmphasis) -> egui::Color32 {
     match emphasis {
         ScanValueEmphasis::Normal => ui.visuals().selection.bg_fill,
-        ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(),
-        ScanValueEmphasis::Error => text_style::inspector_error_text_color(),
+        ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(ui),
+        ScanValueEmphasis::Error => text_style::inspector_error_text_color(ui),
     }
 }
 

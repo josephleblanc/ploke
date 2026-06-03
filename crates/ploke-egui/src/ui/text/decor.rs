@@ -1,5 +1,6 @@
-use egui::Color32;
 use egui::RichText;
+
+use crate::ui::theme::PaletteTokens;
 use ploke_records::ids::ArtifactId;
 use ploke_records::invocation::InvocationRecord;
 use ploke_records::invocation::Role;
@@ -42,18 +43,15 @@ impl<'a> From<&'a Badge<'a>> for &'static str {
 }
 
 impl<'a> Badge<'a> {
-    pub(crate) fn bg_color(&self) -> Color32 {
+    pub(crate) fn bg_color(&self, tokens: PaletteTokens) -> egui::Color32 {
         match self {
-            Self::Parent(_) => Color32::PURPLE,
-            Self::Child(_) => Color32::BLUE,
+            Self::Parent(_) => tokens.badge_parent,
+            Self::Child(_) => tokens.badge_child,
         }
     }
 
-    pub(crate) fn text_color(&self) -> Color32 {
-        match self {
-            Self::Parent(_) => Color32::WHITE,
-            Self::Child(_) => Color32::WHITE,
-        }
+    pub(crate) fn text_color(&self, tokens: PaletteTokens) -> egui::Color32 {
+        tokens.badge_text
     }
 
     pub(crate) fn from_invocation(inv: &'a InvocationRecord) -> Option<Self> {
@@ -84,10 +82,10 @@ impl<'a> Badge<'a> {
         }
     }
 
-    pub(crate) fn to_badge_text(&'a self) -> BadgeText<'a> {
+    pub(crate) fn to_badge_text(&'a self, tokens: PaletteTokens) -> BadgeText<'a> {
         let text: &'static str = self.into();
-        let fill = self.bg_color();
-        let text_color = self.text_color();
+        let fill = self.bg_color(tokens);
+        let text_color = self.text_color(tokens);
         let rich_text = RichText::new(text)
             .background_color(fill)
             .color(text_color)

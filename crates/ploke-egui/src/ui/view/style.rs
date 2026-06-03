@@ -1,5 +1,7 @@
 use eframe::egui::Color32;
 
+use crate::ui::theme::PaletteTokens;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewStyle {
     pub layout: LayoutStyle,
@@ -134,13 +136,7 @@ pub struct StatusColors {
 
 impl Default for StatusColors {
     fn default() -> Self {
-        Self {
-            synthesized: Color32::from_rgb(118, 128, 142),
-            opened_from: Color32::from_rgb(196, 145, 58),
-            selected: Color32::from_rgb(33, 164, 106),
-            applied: Color32::from_rgb(55, 118, 184),
-            restored: Color32::from_rgb(126, 116, 95),
-            dropped: Color32::from_rgb(178, 72, 72),
-        }
+        PaletteTokens::tokyo_night().status_colors()
     }
 }
+

@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::ui::theme::tokens_from_ui;
+
 /// A simple horizontal bar chart for categorical data.
 pub(super) fn horizontal_bar_chart(ui: &mut egui::Ui, title: &str, data: &[(&str, f32)]) {
     ui.vertical(|ui| {
@@ -8,6 +10,7 @@ pub(super) fn horizontal_bar_chart(ui: &mut egui::Ui, title: &str, data: &[(&str
 
         let max_val = data.iter().map(|(_, v)| *v).fold(0.0, f32::max);
         let max_val = max_val.max(1.0);
+        let tokens = tokens_from_ui(ui);
 
         egui::Grid::new(title)
             .num_columns(3)
@@ -27,8 +30,7 @@ pub(super) fn horizontal_bar_chart(ui: &mut egui::Ui, title: &str, data: &[(&str
 
                     let mut bar_rect = rect;
                     bar_rect.set_width((rect.width() * progress).max(2.0));
-                    ui.painter()
-                        .rect_filled(bar_rect, 2.0, ui.visuals().selection.bg_fill);
+                    ui.painter().rect_filled(bar_rect, 2.0, tokens.accent);
 
                     ui.monospace(format_chart_value(*value));
                     ui.end_row();

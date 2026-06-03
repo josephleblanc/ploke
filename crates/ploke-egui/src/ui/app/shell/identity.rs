@@ -23,7 +23,7 @@ fn render_badges(
     }
     for badge in badges.badges() {
         ui.horizontal(|ui| {
-            let badge_text = badge.to_badge_text();
+            let badge_text = badge.to_badge_text(crate::ui::theme::tokens_from_ui(ui));
             let artifact_id = badge_text.artifact_id();
             badge_text.show(ui);
             cached_expandable_id(

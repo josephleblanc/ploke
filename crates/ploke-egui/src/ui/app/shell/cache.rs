@@ -406,10 +406,10 @@ fn layout_owned_cached_text(
             ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, egui::Color32::PLACEHOLDER))
         }
         CachedTextKind::MonospaceWarn => ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(text, font_id, text_style::inspector_warn_text_color())
+            fonts.layout_no_wrap(text, font_id, text_style::inspector_warn_text_color(ui))
         }),
         CachedTextKind::MonospaceError => ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(text, font_id, text_style::inspector_error_text_color())
+            fonts.layout_no_wrap(text, font_id, text_style::inspector_error_text_color(ui))
         }),
         CachedTextKind::MonospaceBlock => {
             let job = egui::text::LayoutJob::simple(

@@ -717,13 +717,10 @@ fn render_tool_execution_status_badge(
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let label = tool_execution_status_label(tool);
+    let tokens = crate::ui::theme::tokens_from_ui(ui);
     let (fill, text_color) = match &tool.result {
-        ploke_records::run_record::ToolResult::Completed(_) => {
-            (egui::Color32::from_rgb(33, 164, 106), egui::Color32::WHITE)
-        }
-        ploke_records::run_record::ToolResult::Failed(_) => {
-            (egui::Color32::from_rgb(178, 72, 72), egui::Color32::WHITE)
-        }
+        ploke_records::run_record::ToolResult::Completed(_) => (tokens.success, tokens.badge_text),
+        ploke_records::run_record::ToolResult::Failed(_) => (tokens.error, tokens.badge_text),
     };
     ui.label(
         egui::RichText::new(label)

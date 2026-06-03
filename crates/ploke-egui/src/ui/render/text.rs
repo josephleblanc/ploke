@@ -27,7 +27,7 @@ pub(crate) struct TextSizeSummaryEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CachedTextStyleKey {
-    dark_mode: bool,
+    theme_key: u8,
     pixels_per_point: u32,
 }
 
@@ -44,7 +44,7 @@ impl From<&str> for TextSizeSummaryKey {
 impl CachedTextStyleKey {
     pub(crate) fn from_ui(ui: &egui::Ui) -> Self {
         Self {
-            dark_mode: ui.visuals().dark_mode,
+            theme_key: crate::ui::theme::tokens_from_ui(ui).cache_theme_key(),
             pixels_per_point: ui.ctx().pixels_per_point().to_bits(),
         }
     }

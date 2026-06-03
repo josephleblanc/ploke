@@ -1,6 +1,7 @@
 //! Bottom run timeline: multi-track colored spans from passive run-record evidence.
 
 use crate::ui::inspector::{tool_execution_name, tool_execution_status_label, turn_outcome_label};
+use crate::ui::theme::{PaletteTokens, tokens_from_ui};
 use crate::ui::view::GraphViewDiagnostics;
 use eframe::egui::{self, Color32, Id, Rect, Sense, Stroke, Ui};
 use ploke_records::run_record::{RunRecord, ToolResult, TurnOutcome, TurnRecord};
@@ -49,7 +50,8 @@ pub(crate) fn render_bottom_timeline(
     ui.set_min_width(panel_width);
     ui.set_width(panel_width);
 
-    let model = build_timeline_model(graph);
+    let tokens = tokens_from_ui(ui);
+    let model = build_timeline_model(graph, tokens);
     ui.vertical(|ui| {
         ui.set_width(ui.available_width());
         if let Some(model) = model.as_ref() {
@@ -196,15 +198,15 @@ fn paint_track(ui: &mut Ui, rect: Rect, spans: &[TimelineSpan]) {
     }
 }
 
-fn build_timeline_model(graph: &Graph) -> Option<TimelineModel> {
+fn build_timeline_model(graph: &Graph, tokens: PaletteTokens) -> Option<TimelineModel> {
     let (record, stats) = primary_run_record(graph)?;
     let mut tracks = Vec::new();
-    let turn_track = build_turn_track(record);
+    let turn_track = build_turn_track(record, tokens);
     if turn_track.spans.is_empty() {
         return None;
     }
     tracks.push(turn_track);
-    tracks.push(build_tool_track(record));
+    tracks.push(build_tool_track(record, tokens));
     if let Some(protocol_track) = build_protocol_track(graph) {
         if !protocol_track.spans.is_empty() {
             tracks.push(protocol_track);
@@ -236,7 +238,7 @@ fn primary_run_record(graph: &Graph) -> Option<(&RunRecord, &RunRecordStats)> {
         .and_then(|(key, record)| evidence.stats.get(key).map(|stats| (record, stats)))
 }
 
-fn build_turn_track(record: &RunRecord) -> TimelineTrack {
+fn build_turn_track(record: &RunRecord, tokens: PaletteTokens) -> TimelineTrack {
     let weights = turn_weights(record);
     let total: f32 = weights.iter().sum::<f32>().max(1.0);
     let mut spans = Vec::new();
@@ -249,7 +251,7 @@ fn build_turn_track(record: &RunRecord) -> TimelineTrack {
         spans.push(TimelineSpan {
             start,
             end,
-            fill: turn_color(turn),
+            fill: turn_color(turn, tokens),
             tooltip: turn_tooltip(turn),
         });
     }
@@ -259,7 +261,7 @@ fn build_turn_track(record: &RunRecord) -> TimelineTrack {
     }
 }
 
-fn build_tool_track(record: &RunRecord) -> TimelineTrack {
+fn build_tool_track(record: &RunRecord, tokens: PaletteTokens) -> TimelineTrack {
     let weights = turn_weights(record);
     let total: f32 = weights.iter().sum::<f32>().max(1.0);
     let mut spans = Vec::new();
@@ -282,7 +284,7 @@ fn build_tool_track(record: &RunRecord) -> TimelineTrack {
             spans.push(TimelineSpan {
                 start,
                 end,
-                fill: tool_color(tool),
+                fill: tool_color(tool, tokens),
                 tooltip: format!(
                     "turn {} · {} · {} · {}ms",
                     turn.turn_number,
@@ -349,19 +351,19 @@ fn tool_weight(tool: &ploke_records::run_record::ToolExecutionRecord) -> f32 {
     tool.latency_ms.max(1) as f32
 }
 
-fn turn_color(turn: &TurnRecord) -> Color32 {
+fn turn_color(turn: &TurnRecord, tokens: PaletteTokens) -> Color32 {
     match &turn.outcome {
-        TurnOutcome::Error { .. } => Color32::from_rgb(180, 72, 72),
-        TurnOutcome::Timeout { .. } => Color32::from_rgb(150, 95, 55),
-        TurnOutcome::ToolCalls { .. } => Color32::from_rgb(70, 120, 175),
-        TurnOutcome::Content => Color32::from_rgb(85, 145, 120),
+        TurnOutcome::Error { .. } => tokens.error,
+        TurnOutcome::Timeout { .. } => tokens.warning,
+        TurnOutcome::ToolCalls { .. } => tokens.info,
+        TurnOutcome::Content => tokens.success,
     }
 }
 
-fn tool_color(tool: &ploke_records::run_record::ToolExecutionRecord) -> Color32 {
+fn tool_color(tool: &ploke_records::run_record::ToolExecutionRecord, tokens: PaletteTokens) -> Color32 {
     match &tool.result {
-        ToolResult::Failed(_) => Color32::from_rgb(190, 75, 75),
-        ToolResult::Completed(_) => Color32::from_rgb(75, 155, 105),
+        ToolResult::Failed(_) => tokens.error,
+        ToolResult::Completed(_) => tokens.success,
     }
 }
 
@@ -492,11 +494,12 @@ mod tests {
     #[test]
     fn turn_and_tool_tracks_cover_the_unit_interval() {
         let record = sample_record();
-        let turn_track = build_turn_track(&record);
+        let tokens = PaletteTokens::tokyo_night();
+        let turn_track = build_turn_track(&record, tokens);
         assert_eq!(turn_track.spans.len(), 2);
         assert!((turn_track.spans.last().expect("last").end - 1.0).abs() < 0.001);
 
-        let tool_track = build_tool_track(&record);
+        let tool_track = build_tool_track(&record, tokens);
         assert_eq!(tool_track.spans.len(), 1);
         assert!((tool_track.spans[0].end - tool_track.spans[0].start) > 0.0);
     }

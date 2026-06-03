@@ -9,6 +9,7 @@ use similar::TextDiff;
 
 use crate::allocation::scope;
 use crate::ui::inspector::PatchInspection;
+use crate::ui::theme::{DiffLineColors, tokens_from_ui};
 
 #[derive(Debug, Default)]
 pub(crate) struct PatchDiffCache {
@@ -40,11 +41,11 @@ impl PatchDiffCache {
         ui: &egui::Ui,
         input: PatchDiffInput<'_>,
     ) -> Arc<egui::Galley> {
-        let dark_mode = ui.visuals().dark_mode;
+        let theme_key = tokens_from_ui(ui).cache_theme_key();
         if let Some(entry) = self
             .entries
             .iter()
-            .find(|entry| entry.key.matches(input, dark_mode))
+            .find(|entry| entry.key.matches(input, theme_key))
         {
             let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_CACHE_HIT).entered();
             return entry.galley.clone();
@@ -70,7 +71,7 @@ impl PatchDiffCache {
         {
             let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_STORE).entered();
             self.entries.push(PatchDiffEntry {
-                key: PatchDiffKey::from_input(input, dark_mode),
+                key: PatchDiffKey::from_input(input, theme_key),
                 galley: galley.clone(),
             });
         }
@@ -106,22 +107,22 @@ struct PatchDiffKey {
     target_relpath: String,
     source_hash: String,
     proposed_hash: String,
-    dark_mode: bool,
+    theme_key: u8,
 }
 
 impl PatchDiffKey {
-    fn from_input(input: PatchDiffInput<'_>, dark_mode: bool) -> Self {
+    fn from_input(input: PatchDiffInput<'_>, theme_key: u8) -> Self {
         Self {
             patch_id: input.patch_id.to_owned(),
             target_relpath: input.target_relpath.to_owned(),
             source_hash: input.source_hash.to_owned(),
             proposed_hash: input.proposed_hash.to_owned(),
-            dark_mode,
+            theme_key,
         }
     }
 
-    fn matches(&self, input: PatchDiffInput<'_>, dark_mode: bool) -> bool {
-        self.dark_mode == dark_mode
+    fn matches(&self, input: PatchDiffInput<'_>, theme_key: u8) -> bool {
+        self.theme_key == theme_key
             && self.patch_id == input.patch_id
             && self.target_relpath == input.target_relpath
             && self.source_hash == input.source_hash
@@ -144,7 +145,8 @@ pub(crate) fn unified_rust_diff(path: &str, before: &str, after: &str) -> String
 }
 
 pub(crate) fn highlighted_diff_job(ui: &egui::Ui, diff: &str, wrap_width: f32) -> LayoutJob {
-    let theme = if ui.visuals().dark_mode {
+    let tokens = tokens_from_ui(ui);
+    let theme = if tokens.is_dark {
         CodeTheme::dark(12.0)
     } else {
         CodeTheme::light(12.0)
@@ -170,7 +172,7 @@ pub(crate) fn highlighted_diff_job(ui: &egui::Ui, diff: &str, wrap_width: f32) -
 
 fn append_diff_line(ui: &egui::Ui, theme: &CodeTheme, job: &mut LayoutJob, line: &str) {
     let line = line.strip_suffix('\n').unwrap_or(line);
-    if let Some((marker, payload, background)) = rust_payload(line) {
+    if let Some((marker, payload, background)) = rust_payload(line, ui) {
         append_plain(job, marker, background, marker_color(marker, ui));
         append_rust_payload(ui, theme, job, payload, background);
         append_plain(
@@ -192,30 +194,18 @@ fn append_diff_line(ui: &egui::Ui, theme: &CodeTheme, job: &mut LayoutJob, line:
     );
 }
 
-fn rust_payload(line: &str) -> Option<(&'static str, &str, egui::Color32)> {
+fn rust_payload<'a>(line: &'a str, ui: &egui::Ui) -> Option<(&'a str, &'a str, egui::Color32)> {
+    let tokens = tokens_from_ui(ui);
     if line.starts_with("+++") || line.starts_with("---") {
         return None;
     }
     if let Some(payload) = line.strip_prefix('+') {
-        Some((
-            "+",
-            payload,
-            egui::Color32::from_rgba_unmultiplied(32, 120, 64, 38),
-        ))
+        Some(("+", payload, tokens.diff_add_bg()))
     } else if let Some(payload) = line.strip_prefix('-') {
-        Some((
-            "-",
-            payload,
-            egui::Color32::from_rgba_unmultiplied(150, 48, 48, 42),
-        ))
+        Some(("-", payload, tokens.diff_remove_bg()))
     } else {
-        line.strip_prefix(' ').map(|payload| {
-            (
-                " ",
-                payload,
-                egui::Color32::from_rgba_unmultiplied(128, 128, 128, 10),
-            )
-        })
+        line.strip_prefix(' ')
+            .map(|payload| (" ", payload, tokens.diff_context_bg()))
     }
 }
 
@@ -247,29 +237,22 @@ fn append_plain(job: &mut LayoutJob, text: &str, background: egui::Color32, colo
 }
 
 fn marker_color(marker: &str, ui: &egui::Ui) -> egui::Color32 {
+    let colors = DiffLineColors::from(tokens_from_ui(ui));
     match marker {
-        "+" => egui::Color32::from_rgb(64, 190, 110),
-        "-" => egui::Color32::from_rgb(230, 92, 92),
+        "+" => colors.add,
+        "-" => colors.remove,
         _ => ui.visuals().weak_text_color(),
     }
 }
 
 fn diff_line_style(line: &str, ui: &egui::Ui) -> (egui::Color32, egui::Color32) {
+    let tokens = tokens_from_ui(ui);
     if line.starts_with("@@") {
-        (
-            egui::Color32::from_rgb(108, 151, 255),
-            egui::Color32::from_rgba_unmultiplied(72, 96, 180, 38),
-        )
+        (tokens.diff_hunk, tokens.diff_hunk_bg())
     } else if line.starts_with("diff --git") || line.starts_with("index ") {
-        (
-            ui.visuals().weak_text_color(),
-            egui::Color32::from_rgba_unmultiplied(128, 128, 128, 18),
-        )
+        (ui.visuals().weak_text_color(), tokens.diff_meta_bg())
     } else if line.starts_with("+++") || line.starts_with("---") {
-        (
-            egui::Color32::from_rgb(120, 170, 220),
-            egui::Color32::from_rgba_unmultiplied(60, 100, 140, 24),
-        )
+        (tokens.diff_meta, tokens.diff_header_bg())
     } else {
         (ui.visuals().text_color(), egui::Color32::TRANSPARENT)
     }
@@ -321,7 +304,10 @@ mod tests {
             );
             assert_eq!(cache.rebuilds(), 2);
 
-            ui.visuals_mut().dark_mode = !ui.visuals().dark_mode;
+            let other = crate::ui::theme::PaletteTokens::for_scheme(
+                crate::ui::theme::NamedScheme::GruvboxLight,
+            );
+            other.install_on_context(ui.ctx());
             cache.highlighted_galley(ui, first);
             assert_eq!(cache.rebuilds(), 3);
         });

@@ -1,5 +1,7 @@
 //! Shared egui text and compact table styling.
 
+use crate::ui::theme::tokens_from_ui;
+
 pub(crate) fn body_font_id(style: &egui::Style) -> egui::FontId {
     egui::TextStyle::Body.resolve(style)
 }
@@ -38,10 +40,10 @@ pub(crate) fn inspector_table_selected_row_rail(ui: &egui::Ui) -> egui::Color32 
     ui.visuals().selection.bg_fill
 }
 
-pub(crate) fn inspector_warn_text_color() -> egui::Color32 {
-    egui::Color32::from_rgb(196, 145, 58)
+pub(crate) fn inspector_warn_text_color(ui: &egui::Ui) -> egui::Color32 {
+    tokens_from_ui(ui).warning
 }
 
-pub(crate) fn inspector_error_text_color() -> egui::Color32 {
-    egui::Color32::from_rgb(178, 72, 72)
+pub(crate) fn inspector_error_text_color(ui: &egui::Ui) -> egui::Color32 {
+    tokens_from_ui(ui).error
 }
