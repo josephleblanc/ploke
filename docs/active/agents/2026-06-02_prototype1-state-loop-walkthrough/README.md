@@ -22,6 +22,7 @@ The command is not just a CLI wrapper. It is the typed runtime for one **parent 
 - `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
 - Companion docs:
   - [`campaign-configs.md`](campaign-configs.md): expanded campaign/run-profile config audit, model/provider/route precedence, and config footguns.
+  - [`model-api-brief.md`](model-api-brief.md): short source trace of `prototype1-state` live API call boundaries, runtime model provenance, and current local model config values.
   - [`turn-live-replay.md`](turn-live-replay.md): focused guide to the broad headless-TUI turn-live replay bundle, live observer emissions, replay command, branch tapes, and model routing.
   - [`terminology-conflicts.md`](terminology-conflicts.md): terminology conflicts and proposed conventions.
 
