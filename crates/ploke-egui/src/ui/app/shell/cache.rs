@@ -385,6 +385,10 @@ fn cached_wrap_width_points(width: f32) -> u32 {
     }
 }
 
+fn inspector_cached_text_color(ui: &egui::Ui) -> egui::Color32 {
+    crate::ui::theme::tokens_from_ui(ui).text
+}
+
 fn layout_owned_wrapped_monospace_text(
     ui: &egui::Ui,
     text: String,
@@ -394,7 +398,7 @@ fn layout_owned_wrapped_monospace_text(
     let job = egui::text::LayoutJob::simple(
         text,
         font_id,
-        egui::Color32::PLACEHOLDER,
+        inspector_cached_text_color(ui),
         wrap_width_points as f32,
     );
     ui.fonts_mut(|fonts| fonts.layout_job(job))
@@ -415,10 +419,11 @@ fn layout_owned_cached_text(
         | CachedTextKind::MonospaceWrapped
         | CachedTextKind::MonospaceHover => text_style::monospace_font_id(style),
     };
+    let text_color = inspector_cached_text_color(ui);
     let _span = tracing::trace_span!(scope::EGUI_TEXT_FONT_LAYOUT).entered();
     match kind {
         CachedTextKind::Plain | CachedTextKind::Monospace => {
-            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, egui::Color32::PLACEHOLDER))
+            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, text_color))
         }
         CachedTextKind::MonospaceWarn => ui.fonts_mut(|fonts| {
             fonts.layout_no_wrap(text, font_id, text_style::inspector_warn_text_color(ui))
@@ -427,12 +432,7 @@ fn layout_owned_cached_text(
             fonts.layout_no_wrap(text, font_id, text_style::inspector_error_text_color(ui))
         }),
         CachedTextKind::MonospaceBlock => {
-            let job = egui::text::LayoutJob::simple(
-                text,
-                font_id,
-                egui::Color32::PLACEHOLDER,
-                f32::INFINITY,
-            );
+            let job = egui::text::LayoutJob::simple(text, font_id, text_color, f32::INFINITY);
             ui.fonts_mut(|fonts| fonts.layout_job(job))
         }
         CachedTextKind::MonospaceWrapped => {
@@ -442,7 +442,7 @@ fn layout_owned_cached_text(
             let job = egui::text::LayoutJob::simple(
                 text,
                 font_id,
-                egui::Color32::PLACEHOLDER,
+                text_color,
                 INSPECTOR_HOVER_WRAP_WIDTH,
             );
             ui.fonts_mut(|fonts| fonts.layout_job(job))

@@ -1,21 +1,13 @@
 use eframe::egui;
 use std::sync::Arc;
 
-/// Paint a cached inspector galley with explicit theme text color (see edge labels).
+/// Paint a theme-keyed inspector galley through the standard label widget path.
 pub(crate) fn add_cached_theme_galley(
     ui: &mut egui::Ui,
     galley: Arc<egui::Galley>,
     sense: egui::Sense,
 ) -> egui::Response {
-    let text_color = ui.visuals().text_color();
-    let (galley_pos, galley, response) = egui::Label::new(galley).sense(sense).layout_in_ui(ui);
-    if ui.is_rect_visible(response.rect) {
-        ui.painter().add(
-            egui::epaint::TextShape::new(galley_pos, galley, text_color)
-                .with_override_text_color(text_color),
-        );
-    }
-    response
+    ui.add(egui::Label::new(galley).sense(sense))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

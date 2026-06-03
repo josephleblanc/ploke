@@ -209,6 +209,7 @@ impl OperatorApp {
         self.theme.scheme = scheme;
         self.theme.apply_to_context(ctx);
         self.sync_view_style_from_theme();
+        self.invalidate_theme_caches(ctx);
         true
     }
 

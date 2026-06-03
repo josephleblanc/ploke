@@ -50,7 +50,7 @@ fn inspector_text_galley_cache_invalidates_on_theme_layout_key_change() {
                 .first()
                 .map(|section| section.format.color)
                 .expect("galley section");
-            assert_eq!(color, egui::Color32::PLACEHOLDER);
+            assert_eq!(color, scheme.tokens().text, "galley color for {scheme:?}");
         }
         assert_eq!(cache.text_galley_rebuilds(), 4);
     });
@@ -88,7 +88,7 @@ fn edge_label_palette_text_tracks_active_theme() {
 }
 
 #[test]
-fn inspector_text_galley_uses_placeholder_for_theme_fallback() {
+fn inspector_text_galley_uses_active_theme_text_color() {
     let mut cache = InspectorRenderCache::default();
 
     egui::__run_test_ui(|ui| {
@@ -104,6 +104,7 @@ fn inspector_text_galley_uses_placeholder_for_theme_fallback() {
             .first()
             .map(|section| section.format.color)
             .expect("galley section");
+        assert_eq!(dark_color, NamedScheme::TokyoNight.tokens().text);
 
         AppTheme {
             scheme: NamedScheme::GruvboxLight,
@@ -117,17 +118,8 @@ fn inspector_text_galley_uses_placeholder_for_theme_fallback() {
             .first()
             .map(|section| section.format.color)
             .expect("galley section");
-
-        assert_eq!(dark_color, egui::Color32::PLACEHOLDER);
-        assert_eq!(light_color, egui::Color32::PLACEHOLDER);
-        assert_ne!(
-            ui.visuals().text_color(),
-            AppTheme {
-                scheme: NamedScheme::TokyoNight,
-            }
-            .tokens()
-            .text
-        );
+        assert_eq!(light_color, NamedScheme::GruvboxLight.tokens().text);
+        assert_ne!(dark_color, light_color);
     });
 }
 
@@ -213,18 +205,53 @@ fn text_size_summary_cache_reuses_stable_size_labels() {
 
 #[test]
 fn run_llm_trace_header_labels_use_theme_override_paint() {
-    use super::fields::cached_kv_usize;
+    use super::fields::{cached_label, cached_monospace_label};
 
     let mut cache = InspectorRenderCache::default();
+    let mut responses: Vec<egui::Rect> = Vec::new();
 
     egui::__run_test_ui(|ui| {
         AppTheme {
             scheme: NamedScheme::TokyoNight,
         }
         .apply_to_context(ui.ctx());
-        cached_kv_usize(ui, &mut cache, "records", 19);
+
+        let mut push = |response: egui::Response| {
+            if response.rect.width() > 1.0 && response.rect.height() > 1.0 {
+                responses.push(response.rect);
+            }
+        };
+
+        ui.horizontal(|ui| {
+            push(cached_label(ui, &mut cache, "records"));
+            push(cached_monospace_label(ui, &mut cache, "19"));
+        });
+        ui.horizontal(|ui| {
+            push(cached_label(ui, &mut cache, "turns"));
+            push(cached_monospace_label(ui, &mut cache, "4"));
+        });
+
+        ui.horizontal(|ui| {
+            push(cached_label(ui, &mut cache, "manifest"));
+            push(cached_monospace_label(ui, &mut cache, "manifest:bench:alpha"));
+        });
+        ui.horizontal(|ui| {
+            push(cached_label(ui, &mut cache, "turn"));
+            push(cached_monospace_label(ui, &mut cache, "1"));
+        });
+
         assert!(cache.text_galley_rebuilds() > 0);
         assert!(cache.id_galley_rebuilds() == 0);
+
+        for (left_index, left) in responses.iter().enumerate() {
+            for right in responses.iter().skip(left_index + 1) {
+                let overlap = left.intersect(*right);
+                assert!(
+                    overlap.width() < 2.0 || overlap.height() < 2.0,
+                    "run llm trace header widgets overlap: left={left:?} right={right:?} overlap={overlap:?}"
+                );
+            }
+        }
     });
 }
 

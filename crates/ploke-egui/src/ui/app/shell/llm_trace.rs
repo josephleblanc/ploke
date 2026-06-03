@@ -10,6 +10,16 @@ use super::{
     turn_outcome_tool_count,
 };
 
+fn fresh_kv_grid_row(ui: &mut egui::Ui, key: &str, value: &str, monospace_value: bool) {
+    ui.label(key);
+    if monospace_value {
+        ui.monospace(value);
+    } else {
+        ui.label(value);
+    }
+    ui.end_row();
+}
+
 pub(crate) fn render_run_level_llm_trace_for_graph(
     ui: &mut egui::Ui,
     graph: &Graph,
@@ -29,13 +39,19 @@ pub(crate) fn render_run_level_llm_trace_for_graph(
         ui,
         egui::CollapsingHeader::new("Run LLM Trace").default_open(true),
         |ui| {
-            cached_kv_usize(ui, render_cache, "records", run_records.index.len());
-            cached_kv_optional_usize(
-                ui,
-                render_cache,
-                "turns",
-                dashboard.run_records_total_turn_count(),
-            );
+            let mut records = itoa::Buffer::new();
+            let mut turn_count = itoa::Buffer::new();
+            egui::Grid::new("run-llm-trace-summary")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    fresh_kv_grid_row(ui, "records", records.format(run_records.index.len()), true);
+                    if let Some(turns) = dashboard.run_records_total_turn_count() {
+                        fresh_kv_grid_row(ui, "turns", turn_count.format(turns), true);
+                    } else {
+                        fresh_kv_grid_row(ui, "turns", "not_recorded", true);
+                    }
+                });
             if run_records.index.len() == 1 {
                 let (record_key, record) = run_records.index.iter().next().expect("len checked");
                 render_run_record_llm_trace_metadata_chips(ui, render_cache, record_key, record);
@@ -68,30 +84,39 @@ fn render_run_record_llm_trace_metadata_chips(
     record_key: &str,
     record: &ploke_records::run_record::RunRecord,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        cached_label(ui, render_cache, "record");
-        cached_path_value(
-            ui,
-            render_cache,
-            ("agent-trace-record", record_key),
-            record_key,
-        );
-        fresh_label(ui, "manifest");
-        fresh_monospace_label(ui, record.manifest_id.as_str());
-        fresh_label(ui, "instance");
-        fresh_monospace_label(ui, record.metadata.benchmark.instance_id.as_str());
-        if let Some(model) = record.metadata.agent.model_id.as_deref() {
-            fresh_label(ui, "model");
-            fresh_monospace_label(ui, model);
-        }
-        if let Some(provider) = record.metadata.agent.provider.as_deref() {
-            fresh_label(ui, "provider");
-            fresh_monospace_label(ui, provider);
-        }
-        let mut turns = itoa::Buffer::new();
-        fresh_label(ui, "turns");
-        fresh_monospace_label(ui, turns.format(record.phases.agent_turns.len()));
-    });
+    egui::Grid::new(("run-llm-trace-metadata", record_key))
+        .num_columns(2)
+        .spacing([10.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("record");
+            cached_path_value(
+                ui,
+                render_cache,
+                ("agent-trace-record", record_key),
+                record_key,
+            );
+            ui.end_row();
+            fresh_kv_grid_row(ui, "manifest", record.manifest_id.as_str(), true);
+            fresh_kv_grid_row(
+                ui,
+                "instance",
+                record.metadata.benchmark.instance_id.as_str(),
+                true,
+            );
+            if let Some(model) = record.metadata.agent.model_id.as_deref() {
+                fresh_kv_grid_row(ui, "model", model, true);
+            }
+            if let Some(provider) = record.metadata.agent.provider.as_deref() {
+                fresh_kv_grid_row(ui, "provider", provider, true);
+            }
+            let mut turns = itoa::Buffer::new();
+            fresh_kv_grid_row(
+                ui,
+                "turns",
+                turns.format(record.phases.agent_turns.len()),
+                true,
+            );
+        });
 }
 
 fn render_run_record_llm_trace_turns(
@@ -123,10 +148,13 @@ fn render_run_record_llm_trace_for_record(
     record_key: &str,
     record: &ploke_records::run_record::RunRecord,
 ) {
-    let title = format!(
-        "{} {}",
-        record.metadata.benchmark.instance_id, record.manifest_id
-    );
+    let instance_id = record.metadata.benchmark.instance_id.as_str();
+    let manifest_id = record.manifest_id.as_str();
+    let title = if instance_id == manifest_id {
+        manifest_id.to_owned()
+    } else {
+        format!("{instance_id} {manifest_id}")
+    };
     show_inspector_collapsing(
         ui,
         egui::CollapsingHeader::new(title)
@@ -190,21 +218,20 @@ fn render_run_record_turn_llm_trace_summary(
     _render_cache: &mut InspectorRenderCache,
     turn: &ploke_records::run_record::TurnRecord,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        let mut turn_number = itoa::Buffer::new();
-        fresh_label(ui, "turn");
-        fresh_monospace_label(ui, turn_number.format(turn.turn_number));
-        fresh_label(ui, "outcome");
-        fresh_monospace_label(ui, turn_outcome_label(&turn.outcome));
-        let mut tool_steps = itoa::Buffer::new();
-        fresh_label(ui, "tool steps");
-        fresh_monospace_label(ui, tool_steps.format(turn.tool_calls.len()));
-        if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
-            let mut outcome_tools = itoa::Buffer::new();
-            fresh_label(ui, "outcome tools");
-            fresh_monospace_label(ui, outcome_tools.format(count));
-        }
-    });
+    let mut turn_number = itoa::Buffer::new();
+    let mut tool_steps = itoa::Buffer::new();
+    let mut outcome_tools = itoa::Buffer::new();
+    egui::Grid::new(("run-llm-trace-turn-summary", turn.turn_number))
+        .num_columns(2)
+        .spacing([10.0, 4.0])
+        .show(ui, |ui| {
+            fresh_kv_grid_row(ui, "turn", turn_number.format(turn.turn_number), true);
+            fresh_kv_grid_row(ui, "outcome", turn_outcome_label(&turn.outcome), true);
+            fresh_kv_grid_row(ui, "tool steps", tool_steps.format(turn.tool_calls.len()), true);
+            if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
+                fresh_kv_grid_row(ui, "outcome tools", outcome_tools.format(count), true);
+            }
+        });
 }
 
 fn render_run_record_turn_llm_trace_timing(
