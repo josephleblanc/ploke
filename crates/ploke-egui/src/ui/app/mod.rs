@@ -56,6 +56,7 @@ use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::diff::PatchDiffCache;
+use crate::ui::theme::AppTheme;
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "dev",
@@ -120,6 +121,7 @@ pub struct OperatorApp {
     benchmark_graph_catalog_visible: bool,
     graph_catalog: GraphCatalog,
     benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode,
+    theme: AppTheme,
 }
 
 impl OperatorApp {
@@ -179,7 +181,23 @@ impl OperatorApp {
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
             benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
+            theme: AppTheme::default(),
         }
+    }
+
+    pub fn apply_theme_to_context(&self, ctx: &egui::Context) {
+        self.theme.apply_to_context(ctx);
+    }
+
+    fn sync_view_style_from_theme(&mut self) {
+        let colors = self.theme.tokens().status_colors();
+        self.view.view_style_mut().edge.colors = colors;
+    }
+
+    fn invalidate_theme_caches(&mut self) {
+        self.patch_diff_cache = PatchDiffCache::default();
+        self.inspector_render_cache = shell::InspectorRenderCache::default();
+        self.view.invalidate_projection_cache();
     }
 
     pub fn graph_catalog_mut(&mut self) -> &mut GraphCatalog {
@@ -234,6 +252,7 @@ impl OperatorApp {
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
             benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
+            theme: AppTheme::default(),
         }
     }
 
@@ -281,10 +300,14 @@ impl OperatorApp {
         if let Some(tree) = eframe::get_value(storage, "ploke-egui-dashboard") {
             self.dashboard_tree = tree;
         }
+        if let Some(theme) = eframe::get_value(storage, "ploke-egui-theme") {
+            self.theme = theme;
+        }
         if crate::ui::dashboard::tiles::prefers_eval_protocol_pane(&self.graph) {
             self.dashboard_tree =
                 crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
         }
+        self.sync_view_style_from_theme();
     }
 
     fn current_run_name(&self) -> Option<&str> {
@@ -393,6 +416,7 @@ impl OperatorApp {
 impl eframe::App for OperatorApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "ploke-egui-dashboard", &self.dashboard_tree);
+        eframe::set_value(storage, "ploke-egui-theme", &self.theme);
     }
 
     #[cfg_attr(
@@ -425,19 +449,28 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         let top_strip_start = Instant::now();
+        let top_strip_mode = self.view.mode();
+        let top_strip_run = self.current_run_name().map(str::to_owned);
+        let mut theme_changed = false;
         {
             let _span = tracing::trace_span!(scope::EGUI_PANEL_TOP_STRIP_LAYOUT).entered();
+            let theme = &mut self.theme;
             egui::Panel::top("top_strip")
                 .default_size(layout::TOP_STRIP_HEIGHT)
                 .show_inside(ui, |ui| {
                     profiling::scope!("ploke-egui.frame.top-strip");
-                    shell::render_top_strip(
+                    theme_changed = shell::render_top_strip(
                         ui,
-                        self.view.mode(),
-                        self.current_run_name(),
+                        theme,
+                        top_strip_mode,
+                        top_strip_run.as_deref(),
                         top_graph_has_content,
                     );
                 });
+        }
+        if theme_changed {
+            self.sync_view_style_from_theme();
+            self.invalidate_theme_caches();
         }
         #[cfg(all(
             not(target_arch = "wasm32"),

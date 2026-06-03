@@ -159,6 +159,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     if let Some(storage) = cc.storage {
                         app.load(storage);
                     }
+                    app.apply_theme_to_context(&cc.egui_ctx);
                     Ok(Box::new(app))
                 }),
             )
@@ -244,6 +245,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             if let Some(storage) = cc.storage {
                 app.load(storage);
             }
+            app.apply_theme_to_context(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )?;

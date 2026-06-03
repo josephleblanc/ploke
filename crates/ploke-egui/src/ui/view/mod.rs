@@ -79,6 +79,16 @@ impl GraphView {
         self
     }
 
+    pub(crate) fn view_style_mut(&mut self) -> &mut ViewStyle {
+        &mut self.view_style
+    }
+
+    pub(crate) fn invalidate_projection_cache(&mut self) {
+        self.cache = GraphViewCache::default();
+        self.layout_state_pending = true;
+        self.fit_next_frame = true;
+    }
+
     pub fn diagnostics(&self) -> Option<GraphViewDiagnostics> {
         self.diagnostics.clone()
     }

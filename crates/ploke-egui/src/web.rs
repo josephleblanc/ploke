@@ -30,9 +30,13 @@ impl WebHandle {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|_cc| {
+                Box::new(|cc| {
                     let mut app = OperatorApp::new(sample_graph());
                     app.graph_catalog_mut().enqueue_startup_graph_load();
+                    if let Some(storage) = cc.storage {
+                        app.load(storage);
+                    }
+                    app.apply_theme_to_context(&cc.egui_ctx);
                     Ok(Box::new(app))
                 }),
             )

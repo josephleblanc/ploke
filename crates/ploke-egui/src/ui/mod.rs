@@ -6,6 +6,7 @@
 
 pub mod app;
 pub(crate) mod charts;
+pub(crate) mod theme;
 pub mod dashboard;
 pub(crate) mod diff;
 pub(crate) mod eval_protocol;

@@ -1,4 +1,5 @@
 use crate::ui::id_display::{self, CopyableExpandable, CopyableRunName};
+use crate::ui::theme::AppTheme;
 use crate::ui::view::GraphViewMode;
 use eframe::egui;
 
@@ -10,12 +11,18 @@ const INSPECTOR_SCROLL_END_FALLBACK_PADDING: f32 = 240.0;
 )]
 pub(crate) fn render_top_strip(
     ui: &mut egui::Ui,
+    theme: &mut AppTheme,
     mode: GraphViewMode,
     run_name: Option<&str>,
     graph_has_content: bool,
-) {
+) -> bool {
+    let mut theme_changed = false;
     ui.horizontal(|ui| {
         ui.label("ploke-egui");
+        ui.separator();
+        if theme.selector_ui(ui) {
+            theme_changed = true;
+        }
         ui.separator();
         ui.label(format!("Mode: {}", mode.as_str()));
         if let Some(run_name) = run_name {
@@ -33,6 +40,7 @@ pub(crate) fn render_top_strip(
             ui.label("No run loaded");
         }
     });
+    theme_changed
 }
 
 pub(crate) fn add_inspector_scroll_end_padding(ui: &mut egui::Ui, viewport_height: f32) {
