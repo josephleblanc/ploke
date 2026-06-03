@@ -141,4 +141,7 @@ docs/agents/active/prototype1-state-execution-path.excalidraw
 
 # local egui screenshots and editor backups
 crates/ploke-egui/ploke-egui-*.png
+crates/ploke-egui/*.png
 crates/ploke-egui/src/**/*.bak*
+*.bak.final
+docs/active/agents/**/captures/*.png

@@ -521,12 +521,28 @@ pub fn graph_fetch_rejection_message(query_value: &str) -> Option<String> {
 #[cfg(target_arch = "wasm32")]
 use wasm::WasmGraphLoad;
 
+/// Parse `?theme=<id>` from a `location.search` string (leading `?` optional).
+pub fn theme_query_id_from_search(search: &str) -> Option<String> {
+    query_param_from_search(search, "theme")
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn startup_theme_id_from_location() -> Option<String> {
+    let window = web_sys::window()?;
+    let search = window.location().search().ok()?;
+    theme_query_id_from_search(&search)
+}
+
 /// Parse `?graph=<url>` from a `location.search` string (leading `?` optional).
 pub fn graph_query_url_from_search(search: &str) -> Option<String> {
+    query_param_from_search(search, "graph")
+}
+
+fn query_param_from_search(search: &str, key: &str) -> Option<String> {
     let trimmed = search.trim().trim_start_matches('?');
     for pair in trimmed.split('&') {
-        let (key, value) = pair.split_once('=')?;
-        if key == "graph" {
+        let (param, value) = pair.split_once('=')?;
+        if param == key {
             let decoded = decode_query_component(value);
             return (!decoded.is_empty()).then_some(decoded);
         }
@@ -620,6 +636,19 @@ mod tests {
             Some("fixture.json".to_owned())
         );
         assert_eq!(graph_query_url_from_search("?other=1"), None);
+    }
+
+    #[test]
+    fn theme_query_id_from_search_decodes_theme_param() {
+        assert_eq!(
+            theme_query_id_from_search("?theme=gruvbox_light"),
+            Some("gruvbox_light".to_owned())
+        );
+        assert_eq!(
+            theme_query_id_from_search("?graph=x&theme=tokyo_night"),
+            Some("tokyo_night".to_owned())
+        );
+        assert_eq!(theme_query_id_from_search("?graph=x"), None);
     }
 
     #[test]

@@ -76,29 +76,21 @@ fn render_run_record_llm_trace_metadata_chips(
             ("agent-trace-record", record_key),
             record_key,
         );
-        cached_label(ui, render_cache, "manifest");
-        cached_monospace_label(ui, render_cache, record.manifest_id.as_str());
-        cached_label(ui, render_cache, "instance");
-        cached_monospace_label(
-            ui,
-            render_cache,
-            record.metadata.benchmark.instance_id.as_str(),
-        );
+        fresh_label(ui, "manifest");
+        fresh_monospace_label(ui, record.manifest_id.as_str());
+        fresh_label(ui, "instance");
+        fresh_monospace_label(ui, record.metadata.benchmark.instance_id.as_str());
         if let Some(model) = record.metadata.agent.model_id.as_deref() {
-            cached_label(ui, render_cache, "model");
-            cached_monospace_label(ui, render_cache, model);
+            fresh_label(ui, "model");
+            fresh_monospace_label(ui, model);
         }
         if let Some(provider) = record.metadata.agent.provider.as_deref() {
-            cached_label(ui, render_cache, "provider");
-            cached_monospace_label(ui, render_cache, provider);
+            fresh_label(ui, "provider");
+            fresh_monospace_label(ui, provider);
         }
         let mut turns = itoa::Buffer::new();
-        cached_label(ui, render_cache, "turns");
-        cached_monospace_label(
-            ui,
-            render_cache,
-            turns.format(record.phases.agent_turns.len()),
-        );
+        fresh_label(ui, "turns");
+        fresh_monospace_label(ui, turns.format(record.phases.agent_turns.len()));
     });
 }
 
@@ -195,22 +187,22 @@ pub(crate) fn render_run_record_turn_llm_trace(
 
 fn render_run_record_turn_llm_trace_summary(
     ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
+    _render_cache: &mut InspectorRenderCache,
     turn: &ploke_records::run_record::TurnRecord,
 ) {
     ui.horizontal_wrapped(|ui| {
         let mut turn_number = itoa::Buffer::new();
-        cached_label(ui, render_cache, "turn");
-        cached_monospace_label(ui, render_cache, turn_number.format(turn.turn_number));
-        cached_label(ui, render_cache, "outcome");
-        cached_monospace_label(ui, render_cache, turn_outcome_label(&turn.outcome));
+        fresh_label(ui, "turn");
+        fresh_monospace_label(ui, turn_number.format(turn.turn_number));
+        fresh_label(ui, "outcome");
+        fresh_monospace_label(ui, turn_outcome_label(&turn.outcome));
         let mut tool_steps = itoa::Buffer::new();
-        cached_label(ui, render_cache, "tool steps");
-        cached_monospace_label(ui, render_cache, tool_steps.format(turn.tool_calls.len()));
+        fresh_label(ui, "tool steps");
+        fresh_monospace_label(ui, tool_steps.format(turn.tool_calls.len()));
         if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
             let mut outcome_tools = itoa::Buffer::new();
-            cached_label(ui, render_cache, "outcome tools");
-            cached_monospace_label(ui, render_cache, outcome_tools.format(count));
+            fresh_label(ui, "outcome tools");
+            fresh_monospace_label(ui, outcome_tools.format(count));
         }
     });
 }

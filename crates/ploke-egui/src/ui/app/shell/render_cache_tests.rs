@@ -32,6 +32,62 @@ fn parent_create_render_rows_reuse_allocated_text_for_stable_key() {
 }
 
 #[test]
+fn inspector_text_galley_cache_invalidates_on_theme_layout_key_change() {
+    let mut cache = InspectorRenderCache::default();
+
+    egui::__run_test_ui(|ui| {
+        for scheme in [
+            NamedScheme::TokyoNight,
+            NamedScheme::GruvboxLight,
+            NamedScheme::Dracula,
+            NamedScheme::OneDark,
+        ] {
+            AppTheme { scheme }.apply_to_context(ui.ctx());
+            let galley = cache.text_galley(ui, "turn", CachedTextKind::Monospace);
+            let color = galley
+                .job
+                .sections
+                .first()
+                .map(|section| section.format.color)
+                .expect("galley section");
+            assert_eq!(color, egui::Color32::PLACEHOLDER);
+        }
+        assert_eq!(cache.text_galley_rebuilds(), 4);
+    });
+}
+
+#[test]
+fn inspector_theme_layout_key_tracks_active_palette() {
+    use super::fields::inspector_theme_layout_key;
+
+    egui::__run_test_ui(|ui| {
+        AppTheme {
+            scheme: NamedScheme::TokyoNight,
+        }
+        .apply_to_context(ui.ctx());
+        let dark_key = inspector_theme_layout_key(ui);
+
+        AppTheme {
+            scheme: NamedScheme::GruvboxLight,
+        }
+        .apply_to_context(ui.ctx());
+        let light_key = inspector_theme_layout_key(ui);
+
+        assert_ne!(dark_key, light_key);
+    });
+}
+
+#[test]
+fn edge_label_palette_text_tracks_active_theme() {
+    use crate::ui::theme::PaletteTokens;
+
+    let dark = PaletteTokens::for_scheme(NamedScheme::TokyoNight);
+    let light = PaletteTokens::for_scheme(NamedScheme::GruvboxLight);
+    assert_ne!(dark.edge_label_text(), light.edge_label_text());
+    assert_ne!(dark.edge_label_background(), light.edge_label_background());
+}
+
+#[test]
 fn inspector_text_galley_uses_placeholder_for_theme_fallback() {
     let mut cache = InspectorRenderCache::default();
 

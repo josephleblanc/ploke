@@ -518,7 +518,12 @@ fn render_run_record_tool_step(
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let call_id = tool.request.call_id.as_str();
-    let header_id = ui.make_persistent_id(("run-record-tool-step", index, call_id));
+    let header_id = ui.make_persistent_id((
+        "run-record-tool-step",
+        inspector_theme_layout_key(ui),
+        index,
+        call_id,
+    ));
     egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
         .show_header(ui, |ui| {
             render_run_record_tool_step_header(ui, render_cache, index, tool);
@@ -530,14 +535,14 @@ fn render_run_record_tool_step(
 
 fn render_run_record_tool_step_header(
     ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
+    _render_cache: &mut InspectorRenderCache,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     ui.horizontal(|ui| {
         let mut step = itoa::Buffer::new();
-        cached_monospace_label(ui, render_cache, step.format(index + 1));
-        cached_monospace_label(ui, render_cache, tool_execution_name(tool));
+        fresh_monospace_label(ui, step.format(index + 1));
+        fresh_monospace_label(ui, tool_execution_name(tool));
         render_tool_execution_status_badge(ui, tool);
     });
 }

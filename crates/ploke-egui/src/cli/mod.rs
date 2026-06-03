@@ -24,6 +24,7 @@ pub struct Run {
     pub contract_report: bool,
     pub run_picker_report: bool,
     pub artifact_connectivity_report: bool,
+    pub theme: Option<String>,
     #[cfg(feature = "dev")]
     pub perf_log: bool,
     #[cfg(feature = "dev")]
@@ -74,6 +75,7 @@ impl Run {
                 contract_report: args.contract_report,
                 run_picker_report: args.run_picker_report,
                 artifact_connectivity_report: args.artifact_connectivity_report,
+                theme: args.theme,
                 perf_log: args.perf_log,
                 puffin_capture_frames: args.puffin_capture_frames,
                 puffin_capture_close: args.puffin_capture_close,
@@ -99,6 +101,7 @@ impl Run {
                 contract_report: false,
                 run_picker_report: false,
                 artifact_connectivity_report: false,
+                theme: None,
             }
         }
     }
@@ -134,6 +137,13 @@ struct Args {
 
     #[arg(long, help = "Print artifact-tree connectivity for discovered runs")]
     artifact_connectivity_report: bool,
+
+    #[arg(
+        long,
+        value_name = "ID",
+        help = "Initial palette id (snake_case): tokyo_night, gruvbox_light, dracula, one_dark, gruvbox_dark, one_light"
+    )]
+    theme: Option<String>,
 
     #[arg(long, help = "Write the rolling import/projection profiling log")]
     perf_log: bool,

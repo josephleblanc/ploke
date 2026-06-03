@@ -36,7 +36,11 @@ impl WebHandle {
                     if let Some(storage) = cc.storage {
                         app.load(storage);
                     }
-                    app.apply_theme_to_context(&cc.egui_ctx);
+                    if let Some(theme_id) = crate::bootstrap::startup_theme_id_from_location() {
+                        app.apply_startup_theme_id(&cc.egui_ctx, &theme_id);
+                    } else {
+                        app.apply_theme_to_context(&cc.egui_ctx);
+                    }
                     Ok(Box::new(app))
                 }),
             )

@@ -18,6 +18,31 @@ pub enum NamedScheme {
 }
 
 impl NamedScheme {
+    /// Stable snake_case id for URL (`?theme=`), CLI (`--theme`), and agent docs.
+    pub fn theme_id(self) -> &'static str {
+        match self {
+            Self::TokyoNight => "tokyo_night",
+            Self::Dracula => "dracula",
+            Self::GruvboxDark => "gruvbox_dark",
+            Self::OneDark => "one_dark",
+            Self::GruvboxLight => "gruvbox_light",
+            Self::OneLight => "one_light",
+        }
+    }
+
+    /// Parse a theme id from `?theme=` or `--theme` (case-sensitive snake_case).
+    pub fn from_theme_id(id: &str) -> Option<Self> {
+        match id.trim() {
+            "tokyo_night" => Some(Self::TokyoNight),
+            "dracula" => Some(Self::Dracula),
+            "gruvbox_dark" => Some(Self::GruvboxDark),
+            "one_dark" => Some(Self::OneDark),
+            "gruvbox_light" => Some(Self::GruvboxLight),
+            "one_light" => Some(Self::OneLight),
+            _ => None,
+        }
+    }
+
     pub const ALL: [Self; 6] = [
         Self::TokyoNight,
         Self::Dracula,
@@ -99,4 +124,24 @@ impl AppTheme {
         }
         changed
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NamedScheme;
+
+    #[test]
+    fn theme_id_round_trip_for_all_palettes() {
+        for scheme in NamedScheme::ALL {
+            let id = scheme.theme_id();
+            assert_eq!(NamedScheme::from_theme_id(id), Some(scheme));
+        }
+        assert_eq!(NamedScheme::from_theme_id("unknown"), None);
+    }
+}
+
+/// Drop egui widget/layout temp state after a palette change (collapsing headers, etc.).
+pub fn on_theme_changed(ctx: &egui::Context) {
+    ctx.request_discard("ploke theme");
+    ctx.memory_mut(|memory| memory.data.clear());
 }

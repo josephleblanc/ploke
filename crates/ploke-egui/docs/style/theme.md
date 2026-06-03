@@ -29,7 +29,8 @@ Defined on [`PaletteTokens`](../../src/ui/theme/palette.rs):
 - [`AppTheme`](../../src/ui/theme/scheme.rs) lives on [`OperatorApp`](../../src/ui/app/mod.rs).
 - Selector: top strip ([`shell/chrome.rs`](../../src/ui/app/shell/chrome.rs)).
 - Persistence: eframe storage key `ploke-egui-theme` (native + WASM when storage is available).
-- On change: `set_visuals` once, sync graph `StatusColors`, clear patch-diff and inspector text caches.
+- On change: `set_visuals` once, sync graph `StatusColors`, clear patch-diff and inspector text caches, `request_discard`, and egui `memory.data` (collapsing-header relayout).
+- Automation: `?theme=<id>` (WASM), `--theme <id>` (native). See design-autonomy README for valid ids.
 
 ## Usage in UI code
 

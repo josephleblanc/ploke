@@ -194,10 +194,22 @@ impl OperatorApp {
         self.view.view_style_mut().edge.colors = colors;
     }
 
-    fn invalidate_theme_caches(&mut self) {
+    fn invalidate_theme_caches(&mut self, ctx: &egui::Context) {
         self.patch_diff_cache = PatchDiffCache::default();
         self.inspector_render_cache = shell::InspectorRenderCache::default();
         self.view.invalidate_projection_cache();
+        crate::ui::theme::on_theme_changed(ctx);
+    }
+
+    /// Apply a startup theme id from `?theme=` or `--theme` (overrides persisted theme when valid).
+    pub fn apply_startup_theme_id(&mut self, ctx: &egui::Context, id: &str) -> bool {
+        let Some(scheme) = crate::ui::theme::NamedScheme::from_theme_id(id) else {
+            return false;
+        };
+        self.theme.scheme = scheme;
+        self.theme.apply_to_context(ctx);
+        self.sync_view_style_from_theme();
+        true
     }
 
     pub fn graph_catalog_mut(&mut self) -> &mut GraphCatalog {
@@ -470,7 +482,7 @@ impl eframe::App for OperatorApp {
         }
         if theme_changed {
             self.sync_view_style_from_theme();
-            self.invalidate_theme_caches();
+            self.invalidate_theme_caches(ui.ctx());
         }
         #[cfg(all(
             not(target_arch = "wasm32"),

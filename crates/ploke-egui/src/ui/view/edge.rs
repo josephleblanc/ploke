@@ -84,8 +84,10 @@ impl GraphEdgeShape {
 
     fn label_galley(&mut self, ctx: &egui_graphs::DrawContext) -> Arc<Galley> {
         let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_LABEL_LAYOUT).entered();
+        let tokens = tokens_from_ctx(ctx.ctx);
         let key = EdgeLabelGalleyKey {
             font_size: self.style.label.font_size,
+            theme_key: tokens.cache_theme_key(),
         };
         match &self.label_galley {
             Some(cached) if cached.key == key => cached.galley.clone(),
@@ -141,6 +143,7 @@ struct EdgeLabelGalley {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct EdgeLabelGalleyKey {
     font_size: f32,
+    theme_key: u8,
 }
 
 impl<N, Ty, Ix, D> egui_graphs::DisplayEdge<N, GraphEdgePayload, Ty, Ix, D> for GraphEdgeShape

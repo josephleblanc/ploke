@@ -41,6 +41,7 @@ use ploke_tree::{Graph, GraphSnapshot};
 pub fn run() -> Result<(), Box<dyn Error>> {
     profiling::register_thread!("ploke-egui.main");
     let run = Run::from_env();
+    let startup_theme = run.theme.clone();
     #[cfg(feature = "dev")]
     if let Some(bench) = run.bench.as_ref() {
         match bench {
@@ -159,7 +160,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     if let Some(storage) = cc.storage {
                         app.load(storage);
                     }
-                    app.apply_theme_to_context(&cc.egui_ctx);
+                    apply_cli_startup_theme(&mut app, &cc.egui_ctx, startup_theme.as_deref());
                     Ok(Box::new(app))
                 }),
             )
@@ -245,11 +246,25 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             if let Some(storage) = cc.storage {
                 app.load(storage);
             }
-            app.apply_theme_to_context(&cc.egui_ctx);
+            apply_cli_startup_theme(&mut app, &cc.egui_ctx, startup_theme.as_deref());
             Ok(Box::new(app))
         }),
     )?;
     Ok(())
+}
+
+fn apply_cli_startup_theme(
+    app: &mut OperatorApp,
+    ctx: &eframe::egui::Context,
+    theme: Option<&str>,
+) {
+    if let Some(id) = theme {
+        if !app.apply_startup_theme_id(ctx, id) {
+            eprintln!("unknown --theme id {id:?}; keeping persisted/default palette");
+        }
+        return;
+    }
+    app.apply_theme_to_context(ctx);
 }
 
 fn initial_graph(

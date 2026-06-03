@@ -9,7 +9,7 @@
 - Cursor plan: `.cursor/plans/autonomous_egui_design_5e129f9d.plan.md`
 - Theme tokens: [`crates/ploke-egui/docs/style/theme.md`](../../../crates/ploke-egui/docs/style/theme.md)
 - Inspector UX: [`crates/ploke-egui/docs/style/inspector-ux.md`](../../../crates/ploke-egui/docs/style/inspector-ux.md)
-- Dogfood script: [`crates/ploke-egui/scripts/dogfood-smoke.sh`](../../../crates/ploke-egui/scripts/dogfood-smoke.sh)
+- Dogfood scripts: [`dogfood-smoke.sh`](../../../crates/ploke-egui/scripts/dogfood-smoke.sh), [`dogfood-theme-matrix.sh`](../../../crates/ploke-egui/scripts/dogfood-theme-matrix.sh)
 
 ## Autonomous loop
 
@@ -26,9 +26,29 @@ Escalation: `cargo test -p ploke-egui --features "dev,native-benchmark" benchmar
 
 After `trunk serve --config crates/ploke-egui/Trunk.toml`:
 
-`http://127.0.0.1:8080/?graph=/benchmark-fixtures/protocol-graph.json`
+`http://127.0.0.1:8080/?graph=/benchmark-fixtures/standard-prototype1-graph-snapshot.json`
 
-(Use `standard-prototype1-graph-snapshot.json` when protocol export is not copied into `benchmark-fixtures/`. Default startup uses the standard snapshot.)
+(Use `protocol-graph.json` when that export is copied into `benchmark-fixtures/`. Default startup uses the standard snapshot.)
+
+## Theme ids (automation)
+
+Valid `?theme=` and `--theme` values (snake_case):
+
+| ID | Label |
+|----|-------|
+| `tokyo_night` | Tokyo Night (default) |
+| `dracula` | Dracula |
+| `gruvbox_dark` | Gruvbox Dark |
+| `one_dark` | One Dark |
+| `gruvbox_light` | Gruvbox Light |
+| `one_light` | One Light |
+
+Examples:
+
+- WASM: `http://127.0.0.1:8080/?graph=/benchmark-fixtures/standard-prototype1-graph-snapshot.json&theme=gruvbox_light` (hard reload to switch palette without using the canvas combo)
+- Native: `cargo run -p ploke-egui -- --theme tokyo_night --graph-snapshot /path/to/snapshot.json`
+
+Script: [`crates/ploke-egui/scripts/dogfood-theme-matrix.sh`](../../../crates/ploke-egui/scripts/dogfood-theme-matrix.sh)
 
 ## Concurrent Trunk ports (Phase 2 worktrees)
 

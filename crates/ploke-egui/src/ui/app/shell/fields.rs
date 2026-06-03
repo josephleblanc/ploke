@@ -16,6 +16,18 @@ pub(super) fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     });
 }
 
+pub(super) fn inspector_theme_layout_key(ui: &egui::Ui) -> u8 {
+    crate::ui::theme::tokens_from_ui(ui).cache_theme_key()
+}
+
+pub(super) fn fresh_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(text)
+}
+
+pub(super) fn fresh_monospace_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(egui::RichText::new(text).monospace())
+}
+
 pub(super) fn cached_label(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
