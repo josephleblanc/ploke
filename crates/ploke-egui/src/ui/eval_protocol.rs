@@ -3,7 +3,7 @@ use ploke_records::protocol::ArtifactBody;
 use ploke_records::run_record::SubmissionArtifactState;
 use ploke_tree::{
     ClosureEvidence, ProtocolArtifactSummary, ProtocolArtifactsEvidence, RunRecordEvidence,
-    RunRecordSummary, graph::EvalProtocolEvidence,
+    RunRecordSummary, graph::{EvalProtocolEvidence, ProtocolReviewStats},
 };
 
 pub(crate) struct EvalProtocolDashboard<'g> {
@@ -175,6 +175,10 @@ impl<'g> EvalProtocolDashboard<'g> {
         }
 
         counts
+    }
+
+    pub(crate) fn protocol_review_stats(&self) -> ProtocolReviewStats {
+        self.evidence.protocol_review_stats()
     }
 }
 
