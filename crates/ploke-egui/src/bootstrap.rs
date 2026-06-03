@@ -90,24 +90,43 @@ impl GraphCatalog {
         self.last_error = None;
     }
 
-    /// Poll async wasm loads, then render catalog UI. Returns a graph when the active
-    /// selection changes (new load or user picked another entry).
+    /// Poll async wasm loads (file picker / `?graph=` fetch). Call from the app frame
+    /// before central tiles so graph replacement is not tied to the left nav panel.
+    #[cfg(target_arch = "wasm32")]
+    pub fn apply_pending_graph(&mut self) -> Option<Graph> {
+        let Some(pending) = self.wasm.take_pending_load() else {
+            return None;
+        };
+        match pending {
+            wasm::PendingLoad::Bytes { label, bytes } => {
+                match self.ingest_snapshot_bytes(label, &bytes) {
+                    Ok(()) => {
+                        self.wasm.discard_pending_url_load();
+                        self.selected_graph_clone()
+                    }
+                    Err(error) => {
+                        self.last_error = Some(error.to_string());
+                        None
+                    }
+                }
+            }
+            wasm::PendingLoad::Error(message) => {
+                self.last_error = Some(message);
+                None
+            }
+        }
+    }
+
+    /// Keep the latest egui context for async file-read callbacks (request_repaint).
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_repaint_context(&mut self, ctx: egui::Context) {
+        self.wasm.set_repaint_context(ctx);
+    }
+
+    /// Render catalog UI. Returns a graph when the user picks another loaded entry.
     ///
     /// `compact` keeps the benchmark placeholder footprint (labels only, no controls).
     pub fn show(&mut self, ui: &mut egui::Ui, compact: bool) -> Option<Graph> {
-        #[cfg(target_arch = "wasm32")]
-        if let Some(pending) = self.wasm.take_pending_load() {
-            match pending {
-                wasm::PendingLoad::Bytes { label, bytes } => {
-                    match self.ingest_snapshot_bytes(label, &bytes) {
-                        Ok(()) => return self.selected_graph_clone(),
-                        Err(error) => self.last_error = Some(error.to_string()),
-                    }
-                }
-                wasm::PendingLoad::Error(message) => self.last_error = Some(message),
-            }
-        }
-
         ui.separator();
         if compact {
             ui.label("Graph catalog");
@@ -189,6 +208,8 @@ mod wasm {
         pending_file: Rc<RefCell<Option<(String, Vec<u8>)>>>,
         pending_error: Rc<RefCell<Option<String>>>,
         pending_url: Rc<RefCell<Option<Result<(String, Vec<u8>), String>>>>,
+        ignore_pending_url: Rc<RefCell<bool>>,
+        repaint_context: Rc<RefCell<Option<egui::Context>>>,
         url_fetch_started: bool,
         fetch_in_progress: Rc<RefCell<bool>>,
     }
@@ -215,8 +236,10 @@ mod wasm {
 
             let pending_file: Rc<RefCell<Option<(String, Vec<u8>)>>> = Rc::new(RefCell::new(None));
             let pending_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+            let repaint_context: Rc<RefCell<Option<egui::Context>>> = Rc::new(RefCell::new(None));
             let pending_for_change = pending_file.clone();
             let pending_error_for_change = pending_error.clone();
+            let repaint_context_for_input = repaint_context.clone();
             let on_change = Closure::wrap(Box::new(move |event: web_sys::Event| {
                 let Ok(input) = event
                     .target()
@@ -240,6 +263,7 @@ mod wasm {
                 let pending = pending_for_change.clone();
                 let pending_error = pending_error_for_change.clone();
                 let pending_error_for_error = pending_error_for_change.clone();
+                let repaint_context = repaint_context_for_input.clone();
                 let reader_weak = Rc::downgrade(&reader);
                 let on_load = Closure::wrap(Box::new(move |_event: web_sys::Event| {
                     let Some(reader) = reader_weak.upgrade() else {
@@ -256,6 +280,10 @@ mod wasm {
                     };
                     let bytes = js_sys::Uint8Array::new(&array_buffer).to_vec();
                     *pending.borrow_mut() = Some((label.clone(), bytes));
+                    if let Some(ctx) = repaint_context.borrow().as_ref() {
+                        ctx.request_repaint();
+                    }
+                    wake_animation_frame();
                 }) as Box<dyn FnMut(_)>);
                 reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
                 on_load.forget();
@@ -275,16 +303,29 @@ mod wasm {
                 pending_file,
                 pending_error,
                 pending_url: Rc::new(RefCell::new(None)),
+                ignore_pending_url: Rc::new(RefCell::new(false)),
+                repaint_context,
                 url_fetch_started: false,
                 fetch_in_progress: Rc::new(RefCell::new(false)),
             }
+        }
+
+        pub fn set_repaint_context(&self, ctx: egui::Context) {
+            *self.repaint_context.borrow_mut() = Some(ctx);
         }
 
         pub fn fetch_in_progress(&self) -> bool {
             *self.fetch_in_progress.borrow()
         }
 
+        pub fn discard_pending_url_load(&self) {
+            *self.ignore_pending_url.borrow_mut() = true;
+            self.pending_url.borrow_mut().take();
+        }
+
         pub fn open_file_picker(&self) {
+            *self.ignore_pending_url.borrow_mut() = true;
+            self.pending_url.borrow_mut().take();
             self.file_input.set_value("");
             let _ = self.file_input.click();
         }
@@ -310,10 +351,14 @@ mod wasm {
             *self.fetch_in_progress.borrow_mut() = true;
             let pending_url = self.pending_url.clone();
             let fetch_in_progress = self.fetch_in_progress.clone();
+            let repaint_context = self.repaint_context.clone();
             spawn_local(async move {
                 let result = fetch_graph_bytes(&url).await;
                 *fetch_in_progress.borrow_mut() = false;
                 *pending_url.borrow_mut() = Some(result);
+                if let Some(ctx) = repaint_context.borrow().as_ref() {
+                    ctx.request_repaint();
+                }
             });
         }
 
@@ -327,6 +372,10 @@ mod wasm {
                     bytes: pending.1,
                 });
             }
+            if *self.ignore_pending_url.borrow() {
+                self.pending_url.borrow_mut().take();
+                return None;
+            }
             self.pending_url
                 .borrow_mut()
                 .take()
@@ -335,6 +384,15 @@ mod wasm {
                     Err(message) => PendingLoad::Error(message),
                 })
         }
+    }
+
+    fn wake_animation_frame() {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let wake = Closure::once(Box::new(move || {}) as Box<dyn FnMut()>);
+        let _ = window.request_animation_frame(wake.as_ref().unchecked_ref());
+        wake.forget();
     }
 
     fn query_graph_url_from_location() -> Option<String> {

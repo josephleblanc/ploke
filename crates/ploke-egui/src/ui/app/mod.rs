@@ -401,6 +401,14 @@ impl eframe::App for OperatorApp {
     )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         profiling::scope!("ploke-egui.frame");
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.graph_catalog.set_repaint_context(ui.ctx().clone());
+            if let Some(graph) = self.graph_catalog.apply_pending_graph() {
+                self.replace_graph(graph);
+                ui.ctx().request_repaint();
+            }
+        }
         #[cfg(all(
             not(target_arch = "wasm32"),
             feature = "dev",
