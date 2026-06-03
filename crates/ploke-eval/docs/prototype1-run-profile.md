@@ -167,9 +167,9 @@ route_source = "direct-google"
 provider = "google"
 ```
 
-- `id`: Optional default model id for Prototype 1 setup. This is the shared
-  eval/protocol model for the current baseline path unless explicit CLI flags
-  override it.
+- `id`: Optional default model id for Prototype 1 setup. This is the eval
+  model default. Protocol uses it only when neither `[protocol.model]` nor
+  `--protocol-*` setup flags supply a protocol-specific override.
 - `route_source`: Optional default router for ambiguous model ids. Accepted
   values are `direct-google` and `openrouter`. This disambiguates ids such as
   `google/gemini-3.5-flash`, which can be valid through both routers.
@@ -188,10 +188,9 @@ sentinel and is normalized away before campaign admission. OpenRouter provider
 slugs belong only with `route_source = "openrouter"`.
 
 CLI flags keep normal precedence over this section. `--model-id`,
-`--route-source`, and `--provider` override the eval defaults; the
-`--protocol-*` flags override the corresponding protocol defaults. When the
-baseline path requires one shared model/route/provider and no protocol override
-is supplied, setup uses the resolved eval tuple for protocol as well.
+`--route-source`, and `--provider` override the eval defaults. If no
+protocol-specific model is configured, setup uses the resolved eval tuple for
+protocol as well.
 
 ## `search`
 
@@ -316,11 +315,26 @@ signal.
 max_tokens = 4000
 tool_review_parallelism = 8
 
+[protocol.model]
+id = "google/gemini-2.5-flash"
+route_source = "direct-google"
+provider = "google"
+
 [protocol.reasoning]
 mode = "omit"
 # effort = "low"
 ```
 
+- `model.id`: Optional protocol-only model id. This lets the loop use a
+  smaller or cheaper model for protocol JSON adjudication while leaving eval and
+  parent patch generation on their own model routes.
+- `model.route_source`: Optional protocol router. Accepted values are
+  `direct-google` and `openrouter`. Direct Google is used for the Google API
+  endpoint directly; OpenRouter remains supported.
+- `model.provider`: Optional protocol provider setting. For
+  `model.route_source = "direct-google"`, use `provider = "google"` or omit the
+  provider. OpenRouter provider pins are valid with
+  `model.route_source = "openrouter"`.
 - `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
   requests admitted from this profile. This applies to the campaign-driven
   baseline protocol path, including tool-call intent segmentation, tool-call

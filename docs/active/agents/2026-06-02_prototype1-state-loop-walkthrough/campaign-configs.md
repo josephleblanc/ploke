@@ -11,9 +11,9 @@ This companion expands the main walkthrough's config section. It answers the con
 
 The short answer is:
 
-- `CampaignManifest.model_id` is the campaign's persisted model id string. After setup, this is the value that `resolve_campaign_config` materializes into `ResolvedCampaignConfig.model_id`, and both eval closure and protocol closure read the resolved campaign config rather than re-reading profile `[model]` directly.[^campaign-fields] [^resolve-config] [^eval-protocol-routing]
-- Run-profile `[model].id` is an operator-profile default used during setup/admission. If CLI setup flags do not override it, setup may copy this value into the generated campaign manifest as `model_id`. After that, the live `prototype1-state` turn uses the campaign manifest/resolved campaign for model routing, not the profile `[model]` section.[^profile-model] [^setup-model-precedence] [^runtime-runshape]
-- `--protocol-model-id` is a setup CLI override for the baseline protocol arm. In the current Prototype 1 setup path, baseline eval and baseline protocol must resolve to the same model, route source, and provider; if they differ, setup errors before writing the campaign as a runnable shared baseline.[^loop-cli-model-flags] [^setup-shared-model]
+- `CampaignManifest.model_id` is the campaign's persisted eval model id string. After setup, this is the value that `resolve_campaign_config` materializes into `ResolvedCampaignConfig.model_id`; eval closure reads that campaign tuple directly.[^campaign-fields] [^resolve-config] [^eval-protocol-routing]
+- Run-profile `[model].id` is an operator-profile default used during setup/admission. If CLI setup flags do not override it, setup may copy this value into the generated campaign manifest as `model_id`. After that, the live `prototype1-state` turn uses the campaign manifest/resolved campaign for eval model routing, not the profile `[model]` section.[^profile-model] [^setup-model-precedence] [^runtime-runshape]
+- Protocol routing can now use a protocol-specific tuple from setup `--protocol-*` flags or run-profile `[protocol.model]`. If no protocol tuple is supplied, setup falls back to the resolved eval model/route/provider.[^loop-cli-model-flags] [^setup-shared-model]
 
 ## Pass log
 
@@ -31,7 +31,7 @@ This doc uses these conventions:
 - **Manifest Model ID** means `CampaignManifest.model_id`, the optional persisted JSON field.
 - **Resolved Model ID** means `ResolvedCampaignConfig.model_id`, the non-optional runtime field after defaults and validation.
 - **Profile Model ID** means `[model].id` in the run-profile TOML.
-- **Protocol Model ID** means the argument to `protocol_llm_config` or setup `--protocol-model-id`; it is not a separate run-profile field.
+- **Protocol Model ID** means the protocol-specific model id from setup `--protocol-model-id`, run-profile `[protocol.model].id`, or the fallback eval model tuple.
 - **Provider slug** means the OpenRouter provider slug when using OpenRouter. Direct Google route is special: config/display may say `google`, but resolved direct-Google campaign/provider state stores `provider_slug = None` unless an intermediate display helper formats it as `google`.[^resolve-config] [^json-llm-config]
 - **Route source** means `ModelRouteSource`: current important values are OpenRouter and direct Google.
 
@@ -84,9 +84,9 @@ The generated manifest then stores `model_id`, `provider_slug`, and `route_sourc
 
 ### 2.3 Setup-time baseline protocol model selection
 
-If setup will reach baseline protocol, it checks protocol model/route/provider. A setup `--protocol-model-id` can override the protocol model candidate, but the current baseline arm requires protocol to share the same model, route source, and provider as eval. A mismatch returns an error in `prepare_prototype1_loop_campaign`.[^setup-shared-model]
+If setup will reach baseline protocol, it resolves a protocol model/route/provider tuple separately from eval. Precedence is setup `--protocol-*` flags, then run-profile `[protocol.model]`, then the resolved eval tuple. When the protocol tuple differs from eval, setup stores the override in `CampaignManifest.protocol` as part of `ProtocolCampaignPolicy`.[^setup-shared-model]
 
-This means `--protocol-model-id` is not currently a free independent protocol route for Prototype 1 baseline setup. It is a compatibility/override surface that must still collapse to the same resolved route as eval for the shared baseline campaign.[^setup-shared-model]
+This means protocol JSON adjudication can use a smaller direct-Google model while eval and parent patch generation keep their own model routes. OpenRouter remains a valid protocol route when selected explicitly or through `[protocol.model].route_source = "openrouter"`.[^setup-shared-model] [^protocol-llm-config]
 
 ### 2.4 Runtime campaign resolution
 
@@ -115,7 +115,7 @@ Prototype 1 setup usually writes `model_id`, `provider_slug`, `route_source`, `i
 | `instances_root` | `CampaignManifest` optional; `ResolvedCampaignConfig` required | Where prepared instance/run directories live. | CLI alias `runs_root` exists for compatibility; profile `storage.worktree_root` does not feed this root. [^campaign-fields] [^resolve-config] |
 | `batches_root` | `CampaignManifest` optional; `ResolvedCampaignConfig` required | Where batch manifests and summaries are written. | Setup nests under `batches/prototype1/<campaign>`. [^setup-manifest-write] |
 | `eval` | `EvalCampaignPolicy` | Controls eval closure batch selection/execution: partials, stop-on-error, limits, labels, budget, batch prefix. | Setup fills budget from prepared batch; run-profile search budget is not eval budget. [^campaign-fields] [^setup-manifest-write] |
-| `protocol` | `ProtocolCampaignPolicy` | Controls protocol row selection, max run fanout, tool review fanout, max tokens, reasoning, stop-on-error. | Profile maps only max tokens/tool review/reasoning into this policy; profile cannot currently set `max_concurrency`. [^campaign-fields] [^profile-protocol] [^protocol-fanout] |
+| `protocol` | `ProtocolCampaignPolicy` | Controls protocol row selection, optional protocol model/provider/route override, max run fanout, tool review fanout, max tokens, reasoning, stop-on-error. | Profile maps `[protocol.model]`, max tokens, tool review, and reasoning into this policy; profile cannot currently set `max_concurrency`. [^campaign-fields] [^profile-protocol] [^protocol-fanout] |
 | `framework` | `FrameworkConfig` | Carried through resolved config and closure recompute request. | Not a run-profile behavior field. [^resolved-closure-request] |
 
 ## 4. Run-profile field inventory
@@ -144,6 +144,9 @@ Prototype 1 setup usually writes `model_id`, `provider_slug`, `route_source`, `i
 | `[selection].oracle` | Maps to oracle mode and evidence requirement. | Relative-score + required evidence requires MBE enabled and target instances. [^profile-selection] |
 | `[selection].seed` | Seeds successor selection. | Replay/selection determinism depends on this plus the considered set. [^profile-selection] |
 | `[protocol].max_tokens` | Copied into `ProtocolCampaignPolicy.max_tokens`, then `JsonLlmConfig.max_tokens`. | Applies to protocol JSON calls, not eval chat/tool run budget. [^profile-protocol] [^protocol-llm-config] |
+| `[protocol.model].id` | Optional protocol-only setup source for `ProtocolCampaignPolicy.model_id`. | Lets protocol use a smaller/different model from eval. If omitted, protocol falls back to the resolved eval tuple. [^profile-protocol] [^setup-shared-model] |
+| `[protocol.model].route_source` | Optional protocol-only route source. | Use `direct-google` for the Google API endpoint directly, or `openrouter` for OpenRouter. Direct Google accepts `provider = "google"` or no provider. [^profile-protocol] [^protocol-llm-config] |
+| `[protocol.model].provider` | Optional protocol-only provider setting. | For OpenRouter this is a provider pin; for direct Google it is only the setup-time `google` sentinel and resolves to no OpenRouter provider slug. [^profile-protocol] [^protocol-llm-config] |
 | `[protocol].tool_review_parallelism` | Copied into `ProtocolCampaignPolicy.tool_review_parallelism`, then used as a semaphore for tool-call reviews. | Segment reviews are still sequential inside each protocol run task. [^profile-protocol] [^protocol-fanout] [^review-calls] |
 | `[protocol].reasoning` | Copied into protocol policy and `JsonLlmConfig`; auto reasoning is disabled for direct Google route. | Recent direct-Google bugs can hide here because `auto` becomes `disabled` only after route resolution. [^profile-protocol] [^protocol-llm-config] |
 | `[execution].stop_after` | Maps to `Prototype1StateStopAfter` for the parent turn. | Different enum from setup's legacy `Prototype1LoopStopAfter`. [^profile-execution] [^loop-cli-model-flags] |
@@ -183,9 +186,9 @@ The route-resolution step can itself make a live provider metadata API call. Dir
 
 ### 6.2 Protocol JSON adjudication calls
 
-The protocol path also gets model/provider/route from campaign config:
+The protocol path gets model/provider/route from campaign config plus any protocol policy override:
 
-1. `advance_protocol_closure` passes `config.model_id`, `config.route_source`, `config.provider_slug`, and protocol policy values into `execute_protocol_run_tasks`.[^eval-protocol-routing]
+1. `advance_protocol_closure` derives the effective protocol model/route/provider from `ProtocolCampaignPolicy`, falling back to `config.model_id`, `config.route_source`, and `config.provider_slug` when the policy has no model override.[^eval-protocol-routing]
 2. `execute_protocol_run_tasks` fans out protocol run tasks up to `policy.max_concurrency` and shares a semaphore for tool-review requests.[^protocol-fanout]
 3. Each protocol task builds `JsonLlmConfig` with `protocol_llm_config`.[^protocol-llm-config]
 4. `JsonAdjudicator` executes protocol specs by calling `adjudicate_json`, which parses `cfg.model_id`, builds either a Google or OpenRouter JSON chat request, and sends it through `chat_step`.[^json-adjudicator] [^json-request]
@@ -212,11 +215,11 @@ Risk: If a campaign manifest omits `route_source`, resolution consults the model
 
 Recommendation: Prototype 1 setup should continue writing explicit `route_source` into generated manifests. Hand-authored campaigns should do the same.
 
-### 7.4 Eval protocol and baseline protocol are currently tied
+### 7.4 Protocol route is independent but still persisted through campaign policy
 
-Risk: The CLI exposes `--protocol-model-id`, `--protocol-provider`, and `--protocol-route-source`, but Prototype 1 baseline setup currently rejects a protocol route that differs from the eval route.[^loop-cli-model-flags] [^setup-shared-model]
+Risk: Operators may still assume protocol and eval are one shared model route because older setup rejected mismatches. The current setup can persist a protocol override under campaign `protocol`, so troubleshooting must inspect both the campaign eval tuple and `ProtocolCampaignPolicy`.[^loop-cli-model-flags] [^setup-shared-model]
 
-Recommendation: Either keep documenting this as a shared baseline invariant, or refactor into an explicit `BaselineRoute { eval, protocol }` type when the loop is ready to support split routes.
+Recommendation: In reports and docs, name the eval route and protocol route separately. For direct Google, say direct Google route rather than treating `google` as an OpenRouter provider slug.
 
 ### 7.5 Profile protocol cannot set `max_concurrency`
 
@@ -302,7 +305,7 @@ Recommendation: If API quota and filesystem isolation allow it, bounded per-inst
 [^setup-admission]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:195-301` loads optional operator profile, prepares/loads batch, rejects unsupported multi-instance legacy profile setup, prepares campaign, admits profile, ensures baseline closure, registers root parent node, checks out parent branch, writes parent identity, commits, and returns setup report.
 [^setup-target]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:3826-3863` lets CLI dataset/instance values override profile target defaults, then prepares the batch request with repo/instance/batch roots and eval budget.
 [^setup-model-precedence]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7553-7593` selects setup model/route/provider from command flags, profile model defaults, default/active model resolution, selected model registry route source, and provider resolution.
-[^setup-shared-model]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7595-7633` resolves optional protocol model/route/provider and errors unless baseline eval and baseline protocol share the same model, route source, and provider.
+[^setup-shared-model]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7596-7685` resolves optional protocol model/route/provider from setup flags or `[protocol.model]`, falls back to eval when no protocol tuple is supplied, and stores the override in `ProtocolCampaignPolicy`.
 [^setup-manifest-write]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7635-7714` builds campaign id/path, writes `slice.jsonl`, creates `CampaignManifest`, sets dataset/model/provider/route/roots/eval/protocol policy, saves the manifest, resolves it, and returns campaign paths.
 [^slice-dataset]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7717-7771` filters selected dataset instances, creates the output parent directory, and writes the campaign-local slice JSONL file.
 [^runtime-runshape]: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:946-999` defines `Prototype1StateRunShape`, maps CLI and profile values, and resolves by loading an admitted profile first, falling back to CLI/defaults when absent.

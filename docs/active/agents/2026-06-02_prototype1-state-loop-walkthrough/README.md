@@ -208,7 +208,7 @@ The setup path constructs a Prototype 1 campaign in `prepare_prototype1_loop_cam
 
 - resolves profile/CLI/default model choices;
 - resolves eval route/provider;
-- enforces shared baseline eval/protocol model routing when baseline protocol is enabled;
+- resolves a protocol route/provider override when `--protocol-*` flags or `[protocol.model]` are supplied;
 - chooses campaign id, defaulting to `prototype1-<batch-id-sanitized>`;
 - writes a selected-instance slice dataset (`cli_facing.rs:7717-7771`);
 - writes the campaign manifest;
@@ -687,7 +687,7 @@ The model path for benchmark/eval runs is:
 The protocol model path is:
 
 1. Campaign/protocol policy enters `advance_protocol_closure`.
-2. `advance_protocol_closure` passes `config.model_id`, `config.route_source`, `config.provider_slug`, `policy.max_concurrency`, `policy.tool_review_parallelism`, `policy.max_tokens`, and `policy.reasoning` to `execute_protocol_run_tasks` (`cli.rs:7011-7021`).
+2. `advance_protocol_closure` derives the effective protocol model/route/provider from `ProtocolCampaignPolicy`, falling back to `config.model_id`, `config.route_source`, and `config.provider_slug`, then passes that tuple plus `policy.max_concurrency`, `policy.tool_review_parallelism`, `policy.max_tokens`, and `policy.reasoning` to `execute_protocol_run_tasks` (`cli.rs:7011-7021`).
 3. `execute_protocol_run_tasks` fans out per record/run with `JoinSet` and gates review calls with a semaphore (`cli.rs:1745-1846`).
 4. `execute_protocol_run_task` performs segmentation, call reviews, and segment reviews (`cli.rs:7249-7357`).
 5. `protocol_llm_config` resolves model id and route/provider into `JsonLlmConfig` (`cli.rs:7741-7761`).

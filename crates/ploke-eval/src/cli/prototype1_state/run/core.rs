@@ -635,10 +635,13 @@ fn protocol_live_preflight_max_tokens(
 async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePreflight {
     let policy = context.admitted_profile.profile.protocol_policy();
     let max_tokens = protocol_live_preflight_max_tokens(policy.max_tokens, policy.reasoning);
+    let model_id = policy.model_id_for(&context.resolved_campaign.model_id);
+    let route_source = policy.route_source_for(context.resolved_campaign.route_source);
+    let provider = policy.provider_slug_for(context.resolved_campaign.provider_slug.as_deref());
     let cfg = match crate::cli::protocol_llm_config(
-        Some(context.resolved_campaign.model_id.clone()),
-        Some(context.resolved_campaign.route_source),
-        context.resolved_campaign.provider_slug.clone(),
+        Some(model_id.clone()),
+        route_source,
+        provider.clone(),
         30,
         1,
         max_tokens,
@@ -648,12 +651,8 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
         Err(err) => {
             return ProtocolLivePreflight {
                 outcome: ProtocolLivePreflightOutcome::Failed,
-                model_id: context.resolved_campaign.model_id.clone(),
-                provider: context
-                    .resolved_campaign
-                    .provider_slug
-                    .clone()
-                    .unwrap_or_else(|| "auto/openrouter".to_string()),
+                model_id,
+                provider: provider.unwrap_or_else(|| "auto/openrouter".to_string()),
                 route_source: "unresolved".to_string(),
                 reasoning: policy.reasoning.display_label(),
                 max_tokens,

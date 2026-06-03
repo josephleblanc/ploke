@@ -1433,14 +1433,8 @@ async fn run_broad_headless_tui_attempt(
         return run_broad_headless_tui_attempt_with_options(slot, &options).await;
     }
 
-    #[cfg(test)]
     let max_attempts = broad_headless_tui_env_u32("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS")?;
-    #[cfg(not(test))]
-    let max_attempts = None;
-    #[cfg(test)]
     let timeout_secs = broad_headless_tui_env_u64("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS")?;
-    #[cfg(not(test))]
-    let timeout_secs = None;
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
     run_broad_headless_tui_attempt_with_options(slot, &options).await
 }
@@ -7599,11 +7593,18 @@ fn prepare_prototype1_loop_campaign(
     run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
     let profile_model = run_profile.map(|profile| &profile.model);
+    let profile_protocol_model = run_profile.map(|profile| &profile.protocol.model);
     let profile_model_id = profile_model
         .map(profile::ModelDefaults::parsed_id)
         .transpose()?
         .flatten();
+    let profile_protocol_model_id = profile_protocol_model
+        .map(|model| model.parsed_id_for("profile.protocol.model"))
+        .transpose()?
+        .flatten();
     let profile_model_configured = profile_model.is_some_and(|model| !model.is_empty());
+    let profile_protocol_model_configured =
+        profile_protocol_model.is_some_and(|model| !model.is_empty());
     let command_model_id = command
         .model_id
         .as_deref()
@@ -7634,10 +7635,15 @@ fn prepare_prototype1_loop_campaign(
         eval_provider.clone(),
         "prototype1_loop_provider",
     )?;
+    let mut protocol_policy = run_profile
+        .map(profile::Prototype1RunProfile::protocol_policy)
+        .unwrap_or_default();
 
     if command.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
         let protocol_model = if let Some(protocol_model_id) = command.protocol_model_id.clone() {
             resolve_protocol_model_id(Some(protocol_model_id))?
+        } else if let Some(protocol_model_id) = profile_protocol_model_id.as_ref() {
+            protocol_model_id.clone()
         } else if profile_model_configured
             || command.model_id.is_some()
             || command.use_default_model
@@ -7646,32 +7652,31 @@ fn prepare_prototype1_loop_campaign(
         } else {
             resolve_protocol_model_id(None)?
         };
-        let protocol_route_source = command.protocol_route_source.unwrap_or(eval_route_source);
+        let protocol_route_source = command
+            .protocol_route_source
+            .or_else(|| profile_protocol_model.and_then(|model| model.route_source))
+            .unwrap_or(eval_route_source);
         let protocol_provider = command
             .protocol_provider
             .clone()
+            .or_else(|| profile_protocol_model.and_then(|model| model.provider.clone()))
             .or_else(|| eval_provider.clone());
         let protocol_provider = resolve_protocol_provider_slug(
             &protocol_model,
             Some(protocol_route_source),
             protocol_provider,
         )?;
-        if protocol_model != eval_model
+        if command.protocol_model_id.is_some()
+            || command.protocol_route_source.is_some()
+            || command.protocol_provider.is_some()
+            || profile_protocol_model_configured
+            || protocol_model != eval_model
             || protocol_route_source != eval_route_source
             || protocol_provider != eval_provider_slug
         {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_loop_campaign",
-                detail: format!(
-                    "prototype1 baseline arm now delegates to closure/campaign and currently requires one shared model/route/provider; eval={} {:?} {:?}, protocol={} {:?} {:?}",
-                    eval_model,
-                    eval_route_source,
-                    eval_provider_slug,
-                    protocol_model,
-                    protocol_route_source,
-                    protocol_provider
-                ),
-            });
+            protocol_policy.model_id = Some(protocol_model.to_string());
+            protocol_policy.route_source = Some(protocol_route_source);
+            protocol_policy.provider_slug = protocol_provider;
         }
     }
 
@@ -7737,9 +7742,6 @@ fn prepare_prototype1_loop_campaign(
         budget: prepared_batch.budget.clone(),
         batch_prefix: Some(prepared_batch.batch_id.clone()),
     };
-    let protocol_policy = run_profile
-        .map(profile::Prototype1RunProfile::protocol_policy)
-        .unwrap_or_default();
     manifest.protocol = ProtocolCampaignPolicy {
         stop_on_error: command.stop_on_error,
         ..protocol_policy

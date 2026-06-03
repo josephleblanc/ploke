@@ -1745,7 +1745,7 @@ struct ProtocolBatchExecution {
 async fn execute_protocol_run_tasks(
     tasks: Vec<ProtocolRunTask>,
     model_id: String,
-    route_source: ModelRouteSource,
+    route_source: Option<ModelRouteSource>,
     provider_slug: Option<String>,
     max_concurrency: usize,
     tool_review_parallelism: usize,
@@ -7017,9 +7017,9 @@ pub(crate) async fn advance_protocol_closure(
         }
         let execution = execute_protocol_run_tasks(
             tasks,
-            config.model_id.clone(),
-            config.route_source,
-            config.provider_slug.clone(),
+            policy.model_id_for(&config.model_id),
+            policy.route_source_for(config.route_source),
+            policy.provider_slug_for(config.provider_slug.as_deref()),
             policy.max_concurrency,
             policy.tool_review_parallelism,
             policy.stop_on_error,
@@ -7066,7 +7066,7 @@ pub(crate) async fn advance_protocol_or_block(
         return Ok(());
     }
 
-    Err(protocol_no_progress_error(config, &report))
+    Err(protocol_no_progress_error(config, policy, &report))
 }
 
 fn protocol_report_allows_continue(report: &ClosureAdvanceProtocolReport) -> bool {
@@ -7122,14 +7122,15 @@ fn procedure_summary_changed(
 
 fn protocol_no_progress_error(
     config: &ResolvedCampaignConfig,
+    policy: &ProtocolCampaignPolicy,
     report: &ClosureAdvanceProtocolReport,
 ) -> PrepareError {
     PrepareError::InvalidBatchSelection {
         detail: format!(
             "baseline_protocol blocked: campaign {} made no protocol progress; model {}; route {}; selected_runs={}; remaining={}; created={{segmentations:{}, call_reviews:{}, segment_reviews:{}}}; failures={}",
             report.campaign_id,
-            config.model_id,
-            protocol_route_detail(config),
+            policy.model_id_for(&config.model_id),
+            protocol_route_detail(config, policy),
             format_protocol_selected_runs(&report.selected_runs),
             format_remaining_protocol_work(&report.after),
             report.segmentations_created,
@@ -7140,26 +7141,26 @@ fn protocol_no_progress_error(
     }
 }
 
-fn protocol_route_detail(config: &ResolvedCampaignConfig) -> String {
-    let route = config
-        .model_id
-        .parse::<ModelId>()
+fn protocol_route_detail(
+    config: &ResolvedCampaignConfig,
+    policy: &ProtocolCampaignPolicy,
+) -> String {
+    let model_id = policy.model_id_for(&config.model_id);
+    let route = model_id.parse::<ModelId>().ok().and_then(|model_id| {
+        resolve_protocol_route(
+            &model_id,
+            policy.route_source_for(config.route_source),
+            policy.provider_slug_for(config.provider_slug.as_deref()),
+        )
         .ok()
-        .and_then(|model_id| {
-            resolve_protocol_route(
-                &model_id,
-                Some(config.route_source),
-                config.provider_slug.clone(),
-            )
-            .ok()
-        });
+    });
     match route {
         Some((route_source, provider_slug)) => match provider_slug {
             Some(provider) => format!("{route_source:?}/{provider}"),
             None => format!("{route_source:?}"),
         },
-        None => config
-            .provider_slug
+        None => policy
+            .provider_slug_for(config.provider_slug.as_deref())
             .as_deref()
             .unwrap_or("unresolved")
             .to_string(),
@@ -7233,7 +7234,7 @@ fn spawn_protocol_run_task(
     join_set: &mut JoinSet<Result<ProtocolRunExecution, PrepareError>>,
     task: ProtocolRunTask,
     model_id: String,
-    route_source: ModelRouteSource,
+    route_source: Option<ModelRouteSource>,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
@@ -7256,7 +7257,7 @@ fn spawn_protocol_run_task(
 async fn execute_protocol_run_task(
     task: ProtocolRunTask,
     model_id: String,
-    route_source: ModelRouteSource,
+    route_source: Option<ModelRouteSource>,
     provider_slug: Option<String>,
     review_permits: Arc<Semaphore>,
     max_tokens: u32,
@@ -7276,7 +7277,7 @@ async fn execute_protocol_run_task(
         execute_protocol_intent_segments_quiet(
             &task.record_path,
             Some(model_id.clone()),
-            Some(route_source),
+            route_source,
             provider_slug.clone(),
             max_tokens,
             reasoning,
@@ -7300,7 +7301,7 @@ async fn execute_protocol_run_task(
         call_subjects,
         protocol_llm_config(
             Some(model_id.clone()),
-            Some(route_source),
+            route_source,
             provider_slug.clone(),
             TOOL_CALL_REVIEW_TIMEOUT_SECS,
             PROTOCOL_HTTP_MAX_ATTEMPTS,
@@ -7334,7 +7335,7 @@ async fn execute_protocol_run_task(
         execute_protocol_tool_call_segment_review_quiet(
             &task.record_path,
             Some(model_id.clone()),
-            Some(route_source),
+            route_source,
             provider_slug.clone(),
             segment_index,
             max_tokens,
@@ -14695,6 +14696,84 @@ mod tests {
         assert_eq!(result.parsed.route, "google");
         assert!(result.response.model.contains("gemini"));
         println!("live Google protocol JSON route returned sentinel JSON");
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live Google API test for Prototype 1 protocol model override routing"]
+    async fn live_google_protocol_override_uses_direct_route_success_or_quota() {
+        if !crate::test_support::live_google_env_or_skip(
+            "live_google_protocol_override_uses_direct_route_success_or_quota",
+        )
+        .await
+        {
+            return;
+        }
+        crate::test_support::install_default_google_route_env();
+        let model_id = std::env::var("PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID")
+            .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let model_id = if model_id.contains('/') {
+            model_id
+        } else {
+            format!("google/{model_id}")
+        };
+        let config = ResolvedCampaignConfig {
+            campaign_id: "live-google-protocol-override".to_string(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            model_id: "anthropic/claude-3.5-sonnet".to_string(),
+            provider_slug: Some("anthropic".to_string()),
+            route_source: ModelRouteSource::OpenRouter,
+            required_procedures: Vec::new(),
+            instances_root: PathBuf::from("/tmp/ploke-live-google-protocol-override/instances"),
+            batches_root: PathBuf::from("/tmp/ploke-live-google-protocol-override/batches"),
+            eval: Default::default(),
+            protocol: ProtocolCampaignPolicy {
+                model_id: Some(model_id),
+                provider_slug: Some("google".to_string()),
+                route_source: Some(ModelRouteSource::DirectGoogle),
+                max_tokens: 120,
+                tool_review_parallelism: 1,
+                ..ProtocolCampaignPolicy::default()
+            },
+            framework: crate::spec::FrameworkConfig::default(),
+        };
+        let cfg = protocol_llm_config(
+            Some(config.protocol.model_id_for(&config.model_id)),
+            config.protocol.route_source_for(config.route_source),
+            config
+                .protocol
+                .provider_slug_for(config.provider_slug.as_deref()),
+            120,
+            1,
+            128,
+            config.protocol.reasoning,
+        )
+        .expect("Google protocol config from override policy");
+        assert!(cfg.route_source.is_direct_google());
+        assert!(cfg.provider_slug.is_none());
+        assert_eq!(cfg.provider_display(), "google");
+
+        let prompt = ploke_protocol::JsonChatPrompt {
+            system: "Return JSON only. Do not use markdown.".to_string(),
+            user: "Return exactly this JSON object: {\"ok\":true,\"route\":\"google\"}".to_string(),
+        };
+        let client = reqwest::Client::new();
+        let result =
+            match ploke_protocol::adjudicate_json::<LiveGoogleJsonOk>(&client, &cfg, &prompt).await
+            {
+                Ok(result) => result,
+                Err(error) if is_google_protocol_quota_error(&error) => {
+                    println!("live Google protocol override route reached Google quota response");
+                    return;
+                }
+                Err(error) => panic!("live Google protocol override failed: {error:?}"),
+            };
+
+        assert!(result.parsed.ok);
+        assert_eq!(result.parsed.route, "google");
+        assert!(result.response.model.contains("gemini"));
     }
 
     fn sample_run_intent(base: &Path, instances_root: &Path) -> RunIntent {

@@ -263,7 +263,7 @@ Why it conflicts:
 
 - Setup CLI, campaign manifests, provider preferences, protocol config, protocol artifacts, and run profiles all carry model/provider words with slightly different authority.
 - Direct Google can be displayed as `google`, while resolved direct-Google campaign/provider state often stores `provider_slug = None`.
-- `--protocol-model-id` sounds independent, but current Prototype 1 baseline setup requires protocol and eval to collapse to the same model/route/provider.
+- `--protocol-model-id` and `[protocol.model]` are protocol-specific setup surfaces. When present, they can make protocol JSON adjudication use a different model/route/provider from eval.
 
 Suggested convention:
 
