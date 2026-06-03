@@ -11,7 +11,7 @@
 
 [build]
 target = "index.html"
-dist = "dist"
+dist = ".dist/default"
 
 [watch]
-ignore = ["dist"]
+ignore = [".dist"]

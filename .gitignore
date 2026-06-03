@@ -116,7 +116,18 @@ research-papers
 crates/ploke-tree-egui/dist/index.html
 crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b.js
 crates/ploke-tree-egui/dist/ploke-tree-egui-484ac9cc6adc504b_bg.wasm
+# ploke-egui Trunk output (consolidated + legacy dirs)
+crates/ploke-egui/.dist/
 crates/ploke-egui/dist/
+crates/ploke-egui/dist-*/
+crates/ploke-egui/.embed-measure/
+crates/ploke-egui/graph-assets/
+# local-only Trunk/html variants for asset/embed experiments
+crates/ploke-egui/Trunk.asset-*.toml
+crates/ploke-egui/Trunk.embed-*.toml
+crates/ploke-egui/Trunk.no-fixtures.toml
+crates/ploke-egui/index.asset-*.html
+crates/ploke-egui/index.no-fixtures.html
 crates/ploke-egui/docs/profiling/benchmarks/*/report.json
 research-symlink
 .tmp/*

@@ -26,13 +26,13 @@ On WASM startup, `web.rs` calls `GraphCatalog::enqueue_startup_graph_load()` onc
 4. If there is no `?graph=`, fetches the default fixture URL `/benchmark-fixtures/standard-prototype1-graph-snapshot.json`.
 5. `fetch` runs async; when bytes arrive, `apply_pending_graph()` replaces the placeholder sample graph.
 
-Trunk must copy JSON into `dist/` beside the WASM bundle. Default `index.html` uses `copy-dir` for `benchmark-fixtures/` only.
+Trunk must copy JSON into `.dist/default/` beside the WASM bundle (see `Trunk.toml`). Default `index.html` uses `copy-dir` for `benchmark-fixtures/` only.
 
 | Constant / alias | Value |
 |------------------|-------|
 | Default fetch URL | `/benchmark-fixtures/standard-prototype1-graph-snapshot.json` |
 | Basename alias | `?graph=standard-prototype1-graph-snapshot.json` → same default URL |
-| Same-origin path | `?graph=/benchmark-fixtures/my-export.json` (file must exist under `dist/`) |
+| Same-origin path | `?graph=/benchmark-fixtures/my-export.json` (file must exist under `.dist/default/`) |
 | External URL | `?graph=https://example.com/export.json` (server must send CORS headers) |
 
 | Method | How |
@@ -48,7 +48,7 @@ Trunk must copy JSON into `dist/` beside the WASM bundle. Default `index.html` u
 
 ### Loading `.temp/protocol-graph.json` (or any export) via fetch
 
-The browser only fetches URLs Trunk serves under `dist/`. Pick one:
+The browser only fetches URLs Trunk serves under `.dist/` (default build: `.dist/default/`). Pick one:
 
 **Option A — copy or symlink into `benchmark-fixtures/` (default Trunk config)**
 

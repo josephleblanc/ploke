@@ -64,4 +64,4 @@ Per-branch captures (Phase 2): `docs/active/agents/ploke-egui-design-autonomy/ca
 
 ## Do not commit
 
-`dist-*`, `.embed-measure/`, extra `Trunk.*.toml` variants, large `protocol-graph.json` exports (~12 MB), screenshots, `web.rs.bak.final`.
+`.dist/` (Trunk output), legacy `dist/` / `dist-*`, `.embed-measure/`, local `Trunk.*` / `index.*` asset/embed variants (see `.gitignore`), large `protocol-graph.json` exports (~12 MB), screenshots, `web.rs.bak.final`.
