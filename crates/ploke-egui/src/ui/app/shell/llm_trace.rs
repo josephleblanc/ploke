@@ -36,18 +36,91 @@ pub(crate) fn render_run_level_llm_trace_for_graph(
                 "turns",
                 dashboard.run_records_total_turn_count(),
             );
-            for (record_index, (record_key, record)) in run_records.index.iter().enumerate() {
-                render_run_record_llm_trace_for_record(
+            if run_records.index.len() == 1 {
+                let (record_key, record) = run_records.index.iter().next().expect("len checked");
+                render_run_record_llm_trace_metadata_chips(ui, render_cache, record_key, record);
+                render_run_record_llm_trace_turns(
                     ui,
                     render_cache,
                     "agent-trace",
-                    record_index,
                     record_key,
                     record,
                 );
+            } else {
+                for (record_index, (record_key, record)) in run_records.index.iter().enumerate() {
+                    render_run_record_llm_trace_for_record(
+                        ui,
+                        render_cache,
+                        "agent-trace",
+                        record_index,
+                        record_key,
+                        record,
+                    );
+                }
             }
         },
     );
+}
+
+fn render_run_record_llm_trace_metadata_chips(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    record_key: &str,
+    record: &ploke_records::run_record::RunRecord,
+) {
+    ui.horizontal_wrapped(|ui| {
+        cached_label(ui, render_cache, "record");
+        cached_path_value(
+            ui,
+            render_cache,
+            ("agent-trace-record", record_key),
+            record_key,
+        );
+        cached_label(ui, render_cache, "manifest");
+        cached_monospace_label(ui, render_cache, record.manifest_id.as_str());
+        cached_label(ui, render_cache, "instance");
+        cached_monospace_label(
+            ui,
+            render_cache,
+            record.metadata.benchmark.instance_id.as_str(),
+        );
+        if let Some(model) = record.metadata.agent.model_id.as_deref() {
+            cached_label(ui, render_cache, "model");
+            cached_monospace_label(ui, render_cache, model);
+        }
+        if let Some(provider) = record.metadata.agent.provider.as_deref() {
+            cached_label(ui, render_cache, "provider");
+            cached_monospace_label(ui, render_cache, provider);
+        }
+        let mut turns = itoa::Buffer::new();
+        cached_label(ui, render_cache, "turns");
+        cached_monospace_label(
+            ui,
+            render_cache,
+            turns.format(record.phases.agent_turns.len()),
+        );
+    });
+}
+
+fn render_run_record_llm_trace_turns(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    scope: &'static str,
+    record_key: &str,
+    record: &ploke_records::run_record::RunRecord,
+) {
+    for (turn_index, turn) in record.phases.agent_turns.iter().enumerate() {
+        render_run_record_turn_llm_trace(
+            ui,
+            render_cache,
+            scope,
+            record_key,
+            turn_index,
+            record,
+            turn,
+            true,
+        );
+    }
 }
 
 fn render_run_record_llm_trace_for_record(
@@ -68,33 +141,8 @@ fn render_run_record_llm_trace_for_record(
             .id_salt((scope, "run-record-llm", record_key, record_index))
             .default_open(record_index == 0),
         |ui| {
-            cached_kv_path(ui, render_cache, "record", record_key);
-            cached_kv_id(ui, render_cache, "manifest", record.manifest_id.as_str());
-            cached_kv_id(
-                ui,
-                render_cache,
-                "instance",
-                record.metadata.benchmark.instance_id.as_str(),
-            );
-            if let Some(model) = record.metadata.agent.model_id.as_deref() {
-                cached_kv_id(ui, render_cache, "model", model);
-            }
-            if let Some(provider) = record.metadata.agent.provider.as_deref() {
-                cached_kv_id(ui, render_cache, "provider", provider);
-            }
-            cached_kv_usize(ui, render_cache, "turns", record.phases.agent_turns.len());
-            for (turn_index, turn) in record.phases.agent_turns.iter().enumerate() {
-                render_run_record_turn_llm_trace(
-                    ui,
-                    render_cache,
-                    scope,
-                    record_key,
-                    turn_index,
-                    record,
-                    turn,
-                    true,
-                );
-            }
+            render_run_record_llm_trace_metadata_chips(ui, render_cache, record_key, record);
+            render_run_record_llm_trace_turns(ui, render_cache, scope, record_key, record);
         },
     );
 }
@@ -110,59 +158,110 @@ pub(crate) fn render_run_record_turn_llm_trace(
     turn: &ploke_records::run_record::TurnRecord,
     include_tool_steps: bool,
 ) {
-    let title = format!("turn {} {:?}", turn.turn_number, turn.outcome);
+    if turn_index > 0 {
+        ui.separator();
+    }
+    render_run_record_turn_llm_trace_summary(ui, render_cache, turn);
+    if include_tool_steps {
+        render_run_record_tool_steps(ui, render_cache, turn.tool_calls.as_slice());
+    }
     show_inspector_collapsing(
         ui,
-        egui::CollapsingHeader::new(title)
-            .id_salt((scope, "run-record-turn-llm", record_key, turn_index))
-            .default_open(turn_index == 0),
+        egui::CollapsingHeader::new("timing & outcome")
+            .id_salt((scope, "run-record-turn-timing", record_key, turn_index))
+            .default_open(false),
         |ui| {
-            cached_kv_u32(ui, render_cache, "turn", turn.turn_number);
-            cached_kv_text(ui, render_cache, "started", turn.started_at.as_str());
-            cached_kv_text(ui, render_cache, "ended", turn.ended_at.as_str());
-            cached_kv_i64(ui, render_cache, "db micros", turn.db_timestamp_micros);
-            cached_kv_id(
-                ui,
-                render_cache,
-                "outcome",
-                turn_outcome_label(&turn.outcome),
-            );
-            if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
-                cached_kv_usize(ui, render_cache, "outcome tools", count);
-            }
-            if let Some(message) = turn_outcome_error(&turn.outcome) {
-                cached_kv_text(ui, render_cache, "outcome error", message);
-            }
-            if let Some(elapsed) = turn_outcome_elapsed_secs(&turn.outcome) {
-                cached_kv_u64(ui, render_cache, "elapsed secs", elapsed);
-            }
-            if let Some(request) = turn.llm_request.as_ref() {
-                render_llm_request_record(ui, render_cache, scope, record_key, turn_index, request);
-            } else {
-                cached_kv_id(ui, render_cache, "llm request", "missing");
-            }
-            if let Some(response) = turn.llm_response.as_ref() {
-                render_llm_response_record(
-                    ui,
-                    render_cache,
-                    scope,
-                    "turn-response",
-                    record_key,
-                    turn_index,
-                    response,
-                );
-            } else {
-                cached_kv_id(ui, render_cache, "llm response", "missing");
-            }
-            render_agent_turn_artifact_trace(ui, render_cache, scope, record_key, turn_index, turn);
-            if include_tool_steps {
-                render_run_record_tool_steps(ui, render_cache, turn.tool_calls.as_slice());
-            }
-            if let Some(model) = record.metadata.agent.model_id.as_deref() {
-                cached_kv_id(ui, render_cache, "record model", model);
-            }
+            render_run_record_turn_llm_trace_timing(ui, render_cache, turn);
         },
     );
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("LLM & artifacts")
+            .id_salt((scope, "run-record-turn-llm-bundle", record_key, turn_index))
+            .default_open(false),
+        |ui| {
+            render_run_record_turn_llm_trace_bundle(
+                ui,
+                render_cache,
+                scope,
+                record_key,
+                turn_index,
+                record,
+                turn,
+            );
+        },
+    );
+}
+
+fn render_run_record_turn_llm_trace_summary(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: &ploke_records::run_record::TurnRecord,
+) {
+    ui.horizontal_wrapped(|ui| {
+        let mut turn_number = itoa::Buffer::new();
+        cached_label(ui, render_cache, "turn");
+        cached_monospace_label(ui, render_cache, turn_number.format(turn.turn_number));
+        cached_label(ui, render_cache, "outcome");
+        cached_monospace_label(ui, render_cache, turn_outcome_label(&turn.outcome));
+        let mut tool_steps = itoa::Buffer::new();
+        cached_label(ui, render_cache, "tool steps");
+        cached_monospace_label(ui, render_cache, tool_steps.format(turn.tool_calls.len()));
+        if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
+            let mut outcome_tools = itoa::Buffer::new();
+            cached_label(ui, render_cache, "outcome tools");
+            cached_monospace_label(ui, render_cache, outcome_tools.format(count));
+        }
+    });
+}
+
+fn render_run_record_turn_llm_trace_timing(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: &ploke_records::run_record::TurnRecord,
+) {
+    cached_kv_text(ui, render_cache, "started", turn.started_at.as_str());
+    cached_kv_text(ui, render_cache, "ended", turn.ended_at.as_str());
+    cached_kv_i64(ui, render_cache, "db micros", turn.db_timestamp_micros);
+    if let Some(message) = turn_outcome_error(&turn.outcome) {
+        cached_kv_text(ui, render_cache, "outcome error", message);
+    }
+    if let Some(elapsed) = turn_outcome_elapsed_secs(&turn.outcome) {
+        cached_kv_u64(ui, render_cache, "elapsed secs", elapsed);
+    }
+}
+
+fn render_run_record_turn_llm_trace_bundle(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    scope: &'static str,
+    record_key: &str,
+    turn_index: usize,
+    record: &ploke_records::run_record::RunRecord,
+    turn: &ploke_records::run_record::TurnRecord,
+) {
+    if let Some(request) = turn.llm_request.as_ref() {
+        render_llm_request_record(ui, render_cache, scope, record_key, turn_index, request);
+    } else {
+        cached_kv_id(ui, render_cache, "llm request", "missing");
+    }
+    if let Some(response) = turn.llm_response.as_ref() {
+        render_llm_response_record(
+            ui,
+            render_cache,
+            scope,
+            "turn-response",
+            record_key,
+            turn_index,
+            response,
+        );
+    } else {
+        cached_kv_id(ui, render_cache, "llm response", "missing");
+    }
+    render_agent_turn_artifact_trace(ui, render_cache, scope, record_key, turn_index, turn);
+    if let Some(model) = record.metadata.agent.model_id.as_deref() {
+        cached_kv_id(ui, render_cache, "record model", model);
+    }
 }
 
 fn render_llm_request_record(
