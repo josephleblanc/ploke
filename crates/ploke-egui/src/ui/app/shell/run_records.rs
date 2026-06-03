@@ -176,7 +176,7 @@ fn run_record_label(
         render_cache.run_record_text_galley(ui, text, CachedTextKind::Plain)
     };
     let _span = tracing::trace_span!(scope::INSPECTOR_RUN_RECORDS_LABEL_WIDGET).entered();
-    ui.add(egui::Label::new(galley))
+    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }
 
 fn run_record_expandable_id(
@@ -235,7 +235,7 @@ fn run_record_monospace_label(
         render_cache.run_record_text_galley(ui, text, CachedTextKind::Monospace)
     };
     let _span = tracing::trace_span!(scope::INSPECTOR_RUN_RECORDS_LABEL_WIDGET).entered();
-    ui.add(egui::Label::new(galley))
+    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }
 
 fn compared_run_arm_label(arm: ploke_tree::ComparedRunArm) -> &'static str {

@@ -15,10 +15,18 @@
 
 1. Implement UI slice (surgical diff; no per-frame graph clone/alloc).
 2. `cargo check -p ploke-egui --target wasm32-unknown-unknown`
-3. `cargo test -p ploke-egui --features "dev,native-benchmark" benchmark_regression` (blocking before commit)
-4. `./crates/ploke-egui/scripts/dogfood-smoke.sh` (wasm + trunk build + curl; no vision)
-5. Optional: `trunk serve` + MCP browser pass (see checklist below)
-6. Commit on green gate
+3. **Theme / inspector text regressions (mandatory before claiming fixed):**
+   - `cargo test -p ploke-egui inspector_text_galley`
+   - `cargo test -p ploke-egui render_cache_tests`
+   - `cargo test -p ploke-egui theme`
+   - `cargo test -p ploke-egui --features "dev,native-benchmark" benchmark_regression`
+   - If the bug is under **Agent Trace → Run LLM Trace**, also run `cargo test -p ploke-egui run_llm_trace_header` (cached KV + theme override paint).
+4. **URL theme matrix:** hard-reload the fixture URL with at least `&theme=tokyo_night` and `&theme=gruvbox_light` (no `memory.data.clear()` on palette change — collapsibles must stay open).
+5. **Browser proof when Trunk is available:** `env -u NO_COLOR trunk serve --config crates/ploke-egui/Trunk.toml --port 8080`, open the matrix URLs, expand **Agent Trace → Run LLM Trace**, `browser_take_screenshot` both palettes; text under the header (records/turns, chip row, turn summary) must be readable — not white pixel garbage. Save captures under `docs/active/agents/ploke-egui-design-autonomy/captures/` or `/tmp/cursor/screenshots/`.
+6. `./crates/ploke-egui/scripts/dogfood-smoke.sh` (wasm + trunk build + curl; no vision)
+7. Commit on green gate
+
+Do **not** ask the user to verify theme bugs; extend tests or browser proof until the failure mode is covered or documented (MCP canvas limitation).
 
 Escalation: `cargo test -p ploke-egui --features "dev,native-benchmark" benchmark_regression_against_baseline -- --ignored` — **do not update baseline JSON without explicit approval**.
 

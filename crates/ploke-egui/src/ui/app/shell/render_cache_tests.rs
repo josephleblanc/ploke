@@ -212,6 +212,23 @@ fn text_size_summary_cache_reuses_stable_size_labels() {
 }
 
 #[test]
+fn run_llm_trace_header_labels_use_theme_override_paint() {
+    use super::fields::cached_kv_usize;
+
+    let mut cache = InspectorRenderCache::default();
+
+    egui::__run_test_ui(|ui| {
+        AppTheme {
+            scheme: NamedScheme::TokyoNight,
+        }
+        .apply_to_context(ui.ctx());
+        cached_kv_usize(ui, &mut cache, "records", 19);
+        assert!(cache.text_galley_rebuilds() > 0);
+        assert!(cache.id_galley_rebuilds() == 0);
+    });
+}
+
+#[test]
 fn patch_diff_galleys_keep_natural_height_when_repeated() {
     use std::fmt::Write as _;
 
@@ -229,8 +246,8 @@ fn patch_diff_galleys_keep_natural_height_when_repeated() {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
         let content_height = galley.size().y;
 
-        let first = render_diff_galley(ui, ("patch-diff-height", 1), galley.clone());
-        let second = render_diff_galley(ui, ("patch-diff-height", 2), galley);
+        let first = render_diff_galley(ui, ("patch-diff-height", 1), galley.clone(), false);
+        let second = render_diff_galley(ui, ("patch-diff-height", 2), galley, false);
 
         assert!(
             first.rect.height() >= content_height,

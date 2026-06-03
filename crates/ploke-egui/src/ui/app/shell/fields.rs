@@ -34,7 +34,7 @@ pub(super) fn cached_label(
     text: &str,
 ) -> egui::Response {
     let galley = render_cache.text_galley(ui, text, CachedTextKind::Plain);
-    ui.add(egui::Label::new(galley))
+    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }
 
 pub(super) fn cached_monospace_label(
@@ -43,7 +43,7 @@ pub(super) fn cached_monospace_label(
     text: &str,
 ) -> egui::Response {
     let galley = render_cache.text_galley(ui, text, CachedTextKind::Monospace);
-    ui.add(egui::Label::new(galley))
+    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }
 
 pub(super) fn cached_expandable_id(
@@ -144,12 +144,10 @@ pub(super) fn cached_copyable_value(
         expanded = false;
     }
     let galley = label_galley(render_cache, ui, expanded);
-    let response = ui
-        .add(egui::Label::new(galley).sense(egui::Sense::click()))
-        .on_hover_ui(|ui| {
-            ui.monospace(value.full_text());
-            ui.label(value.hover_text(expanded, expandable));
-        });
+    let response = add_cached_theme_galley(ui, galley, egui::Sense::click()).on_hover_ui(|ui| {
+        ui.monospace(value.full_text());
+        ui.label(value.hover_text(expanded, expandable));
+    });
 
     if response.clicked() && expandable {
         expanded = !expanded;
@@ -383,5 +381,5 @@ pub(super) fn cached_wrapped_monospace_label(
     text: &str,
 ) -> egui::Response {
     let galley = render_cache.wrapped_monospace_galley(ui, text);
-    ui.add(egui::Label::new(galley))
+    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }

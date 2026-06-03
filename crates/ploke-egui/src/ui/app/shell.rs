@@ -1440,7 +1440,7 @@ fn render_cached_code_block(
     text: &str,
 ) -> egui::Response {
     let galley = render_cache.text_galley(ui, text, CachedTextKind::MonospaceBlock);
-    render_diff_galley(ui, id_salt, galley)
+    render_diff_galley(ui, id_salt, galley, true)
 }
 
 fn render_agent_turns<'a>(
@@ -1690,6 +1690,7 @@ fn render_diff(
             patch.patch_id(),
         ),
         galley,
+        false,
     )
 }
 
@@ -1697,6 +1698,7 @@ fn render_diff_galley(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
     galley: Arc<egui::Galley>,
+    theme_cached: bool,
 ) -> egui::Response {
     let _span = tracing::trace_span!(scope::INSPECTOR_PATCH_DEBUG_DIFF_WIDGET).entered();
     let width = ui.available_width().max(240.0);
@@ -1708,7 +1710,15 @@ fn render_diff_galley(
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     ui.set_min_width(width);
-                    ui.add(egui::Label::new(galley).selectable(true));
+                    if theme_cached {
+                        add_cached_theme_galley(
+                            ui,
+                            galley,
+                            egui::Sense::click().union(egui::Sense::drag()),
+                        );
+                    } else {
+                        ui.add(egui::Label::new(galley).selectable(true));
+                    }
                 });
         })
         .response
