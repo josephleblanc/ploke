@@ -140,8 +140,7 @@ mod tests {
     }
 }
 
-/// Drop egui widget/layout temp state after a palette change (collapsing headers, etc.).
+/// Request a full repaint after palette change; app-level render caches are cleared separately.
 pub fn on_theme_changed(ctx: &egui::Context) {
     ctx.request_discard("ploke theme");
-    ctx.memory_mut(|memory| memory.data.clear());
 }
