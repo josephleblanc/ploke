@@ -16,6 +16,7 @@ use super::geometry::{
 use super::label::{EdgeLabelInput, place_edge_label, record_edge_label};
 use super::projection::{EdgePattern, GraphEdgePayload};
 use super::style::{CurveStyle, EdgeStyle};
+use crate::ui::theme::tokens_from_ctx;
 
 #[derive(Debug, Clone)]
 pub(super) struct GraphEdgeShape {
@@ -81,12 +82,14 @@ impl GraphEdgeShape {
         }
     }
 
-    fn label_galley(&mut self, ctx: &egui_graphs::DrawContext, color: Color32) -> Arc<Galley> {
+    fn label_galley(&mut self, ctx: &egui_graphs::DrawContext) -> Arc<Galley> {
         let _span = tracing::trace_span!(scope::EGUI_GRAPHS_EDGE_LABEL_LAYOUT).entered();
+        let tokens = tokens_from_ctx(ctx.ctx);
         let key = EdgeLabelGalleyKey {
             font_size: self.style.label.font_size,
-            color,
+            theme_key: tokens.cache_theme_key(),
         };
+        let text_color = tokens.edge_label_text();
         match &self.label_galley {
             Some(cached) if cached.key == key => cached.galley.clone(),
             _ => {
@@ -94,7 +97,7 @@ impl GraphEdgeShape {
                     fonts.layout_no_wrap(
                         self.label.to_string(),
                         FontId::monospace(self.style.label.font_size),
-                        color,
+                        text_color,
                     )
                 });
                 self.label_galley = Some(EdgeLabelGalley {
@@ -141,7 +144,7 @@ struct EdgeLabelGalley {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct EdgeLabelGalleyKey {
     font_size: f32,
-    color: Color32,
+    theme_key: u8,
 }
 
 impl<N, Ty, Ix, D> egui_graphs::DisplayEdge<N, GraphEdgePayload, Ty, Ix, D> for GraphEdgeShape
@@ -200,7 +203,10 @@ where
         }
 
         if self.label_visible {
-            let galley = self.label_galley(ctx, color);
+            let tokens = tokens_from_ctx(ctx.ctx);
+            let label_text = tokens.edge_label_text();
+            let label_bg = tokens.edge_label_background();
+            let galley = self.label_galley(ctx);
             let placement = place_edge_label(EdgeLabelInput {
                 curve: screen_curve,
                 start_node: ctx.meta.canvas_to_screen_pos(start.location()),
@@ -218,12 +224,8 @@ where
                 Order::Foreground,
                 Id::new("ploke-egui.edge-labels"),
             ));
-            label_painter.add(Shape::rect_filled(
-                placement.background,
-                2.0,
-                Color32::from_black_alpha(180),
-            ));
-            label_painter.add(TextShape::new(placement.text_pos, galley, color));
+            label_painter.add(Shape::rect_filled(placement.background, 2.0, label_bg));
+            label_painter.add(TextShape::new(placement.text_pos, galley, label_text));
         }
 
         shapes

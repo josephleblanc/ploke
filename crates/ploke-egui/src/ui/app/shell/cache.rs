@@ -406,6 +406,7 @@ fn layout_owned_cached_text(
     kind: CachedTextKind,
 ) -> Arc<egui::Galley> {
     let style = ui.style();
+    let text_color = ui.visuals().text_color();
     let font_id = match kind {
         CachedTextKind::Plain => text_style::body_font_id(style),
         CachedTextKind::Monospace
@@ -418,7 +419,7 @@ fn layout_owned_cached_text(
     let _span = tracing::trace_span!(scope::EGUI_TEXT_FONT_LAYOUT).entered();
     match kind {
         CachedTextKind::Plain | CachedTextKind::Monospace => {
-            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, egui::Color32::PLACEHOLDER))
+            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, text_color))
         }
         CachedTextKind::MonospaceWarn => ui.fonts_mut(|fonts| {
             fonts.layout_no_wrap(text, font_id, text_style::inspector_warn_text_color(ui))

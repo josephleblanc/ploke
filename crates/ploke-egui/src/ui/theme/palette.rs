@@ -301,17 +301,35 @@ impl PaletteTokens {
         visuals
     }
 
+    pub fn edge_label_text(self) -> Color32 {
+        self.text
+    }
+
+    pub fn edge_label_background(self) -> Color32 {
+        let base = if self.is_dark {
+            self.panel
+        } else {
+            self.background
+        };
+        tint_alpha(base, if self.is_dark { 210 } else { 240 })
+    }
+
     pub fn install_on_context(self, ctx: &egui::Context) {
         ctx.set_visuals(self.to_visuals());
         ctx.data_mut(|data| data.insert_temp(theme_tokens_id(), self));
+        ctx.request_discard("theme palette");
     }
 }
 
-pub fn tokens_from_ui(ui: &egui::Ui) -> PaletteTokens {
-    ui.ctx().data(|data| {
+pub fn tokens_from_ctx(ctx: &egui::Context) -> PaletteTokens {
+    ctx.data(|data| {
         data.get_temp::<PaletteTokens>(theme_tokens_id())
             .unwrap_or_else(|| NamedScheme::default().tokens())
     })
+}
+
+pub fn tokens_from_ui(ui: &egui::Ui) -> PaletteTokens {
+    tokens_from_ctx(ui.ctx())
 }
 
 #[derive(Debug, Clone, Copy)]
