@@ -70,6 +70,22 @@ must not be cited as successful reviews.
 11. Write or update the run review in `docs/active/agents/run-reviews/`.
 12. Update `docs/active/agents/run-reviews/README.md` when adding a durable report.
 
+## Campaign-Wide EvalOps
+
+When the task is not a single run review but a campaign-wide pipeline, board
+creation, node/slot coverage audit, watchdog, or synthesis/backlog handoff, use
+`docs/workflow/skills/prototype1-evalops/SKILL.md` first. That skill owns the
+outer workflow:
+
+```text
+campaign inventory -> dry-run board plan -> coverage verifier -> Kanban graph
+-> quality-gated reviews -> synthesis -> backlog/rerun decision
+```
+
+Keep this skill (`ploke-run-review`) as the quality gate for each individual
+review report. Do not let an EvalOps board or synthesis count a report as durable
+evidence unless it passes the run-review gate above.
+
 ## Scout Fan-Out Before Full Review
 
 For broad or active Prototype 1 runs, use a fan-out/fan-in scout pass before
@@ -198,7 +214,8 @@ families before concluding:
 - campaign state: `campaign.json`, `closure-state.json`, `scheduler.json`,
   `prototype1/transition-journal.jsonl`
 - node/runtime state: `nodes/<node>/node.json`, `runner-request.json`,
-  `runner-result.json`, `invocations/*.json`, channel JSONL files
+  `runner-result.json`, `results/*.json`, `invocations/*.json`, stream logs,
+  and channel JSONL files
 - broad-harness state: `messages/edit-harness-request/*.json`,
   `messages/edit-harness-result/*.json`, the attempt workspace, terminal
   record, submitted result, candidate commit, and checkout diff
@@ -208,6 +225,44 @@ families before concluding:
   `benchmark-patch-projection.json`
 - protocol evidence: `*_tool_call_intent_segmentation_*.json`,
   `*_tool_call_review_*.json`, and `*_tool_call_segment_review_*.json`
+
+## Prototype 1 Node Coverage
+
+Do not let a selected successor node stand in for the whole campaign. Build the
+coverage map from the authoritative campaign node directories under
+`<campaign-root>/prototype1/nodes/node-*` plus all
+`messages/edit-harness-request/*.json` and `messages/edit-harness-result/*.json`
+slots before creating or completing review cards. For example, campaign
+`p1-gemini35-flash-direct-3g2x3-par2-20260602-170054` stores its campaign nodes
+under
+`~/.ploke-eval/campaigns/p1-gemini35-flash-direct-3g2x3-par2-20260602-170054/prototype1/nodes/`.
+
+Do not count copied fixture files inside candidate workspaces as campaign nodes,
+e.g. paths under
+`prototype1/workspaces/edit-harness/<slot>/crates/ploke-eval/src/tests/fixtures/prototype1-node-150-handoff/node.json`.
+Those belong to the candidate checkout, not the campaign node graph.
+
+Each node needs its own classification:
+
+- parent/root nodes: review the baseline eval/run root, parent planning, and all
+  broad-harness request/result slots emitted from that parent;
+- failed child nodes: review the materialization/build/spawn/admission failure
+  path even when `runner-result.json` is absent;
+- succeeded child runners: review the child runner result, treatment campaign,
+  branch evaluation, protocol artifacts, and the headless trace that produced the
+  admitted patch;
+- selected successors: review both phases separately: the earlier treatment
+  runner that made the branch selectable and the later successor
+  `prototype1-state` handoff;
+- stale-running metadata: if `node.json` says `running` but no active OS process
+  exists, reconcile `transition-journal.jsonl`, `results/*.json`, stream logs,
+  and successor completion records before calling the node live.
+
+A successor handoff that fails from a transient provider/quota error (for
+example HTTP 429 / `RESOURCE_EXHAUSTED`) is not evidence that the selected child
+runner failed. Preserve the distinction: "runner succeeded and branch was
+selected" vs "successor parent handoff later failed." Redact provider project
+ids, endpoint URLs, tokens, and credential paths in durable reports.
 
 The default conclusion should not be "no records exist" unless those checks
 prove absence. Prefer a precise claim such as "the record exists, but playback

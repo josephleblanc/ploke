@@ -124,3 +124,50 @@ state without checking newer code, History records, and run artifacts.
   provider-unavailable r5, applied-but-unadmitted r6, and incomplete r7-r9 state
   while mapping findings to alive bugs, blocker-repair work, and adjudication
   signals.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-baseline-eval.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-baseline-eval.md)
+  Baseline eval review for `BurntSushi__ripgrep-2209`, covering non-empty
+  patch/submission output, workspace-covering final cargo validation, missing
+  protocol artifacts, no fmt evidence, and lifecycle/read-side gaps before
+  broad-harness descendants complete.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-100204-node-ce7da05078b0116e-parent-patch-generation-child-planning.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-100204-node-ce7da05078b0116e-parent-patch-generation-child-planning.md)
+  Parent patch-generation / child-planning review for `node-ce7da05078b0116e`,
+  separating the real headless-TUI diagnostics and focused syn_parser cargo
+  checks from the provider-unavailable terminal failure and the absence of any
+  submitted-result or child-plan artifact.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-parent-child-plan.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-parent-child-plan.md)
+  Parent planning/request-publication review for `node-26f01da56959fd47`,
+  separating published r2-r9 prompt slots and materialized early workspaces from
+  absent submitted child results and unproven descendant usefulness.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-broad-harness.md)
+  Broad-harness parent-slot review, covering a timed-out diagnostics bundle with
+  verified dirty `ploke-core` workspace edits, absent submitted result, empty raw
+  provider log, and no child admission or benchmark usefulness.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r2-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r2-broad-harness.md)
+  Broad-harness r2 review, covering an applied `syn_parser_macros` edit, focused
+  validation plus missing-fixture test failure, absent submitted result, timeout
+  accounting ambiguity, and no admitted descendant result.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r3-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r3-broad-harness.md)
+  Broad-harness r3 review, covering an applied `ploke-ty-mcp` manager edit,
+  present submitted result, focused validation-contract mismatch, missing
+  benchmark-path proof for `ploke-eval`, and recovered tool-failure accounting.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r4-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r4-broad-harness.md)
+  Broad-harness r4 review, covering an applied `ploke-protocol` `FanOut::run`
+  concurrency edit, focused validation-contract mismatch, admitted child
+  `node-008968ba900ec740`, branch-evaluation rejection for `tool_calls_failed`
+  regression, and raw trace/provider sidecar inconsistencies.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r5-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-26f01da56959fd47-r5-broad-harness.md)
+  Broad-harness r5 review, covering an applied `ploke-llm` router URL
+  micro-optimization, submitted-result presence, raw provider/final-message
+  mismatch, requested `ploke-eval` validation gap, admitted child
+  `node-6ebbc85b4bd81864`, and branch-evaluation rejection for same-file,
+  abort, convergence, and oracle-eligibility regressions.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-69dd9bb1de784313-r2-broad-harness.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-node-69dd9bb1de784313-r2-broad-harness.md)
+  Broad-harness r2 review under kept child parent `node-69dd9bb1de784313`,
+  covering a provider-unavailable `HTTP_429` no-edit/no-submission result,
+  clean inherited workspace state, focused `ploke-records` validation-contract
+  mismatch, and no descendant benchmark usefulness.
+- [`2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-post-exit-incomplete-child-state.md`](2026-06-02-p1-gemini35-flash-direct-3g2x3-par2-20260602-131345-post-exit-incomplete-child-state.md)
+  Post-exit incomplete child-state note, not a successful run review: 12
+  request slots have no headless result/submission/trace, and one materialized
+  `node-69dd9bb1de784313` workspace contains an unsubmitted dirty
+  `ploke-io/src/write.rs` diff.
