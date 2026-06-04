@@ -149,58 +149,76 @@ pub(crate) mod tests {
         TrackingHash::generate(namespace, file_path, &tokens)
     }
 
+    fn synthetic_fn_node_uuid(namespace: Uuid, file_path: &std::path::Path, name: &str) -> Uuid {
+        use ploke_core::{IdTrait, ItemKind, NodeId};
+
+        NodeId::generate_synthetic(
+            namespace,
+            file_path,
+            &[],
+            name,
+            ItemKind::Function,
+            None,
+            None,
+        )
+        .uuid()
+    }
+
     // Tests to move here:
     #[tokio::test]
-    #[ignore = "needs redisign to have the id (NodeId) of file"]
-    #[allow(unreachable_code)]
+    #[ignore = "focused ignored regression for ordered batch reads"]
     async fn test_get_snippets_batch_preserves_order() {
         let dir = tempdir().unwrap();
 
-        // Use valid Rust syntax
         let file_path1 = dir.path().join("test1.rs");
-        let content1 = "fn main() { println!(\"Hello, world!\"); }";
-        fs::write(&file_path1, content1).unwrap();
+        let alpha = "fn alpha() -> &'static str { \"alpha\" }";
+        let gamma = "fn gamma() -> &'static str { \"gamma\" }";
+        let content1 = format!("{alpha}\n{gamma}\n");
+        fs::write(&file_path1, &content1).unwrap();
 
         let file_path2 = dir.path().join("test2.rs");
-        let content2 = "fn example() { println!(\"This is a test.\"); }";
-        fs::write(&file_path2, content2).unwrap();
+        let beta = "fn beta() -> &'static str { \"beta\" }";
+        let content2 = format!("{beta}\n");
+        fs::write(&file_path2, &content2).unwrap();
 
         let io_manager = IoManagerHandle::new();
 
         let namespace = Uuid::new_v4();
-        // Create requests with calculated offsets
+        let file_hash1 = tracking_hash_with_path_ns(&content1, &file_path1, namespace);
+        let file_hash2 = tracking_hash_with_path_ns(&content2, &file_path2, namespace);
+        let gamma_start = content1.find(gamma).unwrap();
+        let alpha_start = content1.find(alpha).unwrap();
+        let beta_start = content2.find(beta).unwrap();
+
         let requests = vec![
             EmbeddingData {
                 file_path: file_path1.clone(),
-                file_tracking_hash: tracking_hash(content1),
-
-                node_tracking_hash: tracking_hash(content1),
-                start_byte: content1.find("world").unwrap(),
-                end_byte: content1.find("world").unwrap() + "world".len(),
-                id: Uuid::new_v4(),
-                name: "world".to_string(),
+                file_tracking_hash: file_hash1,
+                node_tracking_hash: tracking_hash_with_path_ns(gamma, &file_path1, namespace),
+                start_byte: gamma_start,
+                end_byte: gamma_start + gamma.len(),
+                id: synthetic_fn_node_uuid(namespace, &file_path1, "gamma"),
+                name: "gamma".to_string(),
                 namespace,
             },
             EmbeddingData {
                 file_path: file_path2.clone(),
-                file_tracking_hash: tracking_hash(content2),
-
-                node_tracking_hash: tracking_hash(content2),
-                start_byte: content2.find("This").unwrap(),
-                end_byte: content2.find("This").unwrap() + "This".len(),
-                id: Uuid::new_v4(),
-                name: "This".to_string(),
+                file_tracking_hash: file_hash2,
+                node_tracking_hash: tracking_hash_with_path_ns(beta, &file_path2, namespace),
+                start_byte: beta_start,
+                end_byte: beta_start + beta.len(),
+                id: synthetic_fn_node_uuid(namespace, &file_path2, "beta"),
+                name: "beta".to_string(),
                 namespace,
             },
             EmbeddingData {
                 file_path: file_path1.clone(),
-                file_tracking_hash: tracking_hash(content1),
-
-                node_tracking_hash: tracking_hash(content1),
-                start_byte: content1.find("Hello").unwrap(),
-                end_byte: content1.find("Hello").unwrap() + "Hello".len(),
-                id: Uuid::new_v4(),
-                name: "Hello".to_string(),
+                file_tracking_hash: file_hash1,
+                node_tracking_hash: tracking_hash_with_path_ns(alpha, &file_path1, namespace),
+                start_byte: alpha_start,
+                end_byte: alpha_start + alpha.len(),
+                id: synthetic_fn_node_uuid(namespace, &file_path1, "alpha"),
+                name: "alpha".to_string(),
                 namespace,
             },
         ];
@@ -208,9 +226,9 @@ pub(crate) mod tests {
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
 
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].as_ref().unwrap(), "world");
-        assert_eq!(results[1].as_ref().unwrap(), "This");
-        assert_eq!(results[2].as_ref().unwrap(), "Hello");
+        assert_eq!(results[0].as_ref().unwrap(), gamma);
+        assert_eq!(results[1].as_ref().unwrap(), beta);
+        assert_eq!(results[2].as_ref().unwrap(), alpha);
 
         io_manager.shutdown().await;
     }
