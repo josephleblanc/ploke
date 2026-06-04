@@ -142,6 +142,8 @@ docs/agents/active/prototype1-state-execution-path.excalidraw
 .tmp/prototype1-loop-records.excalidraw
 
 # local egui screenshots and editor backups
+# dogfood / theme-matrix screenshots at repo root
+/dogfood-*.png
 crates/ploke-egui/ploke-egui-*.png
 crates/ploke-egui/*.png
 crates/ploke-egui/src/**/*.bak*
