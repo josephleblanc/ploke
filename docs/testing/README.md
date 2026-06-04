@@ -8,6 +8,9 @@
   Snapshot testing guide for Insta-based assertions.
 - [`LIVE_GOOGLE.md`](LIVE_GOOGLE.md)
   Direct Google/Vertex ADC setup, preflight, and focused live canaries.
+- [`LIVE_LANE_CANARIES.md`](LIVE_LANE_CANARIES.md)
+  Normalized run commands, gates, evidence paths, and cadence for ignored
+  Google, OpenRouter/provider, and operator-workspace live canaries.
 - [`TEST_GUIDELINES.md`](TEST_GUIDELINES.md)
   General repository testing guidelines.
 - [`llm_request_snapshot_harness.md`](llm_request_snapshot_harness.md)

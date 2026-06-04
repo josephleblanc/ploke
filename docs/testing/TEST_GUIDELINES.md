@@ -4,18 +4,19 @@ Purpose
 - Ensure changes are safe, observable, and user‑focused. Tests validate behavior, properties, and invariants; they should be reliable, meaningful, and fast by default.
 
 Principles
-- Small, isolated unit tests for pure logic; integration tests for cross‑crate flows; end‑to‑end tests gated behind envs to protect CI time and cost.
+- Small, isolated unit tests for pure logic; integration tests for cross‑crate flows; end‑to‑end tests gated behind envs when they are costly, flaky, or operator-only.
 - Tests must assert observable properties (inputs → outputs), not implementation details.
-- Use fixtures deterministically; mock external services; gate network/tool‑calling tests behind env (e.g., OPENROUTER).
-- Prefer per‑test env gates (FOO_RUN_TEST_X=1) over global flags; default to skip/ignore for long or external.
+- Use fixtures deterministically; mock external services where the mocked path is the behavior under test.
+- Do not assume every live/provider test should be removed from the default lane. Fast API-sensitive OpenRouter embedding coverage is intentionally part of the default workspace signal when the relevant default features are enabled.
+- Prefer per‑test env gates (FOO_RUN_TEST_X=1) over global flags for long, operator-only, or high-cost tests.
 
 Env Gating Patterns
 - Long running (embedding/indexing) tests: require PLOKE_EMBED_RUN_<TEST_NAME>=1.
-- Live LLM tests (OpenRouter): require OPENROUTER_API_KEY and an explicit gate. By default, these are skipped unless one of the following is set:
+- Live OpenRouter embedding/API tests: `OPENROUTER_API_KEY` is an expected prerequisite for the default workspace lane when those tests are enabled by default features. This is intentional regression coverage for API-sensitive embedding behavior, not an accidental dependency. Use cheap/fast models/providers and keep assertions tight.
+- OpenRouter tests that are expensive, model-behavior-sensitive, diagnostic-only, or not required for the default confidence signal may add an explicit gate, for example:
   - `PLOKE_RUN_LIVE_TESTS=1` (top-level E2E live tests)
   - `PLOKE_RUN_EXEC_LIVE_TESTS=1` (in-crate exec_live_tests diagnostics)
   - `PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS=1` (real tools roundtrip smoke)
-  Choose low‑cost models/providers when enabled.
 - Live Google tests: require Google ADC, `GOOGLE_PROJECT_ID`, `GOOGLE_REGION`,
   an explicit live gate, and a supported model id such as
   `PLOKE_LIVE_GOOGLE_CHAT_MODEL=google/gemini-2.5-flash`. Use
@@ -170,7 +171,11 @@ Live API Endpoint Tests (OpenRouter)
   - If you exhaust the budget (3 failed runs) while trying to reach desired behavior without weakening test integrity, write a report:
     - What you tried, what failed/succeeded, and open questions.
     - Ask for guidance before continuing.
-- Gating: require `OPENROUTER_API_KEY` and an explicit gate (e.g., `PLOKE_RUN_LIVE_TESTS=1`). Default to skip in CI.
+- Gating: require `OPENROUTER_API_KEY`. Do not add an explicit live gate or
+  `#[ignore]` to existing default OpenRouter embedding/API regressions unless
+  the test is being intentionally moved out of the default confidence lane.
+  Operator-only, expensive, or diagnostic OpenRouter tests may still require an
+  explicit gate such as `PLOKE_RUN_LIVE_TESTS=1`.
 - Capture useful metadata (endpoint chosen, prices, rate-limits) in logs/artifacts under `target/test-output/` when helpful.
 
 Live API Endpoint Tests (Google)
