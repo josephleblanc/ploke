@@ -74,7 +74,7 @@ fn analyst_snapshot_two_column_layout(
 }
 
 pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProtocolVisualSummary) {
-    let pane_width = effective_eval_pane_content_width(ui);
+    let pane_width = effective_eval_pane_content_width(ui).min(ui.available_width());
     ui.set_max_width(pane_width);
 
     let run_effort = [
@@ -300,7 +300,7 @@ mod tests {
     fn analyst_snapshot_uses_shared_row_board_constants() {
         assert_eq!(LABEL_COL_WIDTH, 140.0);
         let track = metric_bar_track_width(400.0, 8.0, LABEL_COL_WIDTH);
-        assert_eq!(track, 186.0);
+        assert_eq!(track, 182.0);
     }
 
     #[test]

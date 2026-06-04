@@ -74,6 +74,16 @@ pub(crate) fn metric_bar_track_width(
 
 /// Render a 3-column grid of metric rows; `section_width` is captured at section start
 /// (per-column `ui.available_width()` in two-column layouts, not the parent pane width).
+/// Width for one metric-board section: caller hint capped by visible column width.
+fn metric_row_board_layout_width(ui: &egui::Ui, section_width: f32) -> f32 {
+    let available = ui.available_width();
+    if section_width.is_finite() {
+        section_width.min(available)
+    } else {
+        available
+    }
+}
+
 pub(crate) fn render_metric_row_board(
     ui: &mut egui::Ui,
     grid_id: (&str, &str),
@@ -85,9 +95,8 @@ pub(crate) fn render_metric_row_board(
         return;
     }
 
-    if section_width.is_finite() {
-        ui.set_max_width(section_width);
-    }
+    let section_width = metric_row_board_layout_width(ui, section_width);
+    ui.set_max_width(section_width);
 
     let section_max = rows
         .iter()
@@ -187,6 +196,9 @@ fn render_metric_row_board_row(
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
+        ui.set_max_width(
+            BAR_COLUMN_LEFT_PADDING + section_track_width + BAR_TRACK_RIGHT_INSET,
+        );
         ui.add_space(BAR_COLUMN_LEFT_PADDING);
         let (track_rect, _) = ui.allocate_exact_size(
             egui::vec2(section_track_width, BAR_ROW_HEIGHT),
@@ -246,7 +258,16 @@ mod tests {
     #[test]
     fn bar_track_right_inset_matches_bar_profiles_metric_padding() {
         assert_eq!(BAR_TRACK_RIGHT_INSET, METRIC_TRACK_X_PADDING);
-        assert_eq!(BAR_TRACK_RIGHT_INSET, 8.0);
+        assert_eq!(BAR_TRACK_RIGHT_INSET, 12.0);
+    }
+
+    #[test]
+    fn metric_row_board_layout_width_clamps_to_available() {
+        egui::__run_test_ui(|ui| {
+            ui.set_width(200.0);
+            assert_eq!(metric_row_board_layout_width(ui, 400.0), 200.0);
+            assert_eq!(metric_row_board_layout_width(ui, f32::INFINITY), 200.0);
+        });
     }
 
     #[test]
@@ -261,14 +282,14 @@ mod tests {
                 - BAR_TRACK_RIGHT_INSET
                 - 16.0
         );
-        assert_eq!(track, 186.0);
+        assert_eq!(track, 182.0);
     }
 
     #[test]
     fn metric_bar_track_width_uses_compact_label_column() {
         let compact = 120.0;
         let track = metric_bar_track_width(280.0, 8.0, compact);
-        assert_eq!(track, 86.0);
+        assert_eq!(track, 82.0);
     }
 
     #[test]

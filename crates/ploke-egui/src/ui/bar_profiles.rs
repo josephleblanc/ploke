@@ -30,7 +30,7 @@ pub const MIN_METRIC_FILL_WIDTH_PX: f32 = 2.0;
 /// Minimum width for a timeline span before clamping.
 pub const MIN_SPAN_WIDTH_PX: f32 = 3.0;
 /// Horizontal inset for inspector metric bar tracks (pane edge; see `metric_row_board`).
-pub const METRIC_TRACK_X_PADDING: f32 = 8.0;
+pub const METRIC_TRACK_X_PADDING: f32 = 12.0;
 
 /// Right gutter for row action buttons (copy, inspect, popout); same scale as metric tracks.
 pub const PANE_LIST_TRAILING_INSET: f32 = METRIC_TRACK_X_PADDING;
