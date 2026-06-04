@@ -1,123 +1,128 @@
-use cozo::DataValue;
-use ploke_db::Database;
-use ploke_db::to_usize;
+use cozo::{DataValue, UuidWrapper, Vector};
+use ploke_db::{Database, DbError, to_usize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[cfg(test)]
-#[ignore = "outdated test, not useful"]
-fn create_test_db_for_embedding_updates() -> Database {
-    let db = Database::init_with_schema().unwrap();
+fn fixture_db() -> Database {
+    Database::new(ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes").unwrap())
+}
 
-    let function_id = Uuid::new_v4();
-    let module_id = Uuid::new_v4();
+fn active_embedding_relation_and_dims(db: &Database) -> (String, usize) {
+    db.with_active_set(|set| (set.rel_name.to_string(), set.dims() as usize))
+        .unwrap()
+}
 
-    // Create mock function data for embedding tests
-    let function_script = r#"
-        ?[id, tracking_hash, module_id, name, span] <- [
-            [
-                $function_id,
-                $tracking_hash,
-                $module_id,
-                $name,
-                $span
-            ]
-        ]
-        :put function {id, tracking_hash, module_id, name, span}
-        "#;
+fn first_unembedded_node_id(db: &Database) -> Uuid {
+    db.get_unembedded_node_data(10, 0)
+        .unwrap()
+        .iter()
+        .flat_map(|typed| typed.v.iter())
+        .map(|node| node.id)
+        .next()
+        .expect("fixture_nodes should have at least one unembedded node")
+}
 
-    let mut function_params = BTreeMap::new();
-    function_params.insert(
-        "function_id".to_string(),
-        DataValue::Uuid(cozo::UuidWrapper(function_id)),
-    );
-    function_params.insert(
-        "tracking_hash".to_string(),
-        DataValue::Uuid(cozo::UuidWrapper(Uuid::new_v4())),
-    );
-    function_params.insert(
-        "module_id".to_string(),
-        DataValue::Uuid(cozo::UuidWrapper(module_id)),
-    );
-    function_params.insert("name".to_string(), DataValue::Str("test_function".into()));
-    function_params.insert(
-        "span".to_string(),
-        DataValue::List(vec![
-            DataValue::Num(cozo::Num::Int(0)),
-            DataValue::Num(cozo::Num::Int(100)),
-        ]),
+fn stored_vector_for_node(db: &Database, relation: &str, node_id: Uuid) -> Vec<f64> {
+    let query = format!("?[vector] := *{relation} {{ node_id: $node_id, vector }}");
+    let mut params = BTreeMap::new();
+    params.insert("node_id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+
+    let result = db
+        .run_script(&query, params, cozo::ScriptMutability::Immutable)
+        .unwrap();
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected one embedding row for node {node_id} in relation {relation}"
     );
 
-    db.run_script(
-        function_script,
-        function_params,
-        cozo::ScriptMutability::Mutable,
-    )
-    .unwrap();
+    match &result.rows[0][0] {
+        DataValue::List(values) => values
+            .iter()
+            .map(|value| match value {
+                DataValue::Num(cozo::Num::Float(f)) => *f,
+                DataValue::Num(cozo::Num::Int(i)) => *i as f64,
+                other => panic!("expected numeric vector element, got {other:?}"),
+            })
+            .collect(),
+        DataValue::Vec(Vector::F32(values)) => {
+            values.iter().map(|value| f64::from(*value)).collect()
+        }
+        DataValue::Vec(Vector::F64(values)) => values.iter().copied().collect(),
+        other => panic!("expected vector list, got {other:?}"),
+    }
+}
 
-    let module_script = r#"
-        ?[id, path] <- [
-            [$module_id, $path]
-        ]
-        :put module { id, path }
-        "#;
-
-    let mut module_params = BTreeMap::new();
-    module_params.insert(
-        "module_id".to_string(),
-        DataValue::Uuid(cozo::UuidWrapper(module_id)),
-    );
-    module_params.insert(
-        "path".to_string(),
-        DataValue::List(vec![DataValue::Str("crate".into())]),
-    );
-
-    db.run_script(
-        module_script,
-        module_params,
-        cozo::ScriptMutability::Mutable,
-    )
-    .unwrap();
-
-    db
+fn assert_query_execution_contains(err: DbError, expected: &str) {
+    match err {
+        DbError::QueryExecution(message) => assert!(
+            message.contains(expected),
+            "expected query execution error containing {expected:?}, got {message:?}"
+        ),
+        other => panic!("expected DbError::QueryExecution, got {other:?}"),
+    }
 }
 
 #[tokio::test]
-#[ignore = "outdated test, needs update"]
+#[ignore = "fixture-backed embedding contract"]
 async fn test_update_embeddings_batch_empty() {
-    let db = create_test_db_for_embedding_updates();
+    let db = fixture_db();
+    let before = db.count_pending_embeddings().unwrap();
+
     db.update_embeddings_batch(vec![]).unwrap();
+
+    assert_eq!(db.count_pending_embeddings().unwrap(), before);
 }
 
 #[tokio::test]
-#[ignore = "outdated test, needs update"]
+#[ignore = "fixture-backed embedding contract"]
 async fn test_update_embeddings_batch_single() {
-    let db = create_test_db_for_embedding_updates();
-    let id = Uuid::new_v4();
-    // Use 384-dimensional vector to match schema
-    let embedding = vec![0.5f32; 384];
+    let db = fixture_db();
+    let (relation, dims) = active_embedding_relation_and_dims(&db);
+    let node_id = first_unembedded_node_id(&db);
+    let before = db.count_pending_embeddings().unwrap();
+    let embedding: Vec<f32> = (0..dims).map(|i| i as f32 / dims as f32).collect();
 
-    db.update_embeddings_batch(vec![(id, embedding)]).unwrap();
+    db.update_embeddings_batch(vec![(node_id, embedding.clone())])
+        .unwrap();
+
+    assert_eq!(db.count_pending_embeddings().unwrap(), before - 1);
+    let stored = stored_vector_for_node(&db, &relation, node_id);
+    assert_eq!(stored.len(), dims);
+    for (actual, expected) in stored.iter().zip(embedding.iter()) {
+        assert_eq!(*actual, f64::from(*expected));
+    }
 }
 
 #[tokio::test]
-#[ignore = "outdated test, needs update"]
+#[ignore = "fixture-backed embedding contract"]
 async fn test_update_embeddings_invalid_input() {
-    let db = create_test_db_for_embedding_updates();
-    let result = db.update_embeddings_batch(vec![(Uuid::new_v4(), vec![])]);
+    let db = fixture_db();
+    let (_, dims) = active_embedding_relation_and_dims(&db);
+    let node_id = first_unembedded_node_id(&db);
 
-    assert!(
-        result.is_err(),
-        "Update with invalid vector length should fail"
-    );
+    let empty_err = db
+        .update_embeddings_batch(vec![(node_id, Vec::new())])
+        .expect_err("empty embedding vector should be rejected");
+    assert_query_execution_contains(empty_err, "Embedding vector must not be empty");
+
+    let wrong_len = if dims == 1 { 2 } else { dims - 1 };
+    let shape_err = db
+        .update_embeddings_batch(vec![(node_id, vec![0.25; wrong_len])])
+        .expect_err("embedding vector with wrong length should be rejected");
+    assert_query_execution_contains(shape_err, "does not match active embedding set dimension");
 }
 
 #[tokio::test]
-#[ignore = "outdated test, needs update"]
+#[ignore = "fixture-backed embedding contract"]
 async fn test_pending_embedding_count() {
-    let db = create_test_db_for_embedding_updates();
-    let count = db.count_pending_embeddings().unwrap();
-    assert!(count > 0, "Expected pending embeddings");
+    let db = fixture_db();
+    let all_pending = db.count_pending_embeddings().unwrap();
+    let non_file_pending = db.count_unembedded_nonfiles().unwrap();
+    let file_pending = db.count_unembedded_files().unwrap();
+
+    assert!(all_pending > 0, "fixture should have pending embeddings");
+    assert_eq!(all_pending, non_file_pending + file_pending);
 }
 
 #[test]
