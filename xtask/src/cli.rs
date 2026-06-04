@@ -376,14 +376,16 @@ mod tests {
 
     #[test]
     fn test_cli_default_format() {
-        // Parse with no format specified should default to Human
-        let cli = Cli::parse_from(["xtask", "help"]);
+        // Parse with no format specified should default to Human. Use a regular
+        // subcommand instead of clap's built-in `help` command so passing tests
+        // do not print the full help banner during workspace runs.
+        let cli = Cli::parse_from(["xtask", "help-topic"]);
         assert!(matches!(cli.format, OutputFormat::Human));
     }
 
     #[test]
     fn test_cli_json_format() {
-        let cli = Cli::parse_from(["xtask", "--format", "json", "help"]);
+        let cli = Cli::parse_from(["xtask", "--format", "json", "help-topic"]);
         assert!(matches!(cli.format, OutputFormat::Json));
     }
 
