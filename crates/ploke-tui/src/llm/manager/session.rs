@@ -1012,7 +1012,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let calibration_input = R::calibration_input(&req);
         let mut provider_timing = R::resolve_provider_timing(calibration_input);
         provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
-        provider_timing.max_attempts = 1;
+        provider_timing.max_attempts = 2;
         let mut cfg = ChatHttpConfig::from(&provider_timing);
         let ChatStepData {
             outcome,
@@ -3374,7 +3374,7 @@ mod tests {
             step.provider_timing.attempt_timeout.for_attempt(2),
             Duration::from_secs(90)
         );
-        assert_eq!(step.provider_timing.max_attempts, 1);
+        assert_eq!(step.provider_timing.max_attempts, 2);
     }
 
     #[tokio::test]
@@ -3426,14 +3426,14 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert_eq!(report.chat_steps.len(), 1);
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_attempts.len(), 1);
+        assert_eq!(step.provider_attempts.len(), 2);
         assert_eq!(
             step.provider_attempts
                 .last()
                 .map(|attempt| attempt.retry_decision),
             Some(ProviderRetryDecision::Exhausted)
         );
-        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -3531,7 +3531,7 @@ mod tests {
         );
 
         let step = report.chat_steps.first().expect("chat step report");
-        assert_eq!(step.provider_timing.max_attempts, 1);
+        assert_eq!(step.provider_timing.max_attempts, 2);
         assert_eq!(
             step.provider_timing.first_timeout(),
             Duration::from_secs(45)

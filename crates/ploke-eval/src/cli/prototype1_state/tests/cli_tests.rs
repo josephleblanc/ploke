@@ -117,8 +117,10 @@ fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
         lines: lines.clone(),
     });
     let guard = tracing::subscriber::set_default(subscriber);
+    crate::test_support::rebuild_trace_interest_cache();
     let result = f();
     drop(guard);
+    crate::test_support::rebuild_trace_interest_cache();
     (result, lines.snapshot())
 }
 
@@ -131,8 +133,10 @@ async fn collect_traces_async<T>(f: impl std::future::Future<Output = T>) -> (T,
         lines: lines.clone(),
     });
     let guard = tracing::subscriber::set_default(subscriber);
+    crate::test_support::rebuild_trace_interest_cache();
     let result = f.await;
     drop(guard);
+    crate::test_support::rebuild_trace_interest_cache();
     (result, lines.snapshot())
 }
 
@@ -1115,9 +1119,14 @@ async fn zero_admission_batch_is_persisted() {
     // batch carrying Parent<AwaitingHarnessPlan>; from here the controller must
     // either lock a ChildPlan message or fail without pretending the phase is
     // still fresh.
-    let batch: HarnessRequestBatch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch: HarnessRequestBatch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     let first_diagnostics =
         broad_headless_tui_diagnostics_path(batch.slots[0].published.submitted_result_path());
     write_json_file_pretty(&first_diagnostics, &historical_summary)
@@ -1134,6 +1143,7 @@ async fn zero_admission_batch_is_persisted() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             batch,
             Vec::new(),
@@ -1334,6 +1344,90 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
 }
 
 #[test]
+fn applied_timed_out_headless_tui_blocks_submitted_result_with_typed_detail() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("src/lib.rs"),
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "before"
+}
+"#,
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "typed applied timeout fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(&repo_root, &slot.published)
+        .expect("prepare broad harness workspace");
+
+    let relpath = PathBuf::from("src/lib.rs");
+    let candidate_path = slot.published.workspace_path().join(&relpath);
+    fs::write(
+        &candidate_path,
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "after"
+}
+"#,
+    )
+    .expect("write candidate edit");
+
+    let proposal_id = uuid::Uuid::from_u128(0x45a2_e262_0000_0000_0000_000000000002);
+    let attempts = vec![tui_adapter::HeadlessAttempt::applied_for_test(
+        1,
+        proposal_id,
+        vec![candidate_path.clone()],
+    )];
+    let applied = tui_adapter::HeadlessRun::from_parts_for_test(attempts.clone(), None)
+        .applied_edit()
+        .expect("applied edit evidence");
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        attempts,
+        Some(tui_adapter::HeadlessTerminal::AppliedTimedOut { secs: 900, applied }),
+    );
+    let terminal = run.terminal().expect("terminal");
+
+    let err = finish_broad_headless_tui_attempt(
+        &GitWorktreeBackend,
+        &slot,
+        &repo_root,
+        false,
+        &run,
+        terminal,
+    )
+    .expect_err("typed applied-timeout run must not publish submission");
+    let detail = err.to_string();
+    assert!(
+        detail.contains("timed out after 900 seconds after applying proposal"),
+        "unexpected error: {detail}"
+    );
+    assert!(
+        detail.contains("refusing to publish submitted broad-harness result"),
+        "unexpected error: {detail}"
+    );
+    assert!(
+        !slot.published.submitted_result_path().exists(),
+        "typed applied-timeout run must not write submitted result at {}",
+        slot.published.submitted_result_path().display()
+    );
+}
+
+#[test]
 fn tui_edit_surface_producer_creates_default_checked_candidates() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let allowed = write_broad_surface_targets(tmp.path());
@@ -1429,6 +1523,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         parent,
         budget,
@@ -1540,9 +1635,14 @@ fn broad_batch_publication_allocates_request_slots() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(2, 3);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots from active artifact head");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots from active artifact head");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 3);
@@ -1596,9 +1696,14 @@ fn broad_batch_default_cap_respects_small_max() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(1, 2);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -1617,9 +1722,14 @@ fn broad_batch_uses_explicit_parallel_targets() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(2, 3).with_parallel_targets(2);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -1639,6 +1749,59 @@ fn broad_headless_tui_diagnostics_path_sits_beside_submitted_result() {
             "/tmp/prototype1/messages/edit-harness-result/node-parent-r2.headless-tui.json",
         )
     );
+}
+
+#[test]
+fn turn_live_bundle() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "turn live bundle fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        Vec::new(),
+        Some(tui_adapter::HeadlessTerminal::CompletedWithoutEdit {
+            outcome: "completed".to_string(),
+            summary: "diagnostic bundle".to_string(),
+        }),
+    );
+
+    write_broad_headless_tui_turn_live_bundle(&slot, &run, "diagnose the run", "test/model")
+        .expect("write turn-live bundle");
+
+    let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let full_response_path = dir.join(ploke_records::llm_response::FULL_RESPONSE_TRACE_FILE);
+    assert!(trace_path.exists(), "missing {}", trace_path.display());
+    assert!(summary_path.exists(), "missing {}", summary_path.display());
+    assert!(
+        full_response_path.exists(),
+        "missing {}",
+        full_response_path.display()
+    );
+
+    let trace: ploke_records::agent_turn::AgentTurnTraceRecord =
+        serde_json::from_slice(&fs::read(&trace_path).expect("read turn-live trace"))
+            .expect("decode turn-live trace");
+    assert_eq!(trace.0.task_id, slot.published.request_id());
+    assert_eq!(trace.0.selected_model, "test/model");
+    assert_eq!(trace.0.issue_prompt, "diagnose the run");
 }
 
 #[test]
@@ -1703,23 +1866,53 @@ fn live_google_headless_tui_model_id() -> String {
 }
 
 #[cfg(feature = "live_api_tests")]
+fn live_google_broad_headless_canary_base_dir_from_override(
+    override_dir: Option<PathBuf>,
+) -> PathBuf {
+    override_dir.unwrap_or_else(|| {
+        crate::layout::ploke_eval_home()
+            .unwrap_or_else(|_| PathBuf::from(".ploke-eval"))
+            .join("probes")
+            .join("live-google-broad-headless")
+    })
+}
+
+#[cfg(feature = "live_api_tests")]
+fn live_google_broad_headless_canary_base_dir() -> PathBuf {
+    live_google_broad_headless_canary_base_dir_from_override(
+        std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR").map(PathBuf::from),
+    )
+}
+
+#[cfg(feature = "live_api_tests")]
+#[test]
+fn live_google_broad_headless_canary_default_root_is_durable() {
+    let root = live_google_broad_headless_canary_base_dir_from_override(None);
+
+    assert!(
+        root.ends_with(Path::new("probes").join("live-google-broad-headless")),
+        "default broad-headless Google preflight root should live under ploke-eval probes, got {}",
+        root.display()
+    );
+    assert!(
+        !root.starts_with(std::env::temp_dir()),
+        "default broad-headless Google preflight root should not use /tmp: {}",
+        root.display()
+    );
+}
+
+#[cfg(feature = "live_api_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "expected-failing counterexample for the unsupported Google Vertex broad headless-TUI path"]
-async fn xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_published_request() {
-    // regr:googlevertex:23-05-26_19-10
+#[ignore = "live direct-Google broad headless-TUI contract preflight; requires Google ADC/Vertex quota"]
+async fn live_google_direct_broad_headless_tui_rejects_applied_edit_missing_declared_validation() {
+    // regr:googlevertex:23-05-26_19-10 resolved 2026-06-02.
     //
-    // This is intentionally tracked as a counterexample, not as proof of the
-    // supported Google route. It preserves the earlier endpoint experiment:
-    // ploke-eval published request -> cli_facing runner -> tui_adapter ->
-    // vanilla ploke-tui llm_manager -> Google router configured for the Vertex
-    // OpenAI-compatible/ADC path.
-    //
-    // Keep the supported Google path covered by the direct-Google registry,
-    // model-picker, session-loop, eval-router, and protocol tests. If we later
-    // decide to support this Vertex broad-headless endpoint path, remove the
-    // tracker row in docs/active/agents/expected-failing-regression-tests.md,
-    // rename/unignore this test, and make the assertions below the positive
-    // acceptance contract for that newly supported path.
+    // This is the live contract preflight for the Prototype 1 published-request
+    // -> cli_facing runner -> tui_adapter -> vanilla ploke-tui llm_manager ->
+    // direct Google/Vertex OpenAI-compatible route. It intentionally asks for an
+    // edit without the request-declared validation commands, so the applied edit
+    // must be rejected as AppliedValidationMissing instead of being published.
+    // It is intentionally ignored because it spends live Google provider calls.
     crate::test_support::install_default_google_route_env();
     let model_id = live_google_headless_tui_model_id();
     let options = BroadTuiAttemptOptions::from_cli(
@@ -1736,9 +1929,7 @@ async fn xfail_google_vertex_broad_headless_tui_attempt_applies_edit_from_publis
     ));
     assert!(model.provider().is_none());
 
-    let base = std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ploke-eval-live-google-broad-headless"));
+    let base = live_google_broad_headless_canary_base_dir();
     let artifact_root = base.join(format!("run-{}", uuid::Uuid::new_v4().simple()));
     fs::create_dir_all(&artifact_root).expect("create live artifact root");
     println!(
@@ -1793,19 +1984,27 @@ Use exactly this JSON payload:
         request_path: publication.request_path.clone(),
         published: publication.published,
     };
-    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
+    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
         .await
-        .unwrap_or_else(|err| {
-            panic!(
-                "live Google broad headless-TUI attempt failed for '{}': {err}; artifacts at {}",
-                slot.request_path.display(),
-                artifact_root.display()
-            )
-        });
+        .expect_err("live canary must reject applied edit missing declared validation");
+    let detail = err.to_string();
     assert!(
-        executor.is_some(),
-        "expected broad headless-TUI executor for '{}'",
-        slot.request_path.display()
+        detail.contains("missing requested validation after applying proposal"),
+        "expected missing-validation rejection for '{}', got {detail}; artifacts at {}",
+        slot.request_path.display(),
+        artifact_root.display()
+    );
+    assert!(
+        detail.contains("cargo check -p ploke-eval")
+            && detail.contains("cargo test -p ploke-eval edit_surface"),
+        "expected declared validation commands in rejection, got {detail}; artifacts at {}",
+        artifact_root.display()
+    );
+    assert!(
+        !slot.published.submitted_result_path().exists(),
+        "missing-validation live run must not publish submitted result at {}; artifacts at {}",
+        slot.published.submitted_result_path().display(),
+        artifact_root.display()
     );
 
     let diagnostics_path =
@@ -1825,13 +2024,20 @@ Use exactly this JSON payload:
                 artifact_root.display()
             )
         });
+    let terminal = diagnostics
+        .terminal
+        .as_ref()
+        .expect("headless diagnostics should include terminal");
     assert!(
         matches!(
-            diagnostics.terminal,
-            Some(tui_adapter::evidence::Terminal::Applied { .. })
+            terminal,
+            tui_adapter::evidence::Terminal::AppliedValidationMissing { missing, changed_paths, .. }
+                if missing.iter().any(|item| item == "cargo check -p ploke-eval")
+                    && missing.iter().any(|item| item == "cargo test -p ploke-eval edit_surface")
+                    && changed_paths.iter().any(|path| path.ends_with("src/lib.rs"))
         ),
-        "expected applied terminal in diagnostics; got {:?}; artifacts at {}",
-        diagnostics.terminal,
+        "expected AppliedValidationMissing terminal in diagnostics; got {:?}; artifacts at {}",
+        terminal,
         artifact_root.display()
     );
     let requested_tools = diagnostics
@@ -1855,19 +2061,6 @@ Use exactly this JSON payload:
         "expected completed chat turn in diagnostics; artifacts at {}",
         artifact_root.display()
     );
-
-    let submitted = fs::read(slot.published.submitted_result_path()).unwrap_or_else(|err| {
-        panic!(
-            "missing submitted broad harness result '{}': {err}; artifacts at {}",
-            slot.published.submitted_result_path().display(),
-            artifact_root.display()
-        )
-    });
-    let submitted: SubmittedBroadHarnessResult =
-        serde_json::from_slice(&submitted).expect("submitted broad harness result should decode");
-    submitted
-        .verify_request(&slot.published)
-        .expect("submitted result remains bound to the published request");
 
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(&repo_root, &slot.published)
@@ -2001,6 +2194,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         parent,
         budget,
@@ -2101,6 +2295,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -2204,6 +2399,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -2252,9 +2448,14 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
 
     let submitted_indexes = [0_usize, 1, 2];
@@ -2276,6 +2477,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     ))
@@ -2385,9 +2587,14 @@ async fn broad_slots_run_in_parallel() {
     let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget: Prototype1ChildBudget = Prototype1ChildBudget::new(2, 2).with_parallel_targets(2);
-    let batch: HarnessRequestBatch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch: HarnessRequestBatch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
     assert_eq!(
         batch.slots.len(),
@@ -2401,6 +2608,7 @@ async fn broad_slots_run_in_parallel() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     ))
@@ -2476,9 +2684,14 @@ async fn child_fanout_is_parallel() {
     let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
 
     for (index, slot) in batch.slots.iter().take(3).enumerate() {
@@ -2494,6 +2707,7 @@ async fn child_fanout_is_parallel() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2616,15 +2830,21 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2716,15 +2936,21 @@ exit 0
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2809,15 +3035,21 @@ async fn child_spawn_observes_failed_result() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2980,6 +3212,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
         slots,
         child_budget: budget,
         patch_generation_parallel_cap: 2,
+        broad_tui: profile::BroadTui::default(),
     };
 
     let result = publish_broad_harness_child_plan_from_admitted_batch(
@@ -2987,6 +3220,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
         admitted,
@@ -3055,6 +3289,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -3107,6 +3342,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         resumed_parent,
     )
@@ -3185,6 +3421,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             parent,
         )
@@ -3247,6 +3484,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             parent,
         )

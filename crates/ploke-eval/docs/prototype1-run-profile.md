@@ -86,6 +86,23 @@ Parent patch generation may attempt more total slots than `max` over time, but
 it must not run more slot attempts concurrently than the maximum number of
 child candidates that can be admitted.
 
+The per-slot headless TUI retry budget belongs under `[execution.broad_tui]`:
+
+```toml
+[execution.broad_tui]
+max_attempts = 2
+fresh_slots_per_child = 2
+timeout_secs = 900
+```
+
+- `max_attempts`: Optional maximum attempts inside each headless TUI patch
+  generation slot. If omitted, the harness request contract supplies the
+  attempt budget.
+- `fresh_slots_per_child`: Optional count of fresh broad-harness slots to
+  publish per desired child. If omitted, the current runtime default is used.
+- `timeout_secs`: Optional per-slot headless TUI turn timeout. If omitted, the
+  harness request contract supplies the timeout budget.
+
 ## Profile Conflicts
 
 The profile rejects internally conflicting settings:
@@ -111,6 +128,8 @@ The profile rejects internally conflicting settings:
   instance, a nonempty `execution.mbe.python`, and nonzero
   `execution.mbe.workers`.
 - `execution.observe_child_stale_after_secs` must be nonzero.
+- `execution.broad_tui.max_attempts`, `fresh_slots_per_child`, and
+  `timeout_secs`, when present, must be nonzero.
 - `selection.oracle.mode = "relative-score"` with
   `selection.oracle.require_evidence = true` requires MBE to be enabled and at
   least one configured target instance.
@@ -167,9 +186,9 @@ route_source = "direct-google"
 provider = "google"
 ```
 
-- `id`: Optional default model id for Prototype 1 setup. This is the shared
-  eval/protocol model for the current baseline path unless explicit CLI flags
-  override it.
+- `id`: Optional default model id for Prototype 1 setup. This is the eval
+  model default. Protocol uses it only when neither `[protocol.model]` nor
+  `--protocol-*` setup flags supply a protocol-specific override.
 - `route_source`: Optional default router for ambiguous model ids. Accepted
   values are `direct-google` and `openrouter`. This disambiguates ids such as
   `google/gemini-3.5-flash`, which can be valid through both routers.
@@ -188,10 +207,9 @@ sentinel and is normalized away before campaign admission. OpenRouter provider
 slugs belong only with `route_source = "openrouter"`.
 
 CLI flags keep normal precedence over this section. `--model-id`,
-`--route-source`, and `--provider` override the eval defaults; the
-`--protocol-*` flags override the corresponding protocol defaults. When the
-baseline path requires one shared model/route/provider and no protocol override
-is supplied, setup uses the resolved eval tuple for protocol as well.
+`--route-source`, and `--provider` override the eval defaults. If no
+protocol-specific model is configured, setup uses the resolved eval tuple for
+protocol as well.
 
 ## `search`
 
@@ -316,11 +334,26 @@ signal.
 max_tokens = 4000
 tool_review_parallelism = 8
 
+[protocol.model]
+id = "google/gemini-2.5-flash"
+route_source = "direct-google"
+provider = "google"
+
 [protocol.reasoning]
 mode = "omit"
 # effort = "low"
 ```
 
+- `model.id`: Optional protocol-only model id. This lets the loop use a
+  smaller or cheaper model for protocol JSON adjudication while leaving eval and
+  parent patch generation on their own model routes.
+- `model.route_source`: Optional protocol router. Accepted values are
+  `direct-google` and `openrouter`. Direct Google is used for the Google API
+  endpoint directly; OpenRouter remains supported.
+- `model.provider`: Optional protocol provider setting. For
+  `model.route_source = "direct-google"`, use `provider = "google"` or omit the
+  provider. OpenRouter provider pins are valid with
+  `model.route_source = "openrouter"`.
 - `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
   requests admitted from this profile. This applies to the campaign-driven
   baseline protocol path, including tool-call intent segmentation, tool-call

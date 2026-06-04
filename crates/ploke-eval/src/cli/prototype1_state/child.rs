@@ -409,8 +409,10 @@ mod tests {
             lines: lines.clone(),
         });
         let guard = tracing::subscriber::set_default(subscriber);
+        crate::test_support::rebuild_trace_interest_cache();
         let result = f();
         drop(guard);
+        crate::test_support::rebuild_trace_interest_cache();
         (result, lines.snapshot())
     }
 

@@ -6922,6 +6922,7 @@ dependencies = [
  "toml 0.9.5",
  "tracing",
  "tracing-appender",
+ "tracing-core",
  "tracing-subscriber",
  "uuid",
 ]
@@ -7048,6 +7049,10 @@ dependencies = [
  "toml 0.9.5",
  "uuid",
 ]
+
+[[package]]
+name = "ploke-selection-score"
+version = "0.1.0"
 
 [[package]]
 name = "ploke-test-macros"

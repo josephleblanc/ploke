@@ -199,7 +199,7 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             } else {
                 None
             },
-            max_bytes: (!has_line_range).then_some(byte_cap),
+            max_bytes: if has_line_range { None } else { Some(byte_cap) },
             strategy: ReadStrategy::Plain,
         };
 
@@ -223,17 +223,17 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             file_hash,
         } = read_resp;
 
-        let (content, slice_truncated) = match content {
+        let (content, slice_truncated, cap_truncated) = match content {
             Some(src) => {
                 let (sliced, truncated) = slice_content_lines(src, start_line, end_line);
-                if has_line_range {
-                    let (capped, byte_truncated) = truncate_to_utf8_limit(sliced, byte_cap);
-                    (Some(capped), truncated || byte_truncated)
+                let (capped, cap_truncated) = if has_line_range {
+                    truncate_utf8_to_limit(sliced, byte_cap)
                 } else {
-                    (Some(sliced), truncated)
-                }
+                    (sliced, false)
+                };
+                (Some(capped), truncated, cap_truncated)
             }
-            None => (None, false),
+            None => (None, false, false),
         };
 
         let result = NsReadResult {
@@ -243,7 +243,7 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
             byte_len,
             start_line,
             end_line,
-            truncated: io_truncated || slice_truncated,
+            truncated: io_truncated || slice_truncated || cap_truncated,
             content,
             file_hash,
         };
@@ -254,7 +254,10 @@ Paths must be absolute or workspace-root-relative (e.g., \"crates/my-crate/src/l
         };
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("exists", result.exists.to_string())
-            .with_field("truncated", (io_truncated || slice_truncated).to_string())
+            .with_field(
+                "truncated",
+                (io_truncated || slice_truncated || cap_truncated).to_string(),
+            )
             .with_field(
                 "lines",
                 match (result.start_line, result.end_line) {
@@ -300,17 +303,16 @@ fn slice_content_lines(
     (content[start_byte..end_clamped].to_string(), truncated)
 }
 
-fn truncate_to_utf8_limit(mut content: String, max_bytes: usize) -> (String, bool) {
-    if content.len() <= max_bytes {
-        return (content, false);
+fn truncate_utf8_to_limit(mut content: String, max_bytes: usize) -> (String, bool) {
+    if max_bytes > 0 && content.len() > max_bytes {
+        let mut cut = max_bytes.min(content.len());
+        while cut > 0 && !content.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        content.truncate(cut);
+        return (content, true);
     }
-
-    let mut end = max_bytes.min(content.len());
-    while end > 0 && !content.is_char_boundary(end) {
-        end -= 1;
-    }
-    content.truncate(end);
-    (content, true)
+    (content, false)
 }
 
 /// Compute byte offsets for the requested line window, noting truncation when the requested lines
@@ -447,7 +449,7 @@ mod tests {
         assert!(input.len() > DEFAULT_READ_BYTE_CAP);
 
         let (sliced, slice_truncated) = slice_content_lines(input, Some(1_000), Some(1_002));
-        let (out, byte_truncated) = truncate_to_utf8_limit(sliced, DEFAULT_READ_BYTE_CAP);
+        let (out, byte_truncated) = truncate_utf8_to_limit(sliced, DEFAULT_READ_BYTE_CAP);
 
         assert!(
             out.contains("line-1000-abcdefghijklmnopqrstuvwxyz\n")

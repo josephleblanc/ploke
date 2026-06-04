@@ -101,6 +101,10 @@ pub(crate) mod test_support {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    pub(crate) fn rebuild_trace_interest_cache() {
+        tracing_core::callsite::rebuild_interest_cache();
+    }
+
     #[cfg(feature = "live_api_tests")]
     pub(crate) fn install_default_google_route_env() {
         static INIT: OnceLock<()> = OnceLock::new();

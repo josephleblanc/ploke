@@ -120,6 +120,8 @@ This is a Rust workspace. User-facing application code is in `crates/ploke-tui`,
 ## Coding Style & Naming Conventions
 Use Rust 2024 with the workspace Rust version from `Cargo.toml`. Follow standard Rust naming: `snake_case` for functions/modules, `PascalCase` for types and traits, and `SCREAMING_SNAKE_CASE` for constants. Prefer typed boundaries, structured errors, and focused modules that match existing crate layout. Run `cargo fmt --all` before handing off code.
 
+Hard variable/field naming rule: do not name variables or fields with more than three semantic parts. Three is an upper bound, not a goal. If a proposed name needs four or more parts, encode the relationship structurally with a typed carrier, nested field, enum variant, or typestate parameter instead of flattening it into a descriptive name. Prefer shapes like `Runtime<Successor> { id }`, `Selection { chosen }`, or `SelectedChild { node }` over names like `selected_candidate_membership_id` or `selected_child_node_id`.
+
 ## Testing Guidelines
 Place unit tests beside the code they cover and integration tests under each crate’s `tests/` directory. Fixture-backed tests should declare their asset requirements through `xtask` when practical. Live OpenRouter embedding/API coverage in the default workspace lane is intentional when the relevant default features are enabled; do not remove, ignore, or convert those tests to offline-only behavior merely for determinism. `OPENROUTER_API_KEY` is an expected local/CI prerequisite for the fast embedding service path. Google live tests are different: keep them explicit/ignored and use `cargo xtask auth google --strict-live` before claiming that path is validated. Document required environment variables in the test or nearby README.
 
@@ -132,7 +134,7 @@ Follow the most specific `AGENTS.md` in scope; for example, work inside `crates/
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ploke** (51223 symbols, 92366 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ploke** (51818 symbols, 93180 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

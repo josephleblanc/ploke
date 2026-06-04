@@ -28,7 +28,7 @@ pub struct ModelCommand {
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Manage the persisted default provider selection for a model",
+    about = "Manage OpenRouter provider preferences and inspect effective model providers",
     after_help = "\
 Examples:
 \n  cargo run -p ploke-eval -- model provider current
@@ -43,7 +43,7 @@ pub struct ProviderCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProviderSubcommand {
-    /// Persist the default provider for the current or specified model.
+    /// Persist the OpenRouter default provider for the current or specified model.
     Set {
         /// Provider slug to remember for the model.
         provider_slug: String,
@@ -52,13 +52,13 @@ pub enum ProviderSubcommand {
         #[arg(long)]
         model_id: Option<String>,
     },
-    /// Show the persisted default provider for the current or specified model.
+    /// Show the effective provider for the current or specified model.
     Current {
         /// Model id to inspect. Defaults to the current active model.
         #[arg(long)]
         model_id: Option<String>,
     },
-    /// Clear the persisted default provider for the current or specified model.
+    /// Clear the persisted OpenRouter default provider for the current or specified model.
     Clear {
         /// Model id to update. Defaults to the current active model.
         #[arg(long)]
@@ -94,7 +94,7 @@ Examples:
         /// Exact model id to inspect. Defaults to the current active model.
         model_id: Option<String>,
     },
-    /// Persist or inspect the default provider for a model.
+    /// Manage OpenRouter provider preferences and inspect effective providers.
     Provider(ProviderCommand),
     /// Persist the active model selection.
     Set {
@@ -224,4 +224,3 @@ impl ProviderCommand {
         }
     }
 }
-

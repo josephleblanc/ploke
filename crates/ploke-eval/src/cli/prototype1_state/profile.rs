@@ -106,6 +106,9 @@ impl Prototype1RunProfile {
 
     pub(crate) fn protocol_policy(&self) -> ProtocolCampaignPolicy {
         ProtocolCampaignPolicy {
+            model_id: self.protocol.model.id.clone(),
+            route_source: self.protocol.model.route_source,
+            provider_slug: self.protocol.model.provider.clone(),
             max_tokens: self.protocol.max_tokens,
             tool_review_parallelism: self.protocol.tool_review_parallelism,
             reasoning: self.protocol.reasoning,
@@ -147,23 +150,28 @@ impl ModelDefaults {
     }
 
     pub(crate) fn parsed_id(&self) -> Result<Option<ModelId>, PrepareError> {
+        self.parsed_id_for("profile.model")
+    }
+
+    pub(crate) fn parsed_id_for(&self, label: &str) -> Result<Option<ModelId>, PrepareError> {
         self.id
             .as_deref()
             .map(|id| {
-                id.parse().map_err(|err| {
-                    profile_error(format!("profile.model.id '{id}' is invalid: {err}"))
-                })
+                id.parse()
+                    .map_err(|err| profile_error(format!("{label}.id '{id}' is invalid: {err}")))
             })
             .transpose()
     }
 
     fn validate(&self) -> Result<(), PrepareError> {
-        self.parsed_id()?;
+        self.validate_for("profile.model")
+    }
+
+    fn validate_for(&self, label: &str) -> Result<(), PrepareError> {
+        self.parsed_id_for(label)?;
         if let Some(provider) = self.provider.as_deref() {
             ProviderKey::new(provider).map_err(|err| {
-                profile_error(format!(
-                    "profile.model.provider '{provider}' is invalid: {err}"
-                ))
+                profile_error(format!("{label}.provider '{provider}' is invalid: {err}"))
             })?;
         }
         if self
@@ -173,7 +181,7 @@ impl ModelDefaults {
             && provider != "google"
         {
             return Err(profile_error(format!(
-                "profile.model.route_source = direct-google does not accept OpenRouter provider '{provider}'"
+                "{label}.route_source = direct-google does not accept OpenRouter provider '{provider}'"
             )));
         }
         Ok(())
@@ -574,8 +582,10 @@ pub(crate) enum ArchiveScope {
     SelectionScope,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Protocol {
+    #[serde(default, skip_serializing_if = "ModelDefaults::is_empty")]
+    pub(crate) model: ModelDefaults,
     #[serde(default = "default_protocol_max_tokens")]
     pub(crate) max_tokens: u32,
     #[serde(default = "default_protocol_tool_review_parallelism")]
@@ -585,7 +595,8 @@ pub(crate) struct Protocol {
 }
 
 impl Protocol {
-    fn validate(self) -> Result<(), PrepareError> {
+    fn validate(&self) -> Result<(), PrepareError> {
+        self.model.validate_for("profile.protocol.model")?;
         if self.max_tokens == 0 {
             return Err(profile_error(
                 "protocol.max_tokens must be greater than zero",
@@ -604,6 +615,7 @@ impl Protocol {
 impl Default for Protocol {
     fn default() -> Self {
         Self {
+            model: ModelDefaults::default(),
             max_tokens: default_protocol_max_tokens(),
             tool_review_parallelism: default_protocol_tool_review_parallelism(),
             reasoning: ProtocolReasoningPolicy::default(),
@@ -638,6 +650,8 @@ pub(crate) struct Execution {
     #[serde(default = "default_observe_child_stale_after_secs")]
     pub(crate) observe_child_stale_after_secs: u64,
     #[serde(default)]
+    pub(crate) broad_tui: BroadTui,
+    #[serde(default)]
     pub(crate) trace_jsonl: TraceJsonl,
     #[serde(default)]
     pub(crate) debug_tools: bool,
@@ -652,6 +666,7 @@ impl Execution {
                 "execution.observe_child_stale_after_secs must be greater than zero",
             ));
         }
+        self.broad_tui.validate()?;
         self.mbe.validate()
     }
 
@@ -674,6 +689,7 @@ impl Default for Execution {
         Self {
             stop_after: ExecutionStopAfter::Complete,
             observe_child_stale_after_secs: default_observe_child_stale_after_secs(),
+            broad_tui: BroadTui::default(),
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
             mbe: Mbe::default(),
@@ -683,6 +699,37 @@ impl Default for Execution {
 
 fn default_observe_child_stale_after_secs() -> u64 {
     DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct BroadTui {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) max_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fresh_slots_per_child: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) timeout_secs: Option<u64>,
+}
+
+impl BroadTui {
+    fn validate(self) -> Result<(), PrepareError> {
+        if self.max_attempts == Some(0) {
+            return Err(profile_error(
+                "execution.broad_tui.max_attempts must be greater than zero",
+            ));
+        }
+        if self.fresh_slots_per_child == Some(0) {
+            return Err(profile_error(
+                "execution.broad_tui.fresh_slots_per_child must be greater than zero",
+            ));
+        }
+        if self.timeout_secs == Some(0) {
+            return Err(profile_error(
+                "execution.broad_tui.timeout_secs must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1055,6 +1102,10 @@ observe_child_stale_after_secs = 1200
 trace_jsonl = "auto"
 debug_tools = true
 mbe = { enabled = true, python = "python3", workers = 2 }
+
+[execution.broad_tui]
+max_attempts = 2
+fresh_slots_per_child = 2
 "#;
 
     #[test]
@@ -1101,6 +1152,8 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.execution.observe_child_stale_after(),
             Duration::from_secs(1200)
         );
+        assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
+        assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -1135,6 +1188,17 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.execution.observe_child_stale_after(),
             Duration::from_secs(DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS)
         );
+    }
+
+    #[test]
+    fn run_profile_execution_rejects_zero_broad_tui_max_attempts() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("max_attempts = 2", "max_attempts = 0"),
+        )
+        .expect_err("zero broad TUI max attempts should be rejected");
+
+        assert!(err.to_string().contains("execution.broad_tui.max_attempts"));
     }
 
     #[test]
@@ -1249,6 +1313,41 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             profile.protocol_policy().reasoning,
             ProtocolReasoningPolicy::default()
         );
+    }
+
+    #[test]
+    fn run_profile_protocol_model_can_override_to_direct_google() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "tool_review_parallelism = 2\n\n[protocol.reasoning]",
+                "tool_review_parallelism = 2\n\n[protocol.model]\nid = \"google/gemini-2.5-flash\"\nroute_source = \"direct-google\"\nprovider = \"google\"\n\n[protocol.reasoning]",
+            ),
+        )
+        .expect("profile parses");
+        let policy = profile.protocol_policy();
+
+        assert_eq!(policy.model_id.as_deref(), Some("google/gemini-2.5-flash"));
+        assert_eq!(policy.route_source, Some(ModelRouteSource::DirectGoogle));
+        assert_eq!(policy.provider_slug.as_deref(), Some("google"));
+        assert_eq!(policy.max_tokens, 4000);
+    }
+
+    #[test]
+    fn run_profile_protocol_model_still_accepts_openrouter_route() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "tool_review_parallelism = 2\n\n[protocol.reasoning]",
+                "tool_review_parallelism = 2\n\n[protocol.model]\nid = \"google/gemini-2.5-flash\"\nroute_source = \"openrouter\"\nprovider = \"google\"\n\n[protocol.reasoning]",
+            ),
+        )
+        .expect("profile parses");
+        let policy = profile.protocol_policy();
+
+        assert_eq!(policy.model_id.as_deref(), Some("google/gemini-2.5-flash"));
+        assert_eq!(policy.route_source, Some(ModelRouteSource::OpenRouter));
+        assert_eq!(policy.provider_slug.as_deref(), Some("google"));
     }
 
     #[test]

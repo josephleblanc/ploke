@@ -329,6 +329,8 @@ pub enum ProtocolReasoningEffort {
 pub struct Execution {
     pub stop_after: ExecutionStopAfter,
     #[serde(default)]
+    pub broad_tui: BroadTui,
+    #[serde(default)]
     pub trace_jsonl: TraceJsonl,
     #[serde(default)]
     pub debug_tools: bool,
@@ -340,11 +342,22 @@ impl Default for Execution {
     fn default() -> Self {
         Self {
             stop_after: ExecutionStopAfter::Complete,
+            broad_tui: BroadTui::default(),
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
             mbe: Mbe::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BroadTui {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_slots_per_child: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -494,6 +507,10 @@ stop_after = "complete"
 trace_jsonl = "auto"
 debug_tools = true
 mbe = { enabled = true, python = "python3", workers = 2 }
+
+[execution.broad_tui]
+max_attempts = 2
+fresh_slots_per_child = 2
 "#;
 
     #[test]
@@ -516,6 +533,8 @@ mbe = { enabled = true, python = "python3", workers = 2 }
             vec!["BurntSushi__ripgrep-2209".to_string()]
         );
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
+        assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
+        assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
         assert_eq!(profile.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(profile.selection.oracle.require_evidence);
         assert!(profile.selection.metrics.persist);

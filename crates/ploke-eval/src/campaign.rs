@@ -72,6 +72,12 @@ pub struct EvalCampaignPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolCampaignPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<ModelRouteSource>,
     #[serde(default = "default_true")]
     pub include_partial: bool,
     #[serde(default)]
@@ -95,6 +101,9 @@ pub struct ProtocolCampaignPolicy {
 impl Default for ProtocolCampaignPolicy {
     fn default() -> Self {
         Self {
+            model_id: None,
+            provider_slug: None,
+            route_source: None,
             include_partial: true,
             include_incompatible: false,
             include_failed: false,
@@ -104,6 +113,34 @@ impl Default for ProtocolCampaignPolicy {
             tool_review_parallelism: default_protocol_tool_review_parallelism(),
             max_tokens: default_protocol_max_tokens(),
             reasoning: ProtocolReasoningPolicy::default(),
+        }
+    }
+}
+
+impl ProtocolCampaignPolicy {
+    fn has_model_override(&self) -> bool {
+        self.model_id.is_some() || self.provider_slug.is_some() || self.route_source.is_some()
+    }
+
+    pub fn model_id_for(&self, fallback: &str) -> String {
+        self.model_id
+            .clone()
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
+    pub fn route_source_for(&self, fallback: ModelRouteSource) -> Option<ModelRouteSource> {
+        if self.has_model_override() {
+            self.route_source
+        } else {
+            Some(fallback)
+        }
+    }
+
+    pub fn provider_slug_for(&self, fallback: Option<&str>) -> Option<String> {
+        if self.has_model_override() {
+            self.provider_slug.clone()
+        } else {
+            fallback.map(str::to_string)
         }
     }
 }
@@ -793,6 +830,19 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .unwrap_or(&config.campaign_id)
     ));
     out.push_str("\nprotocol\n");
+    out.push_str(&format!(
+        "  model: {} | route_source: {} | provider: {}\n",
+        config.protocol.model_id_for(&config.model_id),
+        config
+            .protocol
+            .route_source_for(config.route_source)
+            .map(route_source_label)
+            .unwrap_or("auto"),
+        config
+            .protocol
+            .provider_slug_for(config.provider_slug.as_deref())
+            .unwrap_or_else(|| "auto".to_string()),
+    ));
     out.push_str(&format!(
         "  include_partial: {} | include_incompatible: {} | include_failed: {} | stop_on_error: {} | limit_runs: {} | max_concurrency: {} | tool_review_parallelism: {} | max_tokens: {} | reasoning: {}\n",
         config.protocol.include_partial,

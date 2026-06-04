@@ -494,7 +494,7 @@ impl Google {
 
 #[cfg(test)]
 mod tests {
-    use super::Google;
+    use super::{Google, google_openapi_base_url};
 
     use crate::{
         SupportsTools,
@@ -504,7 +504,7 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     #[cfg(feature = "live_api_tests")]
-    use std::{env, time::Duration};
+    use std::{collections::BTreeSet, env, time::Duration};
 
     #[cfg(feature = "live_api_tests")]
     use crate::{
@@ -638,6 +638,312 @@ mod tests {
     fn live_thinking_model() -> String {
         env::var("PLOKE_LIVE_GOOGLE_THINKING_MODEL")
             .unwrap_or_else(|_| "google/gemini-3.1-pro-preview".to_string())
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_slug_model(model: &str) -> String {
+        let without_author = model.strip_prefix("google/").unwrap_or(model);
+        without_author
+            .strip_prefix("models/")
+            .unwrap_or(without_author)
+            .to_string()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn endpoint_probe_regions() -> Vec<String> {
+        let mut regions = BTreeSet::new();
+        if let Ok(raw) = env::var("PLOKE_LIVE_GOOGLE_VERTEX_REGIONS") {
+            for region in raw
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                regions.insert(region.to_string());
+            }
+        }
+        if let Ok(region) = env::var("GOOGLE_REGION")
+            && !region.trim().is_empty()
+        {
+            regions.insert(region);
+        }
+        regions.insert("global".to_string());
+        regions.insert("us-central1".to_string());
+        regions.into_iter().collect()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_ai_studio_api_key() -> Option<(&'static str, String)> {
+        [
+            "PLOKE_GOOGLE_AI_STUDIO_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ]
+        .into_iter()
+        .find_map(|name| {
+            env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| (name, value))
+        })
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_error_field<'a>(response: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+        response
+            .get("error")
+            .or_else(|| response.as_array()?.first()?.get("error"))
+            .and_then(|error| error.get(field))
+            .and_then(|value| value.as_str())
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    #[derive(Debug, serde::Serialize)]
+    struct EndpointProbeReport {
+        label: String,
+        auth: String,
+        model: String,
+        url: String,
+        status: Option<u16>,
+        resource_exhausted: bool,
+        error_status: Option<String>,
+        error_message: Option<String>,
+        content: Option<String>,
+        finish_reason: Option<String>,
+        body_excerpt: String,
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn send_endpoint_probe(
+        label: String,
+        auth: String,
+        token: String,
+        url: String,
+        model: String,
+    ) -> EndpointProbeReport {
+        let request = json!({
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": "Reply exactly: google-endpoint-probe-ok"
+            }],
+            "max_tokens": 64,
+            "temperature": 0.0
+        });
+        let response = Client::new()
+            .post(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .json(&request)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+
+        let Ok(response) = response else {
+            return EndpointProbeReport {
+                label,
+                auth,
+                model,
+                url,
+                status: None,
+                resource_exhausted: false,
+                error_status: None,
+                error_message: response.err().map(|error| error.to_string()),
+                content: None,
+                finish_reason: None,
+                body_excerpt: String::new(),
+            };
+        };
+
+        let status = response.status();
+        let response_text = response
+            .text()
+            .await
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+        let response_value = serde_json::from_str::<serde_json::Value>(&response_text).ok();
+        let resource_exhausted = response_value.as_ref().is_some_and(is_resource_exhausted);
+        let content = response_value
+            .as_ref()
+            .and_then(first_message_content)
+            .map(str::to_string);
+        let finish_reason = response_value
+            .as_ref()
+            .and_then(|value| value.get("choices"))
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|reason| reason.as_str())
+            .map(str::to_string);
+        let error_status = response_value
+            .as_ref()
+            .and_then(|value| google_error_field(value, "status"))
+            .map(str::to_string);
+        let error_message = response_value
+            .as_ref()
+            .and_then(|value| google_error_field(value, "message"))
+            .map(str::to_string);
+
+        EndpointProbeReport {
+            label,
+            auth,
+            model,
+            url,
+            status: Some(status.as_u16()),
+            resource_exhausted,
+            error_status,
+            error_message,
+            content,
+            finish_reason,
+            body_excerpt: body_snippet(&response_text),
+        }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn native_generate_content_body() -> serde_json::Value {
+        json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": "Reply exactly: google-endpoint-probe-ok" }]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": 64,
+                "temperature": 0.0
+            }
+        })
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn first_native_content(response: &serde_json::Value) -> Option<String> {
+        let parts = response
+            .get("candidates")?
+            .as_array()?
+            .first()?
+            .get("content")?
+            .get("parts")?
+            .as_array()?;
+        let content = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("");
+        (!content.trim().is_empty()).then_some(content)
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn first_native_finish_reason(response: &serde_json::Value) -> Option<String> {
+        response
+            .get("candidates")?
+            .as_array()?
+            .first()?
+            .get("finishReason")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn send_native_bearer_probe(
+        label: String,
+        auth: String,
+        token: String,
+        url: String,
+        model: String,
+    ) -> EndpointProbeReport {
+        let response = Client::new()
+            .post(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .json(&native_generate_content_body())
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        endpoint_report_from_response(label, auth, model, url, response).await
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn send_native_api_key_probe(
+        label: String,
+        auth: String,
+        key: String,
+        url: String,
+        model: String,
+    ) -> EndpointProbeReport {
+        let request_url = format!("{url}?key={key}");
+        let response = Client::new()
+            .post(&request_url)
+            .header("Accept", "application/json")
+            .json(&native_generate_content_body())
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        endpoint_report_from_response(label, auth, model, url, response).await
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    async fn endpoint_report_from_response(
+        label: String,
+        auth: String,
+        model: String,
+        url: String,
+        response: std::result::Result<reqwest::Response, reqwest::Error>,
+    ) -> EndpointProbeReport {
+        let Ok(response) = response else {
+            return EndpointProbeReport {
+                label,
+                auth,
+                model,
+                url,
+                status: None,
+                resource_exhausted: false,
+                error_status: None,
+                error_message: response.err().map(|error| error.to_string()),
+                content: None,
+                finish_reason: None,
+                body_excerpt: String::new(),
+            };
+        };
+
+        let status = response.status();
+        let response_text = response
+            .text()
+            .await
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+        let response_value = serde_json::from_str::<serde_json::Value>(&response_text).ok();
+        let resource_exhausted = response_value.as_ref().is_some_and(is_resource_exhausted);
+        let content = response_value
+            .as_ref()
+            .and_then(first_message_content)
+            .map(str::to_string)
+            .or_else(|| response_value.as_ref().and_then(first_native_content));
+        let finish_reason = response_value
+            .as_ref()
+            .and_then(|value| value.get("choices"))
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|reason| reason.as_str())
+            .map(str::to_string)
+            .or_else(|| response_value.as_ref().and_then(first_native_finish_reason));
+        let error_status = response_value
+            .as_ref()
+            .and_then(|value| google_error_field(value, "status"))
+            .map(str::to_string);
+        let error_message = response_value
+            .as_ref()
+            .and_then(|value| google_error_field(value, "message"))
+            .map(str::to_string);
+
+        EndpointProbeReport {
+            label,
+            auth,
+            model,
+            url,
+            status: Some(status.as_u16()),
+            resource_exhausted,
+            error_status,
+            error_message,
+            content,
+            finish_reason,
+            body_excerpt: body_snippet(&response_text),
+        }
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -1023,6 +1329,172 @@ mod tests {
             !content.trim().is_empty(),
             "expected non-empty assistant content in Google completion response: {response_value}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live diagnostic: compares Vertex and AI Studio Google endpoint surfaces"]
+    async fn live_google_endpoint_matrix_reports_vertex_vs_ai_studio_status() -> Result<()> {
+        let full_model = live_chat_model();
+        let slug_model = google_slug_model(&full_model);
+        let mut reports = Vec::new();
+        let mut candidates = 0_usize;
+
+        match (
+            env::var("GOOGLE_PROJECT_ID"),
+            Google::resolve_bearer_token().await,
+        ) {
+            (Ok(project_id), Ok(token)) if !project_id.trim().is_empty() => {
+                for region in endpoint_probe_regions() {
+                    let openai_url = format!(
+                        "{}/{}",
+                        google_openapi_base_url(&project_id, &region),
+                        Google::COMPLETION_ENDPOINT
+                    );
+                    for (model_label, model) in [
+                        ("google-prefix-model", full_model.clone()),
+                        ("slug-model", slug_model.clone()),
+                    ] {
+                        candidates += 1;
+                        reports.push(
+                            send_endpoint_probe(
+                                format!("vertex-openai-default-host-{region}-{model_label}"),
+                                "adc-cloud-platform".to_string(),
+                                token.clone(),
+                                openai_url.clone(),
+                                model,
+                            )
+                            .await,
+                        );
+                    }
+
+                    if region != "global" {
+                        let regional_openai_url = format!(
+                            "https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/{}/{}",
+                            Google::OPENAPI_ENDPOINT,
+                            Google::COMPLETION_ENDPOINT
+                        );
+                        candidates += 1;
+                        reports.push(
+                            send_endpoint_probe(
+                                format!("vertex-openai-regional-host-{region}-google-prefix-model"),
+                                "adc-cloud-platform".to_string(),
+                                token.clone(),
+                                regional_openai_url,
+                                full_model.clone(),
+                            )
+                            .await,
+                        );
+                    }
+
+                    let native_url = format!(
+                        "https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models/{slug_model}:generateContent"
+                    );
+                    candidates += 1;
+                    reports.push(
+                        send_native_bearer_probe(
+                            format!("vertex-native-default-host-{region}-slug-model"),
+                            "adc-cloud-platform".to_string(),
+                            token.clone(),
+                            native_url,
+                            slug_model.clone(),
+                        )
+                        .await,
+                    );
+
+                    if region != "global" {
+                        let regional_native_url = format!(
+                            "https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers/google/models/{slug_model}:generateContent"
+                        );
+                        candidates += 1;
+                        reports.push(
+                            send_native_bearer_probe(
+                                format!("vertex-native-regional-host-{region}-slug-model"),
+                                "adc-cloud-platform".to_string(),
+                                token.clone(),
+                                regional_native_url,
+                                slug_model.clone(),
+                            )
+                            .await,
+                        );
+                    }
+                }
+            }
+            _ => eprintln!(
+                "skipping Vertex endpoint probes: missing GOOGLE_PROJECT_ID or Google ADC bearer auth"
+            ),
+        }
+
+        if let Some((key_env, key)) = google_ai_studio_api_key() {
+            let openai_url =
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string();
+            for (model_label, model) in [
+                ("slug-model", slug_model.clone()),
+                ("google-prefix-model", full_model.clone()),
+            ] {
+                candidates += 1;
+                reports.push(
+                    send_endpoint_probe(
+                        format!("ai-studio-openai-{model_label}"),
+                        format!("api-key-bearer:{key_env}"),
+                        key.clone(),
+                        openai_url.clone(),
+                        model,
+                    )
+                    .await,
+                );
+            }
+
+            let native_url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{slug_model}:generateContent"
+            );
+            candidates += 1;
+            reports.push(
+                send_native_api_key_probe(
+                    "ai-studio-native-slug-model".to_string(),
+                    format!("api-key-query:{key_env}"),
+                    key,
+                    native_url,
+                    slug_model.clone(),
+                )
+                .await,
+            );
+        } else {
+            eprintln!(
+                "skipping AI Studio endpoint probes: set PLOKE_GOOGLE_AI_STUDIO_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY"
+            );
+        }
+
+        if candidates == 0 {
+            let message = "no Google endpoint probe candidates were configured";
+            if strict_live_tests_requested() {
+                bail!(message);
+            }
+            eprintln!(
+                "skipping live_google_endpoint_matrix_reports_vertex_vs_ai_studio_status: {message}"
+            );
+            return Ok(());
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&reports).expect("serialize endpoint probe reports")
+        );
+
+        if env::var("PLOKE_LIVE_GOOGLE_ENDPOINT_MATRIX_REQUIRE_SUCCESS")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        {
+            assert!(
+                reports.iter().any(|report| report
+                    .status
+                    .is_some_and(|status| (200..300).contains(&status))),
+                "expected at least one Google endpoint/model candidate to return HTTP success; reports={reports:#?}"
+            );
+        }
 
         Ok(())
     }

@@ -75,6 +75,7 @@ GEMINI.md
 
 # codex
 .codex/
+.worktrees/
 
 # opencode
 .opencode/

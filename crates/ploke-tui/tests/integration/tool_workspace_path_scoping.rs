@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
@@ -25,6 +27,17 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 async fn workspace_fixture_app_state() -> Arc<AppState> {
+    let ws = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
+    let member_a = ws.join("member_root");
+    let member_b = ws.join("nested/member_nested");
+    loaded_workspace_app_state(ws, vec![member_a.clone(), member_b], member_a).await
+}
+
+async fn loaded_workspace_app_state(
+    ws: PathBuf,
+    members: Vec<PathBuf>,
+    primary: PathBuf,
+) -> Arc<AppState> {
     let db = Arc::new(fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL).expect("fixture db"));
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
@@ -49,17 +62,9 @@ async fn workspace_fixture_app_state() -> Arc<AppState> {
         budget: TokenBudget::default(),
     });
 
-    let ws = workspace_root().join("tests/fixture_workspace/ws_fixture_01");
-    let member_a = ws.join("member_root");
-    let member_b = ws.join("nested/member_nested");
-
     state
         .with_system_txn(|txn| {
-            txn.set_loaded_workspace(
-                ws.clone(),
-                vec![member_a.clone(), member_b.clone()],
-                Some(member_a.clone()),
-            );
+            txn.set_loaded_workspace(ws.clone(), members.clone(), Some(primary.clone()));
         })
         .await;
 
@@ -157,6 +162,41 @@ async fn read_file_workspace_relative_member_file_succeeds() {
         .expect("read");
     let parsed: NsReadResult = serde_json::from_str(&result.content).expect("parse");
     assert!(parsed.exists);
+}
+
+#[tokio::test]
+async fn read_file_line_range_after_default_byte_cap_returns_requested_lines() {
+    let temp = tempfile::tempdir().expect("temp workspace");
+    let ws = temp.path().join("workspace");
+    let member = ws.join("member");
+    fs::create_dir_all(member.join("src")).expect("create temp member");
+    let file = member.join("src/large.rs");
+    let input = (1..=1_200)
+        .map(|line| format!("line-{line:04}-abcdefghijklmnopqrstuvwxyz\n"))
+        .collect::<String>();
+    assert!(input.len() > 32 * 1024);
+    fs::write(&file, input).expect("write large fixture");
+
+    let state = loaded_workspace_app_state(ws, vec![member.clone()], member).await;
+
+    let params = NsReadParams {
+        file: Cow::Owned(file.display().to_string()),
+        start_line: Some(1_000),
+        end_line: Some(1_002),
+        max_bytes: None,
+    };
+    let result = NsRead::execute(params, tool_ctx(state))
+        .await
+        .expect("read");
+    let parsed: NsReadResult = serde_json::from_str(&result.content).expect("parse");
+
+    assert!(parsed.exists);
+    let content = parsed.content.expect("read content");
+    assert_eq!(
+        content,
+        "line-1000-abcdefghijklmnopqrstuvwxyz\nline-1001-abcdefghijklmnopqrstuvwxyz\nline-1002-abcdefghijklmnopqrstuvwxyz\n",
+        "line range inside the original file must not become an empty successful read"
+    );
 }
 
 #[tokio::test]

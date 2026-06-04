@@ -15,6 +15,10 @@ use std::{
 use chrono::Utc;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
+use ploke_records::{
+    agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord},
+    llm_response::FULL_RESPONSE_TRACE_FILE,
+};
 use ploke_tui::tools::ToolName;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -630,6 +634,7 @@ struct HarnessRequestBatch {
     slots: Vec<HarnessRequestSlot>,
     child_budget: Prototype1ChildBudget,
     patch_generation_parallel_cap: u32,
+    broad_tui: profile::BroadTui,
 }
 
 #[derive(Clone, Copy)]
@@ -637,6 +642,7 @@ struct ChildPlanEnv<'a> {
     campaign_id: &'a str,
     manifest_path: &'a Path,
     repo_root: &'a Path,
+    broad_tui: profile::BroadTui,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -947,6 +953,7 @@ impl CandidateGenerationConfig {
 struct Prototype1StateRunShape {
     stop_after: Prototype1StateStopAfter,
     observe_child_stale_after: Duration,
+    broad_tui: profile::BroadTui,
     candidate_generation: CandidateGenerationConfig,
     successor_selection: Prototype1SuccessorSelection,
     successor_selection_seed: u64,
@@ -961,6 +968,7 @@ impl Prototype1StateRunShape {
         Self {
             stop_after: command.stop_after,
             observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
+            broad_tui: profile::BroadTui::default(),
             candidate_generation: CandidateGenerationConfig::from_command(command),
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
@@ -975,6 +983,7 @@ impl Prototype1StateRunShape {
         Self {
             stop_after: profile.execution.state_stop_after(),
             observe_child_stale_after: profile.execution.observe_child_stale_after(),
+            broad_tui: profile.execution.broad_tui,
             candidate_generation: CandidateGenerationConfig::from_profile_generation(
                 profile.generation,
             ),
@@ -1128,6 +1137,7 @@ async fn run_parent_target_selection(
             env.repo_root,
             parent,
             child_budget,
+            env.broad_tui,
         )
         .map(ParentTargetSelection::AwaitingHarnessBatch),
         CandidateGenerationConfig::DeterministicTuiTools => {
@@ -1243,6 +1253,7 @@ fn publish_broad_harness_child_plan_request(
     repo_root: &Path,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
 ) -> Result<HarnessRequestBatch, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
@@ -1250,8 +1261,11 @@ fn publish_broad_harness_child_plan_request(
     write_node_projection(&running_parent)?;
     let admission_binding = broad_harness_request_admission_binding(&parent, repo_root)?;
     let slot_budget = Prototype1ChildBudget::new(1, 1);
+    let slots_per_child = broad_tui
+        .fresh_slots_per_child
+        .unwrap_or(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD);
     let slot_count = (child_budget.max as usize)
-        .checked_mul(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD)
+        .checked_mul(slots_per_child)
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
             detail: format!(
                 "broad harness child budget max {} overflowed fresh attempt allocation",
@@ -1295,6 +1309,7 @@ fn publish_broad_harness_child_plan_request(
         slots,
         child_budget,
         patch_generation_parallel_cap: child_budget.parallel_targets(),
+        broad_tui,
     })
 }
 
@@ -1418,6 +1433,7 @@ fn try_admit_request_result(
 
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
+    broad_tui: profile::BroadTui,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
     #[cfg(test)]
     if broad_headless_tui_fixture_enabled() {
@@ -1429,14 +1445,12 @@ async fn run_broad_headless_tui_attempt(
         return run_broad_headless_tui_attempt_with_options(slot, &options).await;
     }
 
-    #[cfg(test)]
-    let max_attempts = broad_headless_tui_env_u32("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS")?;
-    #[cfg(not(test))]
-    let max_attempts = None;
-    #[cfg(test)]
-    let timeout_secs = broad_headless_tui_env_u64("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS")?;
-    #[cfg(not(test))]
-    let timeout_secs = None;
+    let max_attempts = broad_tui.max_attempts.or(broad_headless_tui_env_u32(
+        "PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS",
+    )?);
+    let timeout_secs = broad_tui.timeout_secs.or(broad_headless_tui_env_u64(
+        "PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS",
+    )?);
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
     run_broad_headless_tui_attempt_with_options(slot, &options).await
 }
@@ -1446,7 +1460,6 @@ fn broad_headless_tui_fixture_enabled() -> bool {
     std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_some()
 }
 
-#[cfg(test)]
 fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
     let Some(value) = std::env::var_os(name) else {
         return Ok(None);
@@ -1464,7 +1477,6 @@ fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
         })
 }
 
-#[cfg(test)]
 fn broad_headless_tui_env_u64(name: &str) -> Result<Option<u64>, PrepareError> {
     let Some(value) = std::env::var_os(name) else {
         return Ok(None);
@@ -1582,12 +1594,16 @@ async fn run_broad_headless_tui_attempt_with_options(
         slot.published.workspace_path()
     };
 
-    let run = tui_adapter::run_headless_with_model(
+    let selected_model = options
+        .model_label()
+        .unwrap_or_else(|| "unknown-headless-model".to_string());
+    let run = tui_adapter::run_headless_with_model_capture_responses(
         tui_workspace,
         &prompt,
         budget,
         slot.published.request().edit_policy,
         &slot.published.request().evidence_roots,
+        &slot.published.request().contract.validation.commands,
         options.model().cloned(),
     )
     .await
@@ -1601,6 +1617,7 @@ async fn run_broad_headless_tui_attempt_with_options(
             detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
         })?;
     write_broad_headless_tui_diagnostics(slot, &run)?;
+    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)?;
     finish_broad_headless_tui_attempt(
         &backend,
         slot,
@@ -1647,15 +1664,11 @@ fn broad_headless_tui_fixture_attempt(
     }
 
     Some(Err(match summary.terminal {
-        Some(tui_adapter::evidence::Terminal::TimedOut { secs }) => {
-            PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "headless ploke-tui timed out after {secs} seconds; refusing to publish submitted broad-harness result"
-                ),
-            }
-        }
         Some(terminal) => PrepareError::InvalidBatchSelection {
-            detail: format!("headless ploke-tui test fixture ended with {terminal:?}"),
+            detail: format!(
+                "headless ploke-tui test fixture ended without an admissible edit: {}",
+                terminal_reason(&terminal)
+            ),
         },
         None => PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1726,6 +1739,43 @@ fn finish_broad_headless_tui_attempt(
             Err(PrepareError::ProviderUnavailable {
                 phase: "broad_headless_tui_attempt",
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedValidationFailed { applied, feedback } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui requested validation failed after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id(),
+                    feedback
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedValidationMissing { applied, missing } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui missing requested validation after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id(),
+                    missing.join(", ")
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedTurnAborted {
+            applied,
+            outcome,
+            summary,
+        } => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "headless ploke-tui turn ended with outcome `{outcome}` after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                applied.proposal_id(),
+                summary
+            ),
+        }),
+        tui_adapter::HeadlessTerminal::AppliedTimedOut { secs, applied } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui timed out after {secs} seconds after applying proposal {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id()
+                ),
             })
         }
         tui_adapter::HeadlessTerminal::TimedOut { secs } => {
@@ -2044,6 +2094,41 @@ fn broad_headless_tui_diagnostics_path(submitted_result_path: &Path) -> PathBuf 
     submitted_result_path.with_extension("headless-tui.json")
 }
 
+fn write_broad_headless_tui_turn_live_bundle(
+    slot: &HarnessRequestSlot,
+    run: &tui_adapter::HeadlessRun,
+    prompt: &str,
+    selected_model: &str,
+) -> Result<(), PrepareError> {
+    let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
+    fs::create_dir_all(&dir).map_err(|source| PrepareError::CreateOutputDir {
+        path: dir.clone(),
+        source,
+    })?;
+    let artifact =
+        run.agent_turn_artifact_record(slot.published.request_id(), selected_model, prompt);
+    write_json_file_pretty(
+        &dir.join("agent-turn-trace.json"),
+        &AgentTurnTraceRecord(artifact.clone()),
+    )?;
+    write_json_file_pretty(
+        &dir.join("agent-turn-summary.json"),
+        &AgentTurnSummaryRecord(artifact),
+    )?;
+
+    let mut jsonl = String::new();
+    for record in run.full_response_records() {
+        jsonl.push_str(&serde_json::to_string(record).map_err(PrepareError::Serialize)?);
+        jsonl.push('\n');
+    }
+    let path = dir.join(FULL_RESPONSE_TRACE_FILE);
+    fs::write(&path, jsonl).map_err(|source| PrepareError::WriteManifest { path, source })
+}
+
+fn broad_headless_tui_turn_live_dir(submitted_result_path: &Path) -> PathBuf {
+    submitted_result_path.with_extension("turn-live")
+}
+
 fn broad_harness_child_from_admitted(
     env: ChildPlanEnv<'_>,
     parent_identity: &ParentIdentity,
@@ -2311,6 +2396,38 @@ fn terminal_reason(terminal: &tui_adapter::evidence::Terminal) -> String {
         tui_adapter::evidence::Terminal::ProviderUnavailable { reason } => {
             format!("provider unavailable: {reason}")
         }
+        tui_adapter::evidence::Terminal::AppliedValidationFailed {
+            proposal_id,
+            feedback,
+            ..
+        } => {
+            format!("requested validation failed after applying proposal {proposal_id}: {feedback}")
+        }
+        tui_adapter::evidence::Terminal::AppliedValidationMissing {
+            proposal_id,
+            missing,
+            ..
+        } => {
+            format!(
+                "missing requested validation after applying proposal {proposal_id}: {}",
+                missing.join(", ")
+            )
+        }
+        tui_adapter::evidence::Terminal::AppliedTurnAborted {
+            proposal_id,
+            outcome,
+            summary,
+            ..
+        } => {
+            format!(
+                "turn ended with outcome `{outcome}` after applying proposal {proposal_id}: {summary}"
+            )
+        }
+        tui_adapter::evidence::Terminal::AppliedTimedOut {
+            secs, proposal_id, ..
+        } => {
+            format!("timed out after {secs} seconds after applying proposal {proposal_id}")
+        }
         tui_adapter::evidence::Terminal::TimedOut { secs } => {
             format!("timed out after {secs} seconds")
         }
@@ -2332,6 +2449,7 @@ fn publish_broad_harness_child_plan_from_admitted(
             }],
             child_budget: Prototype1ChildBudget::new(1, 1),
             patch_generation_parallel_cap: 1,
+            broad_tui: profile::BroadTui::default(),
         },
         vec![admitted],
     )
@@ -4296,12 +4414,14 @@ async fn resolve_child_plan(
     candidate_generation: CandidateGenerationConfig,
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     let env = ChildPlanEnv {
         campaign_id,
         manifest_path,
         repo_root,
+        broad_tui,
     };
     info!(
         target: EXECUTION_DEBUG_TARGET,
@@ -4424,7 +4544,11 @@ async fn admit_broad_harness_batch(
             let Some((slot_index, slot)) = pending.next() else {
                 break;
             };
-            running.spawn(run_broad_slot_for_admission(slot_index, slot));
+            running.spawn(run_broad_slot_for_admission(
+                slot_index,
+                slot,
+                batch.broad_tui,
+            ));
         }
 
         if running.is_empty() {
@@ -4512,6 +4636,7 @@ struct BroadSlotAttempt {
 async fn run_broad_slot_for_admission(
     slot_index: usize,
     slot: HarnessRequestSlot,
+    broad_tui: profile::BroadTui,
 ) -> BroadSlotAttempt {
     let result = if slot.published.submitted_result_path().exists() {
         Ok(None)
@@ -4524,7 +4649,7 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot).await
+        run_broad_headless_tui_attempt(&slot, broad_tui).await
     };
     cleanup_broad_slot_target(&slot);
     BroadSlotAttempt {
@@ -4747,6 +4872,7 @@ pub(crate) async fn resolve_profile_child_plan(
         CandidateGenerationConfig::from_profile_generation(run_profile.generation),
         None,
         child_budget,
+        run_profile.execution.broad_tui,
     )
     .await
 }
@@ -6707,6 +6833,7 @@ impl Prototype1StateCommand {
             run_shape.candidate_generation,
             self.node_id.as_deref(),
             plan_child_budget,
+            run_shape.broad_tui,
         )
         .await?;
         let PlannedChildren {
@@ -7556,11 +7683,18 @@ fn prepare_prototype1_loop_campaign(
     run_profile: Option<&profile::Prototype1RunProfile>,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
     let profile_model = run_profile.map(|profile| &profile.model);
+    let profile_protocol_model = run_profile.map(|profile| &profile.protocol.model);
     let profile_model_id = profile_model
         .map(profile::ModelDefaults::parsed_id)
         .transpose()?
         .flatten();
+    let profile_protocol_model_id = profile_protocol_model
+        .map(|model| model.parsed_id_for("profile.protocol.model"))
+        .transpose()?
+        .flatten();
     let profile_model_configured = profile_model.is_some_and(|model| !model.is_empty());
+    let profile_protocol_model_configured =
+        profile_protocol_model.is_some_and(|model| !model.is_empty());
     let command_model_id = command
         .model_id
         .as_deref()
@@ -7591,10 +7725,15 @@ fn prepare_prototype1_loop_campaign(
         eval_provider.clone(),
         "prototype1_loop_provider",
     )?;
+    let mut protocol_policy = run_profile
+        .map(profile::Prototype1RunProfile::protocol_policy)
+        .unwrap_or_default();
 
     if command.stop_after >= Prototype1LoopStopAfter::BaselineProtocol {
         let protocol_model = if let Some(protocol_model_id) = command.protocol_model_id.clone() {
             resolve_protocol_model_id(Some(protocol_model_id))?
+        } else if let Some(protocol_model_id) = profile_protocol_model_id.as_ref() {
+            protocol_model_id.clone()
         } else if profile_model_configured
             || command.model_id.is_some()
             || command.use_default_model
@@ -7603,32 +7742,31 @@ fn prepare_prototype1_loop_campaign(
         } else {
             resolve_protocol_model_id(None)?
         };
-        let protocol_route_source = command.protocol_route_source.unwrap_or(eval_route_source);
+        let protocol_route_source = command
+            .protocol_route_source
+            .or_else(|| profile_protocol_model.and_then(|model| model.route_source))
+            .unwrap_or(eval_route_source);
         let protocol_provider = command
             .protocol_provider
             .clone()
+            .or_else(|| profile_protocol_model.and_then(|model| model.provider.clone()))
             .or_else(|| eval_provider.clone());
         let protocol_provider = resolve_protocol_provider_slug(
             &protocol_model,
             Some(protocol_route_source),
             protocol_provider,
         )?;
-        if protocol_model != eval_model
+        if command.protocol_model_id.is_some()
+            || command.protocol_route_source.is_some()
+            || command.protocol_provider.is_some()
+            || profile_protocol_model_configured
+            || protocol_model != eval_model
             || protocol_route_source != eval_route_source
             || protocol_provider != eval_provider_slug
         {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_loop_campaign",
-                detail: format!(
-                    "prototype1 baseline arm now delegates to closure/campaign and currently requires one shared model/route/provider; eval={} {:?} {:?}, protocol={} {:?} {:?}",
-                    eval_model,
-                    eval_route_source,
-                    eval_provider_slug,
-                    protocol_model,
-                    protocol_route_source,
-                    protocol_provider
-                ),
-            });
+            protocol_policy.model_id = Some(protocol_model.to_string());
+            protocol_policy.route_source = Some(protocol_route_source);
+            protocol_policy.provider_slug = protocol_provider;
         }
     }
 
@@ -7694,9 +7832,6 @@ fn prepare_prototype1_loop_campaign(
         budget: prepared_batch.budget.clone(),
         batch_prefix: Some(prepared_batch.batch_id.clone()),
     };
-    let protocol_policy = run_profile
-        .map(profile::Prototype1RunProfile::protocol_policy)
-        .unwrap_or_default();
     manifest.protocol = ProtocolCampaignPolicy {
         stop_on_error: command.stop_on_error,
         ..protocol_policy

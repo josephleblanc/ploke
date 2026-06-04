@@ -113,3 +113,5 @@ file and current code before treating a report as still open.
   Focused live child runner can produce a valid patch and artifacts while treatment closure rejects the completed run registration due to lexical path mismatch.
 - [`2026-05-26-prototype1-foreground-child-recovery-misses-parent-comparison.md`](./2026-05-26-prototype1-foreground-child-recovery-misses-parent-comparison.md)
   Foreground recovery of a vanished Prototype 1 child can produce a terminal treatment result while the parent campaign reaches complete without the comparison artifact needed for successor selection.
+- [`2026-06-04-prototype1-headless-timeout-after-apply.md`](./2026-06-04-prototype1-headless-timeout-after-apply.md)
+  Fixed in source: Prototype 1 broad headless-TUI slots now preserve typed post-apply timeout/abort/validation terminals instead of collapsing applied candidates into plain `timed_out`; direct-Google missing-validation canary passed, while same-target post-apply timeout validation remains pending.
