@@ -1603,6 +1603,7 @@ async fn run_broad_headless_tui_attempt_with_options(
         budget,
         slot.published.request().edit_policy,
         &slot.published.request().evidence_roots,
+        &slot.published.request().contract.validation.commands,
         options.model().cloned(),
     )
     .await
@@ -1663,15 +1664,11 @@ fn broad_headless_tui_fixture_attempt(
     }
 
     Some(Err(match summary.terminal {
-        Some(tui_adapter::evidence::Terminal::TimedOut { secs }) => {
-            PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "headless ploke-tui timed out after {secs} seconds; refusing to publish submitted broad-harness result"
-                ),
-            }
-        }
         Some(terminal) => PrepareError::InvalidBatchSelection {
-            detail: format!("headless ploke-tui test fixture ended with {terminal:?}"),
+            detail: format!(
+                "headless ploke-tui test fixture ended without an admissible edit: {}",
+                terminal_reason(&terminal)
+            ),
         },
         None => PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -1742,6 +1739,43 @@ fn finish_broad_headless_tui_attempt(
             Err(PrepareError::ProviderUnavailable {
                 phase: "broad_headless_tui_attempt",
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedValidationFailed { applied, feedback } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui requested validation failed after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id(),
+                    feedback
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedValidationMissing { applied, missing } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui missing requested validation after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id(),
+                    missing.join(", ")
+                ),
+            })
+        }
+        tui_adapter::HeadlessTerminal::AppliedTurnAborted {
+            applied,
+            outcome,
+            summary,
+        } => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "headless ploke-tui turn ended with outcome `{outcome}` after applying proposal {}: {}; refusing to publish submitted broad-harness result",
+                applied.proposal_id(),
+                summary
+            ),
+        }),
+        tui_adapter::HeadlessTerminal::AppliedTimedOut { secs, applied } => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "headless ploke-tui timed out after {secs} seconds after applying proposal {}; refusing to publish submitted broad-harness result",
+                    applied.proposal_id()
+                ),
             })
         }
         tui_adapter::HeadlessTerminal::TimedOut { secs } => {
@@ -2361,6 +2395,38 @@ fn terminal_reason(terminal: &tui_adapter::evidence::Terminal) -> String {
         }
         tui_adapter::evidence::Terminal::ProviderUnavailable { reason } => {
             format!("provider unavailable: {reason}")
+        }
+        tui_adapter::evidence::Terminal::AppliedValidationFailed {
+            proposal_id,
+            feedback,
+            ..
+        } => {
+            format!("requested validation failed after applying proposal {proposal_id}: {feedback}")
+        }
+        tui_adapter::evidence::Terminal::AppliedValidationMissing {
+            proposal_id,
+            missing,
+            ..
+        } => {
+            format!(
+                "missing requested validation after applying proposal {proposal_id}: {}",
+                missing.join(", ")
+            )
+        }
+        tui_adapter::evidence::Terminal::AppliedTurnAborted {
+            proposal_id,
+            outcome,
+            summary,
+            ..
+        } => {
+            format!(
+                "turn ended with outcome `{outcome}` after applying proposal {proposal_id}: {summary}"
+            )
+        }
+        tui_adapter::evidence::Terminal::AppliedTimedOut {
+            secs, proposal_id, ..
+        } => {
+            format!("timed out after {secs} seconds after applying proposal {proposal_id}")
         }
         tui_adapter::evidence::Terminal::TimedOut { secs } => {
             format!("timed out after {secs} seconds")

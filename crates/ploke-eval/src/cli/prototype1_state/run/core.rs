@@ -3335,6 +3335,12 @@ Suggested validation after editing: run `cargo test`.
         let _llm_guard = crate::test_support::llm_lock().lock().await;
         let temp = crate::test_support::live_tempdir("prototype1-state-broad-tui-replay-");
         let eval_home = temp.path().join("eval-home");
+        let probe_dir = temp.path().join("slot-probe");
+        eprintln!(
+            "[prototype1-state-live] eval_home={} probe_dir={}",
+            eval_home.display(),
+            probe_dir.display()
+        );
         let _env = crate::test_support::env_guard_os(vec![
             ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
             ("PLOKE_EVAL_HEADLESS_TUI_LIVE", OsString::from("1")),
@@ -3342,14 +3348,24 @@ Suggested validation after editing: run `cargo test`.
                 "PLOKE_EVAL_HEADLESS_TUI_LIVE_RESOURCES",
                 OsString::from("1"),
             ),
+            ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", OsString::from("2")),
+            (
+                "PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_DIR",
+                probe_dir.clone().into_os_string(),
+            ),
+            (
+                "PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_WAIT_FOR",
+                OsString::from("2"),
+            ),
         ]);
         let model_id = crate::test_support::live_google_model_id();
         crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
         print_live_step_timing("model_config_written", started, &mut previous);
 
         let world =
-            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 1, 1, |profile| {
-                profile.execution.stop_after = profile::ExecutionStopAfter::Materialize;
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 2, 2, |profile| {
+                profile.execution.stop_after = profile::ExecutionStopAfter::Complete;
+                profile.search.children = profile.search.children.with_parallel_targets(2);
                 profile.execution.broad_tui = profile::BroadTui {
                     max_attempts: Some(1),
                     fresh_slots_per_child: Some(1),
@@ -3381,7 +3397,7 @@ Suggested validation after editing: run `cargo test`.
             identity_branch: None,
             identity_instance: None,
             handoff_invocation: None,
-            stop_after: crate::cli::Prototype1StateStopAfter::Materialize,
+            stop_after: crate::cli::Prototype1StateStopAfter::Complete,
             successor_selection: crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
             successor_selection_seed: 0,
             successor_selection_metrics: crate::cli::Prototype1TraversalMetrics::Operational,
@@ -3413,8 +3429,8 @@ Suggested validation after editing: run `cargo test`.
         print_headless_profile(&summaries);
         assert_eq!(
             summaries.len(),
-            1,
-            "profile broad_tui.fresh_slots_per_child=1 should publish/run one broad TUI slot"
+            2,
+            "profile broad_tui.fresh_slots_per_child=1 with two children should publish/run two broad TUI slots"
         );
         assert!(
             summaries.iter().any(|summary| {
@@ -3429,8 +3445,8 @@ Suggested validation after editing: run `cargo test`.
         );
         assert_eq!(
             count_broad_requests(&world.manifest_path),
-            before_requests + 1,
-            "profile broad_tui.fresh_slots_per_child=1 should publish one request"
+            before_requests + 2,
+            "profile broad_tui.fresh_slots_per_child=1 with two children should publish two requests"
         );
 
         let budget = crate::cli::prototype1_state::edit_surface::tui_adapter::Budget::new(1, 120)

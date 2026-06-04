@@ -254,6 +254,18 @@ impl ProbeRun {
             Some(tui_adapter::evidence::Terminal::ProviderUnavailable { .. }) => {
                 "provider_unavailable".to_string()
             }
+            Some(tui_adapter::evidence::Terminal::AppliedValidationFailed { .. }) => {
+                "applied_validation_failed".to_string()
+            }
+            Some(tui_adapter::evidence::Terminal::AppliedValidationMissing { .. }) => {
+                "applied_validation_missing".to_string()
+            }
+            Some(tui_adapter::evidence::Terminal::AppliedTurnAborted { .. }) => {
+                "applied_turn_aborted".to_string()
+            }
+            Some(tui_adapter::evidence::Terminal::AppliedTimedOut { .. }) => {
+                "applied_timed_out".to_string()
+            }
             Some(tui_adapter::evidence::Terminal::TimedOut { .. }) => "timed_out".to_string(),
             None => "unknown".to_string(),
         }

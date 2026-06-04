@@ -633,6 +633,7 @@ mod tests {
             },
             execution: Execution {
                 stop_after: ExecutionStopAfter::Complete,
+                broad_tui: ploke_records::run_profile::BroadTui::default(),
                 trace_jsonl: TraceJsonl::Auto,
                 debug_tools: true,
                 mbe: ploke_records::run_profile::Mbe::default(),

@@ -602,6 +602,26 @@ fn terminal_label(terminal: &tui_adapter::HeadlessTerminal) -> String {
                 truncate_chars(reason, 160)
             )
         }
+        tui_adapter::HeadlessTerminal::AppliedValidationFailed { feedback, .. } => {
+            format!(
+                "applied_validation_failed feedback={}",
+                truncate_chars(feedback, 160)
+            )
+        }
+        tui_adapter::HeadlessTerminal::AppliedValidationMissing { missing, .. } => {
+            format!("applied_validation_missing missing={}", missing.join(", "))
+        }
+        tui_adapter::HeadlessTerminal::AppliedTurnAborted {
+            outcome, summary, ..
+        } => {
+            format!(
+                "applied_turn_aborted outcome={outcome} summary={}",
+                truncate_chars(summary, 160)
+            )
+        }
+        tui_adapter::HeadlessTerminal::AppliedTimedOut { secs, .. } => {
+            format!("applied_timed_out secs={secs}")
+        }
         tui_adapter::HeadlessTerminal::TimedOut { secs } => format!("timed_out secs={secs}"),
     }
 }

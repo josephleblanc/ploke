@@ -38,7 +38,7 @@ use uuid::Uuid;
 use super::{
     ArtifactDelta,
     harness_request::{
-        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, request,
+        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract, request,
     },
     surface, tui,
 };
@@ -143,6 +143,7 @@ pub(crate) async fn run_headless_with_model(
         budget,
         edit_policy,
         evidence_roots,
+        &[],
         model,
         None,
     )
@@ -155,6 +156,7 @@ pub(crate) async fn run_headless_with_model_capture_responses(
     budget: Budget,
     edit_policy: BroadEditPolicy,
     evidence_roots: &[EvidenceRoot],
+    validation_commands: &[contract::Command],
     model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
     let (response_tx, response_rx) = std::sync::mpsc::channel();
@@ -166,6 +168,7 @@ pub(crate) async fn run_headless_with_model_capture_responses(
         budget,
         edit_policy,
         evidence_roots,
+        validation_commands,
         model,
         Some(&response_rx),
     )
@@ -178,6 +181,7 @@ async fn run_headless_with_model_inner(
     budget: Budget,
     edit_policy: BroadEditPolicy,
     evidence_roots: &[EvidenceRoot],
+    validation_commands: &[contract::Command],
     model: Option<ModelSelection>,
     response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
 ) -> Result<HeadlessRun, Error> {
@@ -214,6 +218,7 @@ async fn run_headless_with_model_inner(
                 turn,
                 &mut run,
                 &observer,
+                validation_commands,
                 response_rx,
             )
             .await?;
@@ -293,9 +298,7 @@ async fn run_headless_with_model_inner(
                 error: observed_headless_error(source),
             }
         }
-        Err(_) => HeadlessTerminal::TimedOut {
-            secs: budget.timeout_secs(),
-        },
+        Err(_) => timeout_terminal_for_run(&run, budget.timeout_secs()),
     };
     observer.emit(format!("done {}", terminal.live_summary()));
     observer.emit_workspace_size("workspace_done", workspace_path);
@@ -475,6 +478,7 @@ async fn run_attempt(
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
+    validation_commands: &[contract::Command],
     response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
 ) -> Result<AttemptEnd, Error> {
     use ploke_tui::{AppEvent, app_state::events::SystemEvent};
@@ -791,6 +795,15 @@ async fn run_attempt(
                 }
 
                 if outcome != "completed" {
+                    if let Some(applied_edit) =
+                        applied_edit_from_terminal_items(&applied, &changed_paths)
+                    {
+                        return Ok(AttemptEnd::Terminal(turn_aborted_after_apply_terminal(
+                            applied_edit,
+                            outcome,
+                            summary,
+                        )));
+                    }
                     let feedback = if let Some(feedback) = repaired_failure {
                         feedback
                     } else if summary.trim().is_empty() {
@@ -835,23 +848,14 @@ async fn run_attempt(
                     ));
                 }
 
-                if let Some(feedback) = latest_failed_cargo_validation_feedback(run) {
-                    observer.emit(format!(
-                        "attempt {turn} validation_failed_after_apply {}",
-                        truncate_chars(&feedback, 240)
-                    ));
-                    return Ok(AttemptEnd::RetryFailure(feedback));
-                }
-
-                let (proposal_id, applied_proposal_ids) =
-                    terminal_ids(&applied).expect("applied is not empty");
-
-                return Ok(AttemptEnd::Terminal(HeadlessTerminal::Applied {
-                    proposal_id,
-                    applied_proposal_ids,
+                let applied_edit = applied_edit_from_terminal_items(&applied, &changed_paths)
+                    .expect("applied is not empty");
+                return Ok(AttemptEnd::Terminal(classify_applied_terminal(
+                    run,
+                    validation_commands,
                     request_id,
-                    changed_paths: changed_paths.clone(),
-                }));
+                    applied_edit,
+                )));
             }
             _ => {}
         }
@@ -864,6 +868,121 @@ fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
         .last()
         .copied()
         .map(|primary| (primary, proposal_ids))
+}
+
+fn applied_edit_from_terminal_items(
+    applied: &[AppliedItem],
+    changed_paths: &[PathBuf],
+) -> Option<AppliedEdit> {
+    let (proposal_id, proposal_ids) = terminal_ids(applied)?;
+    Some(AppliedEdit {
+        proposal_id,
+        proposal_ids,
+        changed_paths: changed_paths.to_vec(),
+    })
+}
+
+fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {
+    if let Some(applied) = run.applied_edit() {
+        return HeadlessTerminal::AppliedTimedOut { secs, applied };
+    }
+    HeadlessTerminal::TimedOut { secs }
+}
+
+fn turn_aborted_after_apply_terminal(
+    applied: AppliedEdit,
+    outcome: String,
+    summary: String,
+) -> HeadlessTerminal {
+    HeadlessTerminal::AppliedTurnAborted {
+        applied,
+        outcome,
+        summary,
+    }
+}
+
+fn classify_applied_terminal(
+    run: &HeadlessRun,
+    validation_commands: &[contract::Command],
+    request_id: Uuid,
+    applied: AppliedEdit,
+) -> HeadlessTerminal {
+    if validation_commands.is_empty() {
+        if let Some(feedback) = latest_failed_cargo_validation_feedback(run) {
+            return HeadlessTerminal::AppliedValidationFailed { applied, feedback };
+        }
+        return applied_terminal(request_id, applied);
+    }
+
+    if let Some(feedback) = failed_requested_validation_feedback(run, validation_commands) {
+        return HeadlessTerminal::AppliedValidationFailed { applied, feedback };
+    }
+
+    let missing = missing_requested_validation_commands(run, validation_commands);
+    if !missing.is_empty() {
+        return HeadlessTerminal::AppliedValidationMissing { applied, missing };
+    }
+
+    applied_terminal(request_id, applied)
+}
+
+fn applied_terminal(request_id: Uuid, applied: AppliedEdit) -> HeadlessTerminal {
+    HeadlessTerminal::Applied {
+        proposal_id: applied.proposal_id(),
+        applied_proposal_ids: applied.proposal_ids().to_vec(),
+        request_id,
+        changed_paths: applied.changed_paths().to_vec(),
+    }
+}
+
+fn failed_requested_validation_feedback(
+    run: &HeadlessRun,
+    validation_commands: &[contract::Command],
+) -> Option<String> {
+    for command in validation_commands {
+        let required = validation_command_display(command);
+        let Some(observation) = latest_observation_for_command(run, &required) else {
+            continue;
+        };
+        if let Some(feedback) = observation.failure_feedback() {
+            return Some(format!(
+                "Requested validation `{required}` failed: {feedback}"
+            ));
+        }
+    }
+    None
+}
+
+fn missing_requested_validation_commands(
+    run: &HeadlessRun,
+    validation_commands: &[contract::Command],
+) -> Vec<String> {
+    validation_commands
+        .iter()
+        .map(validation_command_display)
+        .filter(|required| latest_observation_for_command(run, required).is_none())
+        .collect()
+}
+
+fn latest_observation_for_command<'a>(
+    run: &'a HeadlessRun,
+    required: &str,
+) -> Option<&'a CargoValidationObservation> {
+    run.validations()
+        .iter()
+        .rev()
+        .find(|observation| command_display_matches(required, &observation.display_command))
+}
+
+fn command_display_matches(required: &str, observed: &str) -> bool {
+    observed == required || observed.replace(" -- ", " ") == required
+}
+
+fn validation_command_display(command: &contract::Command) -> String {
+    std::iter::once(command.program.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn drain_response_records(
@@ -2854,6 +2973,23 @@ pub(crate) enum HeadlessTerminal {
     ProviderUnavailable {
         reason: String,
     },
+    AppliedValidationFailed {
+        applied: AppliedEdit,
+        feedback: String,
+    },
+    AppliedValidationMissing {
+        applied: AppliedEdit,
+        missing: Vec<String>,
+    },
+    AppliedTurnAborted {
+        applied: AppliedEdit,
+        outcome: String,
+        summary: String,
+    },
+    AppliedTimedOut {
+        secs: u64,
+        applied: AppliedEdit,
+    },
     TimedOut {
         secs: u64,
     },
@@ -2896,6 +3032,35 @@ impl HeadlessTerminal {
                     truncate_chars(reason, 240)
                 )
             }
+            Self::AppliedValidationFailed { applied, feedback } => format!(
+                "applied_validation_failed proposal_id={} changed_paths={} feedback={}",
+                applied.proposal_id(),
+                join_paths(applied.changed_paths()),
+                truncate_chars(feedback, 240)
+            ),
+            Self::AppliedValidationMissing { applied, missing } => format!(
+                "applied_validation_missing proposal_id={} changed_paths={} missing={}",
+                applied.proposal_id(),
+                join_paths(applied.changed_paths()),
+                missing.join(", ")
+            ),
+            Self::AppliedTurnAborted {
+                applied,
+                outcome,
+                summary,
+            } => format!(
+                "applied_turn_aborted proposal_id={} changed_paths={} outcome={} summary={}",
+                applied.proposal_id(),
+                join_paths(applied.changed_paths()),
+                outcome,
+                truncate_chars(summary, 240)
+            ),
+            Self::AppliedTimedOut { secs, applied } => format!(
+                "applied_timed_out secs={} proposal_id={} changed_paths={}",
+                secs,
+                applied.proposal_id(),
+                join_paths(applied.changed_paths())
+            ),
             Self::TimedOut { secs } => format!("timed_out secs={secs}"),
         }
     }
@@ -3104,6 +3269,35 @@ pub(crate) mod evidence {
         },
         ProviderUnavailable {
             reason: String,
+        },
+        AppliedValidationFailed {
+            proposal_id: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            applied_proposal_ids: Vec<Uuid>,
+            changed_paths: Vec<PathBuf>,
+            feedback: String,
+        },
+        AppliedValidationMissing {
+            proposal_id: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            applied_proposal_ids: Vec<Uuid>,
+            changed_paths: Vec<PathBuf>,
+            missing: Vec<String>,
+        },
+        AppliedTurnAborted {
+            proposal_id: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            applied_proposal_ids: Vec<Uuid>,
+            changed_paths: Vec<PathBuf>,
+            outcome: String,
+            summary: String,
+        },
+        AppliedTimedOut {
+            secs: u64,
+            proposal_id: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            applied_proposal_ids: Vec<Uuid>,
+            changed_paths: Vec<PathBuf>,
         },
         TimedOut {
             secs: u64,
@@ -3373,6 +3567,39 @@ pub(crate) mod evidence {
                 },
                 HeadlessTerminal::ProviderUnavailable { reason } => Self::ProviderUnavailable {
                     reason: reason.clone(),
+                },
+                HeadlessTerminal::AppliedValidationFailed { applied, feedback } => {
+                    Self::AppliedValidationFailed {
+                        proposal_id: applied.proposal_id().to_string(),
+                        applied_proposal_ids: applied.proposal_ids().to_vec(),
+                        changed_paths: applied.changed_paths().to_vec(),
+                        feedback: feedback.clone(),
+                    }
+                }
+                HeadlessTerminal::AppliedValidationMissing { applied, missing } => {
+                    Self::AppliedValidationMissing {
+                        proposal_id: applied.proposal_id().to_string(),
+                        applied_proposal_ids: applied.proposal_ids().to_vec(),
+                        changed_paths: applied.changed_paths().to_vec(),
+                        missing: missing.clone(),
+                    }
+                }
+                HeadlessTerminal::AppliedTurnAborted {
+                    applied,
+                    outcome,
+                    summary,
+                } => Self::AppliedTurnAborted {
+                    proposal_id: applied.proposal_id().to_string(),
+                    applied_proposal_ids: applied.proposal_ids().to_vec(),
+                    changed_paths: applied.changed_paths().to_vec(),
+                    outcome: outcome.clone(),
+                    summary: summary.clone(),
+                },
+                HeadlessTerminal::AppliedTimedOut { secs, applied } => Self::AppliedTimedOut {
+                    secs: *secs,
+                    proposal_id: applied.proposal_id().to_string(),
+                    applied_proposal_ids: applied.proposal_ids().to_vec(),
+                    changed_paths: applied.changed_paths().to_vec(),
                 },
                 HeadlessTerminal::TimedOut { secs } => Self::TimedOut { secs: *secs },
             }
@@ -4073,6 +4300,16 @@ mod tests {
         assert!(selection.provider().is_none());
     }
 
+    fn declared_cargo_command(label: &str, args: &[&str]) -> contract::Command {
+        contract::Command {
+            label: label.to_string(),
+            program: "cargo".to_string(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            workdir: contract::Workdir::CandidateWorkspace,
+            success: "command exits successfully".to_string(),
+        }
+    }
+
     #[test]
     fn turn_live() {
         let session_id = Uuid::from_u128(0x1111);
@@ -4307,6 +4544,233 @@ mod tests {
 
         assert!(latest_failed_cargo_validation_feedback(&run).is_none());
         assert_eq!(run.evidence().validations.len(), 2);
+    }
+
+    #[test]
+    fn timeout_after_apply_terminal_preserves_applied_evidence() {
+        let proposal_id = Uuid::from_u128(0x8100);
+        let paths = vec![PathBuf::from("crates/ploke-eval/src/lib.rs")];
+        let run = HeadlessRun::from_parts_for_test(
+            vec![HeadlessAttempt::applied_for_test(
+                1,
+                proposal_id,
+                paths.clone(),
+            )],
+            None,
+        );
+
+        let terminal = timeout_terminal_for_run(&run, 900);
+
+        assert!(matches!(
+            terminal,
+            HeadlessTerminal::AppliedTimedOut { secs: 900, applied }
+                if applied.proposal_id() == proposal_id && applied.changed_paths() == paths
+        ));
+    }
+
+    #[test]
+    fn aborted_turn_after_apply_terminal_preserves_applied_evidence() {
+        let proposal_id = Uuid::from_u128(0x8101);
+        let applied = AppliedEdit {
+            proposal_id,
+            proposal_ids: vec![proposal_id],
+            changed_paths: vec![PathBuf::from("crates/ploke-eval/src/lib.rs")],
+        };
+
+        let terminal = turn_aborted_after_apply_terminal(
+            applied.clone(),
+            "aborted".to_string(),
+            "model turn aborted after tool output".to_string(),
+        );
+
+        assert!(matches!(
+            terminal,
+            HeadlessTerminal::AppliedTurnAborted {
+                applied: observed,
+                outcome,
+                summary,
+            } if observed == applied
+                && outcome == "aborted"
+                && summary.contains("after tool output")
+        ));
+    }
+
+    #[test]
+    fn requested_validation_missing_blocks_applied_terminal() {
+        let proposal_id = Uuid::from_u128(0x8102);
+        let request_id = Uuid::from_u128(0x8103);
+        let applied = AppliedEdit {
+            proposal_id,
+            proposal_ids: vec![proposal_id],
+            changed_paths: vec![PathBuf::from("crates/ploke-eval/src/lib.rs")],
+        };
+        let mut run = HeadlessRun::new();
+        let passed = r#"{
+            "ok": true,
+            "status_reason": "success",
+            "command": "test",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 0,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+        observe_cargo_validation(
+            &mut run,
+            "call-wrong",
+            r#"{"command":"test","package":"ploke-db-derive"}"#,
+            passed,
+        )
+        .expect("wrong package validation");
+
+        let terminal = classify_applied_terminal(
+            &run,
+            &[declared_cargo_command(
+                "compile ploke-eval",
+                &["check", "-p", "ploke-eval"],
+            )],
+            request_id,
+            applied.clone(),
+        );
+
+        assert!(matches!(
+            terminal,
+            HeadlessTerminal::AppliedValidationMissing {
+                applied: observed,
+                missing,
+            } if observed == applied && missing == vec!["cargo check -p ploke-eval"]
+        ));
+    }
+
+    #[test]
+    fn requested_validation_failure_blocks_applied_terminal() {
+        let proposal_id = Uuid::from_u128(0x8104);
+        let request_id = Uuid::from_u128(0x8105);
+        let applied = AppliedEdit {
+            proposal_id,
+            proposal_ids: vec![proposal_id],
+            changed_paths: vec![PathBuf::from("crates/ploke-eval/src/lib.rs")],
+        };
+        let mut run = HeadlessRun::new();
+        let failed = r#"{
+            "ok": false,
+            "status_reason": "tests_failed_or_runtime",
+            "command": "check",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 101,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 1,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+        observe_cargo_validation(
+            &mut run,
+            "call-failed",
+            r#"{"command":"check","package":"ploke-eval"}"#,
+            failed,
+        )
+        .expect("declared validation failure");
+
+        let terminal = classify_applied_terminal(
+            &run,
+            &[declared_cargo_command(
+                "compile ploke-eval",
+                &["check", "-p", "ploke-eval"],
+            )],
+            request_id,
+            applied.clone(),
+        );
+
+        assert!(matches!(
+            terminal,
+            HeadlessTerminal::AppliedValidationFailed { applied: observed, feedback }
+                if observed == applied
+                    && feedback.contains("cargo check -p ploke-eval")
+                    && feedback.contains("tests_failed_or_runtime")
+        ));
+    }
+
+    #[test]
+    fn requested_validation_passes_applied_terminal() {
+        let proposal_id = Uuid::from_u128(0x8106);
+        let request_id = Uuid::from_u128(0x8107);
+        let applied = AppliedEdit {
+            proposal_id,
+            proposal_ids: vec![proposal_id],
+            changed_paths: vec![PathBuf::from("crates/ploke-eval/src/lib.rs")],
+        };
+        let mut run = HeadlessRun::new();
+        let passed = r#"{
+            "ok": true,
+            "status_reason": "success",
+            "command": "check",
+            "scope": "workspace",
+            "manifest_path": "/repo/Cargo.toml",
+            "exit_code": 0,
+            "duration_ms": 42,
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "notes": 0,
+                "artifacts": 10,
+                "other_messages": 0
+            },
+            "diagnostics": [],
+            "stderr_tail": [],
+            "non_json_stdout_tail": [],
+            "json_parse_errors_tail": [],
+            "raw_messages_truncated": false
+        }"#;
+        observe_cargo_validation(
+            &mut run,
+            "call-passed",
+            r#"{"command":"check","package":"ploke-eval"}"#,
+            passed,
+        )
+        .expect("declared validation success");
+
+        let terminal = classify_applied_terminal(
+            &run,
+            &[declared_cargo_command(
+                "compile ploke-eval",
+                &["check", "-p", "ploke-eval"],
+            )],
+            request_id,
+            applied,
+        );
+
+        assert!(matches!(
+            terminal,
+            HeadlessTerminal::Applied {
+                proposal_id: observed_proposal,
+                request_id: observed_request,
+                changed_paths,
+                ..
+            } if observed_proposal == proposal_id
+                && observed_request == request_id
+                && changed_paths == vec![PathBuf::from("crates/ploke-eval/src/lib.rs")]
+        ));
     }
 
     #[test]
@@ -4697,6 +5161,40 @@ Suggested action: Verify API credentials and retry."#;
                 && observed_request == &request_id
                 && observed_paths == &changed_paths
         ));
+    }
+
+    #[test]
+    fn evidence_applied_timeout_terminal_carries_post_apply_state() {
+        let proposal_id = Uuid::from_u128(0x8200);
+        let changed_paths = vec![PathBuf::from("crates/ploke-eval/src/lib.rs")];
+        let applied = AppliedEdit {
+            proposal_id,
+            proposal_ids: vec![proposal_id],
+            changed_paths: changed_paths.clone(),
+        };
+        let run = HeadlessRun::from_parts_for_test(
+            vec![HeadlessAttempt::applied_for_test(
+                1,
+                proposal_id,
+                changed_paths.clone(),
+            )],
+            Some(HeadlessTerminal::AppliedTimedOut { secs: 900, applied }),
+        );
+
+        let summary = run.evidence();
+
+        assert!(matches!(
+            summary.terminal.as_ref(),
+            Some(evidence::Terminal::AppliedTimedOut {
+                secs: 900,
+                proposal_id: observed_proposal,
+                applied_proposal_ids,
+                changed_paths: observed_paths,
+            }) if observed_proposal == &proposal_id.to_string()
+                && applied_proposal_ids.as_slice() == &[proposal_id]
+                && observed_paths == &changed_paths
+        ));
+        serde_json::to_string_pretty(&summary).expect("post-apply timeout evidence serializes");
     }
 
     #[test]
@@ -5400,6 +5898,7 @@ Suggested action: Verify API credentials and retry."#;
             1,
             &mut run,
             &LiveObserver::disabled(),
+            &[],
             None,
         )
         .await
@@ -5539,6 +6038,7 @@ Suggested action: Verify API credentials and retry."#;
             1,
             &mut run,
             &LiveObserver::disabled(),
+            &[],
             None,
         )
         .await

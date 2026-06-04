@@ -1334,6 +1334,90 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
 }
 
 #[test]
+fn applied_timed_out_headless_tui_blocks_submitted_result_with_typed_detail() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("src/lib.rs"),
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "before"
+}
+"#,
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "typed applied timeout fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(&repo_root, &slot.published)
+        .expect("prepare broad harness workspace");
+
+    let relpath = PathBuf::from("src/lib.rs");
+    let candidate_path = slot.published.workspace_path().join(&relpath);
+    fs::write(
+        &candidate_path,
+        r#"pub fn timeout_applied_canary() -> &'static str {
+    "after"
+}
+"#,
+    )
+    .expect("write candidate edit");
+
+    let proposal_id = uuid::Uuid::from_u128(0x45a2_e262_0000_0000_0000_000000000002);
+    let attempts = vec![tui_adapter::HeadlessAttempt::applied_for_test(
+        1,
+        proposal_id,
+        vec![candidate_path.clone()],
+    )];
+    let applied = tui_adapter::HeadlessRun::from_parts_for_test(attempts.clone(), None)
+        .applied_edit()
+        .expect("applied edit evidence");
+    let run = tui_adapter::HeadlessRun::from_parts_for_test(
+        attempts,
+        Some(tui_adapter::HeadlessTerminal::AppliedTimedOut { secs: 900, applied }),
+    );
+    let terminal = run.terminal().expect("terminal");
+
+    let err = finish_broad_headless_tui_attempt(
+        &GitWorktreeBackend,
+        &slot,
+        &repo_root,
+        false,
+        &run,
+        terminal,
+    )
+    .expect_err("typed applied-timeout run must not publish submission");
+    let detail = err.to_string();
+    assert!(
+        detail.contains("timed out after 900 seconds after applying proposal"),
+        "unexpected error: {detail}"
+    );
+    assert!(
+        detail.contains("refusing to publish submitted broad-harness result"),
+        "unexpected error: {detail}"
+    );
+    assert!(
+        !slot.published.submitted_result_path().exists(),
+        "typed applied-timeout run must not write submitted result at {}",
+        slot.published.submitted_result_path().display()
+    );
+}
+
+#[test]
 fn tui_edit_surface_producer_creates_default_checked_candidates() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let allowed = write_broad_surface_targets(tmp.path());
@@ -1809,14 +1893,15 @@ fn live_google_broad_headless_canary_default_root_is_durable() {
 
 #[cfg(feature = "live_api_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "live direct-Google broad headless-TUI preflight; requires Google ADC/Vertex quota"]
-async fn live_google_direct_broad_headless_tui_preflight_applies_edit_from_published_request() {
+#[ignore = "live direct-Google broad headless-TUI contract preflight; requires Google ADC/Vertex quota"]
+async fn live_google_direct_broad_headless_tui_rejects_applied_edit_missing_declared_validation() {
     // regr:googlevertex:23-05-26_19-10 resolved 2026-06-02.
     //
-    // This is the positive live preflight for the Prototype 1 published-request
+    // This is the live contract preflight for the Prototype 1 published-request
     // -> cli_facing runner -> tui_adapter -> vanilla ploke-tui llm_manager ->
-    // direct Google/Vertex OpenAI-compatible route. Run it before direct-Google
-    // Prototype 1 live campaigns when provider/quota health is uncertain.
+    // direct Google/Vertex OpenAI-compatible route. It intentionally asks for an
+    // edit without the request-declared validation commands, so the applied edit
+    // must be rejected as AppliedValidationMissing instead of being published.
     // It is intentionally ignored because it spends live Google provider calls.
     crate::test_support::install_default_google_route_env();
     let model_id = live_google_headless_tui_model_id();
@@ -1889,19 +1974,27 @@ Use exactly this JSON payload:
         request_path: publication.request_path.clone(),
         published: publication.published,
     };
-    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
+    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
         .await
-        .unwrap_or_else(|err| {
-            panic!(
-                "live Google broad headless-TUI attempt failed for '{}': {err}; artifacts at {}",
-                slot.request_path.display(),
-                artifact_root.display()
-            )
-        });
+        .expect_err("live canary must reject applied edit missing declared validation");
+    let detail = err.to_string();
     assert!(
-        executor.is_some(),
-        "expected broad headless-TUI executor for '{}'",
-        slot.request_path.display()
+        detail.contains("missing requested validation after applying proposal"),
+        "expected missing-validation rejection for '{}', got {detail}; artifacts at {}",
+        slot.request_path.display(),
+        artifact_root.display()
+    );
+    assert!(
+        detail.contains("cargo check -p ploke-eval")
+            && detail.contains("cargo test -p ploke-eval edit_surface"),
+        "expected declared validation commands in rejection, got {detail}; artifacts at {}",
+        artifact_root.display()
+    );
+    assert!(
+        !slot.published.submitted_result_path().exists(),
+        "missing-validation live run must not publish submitted result at {}; artifacts at {}",
+        slot.published.submitted_result_path().display(),
+        artifact_root.display()
     );
 
     let diagnostics_path =
@@ -1921,13 +2014,20 @@ Use exactly this JSON payload:
                 artifact_root.display()
             )
         });
+    let terminal = diagnostics
+        .terminal
+        .as_ref()
+        .expect("headless diagnostics should include terminal");
     assert!(
         matches!(
-            diagnostics.terminal,
-            Some(tui_adapter::evidence::Terminal::Applied { .. })
+            terminal,
+            tui_adapter::evidence::Terminal::AppliedValidationMissing { missing, changed_paths, .. }
+                if missing.iter().any(|item| item == "cargo check -p ploke-eval")
+                    && missing.iter().any(|item| item == "cargo test -p ploke-eval edit_surface")
+                    && changed_paths.iter().any(|path| path.ends_with("src/lib.rs"))
         ),
-        "expected applied terminal in diagnostics; got {:?}; artifacts at {}",
-        diagnostics.terminal,
+        "expected AppliedValidationMissing terminal in diagnostics; got {:?}; artifacts at {}",
+        terminal,
         artifact_root.display()
     );
     let requested_tools = diagnostics
@@ -1951,19 +2051,6 @@ Use exactly this JSON payload:
         "expected completed chat turn in diagnostics; artifacts at {}",
         artifact_root.display()
     );
-
-    let submitted = fs::read(slot.published.submitted_result_path()).unwrap_or_else(|err| {
-        panic!(
-            "missing submitted broad harness result '{}': {err}; artifacts at {}",
-            slot.published.submitted_result_path().display(),
-            artifact_root.display()
-        )
-    });
-    let submitted: SubmittedBroadHarnessResult =
-        serde_json::from_slice(&submitted).expect("submitted broad harness result should decode");
-    submitted
-        .verify_request(&slot.published)
-        .expect("submitted result remains bound to the published request");
 
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(&repo_root, &slot.published)
