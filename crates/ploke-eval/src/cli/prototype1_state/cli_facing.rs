@@ -1444,7 +1444,6 @@ fn broad_headless_tui_fixture_enabled() -> bool {
     std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_some()
 }
 
-#[cfg(test)]
 fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
     let Some(value) = std::env::var_os(name) else {
         return Ok(None);
@@ -1462,7 +1461,6 @@ fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
         })
 }
 
-#[cfg(test)]
 fn broad_headless_tui_env_u64(name: &str) -> Result<Option<u64>, PrepareError> {
     let Some(value) = std::env::var_os(name) else {
         return Ok(None);
