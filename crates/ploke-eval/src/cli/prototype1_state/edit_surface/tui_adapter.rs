@@ -23,7 +23,7 @@ use ploke_llm::{
 };
 use ploke_records::{
     agent_turn::{
-        AgentTurnArtifactRecord, MessageSnapshotRecord, ObservedTurnEventRecord,
+        AgentTurnArtifactRecord, MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord,
         PatchArtifactRecord, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
         TurnFinishedRecord,
     },
@@ -102,6 +102,38 @@ impl ModelSelection {
 
     pub(crate) fn router(&self) -> RouterVariants {
         self.router
+    }
+
+    pub(crate) fn model_route_record(&self) -> ModelRouteRecord {
+        match self.router {
+            RouterVariants::Google(_) => ModelRouteRecord {
+                route_source: "direct_google".to_string(),
+                router: "google".to_string(),
+                provider_slug: self
+                    .provider
+                    .as_ref()
+                    .map(|provider| provider.slug.as_str().to_string()),
+                endpoint_host: Some("aiplatform.googleapis.com".to_string()),
+            },
+            RouterVariants::OpenRouter(_) => ModelRouteRecord {
+                route_source: "openrouter".to_string(),
+                router: "openrouter".to_string(),
+                provider_slug: self
+                    .provider
+                    .as_ref()
+                    .map(|provider| provider.slug.as_str().to_string()),
+                endpoint_host: Some("openrouter.ai".to_string()),
+            },
+            RouterVariants::Anthropic(_) => ModelRouteRecord {
+                route_source: "anthropic".to_string(),
+                router: "anthropic".to_string(),
+                provider_slug: self
+                    .provider
+                    .as_ref()
+                    .map(|provider| provider.slug.as_str().to_string()),
+                endpoint_host: None,
+            },
+        }
     }
 }
 
@@ -186,6 +218,7 @@ async fn run_headless_with_model_inner(
     response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
 ) -> Result<HeadlessRun, Error> {
     let mut run = HeadlessRun::new();
+    run.model_route = model.as_ref().map(ModelSelection::model_route_record);
     let mut turn = 1_u32;
     let extra_read_roots = evidence_read_roots(evidence_roots);
     let mut next_prompt = attempt_prompt(workspace_path, edit_policy, evidence_roots, prompt, None);
@@ -2156,6 +2189,7 @@ pub(crate) struct HeadlessRun {
     prompt_diagnostics: Vec<PromptDiagnostic>,
     full_response_records: Vec<RawFullResponseRecord>,
     terminal: Option<HeadlessTerminal>,
+    model_route: Option<ModelRouteRecord>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2175,6 +2209,7 @@ impl HeadlessRun {
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
             terminal: None,
+            model_route: None,
         }
     }
 
@@ -2295,6 +2330,7 @@ impl HeadlessRun {
         AgentTurnArtifactRecord {
             task_id: task_id.to_string(),
             selected_model: selected_model.to_string(),
+            model_route: self.model_route.clone(),
             issue_prompt: issue_prompt.to_string(),
             user_message_id: self.observed_user_message_id(),
             events,
@@ -2374,6 +2410,7 @@ impl HeadlessRun {
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
             terminal,
+            model_route: None,
         }
     }
 }
@@ -3069,6 +3106,7 @@ impl HeadlessTerminal {
 pub(crate) mod evidence {
     use std::path::PathBuf;
 
+    use ploke_records::agent_turn::ModelRouteRecord;
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
@@ -3091,6 +3129,8 @@ pub(crate) mod evidence {
         pub(crate) debug_relay: DebugRelaySummary,
         #[serde(default)]
         pub(crate) prompt_diagnostics: Vec<Prompt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub(crate) model_route: Option<ModelRouteRecord>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -3317,6 +3357,7 @@ pub(crate) mod evidence {
                     .collect(),
                 debug_relay: DebugRelaySummary::from(&value.debug_relay),
                 prompt_diagnostics: value.prompt_diagnostics.iter().map(Prompt::from).collect(),
+                model_route: value.model_route.clone(),
             }
         }
     }
@@ -4288,6 +4329,15 @@ mod tests {
 
         assert!(matches!(selection.router(), RouterVariants::OpenRouter(_)));
         assert_eq!(selection.provider(), Some(&provider));
+        assert_eq!(
+            selection.model_route_record(),
+            ModelRouteRecord {
+                route_source: "openrouter".to_string(),
+                router: "openrouter".to_string(),
+                provider_slug: Some("moonshotai".to_string()),
+                endpoint_host: Some("openrouter.ai".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -4298,6 +4348,15 @@ mod tests {
 
         assert!(matches!(selection.router(), RouterVariants::Google(_)));
         assert!(selection.provider().is_none());
+        assert_eq!(
+            selection.model_route_record(),
+            ModelRouteRecord {
+                route_source: "direct_google".to_string(),
+                router: "google".to_string(),
+                provider_slug: None,
+                endpoint_host: Some("aiplatform.googleapis.com".to_string()),
+            }
+        );
     }
 
     fn declared_cargo_command(label: &str, args: &[&str]) -> contract::Command {
@@ -4347,9 +4406,34 @@ mod tests {
                 outcome: "completed".to_string(),
                 summary: "done".to_string(),
             }),
+            model_route: Some(ModelRouteRecord {
+                route_source: "direct_google".to_string(),
+                router: "google".to_string(),
+                provider_slug: None,
+                endpoint_host: Some("aiplatform.googleapis.com".to_string()),
+            }),
         };
 
         let artifact = run.agent_turn_artifact_record("task-1", "test/model", "inspect src/lib.rs");
+        let route = artifact
+            .model_route
+            .as_ref()
+            .expect("turn-live artifact records model route");
+        assert_eq!(route.route_source, "direct_google");
+        assert_eq!(route.router, "google");
+        assert_eq!(route.provider_slug, None);
+        assert_eq!(
+            route.endpoint_host.as_deref(),
+            Some("aiplatform.googleapis.com")
+        );
+        let summary = run.evidence();
+        assert_eq!(
+            summary
+                .model_route
+                .as_ref()
+                .map(|route| route.endpoint_host.as_deref()),
+            Some(Some("aiplatform.googleapis.com"))
+        );
         let turn = artifact
             .terminal_record
             .as_ref()
@@ -5132,6 +5216,7 @@ Suggested action: Verify API credentials and retry."#;
                 request_id,
                 changed_paths: changed_paths.clone(),
             }),
+            model_route: None,
         };
 
         let summary = run.evidence();
@@ -5218,6 +5303,7 @@ Suggested action: Verify API credentials and retry."#;
                 attempts: 2,
                 last: feedback.clone(),
             }),
+            model_route: None,
         };
 
         let summary = run.evidence();
@@ -5509,6 +5595,7 @@ Suggested action: Verify API credentials and retry."#;
             terminal: Some(HeadlessTerminal::ContextUnavailable {
                 reason: reason.clone(),
             }),
+            model_route: None,
         };
 
         let summary = run.evidence();

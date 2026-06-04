@@ -1106,6 +1106,7 @@ impl ToRecord for AgentTurnArtifact {
         PersistedAgentTurnArtifactRecord {
             task_id: self.task_id.clone(),
             selected_model: self.selected_model.to_string(),
+            model_route: None,
             issue_prompt: self.issue_prompt.clone(),
             user_message_id: self.user_message_id.clone(),
             events: self.events.iter().map(ToRecord::to_record).collect(),
