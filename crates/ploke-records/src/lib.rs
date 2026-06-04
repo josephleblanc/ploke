@@ -36,3 +36,6 @@ pub mod scheduler;
 pub mod selection;
 #[cfg(feature = "tool-contracts")]
 pub mod tool_contracts;
+
+#[cfg(test)]
+mod test_fixtures;
