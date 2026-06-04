@@ -151,68 +151,6 @@ async fn embed_message_waits_for_add_user_message_completion() {
 }
 
 #[tokio::test]
-async fn test_fix_with_oneshot() {
-    let db = Arc::new(ploke_db::Database::new_init().unwrap());
-    let mock_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-        Arc::clone(&db.active_embedding_set),
-        EmbeddingProcessor::mock(),
-    ));
-    let rag = Arc::new(RagService::new(db.clone(), Arc::clone(&mock_runtime)).unwrap());
-    let (rag_tx, _) = mpsc::channel::<RagEvent>(100);
-    let state = Arc::new(AppState::new(
-        db.clone(),
-        Arc::clone(&mock_runtime),
-        ploke_io::IoManagerHandle::mock(),
-        rag,
-        TokenBudget::default(),
-        rag_tx,
-    ));
-    let (cmd_tx, cmd_rx) = mpsc::channel(32);
-    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-
-    // Start state manager
-    tokio::spawn(super::dispatcher::state_manager(
-        state.clone(),
-        cmd_rx,
-        event_bus.clone(),
-        mpsc::channel(32).0,
-    ));
-
-    let user_msg_id = Uuid::new_v4();
-    let embed_msg_id = Uuid::new_v4();
-
-    let (tx, rx) = oneshot::channel();
-
-    cmd_tx
-        .send(super::commands::StateCommand::AddUserMessage {
-            content: "tell me a haiku".to_string(),
-            new_user_msg_id: user_msg_id,
-            completion_tx: tx,
-        })
-        .await
-        .unwrap();
-
-    cmd_tx
-        .send(super::commands::StateCommand::EmbedMessage {
-            new_msg_id: embed_msg_id,
-            completion_rx: rx,
-            // TODO: revisit this test
-            scan_rx: oneshot::channel().1, // dummy
-        })
-        .await
-        .unwrap();
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let chat = state.chat.0.read().await;
-    let last_user_msg = chat.last_user_msg();
-    assert!(
-        last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
-        "User message should always be present"
-    );
-}
-
-#[tokio::test]
 #[ignore = "test broken, cause unclear, non-trivial fix needs attention"]
 async fn test_concurrency_with_fuzzing() {
     let db = Arc::new(ploke_db::Database::new_init().unwrap());
