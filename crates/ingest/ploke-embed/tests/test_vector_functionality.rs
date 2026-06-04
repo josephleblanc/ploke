@@ -10,8 +10,13 @@
 //! we use `:replace` instead of `:create` to avoid "relation already exists" errors.
 
 use crate::test_helpers::setup_test_db;
-use cozo::{DataValue, ScriptMutability};
+use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
+use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt, schema::EmbeddingSetExt};
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 mod test_helpers;
 
@@ -149,285 +154,174 @@ fn test_hnsw_graph_walking() {
     test_helpers::print_debug("HNSW graph connections", &result);
 }
 
-fn insert_sample_embeddings(
+fn test_embedding_set() -> EmbeddingSet {
+    EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local-test"),
+        EmbeddingModelId::new_from_str("deterministic-vector-smoke"),
+        EmbeddingShape::f32_raw(3),
+    )
+}
+
+fn vector_param(vector: Vec<f32>) -> DataValue {
+    DataValue::List(
+        vector
+            .into_iter()
+            .map(|value| DataValue::Num(Num::Float(value as f64)))
+            .collect(),
+    )
+}
+
+fn insert_current_schema_embeddings(
     db: &cozo::Db<cozo::MemStorage>,
-) -> Result<cozo::NamedRows, cozo::Error> {
-    // Check if the relation exists first
-    let relations = db.run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)?;
-    println!("{:-^50?}", "all relations");
-    for row in relations {
-        println!("Row ---> {:?}", row);
-    }
-
-    println!("{:-^80}", "all indices of code_embeddings");
-    let indicies = db.run_script(
-        "::indices code_embeddings",
-        BTreeMap::new(),
-        ScriptMutability::Immutable,
-    )?;
-    for row in indicies {
-        println!("Row ---> {:?}", row);
-    }
-    println!("{:-^80}", "end all indicies");
-
-    println!("{:-^80}", "all columns of code_embeddings");
-    let columns = db.run_script(
-        "::columns code_embeddings",
-        BTreeMap::new(),
-        ScriptMutability::Immutable,
-    )?;
-    for row in columns {
-        println!("Row ---> {:?}", row);
-    }
-    println!("{:-^80}", "end all indicies");
-
-    println!("{:-^80}", "all columns of code_embeddings:vector");
-    let indicies = db.run_script(
-        "::indices code_embeddings",
-        BTreeMap::new(),
-        ScriptMutability::Immutable,
-    )?;
-    for row in indicies {
-        println!("Row ---> {:?}", row);
-    }
-    println!("{:-^80}", "end all columns");
-
-    // Shadowing relations after print
-    let relations = db.run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)?;
-    #[allow(unused_variables)]
-    let relation_exists = !relations
-        .rows
-        .iter()
-        .all(|row| row[0].get_str() == Some("code_embeddings"));
-
-    println!("relation_exists: {}", relation_exists);
-    let code_embeddings_def = relations
-        .rows
-        .iter()
-        .find(|row| row[0].get_str() == Some("code_embeddings"));
-    println!("code_embeddings defined as row: {:?}", code_embeddings_def);
-
-    if !relation_exists {
-        println!("Inside `if !relation_exists");
-        // Use replace instead of create to handle both creation and updates
-        // This avoids the "relation already exists" error
-        db.run_script(
-            ":create code_embeddings {id: Int, node_id: Int, node_type: String, embedding: <F32; 384>, text_snippet: String}",
-            BTreeMap::new(),
-            ScriptMutability::Mutable,
-        )?;
-    }
-
-    // Create a sample embedding vector (384 dimensions)
-    // We'll use a simple pattern for the vector values
-    let mut embedding_values = Vec::with_capacity(384);
-    for i in 0..384 {
-        embedding_values.push(DataValue::from(i as f64 / 384.0));
-    }
-
-    // Create parameters for the query
-    let mut params = BTreeMap::new();
-    params.insert("id".to_string(), DataValue::from(1));
-    params.insert("node_id".to_string(), DataValue::from(1));
-    params.insert("node_type".to_string(), DataValue::from("Function"));
-    params.insert("embedding".to_string(), DataValue::List(embedding_values));
-    params.insert(
-        "snippet".to_string(),
-        DataValue::from(
-            "fn sample_function(input: String) -> String { println!(\"Hello\"); input }",
+) -> (EmbeddingSet, Vec<(Uuid, Vec<f32>)>) {
+    let embedding_set = test_embedding_set();
+    let fixtures = vec![
+        (
+            Uuid::from_u128(0x00000000000000000000000000000001),
+            vec![1.0, 0.0, 0.0],
         ),
+        (
+            Uuid::from_u128(0x00000000000000000000000000000002),
+            vec![0.9, 0.1, 0.0],
+        ),
+        (
+            Uuid::from_u128(0x00000000000000000000000000000003),
+            vec![0.0, 1.0, 0.0],
+        ),
+    ];
+
+    db.ensure_embedding_set_relation()
+        .expect("embedding_set relation should be created");
+    db.put_embedding_set(&embedding_set)
+        .expect("embedding_set row should be inserted");
+    db.ensure_vector_embedding_relation(&embedding_set)
+        .expect("vector embedding relation should be created from current schema");
+    db.update_embeddings_batch(
+        fixtures
+            .iter()
+            .map(|(id, vector)| (*id, vector.iter().map(|value| *value as f64).collect()))
+            .collect(),
+        &embedding_set,
+    )
+    .expect("embedding vectors should be inserted through production batch API");
+    db.create_embedding_index(&embedding_set)
+        .expect("HNSW index should be created for current embedding relation");
+
+    (embedding_set, fixtures)
+}
+
+fn search_current_schema_embeddings(
+    db: &cozo::Db<cozo::MemStorage>,
+    embedding_set: &EmbeddingSet,
+    query_vector: Vec<f32>,
+    limit: usize,
+) -> Vec<(Uuid, f64)> {
+    let mut params = BTreeMap::new();
+    params.insert("query_vector".to_string(), vector_param(query_vector));
+    params.insert("k".to_string(), DataValue::from(limit as i64));
+    params.insert("ef".to_string(), DataValue::from(16));
+    params.insert("limit".to_string(), DataValue::from(limit as i64));
+    params.insert(
+        "embedding_set_id".to_string(),
+        DataValue::from(embedding_set.hash_id().into_inner() as i64),
     );
 
-    #[allow(unused_variables)]
-    let vector_relation_exists = relations
-        .rows
-        .iter()
-        .any(|row| row[0].get_str() == Some("code_embeddings:vector"));
-    println!("vector_relation_exists: {}", relation_exists);
-    let code_embeddings_def = relations
-        .rows
-        .iter()
-        .find(|row| row[0].get_str() == Some("code_embeddings:vector"));
-    println!(
-        "code_embeddings:vector defined as row: {:?}",
-        code_embeddings_def
-    );
-    // Insert a sample embedding for a function
-    let result = db.run_script(
+    let hnsw_rel = embedding_set.hnsw_rel_name();
+    let script = format!(
         r#"
-        ?[id, node_id, node_type, embedding, text_snippet] <-
-            [[$id, $node_id, $node_type, $embedding, $snippet]]
-        :put code_embeddings
+        ?[node_id, distance] :=
+            ~{hnsw_rel}{{ node_id, embedding_set_id: set_id |
+                query: vec($query_vector),
+                k: $k,
+                ef: $ef,
+                bind_distance: distance
+            }},
+            set_id = $embedding_set_id
+        :order distance
+        :limit $limit
         "#,
-        params,
-        ScriptMutability::Mutable,
-    )?;
+    );
 
-    if !vector_relation_exists {
-        // Create the HNSW index on the embeddings
-        db.run_script(
-            r#"::hnsw create code_embeddings:vector {
-                dim: 384,
-                m: 16,
-                dtype: F32,
-                fields: [embedding],
-                distance: Cosine,
-                ef_construction: 50
-            }"#,
-            BTreeMap::new(),
-            ScriptMutability::Mutable,
-        )?;
-    }
+    let result = db
+        .run_script(&script, params, ScriptMutability::Immutable)
+        .expect("current-schema HNSW search should run");
 
-    Ok(result)
+    result
+        .rows
+        .into_iter()
+        .map(|row| {
+            let id = match row.first() {
+                Some(DataValue::Uuid(UuidWrapper(id))) => *id,
+                other => panic!("expected UUID node id in HNSW result, got {other:?}"),
+            };
+            let distance = row
+                .get(1)
+                .and_then(DataValue::get_float)
+                .expect("HNSW distance should be a float");
+            (id, distance)
+        })
+        .collect()
 }
 
 #[test]
-#[ignore = "requires update"]
+#[ignore = "current-schema deterministic HNSW smoke"]
 fn test_vector_similarity_search_identical() {
     let db = setup_test_db();
+    let (embedding_set, fixtures) = insert_current_schema_embeddings(&db);
 
-    // Insert sample embeddings
-    insert_sample_embeddings(&db).expect("Failed to insert sample embeddings");
+    let exact_id = fixtures[0].0;
+    let results = search_current_schema_embeddings(&db, &embedding_set, fixtures[0].1.clone(), 3);
 
-    // Create a query vector using the vec function in CozoScript
-    // We'll use the same vector as in our sample data for perfect similarity
-    let mut query_vec = Vec::with_capacity(384);
-    for i in 0..384 {
-        if i < 385 {
-            query_vec.push(DataValue::from(i as f64 / 384.0));
-            // } else {
-            //     query_vec.push(DataValue::from(0.5))
-        }
-    }
-
-    // Create parameters for the query
-    let mut params = BTreeMap::new();
-    params.insert("query_vec".to_string(), DataValue::List(query_vec));
-
-    // Query to find similar code snippets using HNSW index
-    let query = r#"
-        ?[node_id, node_type, text_snippet, dist] :=
-            ~code_embeddings:vector{
-                node_id, node_type, text_snippet |
-                query: vec($query_vec),
-                k: 2,
-                ef: 50,
-                bind_distance: dist
-            }
-        :order dist
-    "#;
-
-    let result = db
-        .run_script(query, params, ScriptMutability::Immutable)
-        .expect("Failed to perform vector similarity search");
-
-    #[cfg(feature = "debug")]
-    test_helpers::print_debug("Vector search results", &result);
-
-    // We should have at least one result
-    assert!(
-        !result.rows.is_empty(),
-        "Expected at least one vector search result"
+    assert_eq!(
+        results.len(),
+        3,
+        "expected all seeded vectors in search results"
     );
-
-    // The first result should have a very low distance (close to 0.0)
-    // Since we're using the same vector, it should be almost exactly 0.0
-    let distance = result.rows[0][3].get_float().unwrap_or(1.0);
+    assert_eq!(
+        results[0].0, exact_id,
+        "identical query should rank the exact vector first"
+    );
     assert!(
-        distance < 0.01,
-        "Expected low distance score, got {}",
-        distance
+        results[0].1.abs() < 1e-6,
+        "identical query should have near-zero distance, got {}",
+        results[0].1
+    );
+    assert!(
+        results.windows(2).all(|pair| pair[0].1 <= pair[1].1),
+        "results should be ordered by ascending distance: {results:?}"
     );
 }
 
 #[test]
-#[ignore = "requires update"]
+#[ignore = "current-schema deterministic HNSW smoke"]
 fn test_vector_similarity_search() {
     let db = setup_test_db();
+    let (embedding_set, fixtures) = insert_current_schema_embeddings(&db);
 
-    // Insert sample embeddings
-    insert_sample_embeddings(&db).expect("Failed to insert sample embeddings");
+    let exact_id = fixtures[0].0;
+    let similar_id = fixtures[1].0;
+    let orthogonal_id = fixtures[2].0;
+    let results = search_current_schema_embeddings(&db, &embedding_set, vec![0.88, 0.12, 0.0], 3);
 
-    // Create a query vector using the vec function in CozoScript
-    // This vector is similar but not identical to the target vector
-    let mut query_vec = Vec::with_capacity(384);
-    for i in 0..384 {
-        if i < 380 {
-            query_vec.push(DataValue::from(i as f64 / 384.0));
-        } else {
-            query_vec.push(DataValue::from(0.5))
-        }
-    }
-
-    // Create parameters for the query
-    let mut params = BTreeMap::new();
-    params.insert("query_vec".to_string(), DataValue::List(query_vec));
-
-    // Query to find similar code snippets using HNSW index
-    let query = r#"
-        ?[node_id, node_type, text_snippet, dist] :=
-            ~code_embeddings:vector{
-                node_id, node_type, text_snippet |
-                query: vec($query_vec),
-                k: 2,
-                ef: 50,
-                bind_distance: dist
-            }
-        :order dist
-    "#;
-
-    let result = db
-        .run_script(query, params, ScriptMutability::Immutable)
-        .expect("Failed to perform vector similarity search");
-
-    #[cfg(feature = "debug")]
-    test_helpers::print_debug("Vector search results", &result);
-
-    // We should have at least one result
-    assert!(
-        !result.rows.is_empty(),
-        "Expected at least one vector search result"
+    assert_eq!(
+        results.len(),
+        3,
+        "expected all seeded vectors in search results"
     );
-
-    // The first result should have a very low distance (close to 0.0)
-    // Since we're using the same vector, it should be almost exactly 0.0
-    let distance = result.rows[0][3].get_float().unwrap_or(1.0);
-    assert!(
-        distance > 0.5,
-        "Expected distance score > 0.5 , got {}",
-        distance
+    assert_eq!(
+        results[0].0, similar_id,
+        "nearby query should rank the deliberately similar vector first"
     );
-}
-
-// #[test]
-// TODO: Learn how this syntax works. Might be important later.
-// The fr_* and to_* syntax of the hnsw search is extremely irritating. Even the examples in the
-// documentation fail, so it's hard to know if it is even working as intended by the cozo crate.
-// For now, we will ignore it, as we don't really need to do a walk like this in the graph right
-// now.
-#[allow(dead_code)]
-fn test_code_embeddings_hnsw_graph() {
-    let db = setup_test_db();
-
-    // Insert sample embeddings
-    insert_sample_embeddings(&db).expect("Failed to insert sample embeddings");
-
-    let query = r#"
-        ?[fr_embedding, to_k, dist] := *code_embeddings:vector{
-            layer: 0,
-            fr_embedding,
-            to_embedding,
-            dist
-        }
-
-    "#;
-
-    #[allow(unused_variables)]
-    let result = db
-        .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
-        .expect("Failed to walk code embeddings HNSW graph");
-
-    #[cfg(feature = "debug")]
-    test_helpers::print_debug("Code embeddings HNSW graph walking results", &result);
+    assert_eq!(
+        results[1].0, exact_id,
+        "exact x-axis vector should be second for the offset query"
+    );
+    assert_eq!(
+        results[2].0, orthogonal_id,
+        "orthogonal vector should be farthest from the offset query"
+    );
+    assert!(
+        results[0].1 < results[1].1 && results[1].1 < results[2].1,
+        "expected strict distance ordering similar < exact < orthogonal, got {results:?}"
+    );
 }

@@ -2,7 +2,12 @@
 use itertools::Itertools;
 
 use cozo::*;
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
+use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt, schema::EmbeddingSetExt};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 #[derive(Debug)]
 struct VectorDocument {
@@ -165,6 +170,145 @@ fn arr_to_float(arr: &[f32]) -> DataValue {
     )
 }
 
+fn current_schema_embedding_set() -> EmbeddingSet {
+    EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local-test"),
+        EmbeddingModelId::new_from_str("deterministic-vector-smoke-db"),
+        EmbeddingShape::f32_raw(3),
+    )
+}
+
+fn current_schema_vector_param(vector: Vec<f32>) -> DataValue {
+    DataValue::List(
+        vector
+            .into_iter()
+            .map(|value| DataValue::Num(Num::Float(value as f64)))
+            .collect(),
+    )
+}
+
+fn setup_current_schema_vector_index() -> (Db<MemStorage>, EmbeddingSet, Vec<(Uuid, Vec<f32>)>) {
+    let db = Db::new(MemStorage::default()).expect("in-memory Cozo DB should initialize");
+    let embedding_set = current_schema_embedding_set();
+    let fixtures = vec![
+        (
+            Uuid::from_u128(0x00000000000000000000000000000101),
+            vec![1.0, 0.0, 0.0],
+        ),
+        (
+            Uuid::from_u128(0x00000000000000000000000000000102),
+            vec![0.9, 0.1, 0.0],
+        ),
+        (
+            Uuid::from_u128(0x00000000000000000000000000000103),
+            vec![0.0, 1.0, 0.0],
+        ),
+    ];
+
+    db.ensure_embedding_set_relation()
+        .expect("embedding_set relation should be created");
+    db.put_embedding_set(&embedding_set)
+        .expect("embedding_set row should be inserted");
+    db.ensure_vector_embedding_relation(&embedding_set)
+        .expect("vector embedding relation should be created from current schema");
+    db.update_embeddings_batch(
+        fixtures
+            .iter()
+            .map(|(id, vector)| (*id, vector.iter().map(|value| *value as f64).collect()))
+            .collect(),
+        &embedding_set,
+    )
+    .expect("embedding vectors should be inserted through production batch API");
+    db.create_embedding_index(&embedding_set)
+        .expect("HNSW index should be created for current embedding relation");
+
+    (db, embedding_set, fixtures)
+}
+
+fn search_current_schema_index(
+    db: &Db<MemStorage>,
+    embedding_set: &EmbeddingSet,
+    query_vector: Vec<f32>,
+    limit: usize,
+) -> Vec<(Uuid, f64)> {
+    let hnsw_rel = embedding_set.hnsw_rel_name();
+    let params = std::collections::BTreeMap::from([
+        (
+            "query_vector".to_string(),
+            current_schema_vector_param(query_vector),
+        ),
+        ("k".to_string(), DataValue::from(limit as i64)),
+        ("ef".to_string(), DataValue::from(16)),
+        ("limit".to_string(), DataValue::from(limit as i64)),
+        (
+            "embedding_set_id".to_string(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        ),
+    ]);
+    let script = format!(
+        r#"
+        ?[node_id, distance] :=
+            ~{hnsw_rel}{{ node_id, embedding_set_id: set_id |
+                query: vec($query_vector),
+                k: $k,
+                ef: $ef,
+                bind_distance: distance
+            }},
+            set_id = $embedding_set_id
+        :order distance
+        :limit $limit
+        "#,
+    );
+
+    db.run_script(&script, params, ScriptMutability::Immutable)
+        .expect("current-schema HNSW search should run")
+        .rows
+        .into_iter()
+        .map(|row| {
+            let id = match row.first() {
+                Some(DataValue::Uuid(UuidWrapper(id))) => *id,
+                other => panic!("expected UUID node id in HNSW result, got {other:?}"),
+            };
+            let distance = row
+                .get(1)
+                .and_then(DataValue::get_float)
+                .expect("HNSW distance should be a float");
+            (id, distance)
+        })
+        .collect()
+}
+
+fn current_schema_hnsw_index_rows(db: &Db<MemStorage>, embedding_set: &EmbeddingSet) -> NamedRows {
+    let base_rel = embedding_set.rel_name().as_ref().replace('-', "_");
+    let script = format!("::indices {base_rel}");
+    db.run_script(
+        &script,
+        std::collections::BTreeMap::new(),
+        ScriptMutability::Immutable,
+    )
+    .expect("HNSW index metadata should be listed for current-schema relation")
+}
+
+fn current_schema_vector_count(db: &Db<MemStorage>, embedding_set: &EmbeddingSet) -> usize {
+    let rel = embedding_set.rel_name().as_ref().replace('-', "_");
+    let params = std::collections::BTreeMap::from([(
+        "embedding_set_id".to_string(),
+        DataValue::from(embedding_set.hash_id().into_inner() as i64),
+    )]);
+    let script = format!(
+        r#"
+        ?[node_id] :=
+            *{rel}{{ node_id, embedding_set_id: set_id @ 'NOW' }},
+            set_id = $embedding_set_id
+        "#,
+    );
+
+    db.run_script(&script, params, ScriptMutability::Immutable)
+        .expect("current-schema vector relation should be queryable")
+        .rows
+        .len()
+}
+
 // Helper function to generate mock embeddings
 fn generate_mock_embedding(seed: u64, dim: usize) -> Vec<f32> {
     use std::collections::hash_map::DefaultHasher;
@@ -314,59 +458,108 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "outdated test needs update"]
+    #[ignore = "current-schema deterministic HNSW smoke"]
     fn test_index_rebuild() {
-        let index = VectorIndex::new().expect("Failed to create index");
-        index.create_tables().expect("Failed to create tables");
+        let (db, embedding_set, fixtures) = setup_current_schema_vector_index();
+        let query_vector = fixtures[0].1.clone();
+        let before = search_current_schema_index(&db, &embedding_set, query_vector.clone(), 3);
+        let hnsw_rel = embedding_set.hnsw_rel_name();
 
-        // Insert some documents
-        for i in 1..=5 {
-            let doc = VectorDocument {
-                id: i,
-                content: format!("Document {}", i),
-                embedding: generate_mock_embedding(i as u64, 384),
-            };
-            index
-                .insert_document(&doc)
-                .expect("Failed to insert document");
+        db.run_script(
+            &format!("::hnsw drop {hnsw_rel}"),
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .expect("dropping current-schema HNSW index should succeed");
+        assert!(
+            !db.is_hnsw_index_registered(&embedding_set)
+                .expect("dropped HNSW index registration check should run"),
+            "HNSW index should not be registered after drop"
+        );
+
+        db.create_embedding_index(&embedding_set)
+            .expect("production HNSW creation entrypoint should rebuild dropped index");
+        let after = search_current_schema_index(&db, &embedding_set, query_vector, 3);
+
+        assert_eq!(
+            after.len(),
+            before.len(),
+            "rebuilt index should return the same result count"
+        );
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            before.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            "rebuilt index should preserve deterministic nearest-neighbor ranking"
+        );
+        for ((_, before_distance), (_, after_distance)) in before.iter().zip(after.iter()) {
+            assert!(
+                (before_distance - after_distance).abs() < 1e-6,
+                "rebuilt index should preserve distances, before={before:?}, after={after:?}"
+            );
         }
-
-        // Rebuild index
-        index.rebuild_index().expect("Failed to rebuild index");
-
-        // Verify search still works after rebuild
-        let query_embedding = generate_mock_embedding(1, 384);
-        let results = index
-            .search_similar(&query_embedding, 3, 3)
-            .expect("Failed to search after rebuild");
-
-        assert_eq!(results.len(), 3);
     }
 
     #[test]
-    #[ignore = "outdated test needs update"]
+    #[ignore = "current-schema deterministic HNSW smoke"]
     fn test_index_stats() {
-        let index = VectorIndex::new().expect("Failed to create index");
-        index.create_tables().expect("Failed to create tables");
+        let (db, embedding_set, fixtures) = setup_current_schema_vector_index();
+        let hnsw_rel = embedding_set.hnsw_rel_name().to_string();
+        let rows = current_schema_hnsw_index_rows(&db, &embedding_set);
 
-        // Insert some documents
-        for i in 1..=10 {
-            let doc = VectorDocument {
-                id: i,
-                content: format!("Document {}", i),
-                embedding: generate_mock_embedding(i as u64, 384),
-            };
-            index
-                .insert_document(&doc)
-                .expect("Failed to insert document");
-        }
+        assert_eq!(
+            rows.headers,
+            vec!["name", "type", "relations", "config"],
+            "::indices output should expose stable metadata columns"
+        );
+        let hnsw_row = rows
+            .rows
+            .iter()
+            .find(|row| {
+                row.get(1).and_then(DataValue::get_str) == Some("hnsw")
+                    && row.get(2).and_then(|relations| match relations {
+                        DataValue::List(values) => Some(
+                            values
+                                .iter()
+                                .any(|value| value.get_str() == Some(hnsw_rel.as_str())),
+                        ),
+                        _ => None,
+                    }) == Some(true)
+            })
+            .unwrap_or_else(|| panic!("expected HNSW metadata row for {hnsw_rel}, got {rows:?}"));
 
-        // Get index statistics
-        let stats = index.get_index_stats().expect("Failed to get stats");
-
-        // Basic validation that we got some stats
-        assert!(!stats.is_empty());
-        println!("Index stats: {:?}", stats);
+        let config = match hnsw_row.get(3) {
+            Some(DataValue::Json(JsonData(config))) => config,
+            other => panic!("expected HNSW config JSON metadata, got {other:?}"),
+        };
+        assert_eq!(
+            config.get("vec_dim").and_then(serde_json::Value::as_i64),
+            Some(3),
+            "HNSW metadata should report the current embedding dimension"
+        );
+        assert_eq!(
+            config
+                .get("ef_construction")
+                .and_then(serde_json::Value::as_i64),
+            Some(200),
+            "HNSW metadata should report production ef_construction"
+        );
+        assert_eq!(
+            config
+                .get("m_neighbours")
+                .and_then(serde_json::Value::as_i64),
+            Some(32),
+            "HNSW metadata should report production m_neighbours"
+        );
+        assert_eq!(
+            config.get("distance").and_then(serde_json::Value::as_str),
+            Some("L2"),
+            "HNSW metadata should report production distance metric"
+        );
+        assert_eq!(
+            current_schema_vector_count(&db, &embedding_set),
+            fixtures.len(),
+            "stats smoke should verify indexed relation contains the seeded vectors"
+        );
     }
 
     #[test]

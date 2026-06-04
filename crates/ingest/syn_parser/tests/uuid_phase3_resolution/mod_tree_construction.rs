@@ -674,11 +674,10 @@ In Actual missing from Expected: {:#?}\n",
     assert!(extern_serde.is_inherited_use()); // Extern crates are treated as inherited for pending list
 }
 
-/// Pending-feature test: expects a backlink from a local definition to its import site.
-/// This should only pass once a relation exists that links a defining node to the ImportNode
-/// (e.g., StructNodeId -> ImportNodeId) for re-exports/imports.
+/// Expects a typed backlink from a local definition to its import site.
+/// The production contract is `SyntacticRelation::ImportedBy`, stored in
+/// `ModuleTree::tree_relations`, from the defining primary node to the ImportNode.
 #[test]
-#[ignore = "Backlink relation not yet implemented"]
 fn expect_backlink_from_definition_to_import_for_sample_struct() {
     let fixture_name = "fixture_nodes";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -694,6 +693,7 @@ fn expect_backlink_from_definition_to_import_for_sample_struct() {
             _ => None,
         })
         .expect("SampleStruct definition not found in fixture_nodes");
+    let sample_struct_primary_id = syn_parser::parser::nodes::PrimaryNodeId::from(sample_struct_id);
 
     // Locate the ImportNode for `use crate::structs::SampleStruct as MySimpleStruct;` in crate::imports.
     let imports_module = graph
@@ -704,17 +704,19 @@ fn expect_backlink_from_definition_to_import_for_sample_struct() {
         .iter()
         .find(|imp| imp.visible_name == "MySimpleStruct")
         .expect("MySimpleStruct import not found in imports module");
-    let import_any_id = syn_parser::parser::nodes::AnyNodeId::from(my_simple_struct_import.id);
 
-    // Expect a relation that points from the definition to the import site.
+    // Expect the typed relation that points from the definition to the import site.
     let has_backlink = tree.tree_relations().iter().any(|tr| {
-        tr.rel().source() == syn_parser::parser::nodes::AnyNodeId::from(sample_struct_id)
-            && tr.rel().target() == import_any_id
+        matches!(
+            tr.rel(),
+            syn_parser::parser::relations::SyntacticRelation::ImportedBy { source, target }
+                if *source == sample_struct_primary_id && *target == my_simple_struct_import.id
+        )
     });
 
     assert!(
         has_backlink,
-        "Expected a relation linking definition SampleStruct -> import MySimpleStruct; implement the backlink relation to satisfy this test."
+        "Expected ImportedBy relation linking definition SampleStruct -> import MySimpleStruct."
     );
 }
 
