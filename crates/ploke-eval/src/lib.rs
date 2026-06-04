@@ -96,6 +96,11 @@ pub(crate) mod test_support {
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
+    pub(crate) fn trace_capture_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     #[cfg(feature = "live_api_tests")]
     pub(crate) fn install_default_google_route_env() {
         static INIT: OnceLock<()> = OnceLock::new();

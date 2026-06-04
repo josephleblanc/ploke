@@ -401,6 +401,9 @@ mod tests {
     }
 
     fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+        let _trace_capture_guard = crate::test_support::trace_capture_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let lines = TraceLines::default();
         let subscriber = Registry::default().with(TraceLayer {
             lines: lines.clone(),

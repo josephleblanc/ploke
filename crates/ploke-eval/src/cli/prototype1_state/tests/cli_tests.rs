@@ -109,6 +109,9 @@ where
 }
 
 fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let _trace_capture_guard = crate::test_support::trace_capture_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let lines = TraceLines::default();
     let subscriber = Registry::default().with(TraceLayer {
         lines: lines.clone(),
@@ -120,6 +123,9 @@ fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
 }
 
 async fn collect_traces_async<T>(f: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
+    let _trace_capture_guard = crate::test_support::trace_capture_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let lines = TraceLines::default();
     let subscriber = Registry::default().with(TraceLayer {
         lines: lines.clone(),
