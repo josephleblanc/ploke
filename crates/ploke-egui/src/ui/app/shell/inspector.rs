@@ -5,6 +5,7 @@ use crate::ui::inspector::InspectorSections;
 use eframe::egui;
 use ploke_tree::Graph;
 
+use super::cache::effective_inspector_content_width;
 use super::eval_protocol::{
     render_selected_eval_protocol_call_review, selected_eval_protocol_call_review_key,
 };
@@ -183,14 +184,19 @@ fn show_inspector_section_collapsing<R>(
         }
     }
 
+    let content_width = effective_inspector_content_width(ui);
+    ui.set_max_width(content_width);
     let header_response = ui.horizontal(|ui| {
+        ui.set_max_width(content_width);
         let prev_item_spacing = ui.spacing_mut().item_spacing;
         ui.spacing_mut().item_spacing.x = 0.0;
         state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
         ui.spacing_mut().item_spacing = prev_item_spacing;
 
         let title_response = ui.add(
-            egui::Label::new(egui::RichText::new(title).heading()).sense(egui::Sense::click()),
+            egui::Label::new(egui::RichText::new(title).heading())
+                .wrap()
+                .sense(egui::Sense::click()),
         );
         if title_response.clicked() {
             state.toggle(ui);
@@ -231,6 +237,7 @@ pub(crate) fn render_right_inspector(
     mut actions: Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
 ) {
     claim_inspector_pane_pointer(ui);
+    let pane_content_width = effective_inspector_content_width(ui);
     let viewport_height = ui.available_height();
     let selected_call_review = if selection_ref.is_none() {
         selected_eval_protocol_call_review_key(ui)
@@ -242,9 +249,11 @@ pub(crate) fn render_right_inspector(
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_max_width(pane_content_width);
                 egui::Frame::new()
                     .inner_margin(INSPECTOR_MARGIN_INNER)
                     .show(ui, |ui| {
+                        ui.set_max_width(pane_content_width);
                         ui.heading("Inspector");
                         ui.separator();
 

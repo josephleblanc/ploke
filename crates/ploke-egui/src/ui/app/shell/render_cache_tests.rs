@@ -407,3 +407,30 @@ fn eval_pane_content_width_at_tile_root_stays_within_parent() {
         );
     });
 }
+
+#[test]
+fn metric_row_board_section_width_follows_eval_clip_not_scroll_min_width() {
+    use super::cache::effective_eval_pane_content_width;
+    use super::metric_row_board::{LABEL_COL_WIDTH, metric_bar_track_width};
+
+    use super::cache::refresh_eval_pane_column_width;
+
+    egui::__run_test_ui(|ui| {
+        let pane_width = 260.0;
+        ui.set_width(pane_width);
+        refresh_eval_pane_column_width(ui);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.set_min_width(3000.0);
+            let section_width = effective_eval_pane_content_width(ui);
+            assert!(
+                section_width < 3000.0,
+                "section width {section_width} should not follow scroll min_width"
+            );
+            let track = metric_bar_track_width(section_width, 8.0, LABEL_COL_WIDTH);
+            assert!(
+                track + LABEL_COL_WIDTH + 80.0 < pane_width + 16.0,
+                "metric row should fit pane {pane_width}, got track {track} at section {section_width}"
+            );
+        });
+    });
+}

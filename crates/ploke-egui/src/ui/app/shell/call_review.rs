@@ -1,6 +1,7 @@
 use crate::ui::id_display::{self, CopyableText};
 use crate::ui::render::text::*;
 use crate::ui::text::style as text_style;
+use crate::ui::theme::{PaletteTokens, tokens_from_ui};
 use eframe::egui;
 use ploke_protocol::Confidence;
 use ploke_records::protocol::ArtifactBody;
@@ -9,7 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::cache::eval_pane_content_width;
+use super::cache::{effective_eval_pane_content_width, eval_pane_content_width};
 use super::eval_protocol::{
     selected_eval_protocol_call_review_key, selected_tool_call_review,
     set_selected_eval_protocol_call_review,
@@ -28,27 +29,15 @@ const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH: f32 = 10.0;
 const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT: f32 = 4.0;
 const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP: f32 = 2.0;
 
-/// Body width inside assessment spotlight frames: pane column cap, frame inner margin.
+/// Body width inside assessment spotlight frames: visible eval column, not scroll min-width.
 fn call_review_assessment_spotlight_content_width(ui: &egui::Ui, pane_content_width: f32) -> f32 {
-    let available = ui.available_width();
-    if available.is_finite() && available > 1.0 {
-        pane_content_width.min(available).max(1.0)
-    } else {
-        pane_content_width.max(1.0)
-    }
+    effective_eval_pane_content_width(ui)
+        .min(pane_content_width)
+        .max(1.0)
 }
 
 fn call_review_assessment_spotlight_row_width(ui: &egui::Ui, content_width: f32) -> f32 {
     call_review_assessment_spotlight_content_width(ui, content_width)
-}
-
-fn call_review_assessment_spotlight_clip_rect(ui: &egui::Ui, content_width: f32) -> egui::Rect {
-    let right = ui.clip_rect().left() + content_width;
-    egui::Rect::from_min_max(
-        ui.clip_rect().min,
-        egui::pos2(right.min(ui.clip_rect().right()), ui.clip_rect().bottom()),
-    )
-    .intersect(ui.clip_rect())
 }
 
 /// Short spotlight chip prefix; full metric name stays in hover text.
@@ -1104,8 +1093,7 @@ const RUN_SYNTHESIS_SPOTLIGHT: CallReviewAssessmentSpotlightConfig =
     CallReviewAssessmentSpotlightConfig {
         title: "Run synthesis",
         artifact_cache_key: "run-synthesis-spotlight-artifact",
-        empty_selection_message:
-            "Select a call row in Call Review Scan to pin run synthesis here.",
+        empty_selection_message: "Select a call row in Call Review Scan to pin run synthesis here.",
         not_available_label: "synthesis",
         not_applicable_label: "synthesis",
         show_synthesis_prose: true,
@@ -1160,7 +1148,6 @@ fn render_call_review_assessment_spotlight(
         .show(ui, |ui| {
             let content_width =
                 call_review_assessment_spotlight_content_width(ui, pane_content_width);
-            ui.set_clip_rect(call_review_assessment_spotlight_clip_rect(ui, content_width));
             ui.set_max_width(content_width);
             ui.horizontal_wrapped(|ui| {
                 ui.set_max_width(content_width);
@@ -1183,9 +1170,19 @@ fn render_call_review_assessment_spotlight(
                 };
                 cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
                 if protocol_artifacts.index.get(artifact_key).is_some() {
-                    cached_kv_id(ui, render_cache, config.not_applicable_label, "not_applicable");
+                    cached_kv_id(
+                        ui,
+                        render_cache,
+                        config.not_applicable_label,
+                        "not_applicable",
+                    );
                 } else {
-                    cached_kv_id(ui, render_cache, config.not_available_label, "not_available");
+                    cached_kv_id(
+                        ui,
+                        render_cache,
+                        config.not_available_label,
+                        "not_available",
+                    );
                 }
                 return;
             };
@@ -1316,11 +1313,7 @@ fn render_call_review_spotlight_structured_synthesis_note(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
 ) {
-    cached_label(
-        ui,
-        render_cache,
-        "Structured summary from call review",
-    );
+    cached_label(ui, render_cache, "Structured summary from call review");
 }
 
 fn render_call_review_spotlight_synthesis_prose(
@@ -1333,8 +1326,7 @@ fn render_call_review_spotlight_synthesis_prose(
     let row_width = call_review_assessment_spotlight_row_width(ui, content_width);
     ui.horizontal_top(|ui| {
         let bullet = ui.label(egui::RichText::new("•").weak());
-        let prose_width =
-            (row_width - bullet.rect.width() - ui.spacing().item_spacing.x).max(1.0);
+        let prose_width = (row_width - bullet.rect.width() - ui.spacing().item_spacing.x).max(1.0);
         ui.vertical(|ui| {
             ui.set_max_width(prose_width);
             ui.horizontal(|ui| {
@@ -1393,7 +1385,12 @@ fn spotlight_verdict_bar_tier_emphasis(tier: usize) -> ScanValueEmphasis {
     }
 }
 
-/// Base segment color for a tier; matches [`scan_value_label`] emphasis colors.
+/// Right-most (good) tier fill — theme semantic success, not body text color.
+pub(crate) fn spotlight_verdict_bar_good_tier_fill(tokens: PaletteTokens) -> egui::Color32 {
+    tokens.success
+}
+
+/// Base segment color for a tier; error/warn match [`scan_value_label`]; good tier uses success.
 pub(crate) fn spotlight_verdict_bar_tier_color(
     ui: &egui::Ui,
     tier_emphasis: ScanValueEmphasis,
@@ -1401,7 +1398,7 @@ pub(crate) fn spotlight_verdict_bar_tier_color(
     match tier_emphasis {
         ScanValueEmphasis::Error => text_style::inspector_error_text_color(ui),
         ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(ui),
-        ScanValueEmphasis::Normal => ui.visuals().text_color(),
+        ScanValueEmphasis::Normal => spotlight_verdict_bar_good_tier_fill(tokens_from_ui(ui)),
     }
 }
 
@@ -1469,109 +1466,116 @@ fn render_call_review_spotlight_signals(
         egui::vec2(row_width, 0.0),
         egui::Layout::top_down(egui::Align::LEFT),
         |ui| {
-        ui.set_max_width(row_width);
-        ui.set_width(row_width);
-        ui.horizontal(|ui| {
-            ui.set_max_width(row_width);
-            cached_label(ui, render_cache, "signals");
-        });
-        let mut render_chips = |ui: &mut egui::Ui| {
             ui.set_max_width(row_width);
             ui.set_width(row_width);
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "repeated tools",
-                signals.repeated_tool_name_count,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "distinct tools",
-                signals.distinct_tool_count,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "similar searches",
-                signals.similar_search_neighbors,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "directory pivots",
-                signals.directory_pivots,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "scope turns",
-                signals.scope_turn_count,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "search calls",
-                signals.search_calls_in_scope,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "read calls",
-                signals.read_calls_in_scope,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "browse calls",
-                signals.browse_calls_in_scope,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "edit calls",
-                signals.edit_calls_in_scope,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "execute calls",
-                signals.execute_calls_in_scope,
-            );
-            render_call_review_spotlight_signal_chip(
-                ui,
-                render_cache,
-                "failed calls",
-                signals.failed_calls_in_scope,
-            );
-            if let Some(value) = signals.uncovered_calls_in_source {
-                render_call_review_spotlight_signal_chip(ui, render_cache, "uncovered calls", value);
-            }
-            if let Some(value) = signals.labeled_segments_in_source {
-                render_call_review_spotlight_signal_chip(ui, render_cache, "labeled segments", value);
-            }
-            if let Some(value) = signals.ambiguous_segments_in_source {
+            ui.horizontal(|ui| {
+                ui.set_max_width(row_width);
+                cached_label(ui, render_cache, "signals");
+            });
+            let mut render_chips = |ui: &mut egui::Ui| {
+                ui.set_max_width(row_width);
+                ui.set_width(row_width);
                 render_call_review_spotlight_signal_chip(
                     ui,
                     render_cache,
-                    "ambiguous segments",
-                    value,
+                    "repeated tools",
+                    signals.repeated_tool_name_count,
                 );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "distinct tools",
+                    signals.distinct_tool_count,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "similar searches",
+                    signals.similar_search_neighbors,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "directory pivots",
+                    signals.directory_pivots,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "scope turns",
+                    signals.scope_turn_count,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "search calls",
+                    signals.search_calls_in_scope,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "read calls",
+                    signals.read_calls_in_scope,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "browse calls",
+                    signals.browse_calls_in_scope,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "edit calls",
+                    signals.edit_calls_in_scope,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "execute calls",
+                    signals.execute_calls_in_scope,
+                );
+                render_call_review_spotlight_signal_chip(
+                    ui,
+                    render_cache,
+                    "failed calls",
+                    signals.failed_calls_in_scope,
+                );
+                if let Some(value) = signals.uncovered_calls_in_source {
+                    render_call_review_spotlight_signal_chip(
+                        ui,
+                        render_cache,
+                        "uncovered calls",
+                        value,
+                    );
+                }
+                if let Some(value) = signals.labeled_segments_in_source {
+                    render_call_review_spotlight_signal_chip(
+                        ui,
+                        render_cache,
+                        "labeled segments",
+                        value,
+                    );
+                }
+                if let Some(value) = signals.ambiguous_segments_in_source {
+                    render_call_review_spotlight_signal_chip(
+                        ui,
+                        render_cache,
+                        "ambiguous segments",
+                        value,
+                    );
+                }
+            };
+            if narrow {
+                render_chips(ui);
+            } else {
+                ui.horizontal_wrapped(render_chips);
             }
-        };
-        if narrow {
-            render_chips(ui);
-        } else {
-            ui.horizontal_wrapped(render_chips);
-        }
         },
     );
 }
 
-fn scan_emphasis_for_local_analysis_signal_metric(
-    metric: &str,
-    value: usize,
-) -> ScanValueEmphasis {
+fn scan_emphasis_for_local_analysis_signal_metric(metric: &str, value: usize) -> ScanValueEmphasis {
     match effective_tone_for_local_analysis_signal_metric(metric, value) {
         RunDashboardValueTone::Warn => ScanValueEmphasis::Warn,
         RunDashboardValueTone::Error => ScanValueEmphasis::Error,
@@ -1640,7 +1644,8 @@ mod tests {
         call_review_spotlight_synthesis_is_mechanized_wire_format, confidence_label,
         format_assessment_dimension_chip, recoverability_verdict_emphasis,
         recoverability_verdict_label, redundancy_verdict_emphasis, redundancy_verdict_label,
-        spotlight_verdict_bar_active_tier, usefulness_verdict_emphasis, usefulness_verdict_label,
+        spotlight_verdict_bar_active_tier, spotlight_verdict_bar_good_tier_fill,
+        usefulness_verdict_emphasis, usefulness_verdict_label,
     };
     use ploke_protocol::{
         Confidence, LocalAnalysisAssessment, LocalAnalysisPacket, LocalAnalysisSignals,
@@ -1720,7 +1725,9 @@ distinct_tool_count=1, similar_search_neighbors=0, directory_pivots=0, \
 uncovered_calls_in_source=None. branch rationales: usefulness='' redundancy='' recoverability=''.";
         let output = minimal_local_analysis_assessment(wire, "");
         assert!(!call_review_spotlight_has_dimension_rationale(&output));
-        assert!(call_review_spotlight_synthesis_is_mechanized_wire_format(wire));
+        assert!(call_review_spotlight_synthesis_is_mechanized_wire_format(
+            wire
+        ));
         assert!(call_review_spotlight_has_structured_assessment(&output));
     }
 
@@ -1792,6 +1799,23 @@ uncovered_calls_in_source=None. branch rationales: usefulness='' redundancy='' r
         assert_eq!(confidence_label(Confidence::Low), "low");
         assert_eq!(confidence_label(Confidence::Medium), "medium");
         assert_eq!(confidence_label(Confidence::High), "high");
+    }
+
+    #[test]
+    fn spotlight_verdict_bar_good_tier_fill_uses_success_semantic() {
+        use crate::ui::theme::NamedScheme;
+        for scheme in [
+            NamedScheme::TokyoNight,
+            NamedScheme::Dracula,
+            NamedScheme::GruvboxLight,
+        ] {
+            let tokens = scheme.tokens();
+            assert_eq!(
+                spotlight_verdict_bar_good_tier_fill(tokens),
+                tokens.success,
+                "{scheme:?}"
+            );
+        }
     }
 
     #[test]

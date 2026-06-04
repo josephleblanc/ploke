@@ -8,8 +8,9 @@ use eframe::egui;
 
 use crate::ui::eval_protocol::EvalProtocolVisualSummary;
 
+use super::cache::effective_eval_pane_content_width;
 use super::metric_row_board::{
-    self, MetricBoardRow, MetricRowBoardStyle, LABEL_COL_WIDTH, row_board_min_width,
+    self, LABEL_COL_WIDTH, MetricBoardRow, MetricRowBoardStyle, row_board_min_width,
 };
 use super::run_dashboard::effective_tone_for_analyst_snapshot_metric;
 
@@ -66,6 +67,9 @@ fn analyst_snapshot_two_column_layout(
 }
 
 pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProtocolVisualSummary) {
+    let pane_width = effective_eval_pane_content_width(ui);
+    ui.set_max_width(pane_width);
+
     let run_effort = [
         ("records", summary.run_records as f32),
         ("turns", summary.turns as f32),
@@ -115,7 +119,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
         || patch.applied_patch_artifact_count > 0;
 
     let section_count = 2 + usize::from(show_outcomes) + usize::from(show_patch);
-    let two_column = analyst_snapshot_two_column_layout(ui, ui.available_width(), section_count);
+    let two_column = analyst_snapshot_two_column_layout(ui, pane_width, section_count);
     let board_style = MetricRowBoardStyle {
         label_col_width: if two_column {
             TWO_COLUMN_LABEL_COL_WIDTH
@@ -174,13 +178,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
             board_style,
         );
         if show_outcomes {
-            render_snapshot_section(
-                ui,
-                "Review Outcome Mix",
-                &outcome_rows,
-                false,
-                board_style,
-            );
+            render_snapshot_section(ui, "Review Outcome Mix", &outcome_rows, false, board_style);
         }
         if show_patch {
             render_snapshot_section(ui, "Patch Production", &patch_rows, false, board_style);
@@ -205,7 +203,7 @@ fn render_snapshot_section(
     );
     ui.add_space(SECTION_TITLE_SPACING);
 
-    let section_width = ui.available_width();
+    let section_width = effective_eval_pane_content_width(ui);
     let board_rows: Vec<MetricBoardRow<'_>> = rows
         .iter()
         .map(|(label, value)| MetricBoardRow {
@@ -225,8 +223,8 @@ fn render_snapshot_section(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::metric_row_board::{LABEL_COL_WIDTH, metric_bar_track_width};
+    use super::*;
 
     #[test]
     fn two_column_layout_hysteresis_and_minimum_width() {

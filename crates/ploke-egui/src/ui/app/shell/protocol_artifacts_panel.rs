@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use crate::ui::eval_protocol::{EvalProtocolDashboard, ProtocolAggregateCounts};
 
 use super::InspectorRenderCache;
+use super::cache::{effective_eval_pane_content_width, scope_eval_pane_content_width};
 use super::metric_row_board::{self, MetricBoardRow, MetricRowBoardStyle};
 use super::run_dashboard::{
     RunDashboardValueTone, analyst_label_for_overall_verdict_key, effective_tone_for_count,
@@ -44,6 +45,16 @@ const RECOVERABILITY_VERDICT_ORDER: &[&str] = &[
 ];
 
 pub(crate) fn render_protocol_artifacts_summary(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dashboard: &EvalProtocolDashboard<'_>,
+) {
+    scope_eval_pane_content_width(ui, |ui| {
+        render_protocol_artifacts_summary_scoped(ui, render_cache, dashboard);
+    });
+}
+
+fn render_protocol_artifacts_summary_scoped(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     dashboard: &EvalProtocolDashboard<'_>,
@@ -208,7 +219,7 @@ fn render_verdict_distribution_section(
     ui.label(egui::RichText::new(title).strong().size(12.0));
     ui.add_space(2.0);
 
-    let section_width = ui.available_width();
+    let section_width = effective_eval_pane_content_width(ui);
     let labels: Vec<String> = rows
         .iter()
         .map(|(key, _)| protocol_verdict_display_label(family, key).into_owned())

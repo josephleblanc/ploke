@@ -362,15 +362,18 @@ pub(super) fn render_copyable_text_preview(
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
     let value = CopyableText::new(text);
+    let content_width = effective_inspector_content_width(ui);
+    ui.set_max_width(content_width);
 
     let header_response = ui.horizontal(|ui| {
+        ui.set_max_width(content_width);
         let prev_item_spacing = ui.spacing_mut().item_spacing;
         ui.spacing_mut().item_spacing.x = 0.0;
         state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
         ui.spacing_mut().item_spacing = prev_item_spacing;
 
         let title_response = ui
-            .add(egui::Label::new(label).sense(egui::Sense::click()))
+            .add(egui::Label::new(label).wrap().sense(egui::Sense::click()))
             .on_hover_text(value.hover_text(state.is_open(), true));
         if title_response.clicked() {
             state.toggle(ui);

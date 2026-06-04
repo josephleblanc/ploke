@@ -5,7 +5,7 @@
 
 use eframe::egui;
 
-use crate::ui::bar_profiles::{self, metric_fill_width, METRIC_TRACK_X_PADDING};
+use crate::ui::bar_profiles::{self, METRIC_TRACK_X_PADDING, metric_fill_width};
 
 use super::run_dashboard::{
     RunDashboardValueTone, dashboard_bar_fill_color, dashboard_value_color,
@@ -85,6 +85,10 @@ pub(crate) fn render_metric_row_board(
         return;
     }
 
+    if section_width.is_finite() {
+        ui.set_max_width(section_width);
+    }
+
     let section_max = rows
         .iter()
         .map(|row| row.value)
@@ -102,13 +106,7 @@ pub(crate) fn render_metric_row_board(
         .min_row_height(BAR_ROW_HEIGHT)
         .show(ui, |ui| {
             for row in rows {
-                render_metric_row_board_row(
-                    ui,
-                    row,
-                    section_max,
-                    style,
-                    section_track_width,
-                );
+                render_metric_row_board_row(ui, row, section_max, style, section_track_width);
             }
         });
 }

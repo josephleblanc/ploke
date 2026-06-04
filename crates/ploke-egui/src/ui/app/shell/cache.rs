@@ -490,11 +490,14 @@ fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<eg
     layout_owned_cached_text(ui, text.to_owned(), kind)
 }
 
-/// Width for inspector prose inside scroll areas and nested drilldowns.
-///
-/// Horizontal scroll content often reports a very large [`egui::Ui::available_width`]; cap by the
-/// visible clip width so wrapped galleys do not extend past the panel.
-pub(super) fn effective_inspector_content_width(ui: &egui::Ui) -> f32 {
+/// Inset from the visible clip edge so labels and chips are not cut mid-glyph.
+pub(super) const PANE_CONTENT_EDGE_INSET: f32 = 2.0;
+
+fn pane_content_width_cap(raw: f32) -> f32 {
+    (raw - PANE_CONTENT_EDGE_INSET).max(1.0)
+}
+
+fn visible_pane_column_width(ui: &egui::Ui) -> f32 {
     let clip_width = ui.clip_rect().width().max(1.0);
     let available = ui.available_width();
     if available.is_finite() && available > 1.0 {
@@ -502,6 +505,14 @@ pub(super) fn effective_inspector_content_width(ui: &egui::Ui) -> f32 {
     } else {
         clip_width
     }
+}
+
+/// Width for inspector prose inside scroll areas and nested drilldowns.
+///
+/// Horizontal scroll content often reports a very large [`egui::Ui::available_width`]; cap by the
+/// visible clip width so wrapped galleys do not extend past the panel.
+pub(super) fn effective_inspector_content_width(ui: &egui::Ui) -> f32 {
+    pane_content_width_cap(visible_pane_column_width(ui))
 }
 
 /// Visible inspector column width from clip only (ignores scroll child min-width).
@@ -509,18 +520,32 @@ pub(super) fn inspector_clip_content_width(ui: &egui::Ui) -> f32 {
     ui.clip_rect().width().max(1.0)
 }
 
+const EVAL_PANE_COLUMN_WIDTH_TEMP_ID: &str = "ploke_eval_protocol_tile_column_width";
+
+fn eval_pane_column_width_from_ui(ui: &egui::Ui) -> f32 {
+    pane_content_width_cap(visible_pane_column_width(ui))
+}
+
+/// Pin the Eval & Protocol tile column width for this frame (call on the tile `ui` before scroll).
+///
+/// Wide call-review grids inflate scroll-content [`egui::Ui::clip_rect`] width; descendants should
+/// read the pinned width via [`effective_eval_pane_content_width`] instead of re-measuring inside scroll.
+pub(crate) fn refresh_eval_pane_column_width(ui: &egui::Ui) -> f32 {
+    let width = eval_pane_column_width_from_ui(ui);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new(EVAL_PANE_COLUMN_WIDTH_TEMP_ID), width));
+    width
+}
+
 /// Content width for Eval & Protocol pane tiles and call-review detail sections.
 ///
 /// `min(finite available_width, clip_rect.width())` so horizontal scroll children do not lay out
-/// prose or chips past the visible eval column.
+/// prose or chips past the visible eval column. Uses the tile pin from [`refresh_eval_pane_column_width`]
+/// when present.
 pub(super) fn effective_eval_pane_content_width(ui: &egui::Ui) -> f32 {
-    let clip_width = ui.clip_rect().width().max(1.0);
-    let available = ui.available_width();
-    if available.is_finite() && available > 1.0 {
-        available.min(clip_width)
-    } else {
-        clip_width
-    }
+    ui.ctx()
+        .data(|data| data.get_temp(egui::Id::new(EVAL_PANE_COLUMN_WIDTH_TEMP_ID)))
+        .unwrap_or_else(|| eval_pane_column_width_from_ui(ui))
 }
 
 /// Lay out eval-pane / call-review body at [`effective_eval_pane_content_width`].
@@ -539,8 +564,8 @@ pub(super) fn scope_eval_pane_content_width<R>(
 
 /// Visible Eval & Protocol tile column width at scroll content roots.
 ///
-/// Alias for [`effective_eval_pane_content_width`]; prefer capturing width on the tile `ui`
-/// before [`egui::ScrollArea::show`] when wide scan grids inflate nested clip rects.
+/// Alias for [`effective_eval_pane_content_width`]; on the Eval tile call [`refresh_eval_pane_column_width`]
+/// on the tile `ui` before [`egui::ScrollArea::show`].
 pub(crate) fn eval_pane_content_width(ui: &egui::Ui) -> f32 {
     effective_eval_pane_content_width(ui)
 }

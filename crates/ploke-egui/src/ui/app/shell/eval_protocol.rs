@@ -5,7 +5,7 @@ use ploke_records::protocol::ArtifactBody;
 use ploke_tree::Graph;
 use std::sync::Arc;
 
-use super::cache::effective_eval_pane_content_width;
+use super::cache::scope_eval_pane_content_width;
 use super::call_review::{render_call_review_scan, render_run_synthesis_spotlight};
 use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
@@ -22,8 +22,16 @@ pub(crate) fn render_eval_protocol_for_graph(
     graph: &Graph,
     render_cache: &mut InspectorRenderCache,
 ) {
-    let content_width = effective_eval_pane_content_width(ui);
-    ui.set_max_width(content_width);
+    scope_eval_pane_content_width(ui, |ui| {
+        render_eval_protocol_for_graph_scoped(ui, graph, render_cache);
+    });
+}
+
+fn render_eval_protocol_for_graph_scoped(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    render_cache: &mut InspectorRenderCache,
+) {
     let dashboard = EvalProtocolDashboard::from_graph(graph);
     if !dashboard.is_available() {
         cached_kv_text(ui, render_cache, "eval protocol", "not_available");
@@ -315,14 +323,14 @@ pub(crate) fn render_eval_protocol_pane(
     render_cache: &mut InspectorRenderCache,
     mode: EvalProtocolRenderMode,
 ) {
-    let content_width = effective_eval_pane_content_width(ui);
-    ui.set_max_width(content_width);
-    match mode {
-        EvalProtocolRenderMode::Full => render_eval_protocol_for_graph(ui, graph, render_cache),
+    scope_eval_pane_content_width(ui, |ui| match mode {
+        EvalProtocolRenderMode::Full => {
+            render_eval_protocol_for_graph_scoped(ui, graph, render_cache)
+        }
         EvalProtocolRenderMode::CallReviewScanOnly => {
             render_eval_protocol_call_review_scan_for_graph(ui, graph, render_cache);
         }
-    }
+    });
 }
 
 fn render_eval_protocol_call_review_scan_for_graph(
@@ -505,10 +513,7 @@ pub(crate) fn tool_call_review_for_artifact_key<'a>(
 pub(crate) fn selected_tool_call_review<'a>(
     ui: &egui::Ui,
     protocol_artifacts: &'a ploke_tree::ProtocolArtifactsEvidence,
-) -> Option<(
-    Arc<str>,
-    &'a ploke_records::protocol::ToolCallReviewPayload,
-)> {
+) -> Option<(Arc<str>, &'a ploke_records::protocol::ToolCallReviewPayload)> {
     let artifact_key = selected_eval_protocol_call_review_key(ui)?;
     let payload = tool_call_review_for_artifact_key(artifact_key.as_ref(), protocol_artifacts)?;
     Some((artifact_key, payload))

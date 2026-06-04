@@ -15,7 +15,6 @@ use ploke_tree::graph::AgentTurnArtifactMetadata;
 use std::sync::Arc;
 
 mod analyst_snapshot;
-mod metric_row_board;
 mod cache;
 mod call_review;
 mod chrome;
@@ -25,6 +24,7 @@ pub(super) mod fields;
 mod identity;
 mod inspector;
 mod llm_trace;
+mod metric_row_board;
 mod parent_create;
 mod protocol_artifacts_panel;
 mod protocol_detail;
@@ -40,7 +40,9 @@ use self::run_records::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
-pub(crate) use cache::{InspectorRenderCache, eval_pane_content_width};
+pub(crate) use cache::{
+    InspectorRenderCache, eval_pane_content_width, refresh_eval_pane_column_width,
+};
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
 pub(crate) use context_strip::render_snapshot_load_banner;
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};

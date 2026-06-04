@@ -1,7 +1,10 @@
 use crate::ui::id_display::{self, CopyableExpandable, CopyableText};
 use eframe::egui;
 
-use super::cache::{effective_eval_pane_content_width, scope_eval_pane_content_width};
+use super::cache::{
+    effective_eval_pane_content_width, effective_inspector_content_width,
+    scope_eval_pane_content_width,
+};
 use super::call_review::{
     ASSESSMENT_CHIP_CONFIDENCE_TOOLTIP, ASSESSMENT_CHIP_OUTCOME_TOOLTIP,
     ASSESSMENT_CHIP_RECOVERABILITY_TOOLTIP, ASSESSMENT_CHIP_REDUNDANCY_TOOLTIP,
@@ -156,7 +159,9 @@ fn render_tool_call_review_inspector_header(
     payload: &ploke_records::protocol::ToolCallReviewPayload,
 ) {
     let focal = &payload.input.focal;
+    let content_width = effective_inspector_content_width(ui);
     ui.horizontal_wrapped(|ui| {
+        ui.set_max_width(content_width);
         cached_label(ui, render_cache, "call review");
         let mut index_buffer = itoa::Buffer::new();
         cached_monospace_label(ui, render_cache, index_buffer.format(focal.index))

@@ -239,10 +239,15 @@ impl<'a> CopyableRunName<'a> {
         if !self.is_compact() {
             return std::borrow::Cow::Borrowed(self.full);
         }
-        std::borrow::Cow::Owned(run_name_ellipsis_tail(
-            self.full,
-            RUN_NAME_COMPACT_MAX_BYTES,
-        ))
+        let minimal = run_name_minimal_label(self.full);
+        if minimal.len() <= RUN_NAME_COMPACT_MAX_BYTES {
+            std::borrow::Cow::Owned(minimal)
+        } else {
+            std::borrow::Cow::Owned(run_name_ellipsis_tail(
+                self.full,
+                RUN_NAME_COMPACT_MAX_BYTES,
+            ))
+        }
     }
 }
 
@@ -429,6 +434,21 @@ fn short_prefix(value: &str, max_chars: usize) -> &str {
         .unwrap_or(value)
 }
 
+/// Path tail, then last `-`/`:` segment; long hex suffixes cap at [`HASH_CHARS`].
+fn run_name_minimal_label(full: &str) -> String {
+    let tail = path_tail(full);
+    let suffix = tail
+        .rsplit_once(':')
+        .or_else(|| tail.rsplit_once('-'))
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(tail);
+    if is_hexish(suffix) && suffix.len() > HASH_CHARS {
+        short_prefix(suffix, HASH_CHARS).to_owned()
+    } else {
+        suffix.to_owned()
+    }
+}
+
 fn run_name_ellipsis_tail(full: &str, max_bytes: usize) -> String {
     let tail = path_tail(full);
     if tail.len() <= max_bytes {
@@ -541,13 +561,27 @@ mod tests {
     }
 
     #[test]
-    fn copyable_run_name_compacts_long_ids_with_ellipsis_tail() {
+    fn copyable_run_name_minimal_label_uses_last_dash_segment() {
+        let long = "/home/user/.ploke-eval/runs/536779067-structured-current-policy-b6d26d17";
+        let run = CopyableRunName::new(long);
+        assert!(run.is_compact());
+        assert_eq!(run.compact_label().as_ref(), "b6d26d17");
+    }
+
+    #[test]
+    fn copyable_run_name_minimal_label_shortens_long_hex_suffix() {
         let long = "campaigns/foo/bar/run-with-a-very-long-instance-id-0123456789abcdef";
         let run = CopyableRunName::new(long);
         assert!(run.is_compact());
-        let compact = run.compact_label();
-        assert!(compact.starts_with('…'));
-        assert!(compact.len() <= 48);
+        assert_eq!(run.compact_label().as_ref(), "01234567");
+    }
+
+    #[test]
+    fn copyable_run_name_keeps_short_ids_uncompacted() {
+        let short = "run-b6d26d17";
+        let run = CopyableRunName::new(short);
+        assert!(!run.is_compact());
+        assert_eq!(run.compact_label().as_ref(), short);
     }
 
     #[test]
