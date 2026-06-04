@@ -36,6 +36,8 @@ Start here:
 
 Related context:
 
+- [`../../../crates/ploke-egui/docs/style/operator-ui-policy.md`](../../../crates/ploke-egui/docs/style/operator-ui-policy.md)
+  Canonical operator UI policy — cite in chat for implementation style.
 - [`../ploke-egui-task-readability/README.md`](../ploke-egui-task-readability/README.md)
   Prior artifact-view readability wave and accepted phase-1/2 work.
 - [`../2026-05-12_ploke-egui-artifact-view-handoff.md`](../2026-05-12_ploke-egui-artifact-view-handoff.md)
