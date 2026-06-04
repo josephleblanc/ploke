@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use ploke_records::evaluation::RunMetrics;
 use ploke_records::history::{
     CandidateSetRootRecord, ProcedureRefRecord, ProtocolMetricsRecord, SelectionScopeRecord,
-    SubjectRefRecord,
+    SubjectRefRecord, TraversalStrategyRecord,
 };
 use ploke_records::ids::{
     ArtifactId, CandidateId, CandidateMembershipId, CandidateOccurrenceId, EntryId, HistoryHash,
@@ -95,6 +95,82 @@ pub struct CandidateMembershipNode {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SelectionIndex {
     pub selections: BTreeMap<EntryId, SelectionNode>,
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    pub metric_witnesses: BTreeMap<SelectionMetricWitnessKey, SelectionMetricWitness>,
+}
+
+/// Traversal policy facts sealed beside a selection decision entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionTraversalSummary {
+    pub seed: u64,
+    pub strategy: TraversalStrategyRecord,
+    pub selected_source: Option<CandidateSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionMetricWitnessKey {
+    pub entry_id: EntryId,
+    pub payload_index: usize,
+    pub branch_id: String,
+}
+
+impl Ord for SelectionMetricWitnessKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.entry_id, self.payload_index, &self.branch_id).cmp(&(
+            &other.entry_id,
+            other.payload_index,
+            &other.branch_id,
+        ))
+    }
+}
+
+impl PartialOrd for SelectionMetricWitnessKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Selection-time metric witness bundling the sealed header join, metric row,
+/// and optional `score_child_prop` replay row for one considered branch.
+/// archaeology:selection-protocol-evidence
+/// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectionMetricWitness {
+    pub key: SelectionMetricWitnessKey,
+    pub selection_entry_id: EntryId,
+    pub metric_candidate: MetricCandidateNode,
+    pub score_child_prop_row: Option<ScoreChildPropRowRecord>,
+}
+
+/// Borrowed selection metric witness resolved from a loaded graph.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectionMetricWitnessRef<'g> {
+    pub key: &'g SelectionMetricWitnessKey,
+    pub selection: &'g SelectionNode,
+    pub metric_candidate: &'g MetricCandidateNode,
+    pub score_child_prop_row: Option<&'g ScoreChildPropRowRecord>,
+    pub imp_at_k: Option<&'g ImpAtK>,
+}
+
+/// One generation row in the campaign trajectory landing table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryGenerationRow {
+    pub generation: u32,
+    pub selection_entry_id: EntryId,
+    pub branch_id: Option<String>,
+    pub artifact_id: Option<ArtifactId>,
+    pub score_child_prop_total: Option<i64>,
+    pub decision_outcome: SelectionOutcome,
+    pub role_hint: Option<TrajectoryRoleHint>,
+}
+
+/// Role hint derived from scheduler/invocation records for the selected node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrajectoryRoleHint {
+    Parent,
+    Child,
+    Successor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +186,11 @@ pub struct SelectionNode {
     pub projection_failure_count: usize,
     pub metric_set_id: HistoryHash,
     pub decision_outcome: SelectionOutcome,
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    pub traversal: Option<SelectionTraversalSummary>,
+    /// Generation label for the selected candidate when coordinate evidence exists.
+    pub generation_label: Option<String>,
 }
 
 /// Selection-time metrics sealed beside History selection entries.
@@ -226,6 +307,24 @@ impl ScoreChildPropNode {
             .iter()
             .find(|row| row.payload_index == payload_index)
     }
+}
+
+impl SelectionMetricWitnessRef<'_> {
+    pub fn score_child_prop_total(&self) -> Option<i64> {
+        self.score_child_prop_row
+            .and_then(score_child_prop_row_total_points)
+    }
+}
+
+pub fn score_child_prop_row_total_points(row: &ScoreChildPropRowRecord) -> Option<i64> {
+    row.performance.or_else(|| {
+        Some(
+            row.outcome_points
+                .saturating_add(row.operational_points)
+                .saturating_add(row.protocol_points)
+                .saturating_add(row.imp_at_k_delta.unwrap_or(0)),
+        )
+    })
 }
 
 impl From<FormulaRecord> for SelectionFormulaKind {

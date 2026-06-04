@@ -12,12 +12,14 @@ use ploke_records::history::{
     TraversalCandidateSourceRecord,
 };
 use ploke_records::ids::{CandidateId, Coordinate, RuntimeId};
+use ploke_records::selection::FormulaRecord;
 
 use crate::graph::{
     CandidateBranchNode, CandidateMembershipKey, CandidateMembershipNode, CandidateNode,
     CandidateSource, ComparedRunMetricNode, EvidenceKind, EvidenceSubject, GraphWarningKind,
     MetricCandidateKey, MetricCandidateNode, MetricSetNode, SelectionFormulaKey,
-    SelectionFormulaNode, SelectionNode,
+    SelectionFormulaNode, SelectionMetricWitness, SelectionMetricWitnessKey, SelectionNode,
+    SelectionTraversalSummary,
 };
 
 use super::Builder;
@@ -50,12 +52,27 @@ impl Builder {
             projection_failure_count: selection.projection_failures.len(),
             metric_set_id: selection.metrics.id.clone(),
             decision_outcome: selection.decision.outcome,
+            traversal: selection
+                .traversal
+                .as_ref()
+                .map(|traversal| SelectionTraversalSummary {
+                    seed: traversal.seed,
+                    strategy: traversal.strategy.clone(),
+                    selected_source: traversal.selected_source.map(|source| match source {
+                        TraversalCandidateSourceRecord::History => CandidateSource::History,
+                        TraversalCandidateSourceRecord::CurrentGeneration => {
+                            CandidateSource::CurrentGeneration
+                        }
+                    }),
+                }),
+            generation_label: selected_generation_label(selection),
         };
         self.graph
             .selections
             .selections
             .insert(entry.core.entry_id.clone(), selection_node);
         self.ingest_selection_metrics(entry, selection, candidate_set_root.as_ref());
+        self.ingest_selection_metric_witnesses(entry, selection);
 
         let candidate_set = selection.candidate_set.as_ref();
         let memberships = candidate_set.map(|candidate_set| candidate_set.memberships.as_slice());
@@ -363,6 +380,49 @@ impl Builder {
             );
         }
     }
+
+    fn ingest_selection_metric_witnesses(
+        &mut self,
+        entry: &AdmittedEntryRecord,
+        selection: &SelectionDecisionEntryRecord,
+    ) {
+        let score_rows = selection
+            .formula
+            .as_ref()
+            .and_then(|formula| match &formula.formula {
+                FormulaRecord::ScoreChildProp(record) => Some(record.rows.as_slice()),
+            });
+
+        for (index, payload) in selection.considered.iter().enumerate() {
+            let Some(branch_id) = payload_branch_id(payload) else {
+                continue;
+            };
+            let metric_key = MetricCandidateKey {
+                metric_set_id: selection.metrics.id.clone(),
+                payload_index: index,
+            };
+            let Some(metric_candidate) = self.graph.metrics.candidates.get(&metric_key) else {
+                continue;
+            };
+            let score_child_prop_row = score_rows
+                .and_then(|rows| rows.iter().find(|row| row.payload_index == index))
+                .cloned();
+            let key = SelectionMetricWitnessKey {
+                entry_id: entry.core.entry_id.clone(),
+                payload_index: index,
+                branch_id: branch_id.clone(),
+            };
+            self.graph.selections.metric_witnesses.insert(
+                key.clone(),
+                SelectionMetricWitness {
+                    key,
+                    selection_entry_id: entry.core.entry_id.clone(),
+                    metric_candidate: metric_candidate.clone(),
+                    score_child_prop_row,
+                },
+            );
+        }
+    }
 }
 
 fn selection_metric_inputs(
@@ -399,4 +459,59 @@ fn operation_coordinate(payload: &EvaluationPayloadRecord) -> Option<Coordinate>
         runtime_id: RuntimeId(runtime_id.clone()),
         target,
     })
+}
+
+fn payload_branch_id(payload: &EvaluationPayloadRecord) -> Option<String> {
+    payload
+        .sealed_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.coordinate.branch_id.clone())
+        .or_else(|| {
+            payload
+                .selection_input
+                .as_ref()
+                .map(|input| input.candidate.branch_id.clone())
+        })
+}
+
+fn payload_generation(payload: &EvaluationPayloadRecord) -> Option<u32> {
+    payload
+        .sealed_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.coordinate.generation)
+        .or_else(|| {
+            payload
+                .selection_input
+                .as_ref()
+                .map(|input| input.candidate.generation)
+        })
+}
+
+fn selected_generation_label(selection: &SelectionDecisionEntryRecord) -> Option<String> {
+    if let Some(index) = selection
+        .formula
+        .as_ref()
+        .and_then(|formula| match &formula.formula {
+            FormulaRecord::ScoreChildProp(record) => record.selected_index,
+        })
+    {
+        return selection
+            .considered
+            .get(index)
+            .and_then(payload_generation)
+            .map(|generation| generation.to_string());
+    }
+
+    let selected_subject = selection.selected_candidate.as_ref()?;
+    let selected_branch = selection.decision.selected_branch_id.as_deref();
+    selection
+        .considered
+        .iter()
+        .find(|payload| {
+            payload.candidate.value == selected_subject.value
+                && selected_branch
+                    .is_none_or(|branch| payload_branch_id(payload).as_deref() == Some(branch))
+        })
+        .and_then(payload_generation)
+        .map(|generation| generation.to_string())
 }

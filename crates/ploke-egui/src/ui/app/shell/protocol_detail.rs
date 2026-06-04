@@ -3,7 +3,10 @@ use eframe::egui;
 
 use super::call_review::{
     cached_hover_monospace_block, call_review_failure_label, confidence_emphasis, confidence_label,
-    failure_emphasis, overall_verdict_emphasis, overall_verdict_label, scan_value_label,
+    failure_emphasis, overall_verdict_emphasis, overall_verdict_label,
+    recoverability_verdict_emphasis, recoverability_verdict_label, redundancy_verdict_emphasis,
+    redundancy_verdict_label, scan_value_label, usefulness_verdict_emphasis,
+    usefulness_verdict_label,
 };
 use super::eval_protocol;
 use super::fields::*;
@@ -165,8 +168,24 @@ pub(crate) fn render_tool_call_review_detail(
             render_local_analysis_packet(ui, render_cache, &payload.output.packet);
         },
     );
-    render_local_analysis_signals(ui, render_cache, &payload.output.signals);
-    render_local_analysis_assessment(ui, render_cache, &payload.output);
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("signals")
+            .id_salt(("tool-call-review-signals", artifact_key))
+            .default_open(false),
+        |ui| {
+            render_local_analysis_signals_body(ui, render_cache, &payload.output.signals);
+        },
+    );
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("assessment")
+            .id_salt(("tool-call-review-assessment", artifact_key))
+            .default_open(true),
+        |ui| {
+            render_local_analysis_assessment(ui, render_cache, &payload.output);
+        },
+    );
     show_inspector_collapsing(
         ui,
         egui::CollapsingHeader::new("reviewed neighborhood")
@@ -230,9 +249,33 @@ pub(crate) fn render_tool_call_segment_review_artifact(
                 segment.rationale.as_str(),
             );
             render_segmentation_coverage(ui, render_cache, &payload.input.coverage);
-            render_local_analysis_packet(ui, render_cache, &payload.output.packet);
-            render_local_analysis_signals(ui, render_cache, &payload.output.signals);
-            render_local_analysis_assessment(ui, render_cache, &payload.output);
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("packet")
+                    .id_salt(("tool-call-segment-review-packet", artifact_key))
+                    .default_open(false),
+                |ui| {
+                    render_local_analysis_packet(ui, render_cache, &payload.output.packet);
+                },
+            );
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("signals")
+                    .id_salt(("tool-call-segment-review-signals", artifact_key))
+                    .default_open(false),
+                |ui| {
+                    render_local_analysis_signals_body(ui, render_cache, &payload.output.signals);
+                },
+            );
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("assessment")
+                    .id_salt(("tool-call-segment-review-assessment", artifact_key))
+                    .default_open(true),
+                |ui| {
+                    render_local_analysis_assessment(ui, render_cache, &payload.output);
+                },
+            );
             show_inspector_collapsing(
                 ui,
                 egui::CollapsingHeader::new("segment calls").default_open(false),
@@ -374,92 +417,86 @@ fn render_local_analysis_packet(
     );
 }
 
-fn render_local_analysis_signals(
+fn render_local_analysis_signals_body(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     signals: &ploke_protocol::LocalAnalysisSignals,
 ) {
-    show_inspector_collapsing(
+    cached_kv_usize(ui, render_cache, "turns", signals.scope_turn_count);
+    cached_kv_usize(
         ui,
-        egui::CollapsingHeader::new("signals").default_open(false),
-        |ui| {
-            cached_kv_usize(ui, render_cache, "turns", signals.scope_turn_count);
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "distinct tools",
-                signals.distinct_tool_count,
-            );
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "repeated tools",
-                signals.repeated_tool_name_count,
-            );
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "search calls",
-                signals.search_calls_in_scope,
-            );
-            cached_kv_usize(ui, render_cache, "read calls", signals.read_calls_in_scope);
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "browse calls",
-                signals.browse_calls_in_scope,
-            );
-            cached_kv_usize(ui, render_cache, "edit calls", signals.edit_calls_in_scope);
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "execute calls",
-                signals.execute_calls_in_scope,
-            );
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "failed calls",
-                signals.failed_calls_in_scope,
-            );
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "similar searches",
-                signals.similar_search_neighbors,
-            );
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "directory pivots",
-                signals.directory_pivots,
-            );
-            cached_kv_optional_usize(
-                ui,
-                render_cache,
-                "labeled segments",
-                signals.labeled_segments_in_source,
-            );
-            cached_kv_optional_usize(
-                ui,
-                render_cache,
-                "ambiguous segments",
-                signals.ambiguous_segments_in_source,
-            );
-            cached_kv_optional_usize(
-                ui,
-                render_cache,
-                "uncovered calls",
-                signals.uncovered_calls_in_source,
-            );
-            if !signals.candidate_concerns.is_empty() {
-                cached_label(ui, render_cache, "concerns");
-                for concern in &signals.candidate_concerns {
-                    cached_monospace_label(ui, render_cache, format!("{concern:?}").as_str());
-                }
-            }
-        },
+        render_cache,
+        "distinct tools",
+        signals.distinct_tool_count,
     );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "repeated tools",
+        signals.repeated_tool_name_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "search calls",
+        signals.search_calls_in_scope,
+    );
+    cached_kv_usize(ui, render_cache, "read calls", signals.read_calls_in_scope);
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "browse calls",
+        signals.browse_calls_in_scope,
+    );
+    cached_kv_usize(ui, render_cache, "edit calls", signals.edit_calls_in_scope);
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "execute calls",
+        signals.execute_calls_in_scope,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "failed calls",
+        signals.failed_calls_in_scope,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "similar searches",
+        signals.similar_search_neighbors,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "directory pivots",
+        signals.directory_pivots,
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "labeled segments",
+        signals.labeled_segments_in_source,
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "ambiguous segments",
+        signals.ambiguous_segments_in_source,
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "uncovered calls",
+        signals.uncovered_calls_in_source,
+    );
+    if !signals.candidate_concerns.is_empty() {
+        cached_label(ui, render_cache, "concerns");
+        for concern in &signals.candidate_concerns {
+            cached_monospace_label(ui, render_cache, format!("{concern:?}").as_str());
+        }
+    }
 }
 
 fn render_local_analysis_assessment(
@@ -467,37 +504,43 @@ fn render_local_analysis_assessment(
     render_cache: &mut InspectorRenderCache,
     assessment: &ploke_protocol::LocalAnalysisAssessment,
 ) {
-    cached_kv_debug(ui, render_cache, "overall", assessment.overall);
-    cached_kv_debug(
-        ui,
-        render_cache,
-        "overall confidence",
-        assessment.overall_confidence,
-    );
-    ui.separator();
-    cached_kv_debug(
-        ui,
-        render_cache,
-        "usefulness",
-        assessment.usefulness.verdict,
-    );
-    cached_kv_debug(
-        ui,
-        render_cache,
-        "redundancy",
-        assessment.redundancy.verdict,
-    );
-    cached_kv_debug(
-        ui,
-        render_cache,
-        "recoverability",
-        assessment.recoverability.verdict,
-    );
+    ui.horizontal_wrapped(|ui| {
+        scan_value_label(
+            ui,
+            render_cache,
+            overall_verdict_label(assessment.overall),
+            overall_verdict_emphasis(assessment.overall),
+        );
+        scan_value_label(
+            ui,
+            render_cache,
+            confidence_label(assessment.overall_confidence),
+            confidence_emphasis(assessment.overall_confidence),
+        );
+        scan_value_label(
+            ui,
+            render_cache,
+            usefulness_verdict_label(assessment.usefulness.verdict),
+            usefulness_verdict_emphasis(assessment.usefulness.verdict),
+        );
+        scan_value_label(
+            ui,
+            render_cache,
+            redundancy_verdict_label(assessment.redundancy.verdict),
+            redundancy_verdict_emphasis(assessment.redundancy.verdict),
+        );
+        scan_value_label(
+            ui,
+            render_cache,
+            recoverability_verdict_label(assessment.recoverability.verdict),
+            recoverability_verdict_emphasis(assessment.recoverability.verdict),
+        );
+    });
     render_copyable_text_preview(
         ui,
         render_cache,
         ("assessment-synthesis", assessment.packet.target_id.as_str()),
-        "synthesis raw",
+        "synthesis",
         assessment.synthesis_rationale.as_str(),
     );
     render_protocol_judgment(

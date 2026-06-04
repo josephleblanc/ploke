@@ -17,7 +17,7 @@ Review each branch in its worktree with trunk on a distinct port, then cherry-pi
 env -u NO_COLOR trunk serve --config crates/ploke-egui/Trunk.toml --address 127.0.0.1 --port <PORT>
 ```
 
-Load: `/?graph=/benchmark-fixtures/protocol-graph.json` (symlink or copy fixture into `benchmark-fixtures/` first).
+Load: `http://127.0.0.1:8080/` (default) or `/?graph=/benchmark-fixtures/protocol-graph.json`
 
 ## Screenshot checklist (all branches)
 

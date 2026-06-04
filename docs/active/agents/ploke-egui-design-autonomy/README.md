@@ -34,9 +34,9 @@ Escalation: `cargo test -p ploke-egui --features "dev,native-benchmark" benchmar
 
 After `trunk serve --config crates/ploke-egui/Trunk.toml`:
 
-`http://127.0.0.1:8080/?graph=/benchmark-fixtures/standard-prototype1-graph-snapshot.json`
+`http://127.0.0.1:8080/` (startup fetches `/benchmark-fixtures/protocol-graph.json`)
 
-(Use `protocol-graph.json` when that export is copied into `benchmark-fixtures/`. Default startup uses the standard snapshot.)
+Ensure `benchmark-fixtures/protocol-graph.json` exists locally (copy or symlink from `.temp/`); it is gitignored (~12 MB).
 
 ## Theme ids (automation)
 
@@ -53,7 +53,7 @@ Valid `?theme=` and `--theme` values (snake_case):
 
 Examples:
 
-- WASM: `http://127.0.0.1:8080/?graph=/benchmark-fixtures/standard-prototype1-graph-snapshot.json&theme=gruvbox_light` (hard reload to switch palette without using the canvas combo)
+- WASM: `http://127.0.0.1:8080/?graph=/benchmark-fixtures/protocol-graph.json&theme=gruvbox_light` (hard reload to switch palette without using the canvas combo)
 - Native: `cargo run -p ploke-egui -- --theme tokyo_night --graph-snapshot /path/to/snapshot.json`
 
 Script: [`crates/ploke-egui/scripts/dogfood-theme-matrix.sh`](../../../crates/ploke-egui/scripts/dogfood-theme-matrix.sh)
@@ -73,13 +73,21 @@ Example: `trunk serve --config crates/ploke-egui/Trunk.toml --port 8081`
 
 ## MCP browser screenshot checklist
 
-Run after graph load (non-zero canvas; wait for fixture fetch if using `?graph=`).
+Run after graph load (non-zero canvas; wait **~18s** for large `?graph=` fixtures; use CDP `Page.captureScreenshot` if `browser_take_screenshot` times out).
 
 1. **Eval Protocol** — dashboard eval pane, verdict mix / analyst surfaces visible.
 2. **Call Review** — scan table + spotlight when a row is selected.
 3. **Agent Trace** — LLM trace pane with turn list.
 4. **Timeline** — bottom playback timeline with colored segments.
 5. **Palette smoke** — at least one dark palette (e.g. Tokyo Night) and one light (e.g. Gruvbox light).
+6. **Trajectory (Generations table)** — click **📈 Trajectory review** in the left Tiles strip (egui canvas; lock tab first). Then verify:
+   - `protocol-graph.json` + `tokyo_night`: one row under **Generations** (`score_child_prop`, trend `insufficient data` or single-gen copy).
+   - `trajectory-multi-gen.json` + `gruvbox_light`: multi-row table + trend line (`improving` / `flat` / `declining`).
+   - Click a generation row → inspector shows selection drilldown (not artifact-only).
+7. **Trajectory dogfood URLs** (after `trunk serve --config crates/ploke-egui/Trunk.toml --port 8080`):
+   - `http://127.0.0.1:8080/?graph=/benchmark-fixtures/protocol-graph.json&theme=tokyo_night`
+   - `http://127.0.0.1:8080/?graph=/benchmark-fixtures/trajectory-multi-gen.json&theme=gruvbox_light`
+   - Save captures as `dogfood-trajectory-protocol.png`, `dogfood-trajectory-multi-gen.png` (repo root or `captures/`).
 
 Per-branch captures (Phase 2): `docs/active/agents/ploke-egui-design-autonomy/captures/<branch-name>/`.
 

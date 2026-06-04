@@ -131,6 +131,8 @@ crates/ploke-egui/index.no-fixtures.html
 crates/ploke-egui/docs/profiling/benchmarks/*/report.json
 # local dev export symlink/copy (~12MB), not a committed fixture
 crates/ploke-egui/benchmark-fixtures/protocol-graph.json
+# local dev export symlink (~20MB), not a committed fixture
+crates/ploke-egui/benchmark-fixtures/trajectory-multi-gen.json
 research-symlink
 .tmp/*
 .tmp/prototype1-loop.excalidraw

@@ -59,4 +59,4 @@ cargo run -p ploke-egui --features "dev native-benchmark" -- \
   --benchmark-output crates/ploke-egui/docs/profiling/benchmarks/20260602-wasm-parity-baseline
 ```
 
-Fixture for cold load: `crates/ploke-egui/benchmark-fixtures/standard-prototype1-graph-snapshot.json` (export via `export-graph`).
+Fixture for cold load: `crates/ploke-egui/benchmark-fixtures/protocol-graph.json` (default WASM dogfood; symlink/copy from `.temp/` export). Alternate: `standard-prototype1-graph-snapshot.json` (tracked benchmark snapshot).

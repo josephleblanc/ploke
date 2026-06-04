@@ -199,7 +199,7 @@ pub(crate) fn render_call_review_scan(
     let filter_id = ui.make_persistent_id("eval-protocol-call-review-filter");
     let mut filter = ui
         .data(|data| data.get_temp::<CallReviewFilter>(filter_id))
-        .unwrap_or(CallReviewFilter::All);
+        .unwrap_or_else(|| failure_first_call_review_filter(counts));
     let sort_id = ui.make_persistent_id("eval-protocol-call-review-sort");
     let mut sort = ui
         .data(|data| data.get_temp::<CallReviewSort>(sort_id))
@@ -358,6 +358,20 @@ pub(crate) fn render_call_review_scan(
                 });
         },
     );
+}
+
+fn failure_first_call_review_filter(counts: CallReviewScanCounts) -> CallReviewFilter {
+    if counts.failed_scope > 0 {
+        CallReviewFilter::FailedScope
+    } else if counts.redundant > 0 {
+        CallReviewFilter::Redundant
+    } else if counts.mixed > 0 {
+        CallReviewFilter::Mixed
+    } else if counts.low_confidence > 0 {
+        CallReviewFilter::LowConfidence
+    } else {
+        CallReviewFilter::All
+    }
 }
 
 fn call_review_scan_counts(

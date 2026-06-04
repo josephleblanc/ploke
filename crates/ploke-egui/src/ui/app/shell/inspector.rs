@@ -16,7 +16,7 @@ use super::{
     render_lineage_authority_for_inspector, render_parent_create_for_inspector,
     render_patches_for_inspector, render_roles_and_metrics, render_run_level_llm_trace_for_graph,
     render_run_level_patch_generation_for_graph, render_run_records_for_inspector,
-    render_source_refs_for_inspector,
+    render_selection_drilldown_for_inspector, render_source_refs_for_inspector,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -74,6 +74,7 @@ pub enum InspectorPanelSection {
     Technical,
     PatchDebug,
     CandidateComparison,
+    SelectionStory,
     LineageAuthority,
 }
 
@@ -94,6 +95,7 @@ impl InspectorPanelSection {
             Self::Technical => "Technical",
             Self::PatchDebug => "Patch Debug",
             Self::CandidateComparison => "Candidate Comparison",
+            Self::SelectionStory => "Selection Story",
             Self::LineageAuthority => "Lineage Authority",
         }
     }
@@ -262,6 +264,30 @@ pub(crate) fn render_right_inspector(
                                 cached_kv_id(ui, render_cache, "call review", "not_available");
                                 cached_kv_artifact_file(ui, render_cache, "artifact", artifact_key);
                             }
+                            ui.separator();
+                        }
+
+                        if let Some(crate::ui::view::GraphSelectionRef::Selection { entry_id }) =
+                            selection_ref
+                        {
+                            show_inspector_section_collapsing(
+                                ui,
+                                "Selection Story",
+                                InspectorPanelSection::SelectionStory,
+                                open_state
+                                    .open(InspectorPanelSection::SelectionStory)
+                                    .or(Some(true)),
+                                selection_ref,
+                                &mut actions,
+                                |ui| {
+                                    render_selection_drilldown_for_inspector(
+                                        ui,
+                                        graph,
+                                        entry_id,
+                                        render_cache,
+                                    );
+                                },
+                            );
                             ui.separator();
                         }
 

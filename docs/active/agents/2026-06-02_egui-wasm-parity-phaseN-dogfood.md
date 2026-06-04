@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-02  
 **Scope:** Manual dogfood after Trunk/WASM wiring (not a plan edit).  
-**Fixture (reference):** `crates/ploke-egui/benchmark-fixtures/standard-prototype1-graph-snapshot.json`
+**Fixture (reference):** `crates/ploke-egui/benchmark-fixtures/protocol-graph.json`
 
 ## Results (pass / fail)
 
@@ -18,7 +18,7 @@
 ## Follow-ups
 
 - Re-run step 5 from an environment with **cursor-ide-browser** (or manual browser) to confirm WASM init, egui canvas paint, and console errors after `TrunkApplicationStarted`.
-- Graph load (fixed 2026-06-02): Trunk `copy-dir` ships `benchmark-fixtures/`; startup auto-fetches `/benchmark-fixtures/standard-prototype1-graph-snapshot.json` when no `?graph=` is set. Working URL: `http://127.0.0.1:8080/?graph=/benchmark-fixtures/standard-prototype1-graph-snapshot.json`. File picker: left nav → **Load graph snapshot (.json)…**
+- Graph load: Trunk `copy-dir` ships `benchmark-fixtures/`; startup auto-fetches `/benchmark-fixtures/protocol-graph.json` when no `?graph=` is set. Working URL: `http://127.0.0.1:8080/` or `http://127.0.0.1:8080/?graph=/benchmark-fixtures/protocol-graph.json`. File picker: left nav → **Load graph snapshot (.json)…**
 
 ## Related
 

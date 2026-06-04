@@ -24,15 +24,17 @@ use crate::allocation::scope;
     feature = "dev",
     feature = "native-benchmark"
 ))]
-use crate::benchmark::benchmark_graph_snapshot_fixture_path;
+use crate::benchmark::{
+    BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkInspectorSection,
+    BenchmarkSelectionTarget, BenchmarkWriteResult, InspectorSectionPhase, InspectorSequenceStage,
+};
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "dev",
     feature = "native-benchmark"
 ))]
 use crate::benchmark::{
-    BenchmarkAction, BenchmarkActionReport, BenchmarkController, BenchmarkInspectorSection,
-    BenchmarkSelectionTarget, BenchmarkWriteResult, InspectorSectionPhase, InspectorSequenceStage,
+    benchmark_graph_snapshot_fixture_path, benchmark_trajectory_graph_snapshot_fixture_path,
 };
 use crate::bootstrap::GraphCatalog;
 #[cfg(not(target_arch = "wasm32"))]
@@ -316,7 +318,9 @@ impl OperatorApp {
         if let Some(theme) = eframe::get_value(storage, "ploke-egui-theme") {
             self.theme = theme;
         }
-        if crate::ui::dashboard::tiles::prefers_eval_protocol_pane(&self.graph) {
+        if crate::ui::dashboard::tiles::prefers_eval_protocol_pane(&self.graph)
+            || crate::ui::dashboard::tiles::prefers_trajectory_pane(&self.graph)
+        {
             self.dashboard_tree =
                 crate::ui::dashboard::tiles::create_default_tree_for_graph(&self.graph);
         }
@@ -367,7 +371,11 @@ impl OperatorApp {
                 render_tile_picker(ui, &mut self.dashboard_tree, &self.graph);
 
                 ui.separator();
-                render_graph_facts(ui, &self.graph);
+                shell::render_graph_facts_sidebar(
+                    ui,
+                    &self.graph,
+                    &mut self.inspector_render_cache,
+                );
                 if let Some(diagnostics) = self.view.diagnostics() {
                     ui.separator();
                     #[cfg(not(target_arch = "wasm32"))]
@@ -380,7 +388,11 @@ impl OperatorApp {
                         feature = "native-benchmark"
                     ))]
                     let diagnostics_start = Instant::now();
-                    render_diagnostics(ui, &diagnostics);
+                    shell::render_diagnostics_sidebar(
+                        ui,
+                        &diagnostics,
+                        &mut self.inspector_render_cache,
+                    );
                     #[cfg(all(
                         not(target_arch = "wasm32"),
                         feature = "dev",
@@ -1053,6 +1065,29 @@ impl OperatorApp {
                     .notes
                     .push("eval_protocol_surface=call_review_scan_only".to_owned());
             }
+            BenchmarkAction::FocusTrajectoryPane => {
+                self.dashboard_tree = crate::ui::dashboard::tiles::create_tree_trajectory_review();
+                report.notes.push("trajectory_pane=primary".to_owned());
+            }
+            BenchmarkAction::SelectTrajectoryGeneration => {
+                self.dashboard_tree = crate::ui::dashboard::tiles::create_tree_trajectory_review();
+                if let Some(entry_id) =
+                    crate::ui::app::shell::preferred_trajectory_entry_id(&self.graph)
+                {
+                    let reference = crate::ui::view::GraphSelectionRef::Selection { entry_id };
+                    if self.view.select_reference(&self.graph, &reference) {
+                        report
+                            .notes
+                            .push("trajectory_generation_selected=true".to_owned());
+                    } else {
+                        report
+                            .notes
+                            .push("trajectory_generation_selected=false".to_owned());
+                    }
+                } else {
+                    report.fallback = Some("no_trajectory_generations".to_owned());
+                }
+            }
             BenchmarkAction::SetMode(mode) => {
                 self.view.set_mode(mode);
                 report.notes.push(format!("mode={}", mode.as_str()));
@@ -1151,6 +1186,49 @@ impl OperatorApp {
                 | InspectorSectionPhase::IdleCollapsed
                 | InspectorSectionPhase::IdleAfterUnselect => {}
             },
+            BenchmarkAction::PrepareTrajectoryBenchmark { select_generation } => {
+                let load_start = Instant::now();
+                let fixture = benchmark_trajectory_graph_snapshot_fixture_path();
+                match std::fs::read(&fixture) {
+                    Ok(bytes) => match graph_from_snapshot_bytes(&bytes) {
+                        Ok(graph) => {
+                            self.replace_graph(graph);
+                            self.dashboard_tree =
+                                crate::ui::dashboard::tiles::create_tree_trajectory_review();
+                            report.notes.push(format!(
+                                "trajectory_fixture_load_ns={}",
+                                load_start.elapsed().as_nanos()
+                            ));
+                            report
+                                .notes
+                                .push(format!("trajectory_fixture={}", fixture.display()));
+                            if select_generation {
+                                if let Some(entry_id) =
+                                    crate::ui::app::shell::preferred_trajectory_entry_id(
+                                        &self.graph,
+                                    )
+                                {
+                                    let reference =
+                                        crate::ui::view::GraphSelectionRef::Selection { entry_id };
+                                    if self.view.select_reference(&self.graph, &reference) {
+                                        report
+                                            .notes
+                                            .push("trajectory_generation_selected=true".to_owned());
+                                    }
+                                } else {
+                                    report.fallback = Some("no_trajectory_generations".to_owned());
+                                }
+                            }
+                        }
+                        Err(error) => report
+                            .notes
+                            .push(format!("trajectory_fixture_replace_error={error}")),
+                    },
+                    Err(error) => report
+                        .notes
+                        .push(format!("trajectory_fixture_read_error={error}")),
+                }
+            }
             BenchmarkAction::ReplaceGraphFromSnapshotFixture => {
                 let load_start = Instant::now();
                 let fixture = benchmark_graph_snapshot_fixture_path();
@@ -1284,6 +1362,7 @@ fn selection_key(reference: &crate::ui::view::GraphSelectionRef) -> String {
     match reference {
         crate::ui::view::GraphSelectionRef::Artifact { key }
         | crate::ui::view::GraphSelectionRef::RunForestNode { key } => key.clone(),
+        crate::ui::view::GraphSelectionRef::Selection { entry_id } => entry_id.clone(),
     }
 }
 
@@ -1322,6 +1401,7 @@ fn render_tile_picker(
         let options = [
             Pane::Graph,
             Pane::EvalProtocol,
+            Pane::Trajectory,
             Pane::Inspector,
             Pane::ArtifactDistribution,
             Pane::RecentActivity,
@@ -1340,6 +1420,10 @@ fn render_tile_picker(
                     tree.root = Some(id);
                 }
             }
+        }
+
+        if ui.button("📈 Trajectory review").clicked() {
+            *tree = crate::ui::dashboard::tiles::create_tree_trajectory_review();
         }
 
         if ui.button("🔄 Reset Layout").clicked() {
@@ -1376,17 +1460,6 @@ fn render_mode_picker(ui: &mut egui::Ui, view: &mut GraphView) {
         }
     });
 }
-
-fn render_graph_facts(ui: &mut egui::Ui, graph: &Graph) {
-    ui.label(format!("History blocks: {}", graph.history.blocks.len()));
-    ui.label(format!("Candidates: {}", graph.candidates.candidates.len()));
-    ui.label(format!("Artifacts: {}", graph.artifacts.artifacts.len()));
-    ui.label(format!("Selections: {}", graph.selections.selections.len()));
-    ui.label(format!("Runtimes: {}", graph.runtimes.runtimes.len()));
-    ui.label(format!("Operations: {}", graph.operations.operations.len()));
-    ui.label(format!("Evidence: {}", graph.evidence.attachments.len()));
-}
-
 fn render_quick_filters(ui: &mut egui::Ui, view: &mut GraphView) {
     let ArtifactTreeFilters {
         hide_unconsidered_children,
@@ -1411,64 +1484,6 @@ fn graph_has_content(graph: &Graph) -> bool {
         > 0
 }
 
-#[cfg_attr(
-    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
-    tracing::instrument(skip_all, name = "diagnostics")
-)]
 pub(crate) fn render_diagnostics(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
-    ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
-    ui.label(format!("View nodes: {}", diagnostics.node_count));
-    ui.label(format!("View edges: {}", diagnostics.edge_count));
-    ui.label(format!(
-        "Components before anchors: {}",
-        diagnostics.connectivity.component_count_before_anchoring
-    ));
-    ui.label(format!(
-        "Hidden records: {}, hidden edges: {}, hidden evidence: {}, hidden operations: {}, unattached components: {}",
-        diagnostics.connectivity.hidden_record_count,
-        diagnostics.connectivity.hidden_edge_count,
-        diagnostics.connectivity.hidden_evidence_count,
-        diagnostics.connectivity.hidden_operation_count,
-        diagnostics.connectivity.hidden_unattached_component_count
-    ));
-    ui.label(format!(
-        "Synthetic anchors visible: {}",
-        diagnostics.connectivity.synthetic_anchors_visible
-    ));
-    ui.label(format!(
-        "Graph: {:.0} x {:.0}",
-        diagnostics.graph_size.x, diagnostics.graph_size.y
-    ));
-    ui.label(format!("Aspect: {:.2}", diagnostics.aspect_ratio));
-    ui.label(format!(
-        "Fit fill: {:.0}% x {:.0}%",
-        diagnostics.fitted_fill.x * 100.0,
-        diagnostics.fitted_fill.y * 100.0
-    ));
-    ui.label(format!(
-        "Edge labels: {}, label collisions: {}, edge intersections: {}, edge collisions: {}",
-        diagnostics.edge_labels.label_count,
-        diagnostics.edge_labels.collision_count,
-        diagnostics.edge_labels.edge_intersection_count,
-        diagnostics.edge_labels.edge_collision_count
-    ));
-    ui.label(format!(
-        "Candidate clutter: {}",
-        diagnostics
-            .readability
-            .edge_crossings_by_kind
-            .candidate_candidate
-    ));
-    ui.label(format!(
-        "Crossings: {}, artifact/artifact: {}, mixed: {}, long edges: {}, backtracking: {}, selected crossings: {}",
-        diagnostics.readability.edge_edge_crossings,
-        diagnostics
-            .readability
-            .edge_crossings_by_kind
-            .artifact_artifact,
-        diagnostics.readability.edge_crossings_by_kind.mixed,
-        diagnostics.readability.long_edge_count,
-        diagnostics.readability.backtracking_edge_count,
-        diagnostics.readability.selected_path_crossings
-    ));
+    shell::render_diagnostics_detail(ui, diagnostics);
 }

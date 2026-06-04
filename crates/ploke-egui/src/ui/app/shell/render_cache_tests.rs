@@ -204,6 +204,24 @@ fn text_size_summary_cache_reuses_stable_size_labels() {
 }
 
 #[test]
+fn trajectory_table_cache_reuses_stable_revision() {
+    use crate::ui::inspector::GraphRevision;
+
+    let graph = ploke_tree::Graph::default();
+    let mut cache = InspectorRenderCache::default();
+    let revision = GraphRevision::default();
+
+    let _first = cache.trajectory_table(&graph, revision);
+    assert_eq!(cache.trajectory_table_rebuilds(), 1);
+
+    let _second = cache.trajectory_table(&graph, revision);
+    assert_eq!(cache.trajectory_table_rebuilds(), 1);
+
+    let _third = cache.trajectory_table(&graph, revision.next());
+    assert_eq!(cache.trajectory_table_rebuilds(), 2);
+}
+
+#[test]
 fn run_llm_trace_header_labels_use_theme_override_paint() {
     use super::fields::{cached_label, cached_monospace_label};
 
@@ -233,7 +251,11 @@ fn run_llm_trace_header_labels_use_theme_override_paint() {
 
         ui.horizontal(|ui| {
             push(cached_label(ui, &mut cache, "manifest"));
-            push(cached_monospace_label(ui, &mut cache, "manifest:bench:alpha"));
+            push(cached_monospace_label(
+                ui,
+                &mut cache,
+                "manifest:bench:alpha",
+            ));
         });
         ui.horizontal(|ui| {
             push(cached_label(ui, &mut cache, "turn"));

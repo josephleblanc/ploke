@@ -50,6 +50,9 @@ pub const PARITY_BASELINE_DIR: &str = "docs/profiling/benchmarks/20260602-wasm-p
 pub const BENCHMARK_GRAPH_SNAPSHOT_FIXTURE: &str =
     "benchmark-fixtures/standard-prototype1-graph-snapshot.json";
 
+pub const BENCHMARK_TRAJECTORY_GRAPH_SNAPSHOT_FIXTURE: &str =
+    "benchmark-fixtures/trajectory-multi-gen.json";
+
 const FOCUSED_CALLSITE_SCOPES: &[&str] = &[
     allocation::scope::EFRAME_RUN_NATIVE,
     allocation::scope::SELECTION_INSPECTOR,
@@ -61,7 +64,9 @@ const FOCUSED_CALLSITE_SCOPES: &[&str] = &[
     allocation::scope::INSPECTOR_PATCH_GENERATION_RECORD,
     allocation::scope::INSPECTOR_RUN_RECORD_TOOL_STEPS,
     allocation::scope::CENTRAL_GRAPH_WIDGET_ADD,
-    allocation::scope::INSPECTOR_RUN_RECORD_TOOL_STEP,
+    allocation::scope::TRAJECTORY_ROWS_BUILD,
+    allocation::scope::TRAJECTORY_PANE,
+    allocation::scope::TRAJECTORY_SELECTION_DRILLDOWN,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +118,8 @@ pub enum BenchmarkScenario {
     GraphSnapshotReplaceCold,
     InspectorToolDecodeExpanded300,
     GraphCatalogIdle300,
+    TrajectoryLanding300,
+    TrajectoryGenerationSelect300,
 }
 
 impl BenchmarkScenario {
@@ -141,6 +148,8 @@ impl BenchmarkScenario {
             "graph_snapshot_replace_cold" => Ok(Self::GraphSnapshotReplaceCold),
             "inspector_tool_decode_expanded_300" => Ok(Self::InspectorToolDecodeExpanded300),
             "graph_catalog_idle_300" => Ok(Self::GraphCatalogIdle300),
+            "trajectory_landing_300" => Ok(Self::TrajectoryLanding300),
+            "trajectory_generation_select_300" => Ok(Self::TrajectoryGenerationSelect300),
             other => Err(format!("unknown benchmark scenario '{other}'")),
         }
     }
@@ -165,6 +174,8 @@ impl BenchmarkScenario {
             Self::GraphSnapshotReplaceCold,
             Self::InspectorToolDecodeExpanded300,
             Self::GraphCatalogIdle300,
+            Self::TrajectoryLanding300,
+            Self::TrajectoryGenerationSelect300,
         ]
     }
 
@@ -208,6 +219,8 @@ impl BenchmarkScenario {
             Self::GraphSnapshotReplaceCold => "graph_snapshot_replace_cold".to_owned(),
             Self::InspectorToolDecodeExpanded300 => "inspector_tool_decode_expanded_300".to_owned(),
             Self::GraphCatalogIdle300 => "graph_catalog_idle_300".to_owned(),
+            Self::TrajectoryLanding300 => "trajectory_landing_300".to_owned(),
+            Self::TrajectoryGenerationSelect300 => "trajectory_generation_select_300".to_owned(),
         }
     }
 
@@ -291,6 +304,8 @@ impl BenchmarkScenario {
                 reset_patch_cache: false,
             },
             Self::GraphCatalogIdle300 => BenchmarkAction::None,
+            Self::TrajectoryLanding300 => BenchmarkAction::FocusTrajectoryPane,
+            Self::TrajectoryGenerationSelect300 => BenchmarkAction::SelectTrajectoryGeneration,
         }
     }
 
@@ -381,6 +396,11 @@ pub enum BenchmarkAction {
     ToggleHideUnconsideredChildren,
     ReplaceGraphFromSnapshotFixture,
     SetGraphCatalogVisible,
+    FocusTrajectoryPane,
+    SelectTrajectoryGeneration,
+    PrepareTrajectoryBenchmark {
+        select_generation: bool,
+    },
 }
 
 impl BenchmarkAction {
@@ -413,6 +433,9 @@ impl BenchmarkAction {
             Self::ToggleHideUnconsideredChildren => "toggle_hide_unconsidered_children",
             Self::ReplaceGraphFromSnapshotFixture => "graph_snapshot_replace_cold",
             Self::SetGraphCatalogVisible => "graph_catalog_idle",
+            Self::FocusTrajectoryPane => "focus_trajectory_pane",
+            Self::SelectTrajectoryGeneration => "select_trajectory_generation",
+            Self::PrepareTrajectoryBenchmark { .. } => "prepare_trajectory_benchmark",
         }
     }
 }
@@ -1824,6 +1847,10 @@ pub fn parity_baseline_report_path() -> PathBuf {
 
 pub fn benchmark_graph_snapshot_fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BENCHMARK_GRAPH_SNAPSHOT_FIXTURE)
+}
+
+pub fn benchmark_trajectory_graph_snapshot_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BENCHMARK_TRAJECTORY_GRAPH_SNAPSHOT_FIXTURE)
 }
 
 pub fn load_benchmark_report(path: &Path) -> Result<BenchmarkReport, Box<dyn Error>> {

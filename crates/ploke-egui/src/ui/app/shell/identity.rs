@@ -4,11 +4,12 @@ use crate::ui::inspector::{
     ArtifactSourceSlot, IdentitySlot, InspectorSections, MetricsSlot, RoleBadgeSet, SourceRef,
     find_run_forest_node, phase_label, result_class_label, run_forest_node_identity,
 };
+use crate::ui::view::GraphViewDiagnostics;
 use eframe::egui;
 use ploke_tree::Graph;
 
 use super::fields::*;
-use super::{InspectorRenderCache, render_unavailable};
+use super::{InspectorRenderCache, render_unavailable, show_inspector_collapsing};
 
 /// archaeology:runtime-role
 /// proof:docs/active/archaeology/ploke-tree-graph/runtime-role.md
@@ -58,6 +59,9 @@ pub(crate) fn render_identity(
         Some(IdentitySlot::Artifact { sources }) => {
             render_artifact_identity(ui, graph, sources, render_cache)
         }
+        Some(IdentitySlot::Selection { entry_id }) => {
+            cached_kv_id(ui, render_cache, "selection entry", entry_id.as_str());
+        }
         None => kv(ui, "identity", "not_available"),
     }
 }
@@ -68,41 +72,53 @@ fn render_run_forest_identity(
     render_cache: &mut InspectorRenderCache,
 ) {
     let identity = run_forest_node_identity(node);
-    cached_kv_id(ui, render_cache, "run forest node", identity.node_key);
-    cached_kv_id(ui, render_cache, "candidate", identity.candidate_id);
-    cached_kv_id(
-        ui,
-        render_cache,
-        "source artifact",
-        identity.source_artifact,
-    );
-    if let Some(parent) = identity.parent_node {
-        cached_kv_id(ui, render_cache, "parent run forest node", parent);
-    }
-    // Artifact ids are still rendered as plain expandable ids here. The intended
-    // UI is a progressive-discovery "Artifact Ids" drilldown that shows compact
-    // prefix + short-hash forms first, expands to the full value on click, and
-    // keeps copy affordances available for debugging. See
-    // docs/active/archaeology/ploke-tree-graph/artifact-identity.md before
-    // refactoring this into shared interaction behavior.
-    if let Some(base) = identity.base_artifact {
-        cached_kv_id(ui, render_cache, "base artifact", base);
-    }
-    if let Some(derived) = identity.derived_artifact {
-        cached_kv_id(ui, render_cache, "derived artifact", derived);
-    }
-    if let Some(patch) = identity.patch {
-        cached_kv_id(ui, render_cache, "patch", patch);
-    }
-    cached_kv_id(ui, render_cache, "branch", identity.branch_id);
+    ui.horizontal_wrapped(|ui| {
+        cached_label(ui, render_cache, "phase");
+        cached_monospace_label(ui, render_cache, phase_label(identity.phase));
+        cached_label(ui, render_cache, "result");
+        cached_monospace_label(ui, render_cache, result_class_label(identity.result));
+    });
     cached_kv_path(ui, render_cache, "target", identity.target_relpath);
-    cached_kv_id(ui, render_cache, "phase", phase_label(identity.phase));
-    cached_kv_id(
+    cached_kv_id(ui, render_cache, "branch", identity.branch_id);
+
+    show_inspector_collapsing(
         ui,
-        render_cache,
-        "result",
-        result_class_label(identity.result),
+        egui::CollapsingHeader::new("Node identifiers").default_open(false),
+        |ui| {
+            cached_kv_id(ui, render_cache, "run forest node", identity.node_key);
+            cached_kv_id(ui, render_cache, "candidate", identity.candidate_id);
+            cached_kv_id(
+                ui,
+                render_cache,
+                "source artifact",
+                identity.source_artifact,
+            );
+            if let Some(parent) = identity.parent_node {
+                cached_kv_id(ui, render_cache, "parent run forest node", parent);
+            }
+        },
     );
+
+    let has_artifact_ids = identity.base_artifact.is_some()
+        || identity.derived_artifact.is_some()
+        || identity.patch.is_some();
+    if has_artifact_ids {
+        show_inspector_collapsing(
+            ui,
+            egui::CollapsingHeader::new("Artifact identifiers").default_open(false),
+            |ui| {
+                if let Some(base) = identity.base_artifact {
+                    cached_kv_id(ui, render_cache, "base artifact", base);
+                }
+                if let Some(derived) = identity.derived_artifact {
+                    cached_kv_id(ui, render_cache, "derived artifact", derived);
+                }
+                if let Some(patch) = identity.patch {
+                    cached_kv_id(ui, render_cache, "patch", patch);
+                }
+            },
+        );
+    }
 }
 
 /// archaeology:artifact-identity
@@ -218,55 +234,207 @@ pub(crate) fn render_lineage_authority_for_inspector(
         return;
     };
 
-    let mut rendered = false;
-    for block in slot.blocks(graph) {
-        rendered = true;
-        ui.separator();
-        cached_kv_id(ui, render_cache, "block hash", block.block_hash.0.as_str());
-        cached_kv_u64(ui, render_cache, "height", block.block_height);
-        cached_kv_id(ui, render_cache, "lineage", block.lineage_id.0.as_str());
-        cached_kv_id(
-            ui,
-            render_cache,
-            "active artifact",
-            block.active_artifact.as_str(),
-        );
-        cached_kv_id(
-            ui,
-            render_cache,
-            "successor artifact",
-            block.selected_successor.artifact.as_str(),
-        );
-        cached_kv_id(ui, render_cache, "policy", block.policy_ref.value.as_str());
-        cached_kv_id(
-            ui,
-            render_cache,
-            "opening authority",
-            opening_authority_label(&block.opening_authority),
-        );
-        cached_kv_id(
-            ui,
-            render_cache,
-            "immutable surface",
-            block.surface.immutable.root.hash.0.as_str(),
-        );
-        cached_kv_id(
-            ui,
-            render_cache,
-            "mutated surface",
-            block.surface.mutated.after.root.hash.0.as_str(),
-        );
-        cached_kv_id(
-            ui,
-            render_cache,
-            "ambient surface",
-            block.surface.ambient.after.root.hash.0.as_str(),
-        );
-        cached_kv_usize(ui, render_cache, "entries", block.entry_count);
-    }
-    if !rendered {
+    let blocks: Vec<_> = slot.blocks(graph).collect();
+    if blocks.is_empty() {
         kv(ui, "lineage authority", "not_available");
+        return;
     }
+
+    cached_kv_usize(ui, render_cache, "blocks", blocks.len());
+    for (block_index, block) in blocks.iter().enumerate() {
+        let mut height = itoa::Buffer::new();
+        let title = format!(
+            "block {} height {}",
+            block_index + 1,
+            height.format(block.block_height)
+        );
+        show_inspector_collapsing(
+            ui,
+            egui::CollapsingHeader::new(title)
+                .id_salt(("lineage-authority-block", block.block_hash.0.as_str()))
+                .default_open(block_index == 0),
+            |ui| {
+                cached_kv_id(ui, render_cache, "block hash", block.block_hash.0.as_str());
+                cached_kv_u64(ui, render_cache, "height", block.block_height);
+                cached_kv_id(ui, render_cache, "lineage", block.lineage_id.0.as_str());
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "active artifact",
+                    block.active_artifact.as_str(),
+                );
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "successor artifact",
+                    block.selected_successor.artifact.as_str(),
+                );
+                cached_kv_id(ui, render_cache, "policy", block.policy_ref.value.as_str());
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "opening authority",
+                    opening_authority_label(&block.opening_authority),
+                );
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "immutable surface",
+                    block.surface.immutable.root.hash.0.as_str(),
+                );
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "mutated surface",
+                    block.surface.mutated.after.root.hash.0.as_str(),
+                );
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "ambient surface",
+                    block.surface.ambient.after.root.hash.0.as_str(),
+                );
+                cached_kv_usize(ui, render_cache, "entries", block.entry_count);
+            },
+        );
+    }
+}
+
+/// Headline view diagnostics for the left sidebar; full breakdown is collapsed.
+pub(crate) fn render_diagnostics_sidebar(
+    ui: &mut egui::Ui,
+    diagnostics: &GraphViewDiagnostics,
+    render_cache: &mut InspectorRenderCache,
+) {
+    cached_kv_id(ui, render_cache, "mode", diagnostics.mode.as_str());
+    cached_kv_usize(ui, render_cache, "view nodes", diagnostics.node_count);
+    cached_kv_usize(ui, render_cache, "view edges", diagnostics.edge_count);
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "crossings",
+        diagnostics.readability.edge_edge_crossings,
+    );
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Graph diagnostics detail").default_open(false),
+        |ui| {
+            render_diagnostics_detail(ui, diagnostics);
+        },
+    );
+}
+
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), feature = "native-benchmark"),
+    tracing::instrument(skip_all, name = "diagnostics")
+)]
+pub(crate) fn render_diagnostics_detail(ui: &mut egui::Ui, diagnostics: &GraphViewDiagnostics) {
+    ui.label(format!("Mode: {}", diagnostics.mode.as_str()));
+    ui.label(format!("View nodes: {}", diagnostics.node_count));
+    ui.label(format!("View edges: {}", diagnostics.edge_count));
+    ui.label(format!(
+        "Components before anchors: {}",
+        diagnostics.connectivity.component_count_before_anchoring
+    ));
+    ui.label(format!(
+        "Hidden records: {}, hidden edges: {}, hidden evidence: {}, hidden operations: {}, unattached components: {}",
+        diagnostics.connectivity.hidden_record_count,
+        diagnostics.connectivity.hidden_edge_count,
+        diagnostics.connectivity.hidden_evidence_count,
+        diagnostics.connectivity.hidden_operation_count,
+        diagnostics.connectivity.hidden_unattached_component_count
+    ));
+    ui.label(format!(
+        "Synthetic anchors visible: {}",
+        diagnostics.connectivity.synthetic_anchors_visible
+    ));
+    ui.label(format!(
+        "Graph: {:.0} x {:.0}",
+        diagnostics.graph_size.x, diagnostics.graph_size.y
+    ));
+    ui.label(format!("Aspect: {:.2}", diagnostics.aspect_ratio));
+    ui.label(format!(
+        "Fit fill: {:.0}% x {:.0}%",
+        diagnostics.fitted_fill.x * 100.0,
+        diagnostics.fitted_fill.y * 100.0
+    ));
+    ui.label(format!(
+        "Edge labels: {}, label collisions: {}, edge intersections: {}, edge collisions: {}",
+        diagnostics.edge_labels.label_count,
+        diagnostics.edge_labels.collision_count,
+        diagnostics.edge_labels.edge_intersection_count,
+        diagnostics.edge_labels.edge_collision_count
+    ));
+    ui.label(format!(
+        "Candidate clutter: {}",
+        diagnostics
+            .readability
+            .edge_crossings_by_kind
+            .candidate_candidate
+    ));
+    ui.label(format!(
+        "Crossings: {}, artifact/artifact: {}, mixed: {}, long edges: {}, backtracking: {}, selected crossings: {}",
+        diagnostics.readability.edge_edge_crossings,
+        diagnostics
+            .readability
+            .edge_crossings_by_kind
+            .artifact_artifact,
+        diagnostics.readability.edge_crossings_by_kind.mixed,
+        diagnostics.readability.long_edge_count,
+        diagnostics.readability.backtracking_edge_count,
+        diagnostics.readability.selected_path_crossings
+    ));
+}
+
+/// Headline graph counts for the left sidebar; full breakdown is collapsed.
+pub(crate) fn render_graph_facts_sidebar(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    render_cache: &mut InspectorRenderCache,
+) {
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "artifacts",
+        graph.artifacts.artifacts.len(),
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "selections",
+        graph.selections.selections.len(),
+    );
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Graph entity counts").default_open(false),
+        |ui| {
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "history blocks",
+                graph.history.blocks.len(),
+            );
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "candidates",
+                graph.candidates.candidates.len(),
+            );
+            cached_kv_usize(ui, render_cache, "runtimes", graph.runtimes.runtimes.len());
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "operations",
+                graph.operations.operations.len(),
+            );
+            cached_kv_usize(
+                ui,
+                render_cache,
+                "evidence",
+                graph.evidence.attachments.len(),
+            );
+        },
+    );
 }
 
 fn opening_authority_label(authority: &ploke_tree::graph::OpeningAuthorityNode) -> &'static str {
@@ -455,6 +623,10 @@ pub(crate) fn render_artifact_ids_for_inspector(
             )
             .entered();
             render_artifact_ids(ui, graph, sources, render_cache);
+        }
+        Some(IdentitySlot::Selection { entry_id }) => {
+            kv(ui, "artifact ids", "not_applicable");
+            let _ = entry_id;
         }
         None => kv(ui, "artifact ids", "not_available"),
     }

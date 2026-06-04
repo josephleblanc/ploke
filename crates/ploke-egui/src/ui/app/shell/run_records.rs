@@ -348,6 +348,53 @@ fn render_run_record_turn(
     turn: RunRecordTurnInspection<'_>,
 ) {
     ui.separator();
+    render_run_record_turn_summary_card(ui, render_cache, turn);
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Turn details").default_open(false),
+        |ui| {
+            render_run_record_turn_details(ui, render_cache, turn);
+        },
+    );
+    render_run_record_agent_turn_artifact(ui, render_cache, turn);
+    render_run_record_tool_steps(ui, render_cache, turn.turn.tool_calls.as_slice());
+}
+
+fn render_run_record_turn_summary_card(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: RunRecordTurnInspection<'_>,
+) {
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                cached_label(ui, render_cache, "turn");
+                let mut turn_number = itoa::Buffer::new();
+                cached_monospace_label(ui, render_cache, turn_number.format(turn.turn.turn_number));
+                cached_label(ui, render_cache, "outcome");
+                cached_monospace_label(ui, render_cache, turn_outcome_label(&turn.turn.outcome));
+                cached_label(ui, render_cache, "tool steps");
+                let mut tool_steps = itoa::Buffer::new();
+                cached_monospace_label(
+                    ui,
+                    render_cache,
+                    tool_steps.format(turn.turn.tool_calls.len()),
+                );
+                if let Some(count) = turn_outcome_tool_count(&turn.turn.outcome) {
+                    cached_label(ui, render_cache, "outcome tools");
+                    let mut outcome_tools = itoa::Buffer::new();
+                    cached_monospace_label(ui, render_cache, outcome_tools.format(count));
+                }
+            });
+        });
+}
+
+fn render_run_record_turn_details(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    turn: RunRecordTurnInspection<'_>,
+) {
     cached_kv_id(
         ui,
         render_cache,
@@ -371,16 +418,6 @@ fn render_run_record_turn(
     }
     if let Some(provider) = turn.record.metadata.agent.provider.as_deref() {
         cached_kv_id(ui, render_cache, "provider", provider);
-    }
-    cached_kv_usize(ui, render_cache, "turn", turn.turn.turn_number as usize);
-    cached_kv_id(
-        ui,
-        render_cache,
-        "outcome",
-        turn_outcome_label(&turn.turn.outcome),
-    );
-    if let Some(count) = turn_outcome_tool_count(&turn.turn.outcome) {
-        cached_kv_usize(ui, render_cache, "outcome tools", count);
     }
     if let Some(message) = turn_outcome_error(&turn.turn.outcome) {
         cached_kv_text(ui, render_cache, "outcome error", message);
@@ -413,8 +450,6 @@ fn render_run_record_turn(
     } else {
         cached_kv_id(ui, render_cache, "response", "missing");
     }
-    render_run_record_agent_turn_artifact(ui, render_cache, turn);
-    render_run_record_tool_steps(ui, render_cache, turn.turn.tool_calls.as_slice());
 }
 
 pub(super) fn render_token_usage(
@@ -501,9 +536,37 @@ pub(super) fn render_run_record_tool_steps(
         return;
     }
 
-    cached_kv_usize(ui, render_cache, "tool steps", tools.len());
+    let mut failed = Vec::new();
+    let mut succeeded = Vec::new();
     for (index, tool) in tools.iter().enumerate() {
-        render_run_record_tool_step(ui, render_cache, index, tool);
+        if matches!(
+            tool.result,
+            ploke_records::run_record::ToolResult::Failed(_)
+        ) {
+            failed.push((index, tool));
+        } else {
+            succeeded.push((index, tool));
+        }
+    }
+
+    cached_kv_usize(ui, render_cache, "tool steps", tools.len());
+    cached_kv_usize(ui, render_cache, "failed", failed.len());
+
+    for (index, tool) in failed {
+        render_run_record_tool_step(ui, render_cache, index, tool, true);
+    }
+
+    if !succeeded.is_empty() {
+        show_inspector_collapsing(
+            ui,
+            egui::CollapsingHeader::new("Successful tool steps").default_open(false),
+            |ui| {
+                cached_kv_usize(ui, render_cache, "successful", succeeded.len());
+                for (index, tool) in succeeded {
+                    render_run_record_tool_step(ui, render_cache, index, tool, false);
+                }
+            },
+        );
     }
 }
 
@@ -516,16 +579,21 @@ fn render_run_record_tool_step(
     render_cache: &mut InspectorRenderCache,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
+    default_open: bool,
 ) {
     let call_id = tool.request.call_id.as_str();
     let header_id = ui.make_persistent_id(("run-record-tool-step", index, call_id));
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
-        .show_header(ui, |ui| {
-            render_run_record_tool_step_header(ui, render_cache, index, tool);
-        })
-        .body(|ui| {
-            render_run_record_tool_step_details(ui, render_cache, index, tool);
-        });
+    egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        header_id,
+        default_open,
+    )
+    .show_header(ui, |ui| {
+        render_run_record_tool_step_header(ui, render_cache, index, tool);
+    })
+    .body(|ui| {
+        render_run_record_tool_step_details(ui, render_cache, index, tool);
+    });
 }
 
 fn render_run_record_tool_step_header(

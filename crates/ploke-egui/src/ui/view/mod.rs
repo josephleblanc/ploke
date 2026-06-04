@@ -41,6 +41,7 @@ pub struct GraphView {
     diagnostics: Option<GraphViewDiagnostics>,
     mode: GraphViewMode,
     artifact_tree_filters: ArtifactTreeFilters,
+    external_selection: Option<GraphSelectionDetail>,
 }
 
 impl Default for GraphView {
@@ -62,6 +63,7 @@ impl Default for GraphView {
             diagnostics: None,
             mode: GraphViewMode::ArtifactTree,
             artifact_tree_filters: ArtifactTreeFilters::default(),
+            external_selection: None,
         }
     }
 }
@@ -95,19 +97,32 @@ impl GraphView {
 
     pub fn selected_node_detail(&mut self, graph: &DomainGraph) -> Option<GraphSelectionDetail> {
         self.sync_projection(graph);
-        self.cache.selected_node_detail()
+        self.external_selection
+            .clone()
+            .or_else(|| self.cache.selected_node_detail())
     }
 
     pub fn selected_reference(&mut self, graph: &DomainGraph) -> Option<&GraphSelectionRef> {
         self.sync_projection(graph);
+        if let Some(detail) = &self.external_selection {
+            return Some(&detail.reference);
+        }
         self.cache.selected_reference()
     }
 
-    pub fn selected_label(&self) -> Option<&str> {
+    pub fn selected_label(&mut self, graph: &DomainGraph) -> Option<&str> {
+        self.sync_projection(graph);
+        if let Some(detail) = &self.external_selection {
+            return Some(detail.label.as_str());
+        }
         self.cache.selected_label()
     }
 
-    pub fn selected_kind(&self) -> Option<&'static str> {
+    pub fn selected_kind(&mut self, graph: &DomainGraph) -> Option<&'static str> {
+        self.sync_projection(graph);
+        if let Some(detail) = &self.external_selection {
+            return Some(selection_kind(&detail.reference));
+        }
         self.cache.selected_kind()
     }
 
@@ -116,16 +131,41 @@ impl GraphView {
         graph: &DomainGraph,
     ) -> Option<(&GraphSelectionRef, &str, &'static str)> {
         self.sync_projection(graph);
+        if let Some(detail) = &self.external_selection {
+            return Some((
+                &detail.reference,
+                detail.label.as_str(),
+                selection_kind(&detail.reference),
+            ));
+        }
         self.cache.selected_node()
+    }
+
+    pub fn set_external_selection(&mut self, graph: &DomainGraph, detail: GraphSelectionDetail) {
+        self.sync_projection(graph);
+        self.cache.clear_selection();
+        self.external_selection = Some(detail);
     }
 
     pub fn select_reference(&mut self, graph: &DomainGraph, reference: &GraphSelectionRef) -> bool {
         self.sync_projection(graph);
+        if matches!(reference, GraphSelectionRef::Selection { .. }) {
+            self.cache.clear_selection();
+            if let Some(detail) =
+                crate::ui::app::shell::selection_detail_for_reference(graph, reference)
+            {
+                self.external_selection = Some(detail);
+                return true;
+            }
+            return false;
+        }
+        self.external_selection = None;
         self.cache.select_reference(reference)
     }
 
     pub fn clear_selection(&mut self, graph: &DomainGraph) {
         self.sync_projection(graph);
+        self.external_selection = None;
         self.cache.clear_selection();
     }
 
@@ -302,8 +342,25 @@ pub struct GraphSelectionDetail {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphSelectionRef {
-    Artifact { key: String },
-    RunForestNode { key: String },
+    Artifact {
+        key: String,
+    },
+    RunForestNode {
+        key: String,
+    },
+    /// archaeology:selection-protocol-evidence
+    /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
+    Selection {
+        entry_id: String,
+    },
+}
+
+fn selection_kind(reference: &GraphSelectionRef) -> &'static str {
+    match reference {
+        GraphSelectionRef::Artifact { .. } => "artifact",
+        GraphSelectionRef::RunForestNode { .. } => "run-forest-node",
+        GraphSelectionRef::Selection { .. } => "selection",
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

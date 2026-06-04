@@ -15,6 +15,7 @@ pub enum Pane {
     Graph,
     #[serde(alias = "RunReview")]
     EvalProtocol,
+    Trajectory,
     Inspector,
     PinnedInspector(GraphSelectionRef),
     InspectorSection(GraphSelectionRef, shell::InspectorPanelSection),
@@ -29,6 +30,7 @@ impl Pane {
         match self {
             Self::Graph => "🌐 Graph".to_owned(),
             Self::EvalProtocol => "Eval & Protocol".to_owned(),
+            Self::Trajectory => "📈 Trajectory".to_owned(),
             Self::Inspector => "🔍 Inspector".to_owned(),
             Self::PinnedInspector(_) => "📌 Inspector".to_owned(),
             Self::InspectorSection(_, section) => format!("📌 {}", section.title()),
@@ -135,6 +137,30 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         });
                 });
             }
+            Pane::Trajectory => {
+                let viewport_height = ui.available_height();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 8,
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                shell::render_trajectory_pane(
+                                    ui,
+                                    self.graph,
+                                    self.view,
+                                    self.graph_revision,
+                                    self.inspector_render_cache,
+                                );
+                                shell::add_inspector_scroll_end_padding(ui, viewport_height);
+                            });
+                    });
+            }
             Pane::Inspector => {
                 ui.horizontal(|ui| {
                     if let Some(detail) = self.view.selected_node_detail(self.graph) {
@@ -217,6 +243,9 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         _ => (Some("artifact"), None),
                     },
                     crate::ui::inspector::SelectionInspector::Unresolved(_) => (None, None),
+                    crate::ui::inspector::SelectionInspector::Selection(decision) => {
+                        (Some("selection"), Some(decision.selection.entry_id.0.as_str()))
+                    }
                 };
 
                 shell::render_right_inspector(
@@ -404,6 +433,20 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                                                 self.inspector_render_cache,
                                             );
                                         }
+                                        shell::InspectorPanelSection::SelectionStory => {
+                                            if let GraphSelectionRef::Selection { entry_id } =
+                                                reference
+                                            {
+                                                shell::render_selection_drilldown_for_inspector(
+                                                    ui,
+                                                    self.graph,
+                                                    entry_id,
+                                                    self.inspector_render_cache,
+                                                );
+                                            } else {
+                                                ui.label("Selection not available.");
+                                            }
+                                        }
                                         shell::InspectorPanelSection::LineageAuthority => {
                                             shell::render_lineage_authority_for_inspector(
                                                 ui,
@@ -527,7 +570,14 @@ pub fn create_default_tree() -> egui_tiles::Tree<Pane> {
     create_tree_with_primary_pane(Pane::Graph)
 }
 
+pub fn prefers_trajectory_pane(graph: &Graph) -> bool {
+    !graph.trajectory_generations().is_empty()
+}
+
 pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
+    if prefers_trajectory_pane(graph) {
+        return create_tree_trajectory_review();
+    }
     let primary = if prefers_eval_protocol_pane(graph) {
         Pane::EvalProtocol
     } else {
@@ -538,6 +588,10 @@ pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
 
 pub fn prefers_eval_protocol_pane(graph: &Graph) -> bool {
     graph.history.blocks.is_empty() && graph.eval_protocol_evidence().is_available()
+}
+
+pub fn create_tree_trajectory_review() -> egui_tiles::Tree<Pane> {
+    create_tree_with_primary_pane(Pane::Trajectory)
 }
 
 pub(crate) fn create_tree_with_primary_pane(primary: Pane) -> egui_tiles::Tree<Pane> {

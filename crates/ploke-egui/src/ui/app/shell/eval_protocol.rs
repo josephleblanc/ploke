@@ -27,304 +27,427 @@ pub(crate) fn render_eval_protocol_for_graph(
         return;
     }
 
-    let availability = dashboard.availability();
-    cached_kv_text(
-        ui,
-        render_cache,
-        "closure evidence",
-        evidence_state_label(availability.closure),
-    );
-    cached_kv_text(
-        ui,
-        render_cache,
-        "run record evidence",
-        evidence_state_label(availability.run_records),
-    );
-    cached_kv_text(
-        ui,
-        render_cache,
-        "protocol evidence",
-        evidence_state_label(availability.protocol_artifacts),
-    );
+    render_eval_protocol_dashboard_header(ui, render_cache, &dashboard);
+    render_eval_protocol_visual_summary(ui, render_cache, dashboard.visual_summary());
 
-    if let Some(closure) = dashboard.closure() {
-        cached_kv_path(
+    if dashboard.protocol_artifacts().is_some() {
+        render_call_review_scan(
             ui,
             render_cache,
-            "closure state",
-            closure.source_path.to_str().unwrap_or("non_utf8_path"),
+            dashboard.protocol_artifacts().expect("checked"),
         );
-        cached_kv_id(
-            ui,
-            render_cache,
-            "campaign",
-            closure.state.campaign_id.as_str(),
-        );
-        cached_kv_text(
-            ui,
-            render_cache,
-            "registry",
-            closure_status_label(&closure.state.registry.status).as_str(),
-        );
-        cached_kv_text(
-            ui,
-            render_cache,
-            "eval",
-            closure_status_label(&closure.state.eval.status).as_str(),
-        );
-        cached_kv_text(
-            ui,
-            render_cache,
-            "protocol",
-            closure_status_label(&closure.state.protocol.status).as_str(),
-        );
-        if let Some(model) = closure.state.config.model_id.as_deref() {
-            cached_kv_id(ui, render_cache, "model", model);
-        }
-        if let Some(provider) = closure.state.config.provider_slug.as_deref() {
-            cached_kv_id(ui, render_cache, "provider", provider);
-        }
-        cached_kv_usize(ui, render_cache, "instances", closure.state.instances.len());
-
-        for instance in closure.state.instances.iter().take(3) {
-            ui.separator();
-            cached_kv_id(ui, render_cache, "instance", instance.instance_id.as_str());
-            cached_kv_text(
-                ui,
-                render_cache,
-                "instance eval",
-                closure_status_label(&instance.eval_status).as_str(),
-            );
-            cached_kv_text(
-                ui,
-                render_cache,
-                "instance protocol",
-                closure_status_label(&instance.protocol_status).as_str(),
-            );
-            if let Some(counts) = instance.protocol_counts.as_ref() {
-                cached_kv_usize(ui, render_cache, "reviewed calls", counts.reviewed_calls);
-                cached_kv_usize(ui, render_cache, "total calls", counts.total_calls);
-                cached_kv_usize(ui, render_cache, "usable segments", counts.usable_segments);
-                cached_kv_usize(ui, render_cache, "total segments", counts.total_segments);
-            }
-        }
-        if closure.state.instances.len() > 3 {
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "more instances",
-                closure.state.instances.len() - 3,
-            );
-        }
     }
 
-    if let Some(run_records) = dashboard.run_records() {
-        ui.separator();
-        ui.label(egui::RichText::new("Eval Run Records").strong());
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "record files",
-            dashboard.run_records_file_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "records",
-            dashboard.run_records_parsed_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "branch refs",
-            dashboard.run_records_branch_ref_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "turns",
-            dashboard.run_records_total_turn_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "tool calls",
-            dashboard.run_records_total_tool_call_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "failed tool calls",
-            dashboard.run_records_failed_tool_call_count(),
-        );
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Closure evidence").default_open(false),
+        |ui| {
+            render_eval_protocol_closure_detail(ui, render_cache, &dashboard);
+        },
+    );
 
-        let patch = dashboard.eval_patch_counts();
-        cached_kv_usize(ui, render_cache, "patch phases", patch.patch_phase_count);
-        cached_kv_usize(
+    if dashboard.run_records().is_some() {
+        show_inspector_collapsing(
             ui,
-            render_cache,
-            "empty submissions",
-            patch.empty_submission_count,
+            egui::CollapsingHeader::new("Eval run records").default_open(false),
+            |ui| {
+                render_eval_protocol_run_records_detail(ui, render_cache, &dashboard);
+            },
         );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "nonempty submissions",
-            patch.nonempty_submission_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "edit proposals",
-            patch.edit_proposal_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "create proposals",
-            patch.create_proposal_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "expected file changes",
-            patch.expected_file_change_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "applied patch artifacts",
-            patch.applied_patch_artifact_count,
-        );
-        render_patch_projection_counts(ui, render_cache, &patch.patch_projection);
-
-        for (record_key, record) in run_records.index.iter().take(2) {
-            ui.separator();
-            cached_kv_path(ui, render_cache, "record", record_key.as_str());
-            cached_kv_id(ui, render_cache, "manifest", record.manifest_id.as_str());
-            cached_kv_id(
-                ui,
-                render_cache,
-                "instance",
-                record.metadata.benchmark.instance_id.as_str(),
-            );
-            if let Some(model) = record.metadata.agent.model_id.as_deref() {
-                cached_kv_id(ui, render_cache, "record model", model);
-            }
-            if let Some(provider) = record.metadata.agent.provider.as_deref() {
-                cached_kv_id(ui, render_cache, "record provider", provider);
-            }
-            if let Some(timing) = record.timing.as_ref() {
-                cached_kv_text(
-                    ui,
-                    render_cache,
-                    "wall clock",
-                    format!("{:.3}s", timing.total_wall_clock_secs).as_str(),
-                );
-                cached_kv_optional_f64(
-                    ui,
-                    render_cache,
-                    "agent clock",
-                    timing.agent_wall_clock_secs,
-                );
-            }
-            if let Some(packaging) = record.phases.packaging.as_ref() {
-                cached_kv_text(
-                    ui,
-                    render_cache,
-                    "submission",
-                    submission_artifact_state_label(packaging.submission_artifact_state),
-                );
-                cached_kv_text(
-                    ui,
-                    render_cache,
-                    "projection",
-                    patch_projection_check_state_label(packaging.patch_projection_check_state),
-                );
-            }
-        }
-        if run_records.index.len() > 2 {
-            cached_kv_usize(
-                ui,
-                render_cache,
-                "more records",
-                run_records.index.len() - 2,
-            );
-        }
     }
 
     if dashboard.protocol_artifacts().is_some() {
-        ui.separator();
-        ui.label(egui::RichText::new("Protocol").strong());
-        cached_kv_optional_usize(
+        show_inspector_collapsing(
             ui,
-            render_cache,
-            "artifact files",
-            dashboard.protocol_artifacts_file_count(),
+            egui::CollapsingHeader::new("Protocol artifacts").default_open(false),
+            |ui| {
+                render_eval_protocol_protocol_detail(ui, render_cache, &dashboard);
+            },
         );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "artifacts",
-            dashboard.protocol_artifacts_parsed_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "intent segments",
-            dashboard.protocol_artifacts_intent_segmentation_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "call reviews",
-            dashboard.protocol_artifacts_review_count(),
-        );
-        cached_kv_optional_usize(
-            ui,
-            render_cache,
-            "segment reviews",
-            dashboard.protocol_artifacts_segment_review_count(),
-        );
-
-        let stats = dashboard.protocol_aggregate_counts();
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "issue detections",
-            stats.issue_detection_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "issue cases",
-            stats.issue_detection_case_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "interventions",
-            stats.intervention_candidate_count,
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "intervention applies",
-            stats.intervention_apply_count,
-        );
-
-        let review_stats = dashboard.protocol_review_stats();
-        render_count_map(ui, render_cache, "overall", &review_stats.overall);
-        render_count_map(ui, render_cache, "redundancy", &review_stats.redundancy);
-        render_count_map(
-            ui,
-            render_cache,
-            "recoverability",
-            &review_stats.recoverability,
-        );
-        render_eval_protocol_visual_summary(ui, render_cache, dashboard.visual_summary());
-        render_protocol_artifact_drilldowns(ui, render_cache, &dashboard);
     }
+}
+
+fn render_eval_protocol_dashboard_header(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dashboard: &EvalProtocolDashboard<'_>,
+) {
+    ui.label(egui::RichText::new("Run dashboard").strong());
+    let availability = dashboard.availability();
+    let summary = dashboard.visual_summary();
+
+    egui::Grid::new("eval-protocol-dashboard-header")
+        .num_columns(2)
+        .spacing([12.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            cached_label(ui, render_cache, "closure evidence");
+            cached_monospace_label(ui, render_cache, evidence_state_label(availability.closure));
+            ui.end_row();
+            cached_label(ui, render_cache, "run records");
+            cached_monospace_label(
+                ui,
+                render_cache,
+                evidence_state_label(availability.run_records),
+            );
+            ui.end_row();
+            cached_label(ui, render_cache, "protocol evidence");
+            cached_monospace_label(
+                ui,
+                render_cache,
+                evidence_state_label(availability.protocol_artifacts),
+            );
+            ui.end_row();
+
+            if let Some(closure) = dashboard.closure() {
+                cached_label(ui, render_cache, "registry");
+                cached_monospace_label(
+                    ui,
+                    render_cache,
+                    closure_status_label(&closure.state.registry.status).as_str(),
+                );
+                ui.end_row();
+                cached_label(ui, render_cache, "eval");
+                cached_monospace_label(
+                    ui,
+                    render_cache,
+                    closure_status_label(&closure.state.eval.status).as_str(),
+                );
+                ui.end_row();
+                cached_label(ui, render_cache, "protocol");
+                cached_monospace_label(
+                    ui,
+                    render_cache,
+                    closure_status_label(&closure.state.protocol.status).as_str(),
+                );
+                ui.end_row();
+                cached_label(ui, render_cache, "instances");
+                let mut instances = itoa::Buffer::new();
+                cached_monospace_label(
+                    ui,
+                    render_cache,
+                    instances.format(closure.state.instances.len()),
+                );
+                ui.end_row();
+            }
+
+            cached_label(ui, render_cache, "reviewed calls");
+            ui.horizontal(|ui| {
+                let mut reviewed = itoa::Buffer::new();
+                let mut total_calls = itoa::Buffer::new();
+                cached_monospace_label(ui, render_cache, reviewed.format(summary.reviewed_calls));
+                cached_monospace_label(ui, render_cache, "/");
+                cached_monospace_label(ui, render_cache, total_calls.format(summary.total_calls));
+            });
+            ui.end_row();
+
+            cached_label(ui, render_cache, "failed tool calls");
+            let mut failed = itoa::Buffer::new();
+            cached_monospace_label(ui, render_cache, failed.format(summary.failed_tool_calls));
+            ui.end_row();
+
+            cached_label(ui, render_cache, "missing call reviews");
+            let mut missing = itoa::Buffer::new();
+            cached_monospace_label(
+                ui,
+                render_cache,
+                missing.format(summary.missing_call_reviews()),
+            );
+            ui.end_row();
+
+            let patch = summary.patch;
+            cached_label(ui, render_cache, "applied patches");
+            let mut applied = itoa::Buffer::new();
+            cached_monospace_label(
+                ui,
+                render_cache,
+                applied.format(patch.applied_patch_artifact_count),
+            );
+            ui.end_row();
+        });
+    ui.separator();
+}
+
+fn render_eval_protocol_closure_detail(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dashboard: &EvalProtocolDashboard<'_>,
+) {
+    let Some(closure) = dashboard.closure() else {
+        cached_kv_text(ui, render_cache, "closure", "not_available");
+        return;
+    };
+
+    cached_kv_path(
+        ui,
+        render_cache,
+        "closure state",
+        closure.source_path.to_str().unwrap_or("non_utf8_path"),
+    );
+    cached_kv_id(
+        ui,
+        render_cache,
+        "campaign",
+        closure.state.campaign_id.as_str(),
+    );
+    if let Some(model) = closure.state.config.model_id.as_deref() {
+        cached_kv_id(ui, render_cache, "model", model);
+    }
+    if let Some(provider) = closure.state.config.provider_slug.as_deref() {
+        cached_kv_id(ui, render_cache, "provider", provider);
+    }
+
+    for instance in closure.state.instances.iter().take(3) {
+        ui.separator();
+        cached_kv_id(ui, render_cache, "instance", instance.instance_id.as_str());
+        cached_kv_text(
+            ui,
+            render_cache,
+            "instance eval",
+            closure_status_label(&instance.eval_status).as_str(),
+        );
+        cached_kv_text(
+            ui,
+            render_cache,
+            "instance protocol",
+            closure_status_label(&instance.protocol_status).as_str(),
+        );
+        if let Some(counts) = instance.protocol_counts.as_ref() {
+            cached_kv_usize(ui, render_cache, "reviewed calls", counts.reviewed_calls);
+            cached_kv_usize(ui, render_cache, "total calls", counts.total_calls);
+            cached_kv_usize(ui, render_cache, "usable segments", counts.usable_segments);
+            cached_kv_usize(ui, render_cache, "total segments", counts.total_segments);
+        }
+    }
+    if closure.state.instances.len() > 3 {
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "more instances",
+            closure.state.instances.len() - 3,
+        );
+    }
+}
+
+fn render_eval_protocol_run_records_detail(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dashboard: &EvalProtocolDashboard<'_>,
+) {
+    let Some(run_records) = dashboard.run_records() else {
+        cached_kv_text(ui, render_cache, "run records", "not_available");
+        return;
+    };
+
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "record files",
+        dashboard.run_records_file_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "records",
+        dashboard.run_records_parsed_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "branch refs",
+        dashboard.run_records_branch_ref_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "turns",
+        dashboard.run_records_total_turn_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "tool calls",
+        dashboard.run_records_total_tool_call_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "failed tool calls",
+        dashboard.run_records_failed_tool_call_count(),
+    );
+
+    let patch = dashboard.eval_patch_counts();
+    cached_kv_usize(ui, render_cache, "patch phases", patch.patch_phase_count);
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "empty submissions",
+        patch.empty_submission_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "nonempty submissions",
+        patch.nonempty_submission_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "edit proposals",
+        patch.edit_proposal_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "create proposals",
+        patch.create_proposal_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "expected file changes",
+        patch.expected_file_change_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "applied patch artifacts",
+        patch.applied_patch_artifact_count,
+    );
+    render_patch_projection_counts(ui, render_cache, &patch.patch_projection);
+
+    for (record_key, record) in run_records.index.iter().take(2) {
+        ui.separator();
+        cached_kv_path(ui, render_cache, "record", record_key.as_str());
+        cached_kv_id(ui, render_cache, "manifest", record.manifest_id.as_str());
+        cached_kv_id(
+            ui,
+            render_cache,
+            "instance",
+            record.metadata.benchmark.instance_id.as_str(),
+        );
+        if let Some(model) = record.metadata.agent.model_id.as_deref() {
+            cached_kv_id(ui, render_cache, "record model", model);
+        }
+        if let Some(provider) = record.metadata.agent.provider.as_deref() {
+            cached_kv_id(ui, render_cache, "record provider", provider);
+        }
+        if let Some(timing) = record.timing.as_ref() {
+            cached_kv_text(
+                ui,
+                render_cache,
+                "wall clock",
+                format!("{:.3}s", timing.total_wall_clock_secs).as_str(),
+            );
+            cached_kv_optional_f64(
+                ui,
+                render_cache,
+                "agent clock",
+                timing.agent_wall_clock_secs,
+            );
+        }
+        if let Some(packaging) = record.phases.packaging.as_ref() {
+            cached_kv_text(
+                ui,
+                render_cache,
+                "submission",
+                submission_artifact_state_label(packaging.submission_artifact_state),
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "projection",
+                patch_projection_check_state_label(packaging.patch_projection_check_state),
+            );
+        }
+    }
+    if run_records.index.len() > 2 {
+        cached_kv_usize(
+            ui,
+            render_cache,
+            "more records",
+            run_records.index.len() - 2,
+        );
+    }
+}
+
+fn render_eval_protocol_protocol_detail(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dashboard: &EvalProtocolDashboard<'_>,
+) {
+    let Some(protocol_artifacts) = dashboard.protocol_artifacts() else {
+        cached_kv_text(ui, render_cache, "protocol", "not_available");
+        return;
+    };
+
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "artifact files",
+        dashboard.protocol_artifacts_file_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "artifacts",
+        dashboard.protocol_artifacts_parsed_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "intent segments",
+        dashboard.protocol_artifacts_intent_segmentation_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "call reviews",
+        dashboard.protocol_artifacts_review_count(),
+    );
+    cached_kv_optional_usize(
+        ui,
+        render_cache,
+        "segment reviews",
+        dashboard.protocol_artifacts_segment_review_count(),
+    );
+
+    let stats = dashboard.protocol_aggregate_counts();
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "issue detections",
+        stats.issue_detection_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "issue cases",
+        stats.issue_detection_case_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "interventions",
+        stats.intervention_candidate_count,
+    );
+    cached_kv_usize(
+        ui,
+        render_cache,
+        "intervention applies",
+        stats.intervention_apply_count,
+    );
+
+    let review_stats = dashboard.protocol_review_stats();
+    render_count_map(ui, render_cache, "overall", &review_stats.overall);
+    render_count_map(ui, render_cache, "redundancy", &review_stats.redundancy);
+    render_count_map(
+        ui,
+        render_cache,
+        "recoverability",
+        &review_stats.recoverability,
+    );
+    render_protocol_artifact_drilldowns(ui, render_cache, dashboard);
 }
 
 fn render_count_map(
@@ -467,7 +590,6 @@ fn render_protocol_artifact_drilldowns(
         .filter(|artifact| matches!(&artifact.body, ArtifactBody::ToolCallReview(_)))
         .count();
     if review_count > 0 {
-        render_call_review_scan(ui, render_cache, protocol_artifacts);
         show_inspector_collapsing(
             ui,
             egui::CollapsingHeader::new("Reviewed Calls").default_open(false),

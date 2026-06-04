@@ -202,6 +202,88 @@ impl Graph {
                     .is_some_and(|derived| derived == artifact_id)
         })
     }
+
+    /// Borrowed selection metric witness for one considered branch payload.
+    pub fn selection_metric_witness(
+        &self,
+        key: &SelectionMetricWitnessKey,
+    ) -> Option<SelectionMetricWitnessRef<'_>> {
+        let witness = self.selections.metric_witnesses.get(key)?;
+        let selection = self
+            .selections
+            .selections
+            .get(&witness.selection_entry_id)?;
+        Some(SelectionMetricWitnessRef {
+            key: &witness.key,
+            selection,
+            metric_candidate: &witness.metric_candidate,
+            score_child_prop_row: witness.score_child_prop_row.as_ref(),
+            imp_at_k: witness.metric_candidate.imp_at_k.as_ref(),
+        })
+    }
+
+    /// Ordered trajectory rows keyed by selected candidate generation.
+    pub fn trajectory_generations(&self) -> Vec<TrajectoryGenerationRow> {
+        let mut ordered_entries: Vec<_> = self.history.entries.values().collect();
+        ordered_entries.sort_by_key(|entry| (entry.block_height, entry.occurred_at.0));
+
+        let mut rows = Vec::new();
+        for entry in ordered_entries {
+            if entry.payload != HistoryPayloadKind::SelectionDecision {
+                continue;
+            }
+            let Some(selection) = self.selections.selections.get(&entry.entry_id) else {
+                continue;
+            };
+            let Some(selected) = selected_trajectory_candidate(self, selection) else {
+                continue;
+            };
+            let score_child_prop_total = selected
+                .witness_key
+                .as_ref()
+                .and_then(|key| self.selection_metric_witness(key))
+                .and_then(|witness| witness.score_child_prop_total());
+            rows.push(TrajectoryGenerationRow {
+                generation: selected.generation,
+                selection_entry_id: selection.entry_id.clone(),
+                branch_id: selected.branch_id,
+                artifact_id: selected.artifact_id,
+                score_child_prop_total,
+                decision_outcome: selection.decision_outcome,
+                role_hint: selected
+                    .node_id
+                    .as_deref()
+                    .and_then(|node_id| self.trajectory_role_hint(node_id)),
+            });
+        }
+
+        rows.sort_by_key(|row| row.generation);
+        rows
+    }
+
+    fn trajectory_role_hint(&self, node_id: &str) -> Option<TrajectoryRoleHint> {
+        if self.child_plans.plan_for_parent_node_id(node_id).is_some() {
+            return Some(TrajectoryRoleHint::Parent);
+        }
+        if self.invocations().any(|(_, invocation)| {
+            invocation.role == Role::Successor
+                && invocation
+                    .node
+                    .as_ref()
+                    .is_some_and(|node| node.node_id.as_str() == node_id)
+        }) {
+            return Some(TrajectoryRoleHint::Successor);
+        }
+        if self.child_invocations().any(|(_, invocation)| {
+            invocation
+                .node
+                .as_ref()
+                .is_some_and(|node| node.node_id.as_str() == node_id)
+        }) {
+            return Some(TrajectoryRoleHint::Child);
+        }
+        None
+    }
 }
 
 /// Borrowed graph-level witness for eval/protocol evidence.
@@ -352,4 +434,105 @@ where
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("{value:?}"))
+}
+
+struct SelectedTrajectoryCandidate {
+    generation: u32,
+    branch_id: Option<String>,
+    artifact_id: Option<ArtifactId>,
+    node_id: Option<String>,
+    witness_key: Option<SelectionMetricWitnessKey>,
+}
+
+fn selected_trajectory_candidate(
+    graph: &Graph,
+    selection: &SelectionNode,
+) -> Option<SelectedTrajectoryCandidate> {
+    let candidates: Vec<_> = graph
+        .candidates
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.selection_entry_id == selection.entry_id)
+        .collect();
+
+    let selected = formula_selected_candidate(graph, selection, &candidates)
+        .or_else(|| subject_selected_candidate(selection, &candidates))?;
+
+    let generation = selected
+        .generation
+        .or_else(|| {
+            selection
+                .generation_label
+                .as_ref()
+                .and_then(|label| label.parse().ok())
+        })
+        .unwrap_or(0);
+    let witness_key = selected
+        .branch_id
+        .as_ref()
+        .map(|branch_id| SelectionMetricWitnessKey {
+            entry_id: selection.entry_id.clone(),
+            payload_index: selected.payload_index,
+            branch_id: branch_id.clone(),
+        });
+
+    Some(SelectedTrajectoryCandidate {
+        generation,
+        branch_id: selected.branch_id.clone(),
+        artifact_id: selected.artifact_after.clone(),
+        node_id: selected.node_id.clone(),
+        witness_key,
+    })
+}
+
+fn formula_selected_candidate<'a>(
+    graph: &Graph,
+    selection: &SelectionNode,
+    candidates: &[&'a CandidateNode],
+) -> Option<&'a CandidateNode> {
+    let formula = graph.metrics.formulas.get(&SelectionFormulaKey {
+        selection_entry_id: selection.entry_id.clone(),
+        metric_set_id: selection.metric_set_id.clone(),
+    })?;
+    let SelectionFormulaKind::ScoreChildProp(score) = &formula.formula;
+    if let Some(index) = score.record.selected_index {
+        return candidates
+            .iter()
+            .find(|candidate| candidate.payload_index == index)
+            .copied();
+    }
+    score
+        .record
+        .rows
+        .iter()
+        .find(|row| row.selected)
+        .and_then(|row| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.payload_index == row.payload_index)
+                .copied()
+        })
+}
+
+fn subject_selected_candidate<'a>(
+    selection: &SelectionNode,
+    candidates: &[&'a CandidateNode],
+) -> Option<&'a CandidateNode> {
+    let subject = selection.selected_candidate.as_ref()?;
+    let matching: Vec<_> = candidates
+        .iter()
+        .copied()
+        .filter(|candidate| candidate.subject.value == subject.value)
+        .collect();
+    match matching.len() {
+        0 => None,
+        1 => Some(matching[0]),
+        _ => matching.into_iter().find(|candidate| {
+            selection.generation_label.as_ref().is_some_and(|label| {
+                candidate
+                    .generation
+                    .is_some_and(|generation| generation.to_string() == *label)
+            })
+        }),
+    }
 }

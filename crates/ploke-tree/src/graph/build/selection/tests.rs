@@ -8,11 +8,13 @@ use ploke_records::history::{
     EntryPayloadRecord, EvaluationEvidenceRecord, EvaluationPayloadRecord, EvidenceCitationRecord,
     EvidenceRefRecord, ObservedEntryRecord, OperationalEnvironmentRecord, ProcedureRefRecord,
     ProtocolMetricsRecord, SelectionDecisionEntryRecord, SelectionScopeRecord, SubjectRefRecord,
+    TraversalCandidateSourceRecord, TraversalEvidenceRecord, TraversalMetricInputsRecord,
+    TraversalOracleModeRecord, TraversalStrategyRecord,
 };
 use ploke_records::ids::{
-    ArtifactId, BlockId, BranchId, CandidateId, CandidateMembershipId, CandidateOccurrenceId,
-    EntryId, HistoryHash, InstanceId, LineageId, OperationTarget, RecordedAt, RuntimeId,
-    SchedulerNodeId, SourceStateId,
+    ArtifactId, BlockHash, BlockId, BranchId, CandidateId, CandidateMembershipId,
+    CandidateOccurrenceId, EntryId, HistoryHash, InstanceId, LineageId, OperationTarget,
+    RecordedAt, RuntimeId, SchedulerNodeId, SourceStateId,
 };
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord};
 use ploke_records::selection::{
@@ -21,8 +23,9 @@ use ploke_records::selection::{
 };
 
 use crate::graph::{
-    CandidateMembershipKey, EvidenceKind, GraphWarningKind, MetricCandidateKey, OperationKey,
-    OperationTargetKey, SelectionFormulaKey, SelectionFormulaKind,
+    CandidateMembershipKey, CandidateSource, EvidenceKind, GraphWarningKind, HistoryEntryNode,
+    HistoryPayloadKind, MetricCandidateKey, OperationKey, OperationTargetKey, SelectionFormulaKey,
+    SelectionFormulaKind, SelectionMetricWitnessKey, score_child_prop_row_total_points,
 };
 
 use super::super::Builder;
@@ -432,6 +435,163 @@ fn selection_metrics_ingestion_preserves_metric_bindings() {
 }
 
 #[test]
+fn selection_traversal_summary_populated_from_payload() {
+    let mut selection = selection_with_root(
+        "root-traversal",
+        vec![payload_with_branch(
+            "candidate:selected",
+            "node-selected",
+            "branch-selected",
+            1,
+        )],
+        vec![membership("candidate:selected", None, "payload-selected")],
+    );
+    selection.selected_candidate = Some(SubjectRefRecord {
+        value: "candidate:selected".to_owned(),
+    });
+    selection.decision.selected_branch_id = Some("branch-selected".to_owned());
+    selection.traversal = Some(TraversalEvidenceRecord {
+        seed: 7,
+        strategy: TraversalStrategyRecord::ScoreChildProp {
+            top_m: 3,
+            lambda_millis: 10_000,
+            metrics: TraversalMetricInputsRecord::OperationalAndProtocol,
+            oracle: TraversalOracleModeRecord::RecordOnly,
+            require_evidence: true,
+        },
+        selected_source: Some(TraversalCandidateSourceRecord::CurrentGeneration),
+    });
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    let node = builder
+        .graph
+        .selections
+        .selections
+        .get(&admitted_entry.core.entry_id)
+        .expect("selection node indexed");
+    let traversal = node.traversal.as_ref().expect("traversal preserved");
+    assert_eq!(traversal.seed, 7);
+    assert_eq!(
+        traversal.selected_source,
+        Some(CandidateSource::CurrentGeneration)
+    );
+    assert!(matches!(
+        traversal.strategy,
+        TraversalStrategyRecord::ScoreChildProp { .. }
+    ));
+    assert_eq!(node.generation_label.as_deref(), Some("1"));
+}
+
+#[test]
+fn selection_metric_witness_bundles_formula_row_and_metric_candidate() {
+    let mut selection = selection_with_root(
+        "root-witness",
+        vec![payload_with_branch(
+            "candidate:metric",
+            "node:metric",
+            "branch:metric",
+            1,
+        )],
+        vec![membership("candidate:metric", None, "payload-metric")],
+    );
+    selection.formula = Some(score_child_prop_formula(selection.metrics.id.clone()));
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    let key = SelectionMetricWitnessKey {
+        entry_id: admitted_entry.core.entry_id.clone(),
+        payload_index: 0,
+        branch_id: "branch:metric".to_owned(),
+    };
+    let witness = builder
+        .graph
+        .selection_metric_witness(&key)
+        .expect("selection metric witness indexed");
+    assert_eq!(witness.metric_candidate.payload_index, 0);
+    assert_eq!(witness.metric_candidate.compared_runs.len(), 0);
+    let row = witness
+        .score_child_prop_row
+        .expect("score_child_prop row preserved");
+    assert_eq!(score_child_prop_row_total_points(row), Some(10_850));
+    assert!(witness.imp_at_k.is_none());
+}
+
+#[test]
+fn trajectory_generations_returns_selected_row_score() {
+    let mut selection = selection_with_root(
+        "root-trajectory",
+        vec![payload_with_branch(
+            "candidate:metric",
+            "node:metric",
+            "branch:metric",
+            1,
+        )],
+        vec![membership("candidate:metric", None, "payload-metric")],
+    );
+    selection.selected_candidate = Some(SubjectRefRecord {
+        value: "candidate:metric".to_owned(),
+    });
+    selection.decision.selected_branch_id = Some("branch:metric".to_owned());
+    selection.formula = Some(score_child_prop_formula(selection.metrics.id.clone()));
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+    builder.ingest_selection(&admitted_entry, &selection);
+    index_selection_history(&mut builder, &admitted_entry);
+    let graph = builder.graph;
+
+    let rows = graph.trajectory_generations();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.generation, 1);
+    assert_eq!(row.branch_id.as_deref(), Some("branch:metric"));
+    assert_eq!(row.score_child_prop_total, Some(10_850));
+    assert_eq!(row.decision_outcome, Outcome::Accepted);
+}
+
+#[test]
+fn protocol_graph_fixture_selection_witness_and_trajectory() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../ploke-egui/benchmark-fixtures/protocol-graph.json");
+    if !path.exists() {
+        return;
+    }
+
+    let snapshot = crate::GraphSnapshot::read_json(&path).expect("read protocol graph fixture");
+    let graph = snapshot.graph();
+    assert!(
+        !graph.selections.selections.is_empty(),
+        "protocol-graph fixture should contain selection decisions"
+    );
+    assert!(
+        !graph.selections.metric_witnesses.is_empty(),
+        "protocol-graph fixture should index selection metric witnesses"
+    );
+
+    let rows = graph.trajectory_generations();
+    assert!(
+        !rows.is_empty(),
+        "protocol-graph should expose trajectory rows"
+    );
+    assert!(
+        rows.iter().any(|row| row.score_child_prop_total.is_some()),
+        "protocol-graph trajectory rows should carry score_child_prop totals"
+    );
+    assert!(
+        graph
+            .selections
+            .selections
+            .values()
+            .any(|selection| selection.traversal.is_some()),
+        "protocol-graph selections should preserve traversal evidence"
+    );
+}
+
+#[test]
 fn selection_metrics_candidate_set_hash_mismatch_warns() {
     let mut selection = selection_with_root(
         "root-metric",
@@ -535,16 +695,29 @@ fn payload_with_coordinate(
     node_id: &str,
     runtime_id: &str,
 ) -> EvaluationPayloadRecord {
+    let mut payload = payload_with_branch(candidate, node_id, "branch:coordinate", 1);
+    if let Some(sealed) = payload.sealed_evidence.as_mut() {
+        sealed.coordinate.primary_runtime_id = Some(runtime_id.to_owned());
+    }
+    payload
+}
+
+fn payload_with_branch(
+    candidate: &str,
+    node_id: &str,
+    branch_id: &str,
+    generation: u32,
+) -> EvaluationPayloadRecord {
     let mut payload = payload(candidate);
     payload.sealed_evidence = Some(CandidateEvidenceRecord {
         schema_version: 1,
         coordinate: CandidateCoordinateRecord {
             node_id: node_id.to_owned(),
             parent_node_id: None,
-            branch_id: None,
-            generation: Some(1),
+            branch_id: Some(branch_id.to_owned()),
+            generation: Some(generation),
             plan_index: None,
-            primary_runtime_id: Some(runtime_id.to_owned()),
+            primary_runtime_id: Some("runtime:fixture".to_owned()),
         },
         lifecycle: CandidateLifecycleRecord {
             planner_outcome: "eligible".to_owned(),
@@ -558,6 +731,35 @@ fn payload_with_coordinate(
         child_diagnostics: Vec::new(),
     });
     payload
+}
+
+fn index_selection_history(builder: &mut Builder, admitted: &AdmittedEntryRecord) {
+    builder.graph.history.entries.insert(
+        admitted.core.entry_id.clone(),
+        HistoryEntryNode {
+            entry_id: admitted.core.entry_id.clone(),
+            block_hash: BlockHash("block-hash".to_owned()),
+            lineage_id: admitted.state.lineage_id.clone(),
+            block_id: admitted.state.block_id.clone(),
+            block_height: admitted.state.block_height,
+            kind: admitted.core.entry_kind.clone(),
+            subject: admitted.core.subject.clone(),
+            executor: admitted.core.executor.clone(),
+            observer: admitted.state.observed.observer.clone(),
+            recorder: admitted.state.observed.recorder.clone(),
+            proposer: admitted.state.proposer.clone(),
+            admitting_authority: admitted.state.admitting_authority.clone(),
+            ruling_authority: admitted.state.ruling_authority.clone(),
+            procedure_or_policy: admitted.state.procedure_or_policy.clone(),
+            payload: HistoryPayloadKind::SelectionDecision,
+            occurred_at: admitted.core.occurred_at,
+            observed_at: admitted.state.observed.observed_at,
+            recorded_at: admitted.state.observed.recorded_at,
+            input_refs: admitted.core.input_refs.clone(),
+            output_refs: admitted.core.output_refs.clone(),
+            payload_ref: admitted.state.observed.payload_ref.clone(),
+        },
+    );
 }
 
 fn payload_with_metrics(candidate: &str) -> EvaluationPayloadRecord {

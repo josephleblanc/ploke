@@ -18,6 +18,7 @@ const INSPECTOR_HOVER_WRAP_WIDTH: f32 = 520.0;
 
 #[derive(Debug, Default)]
 pub(crate) struct InspectorRenderCache {
+    pub(super) trajectory: super::trajectory::TrajectoryRenderCache,
     parent_create_rows: BTreeMap<ParentCreateRowsKey, ParentCreateRows>,
     parent_create_row_rebuilds: usize,
     call_review_scan_order: CallReviewScanOrderCache,

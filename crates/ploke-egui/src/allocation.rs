@@ -109,6 +109,9 @@ ploke_egui_macros::profile_scope_catalog! {
         INSPECTOR_SOURCE_REFS_ITER = "inspector_source_refs_iter",
         INSPECTOR_SOURCE_REFS_ROW = "inspector_source_refs_row",
         INSPECTOR_ARTIFACT_IDS = "inspector_artifact_ids",
+        TRAJECTORY_ROWS_BUILD = "trajectory_rows_build",
+        TRAJECTORY_PANE = "trajectory_pane",
+        TRAJECTORY_SELECTION_DRILLDOWN = "trajectory_selection_drilldown",
     }
 }
 

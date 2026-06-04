@@ -215,21 +215,30 @@ pub(crate) fn render_run_record_turn_llm_trace(
 
 fn render_run_record_turn_llm_trace_summary(
     ui: &mut egui::Ui,
-    _render_cache: &mut InspectorRenderCache,
+    render_cache: &mut InspectorRenderCache,
     turn: &ploke_records::run_record::TurnRecord,
 ) {
-    let mut turn_number = itoa::Buffer::new();
-    let mut tool_steps = itoa::Buffer::new();
-    let mut outcome_tools = itoa::Buffer::new();
-    egui::Grid::new(("run-llm-trace-turn-summary", turn.turn_number))
-        .num_columns(2)
-        .spacing([10.0, 4.0])
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            fresh_kv_grid_row(ui, "turn", turn_number.format(turn.turn_number), true);
-            fresh_kv_grid_row(ui, "outcome", turn_outcome_label(&turn.outcome), true);
-            fresh_kv_grid_row(ui, "tool steps", tool_steps.format(turn.tool_calls.len()), true);
-            if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
-                fresh_kv_grid_row(ui, "outcome tools", outcome_tools.format(count), true);
+            ui.horizontal_wrapped(|ui| {
+                cached_label(ui, render_cache, "turn");
+                let mut turn_number = itoa::Buffer::new();
+                cached_monospace_label(ui, render_cache, turn_number.format(turn.turn_number));
+                cached_label(ui, render_cache, "outcome");
+                cached_monospace_label(ui, render_cache, turn_outcome_label(&turn.outcome));
+                cached_label(ui, render_cache, "tool steps");
+                let mut tool_steps = itoa::Buffer::new();
+                cached_monospace_label(ui, render_cache, tool_steps.format(turn.tool_calls.len()));
+                if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
+                    cached_label(ui, render_cache, "outcome tools");
+                    let mut outcome_tools = itoa::Buffer::new();
+                    cached_monospace_label(ui, render_cache, outcome_tools.format(count));
+                }
+            });
+            if let Some(message) = turn_outcome_error(&turn.outcome) {
+                cached_label(ui, render_cache, "outcome error");
+                cached_wrapped_monospace_label(ui, render_cache, message);
             }
         });
 }

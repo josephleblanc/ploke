@@ -97,6 +97,7 @@ impl InspectorSections {
         match inspector {
             SelectionInspector::RunForestNode(run) => Self::from_run_forest(_graph, run),
             SelectionInspector::Artifact(artifact) => Self::from_artifact(_graph, artifact),
+            SelectionInspector::Selection(selection) => Self::from_selection_decision(selection),
             SelectionInspector::Unresolved(reason) => Self {
                 identity: Some(IdentitySlot::from_selection(selection)),
                 metrics: None,
@@ -112,6 +113,27 @@ impl InspectorSections {
                 source_refs: Vec::new(),
                 unavailable: Some(*reason),
             },
+        }
+    }
+
+    fn from_selection_decision(selection: &SelectionDecisionInspection<'_>) -> Self {
+        let reference = GraphSelectionRef::Selection {
+            entry_id: selection.selection.entry_id.0.clone(),
+        };
+        Self {
+            identity: Some(IdentitySlot::from_selection(&reference)),
+            metrics: None,
+            parent_create: ParentCreateSlot::from_selection(&reference),
+            run_records: Vec::new(),
+            incoming: Vec::new(),
+            outgoing: Vec::new(),
+            artifact_incoming: Vec::new(),
+            artifact_outgoing: Vec::new(),
+            patches: Vec::new(),
+            candidate_comparison: None,
+            lineage_authority: None,
+            source_refs: Vec::new(),
+            unavailable: None,
         }
     }
 
@@ -249,6 +271,7 @@ impl InspectorSections {
             Some(IdentitySlot::Artifact { sources }) => {
                 role_badges_for_artifact_source_slots(graph, sources)
             }
+            Some(IdentitySlot::Selection { .. }) => RoleBadgeSet::default(),
             None => RoleBadgeSet::default(),
         }
     }
@@ -298,6 +321,7 @@ impl InspectorSections {
 pub(crate) enum IdentitySlot {
     RunForestNode { node_key: String },
     Artifact { sources: Vec<ArtifactSourceSlot> },
+    Selection { entry_id: String },
 }
 
 impl IdentitySlot {
@@ -310,6 +334,9 @@ impl IdentitySlot {
                 sources: vec![ArtifactSourceSlot {
                     key: ArtifactKey::PassiveId { value: key.clone() },
                 }],
+            },
+            GraphSelectionRef::Selection { entry_id } => Self::Selection {
+                entry_id: entry_id.clone(),
             },
         }
     }
@@ -334,6 +361,7 @@ impl ParentCreateSlot {
                 node_key: key.clone(),
             }),
             GraphSelectionRef::Artifact { key } => Some(Self::Artifact { key: key.clone() }),
+            GraphSelectionRef::Selection { .. } => None,
         }
     }
 
@@ -735,7 +763,14 @@ pub(crate) fn find_run_forest_node<'g>(
 pub enum SelectionInspector<'g> {
     RunForestNode(RunForestNodeInspection<'g>),
     Artifact(ArtifactInspection<'g>),
+    Selection(SelectionDecisionInspection<'g>),
     Unresolved(UnavailableReason),
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectionDecisionInspection<'g> {
+    pub selection: &'g SelectionNode,
+    pub trajectory_row: Option<ploke_tree::graph::TrajectoryGenerationRow>,
 }
 
 impl<'g> SelectionInspector<'g> {
@@ -753,6 +788,9 @@ impl<'g> SelectionInspector<'g> {
         match reference {
             GraphSelectionRef::RunForestNode { key } => run_forest_node_inspection(graph, key),
             GraphSelectionRef::Artifact { key } => artifact_inspection(graph, key),
+            GraphSelectionRef::Selection { entry_id } => {
+                selection_decision_inspection(graph, entry_id)
+            }
         }
     }
 
@@ -810,6 +848,12 @@ impl<'g> SelectionInspector<'g> {
                     },
                 }
             }
+            SelectionInspector::Selection(decision) => ArtifactIdsSectionSnapshot {
+                selection_kind: ArtifactIdsSelectionKind::Unresolved,
+                state: ArtifactIdsSectionState::NotApplicable {
+                    selection_key: decision.selection.entry_id.0.as_str(),
+                },
+            },
             SelectionInspector::Unresolved(reason) => ArtifactIdsSectionSnapshot {
                 selection_kind: ArtifactIdsSelectionKind::Unresolved,
                 state: ArtifactIdsSectionState::Unavailable(*reason),
@@ -1158,6 +1202,7 @@ pub enum UnavailableReason {
     RunForestNotPresent,
     RunForestNodeNotFound,
     ArtifactNotFound,
+    SelectionDecisionNotFound,
 }
 
 impl UnavailableReason {
@@ -1166,13 +1211,16 @@ impl UnavailableReason {
             Self::RunForestNotPresent => "run forest",
             Self::RunForestNodeNotFound => "run forest node",
             Self::ArtifactNotFound => "artifact",
+            Self::SelectionDecisionNotFound => "selection decision",
         }
     }
 
     pub(crate) fn state(self) -> &'static str {
         match self {
             Self::RunForestNotPresent => "not_present",
-            Self::RunForestNodeNotFound | Self::ArtifactNotFound => "not_found",
+            Self::RunForestNodeNotFound
+            | Self::ArtifactNotFound
+            | Self::SelectionDecisionNotFound => "not_found",
         }
     }
 }
@@ -1210,6 +1258,22 @@ impl<'a> SelectionInspectorSnapshot<'a> {
         match inspector {
             SelectionInspector::RunForestNode(run) => snapshot_run_forest(selection, run),
             SelectionInspector::Artifact(artifact) => snapshot_artifact(selection, artifact),
+            SelectionInspector::Selection(_decision) => Self {
+                kind: selection.kind.as_str(),
+                label: selection.label.as_str(),
+                identity: None,
+                roles: Vec::new(),
+                metrics: None,
+                parent_create: None,
+                run_records: Vec::new(),
+                incoming: Vec::new(),
+                outgoing: Vec::new(),
+                artifact_incoming: Vec::new(),
+                artifact_outgoing: Vec::new(),
+                patches: Vec::new(),
+                source_refs: Vec::new(),
+                unavailable: None,
+            },
             SelectionInspector::Unresolved(reason) => Self {
                 kind: selection.kind.as_str(),
                 label: selection.label.as_str(),
@@ -1632,6 +1696,7 @@ impl GraphSelectionRef {
     fn matches_key(&self, selector: &str) -> bool {
         match self {
             Self::Artifact { key } | Self::RunForestNode { key } => key == selector,
+            Self::Selection { entry_id } => entry_id == selector,
         }
     }
 }
@@ -1669,6 +1734,24 @@ fn graph_selection_by_key(
                 key: node.key.as_str().to_owned(),
             },
         })
+}
+
+fn selection_decision_inspection<'g>(
+    graph: &'g ploke_tree::Graph,
+    entry_id: &str,
+) -> SelectionInspector<'g> {
+    let entry = EntryId(entry_id.to_owned());
+    let Some(selection) = graph.selections.selections.get(&entry) else {
+        return SelectionInspector::Unresolved(UnavailableReason::SelectionDecisionNotFound);
+    };
+    let trajectory_row = graph
+        .trajectory_generations()
+        .into_iter()
+        .find(|row| row.selection_entry_id.0 == entry_id);
+    SelectionInspector::Selection(SelectionDecisionInspection {
+        selection,
+        trajectory_row,
+    })
 }
 
 fn run_forest_node_inspection<'g>(
@@ -4131,6 +4214,8 @@ mod tests {
                 projection_failure_count: 0,
                 metric_set_id: metric_set_id.clone(),
                 decision_outcome: ploke_records::selection::Outcome::Accepted,
+                traversal: None,
+                generation_label: None,
             },
         );
         graph.metrics.candidates.insert(

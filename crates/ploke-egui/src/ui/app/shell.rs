@@ -26,6 +26,7 @@ mod parent_create;
 mod protocol_detail;
 mod run_records;
 mod timeline;
+mod trajectory;
 use self::fields::*;
 use self::llm_trace::render_run_record_turn_llm_trace;
 use self::run_records::{
@@ -38,7 +39,8 @@ pub(crate) use cache::InspectorRenderCache;
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};
 pub(crate) use identity::{
-    render_artifact_ids_for_inspector, render_identity, render_lineage_authority_for_inspector,
+    render_artifact_ids_for_inspector, render_diagnostics_detail, render_diagnostics_sidebar,
+    render_graph_facts_sidebar, render_identity, render_lineage_authority_for_inspector,
     render_roles_and_metrics, render_source_refs_for_inspector,
 };
 pub(crate) use inspector::{
@@ -56,6 +58,10 @@ pub(super) use protocol_detail::{
 };
 pub(crate) use run_records::render_run_records_for_inspector;
 pub(crate) use timeline::render_bottom_timeline;
+pub(crate) use trajectory::{
+    preferred_trajectory_entry_id, render_selection_drilldown_for_inspector,
+    render_trajectory_pane, selection_detail_for_reference,
+};
 #[cfg(test)]
 mod render_cache_tests;
 
@@ -484,95 +490,190 @@ pub(crate) fn render_candidate_comparison_for_inspector(
         return;
     };
 
-    cached_kv_id(
+    ui.horizontal_wrapped(|ui| {
+        cached_label(ui, render_cache, "parent node");
+        cached_expandable_id(
+            ui,
+            render_cache,
+            ("candidate-comparison-parent", slot.parent_node_id.as_str()),
+            slot.parent_node_id.as_str(),
+        );
+        cached_label(ui, render_cache, "planned children");
+        let mut children = itoa::Buffer::new();
+        cached_monospace_label(ui, render_cache, children.format(slot.children().len()));
+        if let Some(metric_set) = slot.metric_set(graph) {
+            cached_label(ui, render_cache, "score profile");
+            cached_monospace_label(
+                ui,
+                render_cache,
+                score_profile_label(metric_set.policy.score_profile),
+            );
+        }
+    });
+
+    ui.separator();
+    ui.label(egui::RichText::new("Candidates").strong());
+    egui::Grid::new(("candidate-comparison-compact", slot.parent_node_id.as_str()))
+        .striped(true)
+        .num_columns(6)
+        .show(ui, |ui| {
+            cached_label(ui, render_cache, "selected");
+            cached_label(ui, render_cache, "child");
+            cached_label(ui, render_cache, "candidate");
+            cached_label(ui, render_cache, "total pts");
+            cached_label(ui, render_cache, "outcome");
+            cached_label(ui, render_cache, "performance");
+            ui.end_row();
+
+            for child in slot.children() {
+                if let Some(candidate) = slot.resolve_child(graph, child) {
+                    render_candidate_comparison_compact_row(ui, render_cache, candidate);
+                    ui.end_row();
+                }
+            }
+        });
+
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Metric set & selector formula").default_open(false),
+        |ui| {
+            if let Some(metric_set) = slot.metric_set(graph) {
+                cached_kv_id(
+                    ui,
+                    render_cache,
+                    "metric set",
+                    metric_set.metric_set_id.0.as_str(),
+                );
+                cached_kv_usize(
+                    ui,
+                    render_cache,
+                    "imp@k budget",
+                    metric_set.policy.imp_at_k.budget_k,
+                );
+                cached_kv_i64(
+                    ui,
+                    render_cache,
+                    "imp@k score weight",
+                    metric_set.policy.imp_at_k.score_points_per_imp_point,
+                );
+                cached_kv_text(
+                    ui,
+                    render_cache,
+                    "imp@k required",
+                    bool_label(metric_set.policy.imp_at_k.require_for_score),
+                );
+            }
+            render_candidate_comparison_formula_summary(
+                ui,
+                render_cache,
+                slot.selection_formula(graph),
+            );
+        },
+    );
+
+    show_inspector_collapsing(
+        ui,
+        egui::CollapsingHeader::new("Full metric grid").default_open(false),
+        |ui| {
+            egui::ScrollArea::horizontal().show(ui, |ui| {
+                egui::Grid::new(("candidate-comparison-full", slot.parent_node_id.as_str()))
+                    .striped(true)
+                    .num_columns(32)
+                    .show(ui, |ui| {
+                        cached_label(ui, render_cache, "selected");
+                        cached_label(ui, render_cache, "child");
+                        cached_label(ui, render_cache, "candidate");
+                        cached_label(ui, render_cache, "payload");
+                        cached_label(ui, render_cache, "outcome");
+                        cached_label(ui, render_cache, "outcome pts");
+                        cached_label(ui, render_cache, "operational pts");
+                        cached_label(ui, render_cache, "protocol pts");
+                        cached_label(ui, render_cache, "imp@k delta");
+                        cached_label(ui, render_cache, "performance");
+                        cached_label(ui, render_cache, "oracle rate");
+                        cached_label(ui, render_cache, "alpha");
+                        cached_label(ui, render_cache, "alpha mid");
+                        cached_label(ui, render_cache, "exploitation");
+                        cached_label(ui, render_cache, "exploration");
+                        cached_label(ui, render_cache, "weight");
+                        cached_label(ui, render_cache, "cumulative");
+                        cached_label(ui, render_cache, "sample hit");
+                        cached_label(ui, render_cache, "child count");
+                        cached_label(ui, render_cache, "selectable");
+                        cached_label(ui, render_cache, "exclusion");
+                        cached_label(ui, render_cache, "improvement");
+                        cached_label(ui, render_cache, "baseline");
+                        cached_label(ui, render_cache, "best descendant");
+                        cached_label(ui, render_cache, "scored / descendants");
+                        cached_label(ui, render_cache, "tool failures delta");
+                        cached_label(ui, render_cache, "patch failures delta");
+                        cached_label(ui, render_cache, "valid patch");
+                        cached_label(ui, render_cache, "converged");
+                        cached_label(ui, render_cache, "oracle eligible");
+                        cached_label(ui, render_cache, "protocol reviewed delta");
+                        cached_label(ui, render_cache, "protocol missing delta");
+                        ui.end_row();
+
+                        for child in slot.children() {
+                            if let Some(candidate) = slot.resolve_child(graph, child) {
+                                render_candidate_comparison_candidate(ui, render_cache, candidate);
+                                ui.end_row();
+                            }
+                        }
+                    });
+            });
+        },
+    );
+}
+
+fn render_candidate_comparison_compact_row(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    candidate: crate::ui::inspector::CandidateComparisonCandidate<'_>,
+) {
+    let row = candidate.selector.and_then(|selector| selector.row);
+    cached_monospace_label(
         ui,
         render_cache,
-        "parent node",
-        slot.parent_node_id.as_str(),
+        if candidate.selected { "yes" } else { "no" },
     );
-    cached_kv_usize(ui, render_cache, "planned children", slot.children().len());
-    if let Some(metric_set) = slot.metric_set(graph) {
-        cached_kv_id(
-            ui,
-            render_cache,
-            "metric set",
-            metric_set.metric_set_id.0.as_str(),
-        );
-        cached_kv_text(
-            ui,
-            render_cache,
-            "score profile",
-            score_profile_label(metric_set.policy.score_profile),
-        );
-        cached_kv_usize(
-            ui,
-            render_cache,
-            "imp@k budget",
-            metric_set.policy.imp_at_k.budget_k,
-        );
-        cached_kv_i64(
-            ui,
-            render_cache,
-            "imp@k score weight",
-            metric_set.policy.imp_at_k.score_points_per_imp_point,
-        );
-        cached_kv_text(
-            ui,
-            render_cache,
-            "imp@k required",
-            bool_label(metric_set.policy.imp_at_k.require_for_score),
-        );
+    cached_expandable_id(
+        ui,
+        render_cache,
+        (
+            "candidate-comparison-compact-child",
+            candidate.child.node.node_id.as_str(),
+        ),
+        candidate.child.node.node_id.as_str(),
+    );
+    cached_expandable_id(
+        ui,
+        render_cache,
+        (
+            "candidate-comparison-compact-candidate",
+            candidate.child.node.node_id.as_str(),
+        ),
+        candidate
+            .candidate
+            .map(|candidate| candidate.subject.value.as_str())
+            .unwrap_or(candidate.child.resolved.branch.candidate_id.as_str()),
+    );
+    if let Some(row) = row {
+        let total = row.outcome_points + row.operational_points + row.protocol_points;
+        let mut total_buffer = itoa::Buffer::new();
+        cached_monospace_label(ui, render_cache, total_buffer.format(total));
+        cached_monospace_label(ui, render_cache, outcome_label(row.base_outcome));
+        if let Some(performance) = row.performance {
+            let mut performance_buffer = itoa::Buffer::new();
+            cached_monospace_label(ui, render_cache, performance_buffer.format(performance));
+        } else {
+            cached_monospace_label(ui, render_cache, "—");
+        }
+    } else {
+        cached_monospace_label(ui, render_cache, "—");
+        cached_monospace_label(ui, render_cache, "—");
+        cached_monospace_label(ui, render_cache, "—");
     }
-
-    render_candidate_comparison_formula_summary(ui, render_cache, slot.selection_formula(graph));
-
-    egui::ScrollArea::horizontal().show(ui, |ui| {
-        egui::Grid::new(("candidate-comparison", slot.parent_node_id.as_str()))
-            .striped(true)
-            .num_columns(32)
-            .show(ui, |ui| {
-                cached_label(ui, render_cache, "selected");
-                cached_label(ui, render_cache, "child");
-                cached_label(ui, render_cache, "candidate");
-                cached_label(ui, render_cache, "payload");
-                cached_label(ui, render_cache, "outcome");
-                cached_label(ui, render_cache, "outcome pts");
-                cached_label(ui, render_cache, "operational pts");
-                cached_label(ui, render_cache, "protocol pts");
-                cached_label(ui, render_cache, "imp@k delta");
-                cached_label(ui, render_cache, "performance");
-                cached_label(ui, render_cache, "oracle rate");
-                cached_label(ui, render_cache, "alpha");
-                cached_label(ui, render_cache, "alpha mid");
-                cached_label(ui, render_cache, "exploitation");
-                cached_label(ui, render_cache, "exploration");
-                cached_label(ui, render_cache, "weight");
-                cached_label(ui, render_cache, "cumulative");
-                cached_label(ui, render_cache, "sample hit");
-                cached_label(ui, render_cache, "child count");
-                cached_label(ui, render_cache, "selectable");
-                cached_label(ui, render_cache, "exclusion");
-                cached_label(ui, render_cache, "improvement");
-                cached_label(ui, render_cache, "baseline");
-                cached_label(ui, render_cache, "best descendant");
-                cached_label(ui, render_cache, "scored / descendants");
-                cached_label(ui, render_cache, "tool failures delta");
-                cached_label(ui, render_cache, "patch failures delta");
-                cached_label(ui, render_cache, "valid patch");
-                cached_label(ui, render_cache, "converged");
-                cached_label(ui, render_cache, "oracle eligible");
-                cached_label(ui, render_cache, "protocol reviewed delta");
-                cached_label(ui, render_cache, "protocol missing delta");
-                ui.end_row();
-
-                for child in slot.children() {
-                    if let Some(candidate) = slot.resolve_child(graph, child) {
-                        render_candidate_comparison_candidate(ui, render_cache, candidate);
-                        ui.end_row();
-                    }
-                }
-            });
-    });
 }
 
 /// archaeology:score-child-prop-ui
@@ -802,7 +903,7 @@ fn render_candidate_comparison_candidate(
 
 /// archaeology:selection-protocol-evidence
 /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
-fn score_profile_label(profile: ploke_records::selection::ScoreProfile) -> &'static str {
+pub(super) fn score_profile_label(profile: ploke_records::selection::ScoreProfile) -> &'static str {
     match profile {
         ploke_records::selection::ScoreProfile::OperationalQualityV1 => "operational_quality_v1",
     }
@@ -830,7 +931,7 @@ fn format_f64(value: f64) -> String {
 
 /// archaeology:selection-protocol-evidence
 /// proof:docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md
-fn render_imp_at_k_counts(
+pub(super) fn render_imp_at_k_counts(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     metric: Option<&ploke_tree::graph::MetricCandidateNode>,

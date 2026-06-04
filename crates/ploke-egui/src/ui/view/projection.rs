@@ -2347,6 +2347,8 @@ mod tests {
                 projection_failure_count: 0,
                 metric_set_id: HistoryHash("metric-set:test".to_owned()),
                 decision_outcome: ploke_records::selection::Outcome::Accepted,
+                traversal: None,
+                generation_label: None,
             },
         );
 
@@ -2429,6 +2431,8 @@ mod tests {
                 projection_failure_count: 0,
                 metric_set_id: HistoryHash("metric-set:test".to_owned()),
                 decision_outcome: ploke_records::selection::Outcome::Accepted,
+                traversal: None,
+                generation_label: None,
             },
         );
 

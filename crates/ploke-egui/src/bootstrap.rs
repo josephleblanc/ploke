@@ -8,15 +8,13 @@ use ploke_tree::Graph;
 use crate::import::{ImportError, graph_from_snapshot_bytes};
 
 /// Export-graph JSON served beside the Trunk `dist/` bundle (see `index.html` copy-dir).
-pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH: &str =
-    "benchmark-fixtures/standard-prototype1-graph-snapshot.json";
+pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH: &str = "benchmark-fixtures/protocol-graph.json";
 
 /// Same-origin URL for [`STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH`] when using `trunk serve`.
-pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL: &str =
-    "/benchmark-fixtures/standard-prototype1-graph-snapshot.json";
+pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL: &str = "/benchmark-fixtures/protocol-graph.json";
 
-/// Basename of the standard benchmark snapshot (also accepted via `?graph=` alias).
-pub const STANDARD_GRAPH_SNAPSHOT_BASENAME: &str = "standard-prototype1-graph-snapshot.json";
+/// Basename of the default WASM dogfood graph (also accepted via `?graph=` alias).
+pub const STANDARD_GRAPH_SNAPSHOT_BASENAME: &str = "protocol-graph.json";
 
 #[derive(Debug, Clone)]
 pub struct LoadedGraph {
@@ -618,7 +616,7 @@ mod tests {
     #[test]
     fn graph_fetch_rejection_message_rejects_repo_paths() {
         let message = graph_fetch_rejection_message(
-            "crates/ploke-egui/benchmark-fixtures/standard-prototype1-graph-snapshot.json",
+            "crates/ploke-egui/benchmark-fixtures/protocol-graph.json",
         )
         .expect("repo path");
         assert!(message.contains("Browser cannot open"));
