@@ -10,6 +10,7 @@
   "eval_set_identity": {
     "id": "fixture-eval-set",
     "kind": "sanitized",
+    "dataset_sources": [],
     "instance_ids": [
       "instance-prototype1"
     ]

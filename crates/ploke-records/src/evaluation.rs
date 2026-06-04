@@ -344,17 +344,17 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_branch_116821_roundtrips_value_and_preserves_metrics_surface() {
-        let path = real_run_root().join("evaluations/branch-116821c1239b4022.json");
+        let path = prototype1_evaluations_dir().join("branch-keep-prototype1.json");
         let original = read_json_value(&path);
-        let record: Artifact =
-            serde_json::from_value(original.clone()).expect("deserialize branch-116821 report");
+        let record: Artifact = serde_json::from_value(original.clone())
+            .expect("deserialize branch-keep-prototype1 report");
 
         assert_eq!(
-            serde_json::to_value(&record).expect("serialize branch-116821 report"),
+            serde_json::to_value(&record).expect("serialize branch-keep-prototype1 report"),
             original
         );
+        assert_eq!(record.branch_id, "branch-keep-prototype1");
         assert_eq!(record.overall_disposition, Disposition::Keep);
         assert_eq!(record.reasons, Vec::<String>::new());
         assert_eq!(record.compared_instances.len(), 1);
@@ -367,118 +367,64 @@ mod tests {
             .baseline_metrics
             .as_ref()
             .expect("baseline metrics present");
-        assert_eq!(baseline_metrics.tool_calls_total, 12);
+        assert_eq!(baseline_metrics.tool_calls_total, 4);
         assert_eq!(baseline_metrics.patch_apply_state, "no");
         let treatment_metrics = compared
             .treatment_metrics
             .as_ref()
             .expect("treatment metrics present");
-        assert_eq!(treatment_metrics.tool_calls_total, 17);
+        assert_eq!(treatment_metrics.tool_calls_total, 6);
         assert!(treatment_metrics.aborted);
         let evaluation = compared.evaluation.as_ref().expect("evaluation present");
         assert_eq!(evaluation.disposition, Disposition::Keep);
+        assert!(evaluation.reasons.is_empty());
     }
 
     #[test]
-    #[ignore]
     fn real_branch_01187c_roundtrips_value_and_preserves_reject_surface() {
-        let path = real_run_root().join("evaluations/branch-01187cd17226d1a4.json");
+        let path = prototype1_evaluations_dir().join("branch-reject-prototype1.json");
         let original = read_json_value(&path);
-        let record: Artifact =
-            serde_json::from_value(original.clone()).expect("deserialize branch-01187 report");
+        let record: Artifact = serde_json::from_value(original.clone())
+            .expect("deserialize branch-reject-prototype1 report");
 
         assert_eq!(
-            serde_json::to_value(&record).expect("serialize branch-01187 report"),
+            serde_json::to_value(&record).expect("serialize branch-reject-prototype1 report"),
             original
         );
+        assert_eq!(record.branch_id, "branch-reject-prototype1");
         assert_eq!(record.overall_disposition, Disposition::Reject);
-        assert_eq!(record.reasons.len(), 1);
-        assert!(
-            record.reasons[0].contains("baseline arm does not have a complete record"),
-            "expected baseline-missing reason, got: {}",
-            record.reasons[0]
+        assert_eq!(
+            record.reasons,
+            vec!["sanitized fixture baseline record is intentionally absent".to_string()]
         );
         assert_eq!(record.compared_instances.len(), 1);
         let compared = record
             .compared_instances
             .first()
             .expect("one compared instance");
-        assert_eq!(compared.status, "missing_baseline_record");
+        assert_eq!(compared.status, "baseline_missing");
         assert!(compared.baseline_metrics.is_none());
-        assert!(compared.evaluation.is_none());
+        let evaluation = compared.evaluation.as_ref().expect("evaluation present");
+        assert_eq!(evaluation.disposition, Disposition::Reject);
+        assert_eq!(
+            evaluation.reasons,
+            vec!["sanitized fixture nested evaluation reason".to_string()]
+        );
         let treatment_metrics = compared
             .treatment_metrics
             .as_ref()
             .expect("treatment metrics present");
-        assert_eq!(treatment_metrics.tool_calls_failed, 3);
+        assert_eq!(treatment_metrics.tool_calls_failed, 2);
         assert_eq!(treatment_metrics.submission_artifact_state, "empty");
     }
 
     #[test]
-    #[ignore]
-    fn print_real_evaluation_probe() {
-        let path = real_run_root().join("evaluations/branch-116821c1239b4022.json");
-        let value = read_json_value(&path);
-        let report: Artifact = serde_json::from_value(value).expect("deserialize report");
-        eprintln!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "branch_id": report.branch_id,
-                "overall_disposition": report.overall_disposition,
-                "reasons": report.reasons,
-                "compared_instances": report.compared_instances.iter().map(|row| {
-                    serde_json::json!({
-                        "instance_id": row.instance_id,
-                        "status": row.status,
-                        "has_baseline_metrics": row.baseline_metrics.is_some(),
-                        "has_treatment_metrics": row.treatment_metrics.is_some(),
-                        "has_evaluation": row.evaluation.is_some(),
-                    })
-                }).collect::<Vec<_>>(),
-            }))
-            .expect("probe to json")
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn print_real_evaluation_round_trip_states() {
-        let path = real_run_root().join("evaluations/branch-116821c1239b4022.json");
-        let original = read_json_value(&path);
-
-        println!(
-            "before deserialize:\n{}",
-            serde_json::to_string_pretty(&evaluation_probe_from_value(&original))
-                .expect("format original probe")
-        );
-
-        let artifact: Artifact =
-            serde_json::from_value(original.clone()).expect("deserialize real evaluation artifact");
-        println!(
-            "after deserialize:\n{}",
-            serde_json::to_string_pretty(&evaluation_probe_from_artifact(&artifact))
-                .expect("format artifact probe")
-        );
-
-        let serialized =
-            serde_json::to_value(&artifact).expect("serialize real evaluation artifact");
-        println!(
-            "after serialize again:\n{}",
-            serde_json::to_string_pretty(&evaluation_probe_from_value(&serialized))
-                .expect("format serialized probe")
-        );
-
-        assert_eq!(serialized, original);
-    }
-
-    #[test]
-    #[ignore]
     fn real_run_all_evaluation_artifacts_roundtrip_and_match_expected_counts() {
-        let evaluations_dir = real_run_root().join("evaluations");
+        let evaluations_dir = prototype1_evaluations_dir();
         let mut paths = fs::read_dir(&evaluations_dir)
             .unwrap_or_else(|err| {
                 panic!(
-                    "read evaluations directory {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
+                    "read Prototype 1 evaluation fixture directory {}: {err}",
                     evaluations_dir.display()
                 )
             })
@@ -520,97 +466,22 @@ mod tests {
             }
         }
 
-        assert_eq!(paths.len(), 36, "unexpected evaluation file count");
-        assert_eq!(keep_count, 20, "unexpected keep disposition count");
-        assert_eq!(reject_count, 16, "unexpected reject disposition count");
+        assert_eq!(paths.len(), 2, "unexpected evaluation fixture file count");
+        assert_eq!(keep_count, 1, "unexpected keep disposition count");
+        assert_eq!(reject_count, 1, "unexpected reject disposition count");
         assert_eq!(
-            nested_reason_files, 6,
-            "unexpected files-with-nested-evaluation-reasons count"
+            nested_reason_files, 1,
+            "unexpected fixture files-with-nested-evaluation-reasons count"
         );
     }
 
-    fn evaluation_probe_from_value(value: &serde_json::Value) -> serde_json::Value {
-        let compared = value
-            .get("compared_instances")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|instances| instances.first())
-            .expect("first compared instance");
-
-        serde_json::json!({
-            "branch_id": value.get("branch_id"),
-            "overall_disposition": value.get("overall_disposition"),
-            "reasons": value.get("reasons"),
-            "compared_instance": {
-                "instance_id": compared.get("instance_id"),
-                "status": compared.get("status"),
-                "baseline_metrics": compared.get("baseline_metrics").map(evaluation_metrics_probe),
-                "treatment_metrics": compared.get("treatment_metrics").map(evaluation_metrics_probe),
-                "evaluation": compared.get("evaluation"),
-            }
-        })
-    }
-
-    fn evaluation_probe_from_artifact(artifact: &Artifact) -> serde_json::Value {
-        let compared = artifact
-            .compared_instances
-            .first()
-            .expect("first compared instance");
-
-        serde_json::json!({
-            "branch_id": artifact.branch_id,
-            "overall_disposition": artifact.overall_disposition,
-            "reasons": artifact.reasons,
-            "compared_instance": {
-                "instance_id": compared.instance_id,
-                "status": compared.status,
-                "baseline_metrics": compared.baseline_metrics.as_ref().map(evaluation_metrics_probe_from_record),
-                "treatment_metrics": compared.treatment_metrics.as_ref().map(evaluation_metrics_probe_from_record),
-                "evaluation": compared.evaluation,
-            }
-        })
-    }
-
-    fn evaluation_metrics_probe(metrics: &serde_json::Value) -> serde_json::Value {
-        serde_json::json!({
-            "tool_calls_total": metrics.get("tool_calls_total"),
-            "tool_calls_failed": metrics.get("tool_calls_failed"),
-            "patch_apply_state": metrics.get("patch_apply_state"),
-            "submission_artifact_state": metrics.get("submission_artifact_state"),
-            "aborted": metrics.get("aborted"),
-            "convergence": metrics.get("convergence"),
-            "oracle_eligible": metrics.get("oracle_eligible"),
-        })
-    }
-
-    fn evaluation_metrics_probe_from_record(metrics: &RunMetrics) -> serde_json::Value {
-        serde_json::json!({
-            "tool_calls_total": metrics.tool_calls_total,
-            "tool_calls_failed": metrics.tool_calls_failed,
-            "patch_apply_state": metrics.patch_apply_state,
-            "submission_artifact_state": metrics.submission_artifact_state,
-            "aborted": metrics.aborted,
-            "convergence": metrics.convergence,
-            "oracle_eligible": metrics.oracle_eligible,
-        })
-    }
-
-    fn real_run_root() -> PathBuf {
-        std::env::var_os("PLOKE_RECORDS_REAL_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1",
-                )
-            })
+    fn prototype1_evaluations_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/prototype1/evaluations")
     }
 
     fn read_json_value(path: &Path) -> serde_json::Value {
-        let text = fs::read_to_string(path).unwrap_or_else(|err| {
-            panic!(
-                "read real-run evaluation {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
-                path.display()
-            )
-        });
-        serde_json::from_str(&text).expect("parse real-run JSON value")
+        let text = fs::read_to_string(path)
+            .unwrap_or_else(|err| panic!("read evaluation fixture {}: {err}", path.display()));
+        serde_json::from_str(&text).expect("parse evaluation fixture JSON value")
     }
 }
