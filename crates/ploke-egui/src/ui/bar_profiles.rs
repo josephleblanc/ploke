@@ -32,6 +32,14 @@ pub const MIN_SPAN_WIDTH_PX: f32 = 3.0;
 /// Horizontal inset for inspector metric bar tracks (pane edge; see `metric_row_board`).
 pub const METRIC_TRACK_X_PADDING: f32 = 8.0;
 
+/// Right gutter for row action buttons (copy, inspect, popout); same scale as metric tracks.
+pub const PANE_LIST_TRAILING_INSET: f32 = METRIC_TRACK_X_PADDING;
+
+/// Reserve [`PANE_LIST_TRAILING_INSET`] after trailing row actions so icons are not clipped at the pane edge.
+pub fn add_pane_list_trailing_inset(ui: &mut egui::Ui) {
+    ui.add_space(PANE_LIST_TRAILING_INSET);
+}
+
 /// Lane layout profile; drives [`paint_bar_profile`] and standalone helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarProfile {

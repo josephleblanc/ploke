@@ -733,7 +733,12 @@ fn call_review_scan_row_contains_pointer(ui: &egui::Ui, row_rect: egui::Rect) ->
     if !row_rect.is_positive() {
         return false;
     }
-    let hit_rect = row_rect.expand2(egui::vec2(4.0, 2.0));
+    let hit_rect = row_rect
+        .expand2(egui::vec2(4.0, 2.0))
+        .intersect(ui.clip_rect());
+    if !hit_rect.is_positive() {
+        return false;
+    }
     ui.rect_contains_pointer(hit_rect)
 }
 
@@ -1898,4 +1903,5 @@ uncovered_calls_in_source=None. branch rationales: usefulness='' redundancy='' r
             2
         );
     }
+
 }

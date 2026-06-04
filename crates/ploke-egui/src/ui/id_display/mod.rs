@@ -5,6 +5,7 @@ use std::hash::Hash;
 
 use eframe::egui;
 use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
+
 use ploke_records::ids::ArtifactId;
 
 const HASH_CHARS: usize = 8;

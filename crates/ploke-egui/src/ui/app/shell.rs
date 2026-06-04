@@ -41,7 +41,8 @@ use self::run_records::{
 #[cfg(not(target_arch = "wasm32"))]
 use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
 pub(crate) use cache::{
-    InspectorRenderCache, eval_pane_content_width, refresh_eval_pane_column_width,
+    InspectorRenderCache, eval_pane_content_width, pane_visible_clip_rect,
+    refresh_eval_pane_column_width,
 };
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
 pub(crate) use context_strip::render_snapshot_load_banner;

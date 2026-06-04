@@ -5,7 +5,7 @@ use crate::ui::inspector::InspectorSections;
 use eframe::egui;
 use ploke_tree::Graph;
 
-use super::cache::effective_inspector_content_width;
+use super::cache::{add_pane_list_trailing_inset, effective_inspector_content_width};
 use super::eval_protocol::{
     render_selected_eval_protocol_call_review, selected_eval_protocol_call_review_key,
 };
@@ -161,6 +161,7 @@ fn show_section_popout_button(
                 ));
             }
         }
+        add_pane_list_trailing_inset(ui);
     });
 }
 
@@ -207,19 +208,6 @@ fn show_inspector_section_collapsing<R>(
     state.show_body_indented(&header_response.response, ui, |ui| add_body(ui));
 }
 
-/// Reserve the inspector tile for pointer hit-testing so eval panes behind it
-/// (same layer, earlier paint order) do not receive row hover from global geometry.
-fn claim_inspector_pane_pointer(ui: &mut egui::Ui) {
-    let pane_rect = ui.max_rect();
-    if pane_rect.is_positive() {
-        ui.interact(
-            pane_rect,
-            ui.id().with("inspector_pane_pointer"),
-            egui::Sense::hover(),
-        );
-    }
-}
-
 #[cfg_attr(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "selection_inspector")
@@ -236,7 +224,6 @@ pub(crate) fn render_right_inspector(
     open_state: InspectorOpenState,
     mut actions: Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
 ) {
-    claim_inspector_pane_pointer(ui);
     let pane_content_width = effective_inspector_content_width(ui);
     let viewport_height = ui.available_height();
     let selected_call_review = if selection_ref.is_none() {
@@ -249,6 +236,10 @@ pub(crate) fn render_right_inspector(
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_clip_rect(super::cache::pane_visible_clip_rect(
+                    ui,
+                    pane_content_width,
+                ));
                 ui.set_max_width(pane_content_width);
                 egui::Frame::new()
                     .inner_margin(INSPECTOR_MARGIN_INNER)

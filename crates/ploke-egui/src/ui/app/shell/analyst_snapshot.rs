@@ -48,6 +48,13 @@ fn analyst_snapshot_two_column_layout_resolved(
     }
 }
 
+/// Per-column content width for 2×2 layout (frame margins + column gap), not `ui.available_width()`
+/// at column start (can still reflect the full pane before the column split commits).
+fn two_column_section_width(pane_width: f32, item_spacing_x: f32) -> f32 {
+    let inner = pane_width - (TWO_COLUMN_INNER_MARGIN as f32) * 2.0;
+    ((inner - item_spacing_x) / 2.0).max(1.0)
+}
+
 fn analyst_snapshot_two_column_layout(
     ui: &mut egui::Ui,
     available_width: f32,
@@ -130,6 +137,8 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
     };
 
     if two_column {
+        let item_spacing_x = ui.spacing().item_spacing.x;
+        let column_width = two_column_section_width(pane_width, item_spacing_x);
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(TWO_COLUMN_INNER_MARGIN, 0))
             .show(ui, |ui| {
@@ -140,6 +149,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
                         &run_effort,
                         true,
                         board_style,
+                        column_width,
                     );
                     render_snapshot_section(
                         &mut columns[0],
@@ -147,6 +157,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
                         &protocol_coverage,
                         false,
                         board_style,
+                        column_width,
                     );
                     if show_outcomes {
                         render_snapshot_section(
@@ -155,6 +166,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
                             &outcome_rows,
                             true,
                             board_style,
+                            column_width,
                         );
                     }
                     if show_patch {
@@ -164,24 +176,47 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
                             &patch_rows,
                             !show_outcomes,
                             board_style,
+                            column_width,
                         );
                     }
                 });
             });
     } else {
-        render_snapshot_section(ui, "Run Effort", &run_effort, true, board_style);
+        render_snapshot_section(
+            ui,
+            "Run Effort",
+            &run_effort,
+            true,
+            board_style,
+            pane_width,
+        );
         render_snapshot_section(
             ui,
             "Protocol Coverage",
             &protocol_coverage,
             false,
             board_style,
+            pane_width,
         );
         if show_outcomes {
-            render_snapshot_section(ui, "Review Outcome Mix", &outcome_rows, false, board_style);
+            render_snapshot_section(
+                ui,
+                "Review Outcome Mix",
+                &outcome_rows,
+                false,
+                board_style,
+                pane_width,
+            );
         }
         if show_patch {
-            render_snapshot_section(ui, "Patch Production", &patch_rows, false, board_style);
+            render_snapshot_section(
+                ui,
+                "Patch Production",
+                &patch_rows,
+                false,
+                board_style,
+                pane_width,
+            );
         }
     }
 }
@@ -192,6 +227,7 @@ fn render_snapshot_section(
     rows: &[(&str, f32)],
     first_in_column: bool,
     style: MetricRowBoardStyle,
+    section_width: f32,
 ) {
     if !first_in_column {
         ui.add_space(SECTION_BLOCK_SPACING);
@@ -203,7 +239,8 @@ fn render_snapshot_section(
     );
     ui.add_space(SECTION_TITLE_SPACING);
 
-    let section_width = effective_eval_pane_content_width(ui);
+    let section_width = section_width.max(1.0);
+    ui.set_max_width(section_width);
     let board_rows: Vec<MetricBoardRow<'_>> = rows
         .iter()
         .map(|(label, value)| MetricBoardRow {
@@ -264,5 +301,30 @@ mod tests {
         assert_eq!(LABEL_COL_WIDTH, 140.0);
         let track = metric_bar_track_width(400.0, 8.0, LABEL_COL_WIDTH);
         assert_eq!(track, 186.0);
+    }
+
+    #[test]
+    fn two_column_section_width_fits_half_pane() {
+        let pane_width = 600.0;
+        let item_spacing_x = 8.0;
+        let column_width = two_column_section_width(pane_width, item_spacing_x);
+        assert!(
+            column_width < pane_width * 0.55,
+            "column {column_width} should be ~half of pane {pane_width}"
+        );
+        let track = metric_bar_track_width(
+            column_width,
+            item_spacing_x,
+            TWO_COLUMN_LABEL_COL_WIDTH,
+        );
+        let row_min = row_board_min_width(TWO_COLUMN_LABEL_COL_WIDTH, item_spacing_x);
+        assert!(
+            track + TWO_COLUMN_LABEL_COL_WIDTH + 50.0 <= column_width + 1.0,
+            "bar track {track} should fit column {column_width}"
+        );
+        assert!(
+            column_width >= row_min - 1.0,
+            "column {column_width} should satisfy row min {row_min}"
+        );
     }
 }

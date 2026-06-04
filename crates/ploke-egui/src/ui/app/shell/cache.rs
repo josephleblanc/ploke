@@ -1,4 +1,5 @@
 use crate::allocation::scope;
+use crate::ui::bar_profiles::{self, METRIC_TRACK_X_PADDING};
 use crate::ui::id_display::ShortId;
 use crate::ui::render::text::*;
 use crate::ui::text::style as text_style;
@@ -493,6 +494,11 @@ fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<eg
 /// Inset from the visible clip edge so labels and chips are not cut mid-glyph.
 pub(super) const PANE_CONTENT_EDGE_INSET: f32 = 2.0;
 
+/// Right gutter for row action buttons (copy, inspect, popout); matches eval tile / metric bar inset.
+pub(crate) const PANE_LIST_TRAILING_INSET: f32 = bar_profiles::PANE_LIST_TRAILING_INSET;
+
+pub(crate) use bar_profiles::add_pane_list_trailing_inset;
+
 fn pane_content_width_cap(raw: f32) -> f32 {
     (raw - PANE_CONTENT_EDGE_INSET).max(1.0)
 }
@@ -568,6 +574,18 @@ pub(super) fn scope_eval_pane_content_width<R>(
 /// on the tile `ui` before [`egui::ScrollArea::show`].
 pub(crate) fn eval_pane_content_width(ui: &egui::Ui) -> f32 {
     effective_eval_pane_content_width(ui)
+}
+
+/// Clip for scroll-content pointer routing: wide grids inflate [`egui::Ui::clip_rect`].
+///
+/// Call inside [`egui::ScrollArea::show`] after measuring [`eval_pane_content_width`].
+pub(crate) fn pane_visible_clip_rect(ui: &egui::Ui, content_width: f32) -> egui::Rect {
+    let clip = ui.clip_rect();
+    let right = clip.left() + content_width.max(1.0);
+    egui::Rect::from_min_max(
+        clip.min,
+        egui::pos2(right.min(clip.right()), clip.bottom()),
+    )
 }
 
 pub(super) fn inspector_wrap_width_points(width: f32) -> u32 {

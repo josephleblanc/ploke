@@ -409,6 +409,32 @@ fn eval_pane_content_width_at_tile_root_stays_within_parent() {
 }
 
 #[test]
+fn pane_visible_clip_rect_narrows_inflated_scroll_clip() {
+    use super::cache::{pane_visible_clip_rect, refresh_eval_pane_column_width};
+
+    egui::__run_test_ui(|ui| {
+        let pane_width = 260.0;
+        ui.set_width(pane_width);
+        let content_width = refresh_eval_pane_column_width(ui);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.set_min_width(3000.0);
+            let inflated = ui.clip_rect();
+            assert!(
+                inflated.width() > pane_width + 100.0,
+                "scroll min_width should inflate clip for test setup"
+            );
+            let visible = pane_visible_clip_rect(ui, content_width);
+            assert!(
+                visible.width() <= pane_width + 8.0,
+                "visible clip {} should track pane {}",
+                visible.width(),
+                pane_width
+            );
+        });
+    });
+}
+
+#[test]
 fn metric_row_board_section_width_follows_eval_clip_not_scroll_min_width() {
     use super::cache::effective_eval_pane_content_width;
     use super::metric_row_board::{LABEL_COL_WIDTH, metric_bar_track_width};

@@ -294,6 +294,7 @@ fn provenance_inspect_icon_button(ui: &mut egui::Ui) -> egui::Response {
             visuals.text_color(),
         );
     }
+    crate::ui::bar_profiles::add_pane_list_trailing_inset(ui);
     response
 }
 

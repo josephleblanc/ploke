@@ -121,7 +121,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                 let scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
                 scroll_area.show(ui, |ui| {
                     let pane_content_width = shell::eval_pane_content_width(ui);
-                    ui.set_clip_rect(ui.clip_rect());
+                    ui.set_clip_rect(shell::pane_visible_clip_rect(ui, pane_content_width));
                     ui.set_max_width(pane_content_width);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
@@ -149,7 +149,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
                                 left: 8,
-                                right: 0,
+                                right: 8,
                                 top: 0,
                                 bottom: 0,
                             })
