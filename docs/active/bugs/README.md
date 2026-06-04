@@ -115,6 +115,8 @@ file and current code before treating a report as still open.
   Foreground recovery of a vanished Prototype 1 child can produce a terminal treatment result while the parent campaign reaches complete without the comparison artifact needed for successor selection.
 - [`2026-06-04-prototype1-headless-timeout-after-apply.md`](./2026-06-04-prototype1-headless-timeout-after-apply.md)
   Fixed in source: Prototype 1 broad headless-TUI slots now preserve typed post-apply timeout/abort/validation terminals instead of collapsing applied candidates into plain `timed_out`; direct-Google missing-validation canary passed, while same-target post-apply timeout validation remains pending.
+- [`2026-06-04-prototype1-headless-tui-runtime-actor-leak.md`](./2026-06-04-prototype1-headless-tui-runtime-actor-leak.md)
+  Fixed in source: Prototype 1 broad headless-TUI runtimes now retain spawned actor handles in `WorkspaceTuiRuntime` so completed patch attempts do not leave detached TUI actors holding runtime state.
 - [`2026-06-04-prototype1-post-apply-stale-snippet-indexing.md`](./2026-06-04-prototype1-post-apply-stale-snippet-indexing.md)
   Fixed in source: recorded headless-TUI tape coverage now proves post-apply refresh retracts stale snippet rows before indexing can emit `ContentMismatch` or byte-range warnings after truncating edits; fresh live-log validation remains pending.
 - [`2026-06-04-type-context-missing-type-contains-relation.md`](./2026-06-04-type-context-missing-type-contains-relation.md)

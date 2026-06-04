@@ -54,7 +54,7 @@ use ploke_records::tool_contracts::{PersistedToolCallArguments, ToolCallArgument
 use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::TestAppAccessor;
-use ploke_tui::app::commands::harness::TestRuntime;
+use ploke_tui::app::commands::harness::{TestRuntime, TestRuntimeActorGuard};
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::ParseFailure;
@@ -4024,6 +4024,7 @@ pub(crate) async fn setup_replay_runtime(
 }
 
 pub(crate) struct WorkspaceTuiRuntime {
+    _actor_guard: TestRuntimeActorGuard,
     pub(crate) app: App,
     pub(crate) state: Arc<AppState>,
     pub(crate) debug_rx: mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
@@ -4085,13 +4086,14 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
     configure_sparse_strict_rag(&state).await;
     prepare_sparse_workspace(&state, workspace_root, extra_read_roots).await?;
 
-    let mut app = runtime
-        .into_app_with_state_pwd(workspace_root.to_path_buf())
+    let (mut app, actor_guard) = runtime
+        .into_app_with_state_pwd_and_actor_guard(workspace_root.to_path_buf())
         .await;
     wait_for_bm25_ready(&mut app, Arc::clone(&state)).await?;
     app.pump_pending_events().await;
 
     Ok(WorkspaceTuiRuntime {
+        _actor_guard: actor_guard,
         app,
         state,
         debug_rx,
@@ -4147,13 +4149,14 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
     configure_sparse_strict_rag(&state).await;
     prepare_sparse_workspace(&state, workspace_root, &[]).await?;
 
-    let mut app = runtime
-        .into_app_with_state_pwd(workspace_root.to_path_buf())
+    let (mut app, actor_guard) = runtime
+        .into_app_with_state_pwd_and_actor_guard(workspace_root.to_path_buf())
         .await;
     wait_for_bm25_ready(&mut app, Arc::clone(&state)).await?;
     app.pump_pending_events().await;
 
     Ok(WorkspaceTuiRuntime {
+        _actor_guard: actor_guard,
         app,
         state,
         debug_rx,

@@ -893,6 +893,33 @@ struct TestRuntimeInner {
     validation_rx: std::sync::Mutex<Option<mpsc::Receiver<ValidationProbeEvent>>>,
     rag_event_tx: mpsc::Sender<RagEvent>,
     cancel_tx: watch::Sender<CancelChatToken>,
+    actor_handles: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+}
+
+/// Owns background actor tasks spawned by [`TestRuntime`].
+///
+/// Most unit tests intentionally consume `TestRuntime` without this guard and keep
+/// the historical detached-task behavior. Long-lived eval harnesses should keep
+/// the guard with the returned [`App`] so dropping the runtime also terminates
+/// the actor tasks and their `Arc<AppState>`/database holdings.
+pub struct TestRuntimeActorGuard {
+    cancel_tx: watch::Sender<CancelChatToken>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl TestRuntimeActorGuard {
+    pub fn handle_count(&self) -> usize {
+        self.handles.len()
+    }
+}
+
+impl Drop for TestRuntimeActorGuard {
+    fn drop(&mut self) {
+        let _ = self.cancel_tx.send(CancelChatToken::Close);
+        for handle in &self.handles {
+            handle.abort();
+        }
+    }
 }
 
 /// Type-state test harness that tracks which background actors have been spawned.
@@ -939,15 +966,53 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         )
     }
 
+    fn retain_actor_handle(&self, handle: tokio::task::JoinHandle<()>) {
+        self.inner
+            .actor_handles
+            .lock()
+            .expect("actor_handles mutex poisoned")
+            .push(handle);
+    }
+
+    fn actor_guard(&self) -> TestRuntimeActorGuard {
+        let handles = self
+            .inner
+            .actor_handles
+            .lock()
+            .expect("actor_handles mutex poisoned")
+            .drain(..)
+            .collect();
+        TestRuntimeActorGuard {
+            cancel_tx: self.inner.cancel_tx.clone(),
+            handles,
+        }
+    }
+
     /// Build the [`App`] handle. This does **not** require any actors to be spawned.
     pub fn into_app(self, pwd: PathBuf) -> App {
         self.app(pwd)
+    }
+
+    /// Build the [`App`] handle and retain ownership of spawned actor tasks.
+    pub fn into_app_with_actor_guard(self, pwd: PathBuf) -> (App, TestRuntimeActorGuard) {
+        let app = self.app(pwd);
+        let actor_guard = self.actor_guard();
+        (app, actor_guard)
     }
 
     /// Build the [`App`] handle after seeding `SystemState.pwd` for fast-path tests.
     pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
         self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
         self.into_app(pwd)
+    }
+
+    /// Build the [`App`] handle and actor guard after seeding `SystemState.pwd`.
+    pub async fn into_app_with_state_pwd_and_actor_guard(
+        self,
+        pwd: PathBuf,
+    ) -> (App, TestRuntimeActorGuard) {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        self.into_app_with_actor_guard(pwd)
     }
 
     /// Spawn a real terminal frontend attached to this runtime.
@@ -1176,6 +1241,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
                 validation_rx: std::sync::Mutex::new(None),
                 rag_event_tx,
                 cancel_tx,
+                actor_handles: std::sync::Mutex::new(Vec::new()),
             }),
             _file_manager: std::marker::PhantomData,
             _state_manager: std::marker::PhantomData,
@@ -1202,7 +1268,8 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             self.inner.event_bus.realtime_tx.clone(),
             pwd,
         );
-        tokio::spawn(fm.run());
+        let handle = tokio::spawn(fm.run());
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
@@ -1229,13 +1296,15 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             .lock()
             .expect("debug_string_rx mutex poisoned") = Some(debug_string_rx);
 
-        tokio::spawn(debug_relay.run_relay());
-        tokio::spawn(state_manager(
+        let relay_handle = tokio::spawn(debug_relay.run_relay());
+        self.retain_actor_handle(relay_handle);
+        let state_handle = tokio::spawn(state_manager(
             Arc::clone(&self.inner.state),
             state_cmd_relay_rx,
             Arc::clone(&self.inner.event_bus),
             self.inner.rag_event_tx.clone(),
         ));
+        self.retain_actor_handle(state_handle);
         self._cast()
     }
 
@@ -1269,22 +1338,24 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             .lock()
             .expect("validation_rx mutex poisoned") = Some(validation_rx);
 
-        tokio::spawn(probe.run_relay());
+        let handle = tokio::spawn(probe.run_relay());
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_event_bus(self) -> TestRuntime<F, S, Spawned, L, O> {
         let event_bus = Arc::clone(&self.inner.event_bus);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             crate::set_global_event_bus(Arc::clone(&event_bus)).await;
             let _ = run_event_bus(event_bus).await;
         });
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_llm_manager(self) -> TestRuntime<F, S, E, Spawned, O> {
         let cancel_rx = self.inner.cancel_tx.subscribe();
-        tokio::spawn(llm_manager(
+        let handle = tokio::spawn(llm_manager(
             self.inner.event_bus.subscribe(EventPriority::Realtime),
             self.inner.event_bus.subscribe(EventPriority::Background),
             Arc::clone(&self.inner.state),
@@ -1292,14 +1363,16 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             Arc::clone(&self.inner.event_bus),
             cancel_rx,
         ));
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_observability(self) -> TestRuntime<F, S, E, L, Spawned> {
-        tokio::spawn(observability::run_observability(
+        let handle = tokio::spawn(observability::run_observability(
             Arc::clone(&self.inner.event_bus),
             Arc::clone(&self.inner.state),
         ));
+        self.retain_actor_handle(handle);
         self._cast()
     }
 }
@@ -1373,6 +1446,22 @@ mod tests {
         let mut locked = app.lock().await;
         locked.input_buffer = "/index".to_string();
         assert_eq!(locked.input_buffer, "/index");
+    }
+
+    #[tokio::test]
+    async fn test_runtime_actor_guard_retains_full_stack_handles() {
+        let fixture_db =
+            Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+        let pwd = std::env::current_dir().expect("current dir");
+        let (_app, actor_guard) = TestRuntime::new(&fixture_db)
+            .spawn_file_manager()
+            .spawn_state_manager()
+            .spawn_event_bus()
+            .spawn_llm_manager()
+            .spawn_observability()
+            .into_app_with_actor_guard(pwd);
+
+        assert_eq!(actor_guard.handle_count(), 6);
     }
 
     #[tokio::test]
