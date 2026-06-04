@@ -1,0 +1,299 @@
+Expected Value Alignment for Generative Reward
+Modeling in Formal Mathematics Verification
+
+Shihao Ji, Haotao Tan, Zihui Song, Mingyu Li
+
+Abstract
+Large Language Models (LLMs) are increasingly used with formal interactive theorem provers such as Lean 4. Scaling these systems with reinforcement learning or search methods requires process reward models (PRMs) that can evaluate intermediate reasoning steps. Existing reward-model designs expose a practical trade-off. Value-head models provide continuous scores but modify the generative model interface, while generative reward models preserve textual rationales but are poorly matched to continuous floating-point regression because numeric values are split across tokens. We introduce Expected Value Alignment (EVA), a reward-modeling procedure that keeps the surface output discrete while extracting continuous scores from the model’s token distribution. The model emits integer scores in a structured JSON format, and EVA computes a continuous score as the expectation over the logits of the corresponding anchor tokens. Training combines the causal language modeling objective with an auxiliary mean squared error loss on these expected values. We instantiate EVA in Leibniz, a reward model for Lean 4 formal verification, and evaluate it against zero-shot and reward-modeling baselines. The evaluation demonstrates that continuous logit-based scoring significantly reduces discretization artifacts while retaining the interpretability of generative critiques.
+
+Introduction
+
+Large Language Models (LLMs) are increasingly applied to formal mathematics. Recent systems have used language models for formal theorem proving in environments such as Metamath and Lean, including generative proof search and retrieval-augmented theorem proving [Polu and Sutskever, 2020, Yang et al., 2023]. Unlike many natural language tasks, proof development in interactive theorem provers (ITPs) such as Lean 4, Coq, and Isabelle requires consistency with type-theoretic constraints and the current tactic state. Although LLMs can generate plausible informal proof sketches, formal tactic generation remains prone to hallucinations: a model may propose tactics that look syntactically plausible but are invalid or irrelevant in the current proof context. One way to reduce these errors is to train or search over proof trajectories using feedback signals, as in human-feedback reward modeling and process supervision [Ouyang et al., 2022, Lightman et al., 2024]. A central component in this setting is the process reward model (PRM), which evaluates intermediate reasoning steps and provides scalar rewards for policy optimization methods such as
+Proximal Policy Optimization (PPO) [Schulman et al., 2017] or search procedures such as Monte
+Carlo Tree Search (MCTS) [Coulom, 2007].
+Common reward-model designs fall into two broad categories. A value-head reward model appends a regression head to the final hidden states of an LLM. This produces continuous scalar outputs, but it also changes the model interface and can make the learned reward less interpretable because no critique or rationale is generated.
+A generative reward model, or LLM-as-a-judge [Zheng et al., 2023], instead prompts the model to
+output a numerical score as text, for example Score: 4.25. This preserves the generative interface
+and can produce Chain-of-Thought (CoT) critiques [Wei et al., 2022], but it is not naturally aligned
+
+with continuous regression. Since LLMs predict discrete tokens, a floating-point score is represented by several token decisions, such as 4, ., and 25. As a result, the probability of the first digit alone is an incomplete proxy for the model’s confidence in the continuous score. We address this mismatch with Expected Value Alignment (EVA). EVA uses a "latent continuous, surface discrete" design. During inference, the model is constrained to generate integer scores, for
+example {1, 2, 3, 4, 5}, within a predefined JSON schema. Rather than using only the sampled textual
+score, EVA extracts the pre-softmax logits at the score positions and computes the expectation over the integer anchor set. This yields a continuous reward signal while preserving a discrete, parseable output format. To align this expected value with supervision, we add an EVA loss during supervised fine-tuning (SFT). The loss applies a mean squared error (MSE) penalty to the expected score computed from the anchor logits. This encourages the score-token distribution to place probability mass near the continuous target, while the language modeling loss trains the model to produce the critique and JSON output. This work makes three connected contributions. First, it introduces EVA as a way to combine generative critiques with continuous scores extracted from score-token logits, without adding a separate value head. Second, it formalizes categorical anchor-token expectations for obtaining continuous rewards from discrete score outputs. Third, it describes an exact token indexing procedure based on character-to-token mapping and instantiates the method in Leibniz, a PRM for Lean 4 tactic state evaluation with separate Logic, Alignment, and Clarity scores.
+
+Background and Motivation
+
+2.1
+
+Formal Mathematics and Lean 4
+
+Lean 4 is a functional programming language and theorem prover based on dependent type theory
+[de Moura and Ullrich, 2021]. In Lean, a proof is constructed interactively by applying tactics that
+transform a tactic state, consisting of hypotheses and goals, until the goals are resolved. Translating an informal mathematical step into a Lean tactic requires attention to variable types, implicit constraints,
+and the current proof state. Benchmarks such as miniF2F [Zheng et al., 2022] have made this
+setting more standardized, and a PRM for Lean 4 should therefore detect both syntactic failures and contextual mismatches, such as applying a theorem from an unrelated mathematical domain. This setting differs from ordinary mathematical text evaluation because correctness is local to a proof state. A proposed step can be mathematically true in isolation while still being unusable for the current goal, for example when it introduces objects that are absent from the context or proves a statement with a different type. Conversely, a terse Lean tactic may be valid even when it contains little natural language explanation. A reward model for this domain must therefore evaluate the interaction between the proposed step and the formal state, not only the plausibility of the mathematical content. 2.2
+
+Tokenization and Continuous Scores
+
+To understand the motivation for EVA, consider a ground truth reward of RGT = 3.8. If an LLM is trained to generate the text "3.8", the language modeling objective minimizes the negative
+log-likelihood of the token sequence [3, ., 8].
+During inference, one possible approach is to extract the probability of the first digit token. However, P (3) is affected by the fact that the model may subsequently generate .8. The confidence associated with the numeric value is therefore distributed across multiple token decisions. Tokenizers can also
+group digits differently; for example, 3.85 may be tokenized as [3, ., 85] or [3, ., 8, 5].
+These tokenization choices make first-token probabilities a noisy proxy for continuous scores. Restricting the model to a single categorical token, such as 1, 2, 3, 4, 5, avoids multi-token fragmentation but introduces quantization. For example, a target score of 3.8 must be rounded to 4.0 in the generated text. EVA is designed to keep the output categorical while using the full anchor-token distribution to recover a continuous score. The quantization issue matters most when the reward is used for optimization rather than only reporting. Two proof steps with target scores 3.6 and 4.4 would both be rounded to 4 under a purely
+
+Input
+instruction + tactic state + proof text
+
+Expected score
+E[R]
+
+LLM forward pass
+
+CoT critique
++ JSON score tokens
+
+Anchor logits
+
+Token position
+mapping
+
+Figure 1: EVA pipeline. The model produces a critique and discrete score tokens; the score-token positions are then mapped to anchor logits to compute a continuous expected reward.
+textual integer target, even though they should induce different preferences in ranking or policy updates. EVA keeps the generated object simple enough to parse but uses the latent probability distribution to preserve part of this ordering information. The resulting score is not intended to replace formal proof checking; it is a learned proxy that can prioritize candidates before expensive verification or search expansion.
+
+Related Work
+
+Language-model theorem proving has developed along two complementary directions. One line treats proof construction as generative search over formal proof states, where the model proposes candidate
+tactics or proof steps that are checked by a formal system [Polu and Sutskever, 2020]. Another line
+augments the prover with retrieval from theorem libraries and examples, improving access to relevant
+premises and proof patterns [Yang et al., 2023]. EVA is orthogonal to these systems: it does not
+propose tactics directly, but estimates the quality of candidate reasoning steps so that a prover or search algorithm can prioritize them. Reward modeling provides a second source of context. Instruction following with human feedback
+showed that learned reward models can guide language model behavior at scale [Ouyang et al., 2022],
+while process supervision studies reward signals for intermediate reasoning steps rather than only
+final answers [Lightman et al., 2024]. Formal mathematics is a natural setting for process-level
+feedback because the state of the proof is explicit and errors can occur long before the final theorem statement. At the same time, formal verification introduces stricter alignment requirements: a reward model must evaluate whether a step applies to the current tactic state, not only whether it resembles a plausible mathematical explanation. LLM-as-a-judge methods preserve a generative interface and can produce textual assessments in
+addition to scalar scores [Zheng et al., 2023]. This is useful for formal proof development because a
+critique can indicate whether a candidate fails due to logic, state alignment, or presentation. However, generative judges usually emit scores as text, which makes continuous supervision indirect. EVA addresses this interface mismatch by keeping the judge generative at the surface while extracting the reward from the score-token distribution.
+
+The Expected Value Alignment (EVA) Framework
+
+EVA separates the textual output from the reward value used by downstream optimization. The model produces discrete text for parsing and inspection, while the reward is computed as an expectation over selected token logits. 4.1
+
+The "Latent Continuous, Surface Discrete" Paradigm
+
+We formulate the input sequence X as a concatenation of the system instruction I, the current Lean 4 tactic state S, and the proposed proof text T .
+The desired output Y contains a Chain-of-Thought (CoT) reasoning block enclosed in <think>
+. . . </think> tags, followed by a structured JSON object with multi-dimensional discrete scores. For
+the Lean 4 setting, we define three evaluation dimensions: Logic (DL ), Alignment (DA ), and Clarity (DC ).
+
+Table 1: Notation used in the EVA formulation.
+Symbol
+
+Meaning
+
+X
+Y
+A
+Dk
+ht z
+RGT,k
+LSF T
+LEV A
+
+Input sequence consisting of instruction, tactic state, and proof text Output sequence containing CoT and JSON score blocks
+Anchor score set {1, 2, 3, 4, 5}
+Score dimension index Hidden state at position t Vocabulary logit vector Ground truth continuous score for dimension k Causal language modeling loss Expected-value alignment loss
+
+The three dimensions separate failure modes that are often conflated by a single scalar reward. Logic measures whether the mathematical reasoning is sound as a proof idea. Alignment measures whether the reasoning applies to the current Lean state and respects the available hypotheses, goal shape, and type constraints. Clarity measures whether the critique and proposed reasoning are explicit enough to support debugging or downstream filtering. EVA computes a continuous expected score for each dimension independently and can combine them later through a task-specific weighting scheme. The target JSON schema restricts the output for each dimension to an integer value drawn from a
+predefined anchor set A = {1, 2, 3, 4, 5}. An example target output is:
+{ " logic_score " : 4 ,
+" align_score " : 2 , " clarity_score " : 3
+}
+
+4.2
+
+Mathematical Formulation of EVA
+
+Let t be the sequence position immediately preceding the generation of the score token for a specific dimension Dk . Given the prefix sequence x<t , the causal language modeling head processes the final
+hidden state ht to produce a vector of logits z ∈ R|V | , where |V | is the vocabulary size.
+We isolate the logits corresponding to the anchor tokens A. Let vi represent the vocabulary index (token ID) for the string representation of integer i. The anchor logit vector is defined as:
+
+zA = zv1 , zv2 , zv3 , zv4 , zv5 . (1) We compute the probability distribution over the anchor tokens using a restricted, normalized softmax
+over A:
+exp(zvi /τ )
+P (i | X , Y<t ) = P
+, ∀i ∈ A, (2) j∈A exp(zvj /τ ) where τ is an optional temperature parameter, set to τ = 1.0 during training unless otherwise stated.
+The continuous reward score E[R] for the evaluated dimension is the expectation of this discrete
+distribution:
+X
+E[R] =
+i · P (i | X , Y<t ).
+(3) i=1
+
+This expectation E[R] is used as the continuous scalar reward. Because it is derived from the
+pre-softmax logits, it reflects uncertainty over nearby categorical scores. For example, if the model
+assigns P (3) = 0.4 and P (4) = 0.6, the expected score is E[R] = 3.6.
+The expectation is computed over a restricted anchor set rather than the full vocabulary. This design removes probability mass assigned to tokens that are not valid score anchors, so the score extraction step remains well defined even when the unconstrained model distribution assigns nonzero probability to punctuation, whitespace, or unrelated tokens. At generation time the textual score can still be decoded as an integer JSON value, while the reward used for optimization is read from the same forward pass before sampling or parsing artifacts are introduced.
+
+4.3
+
+The EVA Loss Function
+
+To train the expected score E[R] against continuous supervision, we introduce the EVA loss during
+supervised fine-tuning. For a given training sample containing K evaluation dimensions (e.g., K = 3 for Logic, Alignment, and Clarity), let RGT,k denote the ground truth continuous score for dimension k. We apply an MSE penalty between the expectations and the ground truth scores:
+K
+
+LEV A =
+
+1 X
+(E[Rk ] − RGT,k ) .
+K
+
+(4)
+
+k=1
+
+The total joint loss optimized during fine-tuning combines the standard autoregressive cross-entropy loss (LSF T ) and the EVA loss: LT otal = LSF T + αLEV A ,
+
+(5)
+
+where α is a balancing hyperparameter. The LSF T component trains the model to generate CoT critiques and structured JSON, while LEV A encourages the score-token distribution to align with the continuous target. Algorithm 1 Expected Value Alignment (EVA) forward pass and loss computation Require: Input token IDs X, ground truth continuous scores RGT ∈ RK , anchor values A =
+{1, 2, 3, 4, 5}, anchor token IDs VA
+1: Forward pass: logits ← Model(X) {Shape: [Batch, SeqLen, V ocabSize]}
+2: LSF T ← CrossEntropy(logits:−1 , X1: ) {Standard causal LM loss}
+3: LEV A ← 0 4: for k = 1 to K do
+5: idx ← LocateExactTokenIndex(X, dimensionk ) 6:
+zA ← logits[idx − 1, VA ] {Extract logits at prediction step}
+7:
+P ← Softmax(zA ) {Compute probabilities over anchors}
+P5
+8:
+E[Rk ] ← i=1 Ai · Pi {Compute expectation}
+9:
+LEV A ← LEV A + (E[Rk ] − RGT,k )2 {Accumulate MSE}
+10: end for 11: LEV A ← LEV A /K 12: LT otal ← LSF T + αLEV A
+13: return LT otal 4.4
+
+Exact Token Indexing via Character Mapping
+
+A practical challenge in implementing Equation 5 during batched training is locating the sequence index idxk for each score token. Training sequences vary in length because CoT rationales have different lengths, so fixed positional indexing is not reliable. Padding mechanisms, often represented
+as ignore_index = -100 in PyTorch, can also cause indexing errors when token positions are
+misaligned. We handle this with a deterministic character-to-token absolute mapping algorithm during data collation. For each training sample, a regular expression match on the raw string identifies the character offset of each target JSON value, such as the digit after "logic_score": . The fast
+tokenizer’s char_to_token() method then maps these character offsets to token indices. Because
+causal language models predict the token at position t using the hidden state at t − 1, we extract logits at sequence position idxk − 1. This keeps the language modeling objective and the expectation loss aligned at the score-token positions. This indexing step is part of the model interface rather than a preprocessing convenience. If the extracted logits correspond to the generated comma, quote mark, or next field name rather than the score digit, the EVA loss would optimize an unrelated distribution and could degrade both the language modeling objective and the reward estimate. The implementation therefore treats missing or ambiguous character-to-token mappings as invalid training examples for the auxiliary loss while retaining the standard language modeling loss where appropriate.
+
+Table 2: Dataset score dimensions.
+Dimension
+
+Symbol
+
+Assessment target
+
+Logic score
+Alignment score
+Clarity score
+
+DL
+DA
+DC
+
+Mathematical soundness of the proposed steps Fidelity to the current Lean 4 tactic state Natural language articulation
+
+Experimental Setup
+
+5.1
+
+Dataset Construction
+
+The training and evaluation datasets pair Lean 4 tactic states with informal reasoning proposals. The dataset includes both high-quality derivations and synthetically generated adversarial samples containing logical fallacies, hallucinated theorems, and syntax errors. Expert annotators provided CoT critiques and continuous ground truth scores ranging from 1.0 to 5.0 across the dimensions summarized in Table 2. For the textual generation target, the continuous scores are rounded to the nearest categorical integer. The original continuous values are preserved as RGT for the EVA loss computation. The dataset contains approximately 1,800 training records and an independent hold-out set of 400 test records. The hold-out split is constructed at the problem level where possible, so that near-duplicate proposals for the same tactic state do not appear in both training and evaluation. This split is intended to test whether the reward model learns state-sensitive evaluation criteria rather than memorizing a small set of theorem names or common proof fragments. Adversarial examples are included to make this distinction explicit: many negative samples are fluent and mathematically themed, but they fail because they do not discharge the current Lean goal. Continuous labels are used because the annotator often has enough information to distinguish borderline cases inside a five-point category. A proof idea that is locally relevant but missing a necessary side condition should not receive the same supervision as a fully correct derivation, even if both would round to the same integer for textual generation. EVA uses these fractional targets only through the auxiliary loss; the generated JSON remains categorical and easy to validate. 5.2
+
+Model Architecture and Training Details
+
+We initialize Leibniz using the Qwen2.5-1.5B-Instruct base model [Yang et al., 2024]. Finetuning is conducted using Low-Rank Adaptation (LoRA) with a rank of r = 16 and an alpha
+of 32, targeting all linear projection layers (q_proj, v_proj, k_proj, o_proj, gate_proj,
+up_proj, down_proj) [Hu et al., 2022]. The model is trained using bfloat16 precision, the AdamW
+optimizer with a learning rate of 2 × 10−5 , and a batch size of 8, accumulated over 3 epochs. The EVA loss balancing parameter is set to α = 0.5. The training objective is applied to the same sequence used for ordinary supervised fine-tuning, so the auxiliary reward loss does not require a separate value head or a second model pass. The LoRA configuration is chosen to adapt both attention and feed-forward projections while keeping the number of trainable parameters modest. In the current implementation, the EVA loss is computed only at the score positions identified by the character-to-token mapping, which limits the auxiliary supervision to the fields where a continuous target is available. 5.3
+
+Baselines
+
+We compare against four baselines, summarized in Table 3. They cover zero-shot judging, standard generative fine-tuning, and value-head regression. 5.4
+
+Evaluation Metrics
+
+We evaluate the models using mean squared error (MSE), Pearson correlation coefficient (r), and ranking accuracy. MSE measures the discrepancy between predicted continuous rewards and human6
+
+Table 3: Baseline systems used for comparison.
+Baseline
+
+Description
+
+Zero-shot GPT-4o
+
+Proprietary LLM evaluated using prompt-based zero-shot scoring Base model evaluated prior to EVA fine-tuning Base model fine-tuned using only LSF T to output CoT and discrete JSON scores; continuous scores are approximated by parsing generated text Reward model with a linear layer appended to the base model’s last hidden state and trained with MSE loss over continuous target values
+
+Zero-shot Qwen2.5-1.5B
+Standard SFT generative RM
+Value-head RM
+
+annotated continuous scores. Pearson r measures linear correlation between predicted and true rewards. Ranking accuracy measures whether the reward model correctly orders a pair of mathematical proposals, one correct and one flawed, under the same tactic state. These metrics evaluate different uses of a reward model. MSE is sensitive to calibration and is important if the reward is consumed as a numerical signal by reinforcement learning. Pearson correlation is less sensitive to affine rescaling and measures whether higher-scored examples tend to correspond to better annotated proposals. Ranking accuracy is closest to candidate selection during proof search, where the model may only need to choose which branch to expand first. We report these metrics separately for score dimensions when possible, because alignment errors are often more consequential than clarity errors in formal verification.
+
+Results and Discussion
+
+6.1
+
+Reward Accuracy and Ranking Capabilities
+
+Table 4 presents the quantitative comparison of Leibniz against the selected baselines. The results demonstrate the trade-offs between different reward modeling strategies and validate the efficacy of the proposed EVA method.
+Zero-shot models exhibit broad mathematical knowledge but frequently miss Lean-specific tactic constraints, resulting in higher Mean Squared Error (MSE) and lower ranking accuracy. The value-head reward model is highly competitive on scalar MSE, as its architecture directly optimizes continuous regression, but it lacks the textual critique necessary for diagnosing proof failures. Standard SFT generative reward models preserve critiques but rely on discrete textual scores, introducing quantization artifacts that degrade continuous calibration. As hypothesized, Leibniz, utilizing EVA, successfully mitigates these artifacts, achieving the highest Pearson correlation (r = 0.824) and ranking accuracy (84.6%) while retaining the generative critique interface.
+Table 4: Performance comparison on the Lean 4 mathematical verification hold-out set. Metrics evaluate the fidelity of the continuous reward signal and pairwise ranking accuracy.
+Model Strategy
+Zero-Shot GPT-4o
+Zero-Shot Qwen2.5-1.5B
+Standard SFT Generative RM
+Value-Head RM
+Leibniz-1.5B (Ours)
+
+6.2
+
+Logic MSE ↓
+
+Align MSE ↓
+
+Pearson r ↑
+
+Ranking Acc. ↑
+
+0.842 1.250 0.485 0.312 0.334
+
+1.154 1.680 0.521 0.345 0.368
+
+0.612 0.450 0.725 0.782 0.824
+
+72.4% 58.1% 78.5% 81.2% 84.6%
+
+Smoothness and Gradient Continuity
+
+A motivation for EVA is to obtain continuous reward values from a discrete generative model. In reinforcement learning, coarse reward steps can increase variance in advantage estimates.
+
+In contrast to a standard SFT generative RM that emits only integer scores such as 4.0 or 5.0, EVA can use the distribution over score tokens. For example, a generated JSON value of "logic_score": 4 may correspond to an extracted EVA score of 3.842 if probability mass is also assigned to adjacent anchors. This property provides a continuous reward signal that can be used by optimization algorithms such as PPO. The benefit is most direct near category boundaries. If the model is uncertain between anchors 3 and 4, a parsed integer score must choose one category, while the expected value can represent the intermediate belief. This does not make the reward differentiable with respect to the downstream policy’s discrete proof actions, but it does provide a smoother scalar target for reward-model training and a less quantized signal for policy optimization or search heuristics. 6.3
+
+Multi-dimensional Scoring
+
+We evaluate multidimensional scoring with adversarial examples. In one example, a Lean 4 tactic
+state required proving a basic natural number inequality (n > 0 ⊢ n ∗ n > 0). The adversarial
+proposal applied the Pythagorean theorem to geometry hypotenuses to prove the integer algebraic statement. This example separates mathematical plausibility from tactic-state alignment. The algebraic goal is true, but the proposed geometric argument is not aligned with the Lean context. In the intended behavior, Leibniz should assign a moderate logic score while assigning a lower alignment score and explaining the contextual mismatch in its critique. The same separation is useful for ranking partially correct candidates. A candidate that follows the current tactic state but omits a side condition may be preferable to one that gives an elegant proof of an unrelated theorem, because the former can often be repaired by search or by adding a missing lemma. A single scalar score can encode this preference only implicitly. Separate Logic, Alignment, and Clarity scores make the failure mode visible and allow downstream systems to change the aggregation rule depending on whether they prioritize proof completion, data filtering, or human inspection. 6.4
+
+Deterministic Decoding
+
+In preliminary evaluations, higher sampling temperatures (e.g., T = 0.7) sometimes changed the generated CoT and affected the subsequent JSON logits. Because the score tokens are conditioned on the preceding critique, decoding choices can affect the extracted reward. For formal reward modeling, we therefore use deterministic decoding with temperature T = 0 and greedy search when extracting EVA scores. Deterministic decoding also improves reproducibility of the reward extraction pipeline. Since the EVA score is read from logits at specific generated score positions, different rationales can shift token positions and change the context for the JSON fields. In applications where stochastic critiques are useful, one could average EVA scores across multiple sampled rationales, but this would increase inference cost and would require a separate analysis of variance across samples. 6.5
+
+Limitations
+
+The current study evaluates EVA as a reward-modeling component rather than as a complete theoremproving system. The method also depends on reliable score-position identification and on score anchors that are single tokens for the chosen tokenizer. If a tokenizer represents the anchors with multiple tokens, the implementation must either choose a different anchor set or extend the expectation to multi-token score strings. Another limitation is that continuous expected scores are calibrated only to the annotation distribution. They do not provide a proof certificate and should not be interpreted as a substitute for Lean’s kernel. EVA is best viewed as a way to rank, filter, or train candidate proof steps before formal checking. Its effectiveness in closed-loop proof search will depend on how the reward is combined with exploration, tactic execution feedback, and theorem-library retrieval.
+
+Conclusion and Future Work
+
+We introduced Expected Value Alignment (EVA), a training and inference procedure for extracting continuous scores from generative reward models. EVA computes the expectation over discrete score-token logits at identified sequence positions, reducing the dependence on parsed integer outputs while avoiding a separate value head. We applied this method to Lean 4 formal verification through Leibniz, a 1.5B-parameter reward model with generative critiques and continuous logit-based scores. Future work will evaluate EVA-trained models inside PPO loops for theorem proving and study larger or non-uniform anchor sets.
+
+References
+Rémi Coulom. Efficient selectivity and backup operators in monte-carlo tree search. In Computers and Games, pages 72–83. Springer, 2007. Leonardo de Moura and Sebastian Ullrich. The Lean 4 theorem prover and programming language. In Automated Deduction – CADE 28, volume 12699 of Lecture Notes in Computer Science, pages 625–635. Springer, 2021. doi: 10.1007/978-3-030-79876-5_37. Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In International Conference on Learning Representations, 2022. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations, 2024. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F. Christiano, Jan Leike, and Ryan Lowe. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems, volume 35, 2022. Stanislas Polu and Ilya Sutskever. Generative language modeling for automated theorem proving. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H. Chi, Quoc V. Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large language models. In Advances in Neural Information Processing Systems, volume 35, pages 24824–24837, 2022. An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. Qwen2.5 technical report. arXiv preprint Kaiyu Yang, Aidan M. Swope, Alex Gu, Rahul Chalamala, Peiyang Song, Shixing Yu, Saad Godil, Ryan Prenger, and Anima Anandkumar. LeanDojo: Theorem proving with retrieval-augmented language models. In Advances in Neural Information Processing Systems, volume 36, 2023. Kunhao Zheng, Jesse Michael Han, and Stanislas Polu. MiniF2F: A cross-system benchmark for formal olympiad-level mathematics. In International Conference on Learning Representations, 2022.
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. Judging LLM-as-a-judge with MT-Bench and Chatbot Arena. In Advances in Neural Information Processing Systems, volume 36, 2023.

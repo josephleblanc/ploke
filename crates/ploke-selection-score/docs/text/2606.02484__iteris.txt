@@ -1,0 +1,2420 @@
+June 2, 2026
+
+Iteris: Agentic Research Loops for Computational
+Mathematics
+Leheng Chen1,5 , Zihao Liu1,5 , Wanyi He1 , Bin Dong2,3,4,5¶
+School of Mathematical Sciences, Peking University
+Beijing International Center for Mathematical Research and the New Cornerstone Science
+Laboratory, Peking University
+Center for Machine Learning Research, Peking University
+Center for Intelligent Computing, Great Bay Institute for Advanced Study, Great Bay
+University
+Zhongguancun Academy
+Recent advances in large language models and agentic AI systems have enabled significant progress in mathematical discovery, from solving competition problems to tackling research-level conjectures. However, open problems in computational mathematics have received comparatively less attention: research in this area often requires not only proofs but also numerical experimentation, adversarial constructions, and algorithm design. In this paper, we introduce an agentic research system, Iteris, designed for open problems in computational mathematics. We apply Iteris to two open problems from
+a recent Simons Workshop collection [3]. In these case studies, Iteris generated numerical evidence,
+constructions, and proof drafts that led, after expert review and correction, to verified results. The first result is a phase diagram for the asymptotic comparison between conjugate gradient and randomized coordinate descent on power-law spectra; the second is a counterexample showing that QR factorization with column pivoting can fail to select well-conditioned submatrices even under low coherence. These case studies suggest that agentic AI systems can participate meaningfully in research workflows for open problems in computational mathematics, while human validation remains essential. ¶
+Corresponding author
+
+Correspondence : dongbin@math.pku.edu.cn
+
+Introduction
+
+Recent advances in large language models and agentic AI systems have opened new possibilities for mathematical discovery. Frontier reasoning models can now solve increasingly difficult competition and graduate-level problems through natural-language inference [7, 12, 24]. Beyond direct problem solving, systems such as FunSearch [22] and AlphaEvolve [20] have shown that language models can be embedded in iterative search loops, where candidate programs are generated, evaluated, and improved. More recently, autonomous mathematics systems have begun to target research-level questions, including long-horizon natural-language proof search,
+conjecture resolution, and human–AI co-mathematical workflows [10, 15, 26]. These developments suggest
+that AI systems are moving from solving isolated mathematical exercises toward participating in genuine mathematical research. However, open problems in computational mathematics present a different kind of challenge. Progress in this area rarely consists of producing a proof in one pass, nor can it always be reduced to optimizing a single executable objective. A typical research trajectory may involve numerical experimentation, adversarial construction, and proof development. Thus computational mathematics requires an AI system to coordinate several research modes. In this paper, we introduce Iteris, an agentic research system designed for open problems in computational mathematics. Iteris is organized as an explore–plan–execute loop. In each iteration, an exploration agent first probes plausible directions and tests whether the current branch is becoming locally stagnant. A plan agent then reads the global project state and chooses structured tasks for the next iteration. Specialized execution agents carry out the selected tasks, including foundation work, numerical experiment, proof construction,
+
+and route review. All project state is maintained through files, which serve both as long-term memory and as structured messages between agents. This design allows Iteris to pursue long research trajectories while keeping research facts separate and checkable. We apply Iteris to open problems from the recent collection Linear Systems and Eigenvalue Problems: Open
+Questions from a Simons Workshop [3]. Iteris produced long-horizon exploratory artifacts and proof drafts
+for these two problems; the final mathematical results were obtained after human verification, mathematical repair where needed, and expository reorganization. The first (Problem 2.4 ) concerns the asymptotic comparison between conjugate gradient (CG) and randomized coordinate descent (RCD) on power-law spectra. We establish a fixed-parameter phase diagram for the normalized cost ratio between RCD and CG; see Theorem 1. The second (Problem 4.3 ) concerns whether QR factorization with column pivoting (QRCP) reliably selects well-conditioned submatrices from a matrix with orthonormal row. We construct a low-coherence counterexample family showing that QRCP can fail to do so; see Theorem 2. Iteris generated the main exploratory and deductive artifacts that made the two results possible, while the final mathematical arguments required expert verification and editing. In the CG case, the system found the main phase structure, but one rate analysis in the p < 1 regime initially relied on an unjustified stronger assumption; this gap was detected by human inspection and repaired through further human–AI interaction. In the QRCP case, the system identified the correct obstruction, but the generated proof trajectory was circuitous and required substantial reorganization into a readable proof. Together, these results provide concrete evidence that agentic AI systems can move beyond benchmark problem solving and contribute to the research workflow for open problems in computational mathematics. Contributions.
+1. We describe the Iteris system: an explore–plan–execute agentic loop system for distinct research modes in computational mathematics.
+2. We establish a fixed-parameter phase diagram for the CG-versus-RCD comparison on power-law spectra, giving asymptotic rates for the normalized cost ratio between RCD and CG (Theorem 1).
+3. We answer the QRCP orthonormal-selection question in the negative by constructing a low-coherence orthonormal-row counterexample family (Theorem 2). The rest of the paper is organized as follows. Section 2 reviews related work. Section 3 describes the Iteris system framework. Section 4 states the two open problems and their resolutions. Section 5 discusses broader implications. Appendices A and B give proof details.
+
+Related work
+
+AI systems for mathematical discovery. AI has increasingly become a tool for mathematical exploration and constructive search. Early work showed that machine learning can reveal patterns in mathematical data and
+help guide the formulation of new conjectures and theorems [8]. More recent systems use language models as
+search engines over explicit mathematical or algorithmic objects: FunSearch searches over programs with
+an automated evaluator [22], while AlphaEvolve extends evaluator-guided search to larger algorithmic code
+artifacts [20]. Research-level mathematics has also become an explicit target. First Proof proposed researchlevel mathematical questions as a benchmark for AI reasoning [1]; autonomous-mathematics systems such as
+Aletheia study long-horizon natural-language research processes [10]; and automated conjecture-resolution
+systems connect informal mathematical reasoning with formal verification [15]. Another important paradigm is
+human–AI collaboration: recent AI co-mathematician systems are designed to help pure mathematicians carry
+out research-level work through ideation, search, computation, and theorem proving [26]. These developments
+mark rapid progress in AI-assisted and increasingly autonomous mathematics, but open problems in applied and computational mathematics remain much less systematically explored. Agentic research workflows. A parallel line of work views research automation as a long-horizon workflow
+rather than a single model call. ReAct introduced interleaved reasoning and acting in external environments [25],
+
+Figure 1 Iteris agent
+
+and scientific agents such as Coscientist further demonstrate the use of LLM agents for scientific planning and
+experimentation [4]. Closest to full AI-research automation, The AI Scientist frames machine-learning research
+as an end-to-end agentic process spanning idea generation, literature search, experiment implementation,
+result analysis, manuscript drafting, and automated review [18]. These works establish agentic workflows as a
+promising route to scientific discovery, but they are mostly evaluated in laboratory, or benchmark-mediated settings; computational mathematics requires a tighter integration of numerical experimentation, algorithm design, and proof-sensitive reasoning.
+
+Framework
+
+Research in computational mathematics moves between several modes: formulating conjectures, running numerical tests, building proofs, and reviewing whether a route should continue. Iteris is an explore–plan–execute agentic loop system for coordinating these modes (Figure 1). The system has three main parts: an agentic explore–plan–execute protocol, execution agents for different research modes, and an exploration agent that tests possible directions before the plan agent chooses the next task pool.
+
+3.1
+
+Agentic explore-plan-execute protocol
+
+Each iteration follows the same order: explore, plan, and execute. The three phases separate broad search, global task selection, and local research work:
+1. Explore. Exploration agent runs probes before the next task pool is fixed. This work consists of light repository-level probing: reading relevant project files, inspecting recent iterations, searching prior facts, and drafting scratch reasoning over a few plausible routes. The exploration agent does not write the official plan. It writes scratch files and an advisory that records the recommended task shape, the local-minimum check, the routes considered, the reason the direction is high value now, and the risks or non-goals that keep the task safe.
+2. Plan. Plan agent reads the project files and the exploration advisory. It has the global view of the project: the problem statement, roadmap, project memory, route status, prior facts, frontier state, and recent iteration results. Its job is to decide the task pool for the next iteration. The Plan agent writes TASK_POOL.json, which specifies each task’s category, goal, input files, allowed scope, verification requirements, and result contract.
+
+3. Execute. Each selected Execution agent receives its assigned task from TASK_POOL.json as local context. It performs exactly one research action using its task-specific skills and writes structured result files. These result files are added back to project memory and become input for the next iteration. The protocol is organized around files. Project files store memory across iterations, and they also pass structured information between agents. Thus files play two roles. First, they are memory: they keep the project state, reviewed facts, route decisions, and claim limits stable across many iterations. Second, they are messages: advisories, task pools, and result files move information from one agent to the next.
+
+3.2
+
+Execution agents for research modes
+
+Execution agents implement the local research actions selected by the plan agent. Each execution agent is equipped with a task-specific agent skill: a Markdown-based capability specification that defines its purpose, admissible inputs, execution rules, and output schema. This makes different research modes reusable while keeping each execution step narrow and checkable. Iteris currently uses four execution agent categories:
+1. Foundation agent: audits sources, freezes definitions, drafts conjecture cards, and maintains claim discipline.
+2. Experiment agent: runs numerical work, such as test harnesses, diagnostics, and counterexample searches. Experimental evidence is never treated as proof.
+3. Proof agent: constructs and checks proof artifacts for stable statements, special cases, or route-level lemmas.
+4. Review agent: evaluates evidence, proof gaps, route value, and claim status; it may recommend deepening, reframing, or retiring a branch. The plan agent selects the execution agent categories needed in each iteration. This is similar to a mathematician deciding whether the next step should be source cleanup, computation, proof work, or strategic review. The selected execution agent does not make global project decisions. It applies the skills specified by TASK_POOL.json within the assigned scope and returns structured result files. This separation helps prevent false progress: numerical evidence, proof sketches, reviewed facts, and formal theorem claims are kept distinct.
+
+3.3
+
+Exploration agent for escaping local inertia
+
+The exploration agent is separated from the plan agent because planning and exploration play different roles. This separation matters as the plan agent does not directly perform research actions. It works from the global project files, so it may keep improving the route that already looks most natural. This can be useful when the route is correct, but it can also lead to local parameter tuning or route inertia. In open problems, the useful next move may require trying a side idea before it is clear that the idea deserves an official task. The exploration agent fills this gap by running aggressive probes. Its role is not to decide the official task pool, but to produce decision signals that help the plan agent avoid over-committing to the current branch. In practice, this means reviewing recent iterations, checking whether the branch has narrowed into incremental follow-up work, retrieving prior facts when they bear on the decision, and comparing a small number of plausible routes before recommending a candidate task shape. The plan agent may then adopt, modify, or reject this recommendation when writing TASK_POOL.json. With this separation, planning remains globally coherent, execution remains locally scoped, and exploration gives the loop a way to search beyond its current path. Together, these components form the Iteris system. In the open-problems section, we report two successcase trajectories in which Iteris ran for over a hundred iterations per problem and generated artifacts that contributed to the final results; the theorem statements and final proofs were verified, repaired where necessary, and organized by the authors. In our experiments, the generation agent is implemented using the OpenAI Codex agent with GPT-5.5 as the underlying model.
+
+Open problems and resolutions
+
+This section states the two mathematical problems from the Simons workshop collection [3]. For each problem
+we give the theorem statement, and a proof sketch. Full proof details appear in Appendices A and B. The proof of Problem II has also been verified in Lean1 .
+
+4.1
+
+Overview
+Problem
+
+Resolution type
+
+Details
+
+CG vs. RCD on power-law spectra QRCP orthonormal selection
+
+fixed-parameter phase diagram counterexample
+
+Appendix A
+Appendix B
+
+Table 1 The two open-problem resolutions reported in this paper.
+
+4.2
+
+Problem I: CG versus sketching
+
+Background. Conjugate gradient (CG) [13, 23] and randomized sketch-and-project methods [11, 16, 19] are
+two classical iterative methods for solving symmetric positive-definite linear systems. They rely on different mechanisms: CG exploits global spectral structure through Krylov subspaces and residual polynomials, whereas randomized coordinate descent (RCD) and related coordinate sketch-and-project methods process only one coordinate at each step. The individual steps of RCD are therefore extremely cheap, but it may need more steps; the natural unit of comparison is an epoch, namely n coordinate updates, rather than a single
+coordinate step. The Simons workshop collection [3] Problem 2.4 asks how these two mechanisms compare
+asymptotically in a source model with power-law spectra. The problem concerns this epoch-scaled comparison in a regime where condition number alone is not predictive. The stopping times depend jointly on spectral decay, the source distribution of the right-hand side, and the orientation of the eigenvectors relative to the coordinate basis. Related work connects sketch-and-project
+convergence to randomized SVD [9] and analyzes subspace-constrained RCD [17]. We ask, for each fixed (p, ϵ),
+which method has the asymptotic advantage and whether the answer forms a phase diagram. Fix p > 0 and let An = Un diag(1−p , 2−p , . . . , n−p )Un∗ ,
+
+bn = An zn ,
+
+n×n
+
+where Un ∈ C is Haar unitary and zn is an independent uniformly distributed complex unit vector. Thus the exact solution is x⋆,n = A−1 n bn = zn . Both algorithms start from x0 = 0, and errors are measured in the An -norm ∥v∥2An = v ∗ An v. The CG method is exact, unpreconditioned conjugate gradient. The randomized method is the coordinate
+sketch-and-project method used in the open problem: at step t, it samples it ∈ {1, . . . , n} with probability
+P(it = i | An ) =
+
+An (i, i) tr(An )
+
+and performs the exact coordinate update xt+1 = xt +
+
+(bn − An xt )it eit . An (it , it )
+
+We write I = (i0 , i1 , . . .) for the coordinate-sampling sequence. 1 https://github.com/frenzymath/qrcp-bounded-coherence-obstruction
+
+For a fixed relative squared-error threshold ϵ ∈ (0, 1), define
+
+TCG,n (ϵ, p) = min t ≥ 0 : ∥xCG
+− x⋆,n ∥2An ≤ ϵ∥x0 − x⋆,n ∥2An , t and
+
+TRCD,n (ϵ, p; I) = min t ≥ 0 : ∥xRCD
+(I) − x⋆,n ∥2An ≤ ϵ∥x0 − x⋆,n ∥2An . t Since one RCD epoch consists of n coordinate updates, we compare CG steps with RCD epochs through ρn (ϵ, p) =
+
+TRCD,n (ϵ, p; I)/n . TCG,n (ϵ, p)
+
+The goal is to determine the fixed-parameter asymptotic behavior of ρn (ϵ, p) as n → ∞. Before stating the theorem, we introduce the CG-side quantity that will govern the phase diagram. It measures
+what fixed-degree residual polynomials can achieve in the power-law limit. For 0 < p < 1, the limiting tail
+measure has only finitely many finite moments. Since a degree-k residual polynomial involves moments up to order 2k, its limiting quadratic form is finite precisely when (2k + 1)p < 1.
+Define
+K(p) = max{k ≥ 0 : (2k + 1)p < 1},
+and the limiting moment measure νp (dy) =
+
+1 − p −1/p y dy, p
+
+y ∈ [1, ∞).
+
+We define the limiting CG floor by
+Z
+F (p) =
+
+min
+deg r≤K(p), r(0)=1
+
+r(y)2 νp (dy).
+
+This is a finite-dimensional moment problem. Equivalently, if
+Z
+1−p
+ms (p) = y s νp (dy) =
+, 1 − (s + 1)p
+
+0 ≤ s ≤ 2K(p),
+
+and
+
+GK(p) (p) = ma+b (p) 0≤a,b≤K(p) ,
+then F (p) =
+
+. GK(p) (p)−1 00
+
+Thus F (p) is the constrained minimum of the finite Hankel moment matrix associated with νp .
+R
+Equivalently, if GK (p)ab = y a+b dνp (y) on the active range, then F (p) =
+
+. (GK(p) (p)−1 )00
+
+Intuitively, F (p) is the lowest relative error level that fixed-degree CG can stably reach in the limiting active problem. The position of ϵ relative to F (p) is the primary divider in the fixed-parameter phase diagram.
+
+Theorem 1 (Fixed-parameter CG/RCD phase diagram with rate upper bounds). Fix p > 0 and ϵ ∈ (0, 1). Then the zero-ratio regimes are:
+Regime
+
+Conclusion
+
+p>1
+
+ρn (ϵ, p) − →0
+
+p=1
+
+ρn (ϵ, 1) − →0
+
+Proved upper bound
+
+P
+
+P
+
+P
+
+1/3 < p < 1
+
+F (p) = 1,
+
+ρn (ϵ, p) − →0
+
+p = 1/3
+
+F (p) = 1,
+
+ρn (ϵ, 1/3) − →0
+
+P
+
+P
+
+ρn (ϵ, p) − →0
+
+0 < p < 1/3, ϵ < F (p)
+
+ρn (ϵ, p) = OP (n−1 )
+
+log n ρn (ϵ, 1) = OP an ρn (ϵ, p) = OP (1/bn )
+ρn (ϵ, 1/3) = OP (1/bn ) ρn (ϵ, p) = OP (1/bn ).
+
+Here, in the p = 1 row the bound holds for every deterministic an → ∞ satisfying
+log an = o(log n), whereas in the OP (1/bn ) rows it holds for every deterministic bn → ∞ satisfying
+bn log(1 + bn ) = o(log n). The remaining regimes are as follows.
+(1) If 0 < p < 1/3 and F (p) < ϵ < 1, then there exists η(p, ϵ) > 0 such that
+P(ρn (ϵ, p) > η(p, ϵ)) → 1.
+(2) If 0 < p < 1/3 and ϵ = F (p), then there exist η(p) > 0 and c(p) > 0 such that
+lim inf P(ρn (F (p), p) > η(p)) ≥ c(p).
+n→∞
+
+(3) Moreover, on the endpoint/lower-subband critical regimes p=
+
+2K + 3
+
+or
+
+<p≤
+, 2K + 3 2K + 2
+
+K ≥ 1,
+
+the critical obstruction strengthens to
+P(ρn (F (p), p) > η(p)) → 1
+for some η(p) > 0. This theorem is pointwise in the fixed pair (p, ϵ). The rate bounds are conservative stochastic upper bounds, included only to quantify the zero-ratio regimes. We do not claim that these bounds are sharp. 4.2.1
+
+Proof sketch
+
+First, we reduce exact CG to a finite-dimensional residual-polynomial minimum. Write An = Un Λn Un∗ ,
+
+Λn = diag(1−p , 2−p , . . . , n−p ),
+
+For d ≥ 0, define
+
+Pn
+Md,n (p) =
+
+min
+deg q≤d, q(0)=1
+
+j=1 λj |q(λj )| |αj |
+Pn
+.
+j=1 λj |αj |
+
+The standard CG optimality property gives
+TCG,n (ϵ, p) = min{d ≥ 0 : Md,n (p) ≤ ϵ}.
+
+α = Un∗ zn .
+
+Since zn is uniform on the complex unit sphere, the spectral weights have the representation d
+
+(|α1 |2 , . . . , |αn |2 ) =
+
+(E1 , . . . , En )
+Pn
+,
+i=1 Ei
+
+where E1 , . . . , En are independent mean-one exponential random variables. Thus CG stopping becomes a random weighted moment problem.
+Second, for 0 < p < 1, we identify the fixed-degree CG limit. Rescale the spectrum by
+p n
+X
+n a
+Yj,n =
+,
+Sa,n =
+Yj,n
+Ej ,
+j j=1 and define the random probability measure µn =
+
+n
+1 X
+
+S1,n j=1
+
+Yj,n Ej δYj,n .
+
+Then
+
+Z
+Md,n (p) =
+
+min
+deg r≤d, r(0)=1
+
+r(y)2 µn (dy).
+
+For fixed degrees, the relevant moments of µn converge to those of νp (dy) =
+
+1 − p −1/p y dy, p
+
+y ∈ [1, ∞).
+
+A degree-k residual polynomial requires moments up to order 2k, and these moments are finite exactly when (2k + 1)p < 1.
+This gives
+K(p) = max{k ≥ 0 : (2k + 1)p < 1},
+and the limiting CG floor
+Z
+F (p) =
+
+min
+deg r≤K(p), r(0)=1
+
+r(y)2 νp (dy).
+
+The fixed-degree limit is
+P
+
+Md,n (p) − → Fmin(d,K(p)) (p).
+Third, this floor gives the main 0 < p < 1 phase mechanism. If ϵ < F (p), then every fixed CG degree remains
+above the threshold with high probability, so TCG,n (ϵ, p) → ∞
+
+in probability.
+
+At the same time, source RCD satisfies the epoch upper bound TRCD,n (ϵ, p; I)/n = OP (1).
+Therefore
+ρn (ϵ, p) → 0.
+This includes the whole row 1/3 ≤ p < 1, because then K(p) = 0 and F (p) = 1.
+If 0 < p < 1/3 and F (p) < ϵ < 1, the fixed-degree limit gives bounded CG stopping:
+TCG,n (ϵ, p) = OP (1). On the other hand, a small-support argument shows that RCD still needs a positive fraction of an epoch. Hence the ratio is bounded away from zero with high probability.
+
+Fourth, the remaining qualitative cases are handled separately. When p > 1, the spectrum is summable: ∞
+X
+
+j −p < ∞.
+
+j=1
+
+The RCD process has a Hilbert-space random-projection limit, and a fixed number of RCD updates eventually reduces the source error below the threshold. Thus TRCD,n (ϵ, p; I) = OP (1), and since TCG,n (ϵ, p) ≥ 1,
+
+ρn (ϵ, p) = OP (n−1 ).
+
+At the logarithmic boundary p = 1, RCD satisfies TRCD,n (ϵ, 1; I)/n = OP (log n),
+while the CG polynomial minimum remains above any fixed ϵ < 1 for super-logarithmically growing degrees.
+This gives
+ρn (ϵ, 1) → 0. The critical boundary ϵ = F (p) is decided by the first inactive Schur-complement correction. In every nonvacuous active band, this correction gives a positive-probability obstruction to ρn → 0. On the endpoint/lowersubband critical regimes, the same correction dominates with probability tending to one, giving the stronger high-probability obstruction. Finally, the rate bounds use growing-degree CG non-stopping estimates. For p = 1, if an → ∞,
+
+log an = o(log n),
+
+then
+P(TCG,n (ϵ, 1) ≤ an ) → 0.
+For the 0 < p < 1 zero-ratio regimes, if
+bn → ∞,
+
+bn log(1 + bn ) = o(log n),
+
+then
+P(TCG,n (ϵ, p) ≤ bn ) → 0.
+The stochastic upper bounds follow from the event inclusion
+
+B budgetn
+TRCD,n (ϵ, p; I) ρn (ϵ, p) > ⊂
+> B budgetn ∪ {TCG,n (ϵ, p) ≤ dn } .
+dn n
+Here budgetn = log n and dn = an for p = 1, while budgetn = 1 and dn = bn for 0 < p < 1. This proves the
+rate bounds stated in the theorem. Full details are given in Appendix A. 4.2.2
+
+Trajectory analysis
+
+Figure 2 summarizes the agent-collaboration trajectory that led from the original open problem to the final fixed-parameter phase diagram. The figure records the main mathematical roles played by different agents in the Iteris framework: source auditing and convention freezing, candidate proof generation, independent review, blocker identification, proof repair, and final human mathematical audit.
+
+Figure 2 Iteris trajectory for Problem I.
+
+1. Foundation and model freeze. The foundation stage fixed the exact comparison model from Problem 2.4 in the Simons workshop collection: Haar eigenvectors, power-law eigenvalues λj = j −p , source right-hand side bn = An zn , exact unpreconditioned CG, and source RCD counted in epochs. This stage also fixed the comparison ratio ρn (ε, p) and prevented later agents from silently changing the solver model, the source distribution, or the unit of comparison.
+2. Orchestrated decomposition. The plan agent decomposed the original question into spectral regimes: the
+summable row p > 1, the logarithmic row p = 1, and the nonsummable range 0 < p < 1. In the nonsummable
+range, it further separated the below-floor, above-floor, and critical-boundary cases. This orchestration turned the original open-ended comparison into smaller proof targets with explicit dependencies and review gates.
+3. Candidate proof generation. Proof agents generated separate candidate modules for the CG polynomial representation, the RCD epoch upper bound, the RCD lower gate, the active moment problem, the p = 1 logarithmic row, the p > 1 summable row, and the critical Schur-complement boundary. These modules produced several positive mathematical outputs, including the identification of the active degree K(p), the floor F (p), the finite-dimensional residual-polynomial reduction, and the first-inactive Schur mechanism at the critical threshold.
+4. Review gates and blockers. Review agents blocked several overstrong shortcuts: fixed-degree CG nonstopping was not allowed to imply growing-degree rate bounds; selected-row or proxy estimates were not automatically upgraded to global statements; and the critical boundary could not be justified by a compressed “standard asymptotics” step. These blockers forced the proof to split active-block estimates, Schur-gain estimates, inverse-coordinate stability, endpoint cases, and growing-degree controls into separate verifiable units.
+5. Repair loop and final audit. The final appendix was produced only after these agent-generated modules were manually audited and repaired. In particular, informal or invalid arguments were replaced by standard mathematical tools: matrix Chernoff bounds for random Gram consistency, a projection-product theorem for the p > 1 Hilbert-space contraction, explicit Schur-complement asymptotics at the critical boundary, and a
+
+separate treatment of the endpoint K = 0, i.e. p = 1/3. Thus the pipeline contributed both constructive
+proof modules and negative information about which proof routes were not justified. The final proof in Appendix A should therefore be viewed as a human-audited synthesis of agent-generated and agent-reviewed proof modules. Two lessons from this trajectory are worth making explicit. Direct GPT-Pro comparison. As a comparison point, we also submitted the same CG-versus-RCD question directly to GPT-Pro in an advanced reasoning mode.2 The direct response produced an attractive heuristic picture: it identified reasonable spectral-filter intuition, proposed polynomial CG scalings, and suggested that epoch-scaled RCD should often dominate. However, it did not close the proof. In particular, it treated coordinate RCD too much like a diagonal spectral filter, blurred the distinction between expected, typical, and high-probability stopping times, and asserted sharp CG rates without the growing-degree lower bounds needed to justify them. This comparison clarifies one role of the Iteris framework: it does not merely ask for a more fluent answer, but decomposes a plausible heuristic into auditable proof obligations. Human steering and rate-claim repair. A second lesson concerns the role of human steering. The initial agentic proof trajectory focused on the qualitative phase diagram. From a human mathematical perspective, however, such a qualitative convergence statement naturally calls for a more refined analysis of the speed of convergence. The model did not initially make this quantitative question explicit; only after human intervention did the proof search turn toward rate bounds. Once this target was made explicit, early candidate proofs suggested a stronger negative-power rate for ρn (ε, p). The subsequent review stage, again guided by the human request to check what was actually proved, identified that this rate claim was not supported by the available estimates. The fixed-degree CG argument
+showed only that P(TCG,n ≤ d) → 0 for every fixed d, whereas a negative-power bound for ρn would require a
+polynomial lower bound on TCG,n . Subsequent discussion and repair replaced this overstrong statement by a conservative growing-degree non-stopping estimate. The final theorem therefore states bounds such as ρn (ε, p) = OP (1/bn ),
+
+bn → ∞,
+
+bn log(1 + bn ) = o(log n),
+
+rather than an unsupported fixed negative exponent. This illustrates that the human intervention still matters: human mathematical judgment helped formulate the right rate question, while the agentic review and repair loop converted an overstrong candidate answer into a statement supported by the proof.
+
+4.3
+
+Problem II: QRCP orthonormal selection
+
+Background. QR factorization with column pivoting (QRCP), introduced in the Householder least-squares
+setting by Businger and Golub [5], later became a standard deterministic tool for numerical rank detection,
+rank-revealing factorizations, and column-subset selection. Businger and Golub’s greedy pivot rule selects, at each step, the column with largest residual norm after projection. Subsequent theoretical work clarified the distinction between the existence of good rank-revealing column permutations and the behavior of particular
+pivoting rules. Hong and Pan [14] gave column permutation existence results for factorizations with provable
+singular-value bound, and Osinsky [21] gave a fairly efficient O(nk 2 ) algorithm achieving this bound. The
+Simons workshop collection [3] Problem 4.3 asks whether the classical QRCP enforces a conditioning guarantee
+in the orthonormal-row setting. Theorem 2 answers this question in the negative. The problem concerns the rank-revealing power of exact QRCP in the orthonormal regime. Let Q ∈ Rn×k have orthonormal columns, and apply QRCP to A = QT . Equivalently, at each step one selects the remaining row label whose column in A has largest squared residual after orthogonal projection away from the span already chosen. If Ipiv = (i1 , . . . , ik ) is the selected ordered set, write
+M (Q) = Q[Ipiv , :],
+
+γ(Q, Ipiv ) = ∥M (Q)−1 ∥2
+
+2 https://chatgpt.com/s/t_6a19b814f7508191822a0b542bb88347
+
+when M (Q) is nonsingular. The open question asks whether the residual-pivot rule forces γ(Q, Ipiv ) to stay p under the scale k(n − k + 1). We prove a stronger obstruction: the residual-pivot rule can fail by an arbitrarily large polynomial factor even when the row energies of Q are uniformly controlled.
+Theorem 2 (Bounded-coherence obstruction for QRCP). For every H∗ > 1, B > 0, e ≥ 0, and K ≥ 1,
+there exist integers k ≥ K and n > k, and a matrix Q ∈ Rn×k with QT Q = Ik , such that QRCP applied to
+QT selects an ordered pivot set Ipiv for which M (Q) is nonsingular, µ(Q) =
+
+n max ∥Q(i, :)∥22 < H∗ ,
+k 1≤i≤n
+
+γ(Q, Ipiv ) p > Bk e . k(n − k + 1)
+
+Here µ(Q) is the standard coherence of the subspace range(Q), i.e. the maximum row leverage score normalized by the average leverage k/n. The condition µ(Q) < H∗ therefore places the example in a bounded-coherence regime. This rules out the explanation that the QRCP failure is caused by a few high-leverage rows. Such
+coherence conditions are ubiquitous in matrix completion and randomized linear algebra [6].
+4.3.1
+
+Proof sketch
+
+We first prescribe the block that QRCP will select, make this block badly conditioned, and only afterwards add extra columns to restore orthonormality. Choose m large, set k = m + 1, and build A ∈ Rk×n ,
+
+Q = AT .
+
+The columns of A are arranged in four blocks:
+A = R+
+The first block is the selected block
+
+R+ =
+
+G .
+
+X
+
+F
+
+Rβ
+
+z . ηp
+
+Here Rβ is an explicit upper-triangular chain. Let ϵ = e−η/k ,
+
+s = (1 − ϵ2 )1/2 ,
+
+dt =
+
+1 t−1 ϵ k
+
+(1 ≤ t ≤ m),
+
+and choose signs σ1 , . . . , σm ∈ {±1}. Then
+  q = t, dt ,
+(Rβ )t,q = − 2 σt σq s dt , t < q,
+  0, t > q.
+
+z The final selected column is , where ηp zt =
+
+σt sdt
+
+(t < m),
+
+zm =
+
+1/2 σm 1 − dm ,
+
+ηp =
+
+dm .
+
+The signs are chosen so that the entries of Rβ−1 z reinforce rather than cancel. This triangular back-substitution is the source of the large inverse norm of the selected block. The other three blocks only complete the identity AAT = Ik , while keeping every added column too small to be selected by QRCP. The final selected column creates a mixed term between the first m coordinates and the last coordinate. We cancel this term by adding two cross columns
+
+X=
+
+θ2 z , −b2 ηp
+
+θ1 z −b1 ηp
+
+θ1 b1 + θ2 b2 = 1.
+
+T
+The mixed block from XX T cancels exactly the mixed block from R+ R+ .
+
+After this cancellation, the remaining missing matrix in the first m coordinates is
+
+Mrem = Im − Rβ RβT − 1 + θ12 + θ22 zz T . For large m this matrix is positive definite. We split it into many small rank-one pieces,
+Mrem =
+
+NX
+frame
+
+Wh uh uTh ,
+
+0 < Wh < d2m ,
+
+∥uh ∥2 = 1,
+
+p
+
+!
+
+h=1
+
+and put these pieces into the pure frame block √ √
+W1 u1
+W2 u2
+F =
+
+··· ···
+
+WNframe uNframe
+
+.
+
+Thus F fills exactly the missing first-coordinate identity and contributes nothing to the last coordinate. The bound Wh < d2m is also the pivot-control condition: before the final step, every frame column has residual below the next intended selected residual, and after the first m selected columns it has zero residual. Only the last diagonal entry remains. We split the remaining scalar into positive pieces e1 , . . . , eNres and set ! ···
+G= √
+. √ √
+e1 e2 · · · eNres These residual-only columns complete the lower-right entry of AAT . Putting the blocks together, X cancels the mixed term, F restores the first-coordinate identity, and G restores the last diagonal entry. Hence AAT = Ik , QT Q = Ik . At the same time, the small-column bounds force QRCP to select the prescribed columns corresponding to R+ , namely Ipiv = (1, 2, . . . , m, m + 1). It remains to quantify the bad conditioning of the selected block. Let Z = ∥Rβ−1 z∥22 .
+Since
+
+R+
+
+−Rβ−1 z
+
+=
+
+, ηp
+
+the selected block has a very small singular direction, and therefore γ(Q, Ipiv )2 ≥
+
+Z
+. ηp2
+
+The chosen sign pattern in the triangular chain makes Z grow exponentially which is faster than any fixed polynomial in k. The added columns increase the total row count, but only by the amount needed to complete the identity; this does not erase the growth coming from Z. Consequently, for sufficiently large k, γ(Q, Ipiv ) p
+
+k(n − k + 1)
+
+> Bk e .
+
+Full details are given in Appendix B, where the coherence bound µ(Q) < H∗ is also established. The proof has also been verified in Lean, with the aid of the autoformalization agent Archon 3 . Both results were discovered and verified through the Iteris framework described in Section 3. 3 https://github.com/frenzymath/Archon
+
+4.3.2
+
+Trajectory analysis
+
+Figure 3 Iteris trajectory for Problem II.
+
+In this problem, Iteris converts failed proof attempts into targeted structural obstruction insights to construct a exact counterexample and automatically extends to the low coherence setting.
+1. Model freeze and proof-oriented exploration. Iteris first made the statement stable enough to prove or disprove: foundation agents fixed the QRCP convention, tie rule, quality measure, and falsification standard. With this target frozen, proof agents attacked simple cases (k ≤ 2), experiment agents ran bounded searches and replays, and review agents kept the evidence scoped.
+2. From partial positive evidence to a localized obstruction. The next phase was driven by the failure of these simple proof patterns to scale (k ≥ 3). Small cases gave positive evidence, but the first genuinely nontrivial setting (k = 3) exposed a missing control: local residual norm and orthogonality do not by themselves control the cross interaction among the QRCP-selected rows. The failed proof attempt therefore became diagnostic. It identified the structure that a counterexample would need to exploit.
+3. Reversing the failed proof into an exact counterexample. After this vulnerable structure was identified, the system shifted to reverse construction. It designed a selected core satisfying the local pivot conditions but violating the desired conditioning bound. Foundation work then turned the remaining issue into a completion problem: add unused rows to satisfy global orthogonality while preserving the intended QRCP pivot path. The counterexample thus came from reversing a failed proof structure, not from blind numerical search.
+4. Post-obstruction Analysis. After identifying the obstruction, the system did not limit its analysis to this single case. The foundation and proof agents evaluated whether the mechanism could satisfy stricter regularity requirements. This process automatically extends the theorem to the low coherence construction of the obstruction. The framework contribution is the controlled handoff between modes. File memory kept the statement, evidence, and route status stable. Foundation froze definitions and turned proof gaps into construction targets; experiment supplied diagnostics; proof exposed the obstruction; review controlled claim promotion and route
+
+retirement. The QRCP case is therefore a trajectory from proof attempt, to obstruction insight and exact counterexample. Direct GPT-Pro comparison. The direct response from GPT-Pro4 produced a meaningful high-level counterexample sketch. It correctly identified the relevant QRCP failure mechanism: a triangular block embedded through an orthogonal completion, can force the selected submatrix to be badly conditioned. The limitation was instead paper-quality closure. Several essential steps were treated as plausible rather than discharged as explicit, auditable obligations. The baseline also did not push the construction through boundary checks such as coherence and leverage constraints. Thus the comparison should not be read as GPT-Pro missing the main idea; rather, it clarifies one role of Iteris: turning a plausible counterexample mechanism into a closed, robust, and auditable construction. Human audit and semantic alignment. The human role was primarily audit and organization. Iteris supplied the counterexample mechanism, intermediate construction artifacts, and boundary tests. Human work curated these outputs into a paper-level narrative and checked semantic consistency. After the formalization agent Archon completed Lean-level verification, the main human task was to align formal theorem statements and paper claims so that they referred to the same object and scope.
+
+Discussion
+
+Agentic research loops require reliable feedback, and computational mathematics is well suited because it offers both experimental and proof-based feedback. In both case studies, Iteris used numerical evidence to narrow candidate proof routes and mathematical proof to confirm or reject them. For instance, in the CG problem, numerical sweeps identified the Hankel floor as the key structural feature; in the QRCP construction, experiments isolated back-substitution pressure as the source-scale obstruction. Neither type of evidence alone was sufficient—numerical results guided search, and proofs settled claims. The results produced by Iteris still required expert auditing to distinguish correct arguments from unsupported steps, and they required human reorganization to turn long and circuitous derivations into readable mathematical proofs. The two case studies illustrate different kinds of human intervention. In the CG case (Problem I), Iteris identified the main phase structure and generated much of the proof skeleton. However, one branch of the rate analysis in the p < 1 regime used a stronger assumption and led to an incorrect bound in that branch. Human inspection detected the mismatch, and the argument was repaired through subsequent human–AI interaction. In the QRCP case (Problem II), the construction and obstruction identified by Iteris were correct, but the proof was indirect and difficult to read. The final presentation therefore involved substantial human restructuring of the argument. The resulting construction has a sorry-free Lean 4 formalization of the core statement, but this does not eliminate the need to check that the formal statement matches the informal mathematical theorem. Thus, Iteris shifts rather than removes human effort. In these case studies, the system was most valuable in broadening the search space, finding candidate structures, and producing draft arguments for human inspection. The human role remained essential for verifying assumptions, detecting gaps, repairing incorrect branches, and producing the final exposition. We therefore view Iteris as a tool for human-verified agentic research, not as a replacement for mathematical judgment.
+
+Acknowledgements
+The authors would like to warmly thank Zhangsong Li for carefully verifying the proof of CG-versus-sketching problem in Appendix A. This work is supported in part by the Fundamental and Interdisciplinary Disciplines Breakthrough Plan of the Ministry of Education of China (JYB2025XDXM113), the National Key R&D Program of China grant 2024YFA1014000, and the New Cornerstone Investigator Program. 4 https://chatgpt.com/s/t_6a1bf4501af8819191189ec9676c058e
+
+References
+[1] Mohammed Abouzaid, Andrew J. Blumberg, Martin Hairer, Joe Kileel, Tamara G. Kolda, Paul D. Nelson, Daniel
+Spielman, Nikhil Srivastava, Rachel Ward, Shmuel Weinberger, and Lauren Williams. First proof, 2026. URL https://arxiv.org/abs/2602.05192.
+[2] Ichiro Amemiya and Tadao Ando. Convergence of random products of contractions in hilbert space. Acta
+Scientiarum Mathematicarum, 26(3–4):239–244, 1965.
+[3] Noah Amsel, Yves Baumann, Paul Beckman, Peter Bürgisser, Chris Camaño, Tyler Chen, Edmond Chow, Anil
+Damle, Michal Derezinski, Mark Embree, Ethan N. Epperly, Robert Falgout, Mark Fornace, Anne Greenbaum, Chen Greif, Diana Halikias, Zhen Huang, Elias Jarlebring, Yiannis Koutis, Daniel Kressner, Rasmus Kyng, Jörg Liesen, Jackie Lok, Raphael A. Meyer, Yuji Nakatsukasa, Kate Pearce, Richard Peng, David Persson, Eliza Rebrova, Ryan Schneider, Rikhav Shah, Edgar Solomonik, Nikhil Srivastava, Alex Townsend, Robert J. Webber, and Jess Williams. Linear systems and eigenvalue problems: Open questions from a simons workshop, 2026. URL https://arxiv.org/abs/2602.05394.
+[4] Daniil A. Boiko, Robert MacKnight, Ben Kline, and Gabe Gomes. Autonomous chemical research with large
+language models. Nature, 624(7992):570–578, December 2023. ISSN 1476-4687. doi: 10.1038/s41586-023-06792-0. URL http://dx.doi.org/10.1038/s41586-023-06792-0.
+[5] Peter Businger and Gene H. Golub. Linear least squares solutions by householder transformations. Numerische
+Mathematik, 7(3):269–276, 1965. ISSN 0945-3245. doi: 10.1007/bf01436084. URL http://dx.doi.org/10.1007/ bf01436084.
+[6] Emmanuel J. Candès and Benjamin Recht. Exact matrix completion via convex optimization. Foundations of
+Computational Mathematics, 9(6):717–772, April 2009. ISSN 1615-3383. doi: 10.1007/s10208-009-9045-5. URL http://dx.doi.org/10.1007/s10208-009-9045-5.
+[7] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel
+Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5: Pushing the frontier with advanced reasoning,
+[8] Alex Davies, Petar Veličković, Lars Buesing, Sam Blackwell, Daniel Zheng, Nenad Tomašev, Richard Tanburn, Peter
+Battaglia, Charles Blundell, András Juhász, Marc Lackenby, Geordie Williamson, Demis Hassabis, and Pushmeet Kohli. Advancing mathematics by guiding human intuition with ai. Nature, 600(7887):70–74, December 2021. ISSN 1476-4687. doi: 10.1038/s41586-021-04086-x. URL http://dx.doi.org/10.1038/s41586-021-04086-x.
+[9] Michał Dereziński and Elizaveta Rebrova. Sharp analysis of sketch-and-project methods via a connection to
+randomized singular value decomposition. SIAM Journal on Mathematics of Data Science, 6(1):127–153, February
+2024. ISSN 2577-0187. doi: 10.1137/23m1545537. URL http://dx.doi.org/10.1137/23m1545537.
+[10] Tony Feng, Trieu H. Trinh, Garrett Bingham, Dawsen Hwang, Yuri Chervonyi, Junehyuk Jung, Joonkyung
+Lee, Carlo Pagano, Sang hyun Kim, Federico Pasqualotto, Sergei Gukov, Jonathan N. Lee, Junsu Kim, Kaiying Hou, Golnaz Ghiasi, Yi Tay, YaGuang Li, Chenkai Kuang, Yuan Liu, Hanzhao Lin, Evan Zheran Liu, Nigamaa Nayakanti, Xiaomeng Yang, Heng-Tze Cheng, Demis Hassabis, Koray Kavukcuoglu, Quoc V. Le, and Thang Luong. Towards autonomous mathematics research, 2026. URL https://arxiv.org/abs/2602.10177.
+[11] Robert M. Gower and Peter Richtárik. Randomized iterative methods for linear systems. SIAM Journal on
+Matrix Analysis and Applications, 36(4):1660–1690, January 2015. ISSN 1095-7162. doi: 10.1137/15m1025487. URL http://dx.doi.org/10.1137/15m1025487.
+[12] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong
+Ma, Xiao Bi, et al. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature, 645(8081): 633–638, 2025.
+[13] M.R. Hestenes and E. Stiefel. Methods of conjugate gradients for solving linear systems. Journal of Research of
+the National Bureau of Standards, 49(6):409, December 1952. ISSN 0091-0635. doi: 10.6028/jres.049.044. URL http://dx.doi.org/10.6028/jres.049.044.
+[14] Y. P. Hong and C.-T. Pan. Rank-revealing qr factorizations and the singular value decomposition. Mathematics
+of Computation, 58(197):213, January 1992. ISSN 0025-5718. doi: 10.2307/2153029. URL http://dx.doi.org/ 10.2307/2153029.
+
+[15] Haocheng Ju, Guoxiong Gao, Jiedong Jiang, Bin Wu, Zeming Sun, Leheng Chen, Yutong Wang, Yuefeng Wang,
+Zichen Wang, Wanyi He, Peihao Wu, Liang Xiao, Ruochuan Liu, Bryan Dai, and Bin Dong. Automated conjecture resolution with formal verification, 2026. URL https://arxiv.org/abs/2604.03789.
+[16] D. Leventhal and A. S. Lewis. Randomized methods for linear constraints: Convergence rates and conditioning.
+Mathematics of Operations Research, 35(3):641–654, August 2010. ISSN 1526-5471. doi: 10.1287/moor.1100.0456. URL http://dx.doi.org/10.1287/moor.1100.0456.
+[17] Jackie Lok and Elizaveta Rebrova. Subspace-constrained randomized coordinate descent for linear systems with
+good low-rank matrix approximations, 2026. URL https://arxiv.org/abs/2506.09394.
+[18] Chris Lu, Cong Lu, Robert Tjarko Lange, Yutaro Yamada, Shengran Hu, Jakob Foerster, David Ha, and Jeff
+Clune. Towards end-to-end automation of ai research. Nature, 651(8107):914–919, March 2026. ISSN 1476-4687. doi: 10.1038/s41586-026-10265-5. URL http://dx.doi.org/10.1038/s41586-026-10265-5.
+[19] Yu. Nesterov. Efficiency of coordinate descent methods on huge-scale optimization problems. SIAM Journal on
+Optimization, 22(2):341–362, January 2012. ISSN 1095-7189. doi: 10.1137/100802001. URL http://dx.doi.org/ 10.1137/100802001.
+[20] Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Emilien Dupont, Po-Sen Huang, Adam Zsolt Wagner, Sergey
+Shirobokov, Borislav Kozlovskii, Francisco J. R. Ruiz, Abbas Mehrabian, M. Pawan Kumar, Abigail See, Swarat Chaudhuri, George Holland, Alex Davies, Sebastian Nowozin, Pushmeet Kohli, and Matej Balog. Alphaevolve: A coding agent for scientific and algorithmic discovery, 2025. URL https://arxiv.org/abs/2506.13131.
+[21] A.I. Osinsky. Close to optimal column approximation using a single svd. Linear Algebra and its Applications,
+725:359–377, November 2025. ISSN 0024-3795. doi: 10.1016/j.laa.2025.07.016. URL http://dx.doi.org/10. 1016/j.laa.2025.07.016.
+[22] Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Matej Balog, M. Pawan Kumar,
+Emilien Dupont, Francisco J. R. Ruiz, Jordan S. Ellenberg, Pengming Wang, Omar Fawzi, Pushmeet Kohli, and Alhussein Fawzi. Mathematical discoveries from program search with large language models. Nature, 625(7995): 468–475, December 2023. ISSN 1476-4687. doi: 10.1038/s41586-023-06924-6. URL http://dx.doi.org/10.1038/ s41586-023-06924-6.
+[23] Yousef Saad. Iterative Methods for Sparse Linear Systems. Society for Industrial and Applied Mathematics,
+January 2003. ISBN 9780898718003. doi: 10.1137/1.9780898718003. URL http://dx.doi.org/10.1137/1. 9780898718003.
+[24] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen
+[25] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React:
+Synergizing reasoning and acting in language models, 2023. URL https://arxiv.org/abs/2210.03629.
+[26] Daniel Zheng, Ingrid von Glehn, Yori Zwols, Iuliya Beloshapka, Lars Buesing, Daniel M. Roy, Martin Wattenberg,
+Bogdan Georgiev, Tatiana Schmidt, Andrew Cowie, Fernanda Viegas, Dimitri Kanevsky, Vineet Kahlon, Hartmut Maennel, Sophia Alj, George Holland, Alex Davies, and Pushmeet Kohli. Ai co-mathematician: Accelerating mathematicians with agentic ai, 2026. URL https://arxiv.org/abs/2605.06651.
+
+Appendix
+A
+
+Proof details for CG versus sketching
+
+This appendix proves Theorem 1. The proof is fixed-parameter throughout: p and ε are fixed before n → ∞. The rate bounds proved below are conservative upper bounds; no matching lower bounds or sharpness claims are made.
+
+A.1
+
+Finite-dimensional reductions
+
+Let
+An = Un diag(1−p , . . . , n−p )Un∗ ,
+
+bn = An zn ,
+
+x∗,n = zn ,
+
+and let α = Un∗ zn . For d ≥ 0, set
+Pd1 = {q ∈ R[ξ] : deg q ≤ d, q(0) = 1}
+and
+
+Pn
+Md,n (p) = min1 q∈Pd
+
+−p
+|q(j −p )|2 |αj |2
+j=1 j
+Pn
+.
+−p |α |2
+j j=1 j
+
+Proposition 3 (CG polynomial representation). Exact CG from x0 = 0 satisfies
+TCG,n (ε, p) = min{d ≥ 0 : Md,n (p) ≤ ε}.
+In particular M0,n (p) = 1, so TCG,n (ε, p) ≥ 1 for ε ∈ (0, 1).
+Proof. The d-th CG iterate minimizes the An -error over span{bn , An bn , . . . , Ad−1 n bn }.
+Since bn = An zn , every vector in this space is An s(An )zn with deg s ≤ d − 1. Hence the residual is
+zn − An s(An )zn = q(An )zn ,
+
+q(ξ) = 1 − ξs(ξ),
+
+where q(0) = 1 and deg q ≤ d. Conversely, every such q has this form because 1 − q(ξ) is divisible by ξ.
+Diagonalizing An gives exactly the displayed minimum. The Haar vector satisfies d
+
+(|α1 |2 , . . . , |αn |2 ) =
+
+(E1 , . . . , En )
+P
+,
+i Ei
+
+(A.1)
+
+where the Ei are independent exponential variables of mean one. The common denominator cancels in Md,n .
+For 0 < p < 1, define
+Yj,n =
+
+p n , j
+
+Sa,n =
+
+n
+X
+
+a
+Yj,n
+Ej ,
+
+µn =
+
+j=1
+
+n
+1 X
+
+S1,n j=1
+
+Yj,n Ej δYj,n .
+
+After the change of variables r(y) = q(n−p y),
+Z
+Md,n (p) =
+
+min
+deg r≤d, r(0)=1
+
+r(y)2 µn (dy).
+
+(A.2)
+
+Proposition 4 (RCD budget bounds). Let A ≻ 0 be deterministic, let x⋆ = A−1 b, and run RCD from an arbitrary initial point x0 . Write ut = xt − x⋆ , Vt = ∥ut ∥2A , and define
+TRCD (ε) = min{t ≥ 0 : Vt ≤ εV0 }.
+At each step, RCD samples it = i with probability
+P(it = i | A) =
+
+A(i, i)
+tr(A)
+
+and performs the exact coordinate update. Then, for every k ≥ 0, k
+
+λmin (A)
+,
+PI (TRCD (ε) > k | A, u0 ) ≤ ε−1 1 −
+tr(A)
+
+(A.3)
+
+where PI denotes probability over the RCD coordinate-sampling sequence only. Consequently, in the power-law model, TRCD,n (ε, p; I)/n = OP (1),
+0 < p < 1,
+(A.4)
+and TRCD,n (ε, 1; I)/n = OP (log n).
+
+(A.5)
+
+Proof. Since ut = xt − x⋆ , the exact coordinate update gives ut+1 = ut −
+
+(Aut )it ei , A(it , it ) t
+
+where ei is the i-th coordinate vector. Therefore Vt+1 = Vt −
+
+|(Aut )it |2
+. A(it , it )
+
+Taking expectation over it , conditionally on A and ut , gives
+EI [Vt+1 | A, ut ] = Vt −
+
+X A(i, i) |(Aut )i |2
+i
+
+tr(A) A(i, i)
+
+= Vt −
+
+∥Aut ∥22 . tr(A)
+
+Since
+∥Aut ∥22 = u∗t A2 ut ≥ λmin (A)u∗t Aut = λmin (A)Vt ,
+we get
+
+EI [Vt+1 | A, ut ] ≤
+
+λmin (A)
+1− tr(A)
+
+Vt .
+
+Iterating,
+
+k
+λmin (A)
+V0 .
+EI [Vk | A, u0 ] ≤ 1 −
+tr(A)
+By Markov’s inequality,
+−1
+
+PI (TRCD (ε) > k | A, u0 ) = PI (Vk > εV0 | A, u0 ) ≤ ε
+For A = An , one has λmin (An ) = n
+
+−p
+
+,
+
+tr(An ) = Hn,p :=
+
+n
+X
+j=1
+
+λmin (A)
+1− tr(A)
+
+j −p .
+
+k .
+
+If 0 < p < 1, then
+Hn,p ∼
+
+n1−p , 1−p
+
+n−p 1−p = (1 + o(1)).
+Hn,p
+n
+
+Taking k = ⌊Bn⌋ gives an exponentially decaying upper tail in B, hence (A.4). If p = 1, then Hn,1 ∼ log n.
+Taking k = ⌊Bn log n⌋ gives (A.5).
+Proposition 5 (RCD lower gate). Fix 0 < p < 1/3 and ε ∈ (0, 1). If γ ∈ (0, 1) satisfies
+1 − γ 1−p > ε, then there exists a > 0 such that
+P(TRCD,n (ε, p; I)/n > a) → 1.
+Proof. Let a = γ/2 and kn = ⌊an⌋. Write I = (i0 , i1 , . . .) for the coordinate-sampling sequence, and define
+the selected-coordinate set
+Skn (I) = {i0 , . . . , ikn −1 }.
+Since x0 = 0 and each RCD step changes only one coordinate, the support of xkn is contained in Skn (I). In particular,
+|Skn (I)| ≤ kn ≤ γn.
+For a deterministic coordinate set S ⊂ {1, . . . , n}, define
+ES = span{ei : i ∈ S},
+where ei is the i-th coordinate vector. Let PAn ,S be the Euclidean orthogonal projection onto the subspace 1/2 An ES , and set 1/2
+BAn ,S = A1/2
+n (I − PAn ,S )An . For every x ∈ ES ,
+
+1/2 ∗ ∥x − zn ∥2An = ∥A1/2 n x − An zn ∥2 ≥ zn BAn ,S zn .
+1/2
+
+1/2
+
+Indeed, the right-hand side is the squared Euclidean distance from An zn to the subspace An ES .
+We next lower-bound tr(BAn ,S ). Since PAn ,S is an orthogonal projection of rank at most |S|, the Ky Fan
+maximum principle gives
+|S|
+X
+tr(PAn ,S An ) ≤ j −p . j=1
+
+Equivalently, this follows from the variational fact that among all rank-m orthogonal projections P , the
+maximum of tr(P An ) is the sum of the largest m eigenvalues of An . Therefore, if |S| ≤ γn,
+tr(BAn ,S ) = tr(An ) − tr(PAn ,S An ) ≥ Hn,p − H⌊γn⌋,p ,
+where Hm,p =
+
+Pm
+
+j=1 j
+
+−p
+
+. Since
+H⌊γn⌋,p
+→ γ 1−p ,
+Hn,p
+
+the assumption 1 − γ 1−p > ε implies that there exists θ > 0 such that, for all sufficiently large n and all
+|S| ≤ γn,
+tr(BAn ,S ) ≥ (ε + θ)Hn,p .
+Now define
+CAn ,S = BAn ,S − εAn .
+
+Then
+tr(CAn ,S ) ≥ θHn,p .
+Also 0 ≤ BAn ,S ≤ An , so
+−εAn ≤ CAn ,S ≤ (1 − ε)An .
+Since ∥An ∥ = 1, this gives ∥CAn ,S ∥ ≤ 1.
+For a uniform complex unit vector zn , the standard spherical quadratic form identities give, conditionally on
+An and S,
+tr(CAn ,S )
+E[zn∗ CAn ,S zn | An , S] =
+≥ c n−p n for some c > 0, and
+tr(CA ) − tr(CAn ,S )2 /n
+n ,S
+Var(zn∗ CAn ,S zn | An , S) =
+≤ . n(n + 1) n
+Chebyshev’s inequality therefore yields, uniformly over all |S| ≤ γn,
+P(zn∗ CAn ,S zn ≤ 0 | An , S) ≤ Cn2p−1 → 0.
+Here p < 1/3 is more than enough. Finally, conditional on An and the coordinate-sampling sequence I, the set Skn (I) is fixed and is independent
+of zn . Since |Skn (I)| ≤ γn, the preceding bound applies with S = Skn (I). Hence, with probability tending to
+one, zn∗ BAn ,Skn (I) zn > εzn∗ An zn . Because xkn ∈ ESkn (I) , we have
+Vkn = ∥xkn − zn ∥2An ≥ zn∗ BAn ,Skn (I) zn > εzn∗ An zn = εV0 .
+Thus TRCD,n (ε, p; I) > kn with probability tending to one. Since kn /n → a, the claim follows.
+
+A.2
+
+The active floor
+
+For 0 < p < 1, set
+K(p) = max{k ≥ 0 : (2k + 1)p < 1},
+and νp (dy) =
+
+1 − p −1/p y dy, p
+
+y ∈ [1, ∞).
+
+For D ≤ K(p), define
+Z
+FD (p) =
+
+min
+deg r≤D, r(0)=1
+
+r(y)2 νp (dy),
+
+F (p) = FK(p) (p).
+
+1−p , 1 − (s + 1)p
+
+0 ≤ s ≤ 2D,
+
+Equivalently, if
+Z
+ms (p) =
+
+y s νp (dy) =
+
+and
+
+GD (p) = ma+b (p) 0≤a,b≤D ,
+then GD (p) is positive definite. Indeed, for any nonzero coefficient vector c = (c0 , . . . , cD ), ∗
+
+c GD (p)c =
+
+Z X
+D
+
+ca y
+
+a
+
+νp (dy) > 0,
+
+a=0
+
+because νp has infinite support on [1, ∞). Hence GD (p) is invertible, and the constrained minimum is FD (p) =
+
+. (GD (p)−1 )00
+
+(A.6)
+
+Lemma 6 (Moment convergence). If (m + 1)p < 1, then
+Z
+Sm+1,n P
+1−p y m µn (dy) = − →
+.
+S1,n
+1 − (m + 1)p
+
+(A.7)
+
+Moreover, on every fixed interval [1, R], µn converges in moments to νp .
+Proof. For ap < 1, Sa,n = nap
+
+n
+X
+
+j −ap Ej ,
+
+ESa,n ∼
+
+j=1
+
+n , 1 − ap
+
+Var(Sa,n ) = o(n2 ).
+
+Hence Sa,n /n → (1 − ap)−1 in probability. Taking a = m + 1 and a = 1 proves (A.7). The local statement
+follows from the same law of large numbers on the index range nR−1/p ≤ j ≤ n, followed by the change of
+variables y = t−p .
+Proposition 7 (Fixed-degree CG limit). For fixed 0 < p < 1 and fixed d,
+P
+
+Md,n (p) − → Fmin(d,K(p)) (p).
+
+(A.8)
+
+Proof. Let D = min(d, K(p)). The upper bound follows by inserting the minimizer for FD (p) into
+R (A.2) and
+using Lemma 6. For the lower bound, take a minimizer rn in (A.2). Since r ≡ 1 is feasible, rn2 dµn ≤ 1.
+Moment convergence on [1, 2] gives a positive definite local Gram limit, hence the coefficients of rn are tight.
+Any coefficient limit r cannot have degree larger than K(p): if deg r = ℓ > K(p), then (2ℓ + 1)p ≥ 1, so
+RR 2
+R
+r dνp → ∞, contradicting the bound rn2 dµn ≤ 1 after taking R fixed and large. Therefore every limit
+point has degree at most D, and local convergence followed by R → ∞ gives the lower bound FD (p).
+
+A.3
+
+Qualitative phase diagram
+
+Proposition 8 (Zero ratio below the floor). If 0 < p < 1 and ε < F (p), then
+P
+
+ρn (ε, p) − → 0.
+In particular, if 1/3 ≤ p < 1, then K(p) = 0, F (p) = 1, and the same conclusion holds for every ε ∈ (0, 1).
+Proof. For every fixed d, Proposition 7 gives
+P(TCG,n (ε, p) ≤ d) = P(Md,n (p) ≤ ε) → 0.
+Thus TCG,n → ∞ in probability. By (A.4), TRCD,n /n = OP (1). Hence
+P(ρn > η) ≤ P(TRCD,n /n > C) + P(TCG,n ≤ C/η),
+and the conclusion follows by first taking n → ∞, then C → ∞.
+Proposition 9 (Strictly above the floor). If 0 < p < 1/3 and F (p) < ε < 1, then there exists η(p, ε) > 0
+such that
+P(ρn (ε, p) > η(p, ε)) → 1.
+Proof. Take d = K(p). By Proposition 7,
+Md,n (p) → F (p) < ε
+
+in probability, so TCG,n (ε, p) ≤ d with probability tending to one. Proposition 5 gives TRCD,n (ε, p; I)/n > a
+with probability tending to one for some a > 0. On the intersection, ρn > a/d.
+Lemma 10 (Random hyperplane contraction). Let H be a separable Hilbert space, and let G0 , G1 , . . . be iid nonzero random vectors whose law has full support in H. For g ̸= 0, let Pg⊥ be the orthogonal projection onto g ⊥ . Then, for every fixed h ∈ H,
+PG ⊥
+· · · PG⊥ h→0 t−1
+
+strongly almost surely.
+
+Proof. We use the projection-product theorem for random products of orthogonal projections in Hilbert space: for iid random closed subspaces Mt , the product PMt−1 · · · PM0 converges strongly almost surely to the
+orthogonal projection onto ∩t≥0 Mt [2]. Applying this theorem with Mt = G⊥
+t gives
+PG ⊥
+· · · PG⊥
+h → P∩t≥0 G⊥
+h t t−1
+
+strongly almost surely.
+
+It remains only to identify the intersection. Since the law of G0 has full support and H is separable, every ball in a countable base has positive probability. By independence and Borel–Cantelli, each such ball is hit
+infinitely often by the sequence {Gt : t ≥ 0}. Hence {Gt : t ≥ 0} is almost surely dense in H, and therefore its
+closed linear span is all of H. Thus \
+G⊥
+almost surely.
+t = {0}
+t≥0
+
+The projection-product limit is consequently P{0} h = 0, which proves the claim.
+Lemma 11 (Summable-spectrum RCD contraction). Fix p > 1. For every ε, δ ∈ (0, 1), there exists a finite integer L = L(p, ε, δ) such that
+lim inf P(TRCD,n (ε, p; I) ≤ L) ≥ 1 − δ.
+n→∞
+
+Proof. Let
+Hp =
+
+ 
+
+v = (vj )j≥1 : ∥v∥2Hp :=
+
+
+
+X
+j≥1
+
+ 
+j −p |vj |2 < ∞ .
+
+
+Since p > 1,
+Hp :=
+
+X
+
+j −p < ∞,
+
+j≥1
+
+so a standard complex Gaussian sequence belongs to Hp almost surely.
+For 1 ≤ i ≤ n, define the rescaled Haar row
+gi,n =
+
+√
+
+n Un∗ ei
+
+and its weighted norm
+Di,n =
+
+n
+X
+
+j −p |gi,n,j |2 .
+
+j=1
+
+Since
+An (i, i) = e∗i Un Λn Un∗ ei =
+
+Di,n ,
+n
+
+the RCD sampling probability is
+P(it = i | An ) =
+
+An (i, i)
+Di,n
+= , tr(An ) nHn,p
+
+Hn,p =
+
+n
+X
+
+j −p .
+
+j=1
+
+The weighted empirical row law n
+X
+Di,n
+i=1
+
+nHn,p
+
+δgi,n
+
+converges weakly, in probability, to the size-biased Gaussian law
+Q(dg) =
+
+∥g∥2Hp
+Hp
+
+Γ(dg),
+
+where Γ is the law of a standard complex Gaussian sequence in Hp . The finite-coordinate marginals follow
+P
+from the Gaussian representation of Haar rows, while the tail tightness follows from j≥1 j −p < ∞.
+Now write the spectral error as βt,n =
+
+√
+
+n Un∗ (xt − zn ).
+
+For every fixed number of RCD steps, the process (βt,n ) converges to the Hilbert-space process Bt+1 = Bt −
+
+⟨Gt , Bt ⟩Hp
+Gt ,
+∥Gt ∥2Hp
+
+iid
+
+Gt ∼ Q,
+
+with B0 ∼ Γ. Equivalently, Bt .
+Bt+1 = PG⊥
+t The law Q has full support in Hp . Therefore, by Lemma 10, ∥Bt ∥Hp → 0
+
+almost surely.
+
+Equivalently,
+∥Bt ∥2Hp
+∥B0 ∥2Hp
+
+→0
+
+almost surely.
+
+Thus, for the given ε, δ, one can choose a fixed integer L such that
+
+P ∥BL ∥2Hp ≤ ε∥B0 ∥2Hp ≥ 1 − δ.
+The fixed-step convergence of βt,n to Bt then implies
+lim inf P(TRCD,n (ε, p; I) ≤ L) ≥ 1 − δ.
+n→∞
+
+Proposition 12 (The summable row). If p > 1, then TRCD,n (ε, p; I) = OP (1),
+
+ρn (ε, p) = OP (n−1 ).
+
+Proof. By Lemma 11, for every δ > 0 there exists a fixed L < ∞ such that
+lim inf P(TRCD,n (ε, p; I) ≤ L) ≥ 1 − δ.
+n→∞
+
+This is exactly TRCD,n (ε, p; I) = OP (1). Since TCG,n (ε, p) ≥ 1,
+ρn (ε, p) =
+
+TRCD,n (ε, p; I)/n TRCD,n (ε, p; I) ≤ = OP (n−1 ).
+TCG,n (ε, p) n
+
+A.4
+
+The logarithmic row p = 1
+
+Lemma 13 (Random Gram consistency under small leverage). Let am,n ∈ Cr be deterministic vectors satisfying
+X
+am,n a∗m,n = Ir , max ∥am,n ∥22 ≤ τn .
+m
+
+m
+
+Let Em be independent mean-one exponential random variables. If τn log r → 0, then
+X
+
+(Em − 1)am,n a∗m,n
+
+m
+
+P
+
+− → 0. op
+
+Proof. Set
+Xn =
+
+X Em am,n a∗m,n .
+
+m
+
+Then
+EXn =
+
+X
+
+am,n a∗m,n = Ir .
+
+m
+
+The exponential matrix Chernoff bound for sums of independent positive semidefinite rank-one matrices gives
+the following estimate: for every fixed 0 < t < 1, there is an absolute constant c > 0 such that
+
+ct2
+P(∥Xn − Ir ∥op > t) ≤ 2r exp −
+. τn
+Since τn log r → 0, the right-hand side tends to zero for every fixed t > 0. Therefore
+P
+
+∥Xn − Ir ∥op − → 0.
+Because
+Xn − Ir =
+
+X
+(Em − 1)am,n a∗m,n , m
+
+the desired conclusion follows.
+Proposition 14 (CG non-stopping at p = 1). Let an → ∞ be deterministic with
+log an = o(log n), and set dn = ⌊an ⌋.
+Then
+P
+
+Mdn ,n (1) − → 1,
+
+P(TCG,n (ε, 1) ≤ an ) → 0.
+
+Proof. Set
+Jn = ⌈d4n ⌉,
+
+In = {Jn , . . . , n}.
+
+Since log dn = o(log n), we have
+X 1
+= log n − log Jn + O(1) = (1 − o(1)) log n,
+m
+
+m∈In
+
+d2n /Jn → 0.
+
+Consider the deterministic tail inner product ⟨f, g⟩n =
+
+X f (1/m)g(1/m) m
+
+m∈In
+
+.
+
+We project the constant function −1 onto the span of the monomials ξ, ξ 2 , . . . , ξ dn . The relevant Gram matrix and linear term are
+X
+m−k−l−1 ,
+Gkl =
+
+X
+
+bk =
+
+m∈In
+
+m−k−1 ,
+
+1 ≤ k, l ≤ dn .
+
+m∈In
+
+Since d2n /Jn → 0, these are asymptotic to a diagonally rescaled shifted Hilbert system: G = R(H + o(1))R,
+
+b = R(u + o(1)),
+
+where R = diag(Jn−1 , . . . , Jn−dn ),
+
+Hkl =
+
+, k+l
+
+uk =
+
+. k
+
+The shifted Hilbert-matrix identity gives ⊤
+
+u H
+
+−1
+
+u=2
+
+dn
+X
+ℓ=1
+
+ℓ
+
+= O(log dn ).
+
+Therefore the projection energy is O(log dn ), and hence
+X |q(1/m)|2
+
+inf
+deg q≤dn , q(0)=1
+
+m∈In
+
+m
+
+≥
+
+X 1
+− O(log dn ) = (1 − o(1)) log n. m
+
+(A.9)
+
+m∈In
+
+It remains to pass from deterministic weights to exponential weights. Define
+X
+⊤ e= vem = (1, m−1 , . . . , m−dn )⊤ ,
+G
+m−1 vem vem . m∈In
+
+The Christoffel leverage bound in this tail window gives ⊤ e −1 ℓm := m−1 vem G vem ≤ C
+
+d2n = o(1).
+Jn
+
+Set
+e −1/2 m−1/2 vem . am,n = G
+Then
+X
+
+am,n a⊤ m,n = Idn +1 ,
+
+max ∥am,n ∥22 = o(1).
+
+m∈In
+
+m∈In
+
+Since d2n /Jn = d−2 n (1 + o(1)), the leverage bound satisfies the hypothesis of Lemma 13. Hence
+X
+
+e −1/2 m−1 vem ve⊤ G e −1/2 (Em − 1)G m
+
+m∈In
+
+P
+
+− → 0. op
+
+Thus the random weighted quadratic form is relatively consistent with the deterministic one on the polynomial space, and (A.9) implies inf
+deg q≤dn , q(0)=1
+
+X Em |q(1/m)|2
+m∈In
+
+m
+
+≥ (1 − oP (1)) log n.
+
+Also,
+n
+X
+Em
+m=1
+
+m
+
+= (1 + oP (1)) log n.
+
+Therefore
+Mdn ,n (1) ≥ 1 − oP (1). The reverse inequality follows from the feasible polynomial q ≡ 1, so
+P
+
+Mdn ,n (1) − → 1. Since ε < 1,
+P(TCG,n (ε, 1) ≤ dn ) = P(Mdn ,n (1) ≤ ε) → 0.
+Finally, TCG,n is integer-valued and dn = ⌊an ⌋, so
+{TCG,n (ε, 1) ≤ an } = {TCG,n (ε, 1) ≤ dn }.
+This proves the proposition.
+Proposition 15 (Rate at p = 1). For every deterministic an → ∞ satisfying
+log an = o(log n), one has
+
+ρn (ε, 1) = OP
+
+log n an
+
+.
+
+Proof. Use (A.5), Proposition 14, and the event inclusion
+
+B log n ρn >
+⊂ {TRCD,n /n > B log n} ∪ {TCG,n ≤ an } .
+an First take B large, then n → ∞.
+
+A.5
+
+Critical boundary
+
+At ε = F (p), the active floor alone is not decisive. The proof uses the first inactive Schur-complement correction to the CG polynomial minimum. Lemma 16 (Critical first-inactive Schur asymptotics). The following first-inactive Schur asymptotics hold.
+(i) If K = 1 and 1/5 < p < 1/3, then
+F (p) =
+
+p2 , (1 − 2p)2
+
+M1,n (p) = 1 −
+
+S2,n
+,
+S1,n S3,n
+
+and M2,n (p) = M1,n (p) − J2,n , where
+J2,n =
+
+(S3,n − S2,n S4,n )2 2 ). S1,n S3,n (S5,n S3,n − S4,n
+
+Moreover,
+M1,n (p) − F (p) = OP (n3p−1 ).
+If 1/5 < p < 1/4, then
+n5p−1 J2,n ⇒ L2,p ,
+
+L2,p > 0
+
+a.s.
+
+If p = 1/4, then n1/4 (log n)−2 J2,n ⇒ L2,1/4 ,
+
+L2,1/4 > 0
+
+a.s.
+
+If 1/4 < p < 1/3, then
+n1−3p (M1,n (p) − F (p)) ⇒ cp Zp , and n1−3p J2,n ⇒ cp where cp > 0,
+A4 =
+
+∞
+X
+
+j −4p Ej ,
+
+A24
+,
+A5
+∞
+X
+
+A5 =
+
+j=1
+
+j −5p Ej ,
+
+j=1
+
+and Zp = ζR (3p) +
+
+∞
+X
+
+j −3p (Ej − 1).
+
+j=1
+
+(ii) Fix K ≥ 2 and
+<p<
+. 2K + 3 2K + 1 Let rK,n be the degree-K minimizer for µn , and let uK+1,n be the component of y K+1 orthogonal to
+span{y, . . . , y K }
+in L2 (µn ). Then MK+1,n (p) = MK,n (p) − JK+1,n , where
+
+JK+1,n =
+
+Z
+ℓK+1,n =
+
+Z
+rK,n (y)uK+1,n (y) µn (dy),
+
+sK+1,n =
+
+ℓ2K+1,n , sK+1,n
+
+uK+1,n (y)2 µn (dy).
+
+The active-layer error satisfies
+
+MK,n (p) − F (p) = OP n(2K+1)p−1 .
+If
+<p<
+, 2K + 3 2K + 2 then n(2K+3)p−1 JK+1,n ⇒ LK,p ,
+
+LK,p > 0
+
+a.s.
+
+If p = 1/(2K + 2), then
+JK+1,n =
+
+LK,p + oP (1) , log n
+
+LK,p > 0.
+
+(iii) If
+<p<
+, 2K + 2 2K + 1
+
+α = 2K + 1,
+
+then n1−αp (MK,n (p) − F (p)) ⇒ CK,p Zα,p , and n1−αp JK+1,n ⇒ CK,p
+
+A2α+1
+,
+Aα+2
+
+where CK,p > 0,
+Aα+1 =
+
+∞
+X
+
+j −(α+1)p Ej ,
+
+Aα+2 =
+
+j=1
+
+∞
+X
+
+j −(α+2)p Ej ,
+
+j=1
+
+and Zα,p = ζR (αp) +
+
+∞
+X
+
+j −αp (Ej − 1).
+
+j=1
+
+(iv) If pK = 1/(2K + 3), K ≥ 1, then
+JK+1,n =
+and
+
+cK (1 + oP (1)), log n
+
+cK > 0,
+
+MK,n (pK ) − F (pK ) = OP n−2/(2K+3) .
+
+Proof. The proof is a direct Schur-complement expansion using the moment asymptotics of
+Sr,n =
+
+n
+X
+
+r
+Yj,n
+Ej .
+
+j=1
+
+The needed regimes are
+
+n (1 + oP (1)), 1 − rp
+
+rp < 1,
+
+Sr,n = n log n (1 + oP (1)),
+
+rp = 1,
+
+Sr,n =
+
+and n−rp Sr,n →
+
+∞
+X
+
+j −rp Ej ,
+
+rp > 1.
+
+j=1
+
+In the upper subbands one also uses the Euler–Maclaurin fluctuation
+
+∞
+X
+Sr,n
+j −rp (Ej − 1), − ⇒ ζR (rp) + n1−rp n 1 − rp j=1 valid in the L2 -range 2rp > 1.
+For K = 1, the degree-one formula and the degree-two Schur complement give the displayed expression for J2,n . Substituting the three moment regimes above yields the lower-subband, logarithmic, and upper-subband limits. For K ≥ 2, the degree-(K + 1) improvement is the Schur complement
+JK+1,n =
+
+ℓ2K+1,n . sK+1,n
+
+The numerator is determined by the coupling of the active minimizer with the first inactive direction y K+1 , while the denominator is the squared L2 (µn )-distance of y K+1 from the active span. Applying the same moment asymptotics gives the stated lower-subband, logarithmic, upper-subband, and endpoint estimates. The constants L2,p , LK,p , and cK are strictly positive because the corresponding finite moment Gram Schur complements are strictly positive.
+Proposition 17 (Critical boundary). If 0 < p < 1/3 and ε = F (p), then there exist η(p) > 0 and c(p) > 0
+such that
+lim inf P(ρn (F (p), p) > η(p)) ≥ c(p).
+n→∞
+
+Moreover, if
+2K + 3 then the probability tends to one. p=
+
+or
+
+<p≤
+, 2K + 3 2K + 2
+
+K ≥ 1,
+
+Proof. We first analyze the CG side and then combine it with the RCD lower gate. Step 1: the band K = 1. Assume
+
+<p< .
+By Lemma 16,
+M2,n (p) = M1,n (p) − J2,n .
+If 1/5 < p < 1/4, then
+M1,n (p) − F (p) = OP (n3p−1 ),
+
+n5p−1 J2,n ⇒ L2,p > 0.
+
+Since
+1 − 5p > 3p − 1, the Schur improvement dominates the active-layer error. Hence
+P(M2,n (p) < F (p)) → 1,
+and therefore
+P(TCG,n (F (p), p) ≤ 2) → 1.
+At p = 1/4, Lemma 16 gives M1,n (p) − F (p) = OP (n−1/4 ),
+and n1/4 (log n)−2 J2,n ⇒ L2,1/4 > 0. Thus J2,n again dominates the active error, and
+P(TCG,n (F (p), p) ≤ 2) → 1.
+If 1/4 < p < 1/3, Lemma 16 gives
+n1−3p (F (p) − M2,n (p)) ⇒ cp
+
+A24
+− Zp .
+A5
+
+The limiting random variable is positive with positive probability: indeed, A24 /A5 > 0 almost surely, while
+EZp = ζR (3p) < 0
+
+(0 < 3p < 1).
+
+Hence
+lim inf P(TCG,n (F (p), p) ≤ 2) > 0.
+n→∞
+
+Step 2: interior bands with K ≥ 2. Fix K ≥ 2 and assume
+
+<p<
+. 2K + 3 2K + 1
+By Lemma 16,
+MK+1,n (p) = MK,n (p) − JK+1,n ,
+
+and
+
+MK,n (p) − F (p) = OP n(2K+1)p−1 .
+
+If
+
+<p<
+, 2K + 3 2K + 2
+
+then n(2K+3)p−1 JK+1,n ⇒ LK,p > 0.
+Since
+1 − (2K + 3)p > (2K + 1)p − 1, the Schur improvement dominates the active-layer error. Hence
+P(TCG,n (F (p), p) ≤ K + 1) → 1.
+At
+p=
+
+, 2K + 2
+
+Lemma 16 gives
+JK+1,n =
+whereas
+
+LK,p + oP (1) , log n
+
+LK,p > 0,
+
+MK,n (p) − F (p) = OP n−1/(2K+2) .
+
+Again the Schur improvement dominates, so
+P(TCG,n (F (p), p) ≤ K + 1) → 1.
+If
+
+<p<
+, 2K + 2 2K + 1
+
+let α = 2K + 1. Lemma 16 gives n
+
+1−αp
+
+(F (p) − MK+1,n (p)) ⇒ CK,p
+
+A2α+1
+− Zα,p .
+Aα+2
+
+The limiting variable is positive with positive probability because
+A2α+1
+>0
+Aα+2
+
+EZα,p = ζR (αp) < 0
+
+a.s.,
+
+(0 < αp < 1).
+
+Thus
+lim inf P(TCG,n (F (p), p) ≤ K + 1) > 0.
+n→∞
+
+Step 3: odd-reciprocal endpoints. Let
+
+pK =
+By Lemma 16,
+JK+1,n =
+
+, 2K + 3
+
+K ≥ 1.
+
+cK (1 + oP (1)), log n
+
+cK > 0,
+
+and
+
+MK,n (pK ) − F (pK ) = OP n−2/(2K+3) .
+
+Since 1/ log n dominates n−2/(2K+3) ,
+P(TCG,n (F (pK ), pK ) ≤ K + 1) → 1.
+Step 4: combination with the RCD lower gate. For 0 < p < 1/3, one has F (p) < 1. Hence Proposition 5 applies
+
+at ε = F (p): there exists a(p) > 0 such that
+P(TRCD,n (F (p), p; I)/n > a(p)) → 1.
+If the CG stopping event has positive liminf probability, then on the intersection ρn (F (p), p) ≥
+
+a(p) . K(p) + 1
+
+This gives constants η(p) > 0 and c(p) > 0 such that
+lim inf P(ρn (F (p), p) > η(p)) ≥ c(p).
+n→∞
+
+On the endpoint/lower-subband regimes, the CG stopping event has probability tending to one, so the same argument gives
+P(ρn (F (p), p) > η(p)) → 1
+for some η(p) > 0.
+
+A.6
+
+Growing-degree rate bounds for 0 < p < 1
+
+The zero-ratio rows with 0 < p < 1 use a conservative growing-degree non-stopping estimate. Throughout
+this subsection,
+Z
+⟨f, g⟩n =
+
+f (y)g(y) µn (dy),
+
+∥f ∥2n = ⟨f, f ⟩n .
+
+Let K = K(p). Let rK,n be the degree-K minimizer in L2 (µn ) subject to r(0) = 1. Thus
+MK,n (p) = ∥rK,n ∥2n . If K ≥ 1, then
+⟨rK,n , y a ⟩n = 0,
+
+1 ≤ a ≤ K,
+
+and we set
+VK,n = span{y, . . . , y K }.
+If K = 0, then r0,n ≡ 1,
+
+V0,n = {0}.
+
+Lemma 18 (Growing-degree Schur bound). Let d = dn → ∞ be deterministic and satisfy
+d log(1 + d) = o(log n).
+Then
+MK,n (p) − Md,n (p) = oP (1).
+More precisely:
+(i) If p is not an odd reciprocal endpoint, then there are constants A, C < ∞ and β = β(p) > 0 such that
+
+0 ≤ MK,n (p) − Md,n (p) ≤ OP eCd log(1+d) dA (log n)A n−β .
+(A.10)
+
+(ii) If p = pK = 1/(2K + 3), then there are constants A, C, c > 0 such that
+
+0 ≤ MK,n (pK ) − Md,n (pK ) ≤ OP
+log n − Cd log(1 + d)
+
++ OP eCd log(1+d) dA (log n)A n−c .
+
+(A.11)
+
+Proof. The Schur-complement form of the improvement from degree K to degree d is MK,n − Md,n =
+
+⟨rK,n , s⟩2n . ∥s∥2n
+0̸=s∈span{y,...,y d }
+sup
+
+(A.12)
+
+Write
+s(y) =
+
+d
+X
+
+ck y k ,
+
+ak = npk ck .
+
+k=1 p
+
+At the first d spectral nodes Yj,n = (n/j) , d
+X
+
+s(Yj,n ) =
+
+ak j −pk .
+
+k=1
+
+The Vandermonde matrix Bd = (j −pk )1≤j,k≤d satisfies
+∥Bd−1 ∥ ≤ exp{Cd log(1 + d)}.
+Indeed, the node separation
+|i−p − j −p | ≥ cp d−p−1 |i − j|
+and the Lagrange interpolation formula give this inverse bound. Since min1≤j≤d Ej ≥ d−3 with probability
+tending to one and S1,n /n = OP (1) with inverse tight, we get ∥s∥2n ≥ np−1 e−Cd log(1+d)
+
+d
+X
+
+a2k
+
+(A.13)
+
+k=1
+
+with high probability. For the numerator, the orthogonality of rK,n to y, . . . , y K gives ⟨rK,n , s⟩n =
+
+d
+X
+
+γk,n = n−pk ⟨rK,n , y k ⟩n .
+
+ak γk,n ,
+
+k=K+1
+
+The coefficients of rK,n are tight, and for 0 ≤ a ≤ K, K + 1 ≤ k ≤ d,
+⟨y a , y k ⟩n =
+
+Sa+k+1,n
+.
+S1,n
+
+A union bound over k ≤ d, together with Markov estimates for these moments, gives d
+X
+
+γk,n = OP dA (log n)A n−2p(K+1) + n2(K+1)p−2 .
+
+k=K+1
+
+Combining (A.12), (A.13), and (A.14),
+
+MK,n − Md,n ≤ OP eCd log(1+d) dA (log n)A n1−(2K+3)p + n(2K+1)p−1 .
+
+(A.14)
+
+If p is not an odd reciprocal endpoint, then
+(2K + 1)p < 1 < (2K + 3)p,
+so the bracket is O(n−β ) for some β(p) > 0. This proves (A.10).
+It remains to explain the endpoint p = pK = 1/(2K + 3). The first inactive direction y K+1 is logarithmic and
+has to be separated from the higher inactive block. Using the convention above, define un = (I − PVK,n )y K+1 , and
+Bd,n = (I − PVK,n ) span{y K+2 , . . . , y d },
+where projections are in L2 (µn ). Since rK,n ⊥ VK,n ,
+
+MK,n − Md,n = Pspan{un }+Bd,n rK,n n .
+A deterministic two-subspace projection estimate gives
+
+|⟨rK,n , un ⟩n |2
+.
+Pspan{un }+Bd,n rK,n n ≤ OP (1) ∥PBd,n rK,n ∥n +
+dist2n (un , Bd,n )
+
+(A.15)
+
+At the endpoint, the distance term is logarithmic: dist2n (un , Bd,n ) ≥ c log n − Cd log(1 + d)
+
+with high probability. This is the endpoint Christoffel estimate obtained by changing variables t = log y: the problem becomes the projection of a constant on an interval of length p log n against an exponential system, whose Cauchy Gram matrix loses only O(d log(1 + d)). The random version follows from the same small-leverage Gram consistency used in the p = 1 row.
+Moreover,
+⟨rK,n , un ⟩n = ⟨rK,n , y K+1 ⟩n = OP (1),
+because the highest active moment involved is still subcritical. Thus the first inactive direction contributes the first term in (A.11). The block Bd,n is controlled by the same Vandermonde argument as above, now starting at K + 2, which gives the second term in (A.11). Since d log(1 + d) = o(log n), both terms are oP (1).
+Proposition 19 (Growing-degree CG non-stopping). Assume 0 < p < 1, ε < F (p), and let bn → ∞
+satisfy bn log(1 + bn ) = o(log n).
+(A.16)
+Then
+P(TCG,n (ε, p) ≤ bn ) → 0.
+Proof. Set
+dn = ⌊bn ⌋.
+Then dn → ∞, dn log(1 + dn ) = o(log n), and since TCG,n is integer-valued,
+{TCG,n (ε, p) ≤ bn } = {TCG,n (ε, p) ≤ dn }.
+By Proposition 7,
+P
+
+MK,n (p) − → F (p).
+By Lemma 18,
+0 ≤ MK,n (p) − Mdn ,n (p) = oP (1).
+
+Hence
+Mdn ,n (p) ≥ F (p) − oP (1).
+Choose δ = (F (p) − ε)/2 > 0. Then
+P(Mdn ,n (p) ≤ ε) ≤ P(Mdn ,n (p) < F (p) − δ) → 0.
+Using the CG polynomial representation,
+P(TCG,n (ε, p) ≤ bn ) → 0.
+
+Proposition 20 (Rate for 0 < p < 1). In every zero-ratio row with 0 < p < 1, if bn → ∞ and
+bn log(1 + bn ) = o(log n), then ρn (ε, p) = OP (1/bn ).
+Proof. Use (A.4), Proposition 19, and
+
+B
+ρn >
+⊂ {TRCD,n /n > B} ∪ {TCG,n ≤ bn } .
+bn First choose B large, then let n → ∞.
+
+A.7
+
+Completion
+
+The zero-ratio rows are Proposition 12, Proposition 15, Proposition 8, and Proposition 20. The strictly above-floor positive-ratio row is Proposition 9. The critical boundary is Proposition 17. All statements are fixed-parameter statements. The displayed rates are proved conservative upper bounds, not sharp rates. The proof does not address matching lower bounds, uniformity in p or K, moving thresholds, finite-precision effects, preconditioning, restarted CG, non-Haar eigenvectors, alternative sketching rules, or solver-level performance comparisons.
+
+B Proof details for the QRCP obstruction
+
+This appendix records the proof structure behind Theorem 2. The purpose is to make the counterexample readable as a mathematical construction rather than as a computational search log. The proof is organized as follows. We first state the construction. We then prove five named estimates: pivot order, Parseval identity, coherence bound, selected-block conditioning, and source-scale violation.
+
+B.1
+
+The selected columns
+
+We build column vectors A = a1
+
+···
+
+an ∈ Rk×n , and then define Q = AT .
+
+Fix H∗ > 1, B > 0, e ≥ 0, and K ≥ 1. Choose η > 0 so small that
+e2η < H∗ . Choose m large and set k = m + 1,
+
+ϵ = e−η/k ,
+
+s = (1 − ϵ2 )1/2 ,
+
+α=
+
+. k
+
+All smallness requirements below are met by taking k sufficiently large. Define the diagonal scales dt = αϵt−1 ,
+
+1 ≤ t ≤ m.
+
+The first k = m + 1 column labels are the intended QRCP labels: Ipiv = (1, 2, . . . , m, m + 1).
+Choose signs σt ∈ {±1} and set β = 12 . This constant controls the strictly upper-triangular couplings among
+the first m selected columns. Define Rβ ∈ Rm×m by   q = t, dt ,
+(Rβ )t,q = −βσt σq sdt , t < q,
+  0, t > q. The first m selected columns are
+
+(Rβ ):,q aq = ,
+
+1 ≤ q ≤ m.
+
+In matrix form their first m coordinates are  d1 −βσ1 σ2 sd1 0 d2  Rβ =  . ..  .. .
+
+ · · · −βσ1 σm sd1 · · · −βσ2 σm sd2   . .. ..  . . ··· dm
+
+We now define the final selected column. Set γ0 =
+
+,
+
+τ0 =
+
+.
+
+The first number controls the size of the first-block component of the final selected column; the second fixes its final residual scale. Define 1/2 r = τ0 d2m , ηp = τ0 dm ,
+so that ηp2 = r. After the first m selected columns have been chosen, their span is Rm ⊕ {0}; projecting the
+final selected column away from this span removes its first-block part and leaves only ηp . Thus its squared residual at that moment is r. Define z ∈ Rm by
+
+( zt =
+
+γ0 σt sdt , γ0 σm (1 − τ0 )1/2 dm ,
+
+The final selected column is am+1 = Thus the selected block of A is
+
+R+ =
+
+1 ≤ t < m,
+t = m.
+
+z , ηp
+
+Rβ
+
+z . ηp
+
+Equivalently,
+d1 0  . R+ =  ..  0 
+
+−βσ1 σ2 sd1 d2 .. .
+
+· · · −βσ1 σm sd1 · · · −βσ2 σm sd2 .. .. . . ··· dm ···
+
+γ0 σ1 sd1 γ0 σ2 sd2 .. .
+
+   .  1/2 γ0 σm (1 − τ0 ) dm  1/2
+
+τ 0 dm
+
+T
+Since Q = AT , the selected row matrix M (Q) is R+ up to the fixed ordering.
+
+
+
+B.2
+
+The full matrix and the identity completion
+
+We now display the whole matrix. The construction has four column blocks:
+A = R+
+
+X
+
+G ∈ Rk×n ,
+
+F
+
+k = m + 1.
+
+We use the splitting k
+
+m
+
+R = R ⊕ R,
+
+Ik =
+
+Im
+
+.
+
+This block split separates the two residual mechanisms in the construction. The first m coordinates carry the QRCP chain and the triangular amplification; the last coordinate stores the residual mass that remains after the chain has been selected. Thus, AAT = Ik is proved by checking the off-diagonal blocks, the upper-left block, and the lower-right scalar separately. The cross block X
+
+z The final selected column creates an off-diagonal block zηp . We cancel it by adding two columns. ηp
+Choose
+θ1 = , θ 2 = , b 1 =
+, b2 = , θ1 b1 + θ2 b2 = 1.
+Define
+
+θ1 z θ2 z
+X=
+. −b1 ηp −b2 ηp
+Then
+T
+R+ R+
+=
+
+and
+T
+
+XX =
+
+Rβ RβT + zz T ηp z T
+
+(θ12 + θ22 )zz T −ηp z T
+
+zηp ηp2
+
+−zηp . (b21 + b22 )ηp2
+
+T
++ XX T are zero. Put So the off-diagonal blocks in R+ R+
+
+κz = 1 + θ12 + θ22 ,
+
+κη = 1 + b21 + b22 .
+
+The pure frame completion block F After R+ and X have been placed, the upper-left block still missing from Im is Mrem = Im − Rβ RβT − κz zz T . For m sufficiently large, Mrem is positive definite. Decompose this missing upper-left block into small rank-one atoms:
+Mrem =
+
+NX
+frame
+
+Wh uh uTh ,
+
+0 < Wh < d2m ,
+
+∥uh ∥2 = 1.
+
+h=1
+
+The atom bound is deliberately at the same scale as the smallest selected-chain residual. It ensures that no frame column can overtake an intended QRCP pivot. Such a decomposition is obtained by taking a spectral decomposition of Mrem and subdividing each eigenvalue into sufficiently many positive pieces. The number of atoms satisfies
+Tr(Mrem )
+m
+Nframe ≤
++ 2m ≤ 2 + 2m. d2m dm
+
+For each atom add one column supported only in the first m coordinates: √
+
+Wh uh
+fh = ∈ Rm ⊕ R,
+1 ≤ h ≤ Nframe .
+Equivalently, the whole frame block is the explicit matrix ! p √ √
+W1 u1
+W2 u2 · · ·
+WNframe uNframe
+F =
+∈ Rk×Nframe . ···
+Then
+
+N
+frame
+X
+Wh uh uTh  FFT =  h=1
+
+ 0 =
+
+Mrem
+
+.
+
+Thus F completes exactly the missing upper-left block, produces no off-diagonal block, and contributes no mass to the last coordinate. The same small-atom bound controls QRCP residuals. At a selected prefix Sℓ with ℓ < m, the residual score of fh is at most its full squared norm:
+∥fh ∥22 = Wh < d2m ≤ d2ℓ+1 .
+At the last prefix Sm , the selected span is Rm ⊕ {0}, so fh has residual score zero. Hence the pure frame
+columns never compete with the prescribed pivots. The residual-only block G After the blocks R+ , X, and F have been placed, the upper-left block has already become Im and the off-diagonal block is zero. Since F has no last-coordinate component, the only lower-right contribution so far is the selected-and-cross contribution κη r. The amount still missing is therefore µres = 1 − κη r.
+For m sufficiently large, r = τ0 d2m is small and µres > 0.
+Split the remaining scalar into small pieces µres = e1 + · · · + eNres ,
+
+0 < ej <
+
+r ,
+
+choosing the ej also to avoid the finitely many residual equalities if a fixed tie-breaking convention is desired. This can be done with Nres ≤ + 2. r For each piece add one column supported only in the last coordinate:
+
+gj = √
+∈ Rm ⊕ R,
+1 ≤ j ≤ Nres .
+ej
+Equivalently,
+G=
+
+0m×Nres
+√ √
+√ e1 e2 · · · eNres
+
+Therefore
+GGT =
+
+0m×m
+
+! ∈ Rk×Nres .
+
+. µres
+
+These columns cannot compete with the final selected column after the first m pivots, because each has
+squared residual ej < r/2 < r.
+
+Putting the four blocks together,
+T
+AAT = R+ R+
++ XX T + F F T + GGT .
+
+The upper-left block is Rβ RβT + κz zz T + Mrem = Im , the off-diagonal block is zero, and the lower-right scalar is κη r + µres = 1.
+Hence
+AAT =
+
+B.3
+
+Im
+
+= Ik .
+
+Main lemmas
+
+This section isolates the estimates used to prove the main theorem. Lemma 21 (Pivot order). QRCP applied to A = QT selects Ipiv = (1, 2, . . . , m, m + 1).
+Proof. Define Rj (S) = ∥(Ik − PS )aj ∥22 , where PS is the orthogonal projector onto span{ai : i ∈ S}. For
+0 ≤ ℓ ≤ m, put Sℓ = {1, . . . , ℓ}. At prefix Sℓ with 0 ≤ ℓ < m, the intended next label is ℓ + 1 and
+Rℓ+1 (Sℓ ) = d2ℓ+1 .
+For a later selected-chain label q with ℓ + 1 < q ≤ m, the upper-triangular form of Rβ gives
+q−1
+X
+
+Rq (Sℓ ) = β 2 s2
+
+d2a + d2q .
+
+a=ℓ+1
+
+Using da = αϵa−1 and s2 = 1 − ϵ2 , this becomes
+
+Rq (Sℓ ) = d2ℓ+1 β 2 + (1 − β 2 )ϵ2(q−ℓ−1) < d2ℓ+1 ,
+because 0 < ϵ < 1 and 0 < β < 1.
+The final selected label m + 1 satisfies, for 0 ≤ ℓ < m,
+Rm+1 (Sℓ ) = γ02 (d2ℓ+1 − r) + r.
+Since r = τ0 d2m ≤ τ0 d2ℓ+1 ,
+Rm+1 (Sℓ ) ≤ (γ02 + τ0 )d2ℓ+1 =
+
+1 2 d < d2ℓ+1 . 8 ℓ+1
+
+The columns in X, F , and G are all smaller. The two columns in X have the same form as the final selected column, but with both coefficients strictly smaller than one; the constants above give residual scores strictly below the final selected column at every prefix. For a pure frame column fh , the atom bound gives, for ℓ < m,
+∥fh ∥22 = Wh < d2m ≤ d2ℓ+1 .
+For a residual-only column gj , its residual score is at most ej < r/2 < d2ℓ+1 .
+At Sm , the final selected label has residual score Rm+1 (Sm ) = r, whereas the columns in X have last-coordinate residual b2i r < r, each frame column has residual zero, and
+each residual-only column has residual ej < r/2 < r. Thus m + 1 is selected at the last step.
+
+Lemma 22 (Parseval identity). The constructed matrix satisfies AAT = Ik ,
+
+and hence
+
+QT Q = Ik .
+
+Proof. Using the block notation from the construction,
+A = R+
+
+X
+
+F
+
+G .
+
+Thus
+T
+AAT = R+ R+
++ XX T + F F T + GGT .
+
+The selected block contributes
+T
+R+ R+
+=
+
+Rβ RβT + zz T ηp z T
+
+zηp . ηp2
+
+The cross block X cancels the off-diagonal entries because θ1 b1 + θ2 b2 = 1. The pure frame block F contributes exactly Mrem in the upper-left corner and contributes zero to both the off-diagonal blocks and the lower-right entry. The block G contributes exactly the remaining lower-right scalar µres = 1 − κη r.
+Therefore
+AAT =
+
+Im
+
+= Ik .
+
+Lemma 23 (Coherence bound). For m sufficiently large, the constructed matrix satisfies µ(Q) < H∗ . Proof. Because Q = AT , the squared norm of a row of Q is the squared norm of the corresponding column of
+A. We first prove the row-leverage bound max ∥Q(i, :)∥22 = α2 . i
+
+For the first m selected columns, direct summation gives ∥aq ∥22 = d2q + β 2 s2
+
+q−1
+X
+
+d2t = α2 β 2 + (1 − β 2 )ϵ2(q−1) ≤ α2 ,
+
+t=1
+
+with equality at q = 1. For the final selected column,
+∥(z T , ηp )∥22 = ∥z∥22 + ηp2 = γ02 (α2 − r) + r < α2 ,
+because 0 < γ0 < 1 and r < α2 .
+For the two columns in X,
+∥(θi z T , −bi ηp )∥22 = θi2 ∥z∥22 + b2i ηp2 < ∥z∥22 + ηp2 < α2 ,
+since 0 < θi , bi < 1.
+For a pure frame column in F ,
+∥fh ∥22 = Wh < d2m ≤ d21 = α2 .
+Finally, a residual-only column in G has squared norm
+ej < r/2 < α2 .
+
+Thus the maximum row leverage is α2 .
+Therefore
+
+n 2 n α = 3. k k
+
+µ(Q) = Using the count
+
+n = m + 3 + Nframe + Nres , together with
+Nframe ≤
+
+m + 2m, d2m
+
+Nres ≤
+
++ 2, τ0 d2m
+
+we estimate the two filler contributions separately. Since
+d2m = α2 ϵ2m−2 =
+we have
+
+2η(m − 1) exp − , k2 k
+
+m k−1 = exp k dm k
+
+2η(k − 2) k
+
+−→ e2η .
+
+The remaining terms contribute only O(k −1 ) after division by k 3 . Hence µ(Q) ≤ e2η + o(1).
+Because e2η < H∗ , taking k sufficiently large gives µ(Q) < H∗ .
+Lemma 24 (Selected-block pressure). Let Z = ∥Rβ−1 z∥22 . Then M (Q) is nonsingular and
+Z
+1+Z
+≥ . r r Moreover, Z eventually dominates every fixed polynomial in k. γ(Q, Ipiv )2 ≥
+
+Proof. The matrix R+ is upper triangular with positive diagonal entries d1 , . . . , dm , ηp , so it is nonsingular. Let x = Rβ−1 z and set
+
+v=
+Then
+
+−x .
+
+, ηp
+
+∥v∥22 = 1 + Z.
+
+σmin (R+ )2 ≤
+
+ηp2 r = ,
+1+Z
+1+Z
+
+R+ v =
+Thus
+
+which gives the inverse-norm lower bound. It remains to see why Z is large. Write xt = σt yt . Back-substitution gives ! m
+X
+1/2 ym = γ0 (1 − τ0 ) , y t = s γ0 + β
+yq , q=t+1
+
+Hence
+
+yt = γ0 s(1 + βs)m−t−1 1 + β(1 − τ0 )1/2 ,
+
+t < m.
+
+and consequently Z ≥ γ02 s2 (1 + βs)2(m−2) .
+Since m = k − 1 and there are constants 0 < c < C < ∞ such that
+ck −1/2 ≤ s ≤ Ck −1/2 ,
+this lower bound grows faster than any fixed power of k. Lemma 25 (Source-scale denominator). The row count satisfies r(n − k + 1) ≤ Cden k,
+
+Cden = 3.
+
+Proof. Since k = m + 1 and n = m + 3 + Nframe + Nres ,
+n − k + 1 = 3 + Nframe + Nres . The frame part gives rNframe ≤ τ0 d2m
+
+m + 2m d2m
+
+= τ0 m + 2τ0 d2m m.
+
+The residual-only part gives rNres ≤ 2 + 2r.
+Therefore
+r(n − k + 1) ≤ 3r + τ0 m + 2τ0 d2m m + 2 + 2r.
+Because d2m = O(k −2 ) and r = τ0 d2m , the finite remainder 5r + 2τ0 d2m m < 1 for k large. Hence
+r(n − k + 1) ≤ 3 + τ0 m ≤ 3k
+for all sufficiently large k.
+
+B.4
+
+Proof of the obstruction theorem
+
+We now assemble the preceding lemmas.
+Proof of Theorem 2. Choose k = m + 1 ≥ K large enough so that the following hold:
+(i) the coherence estimate in Lemma 23 gives µ(Q) < H∗ ; (ii) the denominator estimate in Lemma 25 holds; (iii) the triangular growth satisfies Z > Cden B 2 k 2e+2 . The last condition is possible by Lemma 24, since Z dominates every fixed polynomial in k. By Lemma 22, the matrix Q = AT has orthonormal columns. By Lemma 21, exact QRCP selects Ipiv = (1, 2, . . . , m, m + 1). By Lemma 24, M (Q) is nonsingular and γ(Q, Ipiv )2 ≥
+Therefore
+
+Z
+. r
+
+γ(Q, Ipiv )2
+Z
+≥ . k(n − k + 1) rk(n − k + 1)
+
+Using Lemma 25,
+r(n − k + 1) ≤ Cden k,
+
+we obtain
+
+γ(Q, Ipiv )2
+Z
+> B 2 k 2e . ≥
+k(n − k + 1) Cden k 2
+
+Taking square roots gives γ(Q, Ipiv ) p
+
+k(n − k + 1)
+
+This proves the theorem.
+
+> Bk e .
