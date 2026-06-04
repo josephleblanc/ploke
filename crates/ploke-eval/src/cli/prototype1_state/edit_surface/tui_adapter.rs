@@ -6003,6 +6003,272 @@ Suggested action: Verify API credentials and retry."#;
         );
     }
 
+    /// Replay regression for stale snippet rows seen as ploke-embed warnings
+    /// after a tape-driven edit truncated a file.
+    ///
+    /// The recorded provider tape removes `stale_index_canary` from `src/lib.rs`
+    /// and shortens the file. Before the fix, post-apply refresh only retracted
+    /// embeddings, so the stale function row could survive and later snippet
+    /// extraction would report `ContentMismatch` or an out-of-range byte span.
+    ///
+    /// Related bug report:
+    /// docs/active/bugs/2026-06-04-prototype1-post-apply-stale-snippet-indexing.md.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+
+        // Start from the same live-canary workspace builder used by the other
+        // headless TUI replay tests, then replace its source with a two-function
+        // file. `stale_index_canary` is the row this test expects indexing to
+        // retract after the recorded patch deletes it.
+        let fixture = prepare_live_canary(
+            "recorded-truncating-patch-stale-snippet",
+            "Replay a truncating non_semantic_patch that removes stale_index_canary.",
+        )
+        .expect("prepare recorded stale snippet fixture");
+        install_stale_snippet_canary_source(&fixture);
+
+        let call_id = "call_truncate_stale_snippet_rows";
+        let patch_diff = truncating_stale_snippet_ns_patch_diff();
+        let initial_lib =
+            fs::read_to_string(&fixture.src_file).expect("read initial stale fixture");
+        println!(
+            "\n=== stale snippet replay: setup ===\n  workspace: {}\n  src_file: {}\n  artifact_root: {}\n  call_id: {}\n  initial_bytes: {}\n  initial_contains_stale_index_canary: {}\n  recorded_patch:\n{}",
+            fixture.workspace.display(),
+            fixture.src_file.display(),
+            fixture.artifact_root.display(),
+            call_id,
+            initial_lib.len(),
+            initial_lib.contains("stale_index_canary"),
+            patch_diff
+        );
+
+        // The tape is intentionally just one `non_semantic_patch` tool call
+        // followed by a stop response. That keeps the replay focused on the
+        // production apply/refresh path, not on provider behavior.
+        let tape = recorded_truncating_lib_patch_tape(&fixture.artifact_root, call_id);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        // Runtime startup performs the initial workspace scan. If this fails to
+        // index `stale_index_canary`, the test is not reproducing the stale-row
+        // condition seen in the live warning.
+        let (mut runtime, parent_id) = start_attempt_runtime(
+            &fixture.workspace,
+            &[],
+            fixture.prompt.clone(),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            None,
+        )
+        .await
+        .expect("start stale snippet replay runtime");
+
+        let stale_rows_before = function_rows_by_name(&runtime, "stale_index_canary");
+        print_headless_replay_rows("indexed fixture before replay", &stale_rows_before);
+        assert!(
+            !stale_rows_before.rows.is_empty(),
+            "fixture must index stale_index_canary before the truncating replay"
+        );
+
+        // `run_attempt` is the same adapter path used by broad headless TUI
+        // parent patch generation: consume model output, stage the tool edit,
+        // apply it, and wait for the post-apply refresh barrier.
+        let mut run = HeadlessRun::new();
+        let outcome = run_attempt(
+            &mut runtime,
+            parent_id,
+            &fixture.workspace,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            1,
+            &mut run,
+            &LiveObserver::disabled(),
+            &[],
+            None,
+        )
+        .await
+        .expect("truncating recorded replay should finish");
+        println!(
+            "\n=== stale snippet replay: run_attempt outcome ===\n  outcome:\n{:#?}",
+            outcome
+        );
+
+        // Require a real applied terminal so the final DB assertion is about the
+        // post-apply refresh contract, not about a failed or skipped patch.
+        assert!(
+            matches!(
+                outcome,
+                AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
+            ),
+            "truncating replay should apply one patch, got {outcome:?}"
+        );
+
+        // The file-level assertion proves the recorded patch produced the
+        // truncated workspace state that would make old byte spans invalid.
+        let final_lib = fs::read_to_string(&fixture.src_file).expect("read final stale fixture");
+        assert!(
+            !final_lib.contains("stale_index_canary"),
+            "recorded truncating patch should remove stale_index_canary"
+        );
+
+        // This is the contract check for the original warning. If this row
+        // survives, later embedding/indexing work can ask IO to read a snippet
+        // whose hash or byte span belongs to the pre-apply file.
+        let stale_rows_after = function_rows_by_name(&runtime, "stale_index_canary");
+        println!(
+            "\n=== stale snippet replay: final file ===\n  final_bytes: {}\n  final_contains_stale_index_canary: {}",
+            final_lib.len(),
+            final_lib.contains("stale_index_canary")
+        );
+
+        // Also prove the refresh did not only delete stale rows. The surviving
+        // function should still be queryable, and its refreshed span should
+        // point at actual post-edit source text.
+        let surviving_rows_after = function_rows_by_name(&runtime, "broad_surface_canary");
+        print_headless_replay_rows(
+            "post-apply refreshed surviving function",
+            &surviving_rows_after,
+        );
+        print_headless_replay_span_content(
+            "post-apply refreshed surviving function",
+            &final_lib,
+            &surviving_rows_after,
+        );
+        let surviving_content =
+            first_function_span_content(&final_lib, &surviving_rows_after).unwrap_or_else(|| {
+                panic!(
+                    "expected refreshed broad_surface_canary span to resolve in final source; rows={surviving_rows_after:#?}"
+                )
+            });
+        assert!(
+            surviving_content.contains("broad_surface_canary")
+                && surviving_content.contains("\"after\""),
+            "refreshed span should point at post-edit broad_surface_canary content; content={surviving_content:?}"
+        );
+
+        print_headless_replay_rows("post-apply refresh after replay", &stale_rows_after);
+        assert!(
+            stale_rows_after.rows.is_empty(),
+            "post-apply refresh must retract stale function rows before indexing can request stale snippets; rows={stale_rows_after:#?}"
+        );
+    }
+
+    /// Replay regression for the concrete target that produced the live
+    /// `ContentMismatch`: `crates/ploke-tree/src/lib.rs::assemble_run_forest`.
+    ///
+    /// This copies a fixture snapshot of ploke-tree lib source into a temp workspace at
+    /// the same relative path, applies a recorded edit to `assemble_run_forest`,
+    /// then prints and asserts the refreshed DB span resolves to the edited
+    /// post-apply function body.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_span() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let fixture = prepare_live_canary(
+            "recorded-ploke-tree-assemble-run-forest",
+            "Replay a non_semantic_patch against crates/ploke-tree/src/lib.rs.",
+        )
+        .expect("prepare recorded ploke-tree target fixture");
+        let target_file = install_ploke_tree_assemble_target(&fixture);
+
+        let call_id = "call_patch_assemble_run_forest";
+        let patch_diff = ploke_tree_assemble_run_forest_ns_patch_diff();
+        let initial_lib = fs::read_to_string(&target_file).expect("read initial ploke-tree target");
+        println!(
+            "\n=== ploke-tree target replay: setup ===\n  workspace: {}\n  target_file: {}\n  artifact_root: {}\n  call_id: {}\n  initial_bytes: {}\n  initial_contains_assemble_run_forest: {}\n  recorded_patch:\n{}",
+            fixture.workspace.display(),
+            target_file.display(),
+            fixture.artifact_root.display(),
+            call_id,
+            initial_lib.len(),
+            initial_lib.contains("assemble_run_forest"),
+            patch_diff
+        );
+
+        let tape = recorded_ploke_tree_assemble_patch_tape(&fixture.artifact_root, call_id);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        let (mut runtime, parent_id) = start_attempt_runtime(
+            &fixture.workspace,
+            &[],
+            fixture.prompt.clone(),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            None,
+        )
+        .await
+        .expect("start ploke-tree target replay runtime");
+
+        let target_rows_before = function_rows_by_name(&runtime, "assemble_run_forest");
+        print_headless_replay_rows("ploke-tree target before replay", &target_rows_before);
+        print_headless_replay_span_content(
+            "ploke-tree target before replay",
+            &initial_lib,
+            &target_rows_before,
+        );
+        assert!(
+            !target_rows_before.rows.is_empty(),
+            "fixture must index assemble_run_forest before replay"
+        );
+
+        let mut run = HeadlessRun::new();
+        let outcome = run_attempt(
+            &mut runtime,
+            parent_id,
+            &fixture.workspace,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            1,
+            &mut run,
+            &LiveObserver::disabled(),
+            &[],
+            None,
+        )
+        .await
+        .expect("ploke-tree target recorded replay should finish");
+        println!(
+            "\n=== ploke-tree target replay: run_attempt outcome ===\n  outcome:\n{:#?}",
+            outcome
+        );
+
+        assert!(
+            matches!(
+                outcome,
+                AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
+            ),
+            "ploke-tree target replay should apply one patch, got {outcome:?}"
+        );
+
+        let final_lib = fs::read_to_string(&target_file).expect("read final ploke-tree target");
+        assert!(
+            final_lib.contains("_post_apply_refresh_canary"),
+            "recorded patch should add the post-apply refresh canary to assemble_run_forest"
+        );
+
+        let target_rows_after = function_rows_by_name(&runtime, "assemble_run_forest");
+        println!(
+            "\n=== ploke-tree target replay: final file ===\n  final_bytes: {}\n  final_contains_post_apply_refresh_canary: {}",
+            final_lib.len(),
+            final_lib.contains("_post_apply_refresh_canary")
+        );
+        print_headless_replay_rows("post-apply refreshed ploke-tree target", &target_rows_after);
+        print_headless_replay_span_content(
+            "post-apply refreshed ploke-tree target",
+            &final_lib,
+            &target_rows_after,
+        );
+
+        let refreshed_content =
+            first_function_span_content(&final_lib, &target_rows_after).unwrap_or_else(|| {
+                panic!(
+                    "expected refreshed assemble_run_forest span to resolve in final source; rows={target_rows_after:#?}"
+                )
+            });
+        assert!(
+            refreshed_content.contains("assemble_run_forest")
+                && refreshed_content.contains("_post_apply_refresh_canary")
+                && refreshed_content.contains("\"after\""),
+            "refreshed span should point at post-edit assemble_run_forest content; content={refreshed_content:?}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -6509,6 +6775,63 @@ Suggested action: Verify API credentials and retry."#;
         )
     }
 
+    fn recorded_truncating_lib_patch_tape(
+        run_dir: &Path,
+        call_id: &str,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        // Build the tape through the same raw full-response format used by
+        // replayed live runs. The adapter should not know this came from a test
+        // helper once the tape is installed.
+        let assistant_id = Uuid::new_v4();
+        let request = ns_patch_request(
+            call_id,
+            "src/lib.rs".to_string(),
+            truncating_stale_snippet_ns_patch_diff(),
+            "Remove stale_index_canary and shorten src/lib.rs after indexing",
+            Some(0.95),
+        );
+        load_recorded_tape(
+            run_dir,
+            assistant_id,
+            vec![
+                tool_response_record(
+                    assistant_id,
+                    0,
+                    "recorded-truncating-stale-snippet",
+                    &request,
+                ),
+                stop_response_record(assistant_id, 1, "recorded-truncating-final"),
+            ],
+        )
+    }
+
+    fn recorded_ploke_tree_assemble_patch_tape(
+        run_dir: &Path,
+        call_id: &str,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        let assistant_id = Uuid::new_v4();
+        let request = ns_patch_request(
+            call_id,
+            "crates/ploke-tree/src/lib.rs".to_string(),
+            ploke_tree_assemble_run_forest_ns_patch_diff(),
+            "Add a post-apply refresh canary inside assemble_run_forest",
+            Some(0.95),
+        );
+        load_recorded_tape(
+            run_dir,
+            assistant_id,
+            vec![
+                tool_response_record(
+                    assistant_id,
+                    0,
+                    "recorded-ploke-tree-assemble-run-forest",
+                    &request,
+                ),
+                stop_response_record(assistant_id, 1, "recorded-ploke-tree-final"),
+            ],
+        )
+    }
+
     fn recorded_same_file_repair_tape(
         run_dir: &Path,
         first_call_id: &str,
@@ -6720,6 +7043,82 @@ Suggested action: Verify API credentials and retry."#;
         .join("\n")
     }
 
+    fn stale_snippet_initial_lib() -> &'static str {
+        // Keep one function alive and delete the other. This distinguishes
+        // ordinary reindexing of a changed file from the specific stale
+        // descendant-row case we care about.
+        r#"pub fn broad_surface_canary() -> &'static str {
+    "before"
+}
+
+pub fn stale_index_canary() -> &'static str {
+    "stale"
+}
+"#
+    }
+
+    fn install_stale_snippet_canary_source(fixture: &LiveCanaryFixture) {
+        // Commit the custom source before runtime startup so the initial scan
+        // treats it as the workspace baseline and records a current file hash.
+        fs::write(&fixture.src_file, stale_snippet_initial_lib())
+            .expect("write stale snippet canary source");
+        fs::write(&fixture.initial_file, stale_snippet_initial_lib())
+            .expect("write stale snippet initial artifact");
+        command_output(&fixture.workspace, "git", &["add", "src/lib.rs"]);
+        command_output(
+            &fixture.workspace,
+            "git",
+            &[
+                "-c",
+                "user.email=ploke-eval-live-canary@example.invalid",
+                "-c",
+                "user.name=ploke eval live canary",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "install stale snippet canary",
+            ],
+        );
+    }
+
+    fn truncating_stale_snippet_ns_patch_diff() -> String {
+        // Removing the second function shortens the file. Before the retraction
+        // fix, DB rows for that deleted function could still carry the old byte
+        // range into snippet extraction.
+        [
+            "--- a/src/lib.rs",
+            "+++ b/src/lib.rs",
+            "@@ -1,7 +1,3 @@",
+            " pub fn broad_surface_canary() -> &'static str {",
+            "-    \"before\"",
+            "+    \"after\"",
+            " }",
+            "-",
+            "-pub fn stale_index_canary() -> &'static str {",
+            "-    \"stale\"",
+            "-}",
+            "",
+        ]
+        .join("\n")
+    }
+
+    fn ploke_tree_assemble_run_forest_ns_patch_diff() -> String {
+        [
+            "--- a/crates/ploke-tree/src/lib.rs",
+            "+++ b/crates/ploke-tree/src/lib.rs",
+            "@@ -65,6 +65,7 @@ pub fn assemble_run_forest(input: RunForestInput) -> RunForest {",
+            "     } = input;",
+            "",
+            "     let campaign_id = scheduler.campaign_id.as_str().to_owned();",
+            "+    let _post_apply_refresh_canary = \"after\";",
+            "     let mut diagnostics = Vec::new();",
+            "     let merged_node_records = merge_node_records(&scheduler.nodes, node_records, &mut diagnostics);",
+            "     let mut nodes = merged_node_records",
+            "",
+        ]
+        .join("\n")
+    }
+
     fn stale_canary_repair_ns_patch_diff() -> String {
         [
             "--- a/src/lib.rs",
@@ -6732,6 +7131,159 @@ Suggested action: Verify API credentials and retry."#;
             "",
         ]
         .join("\n")
+    }
+
+    fn install_ploke_tree_assemble_target(fixture: &LiveCanaryFixture) -> PathBuf {
+        let root_cargo_toml = r#"[package]
+name = "ploke-eval-live-tui-canary"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/ploke-tree"]
+resolver = "3"
+
+[lib]
+path = "src/lib.rs"
+"#;
+        let member_cargo_toml = r#"[package]
+name = "ploke-tree"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#;
+        let source_file = ploke_tree_assemble_fixture_path();
+        let target_dir = fixture.workspace.join("crates/ploke-tree/src");
+        let target_file = target_dir.join("lib.rs");
+        fs::create_dir_all(&target_dir).expect("create ploke-tree target src dir");
+        fs::write(fixture.workspace.join("Cargo.toml"), root_cargo_toml)
+            .expect("write workspace cargo manifest");
+        fs::write(
+            fixture.workspace.join("crates/ploke-tree/Cargo.toml"),
+            member_cargo_toml,
+        )
+        .expect("write ploke-tree member manifest");
+        fs::write(
+            &target_file,
+            fs::read_to_string(&source_file).unwrap_or_else(|err| {
+                panic!(
+                    "read ploke-tree target fixture '{}': {err}",
+                    source_file.display()
+                )
+            }),
+        )
+        .expect("write actual ploke-tree target source");
+
+        // The copied lib.rs declares these modules. Empty files are enough for
+        // parser/index traversal; the replay only needs the lib.rs target.
+        for module in [
+            "browser.rs",
+            "graph.rs",
+            "playback.rs",
+            "store.rs",
+            "tests.rs",
+        ] {
+            fs::write(target_dir.join(module), "").expect("write stub ploke-tree module");
+        }
+
+        command_output(
+            &fixture.workspace,
+            "git",
+            &[
+                "add",
+                "Cargo.toml",
+                "crates/ploke-tree/Cargo.toml",
+                "crates/ploke-tree/src/lib.rs",
+                "crates/ploke-tree/src/browser.rs",
+                "crates/ploke-tree/src/graph.rs",
+                "crates/ploke-tree/src/playback.rs",
+                "crates/ploke-tree/src/store.rs",
+                "crates/ploke-tree/src/tests.rs",
+            ],
+        );
+        command_output(
+            &fixture.workspace,
+            "git",
+            &[
+                "-c",
+                "user.email=ploke-eval-live-canary@example.invalid",
+                "-c",
+                "user.name=ploke eval live canary",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "install ploke-tree assemble_run_forest target",
+            ],
+        );
+        target_file
+    }
+
+    fn ploke_tree_assemble_fixture_path() -> PathBuf {
+        ploke_workspace_root_for_test().join("tests/fixtures/prototype1/ploke-tree-src-lib.rs")
+    }
+
+    fn function_rows_by_name(
+        runtime: &crate::runner::WorkspaceTuiRuntime,
+        name: &str,
+    ) -> ploke_db::QueryResult {
+        // Query the primary function relation directly. This avoids hiding the
+        // stale-row condition behind RAG retrieval or embedding behavior.
+        runtime
+            .state
+            .db
+            .raw_query(&format!(
+                r#"?[id, tracking_hash, span] := *function {{ id, name, tracking_hash, span @ 'NOW' }}, name = "{}""#,
+                name
+            ))
+            .expect("query function rows by name")
+    }
+
+    fn print_headless_replay_rows(stage: &str, rows: &ploke_db::QueryResult) {
+        println!(
+            "\n=== headless replay: {stage} ===\n  row_count: {}\n  headers:\n{:#?}\n  rows:\n{:#?}",
+            rows.rows.len(),
+            rows.headers,
+            rows.rows
+        );
+    }
+
+    fn print_headless_replay_span_content(stage: &str, source: &str, rows: &ploke_db::QueryResult) {
+        let span = first_function_span(rows);
+        let content = first_function_span_content(source, rows);
+        println!(
+            "\n=== headless replay: {stage} span content ===\n  span: {:?}\n  content:\n{}",
+            span,
+            content.unwrap_or("<span does not resolve in source>")
+        );
+    }
+
+    fn first_function_span_content<'a>(
+        source: &'a str,
+        rows: &ploke_db::QueryResult,
+    ) -> Option<&'a str> {
+        let (start, end) = first_function_span(rows)?;
+        source.get(start..end)
+    }
+
+    fn first_function_span(rows: &ploke_db::QueryResult) -> Option<(usize, usize)> {
+        let span_index = rows.headers.iter().position(|header| header == "span")?;
+        let span = rows.rows.first()?.get(span_index)?;
+        let cozo::DataValue::List(parts) = span else {
+            return None;
+        };
+        let [start, end] = parts.as_slice() else {
+            return None;
+        };
+        Some((cozo_usize(start)?, cozo_usize(end)?))
+    }
+
+    fn cozo_usize(value: &cozo::DataValue) -> Option<usize> {
+        let cozo::DataValue::Num(cozo::Num::Int(value)) = value else {
+            return None;
+        };
+        usize::try_from(*value).ok()
     }
 
     fn retry_context_bool(wire: &ploke_tui::tools::ToolErrorWire, field: &str) -> Option<bool> {

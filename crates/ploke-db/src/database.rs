@@ -1082,6 +1082,89 @@ target[id] := input[id_str], id = to_uuid(id_str)
             .map_err(DbError::from)
     }
 
+    pub fn retract_file_descendants(
+        &self,
+        file_mods: &BTreeSet<Uuid>,
+    ) -> Result<BTreeSet<Uuid>, DbError> {
+        if file_mods.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+
+        let input_rows = Self::uuid_input_rows(file_mods);
+        let descendant_rows = self.raw_query(&format!(
+            r#"
+input[id_str] <- [{input_rows}]
+root[id] := input[id_str], id = to_uuid(id_str)
+file_root[id] := *file_mod {{ owner_id: id @ 'NOW' }}
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+{method_ancestor_rule}
+desc[id] := root[root_id], parent_of[id, root_id], not file_root[id]
+desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
+?[id] := desc[id]
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
+        ))?;
+        let descendant_ids = descendant_rows
+            .rows
+            .iter()
+            .map(|row| {
+                row.first()
+                    .ok_or_else(|| DbError::QueryExecution("missing file descendant id".into()))
+                    .and_then(to_uuid)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+
+        self.retract_syntax_edges_for_ids(&descendant_ids)?;
+
+        let mut descendant_relations = NodeType::all_variants()
+            .into_iter()
+            .filter(|ty| *ty != NodeType::SyntaxEdge)
+            .map(|ty| ty.relation_str().to_string())
+            .collect::<Vec<_>>();
+        descendant_relations.push("method".to_string());
+        descendant_relations.sort();
+        descendant_relations.dedup();
+
+        for relation in descendant_relations {
+            let node_type = NodeType::all_variants()
+                .into_iter()
+                .find(|ty| ty.relation_str() == relation)
+                .filter(|ty| *ty != NodeType::SyntaxEdge);
+            if let Some(node_type) = node_type {
+                let key_fields = node_type.keys().collect::<Vec<_>>();
+                let val_fields = node_type.vals().collect::<Vec<_>>();
+                self.retract_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &descendant_ids,
+                )?;
+            } else if relation == "method" {
+                let key_fields = MethodNodeSchema::SCHEMA
+                    .keys()
+                    .map(|field| *field)
+                    .collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA
+                    .vals()
+                    .map(|field| *field)
+                    .collect::<Vec<_>>();
+                self.retract_relation_rows_by_id(
+                    &relation,
+                    &key_fields,
+                    &val_fields,
+                    &descendant_ids,
+                )?;
+            }
+        }
+
+        for relation in self.list_embedding_vector_relations()? {
+            self.retract_vector_rows_for_ids(&relation, &descendant_ids)?;
+        }
+        self.retract_bm25_doc_meta_for_ids(&descendant_ids)?;
+
+        Ok(descendant_ids)
+    }
+
     fn list_embedding_vector_relations(&self) -> Result<Vec<String>, DbError> {
         let rels = self
             .iter_relations()
@@ -4158,6 +4241,154 @@ mod tests {
         );
 
         // debug_print_counts(&db)?;
+        Ok(())
+    }
+
+    fn file_mod_id_by_suffix(db: &Database, suffix: &str) -> Result<Uuid, PlokeError> {
+        db.get_file_data()?
+            .into_iter()
+            .find(|file| file.file_path.to_string_lossy().ends_with(suffix))
+            .map(|file| file.id)
+            .ok_or_else(|| {
+                PlokeError::Internal(ploke_error::InternalError::CompilerError(format!(
+                    "missing file fixture suffix {suffix}"
+                )))
+            })
+    }
+
+    fn function_names_under_file(
+        db: &Database,
+        file_mod_id: Uuid,
+    ) -> Result<BTreeSet<String>, PlokeError> {
+        let rows = db.raw_query(&format!(
+            r#"
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+?[name] :=
+    *function {{ id, name @ 'NOW' }},
+    ancestor[id, to_uuid("{file_mod_id}")]
+"#
+        ))?;
+        rows.rows
+            .iter()
+            .map(|row| {
+                row.first()
+                    .and_then(|value| value.get_str())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        PlokeError::Internal(ploke_error::InternalError::CompilerError(
+                            "missing function name".to_string(),
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    fn method_names_under_file(
+        db: &Database,
+        file_mod_id: Uuid,
+    ) -> Result<BTreeSet<String>, PlokeError> {
+        let rows = db.raw_query(&format!(
+            r#"
+parent_of[child, parent] := *syntax_edge {{ source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+{method_ancestor_rule}
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+?[name] :=
+    *method {{ id, name @ 'NOW' }},
+    ancestor[id, to_uuid("{file_mod_id}")]
+"#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
+        ))?;
+        rows.rows
+            .iter()
+            .map(|row| {
+                row.first()
+                    .and_then(|value| value.get_str())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        PlokeError::Internal(ploke_error::InternalError::CompilerError(
+                            "missing method name".to_string(),
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn retract_file_descendants_removes_stale_primary_rows() -> Result<(), PlokeError> {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_update_embed")?;
+        let db = Database::new(cozo_db);
+        let main_file = file_mod_id_by_suffix(&db, "fixture_update_embed/src/main.rs")?;
+        let other_file = file_mod_id_by_suffix(&db, "fixture_update_embed/src/other_mod.rs")?;
+
+        let before_main = function_names_under_file(&db, main_file)?;
+        assert!(
+            before_main.contains("main") && before_main.contains("func_with_params"),
+            "fixture main.rs should have function descendants before retraction: {before_main:?}"
+        );
+        let before_other = function_names_under_file(&db, other_file)?;
+        assert!(
+            before_other.contains("simple_four"),
+            "sibling module should have function descendants before retraction: {before_other:?}"
+        );
+
+        let removed = db.retract_file_descendants(&BTreeSet::from([main_file]))?;
+        assert!(
+            !removed.is_empty(),
+            "changed file retraction should remove descendant ids"
+        );
+
+        let after_main = function_names_under_file(&db, main_file)?;
+        assert!(
+            after_main.is_empty(),
+            "stale function rows under changed main.rs should be retracted, got {after_main:?}"
+        );
+        let after_other = function_names_under_file(&db, other_file)?;
+        assert!(
+            after_other.contains("simple_four"),
+            "sibling file descendants must remain live after main.rs retraction: {after_other:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retract_file_descendants_removes_associated_method_rows() -> Result<(), PlokeError> {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        let db = Database::new(cozo_db);
+        let impls_file = file_mod_id_by_suffix(&db, "fixture_nodes/src/impls.rs")?;
+        let traits_file = file_mod_id_by_suffix(&db, "fixture_nodes/src/traits.rs")?;
+
+        let before_impls = method_names_under_file(&db, impls_file)?;
+        assert!(
+            before_impls.contains("new") && before_impls.contains("trait_method"),
+            "fixture impls.rs should have associated method descendants before retraction: {before_impls:?}"
+        );
+        let before_traits = method_names_under_file(&db, traits_file)?;
+        assert!(
+            before_traits.contains("required_method"),
+            "sibling traits.rs should have associated method descendants before retraction: {before_traits:?}"
+        );
+
+        let removed = db.retract_file_descendants(&BTreeSet::from([impls_file]))?;
+        assert!(
+            !removed.is_empty(),
+            "changed file retraction should remove associated method ids"
+        );
+
+        let after_impls = method_names_under_file(&db, impls_file)?;
+        assert!(
+            after_impls.is_empty(),
+            "stale method rows under changed impls.rs should be retracted, got {after_impls:?}"
+        );
+        let after_traits = method_names_under_file(&db, traits_file)?;
+        assert!(
+            after_traits.contains("required_method"),
+            "sibling file method descendants must remain live after impls.rs retraction: {after_traits:?}"
+        );
+
         Ok(())
     }
 
