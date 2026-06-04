@@ -132,6 +132,17 @@ fn edge_label_palette_text_tracks_active_theme() {
 }
 
 #[test]
+fn text_selection_visuals_use_translucent_fill_and_readable_fg() {
+    use crate::ui::theme::PaletteTokens;
+
+    let tokens = PaletteTokens::for_scheme(NamedScheme::TokyoNight);
+    let visuals = tokens.to_visuals();
+    assert!(visuals.selection.bg_fill.a() < 255);
+    assert_ne!(visuals.selection.bg_fill, visuals.selection.stroke.color);
+    assert_eq!(visuals.selection.stroke.color, tokens.text);
+}
+
+#[test]
 fn inspector_text_galley_uses_active_theme_text_color() {
     let mut cache = InspectorRenderCache::default();
 
@@ -351,6 +362,48 @@ fn patch_diff_galleys_keep_natural_height_when_repeated() {
             second.rect.height() >= content_height,
             "second diff frame clipped content height: frame={} content={content_height}",
             second.rect.height()
+        );
+    });
+}
+
+#[test]
+fn inspector_wrapped_prose_uses_clip_width_not_unbounded_scroll_available() {
+    use super::cache::{effective_eval_pane_content_width, effective_inspector_content_width};
+
+    egui::__run_test_ui(|ui| {
+        let panel_width = 240.0;
+        ui.set_width(panel_width);
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.set_min_width(4000.0);
+            let prose_width = effective_inspector_content_width(ui);
+            let eval_width = effective_eval_pane_content_width(ui);
+            assert_eq!(
+                eval_width, prose_width,
+                "eval pane width should match inspector prose width"
+            );
+            assert!(
+                prose_width < 4000.0,
+                "prose width {prose_width} should not follow scroll min_width"
+            );
+            assert!(
+                prose_width <= panel_width + 8.0,
+                "prose width {prose_width} should stay near panel {panel_width}"
+            );
+        });
+    });
+}
+
+#[test]
+fn eval_pane_content_width_at_tile_root_stays_within_parent() {
+    use super::cache::eval_pane_content_width;
+
+    egui::__run_test_ui(|ui| {
+        let pane_width = 280.0;
+        ui.set_width(pane_width);
+        let content_width = eval_pane_content_width(ui);
+        assert!(
+            content_width <= pane_width + 8.0,
+            "content width {content_width} should stay near pane {pane_width}"
         );
     });
 }

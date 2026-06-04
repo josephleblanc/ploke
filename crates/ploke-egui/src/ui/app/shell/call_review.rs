@@ -9,16 +9,68 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use super::cache::eval_pane_content_width;
 use super::eval_protocol::{
-    selected_eval_protocol_call_review_key, set_selected_eval_protocol_call_review,
+    selected_eval_protocol_call_review_key, selected_tool_call_review,
+    set_selected_eval_protocol_call_review,
 };
 use super::fields::*;
+use super::run_dashboard::{
+    RunDashboardValueTone, effective_tone_for_local_analysis_signal_metric,
+};
 use super::{InspectorRenderCache, show_inspector_collapsing};
 
 const CALL_REVIEW_SCAN_HOVER_PREVIEW_BYTES: usize = 220;
+const CALL_REVIEW_ASSESSMENT_SPOTLIGHT_INNER_MARGIN: i8 = 8;
+const CALL_REVIEW_SPOTLIGHT_SIGNALS_NARROW_WIDTH: f32 = 400.0;
+const CALL_REVIEW_SPOTLIGHT_RATIONALE_LABEL_INDENT: f32 = 4.0;
 const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH: f32 = 10.0;
 const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT: f32 = 4.0;
 const CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP: f32 = 2.0;
+
+/// Body width inside assessment spotlight frames: pane column cap, frame inner margin.
+fn call_review_assessment_spotlight_content_width(ui: &egui::Ui, pane_content_width: f32) -> f32 {
+    let available = ui.available_width();
+    if available.is_finite() && available > 1.0 {
+        pane_content_width.min(available).max(1.0)
+    } else {
+        pane_content_width.max(1.0)
+    }
+}
+
+fn call_review_assessment_spotlight_row_width(ui: &egui::Ui, content_width: f32) -> f32 {
+    call_review_assessment_spotlight_content_width(ui, content_width)
+}
+
+fn call_review_assessment_spotlight_clip_rect(ui: &egui::Ui, content_width: f32) -> egui::Rect {
+    let right = ui.clip_rect().left() + content_width;
+    egui::Rect::from_min_max(
+        ui.clip_rect().min,
+        egui::pos2(right.min(ui.clip_rect().right()), ui.clip_rect().bottom()),
+    )
+    .intersect(ui.clip_rect())
+}
+
+/// Short spotlight chip prefix; full metric name stays in hover text.
+pub(crate) fn call_review_spotlight_signal_metric_short_label(metric: &str) -> &str {
+    match metric {
+        "repeated tools" => "repeated",
+        "distinct tools" => "distinct",
+        "similar searches" => "similar",
+        "directory pivots" => "pivots",
+        "scope turns" => "turns",
+        "search calls" => "search",
+        "read calls" => "read",
+        "browse calls" => "browse",
+        "edit calls" => "edit",
+        "execute calls" => "execute",
+        "failed calls" => "failed",
+        "uncovered calls" => "uncovered",
+        "labeled segments" => "labeled",
+        "ambiguous segments" => "ambiguous",
+        other => other,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CallReviewFilter {
@@ -209,8 +261,11 @@ pub(crate) fn render_call_review_scan(
         ui,
         egui::CollapsingHeader::new("Call Review Scan").default_open(true),
         |ui| {
+            let scan_content_width = eval_pane_content_width(ui);
+            ui.set_max_width(scan_content_width);
             cached_kv_usize(ui, render_cache, "call reviews", counts.total);
             ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(scan_content_width);
                 cached_label(ui, render_cache, "slice");
                 for candidate in CallReviewFilter::ALL {
                     let label = candidate.label();
@@ -690,9 +745,7 @@ fn call_review_scan_row_contains_pointer(ui: &egui::Ui, row_rect: egui::Rect) ->
         return false;
     }
     let hit_rect = row_rect.expand2(egui::vec2(4.0, 2.0));
-    ui.ctx()
-        .pointer_hover_pos()
-        .is_some_and(|pos| hit_rect.contains(pos))
+    ui.rect_contains_pointer(hit_rect)
 }
 
 fn include_call_review_scan_cell(
@@ -818,6 +871,45 @@ pub(crate) fn scan_value_label(
     let galley = render_cache.text_galley(ui, text, scan_value_cached_text_kind(emphasis));
     ui.add(egui::Label::new(galley))
 }
+
+/// Compact chip text: `dimension: value` (e.g. `usefulness: none`).
+pub(crate) fn format_assessment_dimension_chip<'a>(
+    dimension: &str,
+    value: &str,
+    buffer: &'a mut String,
+) -> &'a str {
+    buffer.clear();
+    buffer.reserve(dimension.len() + 2 + value.len());
+    buffer.push_str(dimension);
+    buffer.push(':');
+    buffer.push(' ');
+    buffer.push_str(value);
+    buffer.as_str()
+}
+
+pub(crate) fn render_assessment_dimension_chip(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    dimension: &str,
+    value: &str,
+    emphasis: ScanValueEmphasis,
+    tooltip: &str,
+    label_buffer: &mut String,
+) -> egui::Response {
+    let text = format_assessment_dimension_chip(dimension, value, label_buffer);
+    scan_value_label(ui, render_cache, text, emphasis).on_hover_text(tooltip)
+}
+
+pub(crate) const ASSESSMENT_CHIP_OUTCOME_TOOLTIP: &str =
+    "Overall outcome verdict synthesized from usefulness, redundancy, and recoverability.";
+pub(crate) const ASSESSMENT_CHIP_CONFIDENCE_TOOLTIP: &str =
+    "Confidence assigned to the overall outcome verdict.";
+pub(crate) const ASSESSMENT_CHIP_USEFULNESS_TOOLTIP: &str =
+    "Usefulness: whether the focal call advanced the run. \"none\" is no value (not missing data).";
+pub(crate) const ASSESSMENT_CHIP_REDUNDANCY_TOOLTIP: &str =
+    "Redundancy: whether the call repeated or overlapped prior work in scope.";
+pub(crate) const ASSESSMENT_CHIP_RECOVERABILITY_TOOLTIP: &str =
+    "Recoverability: whether a clear next step exists if the call was a detour or failure.";
 
 fn scan_value_cached_text_kind(emphasis: ScanValueEmphasis) -> CachedTextKind {
     match emphasis {
@@ -989,53 +1081,119 @@ pub(crate) fn recoverability_verdict_emphasis(
     }
 }
 
+struct CallReviewAssessmentSpotlightConfig {
+    title: &'static str,
+    artifact_cache_key: &'static str,
+    empty_selection_message: &'static str,
+    not_available_label: &'static str,
+    not_applicable_label: &'static str,
+    show_synthesis_prose: bool,
+}
+
+const CALL_REVIEW_REASONING_SPOTLIGHT: CallReviewAssessmentSpotlightConfig =
+    CallReviewAssessmentSpotlightConfig {
+        title: "LLM Reasoning Spotlight",
+        artifact_cache_key: "call-review-spotlight-artifact",
+        empty_selection_message: "Select a call row to pin its LLM reasoning here.",
+        not_available_label: "reasoning",
+        not_applicable_label: "reasoning",
+        show_synthesis_prose: false,
+    };
+
+const RUN_SYNTHESIS_SPOTLIGHT: CallReviewAssessmentSpotlightConfig =
+    CallReviewAssessmentSpotlightConfig {
+        title: "Run synthesis",
+        artifact_cache_key: "run-synthesis-spotlight-artifact",
+        empty_selection_message:
+            "Select a call row in Call Review Scan to pin run synthesis here.",
+        not_available_label: "synthesis",
+        not_applicable_label: "synthesis",
+        show_synthesis_prose: true,
+    };
+
+#[ploke_egui_macros::profile_scope(crate::allocation::scope::EVAL_PROTOCOL_RUN_SYNTHESIS_SPOTLIGHT)]
+pub(crate) fn render_run_synthesis_spotlight(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
+) {
+    render_call_review_assessment_spotlight(
+        ui,
+        render_cache,
+        protocol_artifacts,
+        RUN_SYNTHESIS_SPOTLIGHT,
+    );
+}
+
 #[ploke_egui_macros::profile_scope(crate::allocation::scope::EVAL_PROTOCOL_CALL_REVIEW_SPOTLIGHT)]
 pub(super) fn render_call_review_reasoning_spotlight(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
 ) {
+    render_call_review_assessment_spotlight(
+        ui,
+        render_cache,
+        protocol_artifacts,
+        CALL_REVIEW_REASONING_SPOTLIGHT,
+    );
+}
+
+fn render_call_review_assessment_spotlight(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    protocol_artifacts: &ploke_tree::ProtocolArtifactsEvidence,
+    config: CallReviewAssessmentSpotlightConfig,
+) {
     let selected_artifact_key = selected_eval_protocol_call_review_key(ui);
+    let pane_content_width = eval_pane_content_width(ui);
     ui.add_space(4.0);
     egui::Frame::group(ui.style())
         .fill(ui.visuals().widgets.active.weak_bg_fill)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().selection.bg_fill))
-        .inner_margin(egui::Margin::same(6))
+        .stroke(egui::Stroke::new(
+            1.0,
+            crate::ui::theme::tokens_from_ui(ui).accent,
+        ))
+        .inner_margin(egui::Margin::same(
+            CALL_REVIEW_ASSESSMENT_SPOTLIGHT_INNER_MARGIN,
+        ))
         .show(ui, |ui| {
+            let content_width =
+                call_review_assessment_spotlight_content_width(ui, pane_content_width);
+            ui.set_clip_rect(call_review_assessment_spotlight_clip_rect(ui, content_width));
+            ui.set_max_width(content_width);
             ui.horizontal_wrapped(|ui| {
-                cached_label(ui, render_cache, "LLM Reasoning Spotlight");
+                ui.set_max_width(content_width);
+                cached_label(ui, render_cache, config.title);
                 if let Some(artifact_key) = selected_artifact_key.as_deref() {
                     cached_artifact_file_value(
                         ui,
                         render_cache,
-                        ("call-review-spotlight-artifact", artifact_key),
+                        (config.artifact_cache_key, artifact_key),
                         artifact_key,
                     );
                 }
             });
 
-            let Some(artifact_key) = selected_artifact_key.as_deref() else {
-                cached_label(
-                    ui,
-                    render_cache,
-                    "Select a call row to pin its LLM reasoning here.",
-                );
-                return;
-            };
-            let Some(artifact) = protocol_artifacts.index.get(artifact_key) else {
+            let Some((_artifact_key, payload)) = selected_tool_call_review(ui, protocol_artifacts)
+            else {
+                let Some(artifact_key) = selected_artifact_key.as_deref() else {
+                    cached_label(ui, render_cache, config.empty_selection_message);
+                    return;
+                };
                 cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
-                cached_kv_id(ui, render_cache, "reasoning", "not_available");
-                return;
-            };
-            let ArtifactBody::ToolCallReview(payload) = &artifact.body else {
-                cached_kv_artifact_file(ui, render_cache, "selected", artifact_key);
-                cached_kv_id(ui, render_cache, "reasoning", "not_applicable");
+                if protocol_artifacts.index.get(artifact_key).is_some() {
+                    cached_kv_id(ui, render_cache, config.not_applicable_label, "not_applicable");
+                } else {
+                    cached_kv_id(ui, render_cache, config.not_available_label, "not_available");
+                }
                 return;
             };
 
             let output = &payload.output;
             let focal = &payload.input.focal;
             ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(content_width);
                 cached_label(ui, render_cache, "call");
                 let mut index_buffer = itoa::Buffer::new();
                 cached_monospace_label(ui, render_cache, index_buffer.format(focal.index));
@@ -1061,7 +1219,8 @@ pub(super) fn render_call_review_reasoning_spotlight(
             });
 
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(content_width);
                 render_call_review_spotlight_verdict_card(
                     ui,
                     render_cache,
@@ -1089,28 +1248,109 @@ pub(super) fn render_call_review_reasoning_spotlight(
             });
 
             ui.add_space(4.0);
-            render_call_review_spotlight_signals(ui, render_cache, &output.signals);
+            render_call_review_spotlight_signals(ui, render_cache, content_width, &output.signals);
+
+            if config.show_synthesis_prose {
+                ui.add_space(4.0);
+                if call_review_spotlight_has_structured_assessment(output) {
+                    render_call_review_spotlight_structured_synthesis_note(ui, render_cache);
+                } else if !output.synthesis_rationale.trim().is_empty() {
+                    render_call_review_spotlight_synthesis_prose(
+                        ui,
+                        render_cache,
+                        content_width,
+                        output.synthesis_rationale.as_str(),
+                    );
+                }
+            }
 
             ui.add_space(2.0);
             render_call_review_spotlight_rationale_bullet(
                 ui,
                 render_cache,
+                content_width,
                 "Usefulness",
                 output.usefulness.rationale.as_str(),
             );
             render_call_review_spotlight_rationale_bullet(
                 ui,
                 render_cache,
+                content_width,
                 "Redundancy",
                 output.redundancy.rationale.as_str(),
             );
             render_call_review_spotlight_rationale_bullet(
                 ui,
                 render_cache,
+                content_width,
                 "Recoverability",
                 output.recoverability.rationale.as_str(),
             );
         });
+}
+
+/// Typed verdicts, signals, and dimension rationales are shown in the spotlight; the
+/// mechanized `synthesis_rationale` string duplicates that wire-format summary.
+fn call_review_spotlight_has_structured_assessment(
+    output: &ploke_protocol::LocalAnalysisAssessment,
+) -> bool {
+    call_review_spotlight_has_dimension_rationale(output)
+        || call_review_spotlight_synthesis_is_mechanized_wire_format(
+            output.synthesis_rationale.as_str(),
+        )
+}
+
+fn call_review_spotlight_has_dimension_rationale(
+    output: &ploke_protocol::LocalAnalysisAssessment,
+) -> bool {
+    !output.usefulness.rationale.trim().is_empty()
+        || !output.redundancy.rationale.trim().is_empty()
+        || !output.recoverability.rationale.trim().is_empty()
+}
+
+fn call_review_spotlight_synthesis_is_mechanized_wire_format(synthesis: &str) -> bool {
+    synthesis.starts_with("usefulness=") && synthesis.contains("branch rationales:")
+}
+
+fn render_call_review_spotlight_structured_synthesis_note(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+) {
+    cached_label(
+        ui,
+        render_cache,
+        "Structured summary from call review",
+    );
+}
+
+fn render_call_review_spotlight_synthesis_prose(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    content_width: f32,
+    synthesis: &str,
+) {
+    let copy_value = CopyableText::new(synthesis);
+    let row_width = call_review_assessment_spotlight_row_width(ui, content_width);
+    ui.horizontal_top(|ui| {
+        let bullet = ui.label(egui::RichText::new("•").weak());
+        let prose_width =
+            (row_width - bullet.rect.width() - ui.spacing().item_spacing.x).max(1.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(prose_width);
+            ui.horizontal(|ui| {
+                cached_label(ui, render_cache, "synthesis");
+                id_display::copy_button(ui, &copy_value);
+            });
+            let response = render_inspector_wrapped_prose_in_width(
+                ui,
+                render_cache,
+                synthesis,
+                prose_width,
+                egui::Sense::click(),
+            );
+            id_display::attach_copy_context_menu(&response, &copy_value);
+        });
+    });
 }
 
 fn render_call_review_spotlight_verdict_card(
@@ -1128,27 +1368,77 @@ fn render_call_review_spotlight_verdict_card(
             ui.vertical(|ui| {
                 cached_label(ui, render_cache, title);
                 scan_value_label(ui, render_cache, verdict, verdict_emphasis);
-                render_call_review_spotlight_confidence_bar(ui, confidence);
+                render_call_review_spotlight_verdict_bar(ui, verdict_emphasis, confidence);
             });
         });
 }
 
-fn render_call_review_spotlight_confidence_bar(ui: &mut egui::Ui, confidence: Confidence) {
-    const LEVELS: [Confidence; 3] = [Confidence::Low, Confidence::Medium, Confidence::High];
-    let segment_count = LEVELS.len() as f32;
+const SPOTLIGHT_VERDICT_BAR_TIER_COUNT: usize = 3;
+const SPOTLIGHT_VERDICT_BAR_INACTIVE_GAMMA: f32 = 0.38;
+
+/// Active segment index for the three-tier under-bar (concerning → neutral → good).
+pub(crate) fn spotlight_verdict_bar_active_tier(verdict_emphasis: ScanValueEmphasis) -> usize {
+    match verdict_emphasis {
+        ScanValueEmphasis::Error => 0,
+        ScanValueEmphasis::Warn => 1,
+        ScanValueEmphasis::Normal => 2,
+    }
+}
+
+fn spotlight_verdict_bar_tier_emphasis(tier: usize) -> ScanValueEmphasis {
+    match tier {
+        0 => ScanValueEmphasis::Error,
+        1 => ScanValueEmphasis::Warn,
+        _ => ScanValueEmphasis::Normal,
+    }
+}
+
+/// Base segment color for a tier; matches [`scan_value_label`] emphasis colors.
+pub(crate) fn spotlight_verdict_bar_tier_color(
+    ui: &egui::Ui,
+    tier_emphasis: ScanValueEmphasis,
+) -> egui::Color32 {
+    match tier_emphasis {
+        ScanValueEmphasis::Error => text_style::inspector_error_text_color(ui),
+        ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(ui),
+        ScanValueEmphasis::Normal => ui.visuals().text_color(),
+    }
+}
+
+fn spotlight_verdict_bar_segment_fill(
+    ui: &egui::Ui,
+    tier_emphasis: ScanValueEmphasis,
+    active: bool,
+) -> egui::Color32 {
+    let base = spotlight_verdict_bar_tier_color(ui, tier_emphasis);
+    if active {
+        base
+    } else {
+        base.gamma_multiply(SPOTLIGHT_VERDICT_BAR_INACTIVE_GAMMA)
+    }
+}
+
+fn render_call_review_spotlight_verdict_bar(
+    ui: &mut egui::Ui,
+    verdict_emphasis: ScanValueEmphasis,
+    confidence: Confidence,
+) {
+    let active_tier = spotlight_verdict_bar_active_tier(verdict_emphasis);
+    let segment_count = SPOTLIGHT_VERDICT_BAR_TIER_COUNT as f32;
     let width = segment_count * CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH
         + (segment_count - 1.0) * CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP;
-    let hover = format!("Confidence: {}", confidence_label(confidence));
+    let hover = format!(
+        "Assessor confidence: {} · bar highlights verdict severity tier",
+        confidence_label(confidence)
+    );
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT),
         egui::Sense::hover(),
     );
     response.on_hover_text(hover);
 
-    let inactive = ui.visuals().widgets.noninteractive.weak_bg_fill;
-    let active = confidence_bar_active_color(ui, confidence_emphasis(confidence));
     let mut left = rect.left();
-    for level in LEVELS {
+    for tier in 0..SPOTLIGHT_VERDICT_BAR_TIER_COUNT {
         let segment_rect = egui::Rect::from_min_size(
             egui::pos2(left, rect.top()),
             egui::vec2(
@@ -1156,152 +1446,186 @@ fn render_call_review_spotlight_confidence_bar(ui: &mut egui::Ui, confidence: Co
                 CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_HEIGHT,
             ),
         );
-        let fill = if level == confidence {
-            active
-        } else {
-            inactive
-        };
+        let fill = spotlight_verdict_bar_segment_fill(
+            ui,
+            spotlight_verdict_bar_tier_emphasis(tier),
+            tier == active_tier,
+        );
         ui.painter().rect_filled(segment_rect, 1.0, fill);
         left += CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_WIDTH
             + CALL_REVIEW_SPOTLIGHT_CONFIDENCE_SEGMENT_GAP;
     }
 }
 
-fn confidence_bar_active_color(ui: &egui::Ui, emphasis: ScanValueEmphasis) -> egui::Color32 {
-    match emphasis {
-        ScanValueEmphasis::Normal => ui.visuals().selection.bg_fill,
-        ScanValueEmphasis::Warn => text_style::inspector_warn_text_color(ui),
-        ScanValueEmphasis::Error => text_style::inspector_error_text_color(ui),
-    }
-}
-
 fn render_call_review_spotlight_signals(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    content_width: f32,
     signals: &ploke_protocol::LocalAnalysisSignals,
 ) {
-    cached_label(ui, render_cache, "signals");
-    egui::Grid::new("call-review-spotlight-signals")
-        .num_columns(2)
-        .spacing([12.0, 2.0])
-        .show(ui, |ui| {
-            render_call_review_spotlight_signal_row(
+    let row_width = call_review_assessment_spotlight_row_width(ui, content_width);
+    let narrow = row_width < CALL_REVIEW_SPOTLIGHT_SIGNALS_NARROW_WIDTH;
+    ui.allocate_ui_with_layout(
+        egui::vec2(row_width, 0.0),
+        egui::Layout::top_down(egui::Align::LEFT),
+        |ui| {
+        ui.set_max_width(row_width);
+        ui.set_width(row_width);
+        ui.horizontal(|ui| {
+            ui.set_max_width(row_width);
+            cached_label(ui, render_cache, "signals");
+        });
+        let mut render_chips = |ui: &mut egui::Ui| {
+            ui.set_max_width(row_width);
+            ui.set_width(row_width);
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "repeated tools",
                 signals.repeated_tool_name_count,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "distinct tools",
                 signals.distinct_tool_count,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "similar searches",
                 signals.similar_search_neighbors,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "directory pivots",
                 signals.directory_pivots,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "scope turns",
                 signals.scope_turn_count,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "search calls",
                 signals.search_calls_in_scope,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "read calls",
                 signals.read_calls_in_scope,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "browse calls",
                 signals.browse_calls_in_scope,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "edit calls",
                 signals.edit_calls_in_scope,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "execute calls",
                 signals.execute_calls_in_scope,
             );
-            render_call_review_spotlight_signal_row(
+            render_call_review_spotlight_signal_chip(
                 ui,
                 render_cache,
                 "failed calls",
                 signals.failed_calls_in_scope,
             );
             if let Some(value) = signals.uncovered_calls_in_source {
-                render_call_review_spotlight_signal_row(ui, render_cache, "uncovered calls", value);
+                render_call_review_spotlight_signal_chip(ui, render_cache, "uncovered calls", value);
             }
             if let Some(value) = signals.labeled_segments_in_source {
-                render_call_review_spotlight_signal_row(
-                    ui,
-                    render_cache,
-                    "labeled segments",
-                    value,
-                );
+                render_call_review_spotlight_signal_chip(ui, render_cache, "labeled segments", value);
             }
             if let Some(value) = signals.ambiguous_segments_in_source {
-                render_call_review_spotlight_signal_row(
+                render_call_review_spotlight_signal_chip(
                     ui,
                     render_cache,
                     "ambiguous segments",
                     value,
                 );
             }
-        });
+        };
+        if narrow {
+            render_chips(ui);
+        } else {
+            ui.horizontal_wrapped(render_chips);
+        }
+        },
+    );
 }
 
-fn render_call_review_spotlight_signal_row(
+fn scan_emphasis_for_local_analysis_signal_metric(
+    metric: &str,
+    value: usize,
+) -> ScanValueEmphasis {
+    match effective_tone_for_local_analysis_signal_metric(metric, value) {
+        RunDashboardValueTone::Warn => ScanValueEmphasis::Warn,
+        RunDashboardValueTone::Error => ScanValueEmphasis::Error,
+        RunDashboardValueTone::Neutral | RunDashboardValueTone::Positive => {
+            ScanValueEmphasis::Normal
+        }
+    }
+}
+
+fn render_call_review_spotlight_signal_chip(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
-    key: &str,
+    metric: &str,
     value: usize,
 ) {
-    cached_label(ui, render_cache, key);
-    let mut buffer = itoa::Buffer::new();
-    cached_monospace_label(ui, render_cache, buffer.format(value));
+    let short_metric = call_review_spotlight_signal_metric_short_label(metric);
+    let mut count_buffer = itoa::Buffer::new();
+    let count = count_buffer.format(value);
+    let mut chip_buffer = String::new();
+    let chip_text = format_assessment_dimension_chip(short_metric, count, &mut chip_buffer);
+    let emphasis = scan_emphasis_for_local_analysis_signal_metric(metric, value);
+    let hover = format!("{metric}: {value}");
+    ui.group(|ui| {
+        scan_value_label(ui, render_cache, chip_text, emphasis).on_hover_text(hover);
+    });
 }
 
 fn render_call_review_spotlight_rationale_bullet(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    content_width: f32,
     category: &str,
     rationale: &str,
 ) {
     let copy_value = CopyableText::new(rationale);
-    let row_width = ui.available_width();
+    let row_width = call_review_assessment_spotlight_row_width(ui, content_width);
     ui.horizontal_top(|ui| {
-        ui.label(egui::RichText::new("•").weak());
-        let content_width = ui.available_width().min(row_width);
+        ui.add_space(CALL_REVIEW_SPOTLIGHT_RATIONALE_LABEL_INDENT);
+        let bullet = ui.label(egui::RichText::new("•").weak());
+        let content_width =
+            (row_width - bullet.rect.width() - ui.spacing().item_spacing.x).max(1.0);
         ui.vertical(|ui| {
             ui.set_max_width(content_width);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(category).strong());
                 id_display::copy_button(ui, &copy_value);
             });
-            let response = cached_wrapped_monospace_label(ui, render_cache, rationale);
+            let response = render_inspector_wrapped_prose_in_width(
+                ui,
+                render_cache,
+                rationale,
+                content_width,
+                egui::Sense::click(),
+            );
             id_display::attach_copy_context_menu(&response, &copy_value);
         });
     });
@@ -1310,10 +1634,130 @@ fn render_call_review_spotlight_rationale_bullet(
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_utf8_prefix, confidence_label, recoverability_verdict_label,
-        redundancy_verdict_label, usefulness_verdict_label,
+        bounded_utf8_prefix, call_review_spotlight_has_dimension_rationale,
+        call_review_spotlight_has_structured_assessment,
+        call_review_spotlight_signal_metric_short_label,
+        call_review_spotlight_synthesis_is_mechanized_wire_format, confidence_label,
+        format_assessment_dimension_chip, recoverability_verdict_emphasis,
+        recoverability_verdict_label, redundancy_verdict_emphasis, redundancy_verdict_label,
+        spotlight_verdict_bar_active_tier, usefulness_verdict_emphasis, usefulness_verdict_label,
     };
-    use ploke_protocol::{Confidence, RecoverabilityVerdict, RedundancyVerdict, UsefulnessVerdict};
+    use ploke_protocol::{
+        Confidence, LocalAnalysisAssessment, LocalAnalysisPacket, LocalAnalysisSignals,
+        LocalAnalysisTargetKind, RecoverabilityAssessment, RecoverabilityVerdict,
+        RedundancyAssessment, RedundancyVerdict, UsefulnessAssessment, UsefulnessVerdict,
+    };
+
+    fn minimal_local_analysis_assessment(
+        synthesis_rationale: &str,
+        usefulness_rationale: &str,
+    ) -> LocalAnalysisAssessment {
+        LocalAnalysisAssessment {
+            packet: LocalAnalysisPacket {
+                subject_id: "test".to_string(),
+                target_kind: LocalAnalysisTargetKind::FocalCall,
+                target_id: "0".to_string(),
+                scope_summary: String::new(),
+                total_calls_in_scope: 1,
+                total_calls_in_run: 1,
+                turn_span: vec![0],
+                focal_call_index: Some(0),
+                segment_index: None,
+                segment_status: None,
+                segment_label: None,
+                calls: Vec::new(),
+            },
+            signals: LocalAnalysisSignals {
+                scope_turn_count: 1,
+                repeated_tool_name_count: 0,
+                distinct_tool_count: 1,
+                search_calls_in_scope: 0,
+                read_calls_in_scope: 0,
+                browse_calls_in_scope: 0,
+                edit_calls_in_scope: 0,
+                execute_calls_in_scope: 0,
+                failed_calls_in_scope: 0,
+                similar_search_neighbors: 0,
+                directory_pivots: 0,
+                labeled_segments_in_source: None,
+                ambiguous_segments_in_source: None,
+                uncovered_calls_in_source: None,
+                candidate_concerns: Vec::new(),
+            },
+            usefulness: UsefulnessAssessment {
+                verdict: UsefulnessVerdict::HelpfulButNonEssential,
+                confidence: Confidence::High,
+                rationale: usefulness_rationale.to_string(),
+            },
+            redundancy: RedundancyAssessment {
+                verdict: RedundancyVerdict::Distinct,
+                confidence: Confidence::High,
+                rationale: String::new(),
+            },
+            recoverability: RecoverabilityAssessment {
+                verdict: RecoverabilityVerdict::NoRecoveryNeeded,
+                confidence: Confidence::High,
+                rationale: String::new(),
+            },
+            overall: ploke_protocol::OverallVerdict::FocusedProgress,
+            overall_confidence: Confidence::High,
+            synthesis_rationale: synthesis_rationale.to_string(),
+        }
+    }
+
+    #[test]
+    fn call_review_spotlight_structured_assessment_when_dimension_rationale_present() {
+        let output = minimal_local_analysis_assessment("ignored", "branch rationale prose");
+        assert!(call_review_spotlight_has_dimension_rationale(&output));
+        assert!(call_review_spotlight_has_structured_assessment(&output));
+    }
+
+    #[test]
+    fn call_review_spotlight_structured_assessment_when_synthesis_is_mechanized_wire_format() {
+        let wire = "usefulness=HelpfulButNonEssential (High); redundancy=Distinct (High); \
+recoverability=NoRecoveryNeeded (High). signals: repeated_tool_name_count=0, \
+distinct_tool_count=1, similar_search_neighbors=0, directory_pivots=0, \
+uncovered_calls_in_source=None. branch rationales: usefulness='' redundancy='' recoverability=''.";
+        let output = minimal_local_analysis_assessment(wire, "");
+        assert!(!call_review_spotlight_has_dimension_rationale(&output));
+        assert!(call_review_spotlight_synthesis_is_mechanized_wire_format(wire));
+        assert!(call_review_spotlight_has_structured_assessment(&output));
+    }
+
+    #[test]
+    fn call_review_spotlight_raw_synthesis_fallback_when_unstructured_only() {
+        let output = minimal_local_analysis_assessment("Operator-only synthesis note.", "");
+        assert!(!call_review_spotlight_has_structured_assessment(&output));
+    }
+
+    #[test]
+    fn call_review_spotlight_signal_metric_short_labels_match_dashboard() {
+        assert_eq!(
+            call_review_spotlight_signal_metric_short_label("scope turns"),
+            "turns"
+        );
+        assert_eq!(
+            call_review_spotlight_signal_metric_short_label("search calls"),
+            "search"
+        );
+        assert_eq!(
+            call_review_spotlight_signal_metric_short_label("directory pivots"),
+            "pivots"
+        );
+    }
+
+    #[test]
+    fn assessment_dimension_chip_label_includes_dimension_prefix() {
+        let mut buffer = String::new();
+        assert_eq!(
+            format_assessment_dimension_chip("usefulness", "none", &mut buffer),
+            "usefulness: none"
+        );
+        assert_eq!(
+            format_assessment_dimension_chip("outcome", "recoverable", &mut buffer),
+            "outcome: recoverable"
+        );
+    }
 
     #[test]
     fn call_review_hover_preview_respects_utf8_boundaries() {
@@ -1348,5 +1792,86 @@ mod tests {
         assert_eq!(confidence_label(Confidence::Low), "low");
         assert_eq!(confidence_label(Confidence::Medium), "medium");
         assert_eq!(confidence_label(Confidence::High), "high");
+    }
+
+    #[test]
+    fn spotlight_verdict_bar_active_tier_tracks_usefulness_emphasis() {
+        use ploke_protocol::UsefulnessVerdict::{
+            HelpfulButNonEssential, KeyProgress, LowValue, NoValue, Unclear,
+        };
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(usefulness_verdict_emphasis(NoValue)),
+            0
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(usefulness_verdict_emphasis(LowValue)),
+            1
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(usefulness_verdict_emphasis(Unclear)),
+            1
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(usefulness_verdict_emphasis(HelpfulButNonEssential)),
+            2
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(usefulness_verdict_emphasis(KeyProgress)),
+            2
+        );
+    }
+
+    #[test]
+    fn spotlight_verdict_bar_active_tier_tracks_redundancy_emphasis() {
+        use ploke_protocol::RedundancyVerdict::{
+            Distinct, Overlapping, RedundantRepeat, SearchThrash, Unclear,
+        };
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(redundancy_verdict_emphasis(RedundantRepeat)),
+            0
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(redundancy_verdict_emphasis(SearchThrash)),
+            0
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(redundancy_verdict_emphasis(Unclear)),
+            1
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(redundancy_verdict_emphasis(Distinct)),
+            2
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(redundancy_verdict_emphasis(Overlapping)),
+            2
+        );
+    }
+
+    #[test]
+    fn spotlight_verdict_bar_active_tier_tracks_recoverability_emphasis() {
+        use ploke_protocol::RecoverabilityVerdict::{
+            ClearNextStep, NoClearRecovery, NoRecoveryNeeded, PartialNextStep, Unclear,
+        };
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(recoverability_verdict_emphasis(NoClearRecovery)),
+            0
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(recoverability_verdict_emphasis(PartialNextStep)),
+            1
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(recoverability_verdict_emphasis(Unclear)),
+            1
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(recoverability_verdict_emphasis(NoRecoveryNeeded)),
+            2
+        );
+        assert_eq!(
+            spotlight_verdict_bar_active_tier(recoverability_verdict_emphasis(ClearNextStep)),
+            2
+        );
     }
 }

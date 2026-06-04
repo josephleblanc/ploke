@@ -7,7 +7,7 @@ pub(crate) fn add_cached_theme_galley(
     galley: Arc<egui::Galley>,
     sense: egui::Sense,
 ) -> egui::Response {
-    ui.add(egui::Label::new(galley).sense(sense))
+    ui.add(egui::Label::new(galley).selectable(true).sense(sense))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

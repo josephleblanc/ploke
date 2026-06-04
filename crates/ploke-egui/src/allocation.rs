@@ -36,6 +36,7 @@ ploke_egui_macros::profile_scope_catalog! {
         EVAL_PROTOCOL_PROTOCOL_DRILLDOWNS = "eval_protocol_protocol_drilldowns",
         EVAL_PROTOCOL_CALL_REVIEW_SCAN = "eval_protocol_call_review_scan",
         EVAL_PROTOCOL_CALL_REVIEW_SPOTLIGHT = "eval_protocol_call_review_spotlight",
+        EVAL_PROTOCOL_RUN_SYNTHESIS_SPOTLIGHT = "eval_protocol_run_synthesis_spotlight",
         EVAL_PROTOCOL_CALL_REVIEW_ROW = "eval_protocol_call_review_row",
         CENTRAL_GRAPH_LAYOUT_STATE_RESTORE = "central_graph_layout_state_restore",
         CENTRAL_GRAPH_NAVIGATION_PREPARE = "central_graph_navigation_prepare",

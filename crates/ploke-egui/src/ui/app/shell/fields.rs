@@ -7,6 +7,7 @@ use crate::ui::render::text::*;
 use eframe::egui;
 use std::sync::Arc;
 
+use super::cache::{effective_inspector_content_width, inspector_wrap_width_points};
 use super::{InspectorRenderCache, bool_label, format_f64};
 
 pub(super) fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
@@ -116,13 +117,21 @@ pub(super) fn cached_run_name_value(
     full: &str,
 ) -> egui::Response {
     let value = CopyableRunName::new(full);
+    let expandable = value.is_compact();
     cached_copyable_value(
         ui,
         render_cache,
         id_source,
         &value,
-        false,
-        |cache, ui, _expanded| cache.text_galley(ui, full, CachedTextKind::Monospace),
+        expandable,
+        |cache, ui, expanded| {
+            let label = if expanded {
+                std::borrow::Cow::Borrowed(full)
+            } else {
+                value.compact_label()
+            };
+            cache.text_galley(ui, label.as_ref(), CachedTextKind::Monospace)
+        },
     )
 }
 
@@ -371,8 +380,51 @@ pub(super) fn render_copyable_text_preview(
     });
 
     state.show_body_indented(&header_response.response, ui, |ui| {
-        cached_wrapped_monospace_label(ui, render_cache, text);
+        render_inspector_wrapped_prose(ui, render_cache, text);
     });
+}
+
+/// Wrapped monospace prose constrained to the visible inspector column.
+pub(super) fn render_inspector_wrapped_prose(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+) -> egui::Response {
+    render_inspector_wrapped_prose_with_sense(ui, render_cache, text, egui::Sense::click())
+}
+
+pub(super) fn render_inspector_wrapped_prose_with_sense(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+    sense: egui::Sense,
+) -> egui::Response {
+    render_inspector_wrapped_prose_in_width(
+        ui,
+        render_cache,
+        text,
+        effective_inspector_content_width(ui),
+        sense,
+    )
+}
+
+/// Wrapped monospace prose at an explicit content width (e.g. after a bullet or tree indent).
+pub(super) fn render_inspector_wrapped_prose_in_width(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+    content_width: f32,
+    sense: egui::Sense,
+) -> egui::Response {
+    let content_width = content_width.max(1.0);
+    ui.set_max_width(content_width);
+    ui.set_width(content_width);
+    let galley = render_cache.wrapped_monospace_galley_with_wrap_width(
+        ui,
+        text,
+        inspector_wrap_width_points(content_width),
+    );
+    add_cached_theme_galley(ui, galley, sense)
 }
 
 pub(super) fn cached_wrapped_monospace_label(
@@ -380,6 +432,15 @@ pub(super) fn cached_wrapped_monospace_label(
     render_cache: &mut InspectorRenderCache,
     text: &str,
 ) -> egui::Response {
-    let galley = render_cache.wrapped_monospace_galley(ui, text);
+    render_inspector_wrapped_prose(ui, render_cache, text)
+}
+
+pub(super) fn cached_wrapped_monospace_label_with_wrap_width(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    text: &str,
+    wrap_width_points: u32,
+) -> egui::Response {
+    let galley = render_cache.wrapped_monospace_galley_with_wrap_width(ui, text, wrap_width_points);
     add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }

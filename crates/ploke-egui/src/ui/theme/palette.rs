@@ -290,8 +290,17 @@ impl PaletteTokens {
         visuals.widgets.inactive.fg_stroke.color = self.text;
         visuals.widgets.hovered.fg_stroke.color = self.text;
         visuals.widgets.active.fg_stroke.color = self.text;
-        visuals.selection.bg_fill = self.accent;
-        visuals.selection.stroke.color = self.accent;
+        // Text selection paints bg_fill behind glyphs and recolors glyphs to stroke.color.
+        // Matching both to opaque accent produces an unreadable solid block.
+        visuals.selection.bg_fill = tint_alpha(
+            self.accent,
+            if self.is_dark {
+                SELECTION_BG_ALPHA_DARK
+            } else {
+                SELECTION_BG_ALPHA_LIGHT
+            },
+        );
+        visuals.selection.stroke.color = self.text;
         visuals.hyperlink_color = self.info;
         visuals.warn_fg_color = self.warning;
         visuals.error_fg_color = self.error;
@@ -395,6 +404,10 @@ impl PaletteTokens {
         tint_alpha(self.text_muted, if self.is_dark { 10 } else { 14 })
     }
 }
+
+/// Text-selection highlight background (~35% accent on dark palettes).
+const SELECTION_BG_ALPHA_DARK: u8 = 90;
+const SELECTION_BG_ALPHA_LIGHT: u8 = 110;
 
 fn tint_alpha(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)

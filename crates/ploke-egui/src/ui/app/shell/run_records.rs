@@ -17,10 +17,31 @@ use ploke_records::tool_contracts::{
 
 use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
+use super::run_dashboard::render_tool_step_outcome_histogram;
 use super::{
     InspectorRenderCache, render_cached_code_block, render_unavailable, show_inspector_collapsing,
 };
-use crate::ui::provenance::{EvidenceLane, render_evidence_lane_chip, tool_failure_headline};
+
+fn tool_steps_id_salt(
+    render_cache: &InspectorRenderCache,
+    part: impl std::hash::Hash,
+) -> (u32, impl std::hash::Hash) {
+    (render_cache.active_tool_steps_disclosure_generation(), part)
+}
+
+fn show_tool_steps_collapsing<R>(
+    ui: &mut egui::Ui,
+    header: egui::CollapsingHeader,
+    default_open: bool,
+    add_body: impl FnOnce(&mut egui::Ui) -> R,
+) {
+    show_inspector_collapsing(ui, header.default_open(default_open), add_body);
+}
+use crate::ui::provenance::{
+    EvidenceLane, RunRecordProvenanceCtx, detail_for_lane_at_step, detail_for_tool_failure,
+    render_evidence_lane_chip_with_inspect, render_provenance_inspect_button,
+    tool_failure_headline,
+};
 use crate::ui::text::style::inspector_error_text_color;
 
 /// archaeology:run-record-branch-output
@@ -365,28 +386,25 @@ fn render_run_record_turn(
         },
     );
     render_run_record_agent_turn_artifact(ui, render_cache, turn);
-    render_run_record_tool_steps(ui, render_cache, turn.turn.tool_calls.as_slice());
+    let record_ctx = run_record_provenance_ctx(turn);
+    render_run_record_tool_steps(
+        ui,
+        render_cache,
+        Some(record_ctx),
+        turn.turn_index,
+        turn.turn.tool_calls.as_slice(),
+    );
 }
 
-fn render_run_record_tool_steps_failed_count(
-    ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
-    failed: usize,
-) {
-    ui.horizontal(|ui| {
-        cached_label(ui, render_cache, "failed");
-        let mut count = itoa::Buffer::new();
-        let value = count.format(failed);
-        if failed > 0 {
-            ui.label(
-                egui::RichText::new(value)
-                    .monospace()
-                    .color(inspector_error_text_color(ui)),
-            );
-        } else {
-            cached_monospace_label(ui, render_cache, value);
-        }
-    });
+fn run_record_provenance_ctx(turn: RunRecordTurnInspection<'_>) -> RunRecordProvenanceCtx<'_> {
+    RunRecordProvenanceCtx {
+        manifest_id: turn.record.manifest_id.as_str(),
+        record_path: turn
+            .record_ref
+            .record_path
+            .to_str()
+            .unwrap_or("non_utf8_path"),
+    }
 }
 
 fn render_run_record_turn_summary_card(
@@ -558,6 +576,8 @@ fn render_run_record_agent_turn_artifact(
 pub(super) fn render_run_record_tool_steps(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    turn_index: usize,
     tools: &[ploke_records::run_record::ToolExecutionRecord],
 ) {
     if tools.is_empty() {
@@ -565,38 +585,74 @@ pub(super) fn render_run_record_tool_steps(
         return;
     }
 
-    let mut failed = Vec::new();
-    let mut succeeded = Vec::new();
-    for (index, tool) in tools.iter().enumerate() {
-        if matches!(
-            tool.result,
-            ploke_records::run_record::ToolResult::Failed(_)
-        ) {
-            failed.push((index, tool));
-        } else {
-            succeeded.push((index, tool));
+    let disclosure_scope = record_ctx
+        .map(|ctx| InspectorRenderCache::tool_steps_disclosure_scope(ctx.record_path, turn_index));
+
+    render_cache.with_active_tool_steps_disclosure(disclosure_scope.clone(), |render_cache| {
+        let mut failed = Vec::new();
+        let mut succeeded = Vec::new();
+        for (index, tool) in tools.iter().enumerate() {
+            if matches!(
+                tool.result,
+                ploke_records::run_record::ToolResult::Failed(_)
+            ) {
+                failed.push((index, tool));
+            } else {
+                succeeded.push((index, tool));
+            }
         }
-    }
 
-    cached_kv_usize(ui, render_cache, "tool steps", tools.len());
-    render_run_record_tool_steps_failed_count(ui, render_cache, failed.len());
+        ui.horizontal(|ui| {
+            cached_label(ui, render_cache, "tool steps");
+            if let Some(scope) = disclosure_scope {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("Expand all")
+                        .on_hover_text("Expand every tool step and nested section in this turn")
+                        .clicked()
+                    {
+                        render_cache.tool_steps_expand_all(scope.clone());
+                    }
+                    if ui
+                        .small_button("Collapse all")
+                        .on_hover_text("Collapse every tool step and nested section in this turn")
+                        .clicked()
+                    {
+                        render_cache.tool_steps_collapse_all(scope.clone());
+                    }
+                });
+            }
+        });
+        render_tool_step_outcome_histogram(ui, tools.len(), failed.len());
 
-    for (index, tool) in failed {
-        render_run_record_tool_step(ui, render_cache, index, tool, true);
-    }
+        for (index, tool) in failed {
+            render_run_record_tool_step(ui, render_cache, record_ctx, index, tool, true);
+        }
 
-    if !succeeded.is_empty() {
-        show_inspector_collapsing(
-            ui,
-            egui::CollapsingHeader::new("Successful tool steps").default_open(false),
-            |ui| {
-                cached_kv_usize(ui, render_cache, "successful", succeeded.len());
-                for (index, tool) in succeeded {
-                    render_run_record_tool_step(ui, render_cache, index, tool, false);
-                }
-            },
-        );
-    }
+        if !succeeded.is_empty() {
+            show_tool_steps_collapsing(
+                ui,
+                egui::CollapsingHeader::new("Successful tool steps").id_salt(tool_steps_id_salt(
+                    render_cache,
+                    "run-record-tool-steps-succeeded",
+                )),
+                render_cache.tool_steps_default_open(false),
+                |ui| {
+                    cached_kv_usize(ui, render_cache, "successful", succeeded.len());
+                    for (index, tool) in succeeded {
+                        render_run_record_tool_step(
+                            ui,
+                            render_cache,
+                            record_ctx,
+                            index,
+                            tool,
+                            false,
+                        );
+                    }
+                },
+            );
+        }
+    });
 }
 
 #[cfg_attr(
@@ -606,43 +662,56 @@ pub(super) fn render_run_record_tool_steps(
 fn render_run_record_tool_step(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
     default_open: bool,
 ) {
     let call_id = tool.request.call_id.as_str();
-    let header_id = ui.make_persistent_id(("run-record-tool-step", index, call_id));
+    let header_id = ui.make_persistent_id(tool_steps_id_salt(
+        render_cache,
+        ("run-record-tool-step", index, call_id),
+    ));
     egui::collapsing_header::CollapsingState::load_with_default_open(
         ui.ctx(),
         header_id,
-        default_open,
+        render_cache.tool_steps_default_open(default_open),
     )
     .show_header(ui, |ui| {
-        render_run_record_tool_step_header(ui, render_cache, index, tool);
+        render_run_record_tool_step_header(ui, render_cache, record_ctx, index, tool);
     })
     .body(|ui| {
-        render_run_record_tool_step_details(ui, render_cache, index, tool);
+        render_run_record_tool_step_details(ui, render_cache, record_ctx, index, tool);
     });
 }
 
 fn render_run_record_tool_step_header(
     ui: &mut egui::Ui,
     _render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
+    let call_id = tool.request.call_id.as_str();
     ui.horizontal(|ui| {
         let mut step = itoa::Buffer::new();
         fresh_monospace_label(ui, step.format(index + 1));
         fresh_monospace_label(ui, tool_execution_name(tool));
         render_tool_execution_status_badge(ui, tool);
-        render_evidence_lane_chip(ui, EvidenceLane::lane_for_tool_result(tool));
+        let detail = detail_for_tool_failure(tool, index, record_ctx);
+        render_evidence_lane_chip_with_inspect(
+            ui,
+            EvidenceLane::lane_for_tool_result(tool),
+            detail,
+            ("run-record-tool-step-lane", index, call_id),
+        );
     });
 }
 
 fn render_run_record_tool_step_details(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
@@ -667,17 +736,25 @@ fn render_run_record_tool_step_details(
         tool.result,
         ploke_records::run_record::ToolResult::Failed(_)
     ) {
-        cached_label(ui, render_cache, "Harness error (recorded)");
+        ui.horizontal(|ui| {
+            cached_label(ui, render_cache, "Harness error (recorded)");
+            let detail = detail_for_tool_failure(tool, index, record_ctx);
+            render_provenance_inspect_button(
+                ui,
+                ("run-record-tool-harness", index, call_id),
+                detail,
+            );
+        });
         cached_wrapped_monospace_label(ui, render_cache, tool_failure_headline(tool));
     } else {
         cached_label(ui, render_cache, "summary");
         cached_wrapped_monospace_label(ui, render_cache, tool_execution_summary(tool));
     }
-    render_tool_arguments_section(ui, render_cache, index, tool);
+    render_tool_arguments_section(ui, render_cache, record_ctx, index, tool);
     if let Some(payload) = tool_execution_ui_payload(tool) {
-        render_tool_ui_payload(ui, render_cache, payload);
+        render_tool_ui_payload(ui, render_cache, record_ctx, index, tool, payload);
     }
-    render_tool_result_section(ui, render_cache, index, tool);
+    render_tool_result_section(ui, render_cache, record_ctx, index, tool);
 }
 
 #[cfg_attr(
@@ -687,15 +764,18 @@ fn render_run_record_tool_step_details(
 fn render_tool_arguments_section(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let call_id = tool.request.call_id.as_str();
-    show_inspector_collapsing(
+    show_tool_steps_collapsing(
         ui,
-        egui::CollapsingHeader::new("tool call arguments")
-            .id_salt(("run-record-tool-arguments", index, call_id))
-            .default_open(true),
+        egui::CollapsingHeader::new("tool call arguments").id_salt(tool_steps_id_salt(
+            render_cache,
+            ("run-record-tool-arguments", index, call_id),
+        )),
+        render_cache.tool_steps_default_open(true),
         |ui| {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -704,16 +784,38 @@ fn render_tool_arguments_section(
                     tool.request.tool.as_str(),
                     tool.request.arguments.as_str(),
                 );
-                render_decoded_tool_arguments(ui, render_cache, decoded.as_ref());
+                render_decoded_tool_arguments(
+                    ui,
+                    render_cache,
+                    decoded.as_ref(),
+                    record_ctx,
+                    Some((index, tool)),
+                );
             }
             #[cfg(target_arch = "wasm32")]
-            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeUnavailable);
+            {
+                let detail = detail_for_lane_at_step(
+                    EvidenceLane::UiDecodeUnavailable,
+                    record_ctx,
+                    Some(call_id),
+                    Some(tool.request.tool.as_str()),
+                    Some(index),
+                );
+                render_evidence_lane_chip_with_inspect(
+                    ui,
+                    EvidenceLane::UiDecodeUnavailable,
+                    detail,
+                    ("run-record-tool-args-decode", index, call_id),
+                );
+            }
 
-            show_inspector_collapsing(
+            show_tool_steps_collapsing(
                 ui,
-                egui::CollapsingHeader::new("raw arguments")
-                    .id_salt(("run-record-tool-raw-arguments", index, call_id))
-                    .default_open(false),
+                egui::CollapsingHeader::new("raw arguments").id_salt(tool_steps_id_salt(
+                    render_cache,
+                    ("run-record-tool-raw-arguments", index, call_id),
+                )),
+                render_cache.tool_steps_default_open(false),
                 |ui| {
                     render_tool_raw_arguments_section(ui, render_cache, index, call_id, tool);
                 },
@@ -748,34 +850,71 @@ fn render_tool_raw_arguments_section(
 fn render_tool_result_section(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
     index: usize,
     tool: &ploke_records::run_record::ToolExecutionRecord,
 ) {
     let call_id = tool.request.call_id.as_str();
     let raw_content = tool_execution_content(tool);
-    show_inspector_collapsing(
+    show_tool_steps_collapsing(
         ui,
-        egui::CollapsingHeader::new("tool call content")
-            .id_salt(("run-record-tool-content", index, call_id))
-            .default_open(false),
+        egui::CollapsingHeader::new("tool call content").id_salt(tool_steps_id_salt(
+            render_cache,
+            ("run-record-tool-content", index, call_id),
+        )),
+        render_cache.tool_steps_default_open(false),
         |ui| match &tool.result {
             ploke_records::run_record::ToolResult::Completed(_) => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let decoded =
                         render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
-                    render_decoded_tool_result(ui, render_cache, decoded.as_ref());
+                    render_decoded_tool_result(
+                        ui,
+                        render_cache,
+                        decoded.as_ref(),
+                        record_ctx,
+                        Some((index, tool)),
+                    );
                 }
                 #[cfg(target_arch = "wasm32")]
-                render_evidence_lane_chip(ui, EvidenceLane::UiDecodeUnavailable);
+                {
+                    let detail = detail_for_lane_at_step(
+                        EvidenceLane::UiDecodeUnavailable,
+                        record_ctx,
+                        Some(call_id),
+                        Some(tool.request.tool.as_str()),
+                        Some(index),
+                    );
+                    render_evidence_lane_chip_with_inspect(
+                        ui,
+                        EvidenceLane::UiDecodeUnavailable,
+                        detail,
+                        ("run-record-tool-content-decode", index, call_id),
+                    );
+                }
 
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("raw content")
-                        .id_salt(("run-record-tool-content-raw", index, call_id))
-                        .default_open(false),
+                    egui::CollapsingHeader::new("raw content").id_salt(tool_steps_id_salt(
+                        render_cache,
+                        ("run-record-tool-content-raw", index, call_id),
+                    )),
+                    render_cache.tool_steps_default_open(false),
                     |ui| {
-                        render_evidence_lane_chip(ui, EvidenceLane::RecordedRawPayload);
+                        let detail = detail_for_lane_at_step(
+                            EvidenceLane::RecordedRawPayload,
+                            record_ctx,
+                            Some(call_id),
+                            Some(tool.request.tool.as_str()),
+                            Some(index),
+                        );
+                        render_evidence_lane_chip_with_inspect(
+                            ui,
+                            EvidenceLane::RecordedRawPayload,
+                            detail,
+                            ("run-record-tool-content-raw-lane", index, call_id),
+                        );
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
@@ -787,13 +926,27 @@ fn render_tool_result_section(
             }
             ploke_records::run_record::ToolResult::Failed(_) => {
                 render_tool_failure_content(ui, render_cache, tool);
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("raw error")
-                        .id_salt(("run-record-tool-error-raw", index, call_id))
-                        .default_open(false),
+                    egui::CollapsingHeader::new("raw error").id_salt(tool_steps_id_salt(
+                        render_cache,
+                        ("run-record-tool-error-raw", index, call_id),
+                    )),
+                    render_cache.tool_steps_default_open(false),
                     |ui| {
-                        render_evidence_lane_chip(ui, EvidenceLane::RecordedRawPayload);
+                        let detail = detail_for_lane_at_step(
+                            EvidenceLane::RecordedRawPayload,
+                            record_ctx,
+                            Some(call_id),
+                            Some(tool.request.tool.as_str()),
+                            Some(index),
+                        );
+                        render_evidence_lane_chip_with_inspect(
+                            ui,
+                            EvidenceLane::RecordedRawPayload,
+                            detail,
+                            ("run-record-tool-error-raw-lane", index, call_id),
+                        );
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
@@ -818,6 +971,34 @@ fn render_tool_raw_result_section(
     raw_content: &str,
 ) {
     render_cached_code_block(ui, render_cache, id_salt, raw_content);
+}
+
+fn render_run_record_decode_lane_chip(
+    ui: &mut egui::Ui,
+    lane: EvidenceLane,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    tool_step: Option<(usize, &ploke_records::run_record::ToolExecutionRecord)>,
+    id_kind: &'static str,
+) {
+    let Some((index, tool)) = tool_step else {
+        use crate::ui::provenance::render_evidence_lane_chip;
+        render_evidence_lane_chip(ui, lane);
+        return;
+    };
+    let call_id = tool.request.call_id.as_str();
+    if let Some(ctx) = record_ctx {
+        let detail = detail_for_lane_at_step(
+            lane,
+            Some(ctx),
+            Some(call_id),
+            Some(tool.request.tool.as_str()),
+            Some(index),
+        );
+        render_evidence_lane_chip_with_inspect(ui, lane, detail, (id_kind, index, call_id));
+    } else {
+        use crate::ui::provenance::render_evidence_lane_chip;
+        render_evidence_lane_chip(ui, lane);
+    }
 }
 
 fn render_tool_execution_status_badge(
@@ -861,11 +1042,19 @@ fn tool_execution_ui_payload(
 fn render_tool_ui_payload(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
     payload: &ploke_records::agent_turn::ToolUiPayloadRecord,
 ) {
-    show_inspector_collapsing(
+    let call_id = tool.request.call_id.as_str();
+    show_tool_steps_collapsing(
         ui,
-        egui::CollapsingHeader::new("tool ui payload").default_open(true),
+        egui::CollapsingHeader::new("tool ui payload").id_salt(tool_steps_id_salt(
+            render_cache,
+            ("run-record-tool-ui-payload", index, call_id),
+        )),
+        render_cache.tool_steps_default_open(true),
         |ui| {
             ui.label(
                 egui::RichText::new("Exported tool UI witness")
@@ -890,16 +1079,20 @@ fn render_tool_ui_payload(
                 }
             }
             if let Some(details) = payload.details.as_deref() {
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new("details").default_open(false),
+                    egui::CollapsingHeader::new("details").id_salt(tool_steps_id_salt(
+                        render_cache,
+                        ("run-record-tool-ui-details", index, call_id),
+                    )),
+                    render_cache.tool_steps_default_open(false),
                     |ui| {
                         render_tool_ui_payload_details(ui, render_cache, details);
                     },
                 );
             }
             if let Some(error) = payload.error.as_ref() {
-                render_tool_error_wire(ui, render_cache, error);
+                render_tool_error_wire(ui, render_cache, record_ctx, index, tool, error);
             }
         },
     );
@@ -924,13 +1117,33 @@ fn render_tool_ui_payload_details(
 fn render_tool_error_wire(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    index: usize,
+    tool: &ploke_records::run_record::ToolExecutionRecord,
     error: &ploke_records::agent_turn::ToolErrorWireRecord,
 ) {
-    show_inspector_collapsing(
+    let call_id = tool.request.call_id.as_str();
+    show_tool_steps_collapsing(
         ui,
-        egui::CollapsingHeader::new("typed error").default_open(true),
+        egui::CollapsingHeader::new("typed error").id_salt(tool_steps_id_salt(
+            render_cache,
+            ("run-record-tool-typed-error-section", index, call_id),
+        )),
+        render_cache.tool_steps_default_open(true),
         |ui| {
-            render_evidence_lane_chip(ui, EvidenceLane::RecordedTypedErrorWire);
+            let detail = detail_for_lane_at_step(
+                EvidenceLane::RecordedTypedErrorWire,
+                record_ctx,
+                Some(call_id),
+                Some(tool.request.tool.as_str()),
+                Some(index),
+            );
+            render_evidence_lane_chip_with_inspect(
+                ui,
+                EvidenceLane::RecordedTypedErrorWire,
+                detail,
+                ("run-record-tool-typed-error", index, call_id),
+            );
             tool_kv_text(ui, render_cache, "user", error.user.as_str());
             tool_kv_text(ui, render_cache, "system", error.system.as_str());
             tool_kv_bool(ui, render_cache, "ok", error.llm.ok);
@@ -972,14 +1185,28 @@ pub(super) fn render_decoded_tool_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     decoded: &PersistedToolCallArguments,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    tool_step: Option<(usize, &ploke_records::run_record::ToolExecutionRecord)>,
 ) {
     match decoded {
         PersistedToolCallArguments::Decoded(arguments) => {
-            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeOk);
+            render_run_record_decode_lane_chip(
+                ui,
+                EvidenceLane::UiDecodeOk,
+                record_ctx,
+                tool_step,
+                "run-record-tool-args-decode-ok",
+            );
             render_tool_call_arguments(ui, render_cache, arguments);
         }
         PersistedToolCallArguments::ParseFailure(failure) => {
-            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeFailed);
+            render_run_record_decode_lane_chip(
+                ui,
+                EvidenceLane::UiDecodeFailed,
+                record_ctx,
+                tool_step,
+                "run-record-tool-args-decode-fail",
+            );
             tool_kv_text(ui, render_cache, "tool", failure.tool.as_str());
             tool_kv_debug(ui, render_cache, "error", &failure.error);
         }
@@ -1012,10 +1239,12 @@ fn render_tool_call_arguments(
             render_optional_f32(ui, render_cache, "confidence", args.confidence);
             tool_kv_usize(ui, render_cache, "edits", args.edits.len());
             for (index, edit) in args.edits.iter().enumerate() {
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new(format!("edit {}", index + 1))
-                        .default_open(index == 0),
+                    egui::CollapsingHeader::new(format!("edit {}", index + 1)).id_salt(
+                        tool_steps_id_salt(render_cache, ("run-record-tool-edit", index)),
+                    ),
+                    render_cache.tool_steps_default_open(index == 0),
                     |ui| {
                         let _span =
                             tracing::trace_span!(scope::INSPECTOR_TOOL_ARGUMENT_EDIT).entered();
@@ -1050,10 +1279,12 @@ fn render_tool_call_arguments(
             render_optional_f32(ui, render_cache, "confidence", args.confidence);
             tool_kv_usize(ui, render_cache, "patches", args.patches.len());
             for (index, patch) in args.patches.iter().enumerate() {
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new(format!("patch {}", index + 1))
-                        .default_open(index == 0),
+                    egui::CollapsingHeader::new(format!("patch {}", index + 1)).id_salt(
+                        tool_steps_id_salt(render_cache, ("run-record-tool-patch", index)),
+                    ),
+                    render_cache.tool_steps_default_open(index == 0),
                     |ui| {
                         let _span =
                             tracing::trace_span!(scope::INSPECTOR_TOOL_ARGUMENT_PATCH).entered();
@@ -1132,14 +1363,28 @@ pub(super) fn render_decoded_tool_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
     decoded: &PersistedToolResultContent,
+    record_ctx: Option<RunRecordProvenanceCtx<'_>>,
+    tool_step: Option<(usize, &ploke_records::run_record::ToolExecutionRecord)>,
 ) {
     match decoded {
         PersistedToolResultContent::Decoded(result) => {
-            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeOk);
+            render_run_record_decode_lane_chip(
+                ui,
+                EvidenceLane::UiDecodeOk,
+                record_ctx,
+                tool_step,
+                "run-record-tool-content-decode-ok",
+            );
             render_tool_result_content(ui, render_cache, result);
         }
         PersistedToolResultContent::ParseFailure(failure) => {
-            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeFailed);
+            render_run_record_decode_lane_chip(
+                ui,
+                EvidenceLane::UiDecodeFailed,
+                record_ctx,
+                tool_step,
+                "run-record-tool-content-decode-fail",
+            );
             tool_kv_text(ui, render_cache, "tool", failure.tool.as_str());
             tool_kv_debug(ui, render_cache, "error", &failure.error);
         }
@@ -1235,18 +1480,30 @@ fn render_tool_result_content(
         }
         ToolResultContent::ListDir(result) => {
             tool_kv_usize(ui, render_cache, "entries", result.entries.len());
-            show_inspector_collapsing(ui, egui::CollapsingHeader::new("details"), |ui| {
-                let _span =
-                    tracing::trace_span!(scope::INSPECTOR_TOOL_RESULT_LIST_DIR_DETAILS).entered();
-                tool_kv_bool(ui, render_cache, "ok", result.ok);
-                tool_kv_path(ui, render_cache, "dir", result.dir.as_str());
-                tool_kv_bool(ui, render_cache, "exists", result.exists);
-                tool_kv_bool(ui, render_cache, "truncated", result.truncated);
-            });
+            show_tool_steps_collapsing(
+                ui,
+                egui::CollapsingHeader::new("details").id_salt(tool_steps_id_salt(
+                    render_cache,
+                    "run-record-tool-list-dir-details",
+                )),
+                render_cache.tool_steps_default_open(false),
+                |ui| {
+                    let _span = tracing::trace_span!(scope::INSPECTOR_TOOL_RESULT_LIST_DIR_DETAILS)
+                        .entered();
+                    tool_kv_bool(ui, render_cache, "ok", result.ok);
+                    tool_kv_path(ui, render_cache, "dir", result.dir.as_str());
+                    tool_kv_bool(ui, render_cache, "exists", result.exists);
+                    tool_kv_bool(ui, render_cache, "truncated", result.truncated);
+                },
+            );
             for (index, entry) in result.entries.iter().take(8).enumerate() {
-                show_inspector_collapsing(
+                show_tool_steps_collapsing(
                     ui,
-                    egui::CollapsingHeader::new(entry.name.as_str()).default_open(index == 0),
+                    egui::CollapsingHeader::new(entry.name.as_str()).id_salt(tool_steps_id_salt(
+                        render_cache,
+                        ("run-record-tool-list-dir-entry", index, entry.path.as_str()),
+                    )),
+                    render_cache.tool_steps_default_open(index == 0),
                     |ui| {
                         let _span =
                             tracing::trace_span!(scope::INSPECTOR_TOOL_RESULT_LIST_DIR_ENTRY)
@@ -1302,9 +1559,13 @@ fn render_concise_context(
     index: usize,
     context: &ploke_records::tool_contracts::ConciseContext,
 ) {
-    show_inspector_collapsing(
+    show_tool_steps_collapsing(
         ui,
-        egui::CollapsingHeader::new(format!("context {}", index + 1)).default_open(index == 0),
+        egui::CollapsingHeader::new(format!("context {}", index + 1)).id_salt(tool_steps_id_salt(
+            render_cache,
+            ("run-record-tool-context", index),
+        )),
+        render_cache.tool_steps_default_open(index == 0),
         |ui| {
             let _span = tracing::trace_span!(scope::INSPECTOR_CONTEXT).entered();
             tool_kv_path(ui, render_cache, "file", context.file_path.as_ref());
@@ -1544,12 +1805,34 @@ mod tests {
             error: None,
             error_code: None,
         };
+        use ploke_records::agent_turn::ToolCompletedRecord;
+        use ploke_records::agent_turn::ToolRequestRecord;
+        use ploke_records::run_record::{ToolExecutionRecord, ToolResult};
+        let tool = ToolExecutionRecord {
+            request: ToolRequestRecord {
+                request_id: "request-1".to_owned(),
+                parent_id: "parent-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                tool: "apply_code_edit".to_owned(),
+                arguments: "{}".into(),
+            },
+            result: ToolResult::Completed(ToolCompletedRecord {
+                request_id: "request-1".to_owned(),
+                parent_id: "parent-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                tool: "apply_code_edit".to_owned(),
+                content: "{}".to_owned(),
+                ui_payload: Some(payload.clone()),
+                latency_ms: 1,
+            }),
+            latency_ms: 1,
+        };
         let mut cache = InspectorRenderCache::default();
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
 
         let output = ctx.run_ui(Default::default(), |ui| {
-            render_tool_ui_payload(ui, &mut cache, &payload);
+            render_tool_ui_payload(ui, &mut cache, None, 0, &tool, &payload);
         });
         let texts = clipped_shape_texts(&output.shapes);
 

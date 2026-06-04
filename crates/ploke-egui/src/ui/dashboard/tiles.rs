@@ -117,8 +117,10 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
             }
             Pane::EvalProtocol => {
                 let viewport_height = ui.available_height();
+                let pane_content_width = shell::eval_pane_content_width(ui);
                 let scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
                 scroll_area.show(ui, |ui| {
+                    ui.set_max_width(pane_content_width);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 8,

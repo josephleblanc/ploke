@@ -4,7 +4,7 @@ use crate::ui::render::text::*;
 use eframe::egui;
 
 use crate::allocation::scope;
-use crate::ui::eval_protocol::{EvalProtocolDashboard, EvidenceState, PatchProjectionCounts};
+use crate::ui::eval_protocol::{EvalProtocolDashboard, PatchProjectionCounts};
 use crate::ui::inspector::{
     InspectorSections, PatchInspection, SelectionEdge, UnavailableReason,
     response_finish_reason_label, surface_apply_status_label, surface_check_status_label,
@@ -14,6 +14,8 @@ use ploke_tree::Graph;
 use ploke_tree::graph::AgentTurnArtifactMetadata;
 use std::sync::Arc;
 
+mod analyst_snapshot;
+mod metric_row_board;
 mod cache;
 mod call_review;
 mod chrome;
@@ -24,7 +26,9 @@ mod identity;
 mod inspector;
 mod llm_trace;
 mod parent_create;
+mod protocol_artifacts_panel;
 mod protocol_detail;
+mod run_dashboard;
 mod run_records;
 mod timeline;
 mod trajectory;
@@ -36,7 +40,7 @@ use self::run_records::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
-pub(crate) use cache::InspectorRenderCache;
+pub(crate) use cache::{InspectorRenderCache, eval_pane_content_width};
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
 pub(crate) use context_strip::render_snapshot_load_banner;
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};
@@ -371,14 +375,6 @@ fn render_patch_projection_counts(
     cached_kv_usize(ui, render_cache, "patch projection.passed", counts.passed);
     cached_kv_usize(ui, render_cache, "patch projection.failed", counts.failed);
     cached_kv_usize(ui, render_cache, "patch projection.not_run", counts.not_run);
-}
-
-fn evidence_state_label(state: EvidenceState) -> &'static str {
-    match state {
-        EvidenceState::Available => "available",
-        EvidenceState::Missing => "missing",
-        EvidenceState::NotApplicable => "not_applicable",
-    }
 }
 
 fn closure_status_label<T>(value: &T) -> String

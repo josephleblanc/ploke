@@ -224,9 +224,25 @@ pub(crate) struct CopyableRunName<'a> {
     full: &'a str,
 }
 
+const RUN_NAME_COMPACT_MAX_BYTES: usize = 44;
+
 impl<'a> CopyableRunName<'a> {
     pub(crate) fn new(full: &'a str) -> Self {
         Self { full }
+    }
+
+    pub(crate) fn is_compact(&self) -> bool {
+        self.full.len() > RUN_NAME_COMPACT_MAX_BYTES
+    }
+
+    pub(crate) fn compact_label(&self) -> std::borrow::Cow<'_, str> {
+        if !self.is_compact() {
+            return std::borrow::Cow::Borrowed(self.full);
+        }
+        std::borrow::Cow::Owned(run_name_ellipsis_tail(
+            self.full,
+            RUN_NAME_COMPACT_MAX_BYTES,
+        ))
     }
 }
 
@@ -243,8 +259,12 @@ impl CopyableExpandable for CopyableRunName<'_> {
         "Copy run name"
     }
 
-    fn hover_text(&self, _expanded: bool, _expandable: bool) -> &'static str {
-        "Right click to copy the run name."
+    fn hover_text(&self, expanded: bool, expandable: bool) -> &'static str {
+        if expandable && !expanded {
+            "Click to expand the full run id. Right click to copy."
+        } else {
+            "Right click to copy the run name."
+        }
     }
 }
 
@@ -409,6 +429,18 @@ fn short_prefix(value: &str, max_chars: usize) -> &str {
         .unwrap_or(value)
 }
 
+fn run_name_ellipsis_tail(full: &str, max_bytes: usize) -> String {
+    let tail = path_tail(full);
+    if tail.len() <= max_bytes {
+        return format!("…{tail}");
+    }
+    let mut start = tail.len().saturating_sub(max_bytes);
+    while start < tail.len() && !tail.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("…{}", &tail[start..])
+}
+
 fn path_tail(value: &str) -> &str {
     let trimmed = value.trim_end_matches(|ch| ch == '/' || ch == '\\');
     if trimmed.is_empty() {
@@ -452,7 +484,9 @@ fn compact_label(full: &str) -> (&str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CopyableArtifactFile, CopyablePath, ShortId, compact_label, id_prefix};
+    use super::{
+        CopyableArtifactFile, CopyablePath, CopyableRunName, ShortId, compact_label, id_prefix,
+    };
 
     fn short(value: &str) -> Option<String> {
         ShortId::new(value).map(|id| id.to_string())
@@ -504,6 +538,16 @@ mod tests {
 
         assert_eq!(path.tail(), "worktree");
         assert!(path.is_expandable());
+    }
+
+    #[test]
+    fn copyable_run_name_compacts_long_ids_with_ellipsis_tail() {
+        let long = "campaigns/foo/bar/run-with-a-very-long-instance-id-0123456789abcdef";
+        let run = CopyableRunName::new(long);
+        assert!(run.is_compact());
+        let compact = run.compact_label();
+        assert!(compact.starts_with('…'));
+        assert!(compact.len() <= 48);
     }
 
     #[test]

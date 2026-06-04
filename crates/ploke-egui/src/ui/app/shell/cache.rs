@@ -16,9 +16,33 @@ use super::call_review::{
 
 const INSPECTOR_HOVER_WRAP_WIDTH: f32 = 520.0;
 
+/// Per run-record turn: bulk collapse/expand for the tool-steps ladder (session-local).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) struct ToolStepsDisclosureScope {
+    pub(super) record_key: String,
+    pub(super) turn_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ToolStepsDisclosureMode {
+    #[default]
+    Default,
+    Collapsed,
+    Expanded,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ToolStepsDisclosureEntry {
+    generation: u32,
+    mode: ToolStepsDisclosureMode,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct InspectorRenderCache {
     pub(super) trajectory: super::trajectory::TrajectoryRenderCache,
+    tool_steps_disclosure: BTreeMap<ToolStepsDisclosureScope, ToolStepsDisclosureEntry>,
+    /// Set for the duration of [`super::run_records::render_run_record_tool_steps`].
+    active_tool_steps_disclosure: Option<ToolStepsDisclosureScope>,
     parent_create_rows: BTreeMap<ParentCreateRowsKey, ParentCreateRows>,
     parent_create_row_rebuilds: usize,
     call_review_scan_order: CallReviewScanOrderCache,
@@ -43,6 +67,66 @@ pub(crate) struct InspectorRenderCache {
 }
 
 impl InspectorRenderCache {
+    pub(super) fn tool_steps_disclosure_scope(
+        record_key: &str,
+        turn_index: usize,
+    ) -> ToolStepsDisclosureScope {
+        ToolStepsDisclosureScope {
+            record_key: record_key.to_owned(),
+            turn_index,
+        }
+    }
+
+    pub(super) fn with_active_tool_steps_disclosure<R>(
+        &mut self,
+        scope: Option<ToolStepsDisclosureScope>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = std::mem::replace(&mut self.active_tool_steps_disclosure, scope);
+        let result = f(self);
+        self.active_tool_steps_disclosure = previous;
+        result
+    }
+
+    pub(super) fn active_tool_steps_disclosure_generation(&self) -> u32 {
+        self.active_tool_steps_disclosure
+            .as_ref()
+            .and_then(|scope| self.tool_steps_disclosure.get(scope))
+            .map(|entry| entry.generation)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn tool_steps_default_open(&self, default: bool) -> bool {
+        match self
+            .active_tool_steps_disclosure
+            .as_ref()
+            .and_then(|scope| self.tool_steps_disclosure.get(scope))
+            .map(|entry| entry.mode)
+        {
+            Some(ToolStepsDisclosureMode::Collapsed) => false,
+            Some(ToolStepsDisclosureMode::Expanded) => true,
+            Some(ToolStepsDisclosureMode::Default) | None => default,
+        }
+    }
+
+    pub(super) fn tool_steps_collapse_all(&mut self, scope: ToolStepsDisclosureScope) {
+        let entry = self
+            .tool_steps_disclosure
+            .entry(scope)
+            .or_insert(ToolStepsDisclosureEntry::default());
+        entry.generation = entry.generation.wrapping_add(1);
+        entry.mode = ToolStepsDisclosureMode::Collapsed;
+    }
+
+    pub(super) fn tool_steps_expand_all(&mut self, scope: ToolStepsDisclosureScope) {
+        let entry = self
+            .tool_steps_disclosure
+            .entry(scope)
+            .or_insert(ToolStepsDisclosureEntry::default());
+        entry.generation = entry.generation.wrapping_add(1);
+        entry.mode = ToolStepsDisclosureMode::Expanded;
+    }
+
     pub(crate) fn set_run_evidence_context(
         &mut self,
         source_label: Option<String>,
@@ -134,8 +218,17 @@ impl InspectorRenderCache {
         ui: &egui::Ui,
         text: &str,
     ) -> Arc<egui::Galley> {
+        let wrap_width_points = cached_wrap_width_points(effective_inspector_content_width(ui));
+        self.wrapped_monospace_galley_with_wrap_width(ui, text, wrap_width_points)
+    }
+
+    pub(super) fn wrapped_monospace_galley_with_wrap_width(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        wrap_width_points: u32,
+    ) -> Arc<egui::Galley> {
         let style_key = CachedTextStyleKey::from_ui(ui);
-        let wrap_width_points = cached_wrap_width_points(ui.available_width());
         if let Some(entry) = self.text_galleys.iter().find(|entry| {
             entry.kind == CachedTextKind::MonospaceWrapped
                 && entry.style_key == style_key
@@ -397,6 +490,65 @@ fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<eg
     layout_owned_cached_text(ui, text.to_owned(), kind)
 }
 
+/// Width for inspector prose inside scroll areas and nested drilldowns.
+///
+/// Horizontal scroll content often reports a very large [`egui::Ui::available_width`]; cap by the
+/// visible clip width so wrapped galleys do not extend past the panel.
+pub(super) fn effective_inspector_content_width(ui: &egui::Ui) -> f32 {
+    let clip_width = ui.clip_rect().width().max(1.0);
+    let available = ui.available_width();
+    if available.is_finite() && available > 1.0 {
+        available.min(clip_width)
+    } else {
+        clip_width
+    }
+}
+
+/// Visible inspector column width from clip only (ignores scroll child min-width).
+pub(super) fn inspector_clip_content_width(ui: &egui::Ui) -> f32 {
+    ui.clip_rect().width().max(1.0)
+}
+
+/// Content width for Eval & Protocol pane tiles and call-review detail sections.
+///
+/// `min(finite available_width, clip_rect.width())` so horizontal scroll children do not lay out
+/// prose or chips past the visible eval column.
+pub(super) fn effective_eval_pane_content_width(ui: &egui::Ui) -> f32 {
+    let clip_width = ui.clip_rect().width().max(1.0);
+    let available = ui.available_width();
+    if available.is_finite() && available > 1.0 {
+        available.min(clip_width)
+    } else {
+        clip_width
+    }
+}
+
+/// Lay out eval-pane / call-review body at [`effective_eval_pane_content_width`].
+pub(super) fn scope_eval_pane_content_width<R>(
+    ui: &mut egui::Ui,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let width = effective_eval_pane_content_width(ui);
+    ui.scope(|ui| {
+        ui.set_max_width(width);
+        ui.set_width(width);
+        body(ui)
+    })
+    .inner
+}
+
+/// Visible Eval & Protocol tile column width at scroll content roots.
+///
+/// Alias for [`effective_eval_pane_content_width`]; prefer capturing width on the tile `ui`
+/// before [`egui::ScrollArea::show`] when wide scan grids inflate nested clip rects.
+pub(crate) fn eval_pane_content_width(ui: &egui::Ui) -> f32 {
+    effective_eval_pane_content_width(ui)
+}
+
+pub(super) fn inspector_wrap_width_points(width: f32) -> u32 {
+    cached_wrap_width_points(width)
+}
+
 fn cached_wrap_width_points(width: f32) -> u32 {
     if width.is_finite() && width > 1.0 {
         width.round() as u32
@@ -493,6 +645,45 @@ pub(super) struct ParentCreateRows {
     pub(super) tools: Arc<str>,
     pub(super) llm_proposal: Arc<str>,
     pub(super) child_eval: Arc<str>,
+}
+
+#[cfg(test)]
+mod tool_steps_disclosure_tests {
+    use super::*;
+
+    #[test]
+    fn collapse_all_forces_closed_defaults_and_bumps_generation() {
+        let mut cache = InspectorRenderCache::default();
+        let scope = InspectorRenderCache::tool_steps_disclosure_scope("record-a", 2);
+        cache.tool_steps_collapse_all(scope.clone());
+        cache.with_active_tool_steps_disclosure(Some(scope.clone()), |cache| {
+            assert!(!cache.tool_steps_default_open(true));
+        });
+        assert_eq!(cache.tool_steps_disclosure[&scope].generation, 1);
+        cache.tool_steps_collapse_all(scope.clone());
+        assert_eq!(cache.tool_steps_disclosure[&scope].generation, 2);
+    }
+
+    #[test]
+    fn expand_all_forces_open_defaults() {
+        let mut cache = InspectorRenderCache::default();
+        let scope = InspectorRenderCache::tool_steps_disclosure_scope("record-b", 0);
+        cache.tool_steps_expand_all(scope.clone());
+        cache.with_active_tool_steps_disclosure(Some(scope), |cache| {
+            assert!(cache.tool_steps_default_open(false));
+        });
+    }
+
+    #[test]
+    fn active_scope_exposes_generation_for_id_salt() {
+        let mut cache = InspectorRenderCache::default();
+        let scope = InspectorRenderCache::tool_steps_disclosure_scope("r", 1);
+        cache.tool_steps_collapse_all(scope.clone());
+        cache.with_active_tool_steps_disclosure(Some(scope), |cache| {
+            assert_eq!(cache.active_tool_steps_disclosure_generation(), 1);
+        });
+        assert_eq!(cache.active_tool_steps_disclosure_generation(), 0);
+    }
 }
 
 impl ParentCreateRows {

@@ -4,13 +4,14 @@ use ploke_tree::Graph;
 
 use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
+use super::run_dashboard::render_tool_step_outcome_histogram;
 use super::{
     InspectorRenderCache, format_f64, render_cached_code_block, render_patch_artifact_details,
     render_run_record_tool_steps, render_token_usage, response_finish_reason_label,
     show_inspector_collapsing, turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label,
     turn_outcome_tool_count,
 };
-use crate::ui::text::style::inspector_error_text_color;
+use crate::ui::provenance::RunRecordProvenanceCtx;
 
 fn fresh_kv_grid_row(ui: &mut egui::Ui, key: &str, value: &str, monospace_value: bool) {
     ui.label(key);
@@ -190,7 +191,17 @@ pub(crate) fn render_run_record_turn_llm_trace(
     }
     render_run_record_turn_llm_trace_summary(ui, render_cache, turn);
     if include_tool_steps {
-        render_run_record_tool_steps(ui, render_cache, turn.tool_calls.as_slice());
+        let record_ctx = RunRecordProvenanceCtx {
+            manifest_id: record.manifest_id.as_str(),
+            record_path: record_key,
+        };
+        render_run_record_tool_steps(
+            ui,
+            render_cache,
+            Some(record_ctx),
+            turn_index,
+            turn.tool_calls.as_slice(),
+        );
     }
     show_inspector_collapsing(
         ui,
@@ -234,9 +245,14 @@ fn render_run_record_turn_llm_trace_summary(
                 cached_monospace_label(ui, render_cache, turn_number.format(turn.turn_number));
                 cached_label(ui, render_cache, "outcome");
                 cached_monospace_label(ui, render_cache, turn_outcome_label(&turn.outcome));
-                cached_label(ui, render_cache, "tool steps");
-                let mut tool_steps = itoa::Buffer::new();
-                cached_monospace_label(ui, render_cache, tool_steps.format(turn.tool_calls.len()));
+                if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
+                    cached_label(ui, render_cache, "outcome tools");
+                    let mut outcome_tools = itoa::Buffer::new();
+                    cached_monospace_label(ui, render_cache, outcome_tools.format(count));
+                }
+            });
+            let tool_step_total = turn.tool_calls.len();
+            if tool_step_total > 0 {
                 let failed_tools = turn
                     .tool_calls
                     .iter()
@@ -247,21 +263,11 @@ fn render_run_record_turn_llm_trace_summary(
                         )
                     })
                     .count();
-                if failed_tools > 0 {
-                    cached_label(ui, render_cache, "failed");
-                    let mut failed = itoa::Buffer::new();
-                    ui.label(
-                        egui::RichText::new(failed.format(failed_tools))
-                            .monospace()
-                            .color(inspector_error_text_color(ui)),
-                    );
-                }
-                if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
-                    cached_label(ui, render_cache, "outcome tools");
-                    let mut outcome_tools = itoa::Buffer::new();
-                    cached_monospace_label(ui, render_cache, outcome_tools.format(count));
-                }
-            });
+                ui.horizontal(|ui| {
+                    cached_label(ui, render_cache, "tool steps");
+                });
+                render_tool_step_outcome_histogram(ui, tool_step_total, failed_tools);
+            }
             if let Some(message) = turn_outcome_error(&turn.outcome) {
                 cached_label(ui, render_cache, "outcome error");
                 cached_wrapped_monospace_label(ui, render_cache, message);

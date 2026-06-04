@@ -12,6 +12,7 @@ We are using rust version 2024 in all crates.
 - Shared agent documents are in `docs/active/agents`
 - See `docs/active/agents/readme.md` for naming conventions of files and directories, and further details.
 - Current type-resolution handoff docs are indexed at `docs/active/agents/2026-05-10_tt-expr-core_type-resolution-handoff/README.md`; check these before resuming `typed_type_graph` or import/type-resolution work on this branch.
+- UI/UX reviews for `ploke-egui` follow [`.cursor/rules/ploke-egui-ux-review.mdc`](.cursor/rules/ploke-egui-ux-review.mdc) in the **parent chat only** — never `Task` subagents (they stall). Start `trunk serve` if `:8080` is down.
 
 ## 1. Think Before Coding
 
@@ -96,6 +97,7 @@ When the user asks you to "check the logs", "read the logs", "look into the logs
 
 ## Test Execution
 - When running tests, use a sub-agent to execute the test command and report the output back to the main agent.
+- **Exception:** ploke-egui WASM UI/UX reviews and trunk+browser dogfood — **never** use a background `Task` subagent (stalls every time). Run in the parent chat per [`.cursor/rules/ploke-egui-ux-review.mdc`](.cursor/rules/ploke-egui-ux-review.mdc), including under Multitask Mode.
 - Use follow-up sub-agent test runs for retries or narrowed repros when needed, so the main thread keeps only the summarized result and next action.
 
 ### Fail-until-impl (strict tests)

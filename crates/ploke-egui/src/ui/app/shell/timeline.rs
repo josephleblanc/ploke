@@ -1,27 +1,51 @@
 //! Bottom run timeline: multi-track colored spans from passive run-record evidence.
+//!
+//! Track bars use [`BarProfile::SegmentLane`] via [`crate::ui::bar_profiles`].
+//! Fixed [`TRACK_LABEL_WIDTH`] aligns all lane areas.
 
+use crate::ui::bar_profiles::{
+    self, BarPaintSegment, SegmentLaneOpts, lane_content_x_span, lane_x_for_normalized,
+};
 use crate::ui::inspector::{tool_execution_name, tool_execution_status_label, turn_outcome_label};
 use crate::ui::theme::{PaletteTokens, tokens_from_ui};
 use crate::ui::view::GraphViewDiagnostics;
-use eframe::egui::{self, Color32, Id, Rect, Sense, Stroke, Ui};
+use eframe::egui::{self, Color32, Rect, Sense, Stroke, Ui};
 use ploke_records::run_record::{RunRecord, ToolResult, TurnOutcome, TurnRecord};
 use ploke_tree::graph::Graph;
 use ploke_tree::{ComparedRunArm, RunRecordStats};
 
 const TRACK_LABEL_WIDTH: f32 = 76.0;
-const TRACK_HEIGHT: f32 = 18.0;
+const LANE_HEIGHT: f32 = 12.0;
+const TRACK_HEIGHT: f32 = LANE_HEIGHT + 2.0;
 const TRACK_GAP: f32 = 3.0;
 const RULER_HEIGHT: f32 = 14.0;
 const FOOTER_HEIGHT: f32 = 16.0;
-const SPAN_ROUNDING: f32 = 2.0;
-const MIN_SPAN_WIDTH_PX: f32 = 3.0;
+/// Horizontal inset inside the allocated track rect so segment strokes are not clipped at the edge.
+const LANE_X_PADDING: f32 = 6.0;
+
+const SEGMENT_LANE_OPTS: SegmentLaneOpts = SegmentLaneOpts {
+    lane_height: LANE_HEIGHT,
+    x_padding: LANE_X_PADDING,
+    min_span_width: bar_profiles::MIN_SPAN_WIDTH_PX,
+};
 
 #[derive(Debug, Clone)]
 struct TimelineSpan {
     start: f32,
     end: f32,
-    fill: Color32,
+    semantic: Color32,
     tooltip: String,
+}
+
+impl From<&TimelineSpan> for BarPaintSegment {
+    fn from(span: &TimelineSpan) -> Self {
+        BarPaintSegment {
+            start: span.start,
+            end: span.end,
+            semantic: span.semantic,
+            tooltip: Some(span.tooltip.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +58,22 @@ struct TimelineTrack {
 struct TimelineModel {
     axis_label: String,
     tracks: Vec<TimelineTrack>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrackLaneLayout {
+    row_width: f32,
+    track_area_width: f32,
+}
+
+impl TrackLaneLayout {
+    fn from_ui(ui: &Ui) -> Self {
+        let row_width = ui.available_width();
+        Self {
+            row_width,
+            track_area_width: (row_width - TRACK_LABEL_WIDTH).max(80.0),
+        }
+    }
 }
 
 #[cfg_attr(
@@ -55,8 +95,9 @@ pub(crate) fn render_bottom_timeline(
     ui.vertical(|ui| {
         ui.set_width(ui.available_width());
         if let Some(model) = model.as_ref() {
-            render_tracks(ui, model);
-            render_ruler(ui, model);
+            let layout = TrackLaneLayout::from_ui(ui);
+            render_tracks(ui, model, layout);
+            render_ruler(ui, model, layout);
         } else {
             ui.label(
                 egui::RichText::new(
@@ -107,95 +148,85 @@ fn render_timeline_footer(
     );
 }
 
-fn render_tracks(ui: &mut Ui, model: &TimelineModel) {
-    let track_area_width = (ui.available_width() - TRACK_LABEL_WIDTH).max(80.0);
+fn render_tracks(ui: &mut Ui, model: &TimelineModel, layout: TrackLaneLayout) {
     for track in &model.tracks {
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(TRACK_LABEL_WIDTH, TRACK_HEIGHT),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
-                    ui.label(
-                        egui::RichText::new(track.name)
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
-            );
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(track_area_width, TRACK_HEIGHT), Sense::hover());
-            paint_track(ui, rect, &track.spans);
-        });
+        ui.allocate_ui_with_layout(
+            egui::vec2(layout.row_width, TRACK_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(layout.row_width);
+                ui.set_width(layout.row_width);
+                paint_track_label(ui, track.name);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(layout.track_area_width, TRACK_HEIGHT),
+                    Sense::hover(),
+                );
+                let segments: Vec<BarPaintSegment> =
+                    track.spans.iter().map(BarPaintSegment::from).collect();
+                bar_profiles::paint_segment_lane(ui, rect, &segments, SEGMENT_LANE_OPTS);
+            },
+        );
         ui.add_space(TRACK_GAP);
     }
 }
 
-fn render_ruler(ui: &mut Ui, model: &TimelineModel) {
+fn paint_track_label(ui: &mut Ui, name: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(TRACK_LABEL_WIDTH, TRACK_HEIGHT),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.set_width(TRACK_LABEL_WIDTH);
+            ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+            ui.label(
+                egui::RichText::new(name)
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        },
+    );
+}
+
+fn render_ruler(ui: &mut Ui, model: &TimelineModel, layout: TrackLaneLayout) {
     let Some(turn_track) = model.tracks.first() else {
         return;
     };
     if turn_track.spans.is_empty() {
         return;
     }
-    ui.horizontal(|ui| {
-        ui.allocate_exact_size(egui::vec2(TRACK_LABEL_WIDTH, RULER_HEIGHT), Sense::hover());
-        let track_area_width = (ui.available_width() - TRACK_LABEL_WIDTH).max(80.0);
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(track_area_width, RULER_HEIGHT), Sense::hover());
-        let visuals = ui.visuals();
-        let stroke = Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color);
-        ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
-        for (index, span) in turn_track.spans.iter().enumerate() {
-            let x = rect.left() + rect.width() * span.start;
-            ui.painter().vline(x, rect.y_range(), stroke);
-            let tick_label = format!("T{}", index + 1);
-            ui.painter().text(
-                egui::pos2(x + 2.0, rect.top()),
-                egui::Align2::LEFT_TOP,
-                tick_label,
-                egui::FontId::proportional(9.0),
-                visuals.weak_text_color(),
+    ui.allocate_ui_with_layout(
+        egui::vec2(layout.row_width, RULER_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(layout.row_width);
+            ui.set_width(layout.row_width);
+            ui.allocate_exact_size(egui::vec2(TRACK_LABEL_WIDTH, RULER_HEIGHT), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(layout.track_area_width, RULER_HEIGHT),
+                Sense::hover(),
             );
-        }
-    });
-}
-
-fn paint_track(ui: &mut Ui, rect: Rect, spans: &[TimelineSpan]) {
-    let painter = ui.painter();
-    let track_bg = ui.visuals().widgets.noninteractive.bg_fill;
-    painter.rect_filled(rect, SPAN_ROUNDING, track_bg);
-    painter.rect_stroke(
-        rect,
-        SPAN_ROUNDING,
-        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        egui::StrokeKind::Inside,
+            let visuals = ui.visuals();
+            let stroke = Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color);
+            let painter = ui.painter().with_clip_rect(rect);
+            let (content_left, content_width) = lane_content_x_span(rect, LANE_X_PADDING);
+            painter.hline(
+                content_left..=content_left + content_width,
+                rect.bottom(),
+                stroke,
+            );
+            for (index, span) in turn_track.spans.iter().enumerate() {
+                let x = lane_x_for_normalized(rect, span.start, LANE_X_PADDING);
+                painter.vline(x, rect.y_range(), stroke);
+                let tick_label = format!("T{}", index + 1);
+                painter.text(
+                    egui::pos2(x + 2.0, rect.top()),
+                    egui::Align2::LEFT_TOP,
+                    tick_label,
+                    egui::FontId::proportional(9.0),
+                    visuals.weak_text_color(),
+                );
+            }
+        },
     );
-
-    let span_response_id = Id::new(("timeline_span", rect.min.x.to_bits(), rect.min.y.to_bits()));
-    for (index, span) in spans.iter().enumerate() {
-        let mut left = rect.left() + rect.width() * span.start;
-        let mut right = rect.left() + rect.width() * span.end;
-        if right - left < MIN_SPAN_WIDTH_PX {
-            right = (left + MIN_SPAN_WIDTH_PX).min(rect.right());
-        }
-        left = left.clamp(rect.left(), rect.right());
-        right = right.clamp(rect.left(), rect.right());
-        if right <= left {
-            continue;
-        }
-        let span_rect = Rect::from_min_max(
-            egui::pos2(left, rect.top() + 1.0),
-            egui::pos2(right, rect.bottom() - 1.0),
-        );
-        let response = ui.interact(span_rect, span_response_id.with(index), Sense::hover());
-        painter.rect_filled(span_rect, SPAN_ROUNDING, span.fill);
-        if response.hovered() {
-            response.show_tooltip_ui(|ui| {
-                ui.label(span.tooltip.as_str());
-            });
-        }
-    }
 }
 
 fn build_timeline_model(graph: &Graph, tokens: PaletteTokens) -> Option<TimelineModel> {
@@ -207,7 +238,7 @@ fn build_timeline_model(graph: &Graph, tokens: PaletteTokens) -> Option<Timeline
     }
     tracks.push(turn_track);
     tracks.push(build_tool_track(record, tokens));
-    if let Some(protocol_track) = build_protocol_track(graph) {
+    if let Some(protocol_track) = build_protocol_track(graph, tokens) {
         if !protocol_track.spans.is_empty() {
             tracks.push(protocol_track);
         }
@@ -251,7 +282,7 @@ fn build_turn_track(record: &RunRecord, tokens: PaletteTokens) -> TimelineTrack 
         spans.push(TimelineSpan {
             start,
             end,
-            fill: turn_color(turn, tokens),
+            semantic: turn_color(turn, tokens),
             tooltip: turn_tooltip(turn),
         });
     }
@@ -284,7 +315,7 @@ fn build_tool_track(record: &RunRecord, tokens: PaletteTokens) -> TimelineTrack 
             spans.push(TimelineSpan {
                 start,
                 end,
-                fill: tool_color(tool, tokens),
+                semantic: tool_color(tool, tokens),
                 tooltip: format!(
                     "turn {} · {} · {} · {}ms",
                     turn.turn_number,
@@ -302,7 +333,7 @@ fn build_tool_track(record: &RunRecord, tokens: PaletteTokens) -> TimelineTrack 
     }
 }
 
-fn build_protocol_track(graph: &Graph) -> Option<TimelineTrack> {
+fn build_protocol_track(graph: &Graph, tokens: PaletteTokens) -> Option<TimelineTrack> {
     let artifacts = graph.protocol_artifacts()?;
     if artifacts.index.is_empty() {
         return None;
@@ -317,7 +348,7 @@ fn build_protocol_track(graph: &Graph) -> Option<TimelineTrack> {
         spans.push(TimelineSpan {
             start,
             end,
-            fill: protocol_color(artifact.procedure_name.as_str()),
+            semantic: protocol_semantic_color(artifact.procedure_name.as_str(), tokens),
             tooltip: format!(
                 "{} · subject={} · created_at_ms={}",
                 artifact.procedure_name, artifact.subject_id, artifact.created_at_ms
@@ -370,32 +401,16 @@ fn tool_color(
     }
 }
 
-fn protocol_color(procedure_name: &str) -> Color32 {
+fn protocol_semantic_color(procedure_name: &str, tokens: PaletteTokens) -> Color32 {
     let hash = procedure_name.bytes().fold(0u32, |acc, byte| {
         acc.wrapping_mul(31).wrapping_add(u32::from(byte))
     });
-    let hue = (hash % 360) as f32;
-    let [r, g, b] = hsl_to_rgb(hue, 0.45, 0.42);
-    Color32::from_rgb(r, g, b)
-}
-
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r1, g1, b1) = match h as i32 {
-        0..=59 => (c, x, 0.0),
-        60..=119 => (x, c, 0.0),
-        120..=179 => (0.0, c, x),
-        180..=239 => (0.0, x, c),
-        240..=299 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    [
-        ((r1 + m) * 255.0).round() as u8,
-        ((g1 + m) * 255.0).round() as u8,
-        ((b1 + m) * 255.0).round() as u8,
-    ]
+    match hash % 4 {
+        0 => tokens.info,
+        1 => tokens.accent,
+        2 => tokens.success,
+        _ => tokens.warning,
+    }
 }
 
 fn turn_tooltip(turn: &TurnRecord) -> String {

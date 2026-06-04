@@ -118,6 +118,7 @@ Work top-to-bottom; collapsed state should communicate status without opening.
 - [ ] Large fixture (`protocol-graph.json` default or `trajectory-multi-gen.json` for trend table): still navigable; note regressions
 - [ ] Broken graph URL or fetch failure: clear error, recoverable via file picker or docs link
 - [ ] **Provenance lanes** on `protocol-graph.json`: failed tool steps show `Recorded · tool failed` chip + **Harness error (recorded)** headline; `tool call arguments` shows `UI · decode (WASM)` (must not read as harness failure); bad `?graph=` shows top **UI · snapshot load** banner (not sidebar-only)
+- [ ] **Inspect provenance** on failed RCC (or equivalent) tool step: click **info** on lane chip or harness row → popover shows `Recorded · tool failed`, headline field (`ui_payload.summary` or `error.user`), copyable `call_id`; **info** on `UI · decode (WASM)` states harness did not fail because of WASM
 
 ## Cross-surface parity
 

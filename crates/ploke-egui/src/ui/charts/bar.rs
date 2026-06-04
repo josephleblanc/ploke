@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use crate::ui::bar_profiles::{metric_fill_width, paint_metric_fill_bar};
 use crate::ui::theme::tokens_from_ui;
 
 /// A simple horizontal bar chart for categorical data.
@@ -19,18 +20,13 @@ pub(super) fn horizontal_bar_chart(ui: &mut egui::Ui, title: &str, data: &[(&str
                 for (label, value) in data {
                     ui.label(*label);
 
-                    let progress = value / max_val;
                     let (rect, _response) = ui.allocate_at_least(
                         egui::vec2(ui.available_width().max(120.0), 14.0),
                         egui::Sense::hover(),
                     );
 
-                    ui.painter()
-                        .rect_filled(rect, 2.0, ui.visuals().faint_bg_color);
-
-                    let mut bar_rect = rect;
-                    bar_rect.set_width((rect.width() * progress).max(2.0));
-                    ui.painter().rect_filled(bar_rect, 2.0, tokens.accent);
+                    let fill_width = metric_fill_width(*value, max_val, rect.width());
+                    paint_metric_fill_bar(ui, rect, fill_width, tokens.accent);
 
                     ui.monospace(format_chart_value(*value));
                     ui.end_row();

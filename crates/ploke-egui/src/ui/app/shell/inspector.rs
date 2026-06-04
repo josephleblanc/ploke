@@ -201,6 +201,19 @@ fn show_inspector_section_collapsing<R>(
     state.show_body_indented(&header_response.response, ui, |ui| add_body(ui));
 }
 
+/// Reserve the inspector tile for pointer hit-testing so eval panes behind it
+/// (same layer, earlier paint order) do not receive row hover from global geometry.
+fn claim_inspector_pane_pointer(ui: &mut egui::Ui) {
+    let pane_rect = ui.max_rect();
+    if pane_rect.is_positive() {
+        ui.interact(
+            pane_rect,
+            ui.id().with("inspector_pane_pointer"),
+            egui::Sense::hover(),
+        );
+    }
+}
+
 #[cfg_attr(
     all(not(target_arch = "wasm32"), feature = "native-benchmark"),
     tracing::instrument(skip_all, name = "selection_inspector")
@@ -217,6 +230,7 @@ pub(crate) fn render_right_inspector(
     open_state: InspectorOpenState,
     mut actions: Option<&mut Vec<crate::ui::dashboard::tiles::TreeAction>>,
 ) {
+    claim_inspector_pane_pointer(ui);
     let viewport_height = ui.available_height();
     let selected_call_review = if selection_ref.is_none() {
         selected_eval_protocol_call_review_key(ui)

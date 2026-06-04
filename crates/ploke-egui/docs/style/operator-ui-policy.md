@@ -168,7 +168,132 @@ Failures must name **which layer** produced the evidence so operators do not con
 
 Headline selection for failed tools: `error.user` → `ui_payload.summary` → `result.error`, labeled **Harness error (recorded)**.
 
-## 8. Labels and trust
+**Inspect provenance (click):** an 18×18 **info** control beside lane chips and the harness-error label opens a click-stable popover titled **Error provenance**. It must show the lane chip + full tooltip, a one-line trust statement, the export field that drove the harness headline (failed tools only), export anchors (`call_id`, `manifest_id`, `record_path` tail), a static **jq hint** template (multiline, monospace—no stretched glyphs), Host/Decode labels, and copy actions for `call_id`, jq hint, and `record_path`. Hover on chips remains a short preview only.
+
+## 8. Emerging operator preferences
+
+Durable layout and trust habits from recent eval/protocol work. Principles and do/don't—not an implementation log. See also §6 (cues), §7 (lanes), [`inspector-ux.md`](inspector-ux.md) (disclosure).
+
+### Evidence honesty
+
+| Do | Don't |
+|----|-------|
+| Name the **lane** (snapshot load, WASM decode, recorded tool, graph gap) before interpreting failures | Treat `UI · decode (WASM)` or missing Fields as a **harness tool failure** |
+| Trust **Harness error (recorded)** from export headline + typed error wire (`error.user` → summary → `result.error`) | Let UI decode labels or generic “failed” chips override recorded semantics |
+| Open **Error provenance** for export anchors, trust line, and copyable `jq` hints | Invent errors the graph did not export |
+
+### Density and structure over dumps
+
+| Do | Don't |
+|----|-------|
+| **Protocol artifacts:** grouped cards with verdict bars and scannable counts | Flat `prefix.count` KV lists or accordion forests of key paths |
+| **Run dashboard:** status-board cards (lifecycle, coverage, problem slices) | Long `label \| value` grids that read like a log |
+| **Analyst Snapshot:** fixed label column, semantic bar hues, two columns when width allows | Repeating the same prose metric in every row without visual hierarchy |
+
+### Flatten nesting
+
+| Do | Don't |
+|----|-------|
+| **Call review:** sibling sections—**Provenance**, **Packet**, **Signals**, **Assessment**—at one depth | Five-level nested collapsible trees for a single call |
+| List rows: tool/outcome summary only | Redundant “selected call” chrome duplicating inspector selection |
+
+### Prose width and wrapping
+
+| Do | Don't |
+|----|-------|
+| Size long text to `min(available_width, clip_rect.width)` (inspector content width) | Let synthesis, rationale, or summaries extend horizontally past the scroll clip |
+| Use one shared wrapped-prose path for inspector prose blocks | Rely on single-line labels or unbounded horizontal layout inside scroll areas |
+
+### Bar profiles (segment-lane family)
+
+Operator **segment-lane bars** share one visual system in **`crate::ui::bar_profiles`** (module docs mirror this table). Constants live there first; call sites pass theme semantic `Color32` only.
+
+| Profile | Role | Geometry |
+|---------|------|----------|
+| **`MetricFill`** | Analyst Snapshot metric rows, protocol verdict distribution | Single fill `value / section_max`; min visible width when value &gt; 0 |
+| **`SegmentLane`** | Footer timeline (turns / tool calls / protocol) | Normalized multi-segment spans; **1.5px** gaps between blocks |
+| **`StackedOutcome`** | Agent-trace tool-step outcome mix | Two normalized segments (succeeded / failed) |
+| **`EmptyTrack`** | Lane shell with no segments | Faint track + stroke only |
+
+**Visual contract:** faint track background, **gamma-muted** semantic fills (`SEMANTIC_FILL_GAMMA` ≈ 0.7), **saturated** strokes on the same hue, **1px** corner radius — not legacy neon solid fills.
+
+**Iteration workflow:** operator dogfoods a surface (e.g. timeline density, snapshot bar readability) → adjust gaps, padding, gamma, and lane height in **`bar_profiles.rs`** → re-run foreground WASM dogfood on the same fixture. Do not fork one-off painters per screen.
+
+**Not this system:** Eval **spotlight** under-bars use the **three-tier verdict emphasis** ladder (§8 semantic color)—width/tier from assessment emphasis, not `BarProfile` segment lanes.
+
+### Layout patterns that worked
+
+Patterns worth copying; still subject to resize dogfood (see imperfections below).
+
+| Pattern | Where | Notes |
+|---------|-------|-------|
+| **3-column metric grid** | Analyst Snapshot, protocol verdict rows | **`metric_row_board`** only: fixed **140px** label + **40px** count + padded bar track in **one** grid cell (`ui.horizontal` for pad+track); `section_width` captured per section/column at layout start; truncated labels and `Label` counts—never painter text in grid cells |
+| **Two-column hysteresis** | Analyst Snapshot | Enter 2×2 at **≥560px** available width; exit to single column at **&lt;500px**; **500–559px** stays single column to avoid boundary flicker |
+| **Wrapped prose width** | Inspector / call review | Inspector: `effective_inspector_content_width`; Eval tile: `effective_eval_pane_content_width` at the **scroll content root** (`ui.set_max_width(min(clip_rect, available_width))`) so protocol detail, Run synthesis spotlight, and call-review spotlights wrap inside the visible column |
+| **Shared timeline lane layout** | Footer timeline | `TrackLaneLayout` + `bar_profiles` **`SegmentLane`**; horizontal padding **`LANE_X_PADDING` = 6px** aligned with `SegmentLaneOpts` |
+| **Status-board cards** | Run dashboard | Lifecycle / coverage / problem slices as scannable cards, not log-style grids |
+| **Run synthesis spotlight** | Eval & Protocol (under Run dashboard) | Focal framed block: pinned call artifact, verdict cards, signals from payload, per-dimension rationale bullets; no mechanized `synthesis_rationale` wire blob when structured assessment is present (short operator note instead); raw prose fallback only when dimension rationales and typed summary are absent; empty until Call Review Scan row selected |
+| **Flat protocol sections** | `protocol_detail` | One-depth sections with scannable headers; raw KV forests behind explicit drilldown |
+| **Labeled assessment chips** | Call review / spotlight | `dimension: value` chips above Fields/Raw |
+
+### Known imperfections / open iteration
+
+UX is **improving, not finished**—treat this list as the next dogfood queue, not blockers unless a row says otherwise.
+
+| Area | Status | Next step |
+|------|--------|-----------|
+| **Analyst Snapshot resize band** | Hysteresis implemented; **500–560px** band needs more manual resize dogfood | Foreground browser at `/`; confirm labels/bars never overlap at boundary widths |
+| **Bar profile tuning** | v1 shipped; hues/gaps not final | User feedback → constants in `bar_profiles.rs`, not per-surface copy-paste |
+| **WASM dogfood claims** | Checklist must run in **foreground** with real trunk + screenshots | No background **Task**-only PASS rows; misnamed screenshots (popover closed) are **FAIL** for visual rows |
+| **Inspect provenance popover** | Code + unit tests; canvas **i** not automatable | Manual click QA until AccessKit or widget refs exist |
+| **Sidebar counters on protocol export** | `selections 0` / `artifacts 0` still confuse | Rename or clarify per §9; not “empty run” |
+| **Multi-gen trajectory scores** | `score_child_prop` / `trend` often `-` | Export `formula` witnesses—not a bar-profile problem |
+
+### Evidence & provenance (pointer)
+
+Harness failures, decode limits, and snapshot load errors are **lane-separated** so operators do not conflate UI decode with recorded tool failure. Full chip table, headline precedence, and **Inspect provenance** popover contract: **§7 Error and provenance lanes**. Emerging density/trust habits: **§8** tables above; inspector copy rules: [`inspector-ux.md`](inspector-ux.md).
+
+### Semantic color (tone, not decoration)
+
+Use **`RunDashboardValueTone`** (or equivalent) mapped to **theme semantic tokens**—see [`theme.md`](theme.md).
+
+| Tone role | Typical mapping |
+|-----------|-----------------|
+| Bad / attention | Failed tools, failed signal counts, error lanes |
+| Good / focus | In-progress or focused eval steps (not “everything green”) |
+| Neutral | Zeros that are real counts, not missing |
+| Muted | `not_recorded`, N/A, decode-not-applicable |
+| Emphasis ladder | Spotlight under-bars: **three tiers** tied to **verdict emphasis**, not model confidence |
+
+**Do** color failed vs repeated signal counts distinctly. **Don't** use hue alone without a collapsed text label (§6 accessibility).
+
+### Labeled chips and assessment
+
+| Do | Don't |
+|----|-------|
+| Show **`dimension: value`** chips (`usefulness: none`, `redundancy: thrash`) with tooltips | Bare `none` / `thrash` tokens with no dimension prefix |
+| Keep assessment summary scannable above Fields/Raw drilldown | Repeat full rationale in every list cell |
+
+### Agent trace (tool steps)
+
+| Do | Don't |
+|----|-------|
+| **Intent:** stacked **succeeded / failed** bar across tool steps in the agent trace lane (glance density before row expand) | A flat step list with no outcome mix at a glance |
+| Click bar or row → Inspector proof | Decorative bars with no selection wiring |
+
+*(Stacked bar may land after surrounding dashboard work; document intent even when code is in flight.)*
+
+### Dogfood and review process
+
+| Do | Don't |
+|----|-------|
+| Run WASM checklist in the **foreground** parent session; start trunk if `:8080` is down | Delegate full trunk+browser checklist to a **background Task** subagent (stalls; **Multitask Mode does not override**) |
+| Mark visual rows **PARTIAL** with a real blocker when trunk or browser fails | Mark trunk-dependent rows **N/A** without trying trunk, or claim screenshots show UI that screenshots do not show |
+| **Take Control** and click **Inspect provenance** / popovers when automation cannot open canvas-only controls | Rename screenshot files as if a popover opened when capture shows only closed chrome |
+
+Playbook: [`.cursor/rules/ploke-egui-ux-review.mdc`](../../../../.cursor/rules/ploke-egui-ux-review.mdc). Latest findings: [`2026-06-03_ploke-egui-wasm-ux-review/README.md`](../../../../docs/active/agents/2026-06-03_ploke-egui-wasm-ux-review/README.md).
+
+## 9. Labels and trust
 
 Counters and labels must not lie about what the operator is viewing.
 
@@ -180,7 +305,7 @@ Counters and labels must not lie about what the operator is viewing.
 
 Prefer renaming sidebar metrics (“sealed selections”, “graph artifacts”) over ambiguous single words when counts stay graph-scoped.
 
-## 9. Run-review ergonomics
+## 10. Run-review ergonomics
 
 Run reviews join graph evidence with disk-only witnesses. UI policy:
 
@@ -190,7 +315,7 @@ Run reviews join graph evidence with disk-only witnesses. UI policy:
 - **Aborted vs useful tension:** protocol reviews can be rich while validation or patch witnesses remain disk-only—show submission/projection **states** and explicit “needs disk” for audit/checkout diff, not silent success.
 - **Mechanical closure ≠ useful progress:** distinguish protocol coverage, tool failures, patch attempted/applied, and selection outcomes; do not let green closure badges subsume failed tools or empty trajectory metrics.
 
-## 10. WASM vs native
+## 11. WASM vs native
 
 | Context | Load path | Default fixture |
 |---------|-----------|-----------------|
@@ -212,7 +337,7 @@ Theme tokens: see [`theme.md`](theme.md)—semantic colors from palettes only, n
 
 **Theme switch:** changing the top-strip palette must not show garbled or corrupted text (stale font atlas / cached galleys). The app clears inspector and diff render caches, requests a single multipass discard via `on_theme_changed`, and **returns early** from the frame so pass 1 does not paint the dashboard until pass 2 repaints with the new visuals.
 
-## 11. Anti-patterns
+## 12. Anti-patterns
 
 - **Inventory-only UI:** default canvas or side panel as a flat record class list instead of artifact lineage or analyst questions.
 - **Raw JSON soup:** generic walkers, clipped one-line payloads as primary view, walls of absolute paths without tail+copy.
@@ -221,13 +346,17 @@ Theme tokens: see [`theme.md`](theme.md)—semantic colors from palettes only, n
 - **Silent absence:** empty panel where drilldown is missing; zero conflated with N/A; truncated preview presented as full record.
 - **Per-frame allocation** in hot inspector/table paths without measurement on large surfaces.
 - **Misleading counters** (sidebar `artifacts` / `selections` vs populated Eval & Protocol).
-- **Background browser UX review subagents** with trunk + MCP—they time out; run checklist in **foreground** per [`.cursor/rules/ploke-egui-ux-review.mdc`](../../../../.cursor/rules/ploke-egui-ux-review.mdc).
+- **Background browser UX review subagents** with trunk + MCP—they time out; run checklist in **foreground** per [`.cursor/rules/ploke-egui-ux-review.mdc`](../../../../.cursor/rules/ploke-egui-ux-review.mdc) and §8 (dogfood process).
+- **Flat KV dumps** where grouped cards, verdict bars, or status boards answer the north-star question faster.
+- **Misnamed or overstated dogfood screenshots** (popover closed but file name implies open)—see §8.
 
-## 12. Related docs
+## 13. Related docs
 
 | Doc | Use |
 |-----|-----|
 | [`inspector-ux.md`](inspector-ux.md) | Disclosure patterns, copy rules, anti-patterns checklist |
+| [`../../../src/ui/bar_profiles.rs`](../../../src/ui/bar_profiles.rs) | Segment-lane bar constants (`SEGMENT_GAP_PX`, gamma fill, profiles) — tune here first |
+| **§8 Emerging operator preferences** (this doc) | Bar profiles, layout patterns, imperfections, density, tone, chips, dogfood—concise do/don't |
 | [`theme.md`](theme.md) | Palette tokens and theme switching |
 | [`../model/default-view-contract.md`](../model/default-view-contract.md) | Frame layout, artifact-tree invariants, testable contract |
 | [`../plan/eval-protocol-analyst-surface/main-plan.md`](../plan/eval-protocol-analyst-surface/main-plan.md) | Dashboard slices, call/segment lists, chart drilldown intent |
