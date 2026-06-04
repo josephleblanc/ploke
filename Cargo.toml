@@ -55,6 +55,7 @@ members = [
     "crates/ploke-rag",
     "crates/ploke-io",
     "crates/ploke-ty-mcp",
+    "crates/ploke-selection-score",
     "xtask",
     "tests/fixture_crates/fixture_impls",
     "crates/ploke-llm",
