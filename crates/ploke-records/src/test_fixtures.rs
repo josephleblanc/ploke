@@ -8,6 +8,7 @@ pub(crate) fn prototype1_root() -> PathBuf {
         .join("prototype1")
 }
 
+#[cfg(feature = "protocol")]
 pub(crate) fn protocol_artifacts_dir() -> PathBuf {
     prototype1_root().join("protocol-artifacts")
 }
