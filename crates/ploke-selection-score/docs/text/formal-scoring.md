@@ -578,11 +578,11 @@ Explanation:
 
 Paper: [[queries/research/ploke-arxiv-cs-ai-2026-06-02/papers/2606.02488__raser-recoverability-aware-selective-escalation-router-for-multi-hop-question-answering|2606.02488 RASER]]
 
-Mechanism name: cost-aware route argmax over recoverability estimates.
+Mechanism name: RASER-3 cost-aware route argmax, plus RASER-2 bridgeability threshold and training label.
 
-Source anchors: `texts/2606.02488.txt` lines 220-289 and 301-347; review-log lines 130 and 175; audit section `2606.02488`.
+Source anchors: `texts/2606.02488.txt` lines 220-289 and 301-347; cleaned local extract `crates/ploke-selection-score/docs/text/2606.02488__raser.txt` lines 31-60; review-log lines 130 and 175; audit section `2606.02488`.
 
-Exactness label: `interpretive-compression` for the learned evaluator; cost-aware argmax is source-supported.
+Exactness label: `interpretive-compression` for the learned evaluators; cost-aware argmax, bridgeability threshold, and PRUNE training label are source-supported.
 
 MathJax:
 
@@ -591,26 +591,44 @@ r^*=\arg\max_{r\in R}\left[\hat f_r(s)-\lambda c_r\right],\qquad
 R=\{\mathrm{ONE\text{-}SHOT\ RAG},\mathrm{PRUNE},\mathrm{IRCOT}^*\}
 $$
 
+$$
+\operatorname{RASER2}(s)=
+\begin{cases}
+\mathrm{PRUNE}, & p(\mathrm{BRIDGEABLE}\mid s)\ge \theta \\
+\mathrm{ONE\text{-}SHOT\ RAG}, & p(\mathrm{BRIDGEABLE}\mid s)<\theta
+\end{cases}
+$$
+
+$$
+y=\mathbf 1\left[F1_{\mathrm{PRUNE}}-F1_{\mathrm{ONE\text{-}SHOT\ RAG}}>\tau\right]
+$$
+
 Symbol definitions:
 
 - $r$: route/action choice; $r^*$: selected route.
-- $R$: set of available routes: one-shot RAG, PRUNE, and IRCoT*.
-- $s$: cheap feature state from the draft/retrieval context.
-- $\hat f_r(s)$: learned estimate of benefit or recoverability for route $r$ given state $s$.
+- $R$: set of available RASER-3 routes: one-shot RAG, PRUNE, and IRCoT*.
+- $s$: cheap feature state from the one-shot draft/retrieval context.
+- $\hat f_r(s)$: route-specific predicted answer F1 for route $r$ given cheap feature state $s$.
 - $\lambda$: cost penalty weight; $c_r$: token or compute cost of route $r$.
+- $p(\mathrm{BRIDGEABLE}\mid s)$: RASER-2 classifier probability that PRUNE will recover the answer enough to justify escalation.
+- $\theta$: RASER-2 escalation threshold; the paper example uses $\theta=0.20$.
+- $y$: RASER-2 bridgeability training label.
+- $F1_{\mathrm{PRUNE}}$ and $F1_{\mathrm{ONE\text{-}SHOT\ RAG}}$: observed answer F1 for the PRUNE route and one-shot route on training data.
+- $\tau$: minimum F1 improvement used to label a question bridgeable; the paper sets $\tau=0.1$.
 
 Domain-specific definitions:
 
 - Recoverability-aware routing: choose escalation only when extra retrieval/reasoning is expected to improve answer quality enough.
 - PRUNE and IRCoT*: more expensive retrieval/reasoning routes than one-shot RAG.
-- GBM: gradient-boosted model used in the paper's routing setup.
+- GBM: gradient-boosted model used for the paper's routers: a binary classifier for RASER-2 and three route-specific regressors for RASER-3.
 
 Explanation:
 
-- The router maximizes predicted benefit minus cost.
-- The feature state is cheap; the route choice avoids unnecessary expensive retrieval.
-- Token/F1 tradeoff is the score-bearing decision boundary.
-- Full per-dataset and threshold details remain unresolved.
+- RASER-3 maximizes predicted route F1 minus token cost, making $\lambda$ a cost/accuracy dial rather than a fixed universal score.
+- RASER-2 uses a cheaper binary escalation threshold: run PRUNE only when $p(\mathrm{BRIDGEABLE}\mid s)$ crosses $\theta$.
+- The RASER-2 label is positive only when PRUNE improves the one-shot answer by more than $\tau$ F1; this avoids treating every hard question as recoverable.
+- The feature state is cheap and available after one-shot RAG; the route choice avoids unnecessary expensive retrieval.
+- Token/F1 tradeoff is the score-bearing decision boundary; complete per-model/per-dataset tables and threshold-sweep details remain unresolved.
 
 ### 2606.02536 — Behavioral trait-vector diff scoring
 

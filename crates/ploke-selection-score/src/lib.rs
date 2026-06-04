@@ -11,6 +11,9 @@ pub mod protocols;
 
 pub use catalog::{Exactness, MechanismKind, MechanismSpec, SourceRef};
 pub use common::{ScoreError, normalize_weights, rank_quality};
-pub use papers::raser::{Route, choose_route};
+pub use papers::raser::{
+    Route, RouteChoice, RouteKind, RoutePrediction, bridgeable_label, choose_route, raser2_select,
+    raser3_score, raser3_select, route_score,
+};
 pub use ploke::evidence::{EvalEvidence, Evidence, Lane, eval_gate, evidence_gate, reliability};
 pub use ploke::frontier::{FrontierConfig, frontier_weights};

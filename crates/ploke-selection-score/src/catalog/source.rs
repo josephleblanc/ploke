@@ -1,15 +1,12 @@
 //! Source-reference metadata for catalog entries.
 
-/// Inclusive line span in a source document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineSpan {
-    pub start: u32,
-    pub end: u32,
-}
-
-/// Source note and optional line span.
+/// Source note and stable lookup key within that note.
+///
+/// Paper-backed entries use the arXiv id as their key, so source references
+/// survive markdown line shifts and heading-title edits. Non-paper entries use
+/// their mechanism id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceRef {
     pub path: &'static str,
-    pub span: Option<LineSpan>,
+    pub section_key: &'static str,
 }

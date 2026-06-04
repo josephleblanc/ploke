@@ -117,3 +117,5 @@ file and current code before treating a report as still open.
   Fixed in source: Prototype 1 broad headless-TUI slots now preserve typed post-apply timeout/abort/validation terminals instead of collapsing applied candidates into plain `timed_out`; direct-Google missing-validation canary passed, while same-target post-apply timeout validation remains pending.
 - [`2026-06-04-prototype1-post-apply-stale-snippet-indexing.md`](./2026-06-04-prototype1-post-apply-stale-snippet-indexing.md)
   Fixed in source: recorded headless-TUI tape coverage now proves post-apply refresh retracts stale snippet rows before indexing can emit `ContentMismatch` or byte-range warnings after truncating edits; fresh live-log validation remains pending.
+- [`2026-06-04-type-context-missing-type-contains-relation.md`](./2026-06-04-type-context-missing-type-contains-relation.md)
+  TUI/RAG type-context expansion can query `type_contains` against a database that was imported through a plain/active fixture path and does not contain typed type graph relations.

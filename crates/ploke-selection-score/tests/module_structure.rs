@@ -54,16 +54,24 @@ fn common_selection_tie_policy_keeps_earliest_index() {
 }
 
 #[test]
-fn catalog_preserves_formal_note_boundaries() {
+fn catalog_uses_stable_formal_note_keys() {
     let raser = registry::by_id("2606.02488-raser-route-argmax")
         .expect("RASER route argmax should be cataloged");
     assert_eq!(raser.paper_id, Some("2606.02488"));
     assert_eq!(raser.kind, MechanismKind::Selector);
     assert_eq!(raser.exactness, Exactness::Interpretive);
-    assert_eq!(raser.source[0].span.expect("line span").start, 577);
+    assert_eq!(raser.source[0].path, registry::FORMAL_NOTE);
+    assert_eq!(raser.source[0].section_key, "2606.02488");
 
     let unresolved = registry::by_id("2606.01066-verifier-metrics-lead")
         .expect("candidate-only mechanisms should remain cataloged separately");
     assert_eq!(unresolved.kind, MechanismKind::Unresolved);
     assert_eq!(unresolved.exactness, Exactness::NotFormalizable);
+    assert_eq!(unresolved.source[0].section_key, "2606.01066");
+
+    for spec in registry::all() {
+        if let Some(paper_id) = spec.paper_id {
+            assert_eq!(spec.source[0].section_key, paper_id);
+        }
+    }
 }
