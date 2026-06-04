@@ -2382,6 +2382,8 @@ target[id] := input[id_str], id = to_uuid(id_str)
     pub async fn create_new_backup_default(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
+        crate::type_graph::fixed_rules::register_ploke_fixed_rules(&new_db)
+            .map_err(DbError::from)?;
         Ok(Self {
             db: new_db,
             active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
@@ -2393,6 +2395,8 @@ target[id] := input[id_str], id = to_uuid(id_str)
     ) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
+        crate::type_graph::fixed_rules::register_ploke_fixed_rules(&new_db)
+            .map_err(DbError::from)?;
         Ok(Self {
             db: new_db,
             active_embedding_set: Arc::new(RwLock::new(active_embedding_set)),
@@ -3621,6 +3625,47 @@ mod tests {
         let db = setup_db();
         db.update_embeddings_batch(vec![])?;
         // Should not panic/error with empty input
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn backup_restore_registers_ploke_fixed_rules() -> Result<(), PlokeError> {
+        let source = Database::init_with_schema()?;
+        let path =
+            std::env::temp_dir().join(format!("ploke-db-fixed-rules-{}.sqlite", Uuid::new_v4()));
+        source.write_backup_to_path(&path)?;
+
+        let restored = Database::create_new_backup_default(&path).await?;
+        let rows = restored.raw_query(
+            r#"
+            roots[type_use_id, owner_id, root_type_id] :=
+                type_use_id = to_uuid("00000000-0000-0000-0000-000000000001"),
+                owner_id = to_uuid("00000000-0000-0000-0000-000000000002"),
+                root_type_id = to_uuid("00000000-0000-0000-0000-000000000003")
+
+            contains[parent_type_id, child_type_id] :=
+                parent_type_id = to_uuid("00000000-0000-0000-0000-000000000003"),
+                child_type_id = to_uuid("00000000-0000-0000-0000-000000000004")
+
+            valid_type_relation[source_id, target_id, relation_kind] :=
+                source_id = to_uuid("00000000-0000-0000-0000-000000000003"),
+                target_id = to_uuid("00000000-0000-0000-0000-000000000005"),
+                relation_kind = "Ordinary"
+
+            ?[
+                type_use_id,
+                owner_id,
+                root_type_id,
+                terminal_type_id,
+                target_id,
+                relation_kind,
+                depth
+            ] <~ ploke.TypeTargetPaths(roots[], contains[], valid_type_relation[])
+            "#,
+        )?;
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(rows.rows.len(), 1);
         Ok(())
     }
 
