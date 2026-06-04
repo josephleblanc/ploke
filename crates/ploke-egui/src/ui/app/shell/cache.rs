@@ -32,6 +32,8 @@ pub(crate) struct InspectorRenderCache {
     text_size_summaries: Vec<TextSizeSummaryEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
+    pub(super) run_evidence_source_label: Option<String>,
+    pub(super) run_evidence_catalog_error: Option<String>,
     #[cfg(all(
         not(target_arch = "wasm32"),
         feature = "dev",
@@ -41,6 +43,23 @@ pub(crate) struct InspectorRenderCache {
 }
 
 impl InspectorRenderCache {
+    pub(crate) fn set_run_evidence_context(
+        &mut self,
+        source_label: Option<String>,
+        catalog_error: Option<String>,
+    ) {
+        self.run_evidence_source_label = source_label;
+        self.run_evidence_catalog_error = catalog_error;
+    }
+
+    pub(super) fn run_evidence_source_label(&self) -> Option<&str> {
+        self.run_evidence_source_label.as_deref()
+    }
+
+    pub(super) fn run_evidence_catalog_error(&self) -> Option<&str> {
+        self.run_evidence_catalog_error.as_deref()
+    }
+
     pub(super) fn parent_create_rows(&mut self, key: ParentCreateRowsKey) -> ParentCreateRows {
         if !self.parent_create_rows.contains_key(&key) {
             self.parent_create_rows
@@ -421,17 +440,19 @@ fn layout_owned_cached_text(
         | CachedTextKind::MonospaceHover => text_style::monospace_font_id(style),
     };
     let text_color = inspector_cached_text_color(ui);
+    let warn_color = text_style::inspector_warn_text_color(ui);
+    let error_color = text_style::inspector_error_text_color(ui);
     let _span = tracing::trace_span!(scope::EGUI_TEXT_FONT_LAYOUT).entered();
     match kind {
         CachedTextKind::Plain | CachedTextKind::Monospace => {
             ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, text_color))
         }
-        CachedTextKind::MonospaceWarn => ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(text, font_id, text_style::inspector_warn_text_color(ui))
-        }),
-        CachedTextKind::MonospaceError => ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(text, font_id, text_style::inspector_error_text_color(ui))
-        }),
+        CachedTextKind::MonospaceWarn => {
+            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, warn_color))
+        }
+        CachedTextKind::MonospaceError => {
+            ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font_id, error_color))
+        }
         CachedTextKind::MonospaceBlock => {
             let job = egui::text::LayoutJob::simple(text, font_id, text_color, f32::INFINITY);
             ui.fonts_mut(|fonts| fonts.layout_job(job))

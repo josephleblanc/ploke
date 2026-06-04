@@ -16,6 +16,12 @@ pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL: &str = "/benchmark-fixtures/proto
 /// Basename of the default WASM dogfood graph (also accepted via `?graph=` alias).
 pub const STANDARD_GRAPH_SNAPSHOT_BASENAME: &str = "protocol-graph.json";
 
+/// Multi-generation trajectory fixture for trend/table QA; load via `?graph=trajectory-multi-gen.json`.
+pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL: &str =
+    "/benchmark-fixtures/trajectory-multi-gen.json";
+
+pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME: &str = "trajectory-multi-gen.json";
+
 #[derive(Debug, Clone)]
 pub struct LoadedGraph {
     pub label: String,
@@ -477,6 +483,9 @@ pub fn resolve_graph_fetch_url(query_value: &str) -> String {
     if path == format!("/{STANDARD_GRAPH_SNAPSHOT_BASENAME}") {
         return STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL.to_owned();
     }
+    if path == format!("/{TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME}") {
+        return TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL.to_owned();
+    }
     path
 }
 
@@ -610,6 +619,10 @@ mod tests {
         assert_eq!(
             resolve_graph_fetch_url(STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL),
             STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL
+        );
+        assert_eq!(
+            resolve_graph_fetch_url(TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME),
+            TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL
         );
     }
 

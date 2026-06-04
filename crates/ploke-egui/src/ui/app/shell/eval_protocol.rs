@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::call_review::render_call_review_scan;
+use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
 use super::{
     EvalProtocolRenderMode, InspectorRenderCache, closure_status_label, evidence_state_label,
@@ -27,6 +28,11 @@ pub(crate) fn render_eval_protocol_for_graph(
         return;
     }
 
+    render_run_evidence_context_strip(
+        ui,
+        render_cache.run_evidence_source_label(),
+        render_cache.run_evidence_catalog_error(),
+    );
     render_eval_protocol_dashboard_header(ui, render_cache, &dashboard);
     render_eval_protocol_visual_summary(ui, render_cache, dashboard.visual_summary());
 
@@ -238,6 +244,12 @@ fn render_eval_protocol_run_records_detail(
         cached_kv_text(ui, render_cache, "run records", "not_available");
         return;
     };
+
+    render_run_evidence_context_strip(
+        ui,
+        render_cache.run_evidence_source_label(),
+        render_cache.run_evidence_catalog_error(),
+    );
 
     cached_kv_optional_usize(
         ui,

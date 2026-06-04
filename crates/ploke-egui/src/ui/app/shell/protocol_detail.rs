@@ -13,6 +13,7 @@ use super::fields::*;
 use super::{InspectorRenderCache, show_inspector_collapsing};
 #[cfg(not(target_arch = "wasm32"))]
 use super::{render_decoded_tool_arguments, render_decoded_tool_result};
+use crate::ui::provenance::{EvidenceLane, render_evidence_lane_chip};
 
 fn render_protocol_artifact_coordinate(
     ui: &mut egui::Ui,
@@ -834,7 +835,7 @@ fn render_protocol_preview_typed_fields(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = (kind, tool_name, preview);
-        cached_kv_id(ui, render_cache, "decode", "native_only");
+        render_evidence_lane_chip(ui, EvidenceLane::UiDecodeUnavailable);
     }
 }
 

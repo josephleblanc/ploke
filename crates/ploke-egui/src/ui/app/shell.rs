@@ -17,6 +17,7 @@ use std::sync::Arc;
 mod cache;
 mod call_review;
 mod chrome;
+mod context_strip;
 mod eval_protocol;
 pub(super) mod fields;
 mod identity;
@@ -37,6 +38,7 @@ use self::run_records::{
 use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
 pub(crate) use cache::InspectorRenderCache;
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
+pub(crate) use context_strip::render_snapshot_load_banner;
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};
 pub(crate) use identity::{
     render_artifact_ids_for_inspector, render_diagnostics_detail, render_diagnostics_sidebar,

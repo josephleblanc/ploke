@@ -29,7 +29,7 @@ Defined on [`PaletteTokens`](../../src/ui/theme/palette.rs):
 - [`AppTheme`](../../src/ui/theme/scheme.rs) lives on [`OperatorApp`](../../src/ui/app/mod.rs).
 - Selector: top strip ([`shell/chrome.rs`](../../src/ui/app/shell/chrome.rs)).
 - Persistence: eframe storage key `ploke-egui-theme` (native + WASM when storage is available).
-- On change: `set_visuals` once, sync graph `StatusColors`, clear patch-diff and inspector text caches, `request_discard`, and egui `memory.data` (collapsing-header relayout).
+- On change: `set_visuals` once, sync graph `StatusColors`, clear patch-diff and inspector text caches, `on_theme_changed` (`request_discard` once), and **return early** from `OperatorApp::ui` so pass 1 does not paint the dashboard with a stale font atlas. Optional: targeted egui `memory.data` clears for collapsing-header relayout (not required for the garbled-text fix).
 - Automation: `?theme=<id>` (WASM), `--theme <id>` (native). See design-autonomy README for valid ids.
 
 ## Usage in UI code

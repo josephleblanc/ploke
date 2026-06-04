@@ -11,6 +11,7 @@ pub(crate) mod diff;
 pub(crate) mod eval_protocol;
 pub(crate) mod id_display;
 pub mod inspector;
+pub(crate) mod provenance;
 pub(crate) mod render;
 pub(crate) mod text;
 pub(crate) mod theme;

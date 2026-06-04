@@ -32,6 +32,50 @@ fn parent_create_render_rows_reuse_allocated_text_for_stable_key() {
 }
 
 #[test]
+fn theme_switch_simulates_invalidate_and_rebuilds_inspector_galley() {
+    let mut cache = InspectorRenderCache::default();
+    const LABEL: &str = "records";
+
+    egui::__run_test_ui(|ui| {
+        AppTheme {
+            scheme: NamedScheme::TokyoNight,
+        }
+        .apply_to_context(ui.ctx());
+
+        let before = cache.text_galley(ui, LABEL, CachedTextKind::Plain);
+        let before_color = before
+            .job
+            .sections
+            .first()
+            .map(|section| section.format.color)
+            .expect("galley section");
+        assert_eq!(cache.text_galley_rebuilds(), 1);
+
+        AppTheme {
+            scheme: NamedScheme::Dracula,
+        }
+        .apply_to_context(ui.ctx());
+        cache = InspectorRenderCache::default();
+
+        let after = cache.text_galley(ui, LABEL, CachedTextKind::Plain);
+        let after_color = after
+            .job
+            .sections
+            .first()
+            .map(|section| section.format.color)
+            .expect("galley section");
+        assert_eq!(after_color, NamedScheme::Dracula.tokens().text);
+        assert_ne!(before_color, after_color);
+        assert_eq!(cache.text_galley_rebuilds(), 1);
+        assert!(!Arc::ptr_eq(&before, &after));
+
+        let reused = cache.text_galley(ui, LABEL, CachedTextKind::Plain);
+        assert_eq!(cache.text_galley_rebuilds(), 1);
+        assert!(Arc::ptr_eq(&after, &reused));
+    });
+}
+
+#[test]
 fn inspector_text_galley_cache_invalidates_on_theme_layout_key_change() {
     let mut cache = InspectorRenderCache::default();
 

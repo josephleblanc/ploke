@@ -313,7 +313,6 @@ impl PaletteTokens {
     pub fn install_on_context(self, ctx: &egui::Context) {
         ctx.set_visuals(self.to_visuals());
         ctx.data_mut(|data| data.insert_temp(theme_tokens_id(), self));
-        ctx.request_discard("theme palette");
     }
 }
 

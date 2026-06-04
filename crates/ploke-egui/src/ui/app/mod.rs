@@ -496,6 +496,8 @@ impl eframe::App for OperatorApp {
         if theme_changed {
             self.sync_view_style_from_theme();
             self.invalidate_theme_caches(ui.ctx());
+            // Pass 1 must not paint dashboard with stale font atlas after palette change.
+            return;
         }
         #[cfg(all(
             not(target_arch = "wasm32"),
@@ -503,6 +505,18 @@ impl eframe::App for OperatorApp {
             feature = "native-benchmark"
         ))]
         self.record_benchmark_component("top_strip", top_strip_start);
+
+        let run_evidence_source = self.current_run_name().map(str::to_owned);
+        #[cfg(target_arch = "wasm32")]
+        let run_evidence_catalog_error = self.graph_catalog.last_error().map(str::to_owned);
+        #[cfg(not(target_arch = "wasm32"))]
+        let run_evidence_catalog_error = self.run_error.clone();
+        self.inspector_render_cache
+            .set_run_evidence_context(run_evidence_source, run_evidence_catalog_error.clone());
+        #[cfg(target_arch = "wasm32")]
+        if let Some(error) = self.graph_catalog.last_error() {
+            shell::render_snapshot_load_banner(ui, error);
+        }
 
         #[cfg(all(
             not(target_arch = "wasm32"),

@@ -2608,11 +2608,9 @@ pub(crate) fn tool_execution_summary(
             .as_ref()
             .map(|payload| payload.summary.as_str())
             .unwrap_or("completed"),
-        ploke_records::run_record::ToolResult::Failed(result) => result
-            .ui_payload
-            .as_ref()
-            .map(|payload| payload.summary.as_str())
-            .unwrap_or(result.error.as_str()),
+        ploke_records::run_record::ToolResult::Failed(_) => {
+            crate::ui::provenance::tool_failure_headline(tool)
+        }
     }
 }
 

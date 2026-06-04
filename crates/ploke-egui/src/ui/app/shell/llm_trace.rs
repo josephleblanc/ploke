@@ -2,6 +2,7 @@ use crate::ui::eval_protocol::EvalProtocolDashboard;
 use eframe::egui;
 use ploke_tree::Graph;
 
+use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
 use super::{
     InspectorRenderCache, format_f64, render_cached_code_block, render_patch_artifact_details,
@@ -9,6 +10,7 @@ use super::{
     show_inspector_collapsing, turn_outcome_elapsed_secs, turn_outcome_error, turn_outcome_label,
     turn_outcome_tool_count,
 };
+use crate::ui::text::style::inspector_error_text_color;
 
 fn fresh_kv_grid_row(ui: &mut egui::Ui, key: &str, value: &str, monospace_value: bool) {
     ui.label(key);
@@ -35,6 +37,11 @@ pub(crate) fn render_run_level_llm_trace_for_graph(
         return;
     }
 
+    render_run_evidence_context_strip(
+        ui,
+        render_cache.run_evidence_source_label(),
+        render_cache.run_evidence_catalog_error(),
+    );
     show_inspector_collapsing(
         ui,
         egui::CollapsingHeader::new("Run LLM Trace").default_open(true),
@@ -230,6 +237,25 @@ fn render_run_record_turn_llm_trace_summary(
                 cached_label(ui, render_cache, "tool steps");
                 let mut tool_steps = itoa::Buffer::new();
                 cached_monospace_label(ui, render_cache, tool_steps.format(turn.tool_calls.len()));
+                let failed_tools = turn
+                    .tool_calls
+                    .iter()
+                    .filter(|tool| {
+                        matches!(
+                            tool.result,
+                            ploke_records::run_record::ToolResult::Failed(_)
+                        )
+                    })
+                    .count();
+                if failed_tools > 0 {
+                    cached_label(ui, render_cache, "failed");
+                    let mut failed = itoa::Buffer::new();
+                    ui.label(
+                        egui::RichText::new(failed.format(failed_tools))
+                            .monospace()
+                            .color(inspector_error_text_color(ui)),
+                    );
+                }
                 if let Some(count) = turn_outcome_tool_count(&turn.outcome) {
                     cached_label(ui, render_cache, "outcome tools");
                     let mut outcome_tools = itoa::Buffer::new();

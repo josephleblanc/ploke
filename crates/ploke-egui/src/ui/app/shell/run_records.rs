@@ -15,10 +15,13 @@ use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
 
+use super::context_strip::render_run_evidence_context_strip;
 use super::fields::*;
 use super::{
     InspectorRenderCache, render_cached_code_block, render_unavailable, show_inspector_collapsing,
 };
+use crate::ui::provenance::{EvidenceLane, render_evidence_lane_chip, tool_failure_headline};
+use crate::ui::text::style::inspector_error_text_color;
 
 /// archaeology:run-record-branch-output
 /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md
@@ -51,6 +54,11 @@ fn render_run_records<'a>(
     render_cache: &mut InspectorRenderCache,
     records: impl IntoIterator<Item = RunRecordInspection<'a>>,
 ) {
+    render_run_evidence_context_strip(
+        ui,
+        render_cache.run_evidence_source_label(),
+        render_cache.run_evidence_catalog_error(),
+    );
     let mut rendered = false;
     for record in records {
         let _span = tracing::trace_span!(scope::INSPECTOR_RUN_RECORDS_ROW).entered();
@@ -360,6 +368,27 @@ fn render_run_record_turn(
     render_run_record_tool_steps(ui, render_cache, turn.turn.tool_calls.as_slice());
 }
 
+fn render_run_record_tool_steps_failed_count(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    failed: usize,
+) {
+    ui.horizontal(|ui| {
+        cached_label(ui, render_cache, "failed");
+        let mut count = itoa::Buffer::new();
+        let value = count.format(failed);
+        if failed > 0 {
+            ui.label(
+                egui::RichText::new(value)
+                    .monospace()
+                    .color(inspector_error_text_color(ui)),
+            );
+        } else {
+            cached_monospace_label(ui, render_cache, value);
+        }
+    });
+}
+
 fn render_run_record_turn_summary_card(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -550,7 +579,7 @@ pub(super) fn render_run_record_tool_steps(
     }
 
     cached_kv_usize(ui, render_cache, "tool steps", tools.len());
-    cached_kv_usize(ui, render_cache, "failed", failed.len());
+    render_run_record_tool_steps_failed_count(ui, render_cache, failed.len());
 
     for (index, tool) in failed {
         render_run_record_tool_step(ui, render_cache, index, tool, true);
@@ -607,6 +636,7 @@ fn render_run_record_tool_step_header(
         fresh_monospace_label(ui, step.format(index + 1));
         fresh_monospace_label(ui, tool_execution_name(tool));
         render_tool_execution_status_badge(ui, tool);
+        render_evidence_lane_chip(ui, EvidenceLane::lane_for_tool_result(tool));
     });
 }
 
@@ -633,8 +663,16 @@ fn render_run_record_tool_step_details(
         cached_monospace_label(ui, render_cache, latency.format(tool.latency_ms));
         cached_monospace_label(ui, render_cache, "ms");
     });
-    cached_label(ui, render_cache, "summary");
-    cached_wrapped_monospace_label(ui, render_cache, tool_execution_summary(tool));
+    if matches!(
+        tool.result,
+        ploke_records::run_record::ToolResult::Failed(_)
+    ) {
+        cached_label(ui, render_cache, "Harness error (recorded)");
+        cached_wrapped_monospace_label(ui, render_cache, tool_failure_headline(tool));
+    } else {
+        cached_label(ui, render_cache, "summary");
+        cached_wrapped_monospace_label(ui, render_cache, tool_execution_summary(tool));
+    }
     render_tool_arguments_section(ui, render_cache, index, tool);
     if let Some(payload) = tool_execution_ui_payload(tool) {
         render_tool_ui_payload(ui, render_cache, payload);
@@ -669,7 +707,7 @@ fn render_tool_arguments_section(
                 render_decoded_tool_arguments(ui, render_cache, decoded.as_ref());
             }
             #[cfg(target_arch = "wasm32")]
-            tool_kv_text(ui, render_cache, "decode", "native_only");
+            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeUnavailable);
 
             show_inspector_collapsing(
                 ui,
@@ -729,7 +767,7 @@ fn render_tool_result_section(
                     render_decoded_tool_result(ui, render_cache, decoded.as_ref());
                 }
                 #[cfg(target_arch = "wasm32")]
-                tool_kv_text(ui, render_cache, "decode", "native_only");
+                render_evidence_lane_chip(ui, EvidenceLane::UiDecodeUnavailable);
 
                 show_inspector_collapsing(
                     ui,
@@ -737,6 +775,7 @@ fn render_tool_result_section(
                         .id_salt(("run-record-tool-content-raw", index, call_id))
                         .default_open(false),
                     |ui| {
+                        render_evidence_lane_chip(ui, EvidenceLane::RecordedRawPayload);
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
@@ -754,6 +793,7 @@ fn render_tool_result_section(
                         .id_salt(("run-record-tool-error-raw", index, call_id))
                         .default_open(false),
                     |ui| {
+                        render_evidence_lane_chip(ui, EvidenceLane::RecordedRawPayload);
                         render_tool_raw_result_section(
                             ui,
                             render_cache,
@@ -827,6 +867,11 @@ fn render_tool_ui_payload(
         ui,
         egui::CollapsingHeader::new("tool ui payload").default_open(true),
         |ui| {
+            ui.label(
+                egui::RichText::new("Exported tool UI witness")
+                    .small()
+                    .weak(),
+            );
             tool_kv_text(ui, render_cache, "tool", payload.tool.as_str());
             tool_kv_text(ui, render_cache, "call id", payload.call_id.as_str());
             if let Some(request_id) = payload.request_id.as_deref() {
@@ -885,6 +930,7 @@ fn render_tool_error_wire(
         ui,
         egui::CollapsingHeader::new("typed error").default_open(true),
         |ui| {
+            render_evidence_lane_chip(ui, EvidenceLane::RecordedTypedErrorWire);
             tool_kv_text(ui, render_cache, "user", error.user.as_str());
             tool_kv_text(ui, render_cache, "system", error.system.as_str());
             tool_kv_bool(ui, render_cache, "ok", error.llm.ok);
@@ -929,11 +975,11 @@ pub(super) fn render_decoded_tool_arguments(
 ) {
     match decoded {
         PersistedToolCallArguments::Decoded(arguments) => {
-            tool_kv_text(ui, render_cache, "decode", "ok");
+            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeOk);
             render_tool_call_arguments(ui, render_cache, arguments);
         }
         PersistedToolCallArguments::ParseFailure(failure) => {
-            tool_kv_text(ui, render_cache, "decode", "failed");
+            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeFailed);
             tool_kv_text(ui, render_cache, "tool", failure.tool.as_str());
             tool_kv_debug(ui, render_cache, "error", &failure.error);
         }
@@ -1089,11 +1135,11 @@ pub(super) fn render_decoded_tool_result(
 ) {
     match decoded {
         PersistedToolResultContent::Decoded(result) => {
-            tool_kv_text(ui, render_cache, "decode", "ok");
+            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeOk);
             render_tool_result_content(ui, render_cache, result);
         }
         PersistedToolResultContent::ParseFailure(failure) => {
-            tool_kv_text(ui, render_cache, "decode", "failed");
+            render_evidence_lane_chip(ui, EvidenceLane::UiDecodeFailed);
             tool_kv_text(ui, render_cache, "tool", failure.tool.as_str());
             tool_kv_debug(ui, render_cache, "error", &failure.error);
         }

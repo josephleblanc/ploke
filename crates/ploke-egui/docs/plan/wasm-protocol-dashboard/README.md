@@ -96,6 +96,8 @@ If the export is hosted with CORS enabled:
 
 Checked-in export of campaign `p1-five-gen-1x3-20260516-1` (`STANDARD_RUN_ROOT` in `benchmark.rs`): five generations, six history blocks, selection-rich data for trajectory UI dogfood. Same bytes as `standard-prototype1-graph-snapshot.json` when exported from the same run root.
 
+**Known data gap:** current checked-in snapshots may omit `selection_decision.formula` (ScoreChildProp row records). The trajectory generation table and `trajectory_generations()` still list generations and outcomes; `score_child_prop_total` and `SelectionMetricWitness` stay empty until export includes formula (requires schema/export change, not UI-only).
+
 **Regenerate locally** (requires eval-home run root):
 
 ```bash
