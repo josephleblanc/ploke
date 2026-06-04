@@ -282,52 +282,52 @@ mod tests {
 
         egui::__run_test_ui(|ui| {
             run_once.call_once(|| {
-            let first = PatchDiffInput {
-                patch_id: "patch:1",
-                target_relpath: "src/lib.rs",
-                source_hash: "sha256:source-a",
-                proposed_hash: "sha256:proposed-a",
-                source_content: "fn a() {}\n",
-                proposed_content: "fn b() {}\n",
-            };
-            let mut rebuilds = cache.rebuilds();
-            cache.highlighted_galley(ui, first);
-            assert!(
-                cache.rebuilds() > rebuilds,
-                "expected cache miss on first highlighted galley"
-            );
-            rebuilds = cache.rebuilds();
+                let first = PatchDiffInput {
+                    patch_id: "patch:1",
+                    target_relpath: "src/lib.rs",
+                    source_hash: "sha256:source-a",
+                    proposed_hash: "sha256:proposed-a",
+                    source_content: "fn a() {}\n",
+                    proposed_content: "fn b() {}\n",
+                };
+                let mut rebuilds = cache.rebuilds();
+                cache.highlighted_galley(ui, first);
+                assert!(
+                    cache.rebuilds() > rebuilds,
+                    "expected cache miss on first highlighted galley"
+                );
+                rebuilds = cache.rebuilds();
 
-            cache.highlighted_galley(ui, first);
-            assert_eq!(
-                cache.rebuilds(),
-                rebuilds,
-                "expected cache hit on repeated input"
-            );
+                cache.highlighted_galley(ui, first);
+                assert_eq!(
+                    cache.rebuilds(),
+                    rebuilds,
+                    "expected cache hit on repeated input"
+                );
 
-            cache.highlighted_galley(
-                ui,
-                PatchDiffInput {
-                    source_hash: "sha256:source-b",
-                    source_content: "fn c() {}\n",
-                    ..first
-                },
-            );
-            assert!(
-                cache.rebuilds() > rebuilds,
-                "expected cache miss when diff input hash changes"
-            );
-            rebuilds = cache.rebuilds();
+                cache.highlighted_galley(
+                    ui,
+                    PatchDiffInput {
+                        source_hash: "sha256:source-b",
+                        source_content: "fn c() {}\n",
+                        ..first
+                    },
+                );
+                assert!(
+                    cache.rebuilds() > rebuilds,
+                    "expected cache miss when diff input hash changes"
+                );
+                rebuilds = cache.rebuilds();
 
-            let other = crate::ui::theme::PaletteTokens::for_scheme(
-                crate::ui::theme::NamedScheme::GruvboxLight,
-            );
-            other.install_on_context(ui.ctx());
-            cache.highlighted_galley(ui, first);
-            assert!(
-                cache.rebuilds() > rebuilds,
-                "expected cache miss when theme key changes"
-            );
+                let other = crate::ui::theme::PaletteTokens::for_scheme(
+                    crate::ui::theme::NamedScheme::GruvboxLight,
+                );
+                other.install_on_context(ui.ctx());
+                cache.highlighted_galley(ui, first);
+                assert!(
+                    cache.rebuilds() > rebuilds,
+                    "expected cache miss when theme key changes"
+                );
             });
         });
     }
