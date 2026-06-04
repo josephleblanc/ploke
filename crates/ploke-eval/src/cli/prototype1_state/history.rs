@@ -3948,11 +3948,11 @@ impl GrantEvidence {
                 ),
             });
         }
-        let Some(runtime_id) = self.coordinate.runtime_id() else {
+        if self.coordinate.runtime_id().is_none() {
             return Err(HistoryError::InvalidSelectionDecision {
                 detail: "surface grant coordinate is missing runtime identity".to_string(),
             });
-        };
+        }
         if let Some(candidate) = self.coordinate.candidate() {
             if candidate.node_id.is_empty() {
                 return Err(HistoryError::InvalidSelectionDecision {

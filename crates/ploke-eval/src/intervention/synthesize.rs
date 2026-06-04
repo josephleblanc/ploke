@@ -378,10 +378,16 @@ impl InterventionSynthesisProcedure {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RecordedInterventionSynthesisRun {
-    pub procedure_name: String,
-    pub output: InterventionSynthesisOutput,
-    pub artifact: InterventionSynthesisArtifact,
+pub(crate) struct RecordedInterventionSynthesisRun {
+    pub(crate) procedure_name: String,
+    pub(crate) output: InterventionSynthesisOutput,
+    artifact: InterventionSynthesisArtifact,
+}
+
+impl RecordedInterventionSynthesisRun {
+    pub(crate) fn artifact_json(&self) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::to_value(&self.artifact)
+    }
 }
 
 pub(crate) async fn synthesize_intervention_with_llm(

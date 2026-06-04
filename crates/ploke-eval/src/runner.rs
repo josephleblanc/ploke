@@ -662,17 +662,6 @@ struct EvalEmbeddingSelection {
     dimensions: u32,
 }
 
-impl EvalEmbeddingSelection {
-    fn cache_key(&self) -> String {
-        let provider = self
-            .provider
-            .as_ref()
-            .map(|provider| provider.slug.as_str())
-            .unwrap_or("<auto>");
-        format!("{}::{provider}", self.model.id)
-    }
-}
-
 #[derive(Debug, Clone)]
 struct StartingDbCachePaths {
     snapshot: PathBuf,
@@ -1371,6 +1360,7 @@ fn snapshot_message(
     })
 }
 
+#[cfg(test)]
 async fn collect_patch_artifact(state: &Arc<AppState>) -> PatchArtifact {
     collect_patch_artifact_with_expected(state, &[])
         .await
@@ -4032,6 +4022,7 @@ pub(crate) struct WorkspaceTuiRuntime {
     _config_guard: XdgConfigHomeGuard,
 }
 
+#[cfg(test)]
 pub(crate) async fn setup_workspace_tui_runtime(
     workspace_root: &Path,
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {

@@ -25,10 +25,9 @@ use crate::{
         CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
         CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
         HistoryCandidateSource, HistoryCandidates, HistoryError, HistoryHash,
-        SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
-        SealedEvaluatorIdentity, SealedProtocolArtifactEvidence, SealedRunEvidence,
-        SealedRunProtocolEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
-        SelectionProjectionFailureKind, SelectionScope, SubjectRef, TraversalCandidateSource,
+        SealedCandidateEvidence, SealedComparedRunEvidence, SealedRunEvidence,
+        SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+        SelectionScope, SubjectRef, TraversalCandidateSource,
     },
     metric::{self, Summary},
 };
@@ -2155,9 +2154,10 @@ mod tests {
             history::{
                 CandidateArtifact, CandidateCoordinate, CandidateLifecycle, HistoryCandidate,
                 HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
-                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
-                SealedEvidenceCitation, SelectionDecisionEntry, SelectionScope, SubjectRef,
-                TraversalEvidence,
+                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
+                SealedEvaluationEvidence, SealedEvaluatorIdentity, SealedEvidenceCitation,
+                SealedProtocolArtifactEvidence, SealedRunProtocolEvidence, SelectionDecisionEntry,
+                SelectionScope, SubjectRef, TraversalEvidence,
             },
         },
         intervention::{
