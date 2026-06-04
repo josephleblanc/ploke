@@ -86,6 +86,23 @@ Parent patch generation may attempt more total slots than `max` over time, but
 it must not run more slot attempts concurrently than the maximum number of
 child candidates that can be admitted.
 
+The per-slot headless TUI retry budget belongs under `[execution.broad_tui]`:
+
+```toml
+[execution.broad_tui]
+max_attempts = 2
+fresh_slots_per_child = 2
+timeout_secs = 900
+```
+
+- `max_attempts`: Optional maximum attempts inside each headless TUI patch
+  generation slot. If omitted, the harness request contract supplies the
+  attempt budget.
+- `fresh_slots_per_child`: Optional count of fresh broad-harness slots to
+  publish per desired child. If omitted, the current runtime default is used.
+- `timeout_secs`: Optional per-slot headless TUI turn timeout. If omitted, the
+  harness request contract supplies the timeout budget.
+
 ## Profile Conflicts
 
 The profile rejects internally conflicting settings:
@@ -111,6 +128,8 @@ The profile rejects internally conflicting settings:
   instance, a nonempty `execution.mbe.python`, and nonzero
   `execution.mbe.workers`.
 - `execution.observe_child_stale_after_secs` must be nonzero.
+- `execution.broad_tui.max_attempts`, `fresh_slots_per_child`, and
+  `timeout_secs`, when present, must be nonzero.
 - `selection.oracle.mode = "relative-score"` with
   `selection.oracle.require_evidence = true` requires MBE to be enabled and at
   least one configured target instance.

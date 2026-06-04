@@ -2501,6 +2501,15 @@ mod tests {
         }
 
         fn mint_at_child_plan_phase_with_budget(eval_home: &Path, min: u32, max: u32) -> Self {
+            Self::mint_at_child_plan_phase_with_profile(eval_home, min, max, |_| {})
+        }
+
+        fn mint_at_child_plan_phase_with_profile(
+            eval_home: &Path,
+            min: u32,
+            max: u32,
+            configure: impl FnOnce(&mut Prototype1RunProfile),
+        ) -> Self {
             let campaign_id = "campaign";
             let instance_id = "BurntSushi__ripgrep-2209";
             let campaign_dir = eval_home.join("campaigns").join(campaign_id);
@@ -2509,12 +2518,12 @@ mod tests {
             fs::create_dir_all(eval_home.join("instances/prototype1/campaign"))
                 .expect("create instances root");
             fs::create_dir_all(eval_home.join("batches")).expect("create batches root");
-            fs::write(campaign_dir.join("slice.jsonl"), "{}\n").expect("write slice");
+            let slice_path = campaign_dir.join("slice.jsonl");
 
             let mut manifest = CampaignManifest::new(campaign_id.to_string());
             manifest.dataset_sources = vec![RegistryDatasetSource {
                 key: None,
-                path: campaign_dir.join("slice.jsonl"),
+                path: slice_path.clone(),
                 label: "slice".to_string(),
                 url: None,
             }];
@@ -2525,7 +2534,8 @@ mod tests {
             manifest.batches_root = Some(eval_home.join("batches"));
             let manifest_path = save_campaign_manifest(&manifest).expect("save manifest");
 
-            let run_profile = profile(Prototype1ChildScheduleMode::FullBatch, min, max);
+            let mut run_profile = profile(Prototype1ChildScheduleMode::FullBatch, min, max);
+            configure(&mut run_profile);
             run_profile.validate().expect("profile validates");
             let operator = profile::OperatorRunProfile {
                 source_path: eval_home.join("profiles/test-profile.toml"),
@@ -2547,7 +2557,9 @@ mod tests {
             )
             .expect("write closure");
 
-            init_repo_with_parent_identity(&repo_root, campaign_id, instance_id);
+            let base_sha = init_repo_with_parent_identity(&repo_root, campaign_id, instance_id);
+            write_slice_dataset(&slice_path, instance_id, &base_sha);
+            clone_repo_cache(&repo_root, &eval_home.join("repos/BurntSushi/ripgrep"));
             let parent_identity = load_parent_identity_optional(&repo_root)
                 .expect("load identity")
                 .unwrap();
@@ -2687,10 +2699,7 @@ Suggested validation after editing: run `cargo test`.
     }
 
     #[cfg(feature = "live_api_tests")]
-    fn first_live_published_request(
-        manifest_path: &Path,
-    ) -> crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest
-    {
+    fn first_live_published_request_path(manifest_path: &Path) -> PathBuf {
         let request_dir = manifest_path
             .parent()
             .expect("campaign manifest parent")
@@ -2709,7 +2718,16 @@ Suggested validation after editing: run `cargo test`.
                 request_dir.display()
             )
         });
-        let bytes = fs::read(path)
+        path.clone()
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn first_live_published_request(
+        manifest_path: &Path,
+    ) -> crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest
+    {
+        let path = first_live_published_request_path(manifest_path);
+        let bytes = fs::read(&path)
             .unwrap_or_else(|err| panic!("read published request '{}': {err}", path.display()));
         serde_json::from_slice(&bytes)
             .unwrap_or_else(|err| panic!("decode published request '{}': {err}", path.display()))
@@ -2797,7 +2815,11 @@ Suggested validation after editing: run `cargo test`.
         }
     }
 
-    fn init_repo_with_parent_identity(repo_root: &Path, campaign_id: &str, instance_id: &str) {
+    fn init_repo_with_parent_identity(
+        repo_root: &Path,
+        campaign_id: &str,
+        instance_id: &str,
+    ) -> String {
         fs::create_dir_all(repo_root).expect("create repo root");
         run_git(repo_root, &["init"]);
         write_protected_core(repo_root);
@@ -2805,6 +2827,7 @@ Suggested validation after editing: run `cargo test`.
         fs::write(repo_root.join("README.md"), "prototype1 fixture\n").expect("write readme");
         run_git(repo_root, &["add", "--all"]);
         commit(repo_root, "base");
+        let base_sha = git_stdout(repo_root, &["rev-parse", "HEAD"]);
 
         let branch = format!("prototype1-parent-{campaign_id}-gen0");
         run_git(repo_root, &["switch", "-c", &branch]);
@@ -2821,6 +2844,41 @@ Suggested validation after editing: run `cargo test`.
             &["add", ".ploke/prototype1/parent_identity.json"],
         );
         commit(repo_root, &parent_identity_commit_message(&identity));
+        base_sha
+    }
+
+    fn write_slice_dataset(path: &Path, instance_id: &str, base_sha: &str) {
+        let record = serde_json::json!({
+            "instance_id": instance_id,
+            "org": "BurntSushi",
+            "repo": "ripgrep",
+            "number": 2209,
+            "title": "Fix prototype1 live canary",
+            "body": "The descendant canary test should pass after editing src/lib.rs.",
+            "base": {
+                "sha": base_sha,
+            },
+            "fix_patch": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        });
+        fs::write(path, format!("{record}\n")).expect("write slice");
+    }
+
+    fn clone_repo_cache(source: &Path, target: &Path) {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).expect("create repo cache parent");
+        }
+        let output = Command::new("git")
+            .arg("clone")
+            .arg(source)
+            .arg(target)
+            .output()
+            .expect("git clone repo cache");
+        assert!(
+            output.status.success(),
+            "git clone repo cache failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn run_git(repo_root: &Path, args: &[&str]) {
@@ -2836,6 +2894,22 @@ Suggested validation after editing: run `cargo test`.
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn git_stdout(repo_root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
     fn commit(repo_root: &Path, message: &str) {
@@ -3239,6 +3313,162 @@ Suggested validation after editing: run `cargo test`.
                 );
             }
         }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires Google ADC and makes a live Gemini call through prototype1-state"]
+    async fn live_google_state_broad_tui_writes_self_edit_replayable_tape() {
+        const TEST_NAME: &str = "live_google_state_broad_tui_writes_self_edit_replayable_tape";
+
+        let started = std::time::Instant::now();
+        let mut previous = started;
+        if !crate::test_support::live_google_env_or_skip(TEST_NAME).await {
+            return;
+        }
+        print_live_step_timing("google_auth_checked", started, &mut previous);
+        assert!(
+            std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_none(),
+            "{TEST_NAME} must not run with the broad TUI fixture hook enabled"
+        );
+
+        let _llm_guard = crate::test_support::llm_lock().lock().await;
+        let temp = crate::test_support::live_tempdir("prototype1-state-broad-tui-replay-");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![
+            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+            ("PLOKE_EVAL_HEADLESS_TUI_LIVE", OsString::from("1")),
+            (
+                "PLOKE_EVAL_HEADLESS_TUI_LIVE_RESOURCES",
+                OsString::from("1"),
+            ),
+        ]);
+        let model_id = crate::test_support::live_google_model_id();
+        crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
+        print_live_step_timing("model_config_written", started, &mut previous);
+
+        let world =
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 1, 1, |profile| {
+                profile.execution.stop_after = profile::ExecutionStopAfter::Materialize;
+                profile.execution.broad_tui = profile::BroadTui {
+                    max_attempts: Some(1),
+                    fresh_slots_per_child: Some(1),
+                    timeout_secs: Some(120),
+                };
+            });
+        write_live_step_evidence(&world.manifest_path);
+        let replay_workspace = temp.path().join("self-edit-replay-workspace");
+        let clone = Command::new("git")
+            .arg("clone")
+            .arg(&world.repo_root)
+            .arg(&replay_workspace)
+            .output()
+            .expect("git clone replay workspace");
+        assert!(
+            clone.status.success(),
+            "git clone replay workspace failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&clone.stdout),
+            String::from_utf8_lossy(&clone.stderr)
+        );
+        print_live_step_timing("world_minted", started, &mut previous);
+
+        let before_requests = count_broad_requests(&world.manifest_path);
+        let command = crate::cli::Prototype1StateCommand {
+            campaign: Some("campaign".to_string()),
+            node_id: None,
+            repo_root: Some(world.repo_root.clone()),
+            init_parent_identity: false,
+            identity_branch: None,
+            identity_instance: None,
+            handoff_invocation: None,
+            stop_after: crate::cli::Prototype1StateStopAfter::Materialize,
+            successor_selection: crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
+            successor_selection_seed: 0,
+            successor_selection_metrics: crate::cli::Prototype1TraversalMetrics::Operational,
+            candidate_generator: crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest,
+            format: InspectOutputFormat::Json,
+        };
+        let state_result = command.run().await;
+        print_live_step_timing("prototype1_state_returned", started, &mut previous);
+        state_result
+            .as_ref()
+            .expect("prototype1-state broad TUI materialize run should complete");
+
+        let request_path = first_live_published_request_path(&world.manifest_path);
+        let request_bytes = fs::read(&request_path)
+            .unwrap_or_else(|err| panic!("read request '{}': {err}", request_path.display()));
+        let published: PublishedBroadHarnessRequest = serde_json::from_slice(&request_bytes)
+            .unwrap_or_else(|err| panic!("decode request '{}': {err}", request_path.display()));
+        let raw_response_path = published
+            .submitted_result_path()
+            .with_extension("turn-live")
+            .join(ploke_records::llm_response::FULL_RESPONSE_TRACE_FILE);
+        assert!(
+            raw_response_path.exists(),
+            "prototype1-state broad TUI should write replayable raw response tape at '{}'; state_result={state_result:?}",
+            raw_response_path.display()
+        );
+
+        let summaries = headless_summaries(&world.manifest_path);
+        print_headless_profile(&summaries);
+        assert_eq!(
+            summaries.len(),
+            1,
+            "profile broad_tui.fresh_slots_per_child=1 should publish/run one broad TUI slot"
+        );
+        assert!(
+            summaries.iter().any(|summary| {
+                summary.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolRequest { .. }
+                    )
+                })
+            }),
+            "live prototype1-state broad TUI should produce a model-driven tool request"
+        );
+        assert_eq!(
+            count_broad_requests(&world.manifest_path),
+            before_requests + 1,
+            "profile broad_tui.fresh_slots_per_child=1 should publish one request"
+        );
+
+        let budget = crate::cli::prototype1_state::edit_surface::tui_adapter::Budget::new(1, 120)
+            .expect("valid self-edit replay budget");
+        let replay = crate::replay::self_edit::SelfEditProbeRequest {
+            request_path,
+            source: crate::replay::self_edit::Source::RawFullResponse {
+                path: raw_response_path,
+            },
+            workspace: replay_workspace,
+            event_index: 0,
+            through_event: false,
+            through_response_index: None,
+            tail: crate::replay::turn::ReplayTail::Stop,
+            budget,
+            model: None,
+        }
+        .run()
+        .await
+        .unwrap_or_else(|err| {
+            panic!("self-edit-live raw response replay failed after prototype1-state: {err}")
+        });
+        print_live_step_timing("self_edit_replay_returned", started, &mut previous);
+
+        assert_eq!(replay.source_kind, "raw_full_response");
+        assert!(
+            replay.selected_response_records.unwrap_or(0) > 0,
+            "self-edit-live replay should select provider responses from the prototype1-state tape"
+        );
+        assert!(
+            replay.observed.events.iter().any(|event| {
+                matches!(
+                    event,
+                    crate::cli::prototype1_state::edit_surface::tui_adapter::evidence::Event::ToolRequest { .. }
+                )
+            }),
+            "self-edit-live replay should drive recorded provider tool calls through current TUI tools"
+        );
     }
 
     fn write_protected_core(repo: &Path) {

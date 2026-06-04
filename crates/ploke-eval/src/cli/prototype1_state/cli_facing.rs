@@ -634,6 +634,7 @@ struct HarnessRequestBatch {
     slots: Vec<HarnessRequestSlot>,
     child_budget: Prototype1ChildBudget,
     patch_generation_parallel_cap: u32,
+    broad_tui: profile::BroadTui,
 }
 
 #[derive(Clone, Copy)]
@@ -641,6 +642,7 @@ struct ChildPlanEnv<'a> {
     campaign_id: &'a str,
     manifest_path: &'a Path,
     repo_root: &'a Path,
+    broad_tui: profile::BroadTui,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -951,6 +953,7 @@ impl CandidateGenerationConfig {
 struct Prototype1StateRunShape {
     stop_after: Prototype1StateStopAfter,
     observe_child_stale_after: Duration,
+    broad_tui: profile::BroadTui,
     candidate_generation: CandidateGenerationConfig,
     successor_selection: Prototype1SuccessorSelection,
     successor_selection_seed: u64,
@@ -965,6 +968,7 @@ impl Prototype1StateRunShape {
         Self {
             stop_after: command.stop_after,
             observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
+            broad_tui: profile::BroadTui::default(),
             candidate_generation: CandidateGenerationConfig::from_command(command),
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
@@ -979,6 +983,7 @@ impl Prototype1StateRunShape {
         Self {
             stop_after: profile.execution.state_stop_after(),
             observe_child_stale_after: profile.execution.observe_child_stale_after(),
+            broad_tui: profile.execution.broad_tui,
             candidate_generation: CandidateGenerationConfig::from_profile_generation(
                 profile.generation,
             ),
@@ -1132,6 +1137,7 @@ async fn run_parent_target_selection(
             env.repo_root,
             parent,
             child_budget,
+            env.broad_tui,
         )
         .map(ParentTargetSelection::AwaitingHarnessBatch),
         CandidateGenerationConfig::DeterministicTuiTools => {
@@ -1247,6 +1253,7 @@ fn publish_broad_harness_child_plan_request(
     repo_root: &Path,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
 ) -> Result<HarnessRequestBatch, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
@@ -1254,8 +1261,11 @@ fn publish_broad_harness_child_plan_request(
     write_node_projection(&running_parent)?;
     let admission_binding = broad_harness_request_admission_binding(&parent, repo_root)?;
     let slot_budget = Prototype1ChildBudget::new(1, 1);
+    let slots_per_child = broad_tui
+        .fresh_slots_per_child
+        .unwrap_or(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD);
     let slot_count = (child_budget.max as usize)
-        .checked_mul(BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD)
+        .checked_mul(slots_per_child)
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
             detail: format!(
                 "broad harness child budget max {} overflowed fresh attempt allocation",
@@ -1299,6 +1309,7 @@ fn publish_broad_harness_child_plan_request(
         slots,
         child_budget,
         patch_generation_parallel_cap: child_budget.parallel_targets(),
+        broad_tui,
     })
 }
 
@@ -1422,6 +1433,7 @@ fn try_admit_request_result(
 
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
+    broad_tui: profile::BroadTui,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
     #[cfg(test)]
     if broad_headless_tui_fixture_enabled() {
@@ -1433,8 +1445,12 @@ async fn run_broad_headless_tui_attempt(
         return run_broad_headless_tui_attempt_with_options(slot, &options).await;
     }
 
-    let max_attempts = broad_headless_tui_env_u32("PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS")?;
-    let timeout_secs = broad_headless_tui_env_u64("PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS")?;
+    let max_attempts = broad_tui.max_attempts.or(broad_headless_tui_env_u32(
+        "PLOKE_EVAL_BROAD_TUI_MAX_ATTEMPTS",
+    )?);
+    let timeout_secs = broad_tui.timeout_secs.or(broad_headless_tui_env_u64(
+        "PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS",
+    )?);
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
     run_broad_headless_tui_attempt_with_options(slot, &options).await
 }
@@ -2367,6 +2383,7 @@ fn publish_broad_harness_child_plan_from_admitted(
             }],
             child_budget: Prototype1ChildBudget::new(1, 1),
             patch_generation_parallel_cap: 1,
+            broad_tui: profile::BroadTui::default(),
         },
         vec![admitted],
     )
@@ -4331,12 +4348,14 @@ async fn resolve_child_plan(
     candidate_generation: CandidateGenerationConfig,
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     let env = ChildPlanEnv {
         campaign_id,
         manifest_path,
         repo_root,
+        broad_tui,
     };
     info!(
         target: EXECUTION_DEBUG_TARGET,
@@ -4459,7 +4478,11 @@ async fn admit_broad_harness_batch(
             let Some((slot_index, slot)) = pending.next() else {
                 break;
             };
-            running.spawn(run_broad_slot_for_admission(slot_index, slot));
+            running.spawn(run_broad_slot_for_admission(
+                slot_index,
+                slot,
+                batch.broad_tui,
+            ));
         }
 
         if running.is_empty() {
@@ -4547,6 +4570,7 @@ struct BroadSlotAttempt {
 async fn run_broad_slot_for_admission(
     slot_index: usize,
     slot: HarnessRequestSlot,
+    broad_tui: profile::BroadTui,
 ) -> BroadSlotAttempt {
     let result = if slot.published.submitted_result_path().exists() {
         Ok(None)
@@ -4559,7 +4583,7 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot).await
+        run_broad_headless_tui_attempt(&slot, broad_tui).await
     };
     cleanup_broad_slot_target(&slot);
     BroadSlotAttempt {
@@ -4782,6 +4806,7 @@ pub(crate) async fn resolve_profile_child_plan(
         CandidateGenerationConfig::from_profile_generation(run_profile.generation),
         None,
         child_budget,
+        run_profile.execution.broad_tui,
     )
     .await
 }
@@ -6742,6 +6767,7 @@ impl Prototype1StateCommand {
             run_shape.candidate_generation,
             self.node_id.as_deref(),
             plan_child_budget,
+            run_shape.broad_tui,
         )
         .await?;
         let PlannedChildren {

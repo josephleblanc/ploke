@@ -1109,9 +1109,14 @@ async fn zero_admission_batch_is_persisted() {
     // batch carrying Parent<AwaitingHarnessPlan>; from here the controller must
     // either lock a ChildPlan message or fail without pretending the phase is
     // still fresh.
-    let batch: HarnessRequestBatch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch: HarnessRequestBatch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     let first_diagnostics =
         broad_headless_tui_diagnostics_path(batch.slots[0].published.submitted_result_path());
     write_json_file_pretty(&first_diagnostics, &historical_summary)
@@ -1128,6 +1133,7 @@ async fn zero_admission_batch_is_persisted() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             batch,
             Vec::new(),
@@ -1423,6 +1429,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         parent,
         budget,
@@ -1534,9 +1541,14 @@ fn broad_batch_publication_allocates_request_slots() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(2, 3);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots from active artifact head");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots from active artifact head");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 3);
@@ -1590,9 +1602,14 @@ fn broad_batch_default_cap_respects_small_max() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(1, 2);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -1611,9 +1628,14 @@ fn broad_batch_uses_explicit_parallel_targets() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(2, 3).with_parallel_targets(2);
 
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("broad harness should allocate request slots");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("broad harness should allocate request slots");
 
     assert_eq!(batch.child_budget, budget);
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -2075,6 +2097,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         parent,
         budget,
@@ -2175,6 +2198,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -2278,6 +2302,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -2326,9 +2351,14 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
 
     let submitted_indexes = [0_usize, 1, 2];
@@ -2350,6 +2380,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     ))
@@ -2459,9 +2490,14 @@ async fn broad_slots_run_in_parallel() {
     let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget: Prototype1ChildBudget = Prototype1ChildBudget::new(2, 2).with_parallel_targets(2);
-    let batch: HarnessRequestBatch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch: HarnessRequestBatch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
     assert_eq!(
         batch.slots.len(),
@@ -2475,6 +2511,7 @@ async fn broad_slots_run_in_parallel() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     ))
@@ -2550,9 +2587,14 @@ async fn child_fanout_is_parallel() {
     let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
 
     for (index, slot) in batch.slots.iter().take(3).enumerate() {
@@ -2568,6 +2610,7 @@ async fn child_fanout_is_parallel() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2690,15 +2733,21 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2790,15 +2839,21 @@ exit 0
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -2883,15 +2938,21 @@ async fn child_spawn_observes_failed_result() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(1, 1);
-    let batch =
-        publish_broad_harness_child_plan_request(&manifest_path, &repo_root, parent, budget)
-            .expect("publish broad harness batch");
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
     )
@@ -3054,6 +3115,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
         slots,
         child_budget: budget,
         patch_generation_parallel_cap: 2,
+        broad_tui: profile::BroadTui::default(),
     };
 
     let result = publish_broad_harness_child_plan_from_admitted_batch(
@@ -3061,6 +3123,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         batch,
         admitted,
@@ -3129,6 +3192,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         receipt,
         admitted,
@@ -3181,6 +3245,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             campaign_id: "campaign",
             manifest_path: &manifest_path,
             repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
         },
         resumed_parent,
     )
@@ -3259,6 +3324,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             parent,
         )
@@ -3321,6 +3387,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 campaign_id: "campaign",
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
             },
             parent,
         )
