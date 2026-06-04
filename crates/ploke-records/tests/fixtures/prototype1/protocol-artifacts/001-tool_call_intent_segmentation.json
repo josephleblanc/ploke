@@ -1,0 +1,814 @@
+{
+  "schema_version": "protocol-artifact.v1",
+  "procedure_name": "tool_call_intent_segmentation",
+  "subject_id": "run-fixture",
+  "run_id": "run-fixture",
+  "created_at_ms": 1770000000000,
+  "input": {
+    "subject_id": "run-fixture",
+    "total_turns": 1,
+    "total_calls_in_run": 2,
+    "turns": [
+      {
+        "turn": 1,
+        "tool_count": 2,
+        "failed_tool_count": 0,
+        "patch_proposed": false,
+        "patch_applied": false
+      }
+    ],
+    "calls": [
+      {
+        "index": 0,
+        "turn": 1,
+        "tool_name": "search_files",
+        "tool_kind": "search",
+        "failed": false,
+        "latency_ms": 9,
+        "summary": "locate fixture target",
+        "args_preview": "pattern=request_code_context",
+        "result_preview": "one match",
+        "search_term": "request_code_context"
+      },
+      {
+        "index": 1,
+        "turn": 1,
+        "tool_name": "read_file",
+        "tool_kind": "read",
+        "failed": false,
+        "latency_ms": 6,
+        "summary": "inspect candidate file",
+        "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+        "result_preview": "fixture text",
+        "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+      }
+    ]
+  },
+  "output": {
+    "sequence": {
+      "subject_id": "run-fixture",
+      "total_turns": 1,
+      "total_calls_in_run": 2,
+      "turns": [
+        {
+          "turn": 1,
+          "tool_count": 2,
+          "failed_tool_count": 0,
+          "patch_proposed": false,
+          "patch_applied": false
+        }
+      ],
+      "calls": [
+        {
+          "index": 0,
+          "turn": 1,
+          "tool_name": "search_files",
+          "tool_kind": "search",
+          "failed": false,
+          "latency_ms": 9,
+          "summary": "locate fixture target",
+          "args_preview": "pattern=request_code_context",
+          "result_preview": "one match",
+          "search_term": "request_code_context"
+        },
+        {
+          "index": 1,
+          "turn": 1,
+          "tool_name": "read_file",
+          "tool_kind": "read",
+          "failed": false,
+          "latency_ms": 6,
+          "summary": "inspect candidate file",
+          "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+          "result_preview": "fixture text",
+          "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+        }
+      ]
+    },
+    "signals": {
+      "total_turns": 1,
+      "total_calls": 2,
+      "search_calls": 1,
+      "read_calls": 1,
+      "browse_calls": 0,
+      "edit_calls": 0,
+      "execute_calls": 0,
+      "failed_calls": 0,
+      "repeated_search_runs": 0,
+      "directory_pivots": 0,
+      "search_terms_seen": [
+        "request_code_context"
+      ]
+    },
+    "segments": [
+      {
+        "segment_index": 0,
+        "start_index": 0,
+        "end_index": 1,
+        "status": "labeled",
+        "label": "inspect_candidate",
+        "confidence": "high",
+        "rationale": "fixture covers search then read",
+        "turns": [
+          1
+        ],
+        "calls": [
+          {
+            "index": 0,
+            "turn": 1,
+            "tool_name": "search_files",
+            "tool_kind": "search",
+            "failed": false,
+            "latency_ms": 9,
+            "summary": "locate fixture target",
+            "args_preview": "pattern=request_code_context",
+            "result_preview": "one match",
+            "search_term": "request_code_context"
+          },
+          {
+            "index": 1,
+            "turn": 1,
+            "tool_name": "read_file",
+            "tool_kind": "read",
+            "failed": false,
+            "latency_ms": 6,
+            "summary": "inspect candidate file",
+            "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+            "result_preview": "fixture text",
+            "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+          }
+        ]
+      }
+    ],
+    "coverage": {
+      "total_calls": 2,
+      "labeled_segments": 1,
+      "ambiguous_segments": 0,
+      "labeled_calls": 2,
+      "ambiguous_calls": 0,
+      "uncovered_calls": 0
+    },
+    "overall_rationale": "fixture segmentation"
+  },
+  "artifact": {
+    "procedure_name": "tool_call_intent_segmentation",
+    "artifact": {
+      "first": {
+        "step_id": "contextualize_tool_call_sequence",
+        "step_name": "contextualize_tool_call_sequence",
+        "executor_kind": "mechanized",
+        "executor_label": "mechanized",
+        "evidence_policy": {
+          "hindsight_allowed": false,
+          "external_context_allowed": false
+        },
+        "input": {
+          "subject_id": "run-fixture",
+          "total_turns": 1,
+          "total_calls_in_run": 2,
+          "turns": [
+            {
+              "turn": 1,
+              "tool_count": 2,
+              "failed_tool_count": 0,
+              "patch_proposed": false,
+              "patch_applied": false
+            }
+          ],
+          "calls": [
+            {
+              "index": 0,
+              "turn": 1,
+              "tool_name": "search_files",
+              "tool_kind": "search",
+              "failed": false,
+              "latency_ms": 9,
+              "summary": "locate fixture target",
+              "args_preview": "pattern=request_code_context",
+              "result_preview": "one match",
+              "search_term": "request_code_context"
+            },
+            {
+              "index": 1,
+              "turn": 1,
+              "tool_name": "read_file",
+              "tool_kind": "read",
+              "failed": false,
+              "latency_ms": 6,
+              "summary": "inspect candidate file",
+              "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+              "result_preview": "fixture text",
+              "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+            }
+          ]
+        },
+        "input_disposition": "record_and_forward",
+        "output": {
+          "sequence": {
+            "subject_id": "run-fixture",
+            "total_turns": 1,
+            "total_calls_in_run": 2,
+            "turns": [
+              {
+                "turn": 1,
+                "tool_count": 2,
+                "failed_tool_count": 0,
+                "patch_proposed": false,
+                "patch_applied": false
+              }
+            ],
+            "calls": [
+              {
+                "index": 0,
+                "turn": 1,
+                "tool_name": "search_files",
+                "tool_kind": "search",
+                "failed": false,
+                "latency_ms": 9,
+                "summary": "locate fixture target",
+                "args_preview": "pattern=request_code_context",
+                "result_preview": "one match",
+                "search_term": "request_code_context"
+              },
+              {
+                "index": 1,
+                "turn": 1,
+                "tool_name": "read_file",
+                "tool_kind": "read",
+                "failed": false,
+                "latency_ms": 6,
+                "summary": "inspect candidate file",
+                "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                "result_preview": "fixture text",
+                "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+              }
+            ]
+          },
+          "signals": {
+            "total_turns": 1,
+            "total_calls": 2,
+            "search_calls": 1,
+            "read_calls": 1,
+            "browse_calls": 0,
+            "edit_calls": 0,
+            "execute_calls": 0,
+            "failed_calls": 0,
+            "repeated_search_runs": 0,
+            "directory_pivots": 0,
+            "search_terms_seen": [
+              "request_code_context"
+            ]
+          }
+        },
+        "output_disposition": "record_and_forward",
+        "provenance": {
+          "strategy": "fixture-mechanized"
+        }
+      },
+      "second": {
+        "branches": {
+          "input": {
+            "state": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "disposition": "record_and_forward"
+          },
+          "left_branch": "left",
+          "right_branch": "right",
+          "left": {
+            "step_id": "prepare_sequence_context",
+            "step_name": "prepare_sequence_context",
+            "executor_kind": "mechanized",
+            "executor_label": "mechanized",
+            "evidence_policy": {
+              "hindsight_allowed": false,
+              "external_context_allowed": false
+            },
+            "input": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "input_disposition": "record_and_forward",
+            "output": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "output_disposition": "record_and_forward",
+            "provenance": {
+              "strategy": "fixture-mechanized"
+            }
+          },
+          "right": {
+            "step_id": "judge_segments",
+            "step_name": "judge_segments",
+            "executor_kind": "llm_adjudicator",
+            "executor_label": "json_adjudicator",
+            "evidence_policy": {
+              "hindsight_allowed": false,
+              "external_context_allowed": false
+            },
+            "input": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "input_disposition": "record_and_forward",
+            "output": {
+              "segments": [
+                {
+                  "start_index": 0,
+                  "end_index": 1,
+                  "status": "labeled",
+                  "label": "inspect_candidate",
+                  "confidence": "high",
+                  "rationale": "fixture segment"
+                }
+              ],
+              "overall_rationale": "fixture"
+            },
+            "output_disposition": "record_and_forward",
+            "provenance": {
+              "model_id": "fixture-model",
+              "provider_slug": "fixture-provider",
+              "raw_content": "{}",
+              "response": {
+                "id": "fixture-response",
+                "choices": [],
+                "created": 0,
+                "model": "fixture-model",
+                "object": "chat.completion",
+                "usage": {
+                  "prompt_tokens": 9,
+                  "completion_tokens": 6,
+                  "total_tokens": 15
+                }
+              }
+            }
+          }
+        },
+        "merge": {
+          "step_id": "assemble_segments",
+          "step_name": "assemble_segments",
+          "executor_kind": "mechanized",
+          "executor_label": "mechanized",
+          "evidence_policy": {
+            "hindsight_allowed": false,
+            "external_context_allowed": false
+          },
+          "input": {
+            "source": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "left": {
+              "sequence": {
+                "subject_id": "run-fixture",
+                "total_turns": 1,
+                "total_calls_in_run": 2,
+                "turns": [
+                  {
+                    "turn": 1,
+                    "tool_count": 2,
+                    "failed_tool_count": 0,
+                    "patch_proposed": false,
+                    "patch_applied": false
+                  }
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              },
+              "signals": {
+                "total_turns": 1,
+                "total_calls": 2,
+                "search_calls": 1,
+                "read_calls": 1,
+                "browse_calls": 0,
+                "edit_calls": 0,
+                "execute_calls": 0,
+                "failed_calls": 0,
+                "repeated_search_runs": 0,
+                "directory_pivots": 0,
+                "search_terms_seen": [
+                  "request_code_context"
+                ]
+              }
+            },
+            "right": {
+              "segments": [
+                {
+                  "start_index": 0,
+                  "end_index": 1,
+                  "status": "labeled",
+                  "label": "inspect_candidate",
+                  "confidence": "high",
+                  "rationale": "fixture segment"
+                }
+              ],
+              "overall_rationale": "fixture"
+            }
+          },
+          "input_disposition": "record_and_forward",
+          "output": {
+            "sequence": {
+              "subject_id": "run-fixture",
+              "total_turns": 1,
+              "total_calls_in_run": 2,
+              "turns": [
+                {
+                  "turn": 1,
+                  "tool_count": 2,
+                  "failed_tool_count": 0,
+                  "patch_proposed": false,
+                  "patch_applied": false
+                }
+              ],
+              "calls": [
+                {
+                  "index": 0,
+                  "turn": 1,
+                  "tool_name": "search_files",
+                  "tool_kind": "search",
+                  "failed": false,
+                  "latency_ms": 9,
+                  "summary": "locate fixture target",
+                  "args_preview": "pattern=request_code_context",
+                  "result_preview": "one match",
+                  "search_term": "request_code_context"
+                },
+                {
+                  "index": 1,
+                  "turn": 1,
+                  "tool_name": "read_file",
+                  "tool_kind": "read",
+                  "failed": false,
+                  "latency_ms": 6,
+                  "summary": "inspect candidate file",
+                  "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                  "result_preview": "fixture text",
+                  "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                }
+              ]
+            },
+            "signals": {
+              "total_turns": 1,
+              "total_calls": 2,
+              "search_calls": 1,
+              "read_calls": 1,
+              "browse_calls": 0,
+              "edit_calls": 0,
+              "execute_calls": 0,
+              "failed_calls": 0,
+              "repeated_search_runs": 0,
+              "directory_pivots": 0,
+              "search_terms_seen": [
+                "request_code_context"
+              ]
+            },
+            "segments": [
+              {
+                "segment_index": 0,
+                "start_index": 0,
+                "end_index": 1,
+                "status": "labeled",
+                "label": "inspect_candidate",
+                "confidence": "high",
+                "rationale": "fixture covers search then read",
+                "turns": [
+                  1
+                ],
+                "calls": [
+                  {
+                    "index": 0,
+                    "turn": 1,
+                    "tool_name": "search_files",
+                    "tool_kind": "search",
+                    "failed": false,
+                    "latency_ms": 9,
+                    "summary": "locate fixture target",
+                    "args_preview": "pattern=request_code_context",
+                    "result_preview": "one match",
+                    "search_term": "request_code_context"
+                  },
+                  {
+                    "index": 1,
+                    "turn": 1,
+                    "tool_name": "read_file",
+                    "tool_kind": "read",
+                    "failed": false,
+                    "latency_ms": 6,
+                    "summary": "inspect candidate file",
+                    "args_preview": "path=crates/ploke-core/tool_text/request_code_context.md",
+                    "result_preview": "fixture text",
+                    "path_hint": "crates/ploke-core/tool_text/request_code_context.md"
+                  }
+                ]
+              }
+            ],
+            "coverage": {
+              "total_calls": 2,
+              "labeled_segments": 1,
+              "ambiguous_segments": 0,
+              "labeled_calls": 2,
+              "ambiguous_calls": 0,
+              "uncovered_calls": 0
+            },
+            "overall_rationale": "fixture segmentation"
+          },
+          "output_disposition": "record_and_forward",
+          "provenance": {
+            "strategy": "fixture-mechanized"
+          }
+        }
+      }
+    }
+  }
+}

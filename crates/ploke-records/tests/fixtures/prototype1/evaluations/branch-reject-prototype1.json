@@ -1,0 +1,58 @@
+{
+  "baseline_campaign_id": "prototype1-baseline-campaign",
+  "branch_id": "branch-reject-prototype1",
+  "treatment_campaign_id": "prototype1-treatment-campaign",
+  "evaluation_procedure_id": "prototype1-sanitized-eval",
+  "evaluator_identity": {
+    "id": "fixture-evaluator",
+    "version": "1"
+  },
+  "eval_set_identity": {
+    "id": "fixture-eval-set",
+    "kind": "sanitized",
+    "instance_ids": [
+      "instance-prototype1"
+    ]
+  },
+  "branch_registry_path": "prototype1/branches.json",
+  "evaluation_artifact_path": "prototype1/evaluations/branch-reject-prototype1.json",
+  "treatment_campaign_manifest": "prototype1/manifest.json",
+  "treatment_closure_state_path": "prototype1/closure.json",
+  "overall_disposition": "reject",
+  "reasons": [
+    "sanitized fixture baseline record is intentionally absent"
+  ],
+  "compared_instances": [
+    {
+      "instance_id": "instance-prototype1",
+      "baseline_registration_path": "baseline/registration.json",
+      "treatment_registration_path": "treatment/registration.json",
+      "baseline_record_path": null,
+      "treatment_record_path": "treatment/record.json.gz",
+      "baseline_metrics": null,
+      "treatment_metrics": {
+        "tool_calls_total": 5,
+        "tool_calls_failed": 2,
+        "patch_attempted": true,
+        "patch_apply_state": "failed",
+        "submission_artifact_state": "empty",
+        "patch_projection_check_state": "not_recorded",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 0,
+        "same_file_patch_max_streak": 0,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "evaluation": {
+        "disposition": "reject",
+        "reasons": [
+          "sanitized fixture nested evaluation reason"
+        ]
+      },
+      "status": "baseline_missing"
+    }
+  ]
+}

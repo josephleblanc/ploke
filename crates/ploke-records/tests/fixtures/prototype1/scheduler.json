@@ -1,0 +1,52 @@
+{
+  "schema_version": "prototype1-scheduler.v1",
+  "campaign_id": "prototype1-sanitized-campaign",
+  "updated_at": "2026-05-08T13:00:00Z",
+  "policy": {
+    "max_generations": 2,
+    "max_total_nodes": 4,
+    "child_budget": {
+      "min": 1,
+      "max": 2
+    },
+    "child_schedule_mode": "adaptive-batch",
+    "stop_on_first_keep": false,
+    "require_keep_for_continuation": true,
+    "explore_from_rejected": true
+  },
+  "frontier_node_ids": [
+    "node-prototype1"
+  ],
+  "completed_node_ids": [],
+  "failed_node_ids": [],
+  "nodes": [
+    {
+      "schema_version": "prototype1-treatment-node.v1",
+      "node_id": "node-prototype1",
+      "generation": 1,
+      "instance_id": "instance-prototype1",
+      "source_state_id": "source-prototype1",
+      "operation_target": {
+        "kind": "patch_set",
+        "base_artifact_id": "artifact-source-prototype1",
+        "patch_ids": [
+          "patch-keep-prototype1"
+        ]
+      },
+      "base_artifact_id": "artifact-source-prototype1",
+      "patch_id": "patch-keep-prototype1",
+      "derived_artifact_id": "artifact-derived-prototype1",
+      "branch_id": "branch-keep-prototype1",
+      "candidate_id": "candidate-keep",
+      "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+      "node_dir": "prototype1/nodes/node-prototype1",
+      "workspace_root": "/tmp/ploke-records-fixture/worktree",
+      "binary_path": "/tmp/ploke-records-fixture/worktree/target/debug/ploke",
+      "runner_request_path": "prototype1/nodes/node-prototype1/runner-request.json",
+      "runner_result_path": "prototype1/nodes/node-prototype1/runner-result.json",
+      "status": "succeeded",
+      "created_at": "2026-05-08T12:00:00Z",
+      "updated_at": "2026-05-08T13:00:00Z"
+    }
+  ]
+}

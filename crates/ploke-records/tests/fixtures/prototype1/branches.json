@@ -1,0 +1,86 @@
+{
+  "schema_version": "prototype1-branch-registry.v1",
+  "campaign_id": "prototype1-sanitized-campaign",
+  "updated_at": "2026-05-08T12:00:00Z",
+  "source_nodes": [
+    {
+      "source_state_id": "source-prototype1",
+      "source_artifact_id": "artifact-source-prototype1",
+      "operation_target": {
+        "kind": "artifact",
+        "artifact_id": "artifact-source-prototype1"
+      },
+      "instance_id": "instance-prototype1",
+      "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+      "source_content": "old fixture content",
+      "source_content_hash": "sha256:source-prototype1",
+      "selected_branch_id": "branch-keep-prototype1",
+      "branches": [
+        {
+          "branch_id": "branch-keep-prototype1",
+          "candidate_id": "candidate-keep",
+          "patch_id": "patch-keep-prototype1",
+          "branch_label": "keep fixture candidate",
+          "synthesized_spec_id": "spec-keep-prototype1",
+          "proposed_content": "new fixture content",
+          "proposed_content_hash": "sha256:keep-prototype1",
+          "generation_target": {
+            "kind": "patch_set",
+            "base_artifact_id": "artifact-source-prototype1",
+            "patch_ids": [
+              "patch-keep-prototype1"
+            ]
+          },
+          "generation_coordinate": {
+            "runtime_id": "runtime-prototype1",
+            "target": {
+              "kind": "artifact",
+              "artifact_id": "artifact-source-prototype1"
+            }
+          },
+          "status": "selected",
+          "latest_evaluation": {
+            "baseline_campaign_id": "prototype1-baseline-campaign",
+            "treatment_campaign_id": "prototype1-treatment-campaign",
+            "compared_instances": 1,
+            "rejected_instances": 0,
+            "overall_disposition": "keep",
+            "evaluated_at": "2026-05-08T13:00:00Z"
+          }
+        },
+        {
+          "branch_id": "branch-reject-prototype1",
+          "candidate_id": "candidate-reject",
+          "patch_id": "patch-reject-prototype1",
+          "branch_label": "reject fixture candidate",
+          "synthesized_spec_id": "spec-reject-prototype1",
+          "proposed_content": "rejected fixture content",
+          "proposed_content_hash": "sha256:reject-prototype1",
+          "status": "dropped",
+          "latest_evaluation": {
+            "baseline_campaign_id": "prototype1-baseline-campaign",
+            "treatment_campaign_id": "prototype1-treatment-campaign",
+            "compared_instances": 1,
+            "rejected_instances": 1,
+            "overall_disposition": "reject",
+            "evaluated_at": "2026-05-08T13:05:00Z"
+          }
+        }
+      ]
+    }
+  ],
+  "active_targets": [
+    {
+      "target_relpath": "crates/ploke-core/tool_text/request_code_context.md",
+      "source_state_id": "source-prototype1",
+      "source_artifact_id": "artifact-source-prototype1",
+      "active_branch_id": "branch-keep-prototype1",
+      "active_patch_id": "patch-keep-prototype1",
+      "active_derived_artifact_id": "artifact-derived-prototype1",
+      "active_operation_target": {
+        "kind": "artifact",
+        "artifact_id": "artifact-derived-prototype1"
+      }
+    }
+  ]
+}
