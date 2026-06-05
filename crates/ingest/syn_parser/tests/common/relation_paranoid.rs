@@ -13,7 +13,7 @@ use syn_parser::TestIds;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::{AnyNodeId, GraphNode, ImportNodeId, PrimaryNodeIdTrait};
+use syn_parser::parser::nodes::{AnyNodeId, GraphNode, ImportNodeId};
 use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::resolve::module_tree::ModuleTree;

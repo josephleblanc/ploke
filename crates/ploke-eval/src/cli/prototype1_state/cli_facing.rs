@@ -4006,12 +4006,6 @@ struct Prototype1MonitorSnapshotEntry {
     modified: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TerminalState {
-    reason: &'static str,
-    detail: String,
-}
-
 impl HistoryCommand {
     pub fn run(self) -> Result<(), PrepareError> {
         let repo_root = match self.repo_root.clone() {
@@ -4123,128 +4117,6 @@ fn prototype1_campaign_root(campaign_manifest_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("prototype1")
-}
-
-fn prototype1_monitor_locations(
-    manifest_path: &Path,
-    repo_root: Option<&Path>,
-) -> Vec<Prototype1MonitorLocation> {
-    let prototype_root = prototype1_campaign_root(manifest_path);
-    let mut locations = vec![
-        Prototype1MonitorLocation {
-            label: "campaign manifest",
-            path: manifest_path.to_path_buf(),
-            volatility: "stable file; may be edited by campaign setup, not by git checkout",
-            description: "Baseline campaign manifest reused by the live controller path.",
-        },
-        Prototype1MonitorLocation {
-            label: "prototype1 root",
-            path: prototype_root.clone(),
-            volatility: "directory; accumulates and mutates during the loop",
-            description: "Campaign-local Prototype 1 state root.",
-        },
-        Prototype1MonitorLocation {
-            label: "scheduler",
-            path: prototype1_scheduler_path(manifest_path),
-            volatility: "mutable JSON; overwritten when scheduler state changes",
-            description: "Search policy, node frontier, completed/failed nodes, and latest continuation decision.",
-        },
-        Prototype1MonitorLocation {
-            label: "branch registry",
-            path: prototype1_branch_registry_path(manifest_path),
-            volatility: "append-only typed record stream; appended as branches are synthesized, selected, applied, and compared",
-            description: "Branch registry snapshots and parent comparison summaries.",
-        },
-        Prototype1MonitorLocation {
-            label: "legacy loop trace",
-            path: prototype_root.join("prototype1-loop-trace.json"),
-            volatility: "mutable JSON; overwritten by the legacy loop controller path",
-            description: "Legacy controller trace retained while the old path remains available.",
-        },
-        Prototype1MonitorLocation {
-            label: "transition journal",
-            path: prototype1_transition_journal_path(manifest_path),
-            volatility: "append-only JSONL; should not be overwritten by normal loop progress",
-            description: "Typed transition journal for materialize/build/spawn/observe events.",
-        },
-        Prototype1MonitorLocation {
-            label: "evaluations",
-            path: prototype_root.join("evaluations"),
-            volatility: "directory; per-branch JSON files are created or replaced by evaluation runs",
-            description: "Treatment-vs-baseline branch evaluation artifacts.",
-        },
-        Prototype1MonitorLocation {
-            label: "nodes",
-            path: prototype_root.join("nodes"),
-            volatility: "directory; node subdirectories are created and later updated",
-            description: "Scheduler-owned node records plus per-runtime invocation and result artifacts.",
-        },
-        Prototype1MonitorLocation {
-            label: "node record",
-            path: prototype_root.join("nodes/<node-id>/node.json"),
-            volatility: "node-scoped JSON; created at node registration and may be updated with status/workspace fields",
-            description: "Durable scheduler mirror for one candidate node.",
-        },
-        Prototype1MonitorLocation {
-            label: "runner request",
-            path: prototype_root.join("nodes/<node-id>/runner-request.json"),
-            volatility: "node-scoped JSON; mutable request consumed by child runtime",
-            description: "Runner invocation configuration for one node.",
-        },
-        Prototype1MonitorLocation {
-            label: "latest runner result",
-            path: prototype_root.join("nodes/<node-id>/runner-result.json"),
-            volatility: "node-scoped JSON; overwritten or cleared before a fresh attempt",
-            description: "Latest runner outcome projection for display and reconstruction.",
-        },
-        Prototype1MonitorLocation {
-            label: "runtime invocation",
-            path: prototype_root.join("nodes/<node-id>/invocations/<runtime-id>.json"),
-            volatility: "attempt-scoped JSON; created per runtime and normally retained",
-            description: "Child or successor authority token for one spawned process.",
-        },
-        Prototype1MonitorLocation {
-            label: "attempt result",
-            path: prototype_root.join("nodes/<node-id>/results/<runtime-id>.json"),
-            volatility: "attempt-scoped JSON; created per child runtime and normally retained",
-            description: "Runner result for one concrete runtime attempt.",
-        },
-        Prototype1MonitorLocation {
-            label: "successor ready",
-            path: prototype_root.join("nodes/<node-id>/successor-ready/<runtime-id>.json"),
-            volatility: "attempt-scoped JSON; created when detached successor acknowledges handoff",
-            description: "Parent-observed successor acknowledgement.",
-        },
-        Prototype1MonitorLocation {
-            label: "successor completion",
-            path: prototype_root.join("nodes/<node-id>/successor-completion/<runtime-id>.json"),
-            volatility: "attempt-scoped JSON; created after successor finishes its parent turn",
-            description: "Terminal status for a successor parent process.",
-        },
-        Prototype1MonitorLocation {
-            label: "child worktree",
-            path: prototype_root.join("nodes/<node-id>/worktree"),
-            volatility: "temporary directory; should be removed after artifact persistence/handoff",
-            description: "Backend-managed child workspace, not the next parent home.",
-        },
-        Prototype1MonitorLocation {
-            label: "child build products",
-            path: prototype_root.join("nodes/<node-id>/{bin,target}"),
-            volatility: "temporary directories; may be removed by cleanup",
-            description: "Build output for child evaluation, not durable identity.",
-        },
-    ];
-
-    if let Some(repo_root) = repo_root {
-        locations.push(Prototype1MonitorLocation {
-            label: "active parent identity",
-            path: crate::cli::prototype1_state::identity::parent_identity_path(repo_root),
-            volatility: "git-tracked artifact file; replaced by git switch during parent handoff",
-            description: "Identity the active checkout uses to know which Parent it is.",
-        });
-    }
-
-    locations
 }
 
 fn prototype1_state_transition_error(
@@ -5539,7 +5411,7 @@ fn historical_traversal_guard(
     let mut parent_turns_started = 0u32;
     for entry in entries {
         match entry {
-            JournalEntry::ParentStarted(entry) => {
+            JournalEntry::ParentStarted(_entry) => {
                 parent_turns_started = parent_turns_started.saturating_add(1);
             }
             _ => {}
@@ -8329,57 +8201,6 @@ fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     println!("{}", "-".repeat(40));
     for stage in &report.pending_stages {
         println!("- {}", stage);
-    }
-}
-
-fn print_prototype1_branch_evaluation_report(report: &Prototype1BranchEvaluationReport) {
-    println!("prototype1 branch evaluation");
-    println!("{}", "-".repeat(40));
-    println!("baseline_campaign_id: {}", report.baseline_campaign_id);
-    println!("branch_id: {}", report.branch_id);
-    println!("treatment_campaign_id: {}", report.treatment_campaign_id);
-    println!(
-        "treatment_campaign_manifest: {}",
-        report.treatment_campaign_manifest.display()
-    );
-    println!(
-        "treatment_closure_state: {}",
-        report.treatment_closure_state_path.display()
-    );
-    println!("branch_registry: {}", report.branch_registry_path.display());
-    println!(
-        "evaluation_artifact: {}",
-        report.evaluation_artifact_path.display()
-    );
-    println!(
-        "overall_disposition: {}",
-        serde_name(&report.overall_disposition)
-    );
-    println!();
-    println!("instances");
-    println!("{}", "-".repeat(40));
-    for row in &report.compared_instances {
-        println!("- {} [{}]", row.instance_id, row.status);
-        if let Some(path) = row.baseline_record_path.as_ref() {
-            println!("  baseline_record: {}", path.display());
-        }
-        if let Some(path) = row.treatment_record_path.as_ref() {
-            println!("  treatment_record: {}", path.display());
-        }
-        if let Some(evaluation) = row.evaluation.as_ref() {
-            println!("  disposition: {}", serde_name(&evaluation.disposition));
-            for reason in &evaluation.reasons {
-                println!("  reason: {}", reason);
-            }
-        }
-    }
-    if !report.reasons.is_empty() {
-        println!();
-        println!("reasons");
-        println!("{}", "-".repeat(40));
-        for reason in &report.reasons {
-            println!("- {}", reason);
-        }
     }
 }
 
