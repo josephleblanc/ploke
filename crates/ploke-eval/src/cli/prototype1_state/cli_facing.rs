@@ -137,47 +137,9 @@ use crate::{
     },
 };
 
-impl Prototype1LoopCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        let format = self.format;
-        let input = Prototype1LoopControllerInput::from_command(&self)?;
-        let report = run_prototype1_loop_controller(input).await?;
-
-        match format {
-            InspectOutputFormat::Table => print_prototype1_loop_report(&report),
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn run_setup(self) -> Result<(), PrepareError> {
-        let format = self.format;
-        let setup = prepare_prototype1_parent_setup(&self)?;
-        record_active_prototype1_monitor_target(&setup.campaign_id, &setup.repo_root);
-
-        match format {
-            InspectOutputFormat::Table => print_prototype1_setup_report(&setup),
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&setup).map_err(PrepareError::Serialize)?
-                );
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
-struct Prototype1SetupReport {
-    campaign_id: String,
+pub(crate) struct Prototype1SetupReport {
+    pub(crate) campaign_id: String,
     campaign_manifest: PathBuf,
     closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
@@ -186,7 +148,7 @@ struct Prototype1SetupReport {
     batch_manifest: PathBuf,
     primary_instance_id: String,
     eval_instances: Vec<String>,
-    repo_root: PathBuf,
+    pub(crate) repo_root: PathBuf,
     artifact_branch: String,
     parent_identity_path: PathBuf,
     parent_id: String,
@@ -197,7 +159,7 @@ struct Prototype1SetupReport {
     run_profile: Option<profile::RunProfileCommitment>,
 }
 
-fn prepare_prototype1_parent_setup(
+pub(crate) fn prepare_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
 ) -> Result<Prototype1SetupReport, PrepareError> {
     let operator_profile = command
@@ -306,7 +268,7 @@ fn prepare_prototype1_parent_setup(
     })
 }
 
-fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
+pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("prototype1 setup");
     println!("{}", "-".repeat(40));
     println!("campaign_id: {}", report.campaign_id);
@@ -3552,7 +3514,7 @@ fn validate_child_plan(
     Ok(())
 }
 
-struct Prototype1LoopControllerInput {
+pub(crate) struct Prototype1LoopControllerInput {
     stop_after: Prototype1LoopStopAfter,
     dry_run: bool,
     stop_on_error: bool,
@@ -3571,7 +3533,7 @@ struct Prototype1LoopControllerInput {
 }
 
 impl Prototype1LoopControllerInput {
-    fn from_command(command: &Prototype1LoopCommand) -> Result<Self, PrepareError> {
+    pub(crate) fn from_command(command: &Prototype1LoopCommand) -> Result<Self, PrepareError> {
         if command.stop_after >= Prototype1LoopStopAfter::Compare && !command.dry_run {
             return Err(PrepareError::InvalidBatchSelection {
                 detail:
@@ -3668,7 +3630,7 @@ fn child_schedule_mode_from_command(
     }
 }
 
-async fn run_prototype1_loop_controller(
+pub(crate) async fn run_prototype1_loop_controller(
     input: Prototype1LoopControllerInput,
 ) -> Result<Prototype1LoopReport, PrepareError> {
     let _run_scope = TimingTrace::scope("loop.prototype1.run");
@@ -4149,7 +4111,7 @@ fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String
         .map(|identity| identity.map(|identity| identity.campaign_id().to_string()))
 }
 
-fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
+pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
     let target = ActivePrototype1MonitorTarget {
         campaign_id: campaign_id.to_string(),
         repo_root: repo_root.to_path_buf(),
@@ -8004,7 +7966,7 @@ pub(crate) struct Prototype1LoopCampaign {
     pub(crate) resolved: ResolvedCampaignConfig,
 }
 
-fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
+pub(crate) fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
     println!("prototype1 loop");
     println!("{}", "-".repeat(40));
     println!("stage_reached: {}", serde_name(&report.stage_reached));

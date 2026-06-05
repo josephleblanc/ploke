@@ -209,5 +209,6 @@
 //! The extraction target should probably start with only the bold spine: `run_turn`, `run_child_fanout`, `run_adaptive_child_fanout`, `run_planned_child`, `ParentSelection`, `continuation_disposition_for_selection`, and `spawn_and_handoff_prototype1_successor`.
 
 pub(crate) mod core;
+mod loop_cmd;
 
 pub(crate) use core::{doctor, prompt, resume, step};
