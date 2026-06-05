@@ -12,7 +12,7 @@ pub(crate) struct TimingScope {
 }
 
 impl TimingTrace {
-    pub(crate) fn mark(label: &str) {
+    fn mark(label: &str) {
         #[cfg(not(feature = "demo"))]
         eprintln!("{} {}", Utc::now().format("%H:%M:%S"), label);
         #[cfg(feature = "demo")]
@@ -43,31 +43,23 @@ impl Drop for TimingScope {
     }
 }
 
+const REMAINING_PROTOTYPE1_STAGES: &[&str] = &[
+    "baseline protocol",
+    "target selection",
+    "intervention apply",
+    "treatment arm",
+    "compare",
+];
+
 pub(crate) fn pending_prototype1_stages(
     stage_reached: Prototype1LoopStopAfter,
 ) -> Vec<&'static str> {
-    match stage_reached {
-        Prototype1LoopStopAfter::BaselineEval => {
-            vec![
-                "baseline protocol",
-                "target selection",
-                "intervention apply",
-                "treatment arm",
-                "compare",
-            ]
-        }
-        Prototype1LoopStopAfter::BaselineProtocol => {
-            vec![
-                "target selection",
-                "intervention apply",
-                "treatment arm",
-                "compare",
-            ]
-        }
-        Prototype1LoopStopAfter::TargetSelection => {
-            vec!["intervention apply", "treatment arm", "compare"]
-        }
-        Prototype1LoopStopAfter::InterventionApply => vec!["treatment arm", "compare"],
-        Prototype1LoopStopAfter::Compare => Vec::new(),
-    }
+    let start = match stage_reached {
+        Prototype1LoopStopAfter::BaselineEval => 0,
+        Prototype1LoopStopAfter::BaselineProtocol => 1,
+        Prototype1LoopStopAfter::TargetSelection => 2,
+        Prototype1LoopStopAfter::InterventionApply => 3,
+        Prototype1LoopStopAfter::Compare => REMAINING_PROTOTYPE1_STAGES.len(),
+    };
+    REMAINING_PROTOTYPE1_STAGES[start..].to_vec()
 }

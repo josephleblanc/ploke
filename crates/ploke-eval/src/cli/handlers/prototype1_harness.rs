@@ -2,6 +2,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::cli::prototype1_process;
+use crate::cli::prototype1_state::cli_facing::{
+    BroadHarnessAttemptProjection, BroadTuiAttemptOptions,
+    run_broad_harness_attempt_from_request_path, run_broad_harness_attempt_sweep,
+};
 use crate::cli::{
     InspectOutputFormat, Prototype1HarnessAttemptCommand, Prototype1HarnessCommand,
     Prototype1HarnessSubcommand, Prototype1HarnessSweepCommand, Prototype1RunnerCommand,
@@ -24,7 +29,7 @@ impl Prototype1RunnerCommand {
         let _ = self.node_id;
         let _ = self.stop_on_error;
         let _ = self.format;
-        crate::cli::prototype1_process::execute_prototype1_runner_invocation(&invocation)
+        prototype1_process::execute_prototype1_runner_invocation(&invocation)
             .await
             .map(|_| ())
     }
@@ -41,18 +46,13 @@ impl Prototype1HarnessCommand {
 
 impl Prototype1HarnessAttemptCommand {
     async fn run(self) -> Result<(), PrepareError> {
-        let options = crate::cli::prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
+        let options = BroadTuiAttemptOptions::from_cli(
             self.model_id,
             self.provider,
             self.max_attempts,
             self.timeout_secs,
         )?;
-        let row =
-            crate::cli::prototype1_state::cli_facing::run_broad_harness_attempt_from_request_path(
-                self.request,
-                options,
-            )
-            .await?;
+        let row = run_broad_harness_attempt_from_request_path(self.request, options).await?;
         print_broad_harness_attempt_rows(std::slice::from_ref(&row), self.format)
     }
 }
@@ -67,11 +67,7 @@ impl Prototype1HarnessSweepCommand {
             self.max_attempts,
             self.timeout_secs,
         )?;
-        let rows = crate::cli::prototype1_state::cli_facing::run_broad_harness_attempt_sweep(
-            lanes,
-            self.parallel,
-        )
-        .await?;
+        let rows = run_broad_harness_attempt_sweep(lanes, self.parallel).await?;
         print_broad_harness_attempt_rows(&rows, self.format)
     }
 }
@@ -130,30 +126,8 @@ fn broad_harness_sweep_lanes(
     provider: Option<String>,
     max_attempts: Option<u32>,
     timeout_secs: Option<u64>,
-) -> Result<
-    Vec<(
-        PathBuf,
-        crate::cli::prototype1_state::cli_facing::BroadTuiAttemptOptions,
-    )>,
-    PrepareError,
-> {
-    let mut lanes = Vec::with_capacity(requests.len());
-    if model_ids.is_empty() {
-        for request in requests {
-            lanes.push((
-                request,
-                crate::cli::prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
-                    None,
-                    provider.clone(),
-                    max_attempts,
-                    timeout_secs,
-                )?,
-            ));
-        }
-        return Ok(lanes);
-    }
-
-    if model_ids.len() != 1 && model_ids.len() != requests.len() {
+) -> Result<Vec<(PathBuf, BroadTuiAttemptOptions)>, PrepareError> {
+    if !model_ids.is_empty() && model_ids.len() != 1 && model_ids.len() != requests.len() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "prototype1-harness sweep requires one --model-id for all requests or one per request; got {} model(s) for {} request(s)",
@@ -163,38 +137,52 @@ fn broad_harness_sweep_lanes(
         });
     }
 
-    for (index, request) in requests.into_iter().enumerate() {
-        let model_id = if model_ids.len() == 1 {
-            model_ids[0].clone()
-        } else {
-            model_ids[index].clone()
-        };
-        lanes.push((
-            request,
-            crate::cli::prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
-                Some(model_id),
-                provider.clone(),
+    match model_ids.len() {
+        0 => {
+            let options =
+                BroadTuiAttemptOptions::from_cli(None, provider, max_attempts, timeout_secs)?;
+            Ok(requests
+                .into_iter()
+                .map(|request| (request, options.clone()))
+                .collect())
+        }
+        1 => {
+            let options = BroadTuiAttemptOptions::from_cli(
+                Some(model_ids[0].clone()),
+                provider,
                 max_attempts,
                 timeout_secs,
-            )?,
-        ));
+            )?;
+            Ok(requests
+                .into_iter()
+                .map(|request| (request, options.clone()))
+                .collect())
+        }
+        _ => requests
+            .into_iter()
+            .enumerate()
+            .map(|(index, request)| {
+                BroadTuiAttemptOptions::from_cli(
+                    Some(model_ids[index].clone()),
+                    provider.clone(),
+                    max_attempts,
+                    timeout_secs,
+                )
+                .map(|options| (request, options))
+            })
+            .collect(),
     }
-    Ok(lanes)
 }
 
 fn print_broad_harness_attempt_rows(
-    rows: &[crate::cli::prototype1_state::cli_facing::BroadHarnessAttemptProjection],
+    rows: &[BroadHarnessAttemptProjection],
     format: InspectOutputFormat,
 ) -> Result<(), PrepareError> {
     match format {
         InspectOutputFormat::Json => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(rows).map_err(|source| {
-                    PrepareError::InvalidBatchSelection {
-                        detail: format!("could not serialize broad harness attempt rows: {source}"),
-                    }
-                })?
+                serde_json::to_string_pretty(rows).map_err(PrepareError::Serialize)?
             );
         }
         InspectOutputFormat::Table => {
