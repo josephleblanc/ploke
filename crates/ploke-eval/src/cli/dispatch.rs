@@ -88,6 +88,13 @@ pub async fn run(cli: Cli) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Mbe(cmd) => match cmd.run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Closure(cmd) => match cmd.run().await {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -104,4 +111,3 @@ pub async fn run(cli: Cli) -> ExitCode {
         },
     }
 }
-
