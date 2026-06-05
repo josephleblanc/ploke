@@ -997,7 +997,6 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn child_cleanup_unlinks_edit_harness_target_symlink_without_following_it() {
         use std::os::unix::fs::symlink;
@@ -2343,7 +2342,7 @@ fn spawn_prototype1_successor(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(stdout))
         .stderr(std::process::Stdio::from(stderr));
-    #[cfg(unix)]
+
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
@@ -2366,7 +2365,6 @@ fn exec_prototype1_successor(
 ) -> Result<(), PrepareError> {
     let child_argv = invocation.launch_args_for_retired_parent(retired_parent, invocation_path)?;
 
-    #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
 

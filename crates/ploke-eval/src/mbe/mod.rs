@@ -1868,7 +1868,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     fn fake_python_that_writes_report(tmp: &Path, report: &FinalReport) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -1991,7 +1990,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn run_harness_executes_configured_python_command_and_loads_report() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -2020,7 +2018,6 @@ mod tests {
         assert_eq!(run.evaluation.evidence.verdict, Verdict::Resolved);
     }
 
-    #[cfg(unix)]
     #[test]
     fn cohort_run_harness_executes_configured_python_command_and_loads_report() {
         let tmp = tempfile::tempdir().expect("tempdir");

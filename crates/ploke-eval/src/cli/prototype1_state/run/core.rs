@@ -1186,6 +1186,18 @@ fn extend_baseline_eval_registration_blockers(
                 row.instance_id
             ));
         }
+        if row.eval_status == ClosureClass::Failed {
+            let detail = row
+                .eval_failure
+                .as_deref()
+                .map(|failure| format!(": {failure}"))
+                .unwrap_or_default();
+            blockers.push(format!(
+                "baseline eval for instance '{}' failed in closure state{detail}; refusing to \
+                 rerun over failed evidence without explicit classification",
+                row.instance_id
+            ));
+        }
     }
 
     Ok(())
@@ -3966,6 +3978,22 @@ Suggested validation after editing: run `cargo test`.
 
         assert_eq!(blockers.len(), 1);
         assert!(blockers[0].contains("partial in closure state"));
+    }
+
+    #[test]
+    fn failed_baseline_eval_closure_adds_doctor_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let instances_root = temp.path().join("instances/prototype1/campaign");
+        let instance_id = "BurntSushi__ripgrep-2209";
+        let closure = closure_state_for_test(instances_root, instance_id, ClosureClass::Failed);
+        let mut blockers = Vec::new();
+
+        extend_baseline_eval_registration_blockers(&closure, &mut blockers)
+            .expect("extend blockers");
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("failed in closure state"));
+        assert!(blockers[0].contains("failed evidence"));
     }
 
     #[test]

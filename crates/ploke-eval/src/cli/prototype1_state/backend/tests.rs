@@ -1469,7 +1469,6 @@ fn surface_commitment_represents_ploke_tui_tool_mutation() {
     assert_ne!(unchanged, changed);
 }
 
-#[cfg(unix)]
 #[test]
 fn surface_commitment_hashes_tracked_symlink_to_directory() {
     let before = init_surface_repo("pub fn policy() {}\n", "same\n");
