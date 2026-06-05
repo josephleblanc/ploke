@@ -1,6 +1,7 @@
 use std::process::ExitCode;
 
-use super::{Cli, Command, run_doctor};
+use super::handlers::doctor::run_doctor;
+use super::{Cli, Command};
 
 pub async fn run(cli: Cli) -> ExitCode {
     match cli.command {

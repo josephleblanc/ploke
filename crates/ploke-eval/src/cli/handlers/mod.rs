@@ -1,5 +1,6 @@
 pub(crate) mod campaign;
 pub(crate) mod closure;
+pub(crate) mod doctor;
 pub(crate) mod inspect;
 mod mbe;
 mod model;
