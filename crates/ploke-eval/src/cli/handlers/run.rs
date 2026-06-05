@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use ploke_llm::{ModelId, ProviderKey};

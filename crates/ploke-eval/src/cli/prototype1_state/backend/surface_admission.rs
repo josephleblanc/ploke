@@ -4,7 +4,6 @@ use std::fs;
 use std::path::Path;
 
 use crate::intervention::{text_file_artifact_id, text_replacement_patch_id};
-use crate::loop_graph::{ArtifactId, PatchId};
 
 use super::git_worktree::GitWorktreeBackend;
 use super::{
@@ -12,11 +11,10 @@ use super::{
     content_hash, edit_surface_contains_path, fold_touches, path_matches_surface_policy,
     validate_normal_repo_relpath, validate_touch_spans,
 };
-use crate::cli::prototype1_state::edit_surface::{self, graph, request_policy, surface, tui};
-use crate::cli::prototype1_state::event::ContentHash;
+use crate::cli::prototype1_state::edit_surface::{graph, surface, tui};
 use crate::cli::prototype1_state::history::{
-    CheckedSurface, CheckedSurfaceTransition, HistoryError, ProcedureRef, SurfaceArtifactRef,
-    SurfaceEvidence, SurfaceTouch, SurfaceWritable, grant,
+    CheckedSurface, CheckedSurfaceTransition, ProcedureRef, SurfaceArtifactRef, SurfaceTouch,
+    SurfaceWritable, grant,
 };
 
 impl GitWorktreeBackend {

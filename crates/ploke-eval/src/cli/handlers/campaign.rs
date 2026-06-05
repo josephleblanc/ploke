@@ -16,7 +16,6 @@ use crate::cli::{
     InspectOutputFormat,
 };
 use crate::closure::{ClosureClass, closure_state_path, load_closure_state};
-use crate::layout::campaigns_dir;
 use crate::run_history::{RunDirPreference, preferred_run_dir_for_instance};
 use crate::runner::MultiSweBenchSubmissionRecord;
 use crate::spec::PrepareError;

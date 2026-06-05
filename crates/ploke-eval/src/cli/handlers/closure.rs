@@ -9,7 +9,6 @@ use ploke_llm::{ModelId, ProviderKey};
 use ploke_protocol::Procedure;
 use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, ProtocolReasoningPolicy};
-use ploke_records::protocol::InterventionIssueDetectionArtifact;
 use serde::Serialize;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -34,23 +33,15 @@ use crate::closure::{
     ClosureClass, ClosureRecomputeRequest, closure_state_path, load_closure_state,
     recompute_closure_state, render_closure_status,
 };
-use crate::inner::registry::RunRegistration;
-use crate::layout::{batches_dir, repos_dir};
+use crate::layout::repos_dir;
 use crate::msb::PrepareMsbBatchRequest;
-use crate::protocol::protocol_aggregate::{
-    ProtocolAggregate, ProtocolAggregateError, load_protocol_aggregate,
-};
-use crate::protocol_artifacts::{
-    StoredProtocolArtifactFile, list_protocol_artifact_load_results, list_protocol_artifacts,
-    load_protocol_artifact, write_protocol_artifact,
-};
+use crate::protocol::protocol_aggregate::{ProtocolAggregateError, load_protocol_aggregate};
+use crate::protocol_artifacts::{list_protocol_artifacts, write_protocol_artifact};
 use crate::record::read_compressed_record;
-use crate::run_history::RunDirPreference;
 use crate::runner::{BatchRunArtifactPaths, BatchRunSummary, RunMsbAgentBatchRequest};
 use crate::spec::{OutputMode, PrepareError, PrepareWrite, PreparedCampaignContext};
 use crate::target_registry::{
-    BenchmarkFamily, RegistryEntry, RegistryRecomputeRequest, TargetRegistry, load_target_registry,
-    recompute_target_registry,
+    RegistryEntry, RegistryRecomputeRequest, TargetRegistry, recompute_target_registry,
 };
 
 async fn execute_batch_eval_for_manifest(

@@ -15,22 +15,20 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::cli::Prototype1EditSurface;
-use crate::intervention::{text_file_artifact_id, text_replacement_patch_id};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 
 use super::edit_surface::{
-    self, graph,
-    harness_request::{BroadEditPolicy, PublishedBroadHarnessRequest, RequestAdmissionBinding},
-    harness_result::{SubmittedBroadHarnessResult, SubmittedBroadHarnessResultError, transaction},
-    request_policy, surface, tui,
+    self, harness_request::BroadEditPolicy, harness_result::transaction, request_policy, surface,
+    tui,
 };
 use super::event::ContentHash;
 use super::history::{
-    ArtifactSurface, CheckedSurface, CheckedSurfaceTransition, HistoryError, HistoryHash,
-    ProcedureRef, SurfaceArtifactRef, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
-    SurfaceWritable, TreeKeyCommitment, grant,
+    CheckedSurface, HistoryError, HistoryHash, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
 };
-use super::identity::{PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message};
+
+#[cfg(test)]
+use super::history::ArtifactSurface;
+use super::identity::ParentIdentity;
 
 pub(crate) const EVAL_CORE_SURFACE_ROOT: &str = "crates/ploke-eval";
 // This list is the ploke-eval-owned authority boundary for
@@ -1195,8 +1193,9 @@ mod harness_ingestion;
 mod surface_admission;
 
 pub(crate) use git_worktree::*;
-pub(crate) use harness_ingestion::*;
-pub(crate) use surface_admission::*;
+
+#[cfg(test)]
+pub(crate) use harness_ingestion::describe_submitted_broad_harness_result_error;
 
 #[cfg(test)]
 mod tests;

@@ -7,41 +7,12 @@
 //! outcomes. `ploke-tui` remains the executor; `ploke-eval` owns the bounded
 //! grant, surface check, and durable projection of what happened.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    fs,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::Receiver},
-    time::{Duration, Instant},
-};
-
 use ploke_llm::{
     ModelId, ProviderKey,
-    manager::RecordedResponse,
     router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
 };
-use ploke_records::{
-    agent_turn::{
-        AgentTurnArtifactRecord, MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord,
-        PatchArtifactRecord, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
-        TurnFinishedRecord,
-    },
-    llm_response::RawFullResponseRecord,
-};
-use ploke_tui::app::commands::harness::TestAppAccessor;
-use serde::{Deserialize, Serialize};
+use ploke_records::agent_turn::ModelRouteRecord;
 use thiserror::Error;
-use tokio::sync::oneshot;
-use uuid::Uuid;
-
-use super::{
-    ArtifactDelta,
-    harness_request::{
-        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract, request,
-    },
-    surface, tui,
-};
 
 #[cfg(test)]
 use super::harness_request::{AttachedReport, EvidenceRole};
@@ -141,9 +112,17 @@ mod harness_io;
 mod tui_bridge;
 
 pub(crate) use harness_io::*;
-pub(crate) use tui_bridge::{
-    run_headless, run_headless_with_model, run_headless_with_model_capture_responses,
+pub(crate) use tui_bridge::{run_headless_with_model, run_headless_with_model_capture_responses};
+
+#[cfg(test)]
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
+    time::Duration,
 };
+
+#[cfg(test)]
+use super::harness_request::{EvidenceRoot, EvidenceRootKind, EvidenceRootLocation};
 
 #[cfg(test)]
 pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) use tui_bridge::{
@@ -151,7 +130,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) use tui_bridge::
     classify_applied_terminal, classify_paths, command_display_matches, contract_cargo_args,
     drain_response_records, evidence_read_roots, next_event, policy_repair_prompt,
     provider_failure_from_message, provider_unavailable_reason, record_batch_terminal,
-    record_post_approval_indeterminate, retry_feedback, run_attempt, select_disjoint,
+    record_post_approval_indeterminate, retry_feedback, run_attempt, run_headless, select_disjoint,
     sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt, terminal_ids,
     timeout_terminal_for_run, turn_aborted_after_apply_terminal, validation_command_display,
     wait_for_refresh,

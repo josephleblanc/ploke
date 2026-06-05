@@ -1,16 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fs;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use cozo::DataValue;
-use ploke_llm::ModelId;
-use ploke_llm::request::models::ModelRouteSource;
 use ploke_protocol::tool_calls::trace;
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment};
-use ploke_protocol::{JsonAdjudicator, ProtocolReasoningPolicy};
 use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
@@ -20,8 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
 
-use crate::campaign::list_campaigns;
-use crate::cli::provider::parse_provider_key;
 use crate::cli::record::{print_record_resolution_footer, resolve_record_path};
 use crate::cli::{
     InspectCommand, InspectConfigCommand, InspectConversationsCommand, InspectDbSnapshotsCommand,
@@ -36,7 +29,7 @@ use crate::closure::{ClosureClass, load_closure_state};
 use crate::intervention_issue_aggregate::{
     IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
 };
-use crate::layout::{instances_dir, repos_dir};
+use crate::layout::instances_dir;
 use crate::protocol::protocol_aggregate::{
     ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
 };
@@ -47,8 +40,7 @@ use crate::protocol_artifacts::{
 use crate::protocol_report::ProtocolAggregateCallIssueRow;
 use crate::protocol_report::{
     ProtocolAggregateCoverage, ProtocolAggregateReport, ProtocolAggregateSegmentRow,
-    ProtocolColorProfile, ProtocolReportRenderOptions,
-    render_protocol_aggregate_report_with_options,
+    ProtocolReportRenderOptions, render_protocol_aggregate_report_with_options,
 };
 use crate::protocol_triage_report::{
     ProtocolCampaignCountRow, ProtocolCampaignEvidence, ProtocolCampaignExemplarRow,
@@ -56,15 +48,8 @@ use crate::protocol_triage_report::{
     render_protocol_campaign_triage_report, sort_count_rows,
 };
 use crate::record::read_compressed_record;
-use crate::run_history::{
-    RunDirPreference, list_finished_record_paths_in_instances_root, preferred_run_dir_for_instance,
-    print_assistant_messages_from_record_path,
-};
-use crate::run_registry::list_registrations_for_instance;
-use crate::runner::MultiSweBenchSubmissionRecord;
-use crate::selection::{load_active_selection, render_selection_warnings};
+use crate::run_history::list_finished_record_paths_in_instances_root;
 use crate::spec::PrepareError;
-use crate::target_registry::{BenchmarkFamily, load_target_registry};
 
 impl InspectCommand {
     pub async fn run(self) -> Result<(), PrepareError> {

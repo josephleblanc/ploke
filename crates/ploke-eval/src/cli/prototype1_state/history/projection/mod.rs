@@ -2438,7 +2438,7 @@ impl GrantEvidence {
                 ),
             });
         }
-        let Some(runtime_id) = self.coordinate.runtime_id() else {
+        let Some(_runtime_id) = self.coordinate.runtime_id() else {
             return Err(HistoryError::InvalidSelectionDecision {
                 detail: "surface grant coordinate is missing runtime identity".to_string(),
             });

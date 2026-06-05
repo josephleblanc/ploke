@@ -18,7 +18,7 @@ use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
-    app_state::{AppState, core::derive_edit_proposal_id, events::SystemEvent},
+    app_state::{AppState, events::SystemEvent},
     rag::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
@@ -40,7 +40,7 @@ use crate::{
     replay::llm::LoadedResponseTape,
     runner::{
         AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RepoStateArtifact,
-        RunMsbSingleRequest, ToolRequestRecord, setup_replay_runtime,
+        RunMsbSingleRequest, ToolRequestRecord,
     },
     spec::PrepareError,
 };

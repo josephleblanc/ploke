@@ -1,19 +1,11 @@
 //! Eval-owned harness I/O carriers, evidence projection, and durable records.
 
 use std::{
-    collections::{HashMap, VecDeque},
-    fs,
+    collections::HashMap,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::Receiver},
-    time::{Duration, Instant},
 };
 
-use ploke_llm::{
-    ModelId, ProviderKey,
-    manager::RecordedResponse,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
-};
 use ploke_records::{
     agent_turn::{
         AgentTurnArtifactRecord, MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord,
@@ -22,16 +14,12 @@ use ploke_records::{
     },
     llm_response::RawFullResponseRecord,
 };
-use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::super::{
     ArtifactDelta,
-    harness_request::{
-        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract, request,
-    },
+    harness_request::{EvidenceRoot, request},
     surface, tui,
 };
 use super::{

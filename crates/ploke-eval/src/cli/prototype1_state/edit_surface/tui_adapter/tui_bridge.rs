@@ -392,7 +392,7 @@ struct BatchOutcome {
 // TODO: I think this actually wants to be a method of `HeadlessRun`
 pub(super) async fn run_attempt(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
-    mut active_parent_id: Uuid,
+    active_parent_id: Uuid,
     workspace_path: &Path,
     edit_policy: BroadEditPolicy,
     turn: u32,
@@ -408,7 +408,7 @@ pub(super) async fn run_attempt(
     let mut applied = Vec::<AppliedItem>::new();
     let mut changed_paths = Vec::<PathBuf>::new();
     let mut policy_feedbacks = Vec::<String>::new();
-    let mut policy_repair_turns = 0_u32;
+    let _policy_repair_turns = 0_u32;
     let mut batches = HashMap::<Uuid, ToolBatch>::new();
     let mut tool_requests = HashMap::<String, (String, String)>::new();
     let mut pending_events = VecDeque::<ploke_tui::AppEvent>::new();

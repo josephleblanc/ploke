@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 use ploke_db::Database;
-use ploke_db::bm25_index::bm25_service::Bm25Status;
-use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
@@ -19,14 +16,10 @@ use ploke_llm::embeddings::{
 };
 use ploke_llm::manager::RequestMessage;
 use ploke_llm::request::{endpoint::Endpoint, models::ResponseItem};
-use ploke_llm::router_only::{
-    HasEndpoint,
-    openrouter::{
-        EmbeddingProviderPrefs, OpenRouter, OpenRouterModelId, ProviderPreferences,
-        embed::OpenRouterEmbeddingFields,
-    },
+use ploke_llm::router_only::openrouter::{
+    EmbeddingProviderPrefs, OpenRouter, ProviderPreferences, embed::OpenRouterEmbeddingFields,
 };
-use ploke_llm::{LlmRoute, ModelId, ProviderKey, ProviderSlug, SupportsTools};
+use ploke_llm::{LlmRoute, ModelId, ProviderKey, ProviderSlug};
 use ploke_records::agent_turn::{
     AgentTurnArtifactRecord as PersistedAgentTurnArtifactRecord, AgentTurnSummaryRecord,
     AgentTurnTraceRecord, ExpectedFileChangeRecord as PersistedExpectedFileChangeRecord,
@@ -51,44 +44,23 @@ use ploke_records::evaluation::{
 };
 use ploke_records::record::ToRecord;
 use ploke_records::tool_contracts::{PersistedToolCallArguments, ToolCallArguments};
-use ploke_tui::AppEvent;
-use ploke_tui::app::App;
-use ploke_tui::app::commands::harness::TestAppAccessor;
-use ploke_tui::app::commands::harness::{TestRuntime, TestRuntimeActorGuard};
-use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::ParseFailure;
-use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus, RuntimeConfig};
-use ploke_tui::app_state::events::SystemEvent;
-use ploke_tui::llm::{ChatEvt, LlmEvent};
-use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
-use ploke_tui::user_config::{
-    ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser, ToolLoopMode,
-};
+use ploke_tui::app_state::core::{DiffPreview, EditProposalStatus};
 use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::broadcast;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::{Instant, sleep};
+use tokio::time::Instant;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::LlmResponseRecord;
-use crate::inner::core::{RegisteredRunRole, RunIntent};
-use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus, RunRegistration};
+use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus};
 use crate::layout;
-use crate::model_registry::resolve_model_for_run;
-use crate::provider_prefs::load_provider_for_model;
 use crate::record::{
     CrateIndexStatus, IndexedCrateSummary, PackagingPhase, ParseErrorSummary, ParseFailureRecord,
-    RunRecord, RunRecordBuilder, RunTimingSummary, SetupPhase, SubmissionArtifactState,
-    write_compressed_record,
+    RunRecord, RunTimingSummary, SetupPhase, SubmissionArtifactState,
 };
-use crate::run_history::record_last_run;
-use crate::run_registry::{persist_registration, register_live_run, storage_roots_for_instance};
 use crate::spec::{PrepareError, PreparedMsbBatch, PreparedSingleRun, RunSource};
-use crate::tracing_setup::current_full_response_log_path;
 
 use super::*;
 

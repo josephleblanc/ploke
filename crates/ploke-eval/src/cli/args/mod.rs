@@ -25,5 +25,3 @@ pub use protocol::*;
 pub use registry::*;
 pub use root::*;
 pub use run::*;
-
-pub(crate) use common::parse_model_route_source;

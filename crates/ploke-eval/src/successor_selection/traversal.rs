@@ -25,12 +25,17 @@ use crate::{
         CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
         CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
         HistoryCandidateSource, HistoryCandidates, HistoryError, HistoryHash,
-        SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
-        SealedEvaluatorIdentity, SealedProtocolArtifactEvidence, SealedRunEvidence,
-        SealedRunProtocolEvidence, SelectionDecisionEntry, SelectionProjectionFailure,
-        SelectionProjectionFailureKind, SelectionScope, SubjectRef, TraversalCandidateSource,
+        SealedCandidateEvidence, SealedComparedRunEvidence, SealedRunEvidence,
+        SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+        SelectionScope, SubjectRef, TraversalCandidateSource,
     },
     metric::{self, Summary},
+};
+
+#[cfg(test)]
+use crate::cli::prototype1_state::history::{
+    SealedEvalSetIdentity, SealedEvaluatorIdentity, SealedProtocolArtifactEvidence,
+    SealedRunProtocolEvidence,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
