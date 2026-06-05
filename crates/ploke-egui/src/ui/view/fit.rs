@@ -119,6 +119,39 @@ pub(super) fn viewport_fit_metrics(bounds: Rect, viewport: Vec2, zoom: f32) -> (
     (fitted_size, fitted_fill, center_offset)
 }
 
+/// Expands node positions around the graph center when lineage spacing alone cannot
+/// reach the target viewport fill (for example depth-heavy trees with little leaf span).
+pub(super) fn stretch_graph_to_viewport_fill(
+    graph: &mut WidgetGraph,
+    bounds: Rect,
+    viewport: Vec2,
+    style: ViewStyle,
+) -> Rect {
+    let viewport = Vec2::new(viewport.x.max(1.0), viewport.y.max(1.0));
+    let target = viewport * TARGET_VIEWPORT_FILL;
+    let size = bounds.size();
+    let size = Vec2::new(size.x.max(1.0), size.y.max(1.0));
+    let scale_x = (target.x / size.x).max(1.0);
+    let scale_y = (target.y / size.y).max(1.0);
+    if scale_x <= 1.0 + f32::EPSILON && scale_y <= 1.0 + f32::EPSILON {
+        return bounds;
+    }
+
+    let center = bounds.center();
+    for node in graph.g_mut().node_weights_mut() {
+        if !node.payload().visible() {
+            continue;
+        }
+        let location = node.location();
+        node.set_location(Pos2::new(
+            center.x + (location.x - center.x) * scale_x,
+            center.y + (location.y - center.y) * scale_y,
+        ));
+    }
+
+    graph_fit_bounds(graph, style).unwrap_or(bounds)
+}
+
 pub(super) fn apply_graph_layout_fit(
     graph: &mut WidgetGraph,
     base_state: LayoutState,
@@ -130,7 +163,8 @@ pub(super) fn apply_graph_layout_fit(
     layout::apply_lineage(graph, &scaled_state);
     scaled_state.triggered = true;
     let post_layout_bounds = graph_fit_bounds(graph, style)?;
-    Some((scaled_state, post_layout_bounds))
+    let fitted_bounds = stretch_graph_to_viewport_fill(graph, post_layout_bounds, viewport, style);
+    Some((scaled_state, fitted_bounds))
 }
 
 pub(super) fn apply_graph_layout_viewport_fit(
@@ -290,6 +324,16 @@ mod tests {
                 .distance(Rect::from_min_size(Pos2::ZERO, viewport).center())
                 < 0.5
         );
+    }
+
+    #[test]
+    fn stretch_scale_expands_underfilled_width_to_target_band() {
+        let viewport = Vec2::new(526.0, 960.0);
+        let bounds = Rect::from_min_max(Pos2::new(248.0, 0.0), Pos2::new(278.0, 886.0));
+        let target = viewport * TARGET_VIEWPORT_FILL;
+        let scale_x = (target.x / bounds.width().max(1.0)).max(1.0);
+        let stretched_width = bounds.width() * scale_x;
+        assert!((stretched_width / viewport.x - TARGET_VIEWPORT_FILL).abs() < 0.02);
     }
 
     #[test]
