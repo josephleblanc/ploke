@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
 use crate::diagnostics::SelectedGraphItemSnapshot;
+use crate::ui::app::layout::INSPECTOR_CONTENT_HORIZONTAL_INSET;
 #[cfg(all(not(target_arch = "wasm32"), feature = "dev"))]
 use crate::ui::view::GraphSelectionDetail;
 use crate::ui::{app::shell, view::GraphSelectionRef};
@@ -277,7 +278,7 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
                     .show(ui, |ui| {
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
-                                left: 8,
+                                left: INSPECTOR_CONTENT_HORIZONTAL_INSET,
                                 right: 0,
                                 top: 0,
                                 bottom: 0,
@@ -578,16 +579,8 @@ pub fn prefers_trajectory_pane(graph: &Graph) -> bool {
     !graph.trajectory_generations().is_empty()
 }
 
-pub fn create_default_tree_for_graph(graph: &Graph) -> egui_tiles::Tree<Pane> {
-    if prefers_trajectory_pane(graph) {
-        return create_tree_trajectory_review();
-    }
-    let primary = if prefers_eval_protocol_pane(graph) {
-        Pane::EvalProtocol
-    } else {
-        Pane::Graph
-    };
-    create_tree_with_primary_pane(primary)
+pub fn create_default_tree_for_graph(_graph: &Graph) -> egui_tiles::Tree<Pane> {
+    create_default_tree()
 }
 
 pub fn prefers_eval_protocol_pane(graph: &Graph) -> bool {
@@ -611,4 +604,67 @@ pub(crate) fn create_tree_with_primary_pane(primary: Pane) -> egui_tiles::Tree<P
     let root = tiles.insert_horizontal_tile(vec![graph_tab, inspector_tab]);
 
     egui_tiles::Tree::new("main_tree", root, tiles)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::benchmark::BENCHMARK_TRAJECTORY_GRAPH_SNAPSHOT_FIXTURE;
+    use crate::bootstrap::PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_PATH;
+    use crate::import::graph_from_snapshot_bytes;
+
+    fn center_primary_pane(tree: &egui_tiles::Tree<Pane>) -> Pane {
+        let root = tree.root.expect("tree root");
+        let egui_tiles::Tile::Container(root_container) = tree.tiles.get(root).expect("root tile")
+        else {
+            panic!("expected horizontal root container");
+        };
+        let graph_tab = *root_container
+            .children()
+            .next()
+            .expect("graph tab is first child");
+        let egui_tiles::Tile::Container(tab_container) =
+            tree.tiles.get(graph_tab).expect("graph tab tile")
+        else {
+            panic!("expected graph tab container");
+        };
+        let pane_id = *tab_container
+            .children()
+            .next()
+            .expect("graph tab holds center pane");
+        let egui_tiles::Tile::Pane(pane) = tree.tiles.get(pane_id).expect("center pane tile")
+        else {
+            panic!("expected center pane");
+        };
+        pane.clone()
+    }
+
+    #[test]
+    fn create_default_tree_for_trajectory_graph_uses_graph_center_pane() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(BENCHMARK_TRAJECTORY_GRAPH_SNAPSHOT_FIXTURE);
+        let bytes = std::fs::read(&path).expect("read trajectory fixture");
+        let graph = graph_from_snapshot_bytes(&bytes).expect("decode trajectory fixture");
+        assert!(
+            prefers_trajectory_pane(&graph),
+            "fixture should back trajectory data without auto-opening Trajectory pane"
+        );
+        let tree = create_default_tree_for_graph(&graph);
+        assert_eq!(center_primary_pane(&tree), Pane::Graph);
+    }
+
+    #[test]
+    fn create_default_tree_for_protocol_graph_uses_graph_center_pane() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_PATH);
+        let bytes = std::fs::read(&path).expect("read protocol fixture");
+        let graph = graph_from_snapshot_bytes(&bytes).expect("decode protocol fixture");
+        assert!(
+            prefers_eval_protocol_pane(&graph),
+            "protocol fixture should carry eval/protocol evidence without auto-opening that pane"
+        );
+        let tree = create_default_tree_for_graph(&graph);
+        assert_eq!(center_primary_pane(&tree), Pane::Graph);
+    }
 }

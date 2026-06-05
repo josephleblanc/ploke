@@ -4,6 +4,7 @@ pub mod artifact_tree;
 mod diagnostics;
 mod edge;
 mod effects;
+mod fit;
 mod geometry;
 mod label;
 mod layout;
@@ -12,7 +13,7 @@ mod projection;
 mod style;
 
 use eframe::egui;
-use eframe::egui::Vec2;
+use eframe::egui::{Id, LayerId, Order, Rect, UiBuilder, Vec2};
 use ploke_tree::Graph as DomainGraph;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,8 @@ pub struct GraphView {
     view_style: ViewStyle,
     last_viewport: Option<egui::Vec2>,
     fit_next_frame: bool,
+    layout_viewport_fit_remaining: u8,
+    layout_viewport_fit_viewport: Option<Vec2>,
     layout_state_pending: bool,
     diagnostics: Option<GraphViewDiagnostics>,
     mode: GraphViewMode,
@@ -54,11 +57,13 @@ impl Default for GraphView {
                 .with_dragging_enabled(false)
                 .with_node_selection_enabled(true)
                 .with_edge_selection_enabled(true),
-            navigation: navigation(view_style.layout.fit_padding, false),
+            navigation: navigation(view_style.layout.fit_padding),
             style: egui_graphs::SettingsStyle::new().with_labels_always(true),
             view_style,
             last_viewport: None,
             fit_next_frame: true,
+            layout_viewport_fit_remaining: 0,
+            layout_viewport_fit_viewport: None,
             layout_state_pending: false,
             diagnostics: None,
             mode: GraphViewMode::ArtifactTree,
@@ -70,7 +75,7 @@ impl Default for GraphView {
 
 impl GraphView {
     pub fn with_style(mut self, style: ViewStyle) -> Self {
-        self.navigation = navigation(style.layout.fit_padding, false);
+        self.navigation = navigation(style.layout.fit_padding);
         self.view_style = style;
         self.fit_next_frame = true;
         self
@@ -89,6 +94,46 @@ impl GraphView {
         self.cache = GraphViewCache::default();
         self.layout_state_pending = true;
         self.fit_next_frame = true;
+    }
+
+    /// Recomputes lineage spacing from the graph pane size and centers at zoom 1.
+    pub(crate) fn request_graph_layout_fit(&mut self, ui: &mut egui::Ui, viewport: Vec2) {
+        let view_style = self.view_style;
+        let base_state = self.cache.layout_state(view_style);
+        let Some((scaled_state, _post_layout_bounds)) =
+            fit::apply_graph_layout_fit(self.cache.graph_mut(), base_state, viewport, view_style)
+        else {
+            return;
+        };
+        self.cache.invalidate_layout_diagnostics();
+        egui_graphs::set_layout_state(ui, scaled_state, Some(self.id.clone()));
+        self.layout_viewport_fit_viewport = Some(viewport);
+        // Re-apply after widget draw so egui_graphs pan/top-left compensation cannot leave a stale offset.
+        self.layout_viewport_fit_remaining = 2;
+        ui.ctx().request_repaint();
+    }
+
+    fn apply_pending_graph_layout_viewport_fit(
+        &mut self,
+        ui: &mut egui::Ui,
+        custom_id: &Option<String>,
+        viewport: Vec2,
+    ) {
+        if self.layout_viewport_fit_remaining == 0 {
+            return;
+        }
+
+        let view_style = self.view_style;
+        let Some(bounds) = fit::graph_fit_bounds(self.cache.graph_mut(), view_style) else {
+            self.layout_viewport_fit_remaining = 0;
+            self.layout_viewport_fit_viewport = None;
+            return;
+        };
+        fit::apply_graph_layout_viewport_fit(ui, custom_id, viewport, bounds);
+        self.layout_viewport_fit_remaining -= 1;
+        if self.layout_viewport_fit_remaining == 0 {
+            self.layout_viewport_fit_viewport = None;
+        }
     }
 
     pub fn diagnostics(&self) -> Option<GraphViewDiagnostics> {
@@ -200,7 +245,12 @@ impl GraphView {
         let view_style = ViewStyle::default();
         let mut cache = GraphViewCache::default();
         cache.refresh(graph, view_style, mode, ArtifactTreeFilters::default());
-        cache.diagnostics(viewport_size, view_style, EdgeLabelDiagnostics::default())
+        cache.diagnostics(
+            viewport_size,
+            1.0,
+            view_style,
+            EdgeLabelDiagnostics::default(),
+        )
     }
 
     #[cfg_attr(
@@ -228,7 +278,21 @@ impl GraphView {
         let fit_now = std::mem::take(&mut self.fit_next_frame);
         {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_NAVIGATION_PREPARE).entered();
-            self.navigation = navigation(self.view_style.layout.fit_padding, fit_now);
+            self.navigation = navigation(self.view_style.layout.fit_padding);
+        }
+
+        label::reset_edge_label_diagnostics(ui.ctx());
+        let custom_id = Some(self.id.clone());
+        if fit_now {
+            fit::apply_graph_screen_fit(
+                ui,
+                ui.auto_id_with("graph-fit-prep"),
+                &custom_id,
+                ui.max_rect().min,
+                viewport,
+                self.cache.graph_mut(),
+                self.view_style,
+            );
         }
 
         let mut widget = {
@@ -242,17 +306,46 @@ impl GraphView {
             .with_styles(&self.style)
         };
 
-        label::reset_edge_label_diagnostics(ui.ctx());
         let response = {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_WIDGET_ADD).entered();
             ui.add(&mut widget)
         };
+        if fit_now {
+            // egui_graphs first-frame fit can overwrite pre-add metadata; re-apply after draw.
+            fit::apply_graph_screen_fit(
+                ui,
+                response.id,
+                &custom_id,
+                response.rect.left_top(),
+                response.rect.size(),
+                self.cache.graph_mut(),
+                self.view_style,
+            );
+        }
+        if let Some(viewport) = self.layout_viewport_fit_viewport {
+            self.apply_pending_graph_layout_viewport_fit(ui, &custom_id, viewport);
+        }
+        let graph_rect = response.rect;
+        let view_style = self.view_style;
+        let relayout_available =
+            fit::graph_fit_bounds(self.cache.graph_mut(), view_style).is_some();
+        if show_graph_layout_fit_button(ui, graph_rect, relayout_available) {
+            let viewport = graph_rect.size();
+            self.request_graph_layout_fit(ui, viewport);
+            self.apply_pending_graph_layout_viewport_fit(ui, &custom_id, viewport);
+        }
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
         {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_DIAGNOSTICS_UPDATE).entered();
-            self.diagnostics =
-                self.cache
-                    .diagnostics(response.rect.size(), self.view_style, edge_labels);
+            let viewport_zoom = egui_graphs::MetadataFrame::new(custom_id.clone())
+                .load(ui)
+                .zoom;
+            self.diagnostics = self.cache.diagnostics(
+                response.rect.size(),
+                viewport_zoom,
+                self.view_style,
+                edge_labels,
+            );
         }
     }
 
@@ -387,9 +480,78 @@ pub struct EdgeCrossingsByKind {
     pub mixed: usize,
 }
 
-fn navigation(fit_padding: f32, fit_to_screen: bool) -> egui_graphs::SettingsNavigation {
+const GRAPH_RELAYOUT_BUTTON_MARGIN: f32 = 8.0;
+/// Reserve space for the egui_tiles tab close control in the pane chrome.
+const GRAPH_RELAYOUT_TILE_CLOSE_RESERVE: f32 = 32.0;
+const GRAPH_RELAYOUT_BUTTON_SIZE: Vec2 = Vec2::new(52.0, 24.0);
+
+fn show_graph_layout_fit_button(
+    ui: &mut egui::Ui,
+    graph_rect: Rect,
+    relayout_available: bool,
+) -> bool {
+    if graph_rect.width() < GRAPH_RELAYOUT_BUTTON_SIZE.x + GRAPH_RELAYOUT_BUTTON_MARGIN
+        || graph_rect.height() < GRAPH_RELAYOUT_BUTTON_SIZE.y + GRAPH_RELAYOUT_BUTTON_MARGIN
+    {
+        return false;
+    }
+
+    let button_rect = Rect::from_min_size(
+        egui::pos2(
+            graph_rect.right()
+                - GRAPH_RELAYOUT_BUTTON_SIZE.x
+                - GRAPH_RELAYOUT_BUTTON_MARGIN
+                - GRAPH_RELAYOUT_TILE_CLOSE_RESERVE,
+            graph_rect.top() + GRAPH_RELAYOUT_BUTTON_MARGIN,
+        ),
+        GRAPH_RELAYOUT_BUTTON_SIZE,
+    );
+
+    let tokens = crate::ui::theme::tokens_from_ui(ui);
+    let hover = "Resize node layout to pane";
+    let disabled_hover = "No visible graph nodes to fit";
+    let text_color = if relayout_available {
+        tokens.text
+    } else {
+        tokens.text.gamma_multiply(0.45)
+    };
+    let fill = tokens.panel.gamma_multiply(1.35);
+    let stroke = egui::Stroke::new(2.0, tokens.accent);
+    let layer_id = LayerId::new(Order::Tooltip, Id::new("ploke-egui.graph-relayout-button"));
+
+    let button = ui
+        .scope_builder(
+            UiBuilder::new()
+                .id_salt("graph-relayout-button")
+                .max_rect(button_rect)
+                .layer_id(layer_id),
+            |ui| {
+                ui.set_min_size(GRAPH_RELAYOUT_BUTTON_SIZE);
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(stroke)
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        let label = egui::RichText::new("↻ Layout").color(text_color);
+                        if relayout_available {
+                            ui.button(label).on_hover_text(hover)
+                        } else {
+                            ui.add_enabled(false, egui::Button::new(label))
+                                .on_hover_text(disabled_hover)
+                        }
+                    })
+                    .inner
+            },
+        )
+        .inner;
+
+    button.clicked() && relayout_available
+}
+
+fn navigation(fit_padding: f32) -> egui_graphs::SettingsNavigation {
     egui_graphs::SettingsNavigation::new()
-        .with_fit_to_screen_enabled(fit_to_screen)
+        .with_fit_to_screen_enabled(false)
         .with_zoom_and_pan_enabled(true)
         .with_fit_to_screen_padding(fit_padding)
 }

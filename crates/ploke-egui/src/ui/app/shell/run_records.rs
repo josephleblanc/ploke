@@ -10,7 +10,6 @@ use crate::ui::render::text::*;
 use eframe::egui;
 use ploke_tree::Graph;
 
-#[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolResultContent,
 };
@@ -777,37 +776,18 @@ fn render_tool_arguments_section(
         )),
         render_cache.tool_steps_default_open(true),
         |ui| {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let decoded = render_cache.tool_arguments(
-                    call_id,
-                    tool.request.tool.as_str(),
-                    tool.request.arguments.as_str(),
-                );
-                render_decoded_tool_arguments(
-                    ui,
-                    render_cache,
-                    decoded.as_ref(),
-                    record_ctx,
-                    Some((index, tool)),
-                );
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let detail = detail_for_lane_at_step(
-                    EvidenceLane::UiDecodeUnavailable,
-                    record_ctx,
-                    Some(call_id),
-                    Some(tool.request.tool.as_str()),
-                    Some(index),
-                );
-                render_evidence_lane_chip_with_inspect(
-                    ui,
-                    EvidenceLane::UiDecodeUnavailable,
-                    detail,
-                    ("run-record-tool-args-decode", index, call_id),
-                );
-            }
+            let decoded = render_cache.tool_arguments(
+                call_id,
+                tool.request.tool.as_str(),
+                tool.request.arguments.as_str(),
+            );
+            render_decoded_tool_arguments(
+                ui,
+                render_cache,
+                decoded.as_ref(),
+                record_ctx,
+                Some((index, tool)),
+            );
 
             show_tool_steps_collapsing(
                 ui,
@@ -865,34 +845,15 @@ fn render_tool_result_section(
         render_cache.tool_steps_default_open(false),
         |ui| match &tool.result {
             ploke_records::run_record::ToolResult::Completed(_) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let decoded =
-                        render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
-                    render_decoded_tool_result(
-                        ui,
-                        render_cache,
-                        decoded.as_ref(),
-                        record_ctx,
-                        Some((index, tool)),
-                    );
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let detail = detail_for_lane_at_step(
-                        EvidenceLane::UiDecodeUnavailable,
-                        record_ctx,
-                        Some(call_id),
-                        Some(tool.request.tool.as_str()),
-                        Some(index),
-                    );
-                    render_evidence_lane_chip_with_inspect(
-                        ui,
-                        EvidenceLane::UiDecodeUnavailable,
-                        detail,
-                        ("run-record-tool-content-decode", index, call_id),
-                    );
-                }
+                let decoded =
+                    render_cache.tool_result(call_id, tool_execution_name(tool), raw_content);
+                render_decoded_tool_result(
+                    ui,
+                    render_cache,
+                    decoded.as_ref(),
+                    record_ctx,
+                    Some((index, tool)),
+                );
 
                 show_tool_steps_collapsing(
                     ui,
@@ -1180,7 +1141,6 @@ fn render_tool_failure_content(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn render_decoded_tool_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1213,7 +1173,6 @@ pub(super) fn render_decoded_tool_arguments(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_call_arguments(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1358,7 +1317,6 @@ fn render_tool_call_arguments(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn render_decoded_tool_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1391,7 +1349,6 @@ pub(super) fn render_decoded_tool_result(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_tool_result_content(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1518,7 +1475,6 @@ fn render_tool_result_content(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_patch_like_result(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1537,7 +1493,6 @@ fn render_patch_like_result(
     render_path_list(ui, render_cache, "files", files);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_code_item_query(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1552,7 +1507,6 @@ fn render_code_item_query(
     tool_kv_text(ui, render_cache, "module path", module_path);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_concise_context(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1575,7 +1529,6 @@ fn render_concise_context(
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_str(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1587,7 +1540,6 @@ fn render_optional_str(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1599,7 +1551,6 @@ fn render_optional_string_list(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_string_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1612,7 +1563,6 @@ fn render_string_list(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_path_list(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1625,7 +1575,6 @@ fn render_path_list(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1637,7 +1586,6 @@ fn render_optional_u32(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_u64(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1649,7 +1597,6 @@ fn render_optional_u64(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_i32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1661,7 +1608,6 @@ fn render_optional_i32(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn render_optional_f32(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1722,19 +1668,16 @@ fn tool_kv_bool(
     tool_kv_text(ui, render_cache, key, if value { "true" } else { "false" });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u32(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u32) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_u64(ui: &mut egui::Ui, render_cache: &mut InspectorRenderCache, key: &str, value: u64) {
     let mut buffer = itoa::Buffer::new();
     tool_kv_text(ui, render_cache, key, buffer.format(value));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_usize(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -1754,7 +1697,6 @@ fn tool_kv_debug(
     tool_kv_owned(ui, render_cache, key, format!("{value:?}"));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tool_kv_text_size_summary(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,

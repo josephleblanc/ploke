@@ -21,14 +21,12 @@ pub(crate) enum CachedTextKind {
     MonospaceHover,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextSizeSummaryKey {
     pub(crate) bytes: usize,
     pub(crate) lines: usize,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TextSizeSummaryEntry {
     pub(crate) key: TextSizeSummaryKey,
@@ -41,7 +39,6 @@ pub(crate) struct CachedTextStyleKey {
     pixels_per_point: u32,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<&str> for TextSizeSummaryKey {
     fn from(v: &str) -> Self {
         Self {

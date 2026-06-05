@@ -8,19 +8,28 @@ use ploke_tree::Graph;
 use crate::import::{ImportError, graph_from_snapshot_bytes};
 
 /// Export-graph JSON served beside the Trunk `dist/` bundle (see `index.html` copy-dir).
-pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH: &str = "benchmark-fixtures/protocol-graph.json";
+pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH: &str =
+    "benchmark-fixtures/trajectory-multi-gen.json";
 
 /// Same-origin URL for [`STANDARD_GRAPH_SNAPSHOT_FIXTURE_PATH`] when using `trunk serve`.
-pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL: &str = "/benchmark-fixtures/protocol-graph.json";
-
-/// Basename of the default WASM dogfood graph (also accepted via `?graph=` alias).
-pub const STANDARD_GRAPH_SNAPSHOT_BASENAME: &str = "protocol-graph.json";
-
-/// Multi-generation trajectory fixture for trend/table QA; load via `?graph=trajectory-multi-gen.json`.
-pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL: &str =
+pub const STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL: &str =
     "/benchmark-fixtures/trajectory-multi-gen.json";
 
-pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME: &str = "trajectory-multi-gen.json";
+/// Basename of the default WASM dogfood graph (also accepted via `?graph=` alias).
+pub const STANDARD_GRAPH_SNAPSHOT_BASENAME: &str = "trajectory-multi-gen.json";
+
+/// Eval/protocol export fixture; load via `?graph=protocol-graph.json`.
+pub const PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_PATH: &str = "benchmark-fixtures/protocol-graph.json";
+
+/// Same-origin URL for [`PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_PATH`] when using `trunk serve`.
+pub const PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_URL: &str = "/benchmark-fixtures/protocol-graph.json";
+
+pub const PROTOCOL_GRAPH_SNAPSHOT_BASENAME: &str = "protocol-graph.json";
+
+/// Alias for [`STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL`] (same multi-gen trajectory fixture).
+pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL: &str = STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL;
+
+pub const TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME: &str = STANDARD_GRAPH_SNAPSHOT_BASENAME;
 
 #[derive(Debug, Clone)]
 pub struct LoadedGraph {
@@ -480,6 +489,9 @@ pub fn resolve_graph_fetch_url(query_value: &str) -> String {
     } else {
         format!("/{query_value}")
     };
+    if path == format!("/{PROTOCOL_GRAPH_SNAPSHOT_BASENAME}") {
+        return PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_URL.to_owned();
+    }
     if path == format!("/{STANDARD_GRAPH_SNAPSHOT_BASENAME}") {
         return STANDARD_GRAPH_SNAPSHOT_FIXTURE_URL.to_owned();
     }
@@ -623,6 +635,14 @@ mod tests {
         assert_eq!(
             resolve_graph_fetch_url(TRAJECTORY_MULTI_GEN_SNAPSHOT_BASENAME),
             TRAJECTORY_MULTI_GEN_SNAPSHOT_FIXTURE_URL
+        );
+        assert_eq!(
+            resolve_graph_fetch_url(PROTOCOL_GRAPH_SNAPSHOT_BASENAME),
+            PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_URL
+        );
+        assert_eq!(
+            resolve_graph_fetch_url(&format!("/{PROTOCOL_GRAPH_SNAPSHOT_BASENAME}")),
+            PROTOCOL_GRAPH_SNAPSHOT_FIXTURE_URL
         );
     }
 

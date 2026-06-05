@@ -236,10 +236,7 @@ pub(crate) fn render_right_inspector(
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.set_clip_rect(super::cache::pane_visible_clip_rect(
-                    ui,
-                    pane_content_width,
-                ));
+                ui.set_clip_rect(super::cache::pane_visible_clip_rect(ui, pane_content_width));
                 ui.set_max_width(pane_content_width);
                 egui::Frame::new()
                     .inner_margin(INSPECTOR_MARGIN_INNER)

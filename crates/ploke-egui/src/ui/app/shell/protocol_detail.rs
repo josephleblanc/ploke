@@ -21,12 +21,9 @@ use super::run_dashboard::{
     render_dashboard_metric_card, tone_for_local_analysis_concern,
     tone_for_local_analysis_signal_not_recorded,
 };
-use super::{InspectorRenderCache, show_inspector_collapsing};
-#[cfg(not(target_arch = "wasm32"))]
-use super::{render_decoded_tool_arguments, render_decoded_tool_result};
-#[cfg(target_arch = "wasm32")]
-use crate::ui::provenance::{
-    EvidenceLane, detail_for_lane, render_evidence_lane_chip_with_inspect,
+use super::{
+    InspectorRenderCache, render_decoded_tool_arguments, render_decoded_tool_result,
+    show_inspector_collapsing,
 };
 
 fn render_call_review_section_heading(ui: &mut egui::Ui, title: &str) {
@@ -1089,23 +1086,15 @@ fn protocol_preview_has_typed_fields(
     tool_name: &str,
     preview: &str,
 ) -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match kind {
-            ProtocolPreviewKind::Arguments => render_cache
-                .tool_arguments("protocol-preview", tool_name, preview)
-                .decoded()
-                .is_some(),
-            ProtocolPreviewKind::Result => render_cache
-                .tool_result("protocol-preview", tool_name, preview)
-                .decoded()
-                .is_some(),
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (render_cache, kind, tool_name, preview);
-        false
+    match kind {
+        ProtocolPreviewKind::Arguments => render_cache
+            .tool_arguments("protocol-preview", tool_name, preview)
+            .decoded()
+            .is_some(),
+        ProtocolPreviewKind::Result => render_cache
+            .tool_result("protocol-preview", tool_name, preview)
+            .decoded()
+            .is_some(),
     }
 }
 
@@ -1116,29 +1105,15 @@ fn render_protocol_preview_typed_fields(
     tool_name: &str,
     preview: &str,
 ) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match kind {
-            ProtocolPreviewKind::Arguments => {
-                let decoded = render_cache.tool_arguments("protocol-preview", tool_name, preview);
-                render_decoded_tool_arguments(ui, render_cache, decoded.as_ref(), None, None);
-            }
-            ProtocolPreviewKind::Result => {
-                let decoded = render_cache.tool_result("protocol-preview", tool_name, preview);
-                render_decoded_tool_result(ui, render_cache, decoded.as_ref(), None, None);
-            }
+    match kind {
+        ProtocolPreviewKind::Arguments => {
+            let decoded = render_cache.tool_arguments("protocol-preview", tool_name, preview);
+            render_decoded_tool_arguments(ui, render_cache, decoded.as_ref(), None, None);
         }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (kind, tool_name, preview);
-        let detail = detail_for_lane(EvidenceLane::UiDecodeUnavailable, None);
-        render_evidence_lane_chip_with_inspect(
-            ui,
-            EvidenceLane::UiDecodeUnavailable,
-            detail,
-            ("protocol-preview-decode", tool_name, preview.len()),
-        );
+        ProtocolPreviewKind::Result => {
+            let decoded = render_cache.tool_result("protocol-preview", tool_name, preview);
+            render_decoded_tool_result(ui, render_cache, decoded.as_ref(), None, None);
+        }
     }
 }
 

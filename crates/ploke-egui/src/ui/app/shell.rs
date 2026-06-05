@@ -35,11 +35,10 @@ mod trajectory;
 use self::fields::*;
 use self::llm_trace::render_run_record_turn_llm_trace;
 use self::run_records::{
-    patch_projection_check_state_label, render_run_record_tool_steps, render_run_record_turns,
-    render_token_usage, submission_artifact_state_label,
+    patch_projection_check_state_label, render_decoded_tool_arguments, render_decoded_tool_result,
+    render_run_record_tool_steps, render_run_record_turns, render_token_usage,
+    submission_artifact_state_label,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use self::run_records::{render_decoded_tool_arguments, render_decoded_tool_result};
 pub(crate) use cache::{
     InspectorRenderCache, eval_pane_content_width, pane_visible_clip_rect,
     refresh_eval_pane_column_width,

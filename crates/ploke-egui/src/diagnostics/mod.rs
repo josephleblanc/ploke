@@ -433,7 +433,8 @@ fn ranked_findings(diagnostics: &GraphViewDiagnostics) -> Vec<SnapshotFinding> {
     let mut findings = Vec::new();
 
     let aspect_mismatch = diagnostics.aspect_ratio / diagnostics.viewport_aspect_ratio.max(0.01);
-    if diagnostics.fitted_fill.y < 0.15 || aspect_mismatch > 6.0 {
+    let min_fitted_fill = diagnostics.fitted_fill.x.min(diagnostics.fitted_fill.y);
+    if min_fitted_fill < 0.15 || aspect_mismatch > 6.0 {
         findings.push(SnapshotFinding {
             severity: FindingSeverity::High,
             title: "Graph composition collapses into a thin horizontal strip.".to_owned(),
@@ -443,10 +444,7 @@ fn ranked_findings(diagnostics: &GraphViewDiagnostics) -> Vec<SnapshotFinding> {
                     "viewport aspect ratio: {:.2}",
                     diagnostics.viewport_aspect_ratio
                 ),
-                format!(
-                    "fitted vertical fill: {:.0}%",
-                    diagnostics.fitted_fill.y * 100.0
-                ),
+                format!("fitted fill (min axis): {:.0}%", min_fitted_fill * 100.0),
             ],
         });
     }

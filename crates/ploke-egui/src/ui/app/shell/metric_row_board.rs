@@ -196,9 +196,7 @@ fn render_metric_row_board_row(
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.set_max_width(
-            BAR_COLUMN_LEFT_PADDING + section_track_width + BAR_TRACK_RIGHT_INSET,
-        );
+        ui.set_max_width(BAR_COLUMN_LEFT_PADDING + section_track_width + BAR_TRACK_RIGHT_INSET);
         ui.add_space(BAR_COLUMN_LEFT_PADDING);
         let (track_rect, _) = ui.allocate_exact_size(
             egui::vec2(section_track_width, BAR_ROW_HEIGHT),

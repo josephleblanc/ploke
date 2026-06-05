@@ -10,7 +10,7 @@ use crate::ui::theme::{PaletteTokens, tokens_from_ui};
 pub enum EvidenceLane {
     /// Snapshot fetch / JSON import / graph build in egui.
     UiSnapshotLoad,
-    /// WASM cannot decode tool args/results (not a harness failure).
+    /// Reserved: decode unavailable on this host (legacy WASM stub; decode is serde_json-only).
     UiDecodeUnavailable,
     /// Native JSON decode of tool args/results failed.
     UiDecodeFailed,
@@ -49,7 +49,7 @@ impl EvidenceLane {
                 "The browser or native UI failed to fetch or import this graph snapshot; tool rows below are not trustworthy until load succeeds."
             }
             Self::UiDecodeUnavailable => {
-                "WASM build cannot run native tool decoders; raw JSON is still valid export evidence—the harness did not fail because of WASM."
+                "Decode unavailable on this host; raw JSON is still valid export evidence."
             }
             Self::UiDecodeFailed => {
                 "Native UI could not decode persisted tool JSON into typed fields; see raw payload for the recorded bytes."
@@ -305,9 +305,6 @@ fn render_provenance_popover(ui: &mut egui::Ui, detail: ProvenanceDetail<'_>) {
     ui.label(egui::RichText::new("Lane").strong());
     render_evidence_lane_chip(ui, detail.lane);
     ui.label(detail.lane.tooltip());
-    ui.separator();
-    ui.label(egui::RichText::new("Trust").strong());
-    ui.label(trust_line_for_lane(detail.lane));
     if let Some(field) = detail.headline_field {
         ui.separator();
         ui.label(egui::RichText::new("Headline source").strong());
@@ -329,38 +326,6 @@ fn render_provenance_popover(ui: &mut egui::Ui, detail: ProvenanceDetail<'_>) {
         ui.label("Decode:");
         ui.monospace(decode_capability_label());
     });
-}
-
-fn trust_line_for_lane(lane: EvidenceLane) -> &'static str {
-    match lane {
-        EvidenceLane::UiSnapshotLoad => {
-            "Trust the snapshot load layer: fix import/URL before interpreting tool rows below."
-        }
-        EvidenceLane::UiDecodeUnavailable => {
-            "Trust export JSON and recorded harness fields; WASM decode limits are not harness failures."
-        }
-        EvidenceLane::UiDecodeFailed => {
-            "Trust raw persisted tool JSON when native decode fails; harness headline is separate."
-        }
-        EvidenceLane::UiDecodeOk => {
-            "Native decode is for scanability; recorded harness and export payloads remain authoritative."
-        }
-        EvidenceLane::RecordedHarnessFailure => {
-            "Trust the recorded harness failure and typed error wire over UI decode labels."
-        }
-        EvidenceLane::RecordedToolCompleted => {
-            "Trust the exported completed tool result and UI payload witnesses."
-        }
-        EvidenceLane::RecordedTypedErrorWire => {
-            "Trust structured tool error wire from the export (user line first in drilldown)."
-        }
-        EvidenceLane::RecordedRawPayload => {
-            "Trust persisted raw bytes; the UI does not reinterpret them."
-        }
-        EvidenceLane::GraphWitnessGap => {
-            "Do not infer missing facts; load a richer snapshot or disk witness."
-        }
-    }
 }
 
 fn render_export_anchor_rows(ui: &mut egui::Ui, detail: ProvenanceDetail<'_>) {
@@ -486,14 +451,8 @@ pub const fn host_label() -> &'static str {
     "native"
 }
 
-#[cfg(target_arch = "wasm32")]
 pub const fn decode_capability_label() -> &'static str {
-    "limited (WASM)"
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub const fn decode_capability_label() -> &'static str {
-    "full (native)"
+    "full (serde_json)"
 }
 
 #[cfg(test)]
@@ -701,7 +660,11 @@ mod tests {
         let detail = detail_for_lane(EvidenceLane::UiDecodeUnavailable, None);
         assert_eq!(detail.lane, EvidenceLane::UiDecodeUnavailable);
         assert_eq!(detail.headline_field, None);
-        assert!(EvidenceLane::UiDecodeUnavailable.tooltip().contains("WASM"));
+        assert!(
+            EvidenceLane::UiDecodeUnavailable
+                .tooltip()
+                .contains("export evidence")
+        );
     }
 
     #[test]

@@ -50,9 +50,9 @@ Split questions by what the loaded graph can answer. Never collapse them into on
 
 | Surface | Role | When primary |
 |--------|------|----------------|
-| **Artifact tree** (center canvas) | Artifact nodes `A`, edges `P_H ∪ P_C`; History as reveal/highlight, not canvas spine | Default when trajectory and eval/protocol preferences do not apply |
+| **Artifact tree** (center canvas) | Artifact nodes `A`, edges `P_H ∪ P_C`; History as reveal/highlight, not canvas spine | Default for trajectory exports and general graphs; **WASM/Netlify demo** lands here with Inspector + bottom timeline |
 | **Eval & Protocol** (center) | Run dashboard: health, coverage, problem slices, scannable call/segment lists | `prefers_eval_protocol_pane`: empty sealed history + eval/protocol evidence |
-| **Trajectory** (center) | Generation table, campaign/policy header, Selection Story when backed | `prefers_trajectory_pane`: non-empty `trajectory_generations()` |
+| **Trajectory** (center) | Generation table, campaign/policy header, Selection Story when backed | **Opt-in** via tile picker / “Trajectory review” preset—not auto-opened when `trajectory_generations()` is non-empty (`prefers_trajectory_pane` is informational only) |
 | **Inspector** (right) | Selected graph node **or** run-level protocol/call/segment detail | Always the detail pane; must not be empty `not_applicable` when eval/protocol selection exists |
 | **Bottom timeline** | Compact sealed/causal order (secondary lane) | Supporting context; not a log dump |
 
@@ -319,7 +319,7 @@ Run reviews join graph evidence with disk-only witnesses. UI policy:
 
 | Context | Load path | Default fixture |
 |---------|-----------|-----------------|
-| **WASM dogfood** | `trunk serve` → fetch URL | `/` → `protocol-graph.json`; trajectory QA → `?graph=trajectory-multi-gen.json` |
+| **WASM dogfood** | `trunk serve` → fetch URL | `/` → `trajectory-multi-gen.json` with **Graph + Inspector** center layout (not Trajectory pane); eval/protocol → `?graph=protocol-graph.json` |
 | **Native dev** | `--run-root`, file picker, dev features | Same fixture basenames under `benchmark-fixtures/`; live campaign roots for full evidence |
 
 - **Trunk auto-start (agents):** if `http://127.0.0.1:8080` is not up, start trunk from `crates/ploke-egui` before dogfood or browser review — do not skip WASM checks or mark them **N/A** because the server was down:

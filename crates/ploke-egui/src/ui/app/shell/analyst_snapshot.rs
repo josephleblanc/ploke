@@ -182,14 +182,7 @@ pub(crate) fn render_analyst_snapshot_panel(ui: &mut egui::Ui, summary: EvalProt
                 });
             });
     } else {
-        render_snapshot_section(
-            ui,
-            "Run Effort",
-            &run_effort,
-            true,
-            board_style,
-            pane_width,
-        );
+        render_snapshot_section(ui, "Run Effort", &run_effort, true, board_style, pane_width);
         render_snapshot_section(
             ui,
             "Protocol Coverage",
@@ -312,11 +305,8 @@ mod tests {
             column_width < pane_width * 0.55,
             "column {column_width} should be ~half of pane {pane_width}"
         );
-        let track = metric_bar_track_width(
-            column_width,
-            item_spacing_x,
-            TWO_COLUMN_LABEL_COL_WIDTH,
-        );
+        let track =
+            metric_bar_track_width(column_width, item_spacing_x, TWO_COLUMN_LABEL_COL_WIDTH);
         let row_min = row_board_min_width(TWO_COLUMN_LABEL_COL_WIDTH, item_spacing_x);
         assert!(
             track + TWO_COLUMN_LABEL_COL_WIDTH + 50.0 <= column_width + 1.0,

@@ -15,9 +15,12 @@ pub(crate) const DEFAULT_CENTER_CANVAS_HEIGHT: f32 =
     DEFAULT_WINDOW_HEIGHT - TOP_STRIP_HEIGHT - BOTTOM_TIMELINE_HEIGHT;
 pub(crate) const MIN_CENTER_CANVAS_WIDTH_FRACTION: f32 = 0.50;
 
+/// Horizontal gutter for inspector scroll content (eval/trajectory tiles use 8px).
+pub(crate) const INSPECTOR_CONTENT_HORIZONTAL_INSET: i8 = 12;
+
 pub(crate) const INSPECTOR_MARGIN_INNER: egui::Margin = egui::Margin {
-    left: 8,
-    right: 8,
+    left: INSPECTOR_CONTENT_HORIZONTAL_INSET,
+    right: INSPECTOR_CONTENT_HORIZONTAL_INSET,
     top: 8,
     bottom: 8,
 };

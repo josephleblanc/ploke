@@ -4,6 +4,7 @@ use petgraph::{
     visit::{EdgeRef, IntoEdgeReferences},
 };
 
+use super::fit::{graph_fit_bounds, viewport_fit_metrics};
 use super::geometry::{cubic_point, curve_points, segments_intersect, self_loop_points};
 use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
@@ -18,6 +19,7 @@ const RANK_SPACING_MEDIAN_MULTIPLE: f32 = 2.0;
 pub(super) fn graph_diagnostics(
     graph: &WidgetGraph,
     viewport_size: Vec2,
+    viewport_zoom: f32,
     style: ViewStyle,
     edge_labels: EdgeLabelDiagnostics,
     connectivity: GraphConnectivityDiagnostics,
@@ -25,18 +27,13 @@ pub(super) fn graph_diagnostics(
     mode: GraphViewMode,
     readability: GraphReadabilityDiagnostics,
 ) -> Option<GraphViewDiagnostics> {
-    let bounds = node_bounds(graph)?;
+    let bounds = graph_fit_bounds(graph, style)?;
     let graph_size = bounds.size();
     let viewport_size = Vec2::new(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
     let graph_size = Vec2::new(graph_size.x.max(1.0), graph_size.y.max(1.0));
-    let padded = graph_size * (1.0 + style.layout.fit_padding);
-    let zoom = (viewport_size.x / padded.x).min(viewport_size.y / padded.y);
-    let fitted = fit_bounds(bounds, viewport_size, zoom);
-    let fitted_size = fitted.size();
-    let fitted_fill = Vec2::new(
-        fitted_size.x / viewport_size.x,
-        fitted_size.y / viewport_size.y,
-    );
+    let zoom = viewport_zoom.max(0.01);
+    let (fitted_size, fitted_fill, center_offset) =
+        viewport_fit_metrics(bounds, viewport_size, zoom);
 
     Some(GraphViewDiagnostics {
         mode,
@@ -58,7 +55,7 @@ pub(super) fn graph_diagnostics(
         viewport_aspect_ratio: viewport_size.x / viewport_size.y,
         fitted_size,
         fitted_fill,
-        center_offset: fitted.center() - Rect::from_min_size(Pos2::ZERO, viewport_size).center(),
+        center_offset,
         edge_labels,
         readability,
     })
@@ -255,39 +252,6 @@ fn curves_cross(left: &EdgeCurve, right: &EdgeCurve, style: ViewStyle) -> bool {
         left_start = left_end;
     }
     false
-}
-
-fn node_bounds(graph: &WidgetGraph) -> Option<Rect> {
-    let mut nodes = graph
-        .g()
-        .node_weights()
-        .filter(|node| node.payload().visible());
-    let first = nodes.next()?.location();
-    let mut min = first;
-    let mut max = first;
-
-    for node in nodes {
-        let location = node.location();
-        min.x = min.x.min(location.x);
-        min.y = min.y.min(location.y);
-        max.x = max.x.max(location.x);
-        max.y = max.y.max(location.y);
-    }
-
-    Some(Rect::from_min_max(
-        min - Vec2::splat(1.0),
-        max + Vec2::splat(1.0),
-    ))
-}
-
-fn fit_bounds(bounds: Rect, viewport_size: Vec2, zoom: f32) -> Rect {
-    let viewport = Rect::from_min_size(Pos2::ZERO, viewport_size);
-    let center = bounds.center().to_vec2();
-    let pan = viewport.center().to_vec2() - center * zoom;
-    Rect::from_min_max(
-        (bounds.min.to_vec2() * zoom + pan).to_pos2(),
-        (bounds.max.to_vec2() * zoom + pan).to_pos2(),
-    )
 }
 
 impl EdgeCrossingsByKind {

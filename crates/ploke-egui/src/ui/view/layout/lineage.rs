@@ -18,7 +18,7 @@ pub(in crate::ui::view) struct Lineage {
 }
 
 impl Lineage {
-    fn apply<N, E, Ty, Ix, Dn, De>(
+    pub(super) fn apply<N, E, Ty, Ix, Dn, De>(
         graph: &mut egui_graphs::Graph<N, E, Ty, Ix, Dn, De>,
         state: &State,
     ) where

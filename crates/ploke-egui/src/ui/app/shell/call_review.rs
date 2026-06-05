@@ -1903,5 +1903,4 @@ uncovered_calls_in_source=None. branch rationales: usefulness='' redundancy='' r
             2
         );
     }
-
 }

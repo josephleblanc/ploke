@@ -60,3 +60,17 @@ where
     nodes.sort_by_key(|node| node.index());
     nodes
 }
+
+pub(super) fn apply_lineage<N, E, Ty, Ix, Dn, De>(
+    graph: &mut egui_graphs::Graph<N, E, Ty, Ix, Dn, De>,
+    state: &State,
+) where
+    N: Clone,
+    E: Clone,
+    Ty: petgraph::EdgeType,
+    Ix: IndexType,
+    Dn: egui_graphs::DisplayNode<N, E, Ty, Ix>,
+    De: egui_graphs::DisplayEdge<N, E, Ty, Ix, Dn>,
+{
+    Lineage::apply(graph, state);
+}

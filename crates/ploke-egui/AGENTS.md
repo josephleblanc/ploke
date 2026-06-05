@@ -13,12 +13,12 @@
 
 ## WASM dogfood defaults
 
-- Default graph (no `?graph=`): `/benchmark-fixtures/protocol-graph.json` (`protocol-graph.json`) — see `STANDARD_GRAPH_SNAPSHOT_FIXTURE_*` in `src/bootstrap.rs`.
-- Trajectory / multi-gen table QA: `?graph=trajectory-multi-gen.json` → `/benchmark-fixtures/trajectory-multi-gen.json`.
+- Default graph (no `?graph=`): `/benchmark-fixtures/trajectory-multi-gen.json` (`trajectory-multi-gen.json`) — see `STANDARD_GRAPH_SNAPSHOT_FIXTURE_*` in `src/bootstrap.rs`.
+- Eval/protocol export: `?graph=protocol-graph.json` → `/benchmark-fixtures/protocol-graph.json` (`PROTOCOL_GRAPH_SNAPSHOT_*`).
 - Dev server: `trunk serve --config crates/ploke-egui/Trunk.toml --address 127.0.0.1 --port 8080` → [http://127.0.0.1:8080/](http://127.0.0.1:8080/).
 - **WASM dogfood:** if `curl -sf http://127.0.0.1:8080/` fails, start trunk (`cd crates/ploke-egui && env -u NO_COLOR trunk serve --config Trunk.toml --address 127.0.0.1 --port 8080` in background; wait for HTTP 200, max ~90s) — do not skip dogfood or mark trunk rows **N/A**.
 
-Sidebar **`selections 0`** on the protocol export does not mean an empty run; use the multi-gen fixture for trajectory-centric checklist items.
+Sidebar **`selections 0`** on the protocol export does not mean an empty run; default `/` loads the multi-gen trajectory fixture. Use `?graph=protocol-graph.json` for eval/protocol-centric checklist items.
 
 ## UI/UX reviews
 

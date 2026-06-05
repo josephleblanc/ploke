@@ -118,6 +118,11 @@ impl GraphViewCache {
         &mut self.graph
     }
 
+    pub(super) fn invalidate_layout_diagnostics(&mut self) {
+        self.readability.clear();
+        self.diagnostics.clear();
+    }
+
     pub(super) fn layout_state(&self, style: ViewStyle) -> super::layout::State {
         super::layout::State {
             triggered: false,
@@ -134,6 +139,7 @@ impl GraphViewCache {
     pub(super) fn diagnostics(
         &mut self,
         viewport_size: Vec2,
+        viewport_zoom: f32,
         style: ViewStyle,
         edge_labels: EdgeLabelDiagnostics,
     ) -> Option<GraphViewDiagnostics> {
@@ -148,6 +154,7 @@ impl GraphViewCache {
         );
         self.diagnostics.get_or_compute(
             viewport_size,
+            viewport_zoom,
             style,
             edge_labels,
             self.connectivity,
@@ -426,6 +433,7 @@ impl DiagnosticsCache {
     fn get_or_compute(
         &mut self,
         viewport_size: Vec2,
+        viewport_zoom: f32,
         style: ViewStyle,
         edge_labels: EdgeLabelDiagnostics,
         connectivity: GraphConnectivityDiagnostics,
@@ -444,6 +452,7 @@ impl DiagnosticsCache {
             filters,
             viewport_x: viewport_size.x.to_bits(),
             viewport_y: viewport_size.y.to_bits(),
+            viewport_zoom: viewport_zoom.to_bits(),
             edge_labels,
             connectivity,
             artifact_tree,
@@ -454,6 +463,7 @@ impl DiagnosticsCache {
             self.value = graph_diagnostics(
                 graph,
                 viewport_size,
+                viewport_zoom,
                 style,
                 edge_labels,
                 connectivity,
@@ -476,6 +486,7 @@ struct DiagnosticsKey {
     filters: ArtifactTreeFilters,
     viewport_x: u32,
     viewport_y: u32,
+    viewport_zoom: u32,
     edge_labels: EdgeLabelDiagnostics,
     connectivity: GraphConnectivityDiagnostics,
     artifact_tree: artifact_tree::Shape,
@@ -2064,10 +2075,18 @@ mod tests {
         let viewport = eframe::egui::Vec2::new(800.0, 600.0);
         let edge_labels = crate::ui::view::EdgeLabelDiagnostics::default();
         assert_eq!(cache.diagnostics_rebuilds(), 0);
-        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert!(
+            cache
+                .diagnostics(viewport, 1.0, style, edge_labels)
+                .is_some()
+        );
         assert_eq!(cache.readability_rebuilds(), 1);
         assert_eq!(cache.diagnostics_rebuilds(), 1);
-        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert!(
+            cache
+                .diagnostics(viewport, 1.0, style, edge_labels)
+                .is_some()
+        );
         assert_eq!(cache.readability_rebuilds(), 1);
         assert_eq!(cache.diagnostics_rebuilds(), 1);
 
@@ -2078,7 +2097,11 @@ mod tests {
             .next()
             .expect("projected node");
         cache.graph.g_mut()[first].set_location(eframe::egui::Pos2::new(20.0, 20.0));
-        assert!(cache.diagnostics(viewport, style, edge_labels).is_some());
+        assert!(
+            cache
+                .diagnostics(viewport, 1.0, style, edge_labels)
+                .is_some()
+        );
         assert_eq!(cache.readability_rebuilds(), 2);
         assert_eq!(cache.diagnostics_rebuilds(), 2);
     }

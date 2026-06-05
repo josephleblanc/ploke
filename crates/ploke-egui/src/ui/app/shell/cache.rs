@@ -7,7 +7,6 @@ use eframe::egui;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[cfg(not(target_arch = "wasm32"))]
 use ploke_records::tool_contracts::{PersistedToolCallArguments, PersistedToolResultContent};
 
 use super::call_review::{
@@ -49,11 +48,8 @@ pub(crate) struct InspectorRenderCache {
     call_review_scan_order: CallReviewScanOrderCache,
     text_galleys: Vec<CachedTextGalley>,
     id_galleys: Vec<CachedIdGalley>,
-    #[cfg(not(target_arch = "wasm32"))]
     tool_argument_decodes: Vec<ToolArgumentDecodeEntry>,
-    #[cfg(not(target_arch = "wasm32"))]
     tool_result_decodes: Vec<ToolResultDecodeEntry>,
-    #[cfg(not(target_arch = "wasm32"))]
     text_size_summaries: Vec<TextSizeSummaryEntry>,
     text_galley_rebuilds: usize,
     id_galley_rebuilds: usize,
@@ -379,7 +375,6 @@ impl InspectorRenderCache {
         galley
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn tool_arguments(
         &mut self,
         call_id: &str,
@@ -405,7 +400,6 @@ impl InspectorRenderCache {
         self.tool_argument_decodes[index].decoded.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn tool_result(
         &mut self,
         call_id: &str,
@@ -431,7 +425,6 @@ impl InspectorRenderCache {
         self.tool_result_decodes[index].decoded.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn text_size_summary(&mut self, text: &str) -> Arc<str> {
         let key = TextSizeSummaryKey::from(text);
         if let Some(index) = self
@@ -461,7 +454,6 @@ impl InspectorRenderCache {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolArgumentDecodeEntry {
     call_id: Arc<str>,
@@ -470,7 +462,6 @@ struct ToolArgumentDecodeEntry {
     decoded: Arc<PersistedToolCallArguments>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct ToolResultDecodeEntry {
     call_id: Arc<str>,
@@ -582,10 +573,7 @@ pub(crate) fn eval_pane_content_width(ui: &egui::Ui) -> f32 {
 pub(crate) fn pane_visible_clip_rect(ui: &egui::Ui, content_width: f32) -> egui::Rect {
     let clip = ui.clip_rect();
     let right = clip.left() + content_width.max(1.0);
-    egui::Rect::from_min_max(
-        clip.min,
-        egui::pos2(right.min(clip.right()), clip.bottom()),
-    )
+    egui::Rect::from_min_max(clip.min, egui::pos2(right.min(clip.right()), clip.bottom()))
 }
 
 pub(super) fn inspector_wrap_width_points(width: f32) -> u32 {
