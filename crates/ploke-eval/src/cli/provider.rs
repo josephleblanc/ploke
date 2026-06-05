@@ -114,7 +114,7 @@ pub(crate) fn load_parent_patcher_model_selection()
 -> Result<crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
     // Temporary split config: broad parent patch generation reads the
     // parent-patcher selection here, while eval/protocol defaults still read
-    // `load_active_model()` in `resolve_protocol_model_id()` above. Collapse
+    // `load_active_model()` in `protocol_route::resolve_protocol_model_id()`. Collapse
     // both onto the admitted profile/campaign config once that plumbing exists.
     let selected = load_parent_patcher_model().or_else(|err| match err {
         PrepareError::MissingParentPatcherModel(_) => load_active_model(),
