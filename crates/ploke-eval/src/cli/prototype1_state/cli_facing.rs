@@ -34,7 +34,7 @@ use crate::{
     campaign::campaign_closure_state_path,
     campaign_manifest_path,
     cli::{
-        HistoryCommand, HistorySubcommand, InspectOutputFormat, Prototype1CandidateGenerator,
+        HistoryCommand, InspectOutputFormat, Prototype1CandidateGenerator,
         Prototype1ChildEvidenceCommand, Prototype1ChildScheduleMode as CliChildScheduleMode,
         Prototype1EditSurface, Prototype1LoopCommand, Prototype1LoopStopAfter,
         Prototype1MetricsCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
@@ -3971,36 +3971,7 @@ struct Prototype1MonitorSnapshotEntry {
     modified: Option<SystemTime>,
 }
 
-impl HistoryCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let repo_root = match self.repo_root.clone() {
-            Some(path) => path,
-            None => current_dir_as_repo_root()?,
-        };
-        let campaign_id = resolve_history_campaign(&self, &repo_root)?;
-        let manifest_path = campaign_manifest_path(&campaign_id)?;
-
-        match self.command {
-            HistorySubcommand::ChildEvidence(command) => {
-                run_child_evidence(&campaign_id, &manifest_path, &command)
-            }
-            HistorySubcommand::Metrics(command) => {
-                run_metric_slice(&campaign_id, &manifest_path, &command)
-            }
-            HistorySubcommand::Scores(command) => {
-                run_score_report(&campaign_id, &manifest_path, &command)
-            }
-            HistorySubcommand::ScoreSelectionReview(command) => {
-                run_score_selection_review(&campaign_id, &manifest_path, &command)
-            }
-            HistorySubcommand::SelectionShow(command) => {
-                run_selection_show(&campaign_id, &manifest_path, &command)
-            }
-        }
-    }
-}
-
-fn run_metric_slice(
+pub(crate) fn run_metric_slice(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1MetricsCommand,
@@ -4017,7 +3988,7 @@ fn run_metric_slice(
     )
 }
 
-fn run_child_evidence(
+pub(crate) fn run_child_evidence(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1ChildEvidenceCommand,
@@ -4029,7 +4000,7 @@ fn run_child_evidence(
     )
 }
 
-fn run_score_report(
+pub(crate) fn run_score_report(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1ScoreCommand,
@@ -4045,7 +4016,7 @@ fn run_score_report(
     )
 }
 
-fn run_score_selection_review(
+pub(crate) fn run_score_selection_review(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1ScoreCommand,
@@ -4061,7 +4032,7 @@ fn run_score_selection_review(
     )
 }
 
-fn run_selection_show(
+pub(crate) fn run_selection_show(
     campaign_id: &str,
     manifest_path: &Path,
     command: &Prototype1SelectionShowCommand,
@@ -4099,7 +4070,7 @@ fn same_existing_path(left: &Path, right: &Path) -> bool {
     normalize(left) == normalize(right)
 }
 
-fn current_dir_as_repo_root() -> Result<PathBuf, PrepareError> {
+pub(crate) fn current_dir_as_repo_root() -> Result<PathBuf, PrepareError> {
     std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
@@ -4140,7 +4111,7 @@ fn resolve_prototype1_state_campaign(
     })
 }
 
-fn resolve_history_campaign(
+pub(crate) fn resolve_history_campaign(
     command: &HistoryCommand,
     repo_root: &Path,
 ) -> Result<String, PrepareError> {
