@@ -35,6 +35,8 @@ use uuid::Uuid;
 
 mod args;
 mod dispatch;
+mod format;
+mod handlers;
 mod prototype1_process;
 /// Prototype 1 typed state model and persisted artifact map.
 ///
@@ -43,6 +45,10 @@ mod prototype1_process;
 pub(crate) mod prototype1_state;
 
 pub use args::*;
+
+pub(crate) use format::{
+    display_context_length, display_price_per_million, extract_model_size, model_size_string,
+};
 
 #[cfg(test)]
 #[path = "cli/tests.rs"]
@@ -133,215 +139,9 @@ use crate::target_registry::{
     recompute_target_registry, render_target_registry_status, target_registry_path,
 };
 
-const CLI_BEFORE_LONG_HELP: &str = "\
-Minimal evaluation runner and artifact inspector for ploke.
-
-Default home:
-  PLOKE_EVAL_HOME    ~/.ploke-eval
-
-Choose an operator path:
-  one instance       run repo fetch -> run prepare instance -> run single agent
-  flat shortcuts     just <favorite>
-  family progress    campaign / closure
-  inspect a run      transcript / conversations / inspect
-  setup and models   doctor / model
-  target inventory   registry
-  active selectors   select
-
-Trust order:
-  per-run artifacts > campaign export-submissions > closure state > batch aggregate JSONL
-
-Use `ploke-eval help <command>` for examples, artifact paths, and command-specific defaults.
-";
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "ploke-eval",
-    about = "Run prepared ploke benchmark/eval instances",
-    before_long_help = CLI_BEFORE_LONG_HELP,
-    version = env!("CARGO_PKG_VERSION"),
-    propagate_version = true
-)]
-pub struct Cli {
-    /// Enable cross-crate execution debug logs in ~/.ploke-eval/logs.
-    #[arg(long, global = true)]
-    pub debug_tools: bool,
-
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum Command {
-    #[command(display_order = 10)]
-    /// Traverse the eval execution tree: repo fetch, datasets, prepare, single, batch, replay.
-    Run(RunCommand),
-    #[command(display_order = 11)]
-    /// Flat shortcuts for common eval commands that also exist under `run ...`.
-    Just(JustCommand),
-    #[command(display_order = 20)]
-    /// Show and set model/provider defaults for eval runs.
-    Model(ModelCommand),
-    #[command(display_order = 30)]
-    /// Print assistant messages from one resolved run.
-    Transcript(TranscriptCommand),
-    #[command(display_order = 31)]
-    /// List conversation turns for a run.
-    Conversations(ConversationsCommand),
-    #[command(display_order = 32)]
-    /// Inspect run artifacts, failures, tool calls, and stored snapshots.
-    Inspect(InspectCommand),
-    #[command(display_order = 33)]
-    /// Inspect History-shaped projections and metrics from persisted evidence.
-    History(HistoryCommand),
-    #[command(display_order = 40)]
-    /// Operate on named eval campaigns and export campaign-level submissions.
-    Campaign(CampaignCommand),
-    #[command(display_order = 41)]
-    /// Show and advance campaign progress across eval and protocol work.
-    Closure(ClosureCommand),
-    #[command(display_order = 42)]
-    /// Show and recompute the persisted target inventory.
-    Registry(RegistryCommand),
-    #[command(display_order = 43)]
-    /// Persist and inspect the active operator selection context.
-    Select(SelectCommand),
-    #[command(display_order = 44)]
-    /// Prepare MBE oracle configs and inspect MBE oracle reports.
-    Mbe(MbeCommand),
-    #[command(display_order = 50)]
-    /// Check eval setup and point out likely configuration problems.
-    Doctor,
-    #[command(display_order = 51)]
-    /// Review or adjudicate protocol artifacts from eval runs.
-    Protocol(ProtocolCommand),
-    #[command(display_order = 52)]
-    /// Run the prototype intervention loop through the currently implemented frontier.
-    Loop(LoopCommand),
-}
-
 impl Cli {
     pub async fn run(self) -> ExitCode {
         dispatch::run(self).await
-    }
-}
-
-impl RunCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunSubcommand::Repo(cmd) => cmd.run().await,
-            RunSubcommand::Datasets(cmd) => cmd.run().await,
-            RunSubcommand::Prepare(cmd) => cmd.run().await,
-            RunSubcommand::List(cmd) => cmd.run().await,
-            RunSubcommand::Single(cmd) => cmd.run().await,
-            RunSubcommand::Batch(cmd) => cmd.run().await,
-            RunSubcommand::Replay(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl MbeCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            MbeSubcommand::Run(cmd) => cmd.run(),
-            MbeSubcommand::CampaignCandidates(cmd) => cmd.run(),
-            MbeSubcommand::RunCampaignCandidate(cmd) => cmd.run(),
-            MbeSubcommand::Runs(cmd) => cmd.run(),
-            MbeSubcommand::WriteConfig(cmd) => cmd.run(),
-            MbeSubcommand::Verdict(cmd) => cmd.run(),
-        }
-    }
-}
-
-impl RunRepoCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunRepoSubcommand::Fetch(cmd) => cmd.run(),
-        }
-    }
-}
-
-impl RunDatasetsCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunDatasetsSubcommand::List => {
-                print_builtin_dataset_entries();
-                Ok(())
-            }
-        }
-    }
-}
-
-impl RunPrepareCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunPrepareSubcommand::Custom(cmd) => cmd.run(),
-            RunPrepareSubcommand::Instance(cmd) => cmd.run(),
-            RunPrepareSubcommand::Batch(cmd) => cmd.run(),
-        }
-    }
-}
-
-impl SelectCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            SelectSubcommand::Status(cmd) => cmd.run(),
-            SelectSubcommand::Campaign(cmd) => cmd.run(),
-            SelectSubcommand::Batch(cmd) => cmd.run(),
-            SelectSubcommand::Instance(cmd) => cmd.run(),
-            SelectSubcommand::Attempt(cmd) => cmd.run(),
-            SelectSubcommand::Unset(cmd) => cmd.run(),
-            SelectSubcommand::Clear(cmd) => cmd.run(),
-        }
-    }
-}
-
-impl RunSingleWorkflowCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunSingleWorkflowSubcommand::Setup(cmd) => cmd.run().await,
-            RunSingleWorkflowSubcommand::Agent(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl RunBatchWorkflowCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunBatchWorkflowSubcommand::Setup(cmd) => cmd.run().await,
-            RunBatchWorkflowSubcommand::Agent(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl RunReplayCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            RunReplaySubcommand::Batch(cmd) => cmd.run().await,
-            RunReplaySubcommand::Inspect(cmd) => cmd.run(),
-            RunReplaySubcommand::SelfEditLive(cmd) => cmd.run().await,
-            RunReplaySubcommand::TurnLive(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl JustCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            JustSubcommand::FetchRepo(cmd) => cmd.run(),
-            JustSubcommand::ListDatasets => {
-                print_builtin_dataset_entries();
-                Ok(())
-            }
-            JustSubcommand::PrepareCustom(cmd) => cmd.run(),
-            JustSubcommand::PrepareInstance(cmd) => cmd.run(),
-            JustSubcommand::PrepareBatch(cmd) => cmd.run(),
-            JustSubcommand::SingleSetup(cmd) => cmd.run().await,
-            JustSubcommand::Single(cmd) => cmd.run().await,
-            JustSubcommand::BatchSetup(cmd) => cmd.run().await,
-            JustSubcommand::Batch(cmd) => cmd.run().await,
-            JustSubcommand::ReplayBatch(cmd) => cmd.run().await,
-        }
     }
 }
 
@@ -613,7 +413,7 @@ impl Drop for TimingScope {
     }
 }
 
-fn print_builtin_dataset_entries() {
+pub(crate) fn print_builtin_dataset_entries() {
     for entry in builtin_dataset_registry_entries() {
         println!("{}\t{}\t{}", entry.key, entry.language, entry.url);
     }
@@ -10753,59 +10553,4 @@ fn print_registry_dataset_view(view: &RegistryDatasetView<'_>) {
     for entry in &view.entries {
         println!("  {}", entry.instance_id);
     }
-}
-
-fn display_context_length(item: &ploke_llm::request::models::ResponseItem) -> String {
-    item.context_length
-        .or(item.top_provider.context_length)
-        .map(|value| value.to_string())
-        .unwrap_or_default()
-}
-
-fn display_price_per_million(value: f64) -> String {
-    format!("${:.2}/M", value * 1_000_000.0)
-}
-
-fn model_size_string(item: &ploke_llm::request::models::ResponseItem) -> String {
-    extract_model_size(item.description.as_ref())
-        .or_else(|| extract_model_size(item.name.as_str()))
-        .unwrap_or_default()
-}
-
-fn extract_model_size(text: &str) -> Option<String> {
-    static MIXTURE_RE: OnceLock<Regex> = OnceLock::new();
-    static BILLION_PARAMS_RE: OnceLock<Regex> = OnceLock::new();
-    static MILLION_PARAMS_RE: OnceLock<Regex> = OnceLock::new();
-    static SUFFIX_RE: OnceLock<Regex> = OnceLock::new();
-
-    let mix_match = MIXTURE_RE
-        .get_or_init(|| Regex::new(r"(?i)\b\d+x\d+(?:\.\d+)?[BM]\b").expect("valid regex"))
-        .find(text)
-        .map(|m| m.as_str().to_string());
-    if mix_match.is_some() {
-        return mix_match;
-    }
-
-    if let Some(caps) = BILLION_PARAMS_RE
-        .get_or_init(|| {
-            Regex::new(r"(?i)\b(\d+(?:\.\d+)?)\s*billion\s+parameters?\b").expect("valid regex")
-        })
-        .captures(text)
-    {
-        return Some(format!("{}B", &caps[1]));
-    }
-
-    if let Some(caps) = MILLION_PARAMS_RE
-        .get_or_init(|| {
-            Regex::new(r"(?i)\b(\d+(?:\.\d+)?)\s*million\s+parameters?\b").expect("valid regex")
-        })
-        .captures(text)
-    {
-        return Some(format!("{}M", &caps[1]));
-    }
-
-    SUFFIX_RE
-        .get_or_init(|| Regex::new(r"(?i)\b\d+(?:\.\d+)?[BM]\b").expect("valid regex"))
-        .find(text)
-        .map(|m| m.as_str().to_string())
 }

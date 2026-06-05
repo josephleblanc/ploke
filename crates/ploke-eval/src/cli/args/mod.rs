@@ -9,6 +9,7 @@ mod model;
 mod operator;
 mod protocol;
 mod registry;
+mod root;
 mod run;
 
 pub use campaign::*;
@@ -22,6 +23,7 @@ pub use model::*;
 pub use operator::*;
 pub use protocol::*;
 pub use registry::*;
+pub use root::*;
 pub use run::*;
 
 pub(crate) use common::parse_model_route_source;
