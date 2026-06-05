@@ -2,7 +2,7 @@
 
 /// Trust score `1 - wrong / attempted`.
 pub fn trust_score(wrong: usize, attempted: usize) -> Option<f64> {
-    if attempted == 0 {
+    if attempted == 0 || wrong > attempted {
         None
     } else {
         Some(1.0 - wrong as f64 / attempted as f64)

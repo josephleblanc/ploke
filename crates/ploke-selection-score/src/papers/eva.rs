@@ -2,10 +2,15 @@
 
 use crate::common::ScoreError;
 
+const ANCHOR_COUNT: usize = 5;
+
 /// Softmax over anchor logits with a finite positive temperature.
 pub fn anchor_probs(logit: &[f64], temp: f64) -> Result<Vec<f64>, ScoreError> {
     if logit.is_empty() {
         return Err(ScoreError::Empty);
+    }
+    if logit.len() != ANCHOR_COUNT {
+        return Err(ScoreError::LengthMismatch);
     }
     if !temp.is_finite() || temp <= 0.0 || logit.iter().any(|item| !item.is_finite()) {
         return Err(ScoreError::NonFinite);
@@ -29,8 +34,17 @@ pub fn expected_score(prob: &[f64]) -> Result<f64, ScoreError> {
     if prob.is_empty() {
         return Err(ScoreError::Empty);
     }
-    if prob.iter().any(|item| !item.is_finite()) {
+    if prob.len() != ANCHOR_COUNT {
+        return Err(ScoreError::LengthMismatch);
+    }
+    if prob
+        .iter()
+        .any(|item| !item.is_finite() || *item < 0.0 || *item > 1.0)
+    {
         return Err(ScoreError::NonFinite);
+    }
+    if (prob.iter().sum::<f64>() - 1.0).abs() > 1e-9 {
+        return Err(ScoreError::ZeroTotal);
     }
 
     Ok(prob
@@ -69,7 +83,7 @@ pub fn eva_loss(predicted: &[f64], target: &[f64]) -> Result<f64, ScoreError> {
 
 /// Total objective `SFT + alpha * EVA`.
 pub fn total_loss(sft: f64, eva: f64, alpha: f64) -> Option<f64> {
-    if !sft.is_finite() || !eva.is_finite() || !alpha.is_finite() {
+    if !sft.is_finite() || !eva.is_finite() || !alpha.is_finite() || alpha < 0.0 {
         None
     } else {
         Some(sft + alpha * eva)

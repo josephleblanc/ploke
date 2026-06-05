@@ -9,6 +9,9 @@ pub fn scheduler_entropy(prob: &[f64]) -> Option<f64> {
     {
         return None;
     }
+    if (prob.iter().sum::<f64>() - 1.0).abs() > 1e-9 {
+        return None;
+    }
 
     Some(
         prob.iter()
@@ -16,6 +19,15 @@ pub fn scheduler_entropy(prob: &[f64]) -> Option<f64> {
             .map(|item| -item * item.log2())
             .sum(),
     )
+}
+
+/// Entropy-change decomposition `dH/dt = F_task + D_context`.
+pub fn entropy_rate(task_pressure: f64, context_drift: f64) -> Option<f64> {
+    if !task_pressure.is_finite() || !context_drift.is_finite() {
+        None
+    } else {
+        Some(task_pressure + context_drift)
+    }
 }
 
 /// Context drift term `beta / (t + 1)`.
