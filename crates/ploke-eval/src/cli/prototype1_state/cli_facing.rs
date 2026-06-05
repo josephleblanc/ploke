@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{Instrument, debug, error, info, instrument, warn};
 
+use crate::cli::handlers::closure::{advance_eval_closure, advance_protocol_closure};
+use crate::cli::handlers::run::default_batch_id;
 use crate::{
     BenchmarkFamily, BranchDisposition, BranchEvaluationInput, BranchEvaluationResult,
     CampaignManifest, CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy,
@@ -37,10 +39,9 @@ use crate::{
         Prototype1EditSurface, Prototype1LoopCommand, Prototype1LoopStopAfter,
         Prototype1MetricsCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
         Prototype1StateCommand, Prototype1StateStopAfter, Prototype1SuccessorSelection,
-        Prototype1TraversalMetrics, TimingTrace, advance_eval_closure, advance_protocol_closure,
-        default_batch_id, pending_prototype1_stages, persist_intervention_apply_for_record,
-        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
-        print_issue_case_block,
+        Prototype1TraversalMetrics, TimingTrace, pending_prototype1_stages,
+        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
+        persist_issue_detection_for_record, print_issue_case_block,
         prototype1_process::{
             SuccessorHandoffMode, cleanup_prototype1_child_build_products,
             persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
@@ -658,7 +659,7 @@ impl BroadTuiAttemptOptions {
         timeout_secs: Option<u64>,
     ) -> Result<Self, PrepareError> {
         Ok(Self {
-            model: Some(crate::cli::load_parent_patcher_model_selection()?),
+            model: Some(crate::cli::provider::load_parent_patcher_model_selection()?),
             max_attempts,
             timeout_secs,
         })
@@ -685,14 +686,16 @@ impl BroadTuiAttemptOptions {
                         })
                     })
                     .transpose()?;
-                Some(crate::cli::headless_model_selection(model_id, provider)?)
+                Some(crate::cli::provider::headless_model_selection(
+                    model_id, provider,
+                )?)
             }
             (None, Some(provider)) => {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!("broad TUI attempt provider '{provider}' requires --model-id"),
                 });
             }
-            (None, None) => Some(crate::cli::load_parent_patcher_model_selection()?),
+            (None, None) => Some(crate::cli::provider::load_parent_patcher_model_selection()?),
         };
         Ok(Self {
             model,

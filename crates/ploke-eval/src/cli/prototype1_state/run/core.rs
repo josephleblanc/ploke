@@ -29,6 +29,9 @@ use crate::{
     spec::PrepareError,
 };
 
+use crate::cli::handlers::closure::{
+    advance_eval_closure, advance_protocol_or_block, protocol_llm_config,
+};
 use crate::cli::prototype1_process::{
     SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
     spawn_and_handoff_prototype1_successor,
@@ -638,7 +641,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
     let model_id = policy.model_id_for(&context.resolved_campaign.model_id);
     let route_source = policy.route_source_for(context.resolved_campaign.route_source);
     let provider = policy.provider_slug_for(context.resolved_campaign.provider_slug.as_deref());
-    let cfg = match crate::cli::protocol_llm_config(
+    let cfg = match protocol_llm_config(
         Some(model_id.clone()),
         route_source,
         provider.clone(),
@@ -1836,7 +1839,7 @@ async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareE
 }
 
 async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareError> {
-    crate::cli::advance_eval_closure(
+    advance_eval_closure(
         &context.resolved_campaign,
         &context.resolved_campaign.eval,
         false,
@@ -1848,7 +1851,7 @@ async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareEr
 
 async fn advance_baseline_protocol(context: &RuntimeContext) -> Result<(), PrepareError> {
     let protocol_policy = context.admitted_profile.profile.protocol_policy();
-    crate::cli::advance_protocol_or_block(&context.resolved_campaign, &protocol_policy).await
+    advance_protocol_or_block(&context.resolved_campaign, &protocol_policy).await
 }
 
 fn active_parent_ready(context: &RuntimeContext) -> Result<Parent<Ready>, PrepareError> {
