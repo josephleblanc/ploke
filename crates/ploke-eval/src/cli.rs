@@ -1,13 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs;
-use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, ExitCode};
-use std::str::FromStr;
-use std::sync::{Arc, OnceLock};
-use std::time::Instant;
-
-use chrono::Utc;
 use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 use ploke_llm::Router;
 use ploke_llm::request::{endpoint::Endpoint, models::ModelRouteSource};
@@ -29,6 +19,13 @@ use ploke_records::tool_contracts::{
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
+use std::fs;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, ExitCode};
+use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use uuid::Uuid;
@@ -59,6 +56,7 @@ pub(crate) use handlers::inspect::{
     tool_call_next_step_index,
 };
 pub(crate) use handlers::protocol::{persist_issue_detection_for_record, print_issue_case_block};
+pub(crate) use handlers::prototype1_support::{TimingTrace, pending_prototype1_stages};
 pub(crate) use handlers::registry::registry_dataset_view;
 pub(crate) use handlers::run::{default_batch_id, resolve_batch_manifest, yes_no};
 mod prototype1_process;
@@ -173,274 +171,6 @@ use crate::target_registry::{
 impl Cli {
     pub async fn run(self) -> ExitCode {
         dispatch::run(self).await
-    }
-}
-
-impl LoopCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            LoopSubcommand::Prototype1(cmd) => cmd.run().await,
-            LoopSubcommand::Prototype1Setup(cmd) => cmd.run_setup().await,
-            LoopSubcommand::Prototype1Doctor(cmd) => prototype1_state::run::doctor(cmd).await,
-            LoopSubcommand::Prototype1Prompt(cmd) => prototype1_state::run::prompt(cmd).await,
-            LoopSubcommand::Prototype1Continue(cmd) => prototype1_state::run::resume(cmd).await,
-            LoopSubcommand::Prototype1Step(cmd) => prototype1_state::run::step(cmd).await,
-            LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
-            LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
-            LoopSubcommand::Prototype1Harness(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl Prototype1RunnerCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        let Some(invocation) = self.invocation else {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1-runner requires --invocation".to_string(),
-            });
-        };
-        if !self.execute {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1-runner currently requires --execute".to_string(),
-            });
-        }
-        let _ = self.campaign;
-        let _ = self.node_id;
-        let _ = self.stop_on_error;
-        let _ = self.format;
-        prototype1_process::execute_prototype1_runner_invocation(&invocation)
-            .await
-            .map(|_| ())
-    }
-}
-
-impl Prototype1HarnessCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            Prototype1HarnessSubcommand::Attempt(cmd) => cmd.run().await,
-            Prototype1HarnessSubcommand::Sweep(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl Prototype1HarnessAttemptCommand {
-    async fn run(self) -> Result<(), PrepareError> {
-        let options = prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
-            self.model_id,
-            self.provider,
-            self.max_attempts,
-            self.timeout_secs,
-        )?;
-        let row = prototype1_state::cli_facing::run_broad_harness_attempt_from_request_path(
-            self.request,
-            options,
-        )
-        .await?;
-        print_broad_harness_attempt_rows(std::slice::from_ref(&row), self.format)
-    }
-}
-
-impl Prototype1HarnessSweepCommand {
-    async fn run(self) -> Result<(), PrepareError> {
-        let requests = collect_broad_harness_request_paths(self.requests, self.requests_dir)?;
-        let lanes = broad_harness_sweep_lanes(
-            requests,
-            self.model_ids,
-            self.provider,
-            self.max_attempts,
-            self.timeout_secs,
-        )?;
-        let rows =
-            prototype1_state::cli_facing::run_broad_harness_attempt_sweep(lanes, self.parallel)
-                .await?;
-        print_broad_harness_attempt_rows(&rows, self.format)
-    }
-}
-
-fn collect_broad_harness_request_paths(
-    mut requests: Vec<PathBuf>,
-    requests_dir: Option<PathBuf>,
-) -> Result<Vec<PathBuf>, PrepareError> {
-    if let Some(dir) = requests_dir {
-        let mut entries = Vec::new();
-        for entry in fs::read_dir(&dir).map_err(|source| PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "could not read requests directory '{}': {source}",
-                dir.display()
-            ),
-        })? {
-            let entry = entry.map_err(|source| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "could not read entry in requests directory '{}': {source}",
-                    dir.display()
-                ),
-            })?;
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                entries.push(path);
-            }
-        }
-        entries.sort();
-        requests.extend(entries);
-    }
-
-    if requests.is_empty() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: "prototype1-harness sweep requires --request or --requests-dir".to_string(),
-        });
-    }
-
-    let mut seen = BTreeSet::new();
-    for path in &requests {
-        if !seen.insert(path.clone()) {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1-harness sweep received duplicate request path '{}'",
-                    path.display()
-                ),
-            });
-        }
-    }
-
-    Ok(requests)
-}
-
-fn broad_harness_sweep_lanes(
-    requests: Vec<PathBuf>,
-    model_ids: Vec<String>,
-    provider: Option<String>,
-    max_attempts: Option<u32>,
-    timeout_secs: Option<u64>,
-) -> Result<
-    Vec<(
-        PathBuf,
-        prototype1_state::cli_facing::BroadTuiAttemptOptions,
-    )>,
-    PrepareError,
-> {
-    let mut lanes = Vec::with_capacity(requests.len());
-    if model_ids.is_empty() {
-        for request in requests {
-            lanes.push((
-                request,
-                prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
-                    None,
-                    provider.clone(),
-                    max_attempts,
-                    timeout_secs,
-                )?,
-            ));
-        }
-        return Ok(lanes);
-    }
-
-    if model_ids.len() != 1 && model_ids.len() != requests.len() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "prototype1-harness sweep requires one --model-id for all requests or one per request; got {} model(s) for {} request(s)",
-                model_ids.len(),
-                requests.len()
-            ),
-        });
-    }
-
-    for (index, request) in requests.into_iter().enumerate() {
-        let model_id = if model_ids.len() == 1 {
-            model_ids[0].clone()
-        } else {
-            model_ids[index].clone()
-        };
-        lanes.push((
-            request,
-            prototype1_state::cli_facing::BroadTuiAttemptOptions::from_cli(
-                Some(model_id),
-                provider.clone(),
-                max_attempts,
-                timeout_secs,
-            )?,
-        ));
-    }
-    Ok(lanes)
-}
-
-fn print_broad_harness_attempt_rows(
-    rows: &[prototype1_state::cli_facing::BroadHarnessAttemptProjection],
-    format: InspectOutputFormat,
-) -> Result<(), PrepareError> {
-    match format {
-        InspectOutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(rows).map_err(|source| {
-                    PrepareError::InvalidBatchSelection {
-                        detail: format!("could not serialize broad harness attempt rows: {source}"),
-                    }
-                })?
-            );
-        }
-        InspectOutputFormat::Table => {
-            println!(
-                "{:<8} {:<42} {:<28} {:>8} {:>8} {:>7} {}",
-                "status", "request_id", "model", "timeout", "elapsed", "paths", "request"
-            );
-            for row in rows {
-                let model = row.model_id.as_deref().unwrap_or("default");
-                let changed = row.changed_paths.len();
-                println!(
-                    "{:<8} {:<42} {:<28} {:>8} {:>8} {:>7} {}",
-                    row.status,
-                    row.request_id,
-                    model,
-                    row.timeout_secs,
-                    row.elapsed_ms,
-                    changed,
-                    row.request_path.display()
-                );
-                if let Some(error) = row.error.as_deref() {
-                    println!("  error: {error}");
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-struct TimingTrace;
-
-struct TimingScope {
-    label: String,
-    started_at: Instant,
-}
-
-impl TimingTrace {
-    fn mark(label: &str) {
-        #[cfg(not(feature = "demo"))]
-        eprintln!("{} {}", Utc::now().format("%H:%M:%S"), label);
-        #[cfg(feature = "demo")]
-        let _ = label;
-    }
-
-    fn scope(label: impl Into<String>) -> TimingScope {
-        let label = label.into();
-        Self::mark(&format!("{label}.start"));
-        TimingScope {
-            label,
-            started_at: Instant::now(),
-        }
-    }
-}
-
-impl Drop for TimingScope {
-    fn drop(&mut self) {
-        #[cfg(not(feature = "demo"))]
-        eprintln!(
-            "{} {}.end +{:.3}s",
-            Utc::now().format("%H:%M:%S"),
-            self.label,
-            self.started_at.elapsed().as_secs_f64()
-        );
-        #[cfg(feature = "demo")]
-        let _ = (&self.label, self.started_at);
     }
 }
 
@@ -564,33 +294,6 @@ fn persist_intervention_apply_for_record(
         &artifact,
     )?;
     Ok(output)
-}
-
-fn pending_prototype1_stages(stage_reached: Prototype1LoopStopAfter) -> Vec<&'static str> {
-    match stage_reached {
-        Prototype1LoopStopAfter::BaselineEval => {
-            vec![
-                "baseline protocol",
-                "target selection",
-                "intervention apply",
-                "treatment arm",
-                "compare",
-            ]
-        }
-        Prototype1LoopStopAfter::BaselineProtocol => {
-            vec![
-                "target selection",
-                "intervention apply",
-                "treatment arm",
-                "compare",
-            ]
-        }
-        Prototype1LoopStopAfter::TargetSelection => {
-            vec!["intervention apply", "treatment arm", "compare"]
-        }
-        Prototype1LoopStopAfter::InterventionApply => vec!["treatment arm", "compare"],
-        Prototype1LoopStopAfter::Compare => Vec::new(),
-    }
 }
 
 pub(crate) fn write_json_file_pretty<T: Serialize>(
