@@ -1,6 +1,7 @@
 use super::*;
 use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
 use crate::inner::registry::RunRegistration;
+use crate::model_registry::save_parent_patcher_model;
 use crate::record::read_compressed_record;
 use crate::run_registry::RunExecutionStatus;
 use ploke_core::ArcStr;
