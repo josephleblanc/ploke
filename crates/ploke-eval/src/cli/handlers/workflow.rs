@@ -1,9 +1,9 @@
 use crate::cli::{
-    JustCommand, JustSubcommand, MbeCommand, MbeSubcommand, RunBatchWorkflowCommand,
-    RunBatchWorkflowSubcommand, RunCommand, RunDatasetsCommand, RunDatasetsSubcommand,
-    RunPrepareCommand, RunPrepareSubcommand, RunReplayCommand, RunReplaySubcommand, RunRepoCommand,
-    RunRepoSubcommand, RunSingleWorkflowCommand, RunSingleWorkflowSubcommand, RunSubcommand,
-    SelectCommand, SelectSubcommand, print_builtin_dataset_entries,
+    JustCommand, JustSubcommand, RunBatchWorkflowCommand, RunBatchWorkflowSubcommand, RunCommand,
+    RunDatasetsCommand, RunDatasetsSubcommand, RunPrepareCommand, RunPrepareSubcommand,
+    RunReplayCommand, RunReplaySubcommand, RunRepoCommand, RunRepoSubcommand,
+    RunSingleWorkflowCommand, RunSingleWorkflowSubcommand, RunSubcommand, SelectCommand,
+    SelectSubcommand, print_builtin_dataset_entries,
 };
 use crate::spec::PrepareError;
 
@@ -17,19 +17,6 @@ impl RunCommand {
             RunSubcommand::Single(cmd) => cmd.run().await,
             RunSubcommand::Batch(cmd) => cmd.run().await,
             RunSubcommand::Replay(cmd) => cmd.run().await,
-        }
-    }
-}
-
-impl MbeCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            MbeSubcommand::Run(cmd) => cmd.run(),
-            MbeSubcommand::CampaignCandidates(cmd) => cmd.run(),
-            MbeSubcommand::RunCampaignCandidate(cmd) => cmd.run(),
-            MbeSubcommand::Runs(cmd) => cmd.run(),
-            MbeSubcommand::WriteConfig(cmd) => cmd.run(),
-            MbeSubcommand::Verdict(cmd) => cmd.run(),
         }
     }
 }
