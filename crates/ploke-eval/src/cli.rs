@@ -34,6 +34,7 @@ mod args;
 mod dispatch;
 mod format;
 mod handlers;
+pub mod types;
 
 pub(crate) use handlers::campaign::default_campaign_submission_export_path;
 pub(crate) use handlers::closure::{
